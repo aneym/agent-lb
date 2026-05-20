@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.balancer import AccountState, RoutingStrategy
+from app.core.balancer import AccountState, RoutingCost, RoutingCostsByAccount, RoutingStrategy
 from app.db.models import Account, AccountStatus, StickySessionKind
 from app.modules.proxy.load_balancer import LoadBalancer
 
@@ -69,6 +69,7 @@ async def _invoke_stickiness(
     sticky_max_age_seconds: int | None = 600,
     budget_threshold_pct: float = 95.0,
     routing_strategy: RoutingStrategy = "usage_weighted",
+    routing_costs_by_account_id: RoutingCostsByAccount | None = None,
 ):
     """Wrapper that calls production LoadBalancer._select_with_stickiness.
 
@@ -94,6 +95,7 @@ async def _invoke_stickiness(
         prefer_earlier_reset_accounts=False,
         routing_strategy=routing_strategy,
         sticky_repo=sticky_repo,
+        routing_costs_by_account_id=routing_costs_by_account_id,
     )
 
 
@@ -289,6 +291,27 @@ async def test_round_robin_pool_health_check_prefers_budget_safe_candidate():
     assert result.account.account_id == "b"
     repo.delete.assert_called_once_with("key-round-robin", kind=StickySessionKind.PROMPT_CACHE)
     repo.upsert.assert_called_once_with("key-round-robin", "b", kind=StickySessionKind.PROMPT_CACHE)
+
+
+@pytest.mark.asyncio
+async def test_sticky_fallback_applies_planner_costs():
+    now = time.time()
+    acc_a = _rate_limited("a", cooldown_until=now + 60)
+    acc_b = _active("b", used_percent=10.0)
+    acc_c = _active("c", used_percent=30.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    result = await _invoke_stickiness(
+        [acc_a, acc_b, acc_c],
+        "key-routing-cost",
+        repo,
+        reallocate_sticky=False,
+        routing_costs_by_account_id={"b": RoutingCost(total=40.0), "c": RoutingCost(total=-5.0)},
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "c"
+    repo.upsert.assert_not_called()
 
 
 @pytest.mark.asyncio
