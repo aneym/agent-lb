@@ -289,7 +289,6 @@ class LimitWarmupService:
                     sender=sender,
                 )
                 latest_attempts[account.id] = completed or attempt
-                break
 
     def _resolve_model(self, configured_model: str, account: Account) -> str | None:
         normalized = configured_model.strip()

@@ -276,6 +276,29 @@ async def test_min_available_quota_threshold_uses_remaining_percent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_both_selected_windows_warm_primary_and_secondary_resets() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+    account = _account()
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(limit_warmup_windows="both"),
+        before_primary={account.id: _usage(account.id, used_percent=100, reset_at=1000)},
+        before_secondary={account.id: _usage(account.id, used_percent=100, reset_at=10_000, window="secondary")},
+        after_primary={account.id: _usage(account.id, used_percent=0, reset_at=2000)},
+        after_secondary={account.id: _usage(account.id, used_percent=0, reset_at=20_000, window="secondary")},
+    )
+
+    assert sender.calls == [(account.id, "gpt-5.1-codex-mini"), (account.id, "gpt-5.1-codex-mini")]
+    assert [(row.window, row.reset_at, row.status) for row in repo.rows] == [
+        ("primary", 2000, "succeeded"),
+        ("secondary", 20_000, "succeeded"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_unsafe_account_state_does_not_send() -> None:
     repo = FakeWarmupRepo()
     sender = FakeSender()
