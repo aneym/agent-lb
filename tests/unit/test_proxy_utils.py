@@ -15059,6 +15059,7 @@ async def test_http_bridge_session_events_keepalive_backstop(monkeypatch):
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     settings.sse_keepalive_interval_seconds = 0.01
+    settings.stream_idle_timeout_seconds = 0.02
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_backstop",
         model="gpt-5.1",
@@ -15124,6 +15125,7 @@ async def test_http_bridge_session_events_keepalive_backstop_with_response_id(mo
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     settings.sse_keepalive_interval_seconds = 0.01
+    settings.stream_idle_timeout_seconds = 0.02
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_backstop_codex",
         model="gpt-5.1",
@@ -15195,6 +15197,7 @@ async def test_http_bridge_session_events_keepalive_backstop_uses_replay_downstr
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     settings.sse_keepalive_interval_seconds = 0.01
+    settings.stream_idle_timeout_seconds = 0.02
     request_state = proxy_service._WebSocketRequestState(
         request_id="req_bridge_replay_backstop",
         model="gpt-5.1",
@@ -15651,6 +15654,89 @@ async def test_retry_http_bridge_precreated_request_preserves_reconnect_timeout_
     assert request_state.error_code_override == "upstream_unavailable"
     assert "reconnect timed out" in (request_state.error_message_override or "")
     upstream.send_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_session_events_uses_stream_idle_timeout_not_just_keepalive_count(monkeypatch):
+    """The downstream event loop must respect stream_idle_timeout_seconds rather
+    than firing stream_idle_timeout after just _STREAM_KEEPALIVE_MAX_COUNT
+    keepalives.  This matters for slow-starting upstreams (e.g. image_url inputs
+    where the first event may take 60-90s).
+    """
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    settings.sse_keepalive_interval_seconds = 0.01
+    # Simulate a generous idle timeout (much larger than keepalive_count * interval)
+    settings.stream_idle_timeout_seconds = 0.2
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req_bridge_idle_timeout_respected",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        response_id="resp_bridge_idle_timeout_respected",
+        event_queue=asyncio.Queue(),
+        request_text='{"type":"response.create"}',
+        transport="http",
+    )
+    session = proxy_service._HTTPBridgeSession(
+        key=proxy_service._HTTPBridgeSessionKey("prompt_cache", "bridge-key", None),
+        headers={},
+        affinity=proxy_service._AffinityPolicy(),
+        request_model="gpt-5.1",
+        account=_make_account("acc_bridge_idle_timeout"),
+        upstream=AsyncMock(),
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque([request_state]),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=1,
+        last_used_at=0.0,
+        idle_ttl_seconds=30.0,
+    )
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    # Set _STREAM_KEEPALIVE_MAX_COUNT low (2) so under the OLD code,
+    # stream would terminate after 3 keepalives (count > 2).
+    # With the fix, the effective max should be derived from
+    # stream_idle_timeout_seconds / keepalive_interval = 0.2 / 0.01 = 20.
+    monkeypatch.setattr(proxy_service, "_STREAM_KEEPALIVE_MAX_COUNT", 2)
+    monkeypatch.setattr(service, "_submit_http_bridge_request", AsyncMock())
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+
+    events = service._stream_http_bridge_session_events(
+        session,
+        request_state=request_state,
+        text_data='{"type":"response.create"}',
+        queue_limit=10,
+        propagate_http_errors=False,
+        downstream_turn_state=None,
+    )
+    collected: list[str] = []
+    try:
+        async for event in events:
+            collected.append(event)
+            if len(collected) >= 30:
+                break
+    finally:
+        await events.aclose()
+
+    # Under the old code with _STREAM_KEEPALIVE_MAX_COUNT=2, we'd get only
+    # 3 events (2 keepalives + stream_idle_timeout).
+    # Under the fix, with stream_idle_timeout_seconds=0.2 and interval=0.01,
+    # effective_max = max(2, int(0.2/0.01)) = 20, so we should get
+    # 20 keepalives + stream_idle_timeout = 21 events.
+    # Assert we get MORE than 3 events (proving the fix works).
+    assert len(collected) > 3, (
+        f"Expected more than 3 events (stream should respect stream_idle_timeout_seconds), got {len(collected)}"
+    )
+    # The last event should still be stream_idle_timeout
+    last = cast(dict[str, object], proxy_service.parse_sse_data_json(collected[-1]))
+    assert last["type"] == "response.failed"
+    assert cast(dict[str, object], last["response"])["status"] == "failed"
+    assert cast(dict[str, object], cast(dict[str, object], last["response"])["error"])["code"] == "stream_idle_timeout"
 
 
 @pytest.mark.asyncio
