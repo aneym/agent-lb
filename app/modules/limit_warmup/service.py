@@ -316,21 +316,30 @@ class LimitWarmupService:
                     pending_send_tasks,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+                completion_error: BaseException | None = None
                 for send_task in completed_send_tasks:
                     outcome = await send_task
-                    completed = await self._complete_warmup(outcome)
+                    try:
+                        completed = await self._complete_warmup(outcome)
+                    except Exception as exc:
+                        completion_error = completion_error or exc
+                        await self._mark_aborted_warmup(
+                            outcome.attempt,
+                            error_code="warmup_completion_failed",
+                            error_message="Limit warm-up completion failed",
+                        )
+                        continue
                     latest_attempts[outcome.account.id] = completed or outcome.attempt
+                if completion_error is not None:
+                    raise completion_error
         finally:
             if pending_send_tasks:
                 for send_task in pending_send_tasks:
                     send_task.cancel()
                 await asyncio.gather(*pending_send_tasks, return_exceptions=True)
                 for send_task in pending_send_tasks:
-                    attempt = send_tasks[send_task]
-                    await self._warmup_repo.complete_attempt(
-                        attempt.id,
-                        status="failed",
-                        completed_at=utcnow(),
+                    await self._mark_aborted_warmup(
+                        send_tasks[send_task],
                         error_code="warmup_cancelled",
                         error_message="Limit warm-up cancelled after another warm-up completion failed",
                     )
@@ -413,6 +422,29 @@ class LimitWarmupService:
             error_code=error_code,
             error_message=_truncate(result.error_message),
         )
+
+    async def _mark_aborted_warmup(
+        self,
+        attempt: AccountLimitWarmup,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        try:
+            await self._warmup_repo.complete_attempt(
+                attempt.id,
+                status="failed",
+                completed_at=utcnow(),
+                error_code=error_code,
+                error_message=error_message,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to mark aborted limit warm-up attempt_id=%s error_code=%s",
+                attempt.id,
+                error_code,
+                exc_info=True,
+            )
 
     async def _record_request_log(
         self,
