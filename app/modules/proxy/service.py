@@ -1544,7 +1544,12 @@ class ProxyService:
                     except asyncio.TimeoutError:
                         keepalive_count += 1
                         downstream_response_id = _websocket_downstream_response_id(request_state)
-                        if keepalive_count > _STREAM_KEEPALIVE_MAX_COUNT:
+                        stream_idle_timeout_seconds = getattr(get_settings(), "stream_idle_timeout_seconds", 600.0)
+                        effective_max_keepalive = max(
+                            _STREAM_KEEPALIVE_MAX_COUNT,
+                            int(stream_idle_timeout_seconds / keepalive_interval),
+                        )
+                        if keepalive_count > effective_max_keepalive:
                             logger.info(
                                 "HTTP bridge stream idle timeout request_id=%s keepalive_count=%s",
                                 request_state.request_id,
