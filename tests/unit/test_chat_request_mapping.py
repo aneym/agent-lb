@@ -41,6 +41,21 @@ def test_chat_endpoint_accepts_responses_style_input_payload():
     assert "user" not in dumped
 
 
+def test_chat_endpoint_preserves_responses_input_when_messages_is_empty():
+    input_items = [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    payload = {
+        "model": "gpt-5.2",
+        "messages": [],
+        "input": input_items,
+        "instructions": "keep it short",
+    }
+    req = ChatCompletionsRequest.model_validate(payload)
+    responses = req.to_responses_request()
+
+    assert responses.instructions == "keep it short"
+    assert responses.input == input_items
+
+
 def test_chat_messages_accept_responses_style_text_parts():
     payload = {
         "model": "gpt-5.2",

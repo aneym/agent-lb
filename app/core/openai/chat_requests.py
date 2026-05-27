@@ -149,11 +149,11 @@ class ChatCompletionsRequest(BaseModel):
             if include_obfuscation is not None:
                 data["stream_options"] = {"include_obfuscation": include_obfuscation}
 
-        if messages is None:
+        if messages is None or (not messages and "input" in data):
             # Some OpenAI-compatible clients route Responses-shaped payloads
             # through /v1/chat/completions. Keep that payload intact after
             # applying chat-level normalizations instead of rejecting it for
-            # a missing `messages` field.
+            # a missing or explicitly empty `messages` field.
             if not isinstance(data.get("instructions"), str):
                 data["instructions"] = ""
             data["tools"] = tools
