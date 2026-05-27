@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.20.0](https://github.com/Soju06/codex-lb/compare/v1.19.0...v1.20.0) (2026-05-27)
+
+
+### Features
+
+* **acc-del:** cascade delete request log option  ([#823](https://github.com/Soju06/codex-lb/issues/823)) ([3fac360](https://github.com/Soju06/codex-lb/commit/3fac360b5415f414522cd68dd80a47e7210af5ec))
+* **accounts:** export OpenCode auth json ([#757](https://github.com/Soju06/codex-lb/issues/757)) ([530c97f](https://github.com/Soju06/codex-lb/commit/530c97f080093db186cdad92cd30939f64836b77))
+* **api:** add app version response header ([#796](https://github.com/Soju06/codex-lb/issues/796)) ([a84d6f4](https://github.com/Soju06/codex-lb/commit/a84d6f4364751ef897ff779b514430615032a856))
+* **quota:** add reset-confirmed limit warm-up ([#786](https://github.com/Soju06/codex-lb/issues/786)) ([bfc7d6c](https://github.com/Soju06/codex-lb/commit/bfc7d6cd4138047dcc8e691a25019f19286a838f))
+* show update indicator for stale runtime version ([#805](https://github.com/Soju06/codex-lb/issues/805)) ([76488a5](https://github.com/Soju06/codex-lb/commit/76488a5e30d120ab54ed063c9a352819437b1733))
+
+
+### Bug Fixes
+
+* **proxy:** avoid unsafe websocket previous-response replay ([#802](https://github.com/Soju06/codex-lb/issues/802)) ([b58e724](https://github.com/Soju06/codex-lb/commit/b58e7249a80f04300febbe93362f6230c72fcd16))
+* **proxy:** classify request budget exhaustion as timeout ([#820](https://github.com/Soju06/codex-lb/issues/820)) ([978797a](https://github.com/Soju06/codex-lb/commit/978797a82a8931f95695d837be2d7cc3cf073703))
+* **proxy:** classify stale Codex websocket anchors ([#801](https://github.com/Soju06/codex-lb/issues/801)) ([93ce129](https://github.com/Soju06/codex-lb/commit/93ce1299a73dab1d2f5231bf4d39fb99d2c135ff))
+* **proxy:** clear stale HTTP bridge retry errors ([#815](https://github.com/Soju06/codex-lb/issues/815)) ([5aa2162](https://github.com/Soju06/codex-lb/commit/5aa21624ff4528ac9d1cfe17dca37fde9ae2de94))
+* **proxy:** extend HTTP Responses stream budget ([#825](https://github.com/Soju06/codex-lb/issues/825)) ([3993c9c](https://github.com/Soju06/codex-lb/commit/3993c9cede74b9ff3450821ae67777885e5b1c13))
+* **proxy:** give HTTP bridge long-turn budget ([#819](https://github.com/Soju06/codex-lb/issues/819)) ([ff02923](https://github.com/Soju06/codex-lb/commit/ff029236ae605a481b0d138392a9f88f85de7afc))
+* **proxy:** parse multiline Codex websocket errors ([#810](https://github.com/Soju06/codex-lb/issues/810)) ([1f089f2](https://github.com/Soju06/codex-lb/commit/1f089f2991640847bc8c0c9471f84195aaf5b69f))
+* **proxy:** recover websocket terminal auth failures ([#809](https://github.com/Soju06/codex-lb/issues/809)) ([098100f](https://github.com/Soju06/codex-lb/commit/098100f7d84548ab9a2e88b8c4bcc1d9004a6743))
+
+
+### Performance Improvements
+
+* **db:** add raw window usage latest index ([#797](https://github.com/Soju06/codex-lb/issues/797)) ([93be0cd](https://github.com/Soju06/codex-lb/commit/93be0cdc5bbf6f9afedb969d9ff81b7038d41dbf))
+
+
+### Documentation
+
+* **readme:** lowercase codex provider name to match Codex 2026-05-23 update ([#798](https://github.com/Soju06/codex-lb/issues/798)) ([a185479](https://github.com/Soju06/codex-lb/commit/a185479f9b080a6c00c503e74ed6947a9e4b5dbe)), closes [#783](https://github.com/Soju06/codex-lb/issues/783)
+* **readme:** update all-contributors emoji key link ([#830](https://github.com/Soju06/codex-lb/issues/830)) ([88eeba9](https://github.com/Soju06/codex-lb/commit/88eeba910363ef2b01da6433360479ca282930d6))
+
 ## [1.19.0](https://github.com/Soju06/codex-lb/compare/v1.18.2...v1.19.0) (2026-05-25)
 
 
