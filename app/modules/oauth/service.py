@@ -228,6 +228,7 @@ class OAuthCallbackServer:
     async def start(self) -> None:
         app = web.Application()
         app.router.add_get("/auth/callback", self._handler)
+        app.router.add_get("/callback", self._handler)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self._host, self._port)
@@ -397,7 +398,7 @@ class OauthService:
             flow_id=flow_id,
             method="browser",
             authorization_url=authorization_url,
-            callback_url=settings.oauth_redirect_uri,
+            callback_url=oauth_config.redirect_uri,
         )
 
     async def manual_callback(self, callback_url: str, flow_id: str | None = None) -> ManualCallbackResponse:

@@ -160,9 +160,10 @@ class Settings(BaseSettings):
     anthropic_oauth_token_url: str = "https://platform.claude.com/v1/oauth/token"
     anthropic_oauth_client_id: str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     anthropic_oauth_scope: str = (
-        "user:file_upload user:inference user:mcp_servers user:profile user:sessions:claude_code"
+        "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers "
+        "user:file_upload"
     )
-    anthropic_oauth_redirect_uri: str = "http://localhost:1455/auth/callback"
+    anthropic_oauth_redirect_uri: str = "http://localhost:1455/callback"
     anthropic_version: str = "2023-06-01"
     token_refresh_timeout_seconds: float = 8.0
     transcription_request_budget_seconds: float = Field(default=120.0, gt=0)

@@ -16,6 +16,7 @@ from app.core.config.settings import get_settings
 from app.core.providers.types import AccountMetadata, ProviderOAuthConfig
 
 ANTHROPIC_ACCESS_TOKEN_REFRESH_INTERVAL_SECONDS = 90 * 60
+ANTHROPIC_AUTHORIZATION_EXTRA_PARAMS = {"code": "true"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +37,7 @@ class AnthropicProvider:
             redirect_uri=settings.anthropic_oauth_redirect_uri,
             scope=settings.anthropic_oauth_scope,
             originator=None,
-            authorization_extra_params={},
+            authorization_extra_params=ANTHROPIC_AUTHORIZATION_EXTRA_PARAMS,
             requires_id_token=self.requires_id_token,
             authorize_url=settings.anthropic_oauth_authorize_url,
             token_url=settings.anthropic_oauth_token_url,
