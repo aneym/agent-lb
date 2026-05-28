@@ -9,10 +9,10 @@
   - [x] Define provider identifiers and thin provider capability wrappers.
   - [x] Route OpenAI refresh/account creation through the seam without changing OpenAI proxy behavior.
   - [x] Add unit coverage for provider dispatch and OpenAI defaults.
-- [ ] 3. Add Anthropic protocol core.
-  - [ ] Add Messages request/response types and SSE parser coverage for message/content/tool/usage events.
-  - [ ] Add cache-aware Anthropic pricing.
-  - [ ] Add Anthropic model registry sync from mocked `GET /v1/models`.
+- [x] 3. Add Anthropic protocol core.
+  - [x] Add Messages request/response types and SSE parser coverage for message/content/tool/usage events.
+  - [x] Add cache-aware Anthropic pricing.
+  - [x] Add Anthropic model registry sync from mocked `GET /v1/models`.
 - [ ] 4. Add Anthropic OAuth and refresh.
   - [ ] Implement PKCE authorize/token/refresh flow without `id_token`.
   - [ ] Persist Anthropic accounts with `provider='anthropic'`.
