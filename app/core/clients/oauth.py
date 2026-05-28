@@ -34,7 +34,10 @@ class DeviceCode:
 class OAuthTokens:
     access_token: str
     refresh_token: str
-    id_token: str
+    id_token: str | None = None
+    account_id: str | None = None
+    email: str | None = None
+    plan_type: str | None = None
 
 
 class OAuthError(Exception):

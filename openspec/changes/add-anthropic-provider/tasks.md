@@ -13,10 +13,10 @@
   - [x] Add Messages request/response types and SSE parser coverage for message/content/tool/usage events.
   - [x] Add cache-aware Anthropic pricing.
   - [x] Add Anthropic model registry sync from mocked `GET /v1/models`.
-- [ ] 4. Add Anthropic OAuth and refresh.
-  - [ ] Implement PKCE authorize/token/refresh flow without `id_token`.
-  - [ ] Persist Anthropic accounts with `provider='anthropic'`.
-  - [ ] Add mocked token exchange and refresh coverage.
+- [x] 4. Add Anthropic OAuth and refresh.
+  - [x] Implement PKCE authorize/token/refresh flow without `id_token`.
+  - [x] Persist Anthropic accounts with `provider='anthropic'`.
+  - [x] Add mocked token exchange and refresh coverage.
 - [ ] 5. Add `/v1/messages` proxy.
   - [ ] Implement a slim Anthropic proxy service separate from `app/modules/proxy/service.py`.
   - [ ] Preserve inbound `anthropic-beta` and client system prompt content.

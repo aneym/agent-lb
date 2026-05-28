@@ -25,6 +25,8 @@ class ProviderOAuthConfig:
     originator: str | None
     authorization_extra_params: Mapping[str, str]
     requires_id_token: bool
+    authorize_url: str | None = None
+    token_url: str | None = None
 
 
 class Provider(Protocol):

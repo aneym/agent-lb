@@ -2,7 +2,7 @@
 
 - **Date:** 2026-05-28
 - **Owner / requester:** Alex Neyman
-- **Status:** CP3 complete — Anthropic core landed; CP4/CP5/CP6 integration in progress
+- **Status:** CP4 complete — Anthropic OAuth landed; CP5/CP6 integration in progress
 - **Fork target:** https://github.com/Soju06/codex-lb (Python / FastAPI / SQLAlchemy)
 - **Repo:** `/Users/aneyman/repos/swap-lb` (already cloned; full history; remote `upstream` → Soju06/codex-lb)
 - **Branch:** `feat/anthropic-provider` (already created)
@@ -138,11 +138,11 @@
 
 ## 8. Progress Log
 
-**Current checkpoint:** CP4/CP5/CP6 — Anthropic OAuth/proxy and dashboard integration
+**Current checkpoint:** CP5/CP6 — Anthropic proxy and dashboard integration
 **Outcome metric:** providers poolable, before = 1 (OpenAI only) / 0 Claude accounts; target = 2 providers, ≥2 Claude accounts balancing + failing over with unified dashboard usage/cost. **Final deliverable:** open upstream PR(s) (Stage C / CP8).
-**Current value:** CP3 complete: schema/provider seam remain OpenAI-compatible and `app/core/anthropic/` now has Messages models, SSE parsing, cache-aware pricing, and model-list parsing; zero Claude accounts poolable until CP4–CP7 land.
-**Last verified:** 2026-05-28 17:44 EDT — `uv run ruff check app/core/anthropic tests/unit/test_anthropic_core.py` passed; `uv run pytest -q tests/unit/test_anthropic_core.py` passed (5 passed).
-**Remaining:** CP4–CP8
+**Current value:** CP4 complete: schema/provider seam remain OpenAI-compatible, Anthropic protocol core exists, and dashboard OAuth can persist Anthropic accounts with no `id_token`; Claude requests still need CP5 proxy routing before accounts are poolable by Claude Code.
+**Last verified:** 2026-05-28 17:52 EDT — `uv run ruff check app/core/anthropic/oauth.py app/core/providers app/core/clients/oauth.py app/core/auth/refresh.py app/modules/oauth tests/unit/test_anthropic_oauth.py tests/unit/test_provider_registry.py tests/integration/test_oauth_flow.py` passed; `uv run pytest -q tests/unit/test_auth_manager.py tests/unit/test_auth_refresh.py tests/unit/test_oauth_client.py tests/unit/test_provider_registry.py tests/unit/test_anthropic_oauth.py tests/integration/test_oauth_flow.py` passed (50 passed); `git diff -- app/modules/proxy/service.py` empty.
+**Remaining:** CP5–CP8
 **Blocked:** No
 
 | Time | Checkpoint | Change | Outcome delta (before → after) | Next |
@@ -151,6 +151,7 @@
 | 2026-05-28 17:35 EDT | CP1 — Schema migration | Added `provider` to `accounts`, `request_logs`, and `usage_history`; made `accounts.id_token_encrypted` nullable; added `cache_creation_tokens` and `cache_read_tokens` to request logs; added OpenSpec change artifacts. | Provider persistence 1-provider implicit → provider-discriminated schema with legacy rows backfilled as `openai`; Claude accounts still 0 until OAuth/proxy land. | CP2 provider dispatch seam over existing OpenAI impl, with OpenAI behavior unchanged. |
 | 2026-05-28 17:36 EDT | CP2 — Provider dispatch seam | Added `app/core/providers/` with OpenAI as the default provider, provider OAuth config, provider metadata extraction, refresh dispatch, and account-creation routing through the seam. | Provider implementation count 1 hardcoded → 1 registered default provider with Anthropic-ready extension points; Claude accounts still 0 until Anthropic core/OAuth/proxy land. | CP3 backend protocol core and CP6 dashboard provider UI lanes. |
 | 2026-05-28 17:44 EDT | CP3 — Anthropic protocol core | Added `app/core/anthropic/` with Messages request/response/event models, SSE parsing and usage extraction, cache-aware pricing, and model-list registry parsing/sync helpers. | Anthropic implementation count 0 modules → protocol core ready for OAuth/proxy wiring; providers poolable remains 1 and Claude accounts remain 0 until CP4/CP5/CP7. | CP4 Anthropic OAuth, CP5 `/v1/messages` proxy, and CP6 dashboard integration review. |
+| 2026-05-28 17:52 EDT | CP4 — Anthropic OAuth | Added Anthropic provider registration, Claude-Code-shaped PKCE authorize/token/refresh helpers, provider-aware OAuth state/exchange/persistence, nullable `id_token` refresh handling, and mocked OAuth tests. | Anthropic accounts 0 persistable → dashboard OAuth can create `provider='anthropic'` accounts without `id_token`; Claude Code routing still 0 until CP5 `/v1/messages` lands. | CP5 slim `/v1/messages` proxy and CP6 dashboard integration review. |
 
 ---
 

@@ -595,6 +595,63 @@ async def test_manual_callback_returns_success_and_creates_account(async_client,
 
 
 @pytest.mark.asyncio
+async def test_anthropic_manual_callback_persists_provider_account(async_client, monkeypatch):
+    await oauth_module._OAUTH_STORE.reset()
+
+    async def fake_callback_server_start(self) -> None:
+        return None
+
+    async def fake_exchange_anthropic_authorization_code(**kwargs):
+        assert kwargs["code"] == "anthropic-code"
+        return OAuthTokens(
+            access_token="anthropic-access-token",
+            refresh_token="anthropic-refresh-token",
+            id_token=None,
+            account_id="claude_user_123",
+            email="claude@example.com",
+            plan_type="max",
+        )
+
+    monkeypatch.setattr(oauth_module.OAuthCallbackServer, "start", fake_callback_server_start)
+    monkeypatch.setattr(
+        oauth_module,
+        "exchange_anthropic_authorization_code",
+        fake_exchange_anthropic_authorization_code,
+    )
+
+    start = await async_client.post(
+        "/api/oauth/start",
+        json={"forceMethod": "browser", "provider": "anthropic"},
+    )
+    assert start.status_code == 200
+    payload = start.json()
+    assert payload["method"] == "browser"
+    assert "claude.com/cai/oauth/authorize" in payload["authorizationUrl"]
+
+    response = await async_client.post(
+        "/api/oauth/manual-callback",
+        json={
+            "callbackUrl": (
+                "http://localhost:1455/auth/callback?code=anthropic-code&state="
+                f"{_oauth_state_token(payload['authorizationUrl'])}"
+            ),
+            "flowId": payload["flowId"],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "errorMessage": None}
+
+    accounts = await async_client.get("/api/accounts")
+    assert accounts.status_code == 200
+    data = accounts.json()["accounts"]
+    anthropic_accounts = [account for account in data if account["provider"] == "anthropic"]
+    assert len(anthropic_accounts) == 1
+    assert anthropic_accounts[0]["accountId"] == generate_unique_account_id("claude_user_123", "claude@example.com")
+    assert anthropic_accounts[0]["email"] == "claude@example.com"
+    assert anthropic_accounts[0]["planType"] == "max"
+
+
+@pytest.mark.asyncio
 async def test_manual_callback_returns_error_message_for_invalid_state(async_client, monkeypatch):
     await oauth_module._OAUTH_STORE.reset()
 
