@@ -76,6 +76,9 @@ def test_anthropic_oauth_config_uses_claude_code_public_client_without_openai_pa
     assert parsed.scheme == "https"
     assert parsed.netloc == "claude.com"
     assert parsed.path == "/cai/oauth/authorize"
+    assert parsed.query.startswith(
+        "code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&"
+    )
     assert params["client_id"] == ["9d1c250a-e61b-44d9-88ed-5944d1962f5e"]
     assert params["code"] == ["true"]
     assert params["redirect_uri"] == ["https://platform.claude.com/oauth/code/callback"]

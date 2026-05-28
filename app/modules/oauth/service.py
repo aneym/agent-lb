@@ -367,8 +367,8 @@ class OauthService:
 
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
-        state_token = secrets.token_urlsafe(16)
         provider = get_provider(provider_name)
+        state_token = secrets.token_urlsafe(32 if provider.name == ANTHROPIC_PROVIDER_NAME else 16)
         oauth_config = provider.oauth_config()
         if provider.name == ANTHROPIC_PROVIDER_NAME:
             authorization_url = build_anthropic_authorization_url(
