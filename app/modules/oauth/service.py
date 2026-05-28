@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
+from app.core.anthropic.oauth import build_anthropic_authorization_url, exchange_anthropic_authorization_code
 from app.core.auth import (
     DEFAULT_EMAIL,
     DEFAULT_PLAN,
@@ -35,7 +36,7 @@ from app.core.clients.oauth import (
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, ProviderLookupError, get_provider
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
@@ -80,6 +81,7 @@ class OAuthState:
     flow_id: str | None = None
     status: str = "pending"
     method: str | None = None
+    provider: str = OPENAI_PROVIDER_NAME
     error_message: str | None = None
     state_token: str | None = None
     code_verifier: str | None = None
@@ -137,6 +139,7 @@ class OAuthStateStore:
             flow_id=flow.flow_id,
             status=flow.status,
             method=flow.method,
+            provider=flow.provider,
             error_message=flow.error_message,
             state_token=flow.state_token,
             code_verifier=flow.code_verifier,
@@ -281,9 +284,16 @@ class OauthService:
 
     async def start_oauth(self, request: OauthStartRequest) -> OauthStartResponse:
         force_method = (request.force_method or "").lower()
+        try:
+            provider = get_provider(request.provider)
+        except ProviderLookupError as exc:
+            raise OAuthError("unsupported_provider", str(exc), 400) from exc
         if not force_method:
             accounts = await self._accounts_repo.list_accounts()
-            if accounts:
+            has_openai_account = any(
+                getattr(account, "provider", OPENAI_PROVIDER_NAME) == OPENAI_PROVIDER_NAME for account in accounts
+            )
+            if provider.name == OPENAI_PROVIDER_NAME and has_openai_account:
                 server: OAuthCallbackServer | None = None
                 stop_task: asyncio.Task[None] | None = None
                 async with self._store.lock:
@@ -296,11 +306,21 @@ class OauthService:
                 return OauthStartResponse(method="browser")
 
         if force_method == "device":
+            if provider.name != OPENAI_PROVIDER_NAME:
+                raise OAuthError(
+                    "unsupported_provider_flow",
+                    "Device login is only supported for OpenAI accounts.",
+                    400,
+                )
             return await self._start_device_flow()
 
         try:
-            return await self._start_browser_flow()
+            if provider.name == OPENAI_PROVIDER_NAME:
+                return await self._start_browser_flow()
+            return await self._start_browser_flow(provider.name)
         except OSError:
+            if provider.name != OPENAI_PROVIDER_NAME:
+                raise
             return await self._start_device_flow()
 
     async def oauth_status(self, flow_id: str | None = None) -> OauthStatusResponse:
@@ -341,24 +361,35 @@ class OauthService:
                 return OauthCompleteResponse(status="error")
             return OauthCompleteResponse(status="pending")
 
-    async def _start_browser_flow(self) -> OauthStartResponse:
+    async def _start_browser_flow(self, provider_name: str = OPENAI_PROVIDER_NAME) -> OauthStartResponse:
         await self._wait_for_callback_server_stop()
 
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
         state_token = secrets.token_urlsafe(16)
-        provider = get_provider(OPENAI_PROVIDER_NAME)
+        provider = get_provider(provider_name)
         oauth_config = provider.oauth_config()
-        authorization_url = build_authorization_url(
-            state=state_token,
-            code_challenge=code_challenge,
-            base_url=oauth_config.auth_base_url,
-            client_id=oauth_config.client_id,
-            originator=oauth_config.originator,
-            redirect_uri=oauth_config.redirect_uri,
-            scope=oauth_config.scope,
-            extra_params=oauth_config.authorization_extra_params,
-        )
+        if provider.name == ANTHROPIC_PROVIDER_NAME:
+            authorization_url = build_anthropic_authorization_url(
+                state=state_token,
+                code_challenge=code_challenge,
+                authorize_url=oauth_config.authorize_url,
+                client_id=oauth_config.client_id,
+                redirect_uri=oauth_config.redirect_uri,
+                scope=oauth_config.scope,
+                extra_params=oauth_config.authorization_extra_params,
+            )
+        else:
+            authorization_url = build_authorization_url(
+                state=state_token,
+                code_challenge=code_challenge,
+                base_url=oauth_config.auth_base_url,
+                client_id=oauth_config.client_id,
+                originator=oauth_config.originator,
+                redirect_uri=oauth_config.redirect_uri,
+                scope=oauth_config.scope,
+                extra_params=oauth_config.authorization_extra_params,
+            )
         settings = get_settings()
         callback_server: OAuthCallbackServer | None = None
 
@@ -368,6 +399,7 @@ class OauthService:
                     flow_id=flow_id,
                     status="pending",
                     method="browser",
+                    provider=provider.name,
                     state_token=state_token,
                     code_verifier=code_verifier,
                     expires_at=time.time() + _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS,
@@ -438,18 +470,9 @@ class OauthService:
             return ManualCallbackResponse(status="error", error_message=message)
 
         try:
-            route = await _oauth_route()
-            oauth_config = get_provider(OPENAI_PROVIDER_NAME).oauth_config()
-            tokens = await exchange_authorization_code(
-                code=code,
-                code_verifier=verifier,
-                redirect_uri=oauth_config.redirect_uri,
-                base_url=oauth_config.auth_base_url,
-                client_id=oauth_config.client_id,
-                route=route,
-                allow_direct_egress=route is None,
-            )
-            await self._persist_tokens(tokens)
+            provider = get_provider(flow.provider)
+            tokens = await self._exchange_authorization_code(provider.name, code=code, code_verifier=verifier)
+            await self._persist_tokens(tokens, provider_name=provider.name)
             await self._set_success(flow.flow_id)
             asyncio.create_task(self._stop_callback_server_if_idle())
             return ManualCallbackResponse(status="success")
@@ -517,18 +540,9 @@ class OauthService:
             return self._html_response(_error_html("Invalid OAuth callback."))
 
         try:
-            route = await _oauth_route()
-            oauth_config = get_provider(OPENAI_PROVIDER_NAME).oauth_config()
-            tokens = await exchange_authorization_code(
-                code=code,
-                code_verifier=verifier,
-                redirect_uri=oauth_config.redirect_uri,
-                base_url=oauth_config.auth_base_url,
-                client_id=oauth_config.client_id,
-                route=route,
-                allow_direct_egress=route is None,
-            )
-            await self._persist_tokens(tokens)
+            provider = get_provider(flow.provider)
+            tokens = await self._exchange_authorization_code(provider.name, code=code, code_verifier=verifier)
+            await self._persist_tokens(tokens, provider_name=provider.name)
             await self._set_success(flow.flow_id)
             html = _success_html()
         except OAuthError as exc:
@@ -552,7 +566,7 @@ class OauthService:
                     allow_direct_egress=route is None,
                 )
                 if tokens:
-                    await self._persist_tokens(tokens)
+                    await self._persist_tokens(tokens, provider_name=OPENAI_PROVIDER_NAME)
                     await self._set_success(flow_id)
                     return
                 await _async_sleep(context.interval_seconds)
@@ -585,21 +599,62 @@ class OauthService:
         state.poll_task = asyncio.create_task(self._poll_device_tokens(state.flow_id, poll_context))
         return True
 
-    async def _persist_tokens(self, tokens: OAuthTokens) -> None:
-        provider = get_provider(OPENAI_PROVIDER_NAME)
-        metadata = provider.account_metadata_from_id_token(tokens.id_token)
-        claims = extract_id_token_claims(tokens.id_token)
-        auth_claims = claims.auth or OpenAIAuthClaims()
-        raw_account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id or metadata.account_id
-        email = claims.email or metadata.email or DEFAULT_EMAIL
-        workspace_id = clean_account_identity_part(auth_claims.workspace_id or claims.workspace_id)
-        workspace_label = clean_account_identity_part(auth_claims.workspace_label or claims.workspace_label)
-        seat_type = normalize_seat_type(auth_claims.seat_type or claims.seat_type)
-        account_id = generate_unique_account_id(raw_account_id, email, workspace_id)
-        plan_type = coerce_account_plan_type(
-            auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type or metadata.plan_type,
-            DEFAULT_PLAN,
+    async def _exchange_authorization_code(
+        self,
+        provider_name: str,
+        *,
+        code: str,
+        code_verifier: str,
+    ) -> OAuthTokens:
+        provider = get_provider(provider_name)
+        oauth_config = provider.oauth_config()
+        if provider.name == ANTHROPIC_PROVIDER_NAME:
+            return await exchange_anthropic_authorization_code(
+                code=code,
+                code_verifier=code_verifier,
+                redirect_uri=oauth_config.redirect_uri,
+                token_url=oauth_config.token_url,
+                client_id=oauth_config.client_id,
+            )
+        route = await _oauth_route()
+        return await exchange_authorization_code(
+            code=code,
+            code_verifier=code_verifier,
+            redirect_uri=oauth_config.redirect_uri,
+            base_url=oauth_config.auth_base_url,
+            client_id=oauth_config.client_id,
+            route=route,
+            allow_direct_egress=route is None,
         )
+
+    async def _persist_tokens(self, tokens: OAuthTokens, *, provider_name: str = OPENAI_PROVIDER_NAME) -> None:
+        provider = get_provider(provider_name)
+        metadata = provider.account_metadata_from_id_token(tokens.id_token)
+        metadata_plan_type = metadata.plan_type if tokens.id_token else None
+        default_plan = tokens.plan_type or metadata_plan_type or DEFAULT_PLAN
+        plan_type = coerce_account_plan_type(tokens.plan_type or metadata_plan_type, default_plan)
+        id_token_encrypted = self._encryptor.encrypt(tokens.id_token) if tokens.id_token else None
+        if provider.requires_id_token and id_token_encrypted is None:
+            raise OAuthError("invalid_response", "OAuth response missing id token")
+        workspace_id: str | None = None
+        workspace_label: str | None = None
+        seat_type: str | None = None
+        if provider.name == OPENAI_PROVIDER_NAME and tokens.id_token:
+            claims = extract_id_token_claims(tokens.id_token)
+            auth_claims = claims.auth or OpenAIAuthClaims()
+            raw_account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id or metadata.account_id
+            email = claims.email or metadata.email or tokens.email or DEFAULT_EMAIL
+            workspace_id = clean_account_identity_part(auth_claims.workspace_id or claims.workspace_id)
+            workspace_label = clean_account_identity_part(auth_claims.workspace_label or claims.workspace_label)
+            seat_type = normalize_seat_type(auth_claims.seat_type or claims.seat_type)
+            plan_type = coerce_account_plan_type(
+                auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type or metadata_plan_type or tokens.plan_type,
+                default_plan,
+            )
+        else:
+            raw_account_id = metadata.account_id or tokens.account_id
+            email = metadata.email or tokens.email or DEFAULT_EMAIL
+        account_id = generate_unique_account_id(raw_account_id, email, workspace_id)
 
         account = Account(
             id=account_id,
@@ -612,7 +667,7 @@ class OauthService:
             plan_type=plan_type,
             access_token_encrypted=self._encryptor.encrypt(tokens.access_token),
             refresh_token_encrypted=self._encryptor.encrypt(tokens.refresh_token),
-            id_token_encrypted=self._encryptor.encrypt(tokens.id_token),
+            id_token_encrypted=id_token_encrypted,
             last_refresh=utcnow(),
             status=AccountStatus.ACTIVE,
             deactivation_reason=None,

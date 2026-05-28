@@ -43,7 +43,7 @@ _TOKEN_REFRESH_TIMEOUT_OVERRIDE: contextvars.ContextVar[float | None] = contextv
 class TokenRefreshResult:
     access_token: str
     refresh_token: str
-    id_token: str
+    id_token: str | None
     account_id: str | None
     plan_type: str | None
     email: str | None
