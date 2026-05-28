@@ -71,7 +71,7 @@ def build_anthropic_authorization_url(
     }
     params.update(extra_params or {})
     authorize_endpoint = (authorize_url or settings.anthropic_oauth_authorize_url).rstrip("?")
-    return f"{authorize_endpoint}?{urlencode(params, quote_via=quote)}"
+    return f"{authorize_endpoint}?{urlencode(params)}"
 
 
 async def exchange_anthropic_authorization_code(

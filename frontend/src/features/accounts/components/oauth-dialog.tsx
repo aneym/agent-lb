@@ -131,7 +131,7 @@ function ManualCallbackInputBody({
   return (
     <div className="space-y-1.5">
       <p className="text-xs font-medium text-muted-foreground">
-        Paste callback URL (for remote server)
+        Paste callback URL or code
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -139,7 +139,7 @@ function ManualCallbackInputBody({
           value={callbackUrl}
           onChange={(e) => setCallbackUrl(e.target.value)}
           disabled={disabled}
-          placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+          placeholder="code...#state... or callback URL"
           className="flex-1 rounded-lg border bg-muted/20 px-3 py-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
         />
         <Button

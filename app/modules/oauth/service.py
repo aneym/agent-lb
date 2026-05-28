@@ -439,7 +439,13 @@ class OauthService:
         from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(callback_url)
-        params = parse_qs(parsed.query)
+        if not parsed.scheme and "#" in callback_url:
+            code, state = callback_url.split("#", 1)
+            params = {"code": [code], "state": [state]}
+        else:
+            params = parse_qs(parsed.query)
+            if parsed.fragment:
+                params.update(parse_qs(parsed.fragment))
 
         error = params.get("error", [None])[0]
         code = params.get("code", [None])[0]

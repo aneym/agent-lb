@@ -187,7 +187,7 @@ class Settings(BaseSettings):
         "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers "
         "user:file_upload"
     )
-    anthropic_oauth_redirect_uri: str = "http://localhost:1455/callback"
+    anthropic_oauth_redirect_uri: str = "https://platform.claude.com/oauth/code/callback"
     anthropic_version: str = "2023-06-01"
     token_refresh_timeout_seconds: float = 8.0
     auth_guardian_enabled: bool = False
