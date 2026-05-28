@@ -5,10 +5,10 @@
   - [x] Make OpenAI-only account fields nullable where Anthropic has no equivalent.
   - [x] Add Anthropic cache token columns to request logs.
   - [x] Verify migration on fresh and existing SQLite databases.
-- [ ] 2. Add provider dispatch seam.
-  - [ ] Define provider identifiers and thin provider capability wrappers.
-  - [ ] Route OpenAI refresh/account creation through the seam without changing OpenAI proxy behavior.
-  - [ ] Add unit coverage for provider dispatch and OpenAI defaults.
+- [x] 2. Add provider dispatch seam.
+  - [x] Define provider identifiers and thin provider capability wrappers.
+  - [x] Route OpenAI refresh/account creation through the seam without changing OpenAI proxy behavior.
+  - [x] Add unit coverage for provider dispatch and OpenAI defaults.
 - [ ] 3. Add Anthropic protocol core.
   - [ ] Add Messages request/response types and SSE parser coverage for message/content/tool/usage events.
   - [ ] Add cache-aware Anthropic pricing.

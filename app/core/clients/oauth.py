@@ -4,6 +4,7 @@ import base64
 import hashlib
 import logging
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import quote, urlencode
@@ -63,6 +64,7 @@ def build_authorization_url(
     originator: str | None = None,
     redirect_uri: str | None = None,
     scope: str | None = None,
+    extra_params: Mapping[str, str] | None = None,
 ) -> str:
     settings = get_settings()
     auth_base = (base_url or settings.auth_base_url).rstrip("/")
@@ -75,10 +77,15 @@ def build_authorization_url(
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "state": state,
-        "id_token_add_organizations": "true",
-        "codex_cli_simplified_flow": "true",
-        "originator": originator or settings.oauth_originator,
     }
+    params.update(
+        extra_params
+        or {
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+        }
+    )
+    params["originator"] = originator or settings.oauth_originator
     query = urlencode(params, quote_via=quote)
     return f"{auth_base}/oauth/authorize?{query}"
 

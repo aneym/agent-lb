@@ -9,12 +9,13 @@ from datetime import datetime
 from hashlib import sha256
 from typing import Protocol, TypeAlias
 
-from app.core.auth import DEFAULT_PLAN, OpenAIAuthClaims, extract_id_token_claims
+from app.core.auth import DEFAULT_PLAN
 from app.core.auth.refresh import RefreshError, TokenRefreshResult, refresh_access_token, should_refresh
 from app.core.balancer import PERMANENT_FAILURE_CODES
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.providers import OPENAI_PROVIDER_NAME, Provider, ProviderLookupError, get_provider
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
 
@@ -36,7 +37,7 @@ class AccountsRepositoryPort(Protocol):
         account_id: str,
         access_token_encrypted: bytes,
         refresh_token_encrypted: bytes,
-        id_token_encrypted: bytes,
+        id_token_encrypted: bytes | None,
         last_refresh: datetime,
         plan_type: str | None = None,
         email: str | None = None,
@@ -184,9 +185,14 @@ class AuthManager:
             return await owned.refresh_account(account)
 
     async def refresh_account(self, account: Account) -> Account:
+        try:
+            provider = get_provider(account.provider)
+        except ProviderLookupError as exc:
+            raise RefreshError("unsupported_provider", str(exc), True) from exc
+
         refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
         try:
-            result = await self._refresh_tokens(refresh_token)
+            result = await self._refresh_tokens(refresh_token, provider=provider)
         except RefreshError as exc:
             if exc.is_permanent:
                 latest = await self._repo.get_by_id(account.id)
@@ -204,7 +210,12 @@ class AuthManager:
 
         account.access_token_encrypted = self._encryptor.encrypt(result.access_token)
         account.refresh_token_encrypted = self._encryptor.encrypt(result.refresh_token)
-        account.id_token_encrypted = self._encryptor.encrypt(result.id_token)
+        if result.id_token:
+            account.id_token_encrypted = self._encryptor.encrypt(result.id_token)
+        elif provider.requires_id_token:
+            raise RefreshError("invalid_response", "Refresh response missing id token", False)
+        else:
+            account.id_token_encrypted = None
         account.last_refresh = utcnow()
         if result.account_id:
             account.chatgpt_account_id = result.account_id
@@ -230,12 +241,14 @@ class AuthManager:
         )
         return account
 
-    async def _refresh_tokens(self, refresh_token: str) -> TokenRefreshResult:
+    async def _refresh_tokens(self, refresh_token: str, *, provider: Provider) -> TokenRefreshResult:
         refresh_lease: RefreshAdmissionLeasePort | None = None
         if self._acquire_refresh_admission is not None:
             refresh_lease = await self._acquire_refresh_admission()
         try:
-            return await refresh_access_token(refresh_token)
+            if provider.name == OPENAI_PROVIDER_NAME:
+                return await refresh_access_token(refresh_token)
+            return await provider.refresh_access_token(refresh_token)
         finally:
             if refresh_lease is not None:
                 refresh_lease.release()
@@ -243,11 +256,13 @@ class AuthManager:
     async def _ensure_chatgpt_account_id(self, account: Account) -> Account:
         if account.chatgpt_account_id:
             return account
+        if account.provider != OPENAI_PROVIDER_NAME or account.id_token_encrypted is None:
+            return account
         try:
             id_token = self._encryptor.decrypt(account.id_token_encrypted)
         except Exception:
             return account
-        raw_account_id = _chatgpt_account_id_from_id_token(id_token)
+        raw_account_id = get_provider(account.provider).account_metadata_from_id_token(id_token).account_id
         if not raw_account_id:
             return account
 
@@ -269,9 +284,7 @@ class AuthManager:
 
 
 def _chatgpt_account_id_from_id_token(id_token: str) -> str | None:
-    claims = extract_id_token_claims(id_token)
-    auth_claims = claims.auth or OpenAIAuthClaims()
-    return auth_claims.chatgpt_account_id or claims.chatgpt_account_id
+    return get_provider(OPENAI_PROVIDER_NAME).account_metadata_from_id_token(id_token).account_id
 
 
 def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _RefreshSingleflightKey:
