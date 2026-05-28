@@ -36,6 +36,7 @@ class Provider(Protocol):
     pricing: object
     sse_parser: object
     request_normalizer: object
+    access_token_refresh_interval_seconds: int | None
 
     def oauth_config(self) -> ProviderOAuthConfig: ...
 

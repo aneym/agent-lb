@@ -433,6 +433,53 @@ async def test_refresh_account_converts_upstream_route_failure_to_refresh_error(
 
 
 @pytest.mark.asyncio
+async def test_refresh_account_uses_non_openai_provider_without_id_token(monkeypatch):
+    refresh_calls = 0
+
+    async def _fake_refresh(_: str) -> TokenRefreshResult:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return TokenRefreshResult(
+            access_token="new-anthropic-access",
+            refresh_token="new-anthropic-refresh",
+            id_token=None,
+            account_id="anthropic_acc",
+            plan_type="max",
+            email=None,
+        )
+
+    fake_provider = SimpleNamespace(
+        name="anthropic",
+        requires_id_token=False,
+        refresh_access_token=_fake_refresh,
+    )
+    monkeypatch.setattr(auth_manager_module, "get_provider", lambda _: fake_provider)
+
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="anthropic_acc",
+        provider="anthropic",
+        email="claude@example.com",
+        plan_type="max",
+        access_token_encrypted=encryptor.encrypt("opaque-access"),
+        refresh_token_encrypted=encryptor.encrypt("opaque-refresh"),
+        id_token_encrypted=None,
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    repo = _DummyRepo()
+    manager = AuthManager(cast(AccountsRepositoryPort, repo))
+
+    refreshed = await manager.refresh_account(account)
+
+    assert encryptor.decrypt(refreshed.access_token_encrypted) == "new-anthropic-access"
+    assert refresh_calls == 1
+    assert repo.tokens_payload is not None
+    assert repo.tokens_payload["id_token_encrypted"] is None
+
+
+@pytest.mark.asyncio
 async def test_ensure_fresh_singleflights_concurrent_refreshes(monkeypatch):
     started = asyncio.Event()
     release = asyncio.Event()

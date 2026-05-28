@@ -328,10 +328,17 @@ class StubAdditionalUsageRepository:
         )
 
 
-def _make_account(account_id: str, chatgpt_account_id: str, email: str = "a@example.com") -> Account:
+def _make_account(
+    account_id: str,
+    chatgpt_account_id: str,
+    email: str = "a@example.com",
+    *,
+    provider: str = "openai",
+) -> Account:
     encryptor = TokenEncryptor()
     return Account(
         id=account_id,
+        provider=provider,
         chatgpt_account_id=chatgpt_account_id,
         email=email,
         plan_type="plus",
@@ -685,6 +692,41 @@ async def test_usage_updater_includes_chatgpt_account_id_even_when_shared(monkey
     await updater.refresh_accounts([acc_a, acc_b, acc_c], latest_usage={})
 
     assert [call["account_id"] for call in calls] == [shared, shared, "workspace_unique"]
+
+
+@pytest.mark.asyncio
+async def test_usage_updater_skips_anthropic_accounts(monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    calls: list[str | None] = []
+
+    async def stub_fetch_usage(*, account_id: str | None, **_: Any) -> UsagePayload:
+        calls.append(account_id)
+        return UsagePayload.model_validate(
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 10.0,
+                        "reset_at": 1735689600,
+                        "limit_window_seconds": 60,
+                    }
+                }
+            }
+        )
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_usage", stub_fetch_usage)
+
+    usage_repo = StubUsageRepository()
+    updater = UsageUpdater(usage_repo, accounts_repo=None)
+    openai_account = _make_account("acc_openai_usage", "workspace_openai")
+    anthropic_account = _make_account("acc_anthropic_usage", "workspace_anthropic", provider="anthropic")
+
+    await updater.refresh_accounts([openai_account, anthropic_account], latest_usage={})
+
+    assert calls == ["workspace_openai"]
 
 
 @pytest.mark.asyncio

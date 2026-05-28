@@ -6,11 +6,11 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any, Protocol, TypeAlias
 
-from app.core.auth import DEFAULT_PLAN
+from app.core.auth import DEFAULT_PLAN, token_expiry_epoch_ms
 from app.core.auth.refresh import RefreshError, TokenRefreshResult, refresh_access_token, should_refresh
 from app.core.balancer import PERMANENT_FAILURE_CODES, account_status_for_permanent_failure
 from app.core.config.settings import get_settings
@@ -18,7 +18,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, Provider, ProviderLookupError, get_provider
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
-from app.core.utils.time import utcnow
+from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 
@@ -65,6 +65,7 @@ class RefreshAdmissionLeasePort(Protocol):
 
 
 logger = logging.getLogger(__name__)
+_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
 
 
 _RefreshSingleflightKey: TypeAlias = tuple[str, str]
@@ -169,7 +170,7 @@ class AuthManager:
         self._refresh_repo_factory = refresh_repo_factory
 
     async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account:
-        if force or should_refresh(account.last_refresh):
+        if force or _account_needs_refresh(self._encryptor, account):
             account = await _REFRESH_SINGLEFLIGHT.run(
                 _refresh_singleflight_key(self._encryptor, account),
                 lambda: self._run_refresh(account),
@@ -375,6 +376,39 @@ def _chatgpt_account_id_from_id_token(id_token: str) -> str | None:
 
 def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _RefreshSingleflightKey:
     return (account.id, _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted))
+
+
+def _access_token_needs_refresh(
+    encryptor: TokenEncryptor,
+    account: Account,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    try:
+        access_token = encryptor.decrypt(account.access_token_encrypted)
+    except Exception:
+        return False
+    expires_ms = token_expiry_epoch_ms(access_token)
+    if expires_ms is None:
+        return False
+    current = to_utc_naive(now) if now is not None else utcnow()
+    refresh_at_ms = naive_utc_to_epoch(current) * 1000 + (_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS * 1000)
+    return expires_ms <= refresh_at_ms
+
+
+def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
+    current = to_utc_naive(now) if now is not None else utcnow()
+    if _access_token_needs_refresh(encryptor, account, now=current):
+        return True
+    try:
+        provider = get_provider(account.provider)
+    except ProviderLookupError:
+        return should_refresh(account.last_refresh, now=current)
+    interval_seconds = provider.access_token_refresh_interval_seconds
+    if interval_seconds is not None:
+        last = to_utc_naive(account.last_refresh)
+        return current - last > timedelta(seconds=interval_seconds)
+    return should_refresh(account.last_refresh, now=current)
 
 
 def _refresh_token_material_changed(

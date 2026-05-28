@@ -114,3 +114,4 @@ async def test_refresh_anthropic_access_token_returns_optional_id_token() -> Non
     body = parse_qs(session.requests[0]["data"])
     assert body["grant_type"] == ["refresh_token"]
     assert body["refresh_token"] == ["old-refresh"]
+    assert "scope" not in body

@@ -70,6 +70,16 @@ def _route() -> ResolvedUpstreamRoute:
     )
 
 
+def test_group_by_plan_ignores_anthropic_accounts() -> None:
+    openai_account = _account("account-openai")
+    anthropic_account = _account("account-anthropic")
+    anthropic_account.provider = "anthropic"
+
+    grouped = scheduler_module._group_by_plan([openai_account, anthropic_account])
+
+    assert grouped == {"team": [openai_account]}
+
+
 @pytest.mark.asyncio
 async def test_fetch_models_for_plan_marks_transport_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     session = MagicMock()
