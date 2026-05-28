@@ -60,16 +60,17 @@ def build_anthropic_authorization_url(
     extra_params: Mapping[str, str] | None = None,
 ) -> str:
     settings = get_settings()
-    params = {
-        "response_type": "code",
-        "client_id": client_id or settings.anthropic_oauth_client_id,
-        "redirect_uri": redirect_uri or settings.anthropic_oauth_redirect_uri,
-        "scope": scope or settings.anthropic_oauth_scope,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-        "state": state,
-    }
-    params.update(extra_params or {})
+    params = [
+        ("code", "true"),
+        ("client_id", client_id or settings.anthropic_oauth_client_id),
+        ("response_type", "code"),
+        ("redirect_uri", redirect_uri or settings.anthropic_oauth_redirect_uri),
+        ("scope", scope or settings.anthropic_oauth_scope),
+        ("code_challenge", code_challenge),
+        ("code_challenge_method", "S256"),
+        ("state", state),
+    ]
+    params.extend((key, value) for key, value in (extra_params or {}).items() if key != "code")
     authorize_endpoint = (authorize_url or settings.anthropic_oauth_authorize_url).rstrip("?")
     return f"{authorize_endpoint}?{urlencode(params)}"
 

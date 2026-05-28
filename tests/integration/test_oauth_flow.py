@@ -628,6 +628,7 @@ async def test_anthropic_manual_callback_persists_provider_account(async_client,
     assert payload["method"] == "browser"
     assert payload["callbackUrl"] == "https://platform.claude.com/oauth/code/callback"
     assert "claude.com/cai/oauth/authorize" in payload["authorizationUrl"]
+    assert len(_oauth_state_token(payload["authorizationUrl"])) == 43
 
     response = await async_client.post(
         "/api/oauth/manual-callback",
