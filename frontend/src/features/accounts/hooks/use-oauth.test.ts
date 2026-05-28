@@ -39,6 +39,7 @@ describe("useOauth", () => {
       await result.current.start("device");
     });
 
+    expect(startOauthMock).toHaveBeenCalledWith({ forceMethod: "device", provider: "openai" });
     expect(completeOauthMock).toHaveBeenCalledTimes(1);
     expect(completeOauthMock).toHaveBeenCalledWith({
       flowId: "flow-device",
@@ -66,7 +67,60 @@ describe("useOauth", () => {
       await result.current.start("browser");
     });
 
+    expect(startOauthMock).toHaveBeenCalledWith({ forceMethod: "browser", provider: "openai" });
     expect(completeOauthMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the selected Anthropic provider through the OAuth start hook", async () => {
+    startOauthMock.mockResolvedValue({
+      flowId: "flow-anthropic",
+      method: "browser",
+      authorizationUrl: "https://claude.com/cai/oauth/authorize",
+      callbackUrl: "http://127.0.0.1:1455/auth/callback",
+      verificationUrl: null,
+      userCode: null,
+      deviceAuthId: null,
+      intervalSeconds: null,
+      expiresInSeconds: null,
+    });
+
+    const { result } = renderHook(() => useOauth());
+
+    await act(async () => {
+      await result.current.start("browser", "anthropic");
+    });
+
+    expect(startOauthMock).toHaveBeenCalledWith({ forceMethod: "browser", provider: "anthropic" });
+    expect(result.current.state.provider).toBe("anthropic");
+    expect(result.current.state.authorizationUrl).toBe("https://claude.com/cai/oauth/authorize");
+  });
+
+  it("blocks an Anthropic start response that is still backed by the OpenAI OAuth URL", async () => {
+    startOauthMock.mockResolvedValue({
+      flowId: "flow-openai",
+      method: "browser",
+      authorizationUrl: "https://auth.openai.com/authorize",
+      callbackUrl: "http://127.0.0.1:1455/auth/callback",
+      verificationUrl: null,
+      userCode: null,
+      deviceAuthId: null,
+      intervalSeconds: null,
+      expiresInSeconds: null,
+    });
+
+    const { result } = renderHook(() => useOauth());
+    let caughtError: unknown;
+
+    await act(async () => {
+      try {
+        await result.current.start("browser", "anthropic");
+      } catch (error) {
+        caughtError = error;
+      }
+    });
+
+    expect(caughtError).toEqual(new Error("Anthropic OAuth is not available from this backend yet."));
+    expect(result.current.state.status).toBe("error");
   });
 
   it("updates state to success after a successful manual callback", async () => {

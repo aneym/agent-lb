@@ -134,6 +134,9 @@ export function AccountUsagePanel({ account, trends }: AccountUsagePanelProps) {
   const monthly = account.usage?.monthlyRemainingPercent ?? null;
   const requestUsage = account.requestUsage ?? null;
   const hasRequestUsage = (requestUsage?.requestCount ?? 0) > 0;
+  const requestUsageCacheLabel = (account.provider ?? "openai") === "anthropic"
+    ? `${formatCompactNumber(requestUsage?.cacheCreationTokens ?? 0)} cache create | ${formatCompactNumber(requestUsage?.cacheReadTokens ?? 0)} cache read`
+    : `${formatCompactNumber(requestUsage?.cachedInputTokens)} cached`;
   const weeklyOnly = account.windowMinutesPrimary == null && account.windowMinutesSecondary != null;
   const primaryTrendPoints = trends?.primary ?? [];
   const secondaryTrendPoints = trends?.secondary ?? [];
@@ -162,8 +165,8 @@ export function AccountUsagePanel({ account, trends }: AccountUsagePanelProps) {
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Request logs total</p>
         {hasRequestUsage ? (
           <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-            {formatCompactNumber(requestUsage?.totalTokens)} tok | {formatCompactNumber(requestUsage?.cachedInputTokens)} cached |{" "}
-            {formatCompactNumber(requestUsage?.requestCount)} req | {formatCurrency(requestUsage?.totalCostUsd)}
+            {formatCompactNumber(requestUsage?.totalTokens)} tok | {requestUsageCacheLabel} | {formatCompactNumber(requestUsage?.requestCount)} req |{" "}
+            {formatCurrency(requestUsage?.totalCostUsd)}
           </p>
         ) : (
           <p className="mt-1 text-xs text-muted-foreground">No request usage yet.</p>

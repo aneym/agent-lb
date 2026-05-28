@@ -29,6 +29,8 @@ class AccountRequestUsage(DashboardModel):
     request_count: int = 0
     total_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
     total_cost_usd: float = 0.0
 
 

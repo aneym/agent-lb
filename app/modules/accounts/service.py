@@ -117,6 +117,8 @@ class AccountsService:
                 request_count=row.request_count,
                 total_tokens=row.total_tokens,
                 cached_input_tokens=row.cached_input_tokens,
+                cache_creation_tokens=row.cache_creation_tokens,
+                cache_read_tokens=row.cache_read_tokens,
                 total_cost_usd=row.total_cost_usd,
             )
             for account_id, row in request_usage_rows.items()

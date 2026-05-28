@@ -20,7 +20,7 @@ import {
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import { useUpstreamProxyAdmin } from "@/features/settings/hooks/use-settings";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
-import type { AccountAuthExportResponse } from "@/features/accounts/schemas";
+import type { AccountAuthExportResponse, AccountProvider } from "@/features/accounts/schemas";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
 const OauthDialog = lazy(() =>
@@ -49,7 +49,7 @@ export function AccountsPage() {
   const oauth = useOauth();
 
   const importDialog = useDialogState();
-  const oauthDialog = useDialogState();
+  const oauthDialog = useDialogState<{ provider: AccountProvider }>();
   const deleteDialog = useDialogState<string>();
   const exportDialog = useDialogState<AccountAuthExportResponse>();
   const [deleteHistory, setDeleteHistory] = useState(false);
@@ -150,7 +150,7 @@ export function AccountsPage() {
               sortMode={accountSortMode}
               onSortModeChange={setAccountSortMode}
               onOpenImport={() => importDialog.show()}
-              onOpenOauth={() => oauthDialog.show()}
+              onOpenOauth={() => oauthDialog.show({ provider: "openai" })}
             />
           </div>
 
@@ -167,7 +167,11 @@ export function AccountsPage() {
               setAliasMutation.mutateAsync({ accountId, alias })
             }
             onDelete={(accountId) => deleteDialog.show(accountId)}
-            onReauth={() => oauthDialog.show()}
+            onReauth={() => {
+              if (selectedAccount) {
+                oauthDialog.show({ provider: selectedAccount.provider ?? "openai" });
+              }
+            }}
             onExportAuth={(accountId) => {
               void exportAuthMutation
                 .mutateAsync(accountId)
@@ -209,11 +213,13 @@ export function AccountsPage() {
 
       <Suspense fallback={null}>
         <OauthDialog
+          key={oauthDialog.data?.provider ?? "openai"}
           open={oauthDialog.open}
           state={oauth.state}
+          initialProvider={oauthDialog.data?.provider ?? "openai"}
           onOpenChange={oauthDialog.onOpenChange}
-          onStart={async (method) => {
-            await oauth.start(method);
+          onStart={async (method, provider) => {
+            await oauth.start(method, provider);
           }}
           onComplete={async () => {
             await oauth.complete();

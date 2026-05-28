@@ -112,6 +112,25 @@ describe("AccountUsagePanel", () => {
     expect(screen.getByText(/51\.48K tok/)).toBeInTheDocument();
   });
 
+  it("renders Anthropic cache creation and cache read token totals", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      requestUsage: {
+        requestCount: 7,
+        totalTokens: 51_480,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 12_300,
+        cacheReadTokens: 29_170,
+        totalCostUsd: 0.13,
+      },
+    });
+
+    render(<AccountUsagePanel account={account} trends={null} />);
+
+    expect(screen.getByText(/12\.3K cache create/)).toBeInTheDocument();
+    expect(screen.getByText(/29\.17K cache read/)).toBeInTheDocument();
+  });
+
   it("shows the weekly plan legend when scheduled trend data exists", () => {
     const account = createAccountSummary();
     const trends = createAccountTrends(account.accountId, {

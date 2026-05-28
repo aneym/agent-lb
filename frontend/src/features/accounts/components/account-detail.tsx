@@ -7,6 +7,7 @@ import { AccountActions } from "@/features/accounts/components/account-actions";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
+import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import type {
   AccountRoutingPolicy,
   AccountSummary,
@@ -91,19 +92,22 @@ export function AccountDetail({
     >
       {/* Account header */}
       <div>
-        <h2 className="text-base font-semibold">
-          {titleIsEmail ? (
-            <>
-              <span className={blurred ? "privacy-blur" : ""}>{title}</span>
-              {idSuffix}
-            </>
-          ) : (
-            <>
-              {title}
-              {!emailSubtitle ? idSuffix : ""}
-            </>
-          )}
-        </h2>
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <h2 className="min-w-0 text-base font-semibold">
+            {titleIsEmail ? (
+              <>
+                <span className={blurred ? "privacy-blur" : ""}>{title}</span>
+                {idSuffix}
+              </>
+            ) : (
+              <>
+                {title}
+                {!emailSubtitle ? idSuffix : ""}
+              </>
+            )}
+          </h2>
+          <ProviderBadge provider={account.provider} />
+        </div>
         {emailSubtitle ? (
           <p
             className="mt-0.5 text-xs text-muted-foreground"

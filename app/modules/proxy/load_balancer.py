@@ -778,10 +778,11 @@ class LoadBalancer:
         self,
         *,
         model: str | None,
-        provider: str,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ) -> _SelectionInputs:
+        provider_name = normalize_provider_name(provider)
         effective_limit_name = additional_limit_name or _gated_limit_name_for_model(model)
         additional_quota_routing_policies: dict[str, str] = {}
         if effective_limit_name is not None:
@@ -792,7 +793,7 @@ class LoadBalancer:
             separators=(",", ":"),
         )
         cache_key = (
-            provider,
+            provider_name,
             model,
             additional_limit_name,
             additional_quota_routing_policies_cache_key,
@@ -807,7 +808,7 @@ class LoadBalancer:
         async with self._repo_factory() as repos:
             all_accounts = await repos.accounts.list_accounts()
             all_accounts = [
-                account for account in all_accounts if normalize_provider_name(account.provider) == provider
+                account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
             quota_planner_repo = getattr(repos, "quota_planner", None)
             get_quota_planner_settings = getattr(quota_planner_repo, "get_settings", None)

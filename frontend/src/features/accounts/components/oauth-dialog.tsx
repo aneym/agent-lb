@@ -12,11 +12,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { OAuthState } from "@/features/accounts/schemas";
+import type { AccountProvider, OAuthState } from "@/features/accounts/schemas";
+import { ProviderBadge } from "@/features/accounts/components/provider-badge";
+import { providerLabel } from "@/features/accounts/components/provider-label";
 import { formatCountdown } from "@/utils/formatters";
 import { copyToClipboard } from "@/utils/clipboard";
 
 type Stage = "intro" | "browser" | "device" | "success" | "error";
+const PROVIDER_OPTIONS: Array<{
+  provider: AccountProvider;
+  title: string;
+  detail: string;
+  deviceEnabled: boolean;
+}> = [
+  {
+    provider: "openai",
+    title: "OpenAI",
+    detail: "ChatGPT / Codex OAuth",
+    deviceEnabled: true,
+  },
+  {
+    provider: "anthropic",
+    title: "Anthropic",
+    detail: "Claude Code OAuth",
+    deviceEnabled: false,
+  },
+];
 
 function getStage(state: OAuthState): Stage {
   if (state.status === "success") return "success";
@@ -138,8 +159,9 @@ function ManualCallbackInputBody({
 export type OauthDialogProps = {
   open: boolean;
   state: OAuthState;
+  initialProvider?: AccountProvider;
   onOpenChange: (open: boolean) => void;
-  onStart: (method?: "browser" | "device") => Promise<void>;
+  onStart: (method?: "browser" | "device", provider?: AccountProvider) => Promise<void>;
   onComplete: () => Promise<void>;
   onManualCallback: (callbackUrl: string) => Promise<void>;
   onReset: () => void;
@@ -148,16 +170,20 @@ export type OauthDialogProps = {
 export function OauthDialog({
   open,
   state,
+  initialProvider = "openai",
   onOpenChange,
   onStart,
   onComplete,
   onManualCallback,
   onReset,
 }: OauthDialogProps) {
+  const [selectedProvider, setSelectedProvider] = useState<AccountProvider>(initialProvider);
   const [selectedMethod, setSelectedMethod] = useState<"browser" | "device">("browser");
   const stage = getStage(state);
+  const activeProvider = stage === "intro" ? selectedProvider : state.provider;
   const completedRef = useRef(false);
   const browserRefreshInProgress = stage === "browser" && state.status === "starting";
+  const deviceMethodDisabled = selectedProvider === "anthropic";
 
   useEffect(() => {
     if (stage === "success" && !completedRef.current) {
@@ -173,16 +199,17 @@ export function OauthDialog({
     onOpenChange(next);
     if (!next) {
       onReset();
+      setSelectedProvider("openai");
       setSelectedMethod("browser");
     }
   };
 
   const handleStart = () => {
-    void onStart(selectedMethod);
+    void onStart(selectedMethod, selectedProvider);
   };
 
   const handleRefreshBrowserLink = () => {
-    void onStart("browser");
+    void onStart("browser", activeProvider);
   };
 
   const handleChangeMethod = () => {
@@ -194,7 +221,11 @@ export function OauthDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {stage === "success" ? "Account added" : stage === "error" ? "Authorization failed" : "Add account with OAuth"}
+            {stage === "success"
+              ? `${providerLabel(activeProvider)} account added`
+              : stage === "error"
+                ? "Authorization failed"
+                : "Add account with OAuth"}
           </DialogTitle>
           {stage === "intro" ? (
             <DialogDescription>Choose a sign-in method and complete authorization.</DialogDescription>
@@ -203,7 +234,36 @@ export function OauthDialog({
 
         {/* Intro stage */}
         {stage === "intro" ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">Provider</p>
+              <div className="grid grid-cols-2 gap-2">
+                {PROVIDER_OPTIONS.map((option) => (
+                  <button
+                    key={option.provider}
+                    type="button"
+                    onClick={() => {
+                      setSelectedProvider(option.provider);
+                      if (!option.deviceEnabled) {
+                        setSelectedMethod("browser");
+                      }
+                    }}
+                    className={cn(
+                      "w-full cursor-pointer rounded-lg border p-3 text-left transition-colors",
+                      selectedProvider === option.provider
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-muted/50",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">{option.title}</p>
+                      <ProviderBadge provider={option.provider} className="text-[10px]" />
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{option.detail}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => setSelectedMethod("browser")}
@@ -222,11 +282,14 @@ export function OauthDialog({
             <button
               type="button"
               onClick={() => setSelectedMethod("device")}
+              disabled={deviceMethodDisabled}
               className={cn(
-                "w-full cursor-pointer rounded-lg border p-3 text-left transition-colors",
+                "w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                 selectedMethod === "device"
                   ? "border-primary bg-primary/5"
-                  : "hover:bg-muted/50",
+                  : deviceMethodDisabled
+                    ? ""
+                    : "cursor-pointer hover:bg-muted/50",
               )}
             >
               <p className="text-sm font-medium">Device code</p>

@@ -22,11 +22,11 @@
   - [x] Preserve inbound `anthropic-beta` and client system prompt content.
   - [x] Inject `anthropic-version`, swap only Authorization, and stream Anthropic SSE through intact.
   - [x] Verify provider-filtered account selection and cache-token request logging.
-- [ ] 6. Update dashboard provider UI.
-  - [ ] Add provider discriminator to account schemas.
-  - [ ] Add provider selection to add-account/login flows.
-  - [ ] Render provider badges and Anthropic cache-token cost columns.
-- [ ] 7. Verify Stage A.
-  - [ ] Run backend/frontend targeted tests, migration checks, and the existing OpenAI test suite.
-  - [ ] Update `GOAL.md` Progress Log with each checkpoint result.
-  - [ ] Record any remaining CP7 real-account runtime steps.
+- [x] 6. Update dashboard provider UI.
+  - [x] Add provider discriminator to account schemas.
+  - [x] Add provider selection to add-account/login flows.
+  - [x] Render provider badges and Anthropic cache-token cost columns.
+- [x] 7. Verify Stage A.
+  - [x] Run backend/frontend targeted tests, migration checks, and the existing OpenAI test suite.
+  - [x] Update `GOAL.md` Progress Log with each checkpoint result.
+  - [x] Record any remaining CP7 real-account runtime steps.

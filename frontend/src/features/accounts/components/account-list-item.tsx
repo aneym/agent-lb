@@ -7,6 +7,7 @@ import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { StatusBadge } from "@/components/status-badge";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
+import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import type {
   AccountRoutingPolicy,
   AccountSummary,
@@ -95,18 +96,21 @@ export function AccountListItem({
             {emailSubtitle ? <><span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span> | {slotSubtitle}{idSuffix}</> : <>{slotSubtitle}{idSuffix}</>}
           </p>
         </div>
-        {showRoutingPolicy ? (
-          <RoutingPolicyBadge
-            policy={account.routingPolicy as AccountRoutingPolicy | undefined}
-          />
-        ) : null}
-        {account.securityWorkAuthorized === true ? (
-          <ShieldCheck
-            className="h-3.5 w-3.5 text-emerald-600"
-            aria-label="Trusted Access for Cyber"
-          />
-        ) : null}
-        <StatusBadge status={status} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {showRoutingPolicy ? (
+            <RoutingPolicyBadge
+              policy={account.routingPolicy as AccountRoutingPolicy | undefined}
+            />
+          ) : null}
+          {account.securityWorkAuthorized === true ? (
+            <ShieldCheck
+              className="h-3.5 w-3.5 text-emerald-600"
+              aria-label="Trusted Access for Cyber"
+            />
+          ) : null}
+          <ProviderBadge provider={account.provider} />
+          <StatusBadge status={status} />
+        </div>
       </div>
       <div
         className={cn(

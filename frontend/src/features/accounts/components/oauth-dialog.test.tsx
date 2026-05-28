@@ -19,6 +19,7 @@ const originalIsSecureContext = Object.getOwnPropertyDescriptor(window, "isSecur
 const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
 
 const idleState = {
+  provider: "openai" as const,
   status: "idle" as const,
   method: null,
   authorizationUrl: null,
@@ -32,6 +33,7 @@ const idleState = {
 };
 
 const devicePendingState = {
+  provider: "openai" as const,
   status: "pending" as const,
   method: "device" as const,
   authorizationUrl: null,
@@ -45,6 +47,7 @@ const devicePendingState = {
 };
 
 const browserPendingState = {
+  provider: "openai" as const,
   status: "pending" as const,
   method: "browser" as const,
   authorizationUrl: "https://auth.example.com/authorize",
@@ -262,7 +265,32 @@ describe("OauthDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Start sign-in" }));
-    expect(onStart).toHaveBeenCalledWith("browser");
+    expect(onStart).toHaveBeenCalledWith("browser", "openai");
+  });
+
+  it("selects Anthropic as a browser-only OAuth provider", async () => {
+    const user = userEvent.setup();
+    const onStart = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <OauthDialog
+        open
+        state={idleState}
+        onOpenChange={vi.fn()}
+        onStart={onStart}
+        onComplete={vi.fn().mockResolvedValue(undefined)}
+        onManualCallback={vi.fn().mockResolvedValue(undefined)}
+        onReset={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText("Claude Code OAuth"));
+
+    expect(screen.getByRole("button", { name: /Device code/ })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Start sign-in" }));
+
+    expect(onStart).toHaveBeenCalledWith("browser", "anthropic");
   });
 
   it("renders device stage with user code and verification URL", () => {
@@ -366,7 +394,7 @@ describe("OauthDialog", () => {
 
     await user.click(screen.getByRole("button", { name: "Refresh link" }));
 
-    expect(onStart).toHaveBeenCalledWith("browser");
+    expect(onStart).toHaveBeenCalledWith("browser", "openai");
   });
 
   it("renders a disabled loading refresh state while generating a fresh browser link", () => {

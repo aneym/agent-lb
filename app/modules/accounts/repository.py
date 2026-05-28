@@ -35,6 +35,8 @@ class AccountRequestUsageSummary:
     request_count: int
     total_tokens: int
     cached_input_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
     total_cost_usd: float
 
 
@@ -99,6 +101,8 @@ class AccountsRepository:
                 func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
                 func.coalesce(func.sum(output_tokens_expr), 0).label("output_tokens"),
                 func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
+                func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0).label("cache_creation_tokens"),
+                func.coalesce(func.sum(RequestLog.cache_read_tokens), 0).label("cache_read_tokens"),
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
             )
             .join(latest_request_log_ids, RequestLog.id == latest_request_log_ids.c.request_log_id)
@@ -112,6 +116,8 @@ class AccountsRepository:
             input_tokens,
             output_tokens,
             cached_input_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
             total_cost_usd,
         ) in result.all():
             if not account_id:
@@ -124,6 +130,8 @@ class AccountsRepository:
                 request_count=int(request_count or 0),
                 total_tokens=input_sum + output_sum,
                 cached_input_tokens=cached_sum,
+                cache_creation_tokens=int(cache_creation_tokens or 0),
+                cache_read_tokens=int(cache_read_tokens or 0),
                 total_cost_usd=round(float(total_cost_usd or 0.0), 6),
             )
             summaries[account_id] = return_row

@@ -873,6 +873,44 @@ async def test_accounts_list_request_usage_counts_repeated_request_id_by_request
 
 
 @pytest.mark.asyncio
+async def test_accounts_list_request_usage_includes_anthropic_cache_tokens(async_client, db_setup):
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        logs_repo = RequestLogsRepository(session)
+
+        account = _make_account("acc_anthropic_usage", "anthropic-usage@example.com")
+        account.provider = "anthropic"
+        await accounts_repo.upsert(account)
+
+        await logs_repo.add_log(
+            account_id="acc_anthropic_usage",
+            provider="anthropic",
+            request_id="req_anthropic_usage_1",
+            model="claude-sonnet-4-5-20250929",
+            input_tokens=1_000,
+            output_tokens=500,
+            cached_input_tokens=0,
+            cache_creation_tokens=123,
+            cache_read_tokens=456,
+            latency_ms=150,
+            status="success",
+            error_code=None,
+        )
+
+    response = await async_client.get("/api/accounts")
+    assert response.status_code == 200
+    payload = response.json()
+    accounts = {item["accountId"]: item for item in payload["accounts"]}
+
+    request_usage = accounts["acc_anthropic_usage"]["requestUsage"]
+    assert request_usage is not None
+    assert request_usage["requestCount"] == 1
+    assert request_usage["totalTokens"] == 1_500
+    assert request_usage["cacheCreationTokens"] == 123
+    assert request_usage["cacheReadTokens"] == 456
+
+
+@pytest.mark.asyncio
 async def test_accounts_list_maps_weekly_only_primary_to_secondary(async_client, db_setup):
     async with SessionLocal() as session:
         accounts_repo = AccountsRepository(session)
