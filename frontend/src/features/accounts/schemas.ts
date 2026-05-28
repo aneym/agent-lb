@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export type AccountProvider = "openai" | "anthropic";
+
+export const AccountProviderSchema = z.enum(["openai", "anthropic"]).catch("openai");
+
 export const UsageTrendPointSchema = z.object({
   t: z.string().datetime({ offset: true }),
   v: z.number(),
@@ -20,6 +24,8 @@ export const AccountRequestUsageSchema = z.object({
   requestCount: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative(),
+  cacheCreationTokens: z.number().int().nonnegative().optional(),
+  cacheReadTokens: z.number().int().nonnegative().optional(),
   totalCostUsd: z.number().nonnegative(),
 });
 
@@ -62,6 +68,7 @@ export const AccountAdditionalQuotaSchema = z.object({
 
 export const AccountSummarySchema = z.object({
   accountId: z.string(),
+  provider: AccountProviderSchema.optional(),
   email: z.string(),
   alias: z.string().nullable().optional(),
   displayName: z.string(),
@@ -154,10 +161,12 @@ export const AccountExportResponseSchema = z.object({
 });
 
 export const OauthStartRequestSchema = z.object({
+  provider: AccountProviderSchema.default("openai"),
   forceMethod: z.string().optional(),
 });
 
 export const OauthStartResponseSchema = z.object({
+  provider: AccountProviderSchema.optional(),
   flowId: z.string().nullable().optional(),
   method: z.string(),
   authorizationUrl: z.string().nullable(),
@@ -199,6 +208,7 @@ export const RuntimeConnectAddressResponseSchema = z.object({
 });
 
 export const OAuthStateSchema = z.object({
+  provider: AccountProviderSchema.default("openai"),
   flowId: z.string().nullable().optional(),
   status: z.enum(["idle", "starting", "pending", "success", "error"]),
   method: z.enum(["browser", "device"]).nullable(),
@@ -219,6 +229,7 @@ export const ImportStateSchema = z.object({
 
 export type UsageTrendPoint = z.infer<typeof UsageTrendPointSchema>;
 export type AccountUsageTrend = z.infer<typeof AccountUsageTrendSchema>;
+export type AccountRequestUsage = z.infer<typeof AccountRequestUsageSchema>;
 export type AccountSummary = z.infer<typeof AccountSummarySchema>;
 export type AccountAliasResponse = z.infer<typeof AccountAliasResponseSchema>;
 export type AccountLimitWarmupStatus = z.infer<typeof AccountLimitWarmupStatusSchema>;

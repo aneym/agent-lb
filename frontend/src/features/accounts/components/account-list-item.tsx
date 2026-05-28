@@ -4,6 +4,7 @@ import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { StatusBadge } from "@/components/status-badge";
 import { MiniQuotaBar } from "@/components/mini-quota-bar";
+import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { normalizeStatus } from "@/utils/account-status";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
@@ -59,7 +60,10 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
             {emailSubtitle ? <><span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span>{idSuffix}</> : <>{baseSubtitle}{idSuffix}</>}
           </p>
         </div>
-        <StatusBadge status={status} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          <ProviderBadge provider={account.provider} />
+          <StatusBadge status={status} />
+        </div>
       </div>
       <div className={cn("mt-2 grid gap-2", visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {showPrimaryRow ? <MiniQuotaRow label="5h" percent={primary} resetAt={account.resetAtPrimary} /> : null}

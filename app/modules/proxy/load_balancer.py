@@ -403,12 +403,13 @@ class LoadBalancer:
         self,
         *,
         model: str | None,
-        provider: str,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ) -> _SelectionInputs:
+        provider_name = normalize_provider_name(provider)
         cache_key = (
-            provider,
+            provider_name,
             model,
             additional_limit_name,
             None if account_ids is None else tuple(sorted(set(account_ids))),
@@ -422,7 +423,7 @@ class LoadBalancer:
         async with self._repo_factory() as repos:
             all_accounts = await repos.accounts.list_accounts()
             all_accounts = [
-                account for account in all_accounts if normalize_provider_name(account.provider) == provider
+                account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
             effective_limit_name = additional_limit_name or _gated_limit_name_for_model(model)
             accounts = _selectable_accounts(all_accounts)

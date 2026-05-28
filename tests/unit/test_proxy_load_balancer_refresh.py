@@ -1479,10 +1479,11 @@ async def test_select_account_does_not_open_repo_before_runtime_lock(monkeypatch
     async def fake_load_selection_inputs(
         *,
         model: str | None,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ):
-        del model, additional_limit_name, account_ids
+        del model, provider, additional_limit_name, account_ids
         return load_balancer_module._SelectionInputs(
             accounts=[account],
             latest_primary={account.id: primary_entry},
@@ -1731,6 +1732,7 @@ async def test_select_account_reloads_inputs_after_version_conflict(monkeypatch)
     async def counted_load_selection_inputs(
         *,
         model: str | None,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ):
@@ -1738,6 +1740,7 @@ async def test_select_account_reloads_inputs_after_version_conflict(monkeypatch)
         load_calls += 1
         return await original_load_selection_inputs(
             model=model,
+            provider=provider,
             additional_limit_name=additional_limit_name,
             account_ids=account_ids,
         )
@@ -1871,6 +1874,7 @@ async def test_select_account_sticky_reloads_inputs_after_stale_selected_persist
     async def counted_load_selection_inputs(
         *,
         model: str | None,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ):
@@ -1878,6 +1882,7 @@ async def test_select_account_sticky_reloads_inputs_after_stale_selected_persist
         load_calls += 1
         return await original_load_selection_inputs(
             model=model,
+            provider=provider,
             additional_limit_name=additional_limit_name,
             account_ids=account_ids,
         )
@@ -1955,6 +1960,7 @@ async def test_select_account_sticky_does_not_return_stale_selection_at_retry_ca
     async def counted_load_selection_inputs(
         *,
         model: str | None,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ):
@@ -1962,6 +1968,7 @@ async def test_select_account_sticky_does_not_return_stale_selection_at_retry_ca
         load_calls += 1
         return await original_load_selection_inputs(
             model=model,
+            provider=provider,
             additional_limit_name=additional_limit_name,
             account_ids=account_ids,
         )

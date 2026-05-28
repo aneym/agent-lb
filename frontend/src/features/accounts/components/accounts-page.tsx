@@ -15,7 +15,7 @@ import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import { sortAccountsForDisplay } from "@/features/accounts/sorting";
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
-import type { AccountOpenCodeAuthExportResponse } from "@/features/accounts/schemas";
+import type { AccountOpenCodeAuthExportResponse, AccountProvider } from "@/features/accounts/schemas";
 import { buildDuplicateAccountIdSet } from "@/utils/account-identifiers";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
@@ -41,7 +41,7 @@ export function AccountsPage() {
   const oauth = useOauth();
 
   const importDialog = useDialogState();
-  const oauthDialog = useDialogState();
+  const oauthDialog = useDialogState<{ provider: AccountProvider }>();
   const deleteDialog = useDialogState<string>();
   const exportDialog = useDialogState<AccountOpenCodeAuthExportResponse>();
   const [deleteHistory, setDeleteHistory] = useState(false);
@@ -137,7 +137,7 @@ export function AccountsPage() {
               selectedAccountId={resolvedSelectedAccountId}
               onSelect={handleSelectAccount}
               onOpenImport={() => importDialog.show()}
-              onOpenOauth={() => oauthDialog.show()}
+              onOpenOauth={() => oauthDialog.show({ provider: "openai" })}
             />
           </div>
 
@@ -155,7 +155,11 @@ export function AccountsPage() {
               setAliasMutation.mutateAsync({ accountId, alias })
             }
             onDelete={(accountId) => deleteDialog.show(accountId)}
-            onReauth={() => oauthDialog.show()}
+            onReauth={() => {
+              if (selectedAccount) {
+                oauthDialog.show({ provider: selectedAccount.provider ?? "openai" });
+              }
+            }}
             onExport={(accountId) => void exportMutation.mutateAsync(accountId)}
             onExportOpenCodeAuth={(accountId) => {
               void exportOpenCodeAuthMutation
@@ -182,11 +186,13 @@ export function AccountsPage() {
 
       <Suspense fallback={null}>
         <OauthDialog
+          key={oauthDialog.data?.provider ?? "openai"}
           open={oauthDialog.open}
           state={oauth.state}
+          initialProvider={oauthDialog.data?.provider ?? "openai"}
           onOpenChange={oauthDialog.onOpenChange}
-          onStart={async (method) => {
-            await oauth.start(method);
+          onStart={async (method, provider) => {
+            await oauth.start(method, provider);
           }}
           onComplete={async () => {
             await oauth.complete();

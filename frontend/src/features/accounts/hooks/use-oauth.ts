@@ -6,9 +6,14 @@ import {
   startOauth,
   submitManualOauthCallback,
 } from "@/features/accounts/api";
-import { OAuthStateSchema, type OAuthState } from "@/features/accounts/schemas";
+import {
+  OAuthStateSchema,
+  type AccountProvider,
+  type OAuthState,
+} from "@/features/accounts/schemas";
 
 const INITIAL_OAUTH_STATE: OAuthState = OAuthStateSchema.parse({
+  provider: "openai",
   flowId: null,
   status: "idle",
   method: null,
@@ -21,6 +26,21 @@ const INITIAL_OAUTH_STATE: OAuthState = OAuthStateSchema.parse({
   expiresInSeconds: null,
   errorMessage: null,
 });
+
+function isExpectedAuthorizationUrl(provider: AccountProvider, authorizationUrl: string | null): boolean {
+  if (provider === "openai" || !authorizationUrl) {
+    return true;
+  }
+  try {
+    const hostname = new URL(authorizationUrl).hostname;
+    return hostname === "claude.com"
+      || hostname.endsWith(".claude.com")
+      || hostname === "claude.ai"
+      || hostname.endsWith(".claude.ai");
+  } catch {
+    return false;
+  }
+}
 
 export function useOauth() {
   const [state, setState] = useState<OAuthState>(INITIAL_OAUTH_STATE);
@@ -73,14 +93,22 @@ export function useOauth() {
     }
   }, [state.flowId]);
 
-  const start = useCallback(async (forceMethod?: "browser" | "device") => {
+  const start = useCallback(async (
+    forceMethod?: "browser" | "device",
+    provider: AccountProvider = "openai",
+  ) => {
     clearPollTimer();
     clearCountdownTimer();
-    setState((prev) => ({ ...prev, status: "starting", errorMessage: null }));
+    setState((prev) => ({ ...prev, provider, status: "starting", errorMessage: null }));
 
     try {
-      const response = await startOauth({ forceMethod });
+      const response = await startOauth({ forceMethod, provider });
+      const resolvedProvider = response.provider ?? provider;
+      if (!isExpectedAuthorizationUrl(resolvedProvider, response.authorizationUrl)) {
+        throw new Error("Anthropic OAuth is not available from this backend yet.");
+      }
       const nextState = OAuthStateSchema.parse({
+        provider: resolvedProvider,
         flowId: response.flowId ?? null,
         status: "pending",
         method: response.method === "device" ? "device" : "browser",
@@ -113,6 +141,7 @@ export function useOauth() {
       setState((prev) =>
         OAuthStateSchema.parse({
           ...prev,
+          provider,
           status: "error",
           errorMessage: message,
         }),

@@ -6,6 +6,7 @@ import { AccountAliasForm } from "@/features/accounts/components/account-alias-f
 import { AccountActions } from "@/features/accounts/components/account-actions";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
+import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { useAccountTrends } from "@/features/accounts/hooks/use-accounts";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
@@ -64,9 +65,12 @@ export function AccountDetail({
     <div key={account.accountId} className="animate-fade-in-up space-y-4 rounded-xl border bg-card p-5">
       {/* Account header */}
       <div>
-        <h2 className="text-base font-semibold">
-          {titleIsEmail ? <><span className={blurred ? "privacy-blur" : ""}>{title}</span>{idSuffix}</> : <>{title}{!emailSubtitle ? idSuffix : ""}</>}
-        </h2>
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <h2 className="min-w-0 text-base font-semibold">
+            {titleIsEmail ? <><span className={blurred ? "privacy-blur" : ""}>{title}</span>{idSuffix}</> : <>{title}{!emailSubtitle ? idSuffix : ""}</>}
+          </h2>
+          <ProviderBadge provider={account.provider} />
+        </div>
         {emailSubtitle ? (
           <p className="mt-0.5 text-xs text-muted-foreground" title={showAccountId ? `Account ID ${account.accountId}` : undefined}>
             <span className={blurred ? "privacy-blur" : ""}>{emailSubtitle}</span>{showAccountId ? ` | ID ${compactId}` : ""}

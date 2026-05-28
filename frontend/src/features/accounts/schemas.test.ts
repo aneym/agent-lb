@@ -46,9 +46,35 @@ describe("AccountSummarySchema", () => {
     });
 
     expect(parsed.accountId).toBe("acc-1");
+    expect(parsed.provider ?? "openai").toBe("openai");
     expect(parsed.usage?.primaryRemainingPercent).toBe(85);
     expect(parsed.windowMinutesSecondary).toBe(10080);
+    expect(parsed.requestUsage?.cacheCreationTokens ?? 0).toBe(0);
+    expect(parsed.requestUsage?.cacheReadTokens ?? 0).toBe(0);
     expect(parsed.requestUsage?.totalCostUsd).toBe(0.02);
+  });
+
+  it("parses Anthropic account payloads with cache usage fields", () => {
+    const parsed = AccountSummarySchema.parse({
+      accountId: "claude-1",
+      provider: "anthropic",
+      email: "claude@example.com",
+      displayName: "claude@example.com",
+      planType: "max",
+      status: "active",
+      requestUsage: {
+        requestCount: 4,
+        totalTokens: 9500,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 2500,
+        cacheReadTokens: 6000,
+        totalCostUsd: 0.07,
+      },
+    });
+
+    expect(parsed.provider).toBe("anthropic");
+    expect(parsed.requestUsage?.cacheCreationTokens).toBe(2500);
+    expect(parsed.requestUsage?.cacheReadTokens).toBe(6000);
   });
 });
 
