@@ -27,6 +27,7 @@ from app.core.balancer.types import UpstreamError
 from app.core.config.settings import get_settings
 from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
+from app.core.providers import normalize_provider_name
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
@@ -118,6 +119,7 @@ class LoadBalancer:
         prefer_earlier_reset_accounts: bool = False,
         routing_strategy: RoutingStrategy = "capacity_weighted",
         model: str | None = None,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
         exclude_account_ids: Collection[str] | None = None,
@@ -125,10 +127,12 @@ class LoadBalancer:
     ) -> AccountSelection:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
+        provider_name = normalize_provider_name(provider)
 
         async def load_selection_inputs() -> _SelectionInputs:
             selection_inputs = await self._load_selection_inputs(
                 model=model,
+                provider=provider_name,
                 additional_limit_name=additional_limit_name,
                 account_ids=scoped_account_ids,
             )
@@ -399,10 +403,12 @@ class LoadBalancer:
         self,
         *,
         model: str | None,
+        provider: str,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ) -> _SelectionInputs:
         cache_key = (
+            provider,
             model,
             additional_limit_name,
             None if account_ids is None else tuple(sorted(set(account_ids))),
@@ -415,6 +421,9 @@ class LoadBalancer:
 
         async with self._repo_factory() as repos:
             all_accounts = await repos.accounts.list_accounts()
+            all_accounts = [
+                account for account in all_accounts if normalize_provider_name(account.provider) == provider
+            ]
             effective_limit_name = additional_limit_name or _gated_limit_name_for_model(model)
             accounts = _selectable_accounts(all_accounts)
             if account_ids is not None:

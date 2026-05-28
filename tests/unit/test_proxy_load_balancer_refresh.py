@@ -323,6 +323,48 @@ async def test_select_account_reads_cached_usage_once_per_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_select_account_filters_accounts_by_provider() -> None:
+    openai_account = _make_account("acc-openai", "openai@example.com")
+    anthropic_account = _make_account("acc-anthropic", "anthropic@example.com")
+    anthropic_account.provider = "anthropic"
+    now = utcnow()
+    now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+    primary = {
+        openai_account.id: UsageHistory(
+            id=1,
+            account_id=openai_account.id,
+            recorded_at=now,
+            window="primary",
+            used_percent=10.0,
+            reset_at=now_epoch + 300,
+            window_minutes=5,
+        ),
+        anthropic_account.id: UsageHistory(
+            id=2,
+            account_id=anthropic_account.id,
+            recorded_at=now,
+            window="primary",
+            used_percent=10.0,
+            reset_at=now_epoch + 300,
+            window_minutes=5,
+        ),
+    }
+
+    accounts_repo = StubAccountsRepository([openai_account, anthropic_account])
+    usage_repo = StubUsageRepository(primary=primary, secondary={})
+    sticky_repo = StubStickySessionsRepository()
+    balancer = LoadBalancer(lambda: _repo_factory(accounts_repo, usage_repo, sticky_repo))
+
+    default_selection = await balancer.select_account()
+    anthropic_selection = await balancer.select_account(provider="anthropic")
+
+    assert default_selection.account is not None
+    assert default_selection.account.id == openai_account.id
+    assert anthropic_selection.account is not None
+    assert anthropic_selection.account.id == anthropic_account.id
+
+
+@pytest.mark.asyncio
 async def test_select_account_prefers_budget_safe_account_when_any_exist() -> None:
     safe_account = _make_account("acc-safe", "safe@example.com")
     pressured_account = _make_account("acc-pressured", "pressured@example.com")

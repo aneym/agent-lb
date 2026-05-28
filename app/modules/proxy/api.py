@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -28,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import usage as usage_core
+from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.auth.dependencies import (
     set_openai_error_format,
     validate_codex_usage_identity,
@@ -79,9 +81,16 @@ from app.core.utils.sse import (
 )
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
-from app.dependencies import ProxyContext, get_proxy_context, get_proxy_websocket_context
+from app.dependencies import (
+    AnthropicProxyContext,
+    ProxyContext,
+    get_anthropic_proxy_context,
+    get_proxy_context,
+    get_proxy_websocket_context,
+)
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import (
+    API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET,
     ApiKeyData,
     ApiKeyInvalidError,
     ApiKeyRateLimitExceededError,
@@ -95,6 +104,7 @@ from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.proxy import affinity as proxy_affinity_module
 from app.modules.proxy import images_service as images_service_module
 from app.modules.proxy import service as proxy_service_module
+from app.modules.proxy.anthropic_service import AnthropicProxyError
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.helpers import _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
@@ -503,6 +513,58 @@ async def responses_websocket(
         codex_session_affinity=True,
         openai_cache_affinity=True,
         api_key=api_key,
+    )
+
+
+@v1_router.post(
+    "/messages",
+    response_model=None,
+    responses={
+        200: {
+            "content": {
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                },
+                "application/json": {
+                    "schema": {"type": "object"},
+                },
+            }
+        }
+    },
+)
+async def v1_messages(
+    request: Request,
+    payload: AnthropicMessageRequest = Body(...),
+    context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    validate_model_access(api_key, payload.model)
+    try:
+        reservation = await _enforce_request_limits(
+            api_key,
+            request_model=payload.model,
+            request_service_tier=None,
+            request_usage_budget=_estimate_anthropic_request_usage(payload),
+        )
+    except ProxyRateLimitError as exc:
+        return _anthropic_error_response(429, "rate_limit_error", str(exc))
+    except ProxyAuthError as exc:
+        return _anthropic_error_response(401, "authentication_error", str(exc))
+
+    try:
+        stream = await context.service.stream_messages(
+            payload,
+            request.headers,
+            api_key=api_key,
+            api_key_reservation=reservation,
+        )
+    except AnthropicProxyError as exc:
+        await _release_reservation(reservation)
+        return _anthropic_error_response(exc.status_code, exc.code, exc.message)
+
+    return StreamingResponse(
+        inject_sse_keepalives(stream.body, get_settings().sse_keepalive_interval_seconds),
+        media_type=stream.media_type,
     )
 
 
@@ -2475,6 +2537,31 @@ async def _enforce_request_limits(
             raise ProxyRateLimitError(message) from exc
         except ApiKeyInvalidError as exc:
             raise ProxyAuthError(str(exc)) from exc
+
+
+def _estimate_anthropic_request_usage(payload: AnthropicMessageRequest) -> ApiKeyRequestUsageBudget:
+    data = payload.model_dump(mode="json", exclude_none=True)
+    data.pop("model", None)
+    data.pop("max_tokens", None)
+    data.pop("stream", None)
+    serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
+    return ApiKeyRequestUsageBudget(
+        input_tokens=min(len(serialized.encode("utf-8")), API_KEY_USAGE_RESERVATION_MAX_TOKEN_BUDGET),
+        output_tokens=payload.max_tokens,
+    )
+
+
+def _anthropic_error_response(status_code: int, error_type: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "type": "error",
+            "error": {
+                "type": error_type,
+                "message": message,
+            },
+        },
+    )
 
 
 async def _release_reservation(reservation: ApiKeyUsageReservationData | None) -> None:

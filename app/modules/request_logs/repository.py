@@ -190,6 +190,9 @@ class RequestLogsRepository:
         session_id: str | None = None,
         plan_type: str | None = None,
         source: str | None = None,
+        provider: str = "openai",
+        cache_creation_tokens: int | None = None,
+        cache_read_tokens: int | None = None,
     ) -> RequestLog:
         async with sqlite_writer_section():
             resolved_request_id = ensure_request_id(request_id)
@@ -198,6 +201,7 @@ class RequestLogsRepository:
                 resolved_plan_type = await self._resolve_account_plan_type(account_id)
             log = RequestLog(
                 account_id=account_id,
+                provider=provider,
                 api_key_id=api_key_id,
                 session_id=session_id,
                 request_id=resolved_request_id,
@@ -211,6 +215,8 @@ class RequestLogsRepository:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cached_input_tokens=cached_input_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_read_tokens=cache_read_tokens,
                 reasoning_tokens=reasoning_tokens,
                 cost_usd=None,
                 reasoning_effort=reasoning_effort,

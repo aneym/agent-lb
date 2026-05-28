@@ -121,6 +121,7 @@ def _account_to_summary(
     )
     return AccountSummary(
         account_id=account.id,
+        provider=account.provider,
         email=account.email,
         alias=account.alias,
         display_name=account.alias or account.email,

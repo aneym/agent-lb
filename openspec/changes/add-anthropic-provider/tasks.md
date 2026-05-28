@@ -17,11 +17,11 @@
   - [x] Implement PKCE authorize/token/refresh flow without `id_token`.
   - [x] Persist Anthropic accounts with `provider='anthropic'`.
   - [x] Add mocked token exchange and refresh coverage.
-- [ ] 5. Add `/v1/messages` proxy.
-  - [ ] Implement a slim Anthropic proxy service separate from `app/modules/proxy/service.py`.
-  - [ ] Preserve inbound `anthropic-beta` and client system prompt content.
-  - [ ] Inject `anthropic-version`, swap only Authorization, and stream Anthropic SSE through intact.
-  - [ ] Verify provider-filtered account selection and cache-token request logging.
+- [x] 5. Add `/v1/messages` proxy.
+  - [x] Implement a slim Anthropic proxy service separate from `app/modules/proxy/service.py`.
+  - [x] Preserve inbound `anthropic-beta` and client system prompt content.
+  - [x] Inject `anthropic-version`, swap only Authorization, and stream Anthropic SSE through intact.
+  - [x] Verify provider-filtered account selection and cache-token request logging.
 - [ ] 6. Update dashboard provider UI.
   - [ ] Add provider discriminator to account schemas.
   - [ ] Add provider selection to add-account/login flows.
