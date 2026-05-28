@@ -23,6 +23,7 @@ from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.modules.accounts.auth_manager import AuthManager
@@ -277,16 +278,19 @@ class AccountsService:
             auth = parse_auth_json(raw)
         except (json.JSONDecodeError, ValidationError, UnicodeDecodeError, TypeError) as exc:
             raise InvalidAuthJsonError("Invalid auth.json payload") from exc
+        provider = get_provider(OPENAI_PROVIDER_NAME)
+        metadata = provider.account_metadata_from_id_token(auth.tokens.id_token)
         claims = claims_from_auth(auth)
 
-        email = claims.email or DEFAULT_EMAIL
-        raw_account_id = claims.account_id
+        email = claims.email or metadata.email or DEFAULT_EMAIL
+        raw_account_id = claims.account_id or metadata.account_id
         account_id = generate_unique_account_id(raw_account_id, email, claims.workspace_id)
-        plan_type = coerce_account_plan_type(claims.plan_type, DEFAULT_PLAN)
+        plan_type = coerce_account_plan_type(claims.plan_type or metadata.plan_type, DEFAULT_PLAN)
         last_refresh = to_utc_naive(auth.last_refresh_at) if auth.last_refresh_at else utcnow()
 
         account = Account(
             id=account_id,
+            provider=provider.name,
             chatgpt_account_id=raw_account_id,
             email=email,
             workspace_id=claims.workspace_id,
@@ -404,7 +408,7 @@ class AccountsService:
             return None
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
-        id_token = self._encryptor.decrypt(account.id_token_encrypted)
+        id_token = self._encryptor.decrypt(account.id_token_encrypted) if account.id_token_encrypted else ""
         auth_json = {
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": None,

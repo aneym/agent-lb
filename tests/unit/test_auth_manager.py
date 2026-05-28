@@ -55,7 +55,7 @@ class _DummyRepo:
         account_id: str,
         access_token_encrypted: bytes,
         refresh_token_encrypted: bytes,
-        id_token_encrypted: bytes,
+        id_token_encrypted: bytes | None,
         last_refresh: datetime,
         plan_type: str | None = None,
         email: str | None = None,
@@ -793,3 +793,34 @@ async def test_refresh_account_requires_reauth_when_upstream_returns_token_expir
     reason = repo.status_payload["deactivation_reason"]
     assert isinstance(reason, str)
     assert "re-login" in reason.lower() or "expired" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_refresh_account_rejects_unknown_provider_without_openai_refresh(monkeypatch):
+    async def _fake_refresh(_: str) -> TokenRefreshResult:
+        raise AssertionError("OpenAI refresh should not run for an unknown provider")
+
+    monkeypatch.setattr(auth_manager_module, "refresh_access_token", _fake_refresh)
+
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="acc_unknown_provider",
+        provider="unknown",
+        email="user@example.com",
+        plan_type="plus",
+        access_token_encrypted=encryptor.encrypt("access-old"),
+        refresh_token_encrypted=encryptor.encrypt("refresh-old"),
+        id_token_encrypted=encryptor.encrypt("id-old"),
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    repo = _DummyRepo()
+    manager = AuthManager(cast(AccountsRepositoryPort, repo))
+
+    with pytest.raises(RefreshError) as exc_info:
+        await manager.refresh_account(account)
+
+    assert exc_info.value.code == "unsupported_provider"
+    assert exc_info.value.is_permanent is True
+    assert repo.tokens_payload is None

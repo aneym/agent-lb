@@ -540,7 +540,7 @@ class AccountsRepository:
         account_id: str,
         access_token_encrypted: bytes,
         refresh_token_encrypted: bytes,
-        id_token_encrypted: bytes,
+        id_token_encrypted: bytes | None,
         last_refresh: datetime,
         plan_type: str | None = None,
         email: str | None = None,
@@ -549,7 +549,7 @@ class AccountsRepository:
         workspace_label: str | None = None,
         seat_type: str | None = None,
     ) -> bool:
-        values: dict[str, bytes | datetime | str] = {
+        values: dict[str, bytes | datetime | str | None] = {
             "access_token_encrypted": access_token_encrypted,
             "refresh_token_encrypted": refresh_token_encrypted,
             "id_token_encrypted": id_token_encrypted,
@@ -706,6 +706,7 @@ class AccountsRepository:
 
 
 def _apply_account_updates(target: Account, source: Account) -> None:
+    target.provider = source.provider
     if source.chatgpt_account_id is not None:
         target.chatgpt_account_id = source.chatgpt_account_id
     target.email = source.email

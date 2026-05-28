@@ -2,7 +2,7 @@
 
 - **Date:** 2026-05-28
 - **Owner / requester:** Alex Neyman
-- **Status:** Repo cloned — ready to start CP1
+- **Status:** CP2 complete — ready to start CP3/CP6 lanes
 - **Fork target:** https://github.com/Soju06/codex-lb (Python / FastAPI / SQLAlchemy)
 - **Repo:** `/Users/aneyman/repos/swap-lb` (already cloned; full history; remote `upstream` → Soju06/codex-lb)
 - **Branch:** `feat/anthropic-provider` (already created)
@@ -138,17 +138,18 @@
 
 ## 8. Progress Log
 
-**Current checkpoint:** CP2 — Provider dispatch seam
+**Current checkpoint:** CP3/CP6 — Parallel backend/frontend lanes
 **Outcome metric:** providers poolable, before = 1 (OpenAI only) / 0 Claude accounts; target = 2 providers, ≥2 Claude accounts balancing + failing over with unified dashboard usage/cost. **Final deliverable:** open upstream PR(s) (Stage C / CP8).
-**Current value:** CP1 complete: schema can persist provider-discriminated OpenAI/Anthropic rows; existing rows default to `openai`; zero Claude accounts poolable until CP3–CP7 land.
-**Last verified:** 2026-05-28 17:35 EDT — `make migration-check` clean; targeted provider migration tests passed; `make test-unit` passed (2076 passed, 39 skipped).
-**Remaining:** CP2–CP8
+**Current value:** CP2 complete: schema can persist provider-discriminated rows and OpenAI refresh/account creation now routes through a provider seam; zero Claude accounts poolable until CP3–CP7 land.
+**Last verified:** 2026-05-28 17:36 EDT — `uv run ruff check ...` passed; provider/auth/OAuth focused tests passed; OAuth/account integration slice passed (24 passed); `make migration-check` clean; `make test-unit` passed (2080 passed, 39 skipped).
+**Remaining:** CP3–CP8
 **Blocked:** No
 
 | Time | Checkpoint | Change | Outcome delta (before → after) | Next |
 | ---- | ---------- | ------ | ------------------------------ | ---- |
 | 2026-05-28 17:28 EDT | CP0 — Baseline | Installed frozen backend/frontend deps, ran migration/unit gates, booted local app with dashboard auth disabled on temp SQLite DB, rendered Accounts UI via Playwright. User updated CP7 intent: open real Anthropic login flows once implemented so real accounts can be used for CLI runtime checks. | Baseline unknown → OpenAI-only baseline verified; providers poolable remains 1 → 1, Claude accounts 0 → 0. | CP1 schema migration: provider columns/defaults, nullable OpenAI-only fields, cache token columns, fresh/existing DB verification. |
 | 2026-05-28 17:35 EDT | CP1 — Schema migration | Added `provider` to `accounts`, `request_logs`, and `usage_history`; made `accounts.id_token_encrypted` nullable; added `cache_creation_tokens` and `cache_read_tokens` to request logs; added OpenSpec change artifacts. | Provider persistence 1-provider implicit → provider-discriminated schema with legacy rows backfilled as `openai`; Claude accounts still 0 until OAuth/proxy land. | CP2 provider dispatch seam over existing OpenAI impl, with OpenAI behavior unchanged. |
+| 2026-05-28 17:36 EDT | CP2 — Provider dispatch seam | Added `app/core/providers/` with OpenAI as the default provider, provider OAuth config, provider metadata extraction, refresh dispatch, and account-creation routing through the seam. | Provider implementation count 1 hardcoded → 1 registered default provider with Anthropic-ready extension points; Claude accounts still 0 until Anthropic core/OAuth/proxy land. | CP3 backend protocol core and CP6 dashboard provider UI lanes. |
 
 ---
 

@@ -35,6 +35,7 @@ from app.core.clients.oauth import (
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
@@ -346,7 +347,18 @@ class OauthService:
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
         state_token = secrets.token_urlsafe(16)
-        authorization_url = build_authorization_url(state=state_token, code_challenge=code_challenge)
+        provider = get_provider(OPENAI_PROVIDER_NAME)
+        oauth_config = provider.oauth_config()
+        authorization_url = build_authorization_url(
+            state=state_token,
+            code_challenge=code_challenge,
+            base_url=oauth_config.auth_base_url,
+            client_id=oauth_config.client_id,
+            originator=oauth_config.originator,
+            redirect_uri=oauth_config.redirect_uri,
+            scope=oauth_config.scope,
+            extra_params=oauth_config.authorization_extra_params,
+        )
         settings = get_settings()
         callback_server: OAuthCallbackServer | None = None
 
@@ -427,9 +439,13 @@ class OauthService:
 
         try:
             route = await _oauth_route()
+            oauth_config = get_provider(OPENAI_PROVIDER_NAME).oauth_config()
             tokens = await exchange_authorization_code(
                 code=code,
                 code_verifier=verifier,
+                redirect_uri=oauth_config.redirect_uri,
+                base_url=oauth_config.auth_base_url,
+                client_id=oauth_config.client_id,
                 route=route,
                 allow_direct_egress=route is None,
             )
@@ -502,9 +518,13 @@ class OauthService:
 
         try:
             route = await _oauth_route()
+            oauth_config = get_provider(OPENAI_PROVIDER_NAME).oauth_config()
             tokens = await exchange_authorization_code(
                 code=code,
                 code_verifier=verifier,
+                redirect_uri=oauth_config.redirect_uri,
+                base_url=oauth_config.auth_base_url,
+                client_id=oauth_config.client_id,
                 route=route,
                 allow_direct_egress=route is None,
             )
@@ -566,21 +586,24 @@ class OauthService:
         return True
 
     async def _persist_tokens(self, tokens: OAuthTokens) -> None:
+        provider = get_provider(OPENAI_PROVIDER_NAME)
+        metadata = provider.account_metadata_from_id_token(tokens.id_token)
         claims = extract_id_token_claims(tokens.id_token)
         auth_claims = claims.auth or OpenAIAuthClaims()
-        raw_account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id
-        email = claims.email or DEFAULT_EMAIL
+        raw_account_id = auth_claims.chatgpt_account_id or claims.chatgpt_account_id or metadata.account_id
+        email = claims.email or metadata.email or DEFAULT_EMAIL
         workspace_id = clean_account_identity_part(auth_claims.workspace_id or claims.workspace_id)
         workspace_label = clean_account_identity_part(auth_claims.workspace_label or claims.workspace_label)
         seat_type = normalize_seat_type(auth_claims.seat_type or claims.seat_type)
         account_id = generate_unique_account_id(raw_account_id, email, workspace_id)
         plan_type = coerce_account_plan_type(
-            auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type,
+            auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type or metadata.plan_type,
             DEFAULT_PLAN,
         )
 
         account = Account(
             id=account_id,
+            provider=provider.name,
             chatgpt_account_id=raw_account_id,
             email=email,
             workspace_id=workspace_id,
