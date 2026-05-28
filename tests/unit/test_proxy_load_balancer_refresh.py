@@ -364,6 +364,29 @@ async def test_select_account_filters_accounts_by_provider() -> None:
     assert anthropic_selection.account.id == anthropic_account.id
 
 
+def test_filter_accounts_for_model_keeps_anthropic_accounts_outside_openai_plan_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    openai_account = _make_account("acc-openai-plan", "openai-plan@example.com")
+    openai_account.plan_type = "free"
+    anthropic_account = _make_account("acc-anthropic-plan", "anthropic-plan@example.com")
+    anthropic_account.provider = "anthropic"
+    anthropic_account.plan_type = "claude"
+
+    monkeypatch.setattr(
+        load_balancer_module,
+        "get_model_registry",
+        lambda: SimpleNamespace(plan_types_for_model=lambda _: frozenset({"plus"})),
+    )
+
+    filtered = load_balancer_module._filter_accounts_for_model(
+        [openai_account, anthropic_account],
+        "claude-sonnet-4-5",
+    )
+
+    assert filtered == [anthropic_account]
+
+
 @pytest.mark.asyncio
 async def test_select_account_prefers_budget_safe_account_when_any_exist() -> None:
     safe_account = _make_account("acc-safe", "safe@example.com")
@@ -903,6 +926,8 @@ async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) 
 
     account_stale = _make_account("acc-additional-stale", email="stale@example.com")
     account_fresh = _make_account("acc-additional-fresh", email="fresh@example.com")
+    account_stale.plan_type = "pro"
+    account_fresh.plan_type = "pro"
     now = utcnow()
     now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
     usage_rows = {
@@ -942,7 +967,7 @@ async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) 
                 account_id=account_fresh.id,
                 window="primary",
                 used_percent=5.0,
-                recorded_at=now - timedelta(seconds=1199),
+                recorded_at=now - timedelta(seconds=600),
             ),
         }
     )

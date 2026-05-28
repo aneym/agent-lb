@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import cast
 
@@ -70,6 +72,12 @@ class _DummyRepo:
             "chatgpt_account_id": chatgpt_account_id,
         }
         return True
+
+
+def _jwt_with_exp(expires_at: datetime) -> str:
+    payload = json.dumps({"exp": int(expires_at.timestamp())}, separators=(",", ":")).encode()
+    encoded_payload = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    return f"header.{encoded_payload}.signature"
 
 
 @pytest.mark.asyncio
@@ -182,6 +190,95 @@ async def test_refresh_account_preserves_plan_type_when_missing(monkeypatch):
     assert updated.plan_type == "pro"
     assert repo.tokens_payload is not None
     assert repo.tokens_payload["plan_type"] == "pro"
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_refreshes_when_access_token_is_expiring(monkeypatch):
+    refresh_calls = 0
+
+    async def _fake_refresh(_: str) -> TokenRefreshResult:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return TokenRefreshResult(
+            access_token="new-access",
+            refresh_token="new-refresh",
+            id_token="new-id",
+            account_id="acc_expiring_access",
+            plan_type="plus",
+            email=None,
+        )
+
+    monkeypatch.setattr(auth_manager_module, "refresh_access_token", _fake_refresh)
+
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="acc_expiring_access",
+        email="user@example.com",
+        plan_type="plus",
+        access_token_encrypted=encryptor.encrypt(_jwt_with_exp(datetime.now(timezone.utc) + timedelta(minutes=2))),
+        refresh_token_encrypted=encryptor.encrypt("refresh-old"),
+        id_token_encrypted=encryptor.encrypt("id-old"),
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    repo = _DummyRepo()
+    manager = AuthManager(cast(AccountsRepositoryPort, repo))
+
+    refreshed = await manager.ensure_fresh(account)
+
+    assert encryptor.decrypt(refreshed.access_token_encrypted) == "new-access"
+    assert refresh_calls == 1
+    assert repo.tokens_payload is not None
+    assert repo.tokens_payload["account_id"] == "acc_expiring_access"
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_uses_provider_refresh_interval_for_opaque_access_tokens(monkeypatch):
+    refresh_calls = 0
+
+    async def _fake_refresh(_: str) -> TokenRefreshResult:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return TokenRefreshResult(
+            access_token="new-anthropic-access",
+            refresh_token="new-anthropic-refresh",
+            id_token=None,
+            account_id="anthropic_acc",
+            plan_type="max",
+            email=None,
+        )
+
+    fake_provider = SimpleNamespace(
+        name="anthropic",
+        requires_id_token=False,
+        access_token_refresh_interval_seconds=60 * 60,
+        refresh_access_token=_fake_refresh,
+    )
+    monkeypatch.setattr(auth_manager_module, "get_provider", lambda _: fake_provider)
+
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="anthropic_acc",
+        provider="anthropic",
+        email="claude@example.com",
+        plan_type="max",
+        access_token_encrypted=encryptor.encrypt("opaque-access"),
+        refresh_token_encrypted=encryptor.encrypt("opaque-refresh"),
+        id_token_encrypted=None,
+        last_refresh=utcnow() - timedelta(hours=2),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    repo = _DummyRepo()
+    manager = AuthManager(cast(AccountsRepositoryPort, repo))
+
+    refreshed = await manager.ensure_fresh(account)
+
+    assert encryptor.decrypt(refreshed.access_token_encrypted) == "new-anthropic-access"
+    assert refresh_calls == 1
+    assert repo.tokens_payload is not None
+    assert repo.tokens_payload["id_token_encrypted"] is None
 
 
 @pytest.mark.asyncio

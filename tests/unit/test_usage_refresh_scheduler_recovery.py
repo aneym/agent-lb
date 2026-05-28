@@ -61,6 +61,15 @@ def _epoch_to_naive_utc(epoch: float) -> datetime:
     return datetime.fromtimestamp(epoch, timezone.utc).replace(tzinfo=None)
 
 
+def test_openai_accounts_filters_out_anthropic_accounts() -> None:
+    openai_account = _make_account("acc_openai", status=AccountStatus.ACTIVE)
+    openai_account.provider = "openai"
+    anthropic_account = _make_account("acc_anthropic", status=AccountStatus.ACTIVE)
+    anthropic_account.provider = "anthropic"
+
+    assert refresh_scheduler_module._openai_accounts([openai_account, anthropic_account]) == [openai_account]
+
+
 class StubAccountsRepository:
     def __init__(self, accounts: list[Account]) -> None:
         self._accounts = {account.id: account for account in accounts}

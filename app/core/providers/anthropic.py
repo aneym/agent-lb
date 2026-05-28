@@ -15,6 +15,8 @@ from app.core.auth.refresh import TokenRefreshResult
 from app.core.config.settings import get_settings
 from app.core.providers.types import AccountMetadata, ProviderOAuthConfig
 
+ANTHROPIC_ACCESS_TOKEN_REFRESH_INTERVAL_SECONDS = 90 * 60
+
 
 @dataclass(frozen=True, slots=True)
 class AnthropicProvider:
@@ -24,6 +26,7 @@ class AnthropicProvider:
     pricing: object = anthropic_pricing
     sse_parser: object = parsing
     request_normalizer: object = models
+    access_token_refresh_interval_seconds: int | None = ANTHROPIC_ACCESS_TOKEN_REFRESH_INTERVAL_SECONDS
 
     def oauth_config(self) -> ProviderOAuthConfig:
         settings = get_settings()

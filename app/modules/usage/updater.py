@@ -16,6 +16,7 @@ from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.providers import OPENAI_PROVIDER_NAME
 from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
@@ -222,6 +223,8 @@ class UsageUpdater:
         interval = settings.usage_refresh_interval_seconds
         _prune_usage_refresh_auth_cooldowns()
         for account in accounts:
+            if account.provider != OPENAI_PROVIDER_NAME:
+                continue
             if account.status == AccountStatus.DEACTIVATED:
                 continue
             if _is_usage_refresh_in_cooldown(account.id):

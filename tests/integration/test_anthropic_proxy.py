@@ -30,6 +30,31 @@ ANTHROPIC_SSE_BYTES = (
 )
 
 
+@pytest.mark.asyncio
+async def test_anthropic_messages_returns_error_when_no_accounts_available(async_client):
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "type": "error",
+        "error": {
+            "type": "no_available_anthropic_accounts",
+            "message": (
+                "No available accounts. Service is operating in degraded mode: "
+                "all upstream accounts are unavailable"
+            ),
+        },
+    }
+
+
 class _FakeContent:
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks
@@ -130,6 +155,7 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
         headers={
             "anthropic-beta": "oauth-2025-04-20",
             "authorization": "Bearer client-token",
+            "x-api-key": "client-placeholder",
         },
     ) as response:
         assert response.status_code == 200
@@ -139,6 +165,7 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert captured["headers"]["Authorization"] == "Bearer anthropic-access"
     assert captured["headers"]["anthropic-beta"] == "oauth-2025-04-20"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
+    assert "x-api-key" not in {key.lower() for key in captured["headers"]}
     assert captured["json_body"]["system"] == payload["system"]
     assert captured["json_body"]["messages"] == payload["messages"]
 

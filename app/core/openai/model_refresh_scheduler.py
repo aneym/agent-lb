@@ -13,6 +13,7 @@ from app.core.clients.model_fetcher import ModelFetchError, fetch_models_for_pla
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.openai.model_registry import UpstreamModel, get_model_registry
+from app.core.providers import OPENAI_PROVIDER_NAME
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AuthManager
@@ -113,6 +114,8 @@ class ModelRefreshScheduler:
 def _group_by_plan(accounts: list[Account]) -> dict[str, list[Account]]:
     grouped: dict[str, list[Account]] = {}
     for account in accounts:
+        if account.provider != OPENAI_PROVIDER_NAME:
+            continue
         if account.status != AccountStatus.ACTIVE:
             continue
         plan_type = account.plan_type

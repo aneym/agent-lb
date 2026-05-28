@@ -26,6 +26,7 @@ class OpenAIProvider:
     pricing: object = pricing
     sse_parser: object = parsing
     request_normalizer: object = requests
+    access_token_refresh_interval_seconds: int | None = None
 
     def oauth_config(self) -> ProviderOAuthConfig:
         settings = get_settings()

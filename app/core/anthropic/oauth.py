@@ -125,7 +125,6 @@ async def refresh_anthropic_access_token(
         "grant_type": "refresh_token",
         "client_id": client_id or settings.anthropic_oauth_client_id,
         "refresh_token": refresh_token,
-        "scope": settings.anthropic_oauth_scope,
     }
     try:
         payload_data = await _post_token_request(

@@ -64,15 +64,20 @@ class AnthropicProxyService:
         started_at = time.monotonic()
         selected_account_ids: set[str] = set()
         media_type = "text/event-stream" if payload.stream else "application/json"
+        first_account = await self._select_account(payload.model, exclude_account_ids=selected_account_ids)
+        selected_account_ids.add(first_account.id)
 
         async def body() -> AsyncIterator[bytes]:
             usage: AnthropicUsage | None = None
             last_account: Account | None = None
             last_error_status: int | None = None
             last_error_message: str | None = None
-            for _ in range(_MAX_SELECTION_ATTEMPTS):
-                account = await self._select_account(payload.model, exclude_account_ids=selected_account_ids)
-                selected_account_ids.add(account.id)
+            for attempt in range(_MAX_SELECTION_ATTEMPTS):
+                if attempt == 0:
+                    account = first_account
+                else:
+                    account = await self._select_account(payload.model, exclude_account_ids=selected_account_ids)
+                    selected_account_ids.add(account.id)
                 last_account = account
                 access_token = await self._fresh_access_token(account)
                 headers = _build_anthropic_headers(inbound_headers, access_token)
@@ -286,7 +291,11 @@ def _request_id_from_headers(headers: Mapping[str, str]) -> str | None:
 
 def _build_anthropic_headers(inbound_headers: Mapping[str, str], access_token: str) -> dict[str, str]:
     settings = get_settings()
-    headers = filter_inbound_headers(inbound_headers)
+    headers = {
+        key: value
+        for key, value in filter_inbound_headers(inbound_headers).items()
+        if key.lower() not in {"api-key", "x-api-key"}
+    }
     lower_keys = {key.lower() for key in headers}
     headers["Authorization"] = f"Bearer {access_token}"
     if "anthropic-version" not in lower_keys:

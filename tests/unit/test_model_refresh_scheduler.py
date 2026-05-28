@@ -17,9 +17,10 @@ from app.db.models import Account, AccountStatus
 pytestmark = pytest.mark.unit
 
 
-def _account(account_id: str = "account-1") -> Account:
+def _account(account_id: str = "account-1", *, provider: str = "openai") -> Account:
     return Account(
         id=account_id,
+        provider=provider,
         email=f"{account_id}@example.test",
         plan_type="team",
         chatgpt_account_id=f"chatgpt-{account_id}",
@@ -59,6 +60,15 @@ class _StubAuthManager:
 
     async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account:
         return account
+
+
+def test_group_by_plan_ignores_anthropic_accounts() -> None:
+    openai_account = _account("account-openai", provider="openai")
+    anthropic_account = _account("account-anthropic", provider="anthropic")
+
+    grouped = scheduler_module._group_by_plan([openai_account, anthropic_account])
+
+    assert grouped == {"team": [openai_account]}
 
 
 @pytest.mark.asyncio

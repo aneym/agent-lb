@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Protocol, cast
 
 from app.core.config.settings import get_settings
+from app.core.providers import OPENAI_PROVIDER_NAME
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts.repository import AccountsRepository
@@ -103,7 +104,7 @@ class UsageRefreshScheduler:
                     request_logs_repo = RequestLogsRepository(session)
                     before_primary = await usage_repo.latest_by_account(window="primary")
                     before_secondary = await usage_repo.latest_by_account(window="secondary")
-                    accounts = await accounts_repo.list_accounts()
+                    accounts = _openai_accounts(await accounts_repo.list_accounts())
                     updater = UsageUpdater(usage_repo, accounts_repo, additional_usage_repo)
                     usage_written = await updater.refresh_accounts(accounts, before_primary)
                     if usage_written:
@@ -118,7 +119,7 @@ class UsageRefreshScheduler:
                                 accounts_repo_factory=_background_accounts_repo,
                             ),
                         )
-                        refreshed_accounts = await accounts_repo.list_accounts(refresh_existing=True)
+                        refreshed_accounts = _openai_accounts(await accounts_repo.list_accounts(refresh_existing=True))
                         await warmup_service.run_after_usage_refresh(
                             accounts=refreshed_accounts,
                             settings=dashboard_settings,
@@ -144,6 +145,10 @@ def build_usage_refresh_scheduler() -> UsageRefreshScheduler:
         interval_seconds=settings.usage_refresh_interval_seconds,
         enabled=settings.usage_refresh_enabled,
     )
+
+
+def _openai_accounts(accounts: list[Account]) -> list[Account]:
+    return [account for account in accounts if account.provider == OPENAI_PROVIDER_NAME]
 
 
 @contextlib.asynccontextmanager
