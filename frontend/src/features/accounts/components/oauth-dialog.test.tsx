@@ -185,15 +185,10 @@ describe("OauthDialog", () => {
       />,
     );
 
-    await user.type(
-      screen.getByPlaceholderText("http://localhost:1455/auth/callback?code=...&state=..."),
-      "http://localhost:1455/auth/callback?code=abc&state=expected",
-    );
+    await user.type(screen.getByPlaceholderText("code...#state... or callback URL"), "abc#expected");
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
-    expect(onManualCallback).toHaveBeenCalledWith(
-      "http://localhost:1455/auth/callback?code=abc&state=expected",
-    );
+    expect(onManualCallback).toHaveBeenCalledWith("abc#expected");
   });
 
   it("refreshes the browser authorization link without leaving the dialog", async () => {
@@ -252,13 +247,9 @@ describe("OauthDialog", () => {
       />,
     );
 
-    const callbackInput = screen.getByPlaceholderText(
-      "http://localhost:1455/auth/callback?code=...&state=...",
-    );
-    await user.type(callbackInput, "http://localhost:1455/auth/callback?code=abc&state=expected");
-    expect(callbackInput).toHaveValue(
-      "http://localhost:1455/auth/callback?code=abc&state=expected",
-    );
+    const callbackInput = screen.getByPlaceholderText("code...#state... or callback URL");
+    await user.type(callbackInput, "abc#expected");
+    expect(callbackInput).toHaveValue("abc#expected");
 
     rerender(
       <OauthDialog

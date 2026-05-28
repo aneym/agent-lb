@@ -626,14 +626,14 @@ async def test_anthropic_manual_callback_persists_provider_account(async_client,
     assert start.status_code == 200
     payload = start.json()
     assert payload["method"] == "browser"
-    assert payload["callbackUrl"] == "http://localhost:1455/callback"
+    assert payload["callbackUrl"] == "https://platform.claude.com/oauth/code/callback"
     assert "claude.com/cai/oauth/authorize" in payload["authorizationUrl"]
 
     response = await async_client.post(
         "/api/oauth/manual-callback",
         json={
             "callbackUrl": (
-                "http://localhost:1455/callback?code=anthropic-code&state="
+                "anthropic-code#"
                 f"{_oauth_state_token(payload['authorizationUrl'])}"
             ),
             "flowId": payload["flowId"],
