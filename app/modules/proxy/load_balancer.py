@@ -46,6 +46,7 @@ from app.core.metrics.prometheus import (
 )
 from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
+from app.core.providers import normalize_provider_name
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
@@ -297,6 +298,7 @@ class LoadBalancer:
         relative_availability_power: float = 2.0,
         relative_availability_top_k: int = 5,
         model: str | None = None,
+        provider: str | None = None,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
         exclude_account_ids: Collection[str] | None = None,
@@ -310,10 +312,12 @@ class LoadBalancer:
     ) -> AccountSelection:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
+        provider_name = normalize_provider_name(provider)
 
         async def load_selection_inputs() -> _SelectionInputs:
             selection_inputs = await self._load_selection_inputs(
                 model=model,
+                provider=provider_name,
                 additional_limit_name=additional_limit_name,
                 account_ids=scoped_account_ids,
             )
@@ -774,6 +778,7 @@ class LoadBalancer:
         self,
         *,
         model: str | None,
+        provider: str,
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
     ) -> _SelectionInputs:
@@ -787,6 +792,7 @@ class LoadBalancer:
             separators=(",", ":"),
         )
         cache_key = (
+            provider,
             model,
             additional_limit_name,
             additional_quota_routing_policies_cache_key,
@@ -800,6 +806,9 @@ class LoadBalancer:
 
         async with self._repo_factory() as repos:
             all_accounts = await repos.accounts.list_accounts()
+            all_accounts = [
+                account for account in all_accounts if normalize_provider_name(account.provider) == provider
+            ]
             quota_planner_repo = getattr(repos, "quota_planner", None)
             get_quota_planner_settings = getattr(quota_planner_repo, "get_settings", None)
             if callable(get_quota_planner_settings):

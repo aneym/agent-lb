@@ -28,6 +28,7 @@ from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.oauth.service import OauthService
+from app.modules.proxy.anthropic_service import AnthropicProxyService
 from app.modules.proxy.repo_bundle import ProxyRepositories
 from app.modules.proxy.service import ProxyService
 from app.modules.proxy.sticky_repository import StickySessionsRepository
@@ -79,6 +80,11 @@ class DashboardAuthContext:
 @dataclass(slots=True)
 class ProxyContext:
     service: ProxyService
+
+
+@dataclass(slots=True)
+class AnthropicProxyContext:
+    service: AnthropicProxyService
 
 
 @dataclass(slots=True)
@@ -230,6 +236,20 @@ def get_proxy_service_for_app(app: FastAPI) -> ProxyService:
     if not isinstance(service, ProxyService):
         service = ProxyService(repo_factory=_proxy_repo_context)
         setattr(state, "proxy_service", service)
+    return service
+
+
+def get_anthropic_proxy_context(request: Request) -> AnthropicProxyContext:
+    service = get_anthropic_proxy_service_for_app(request.app)
+    return AnthropicProxyContext(service=service)
+
+
+def get_anthropic_proxy_service_for_app(app: FastAPI) -> AnthropicProxyService:
+    state = app.state
+    service = getattr(state, "anthropic_proxy_service", None)
+    if not isinstance(service, AnthropicProxyService):
+        service = AnthropicProxyService(repo_factory=_proxy_repo_context)
+        setattr(state, "anthropic_proxy_service", service)
     return service
 
 

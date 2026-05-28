@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from app.core.anthropic.models import AnthropicUsage
+from app.core.anthropic.pricing import (
+    calculate_anthropic_cost_from_usage,
+)
+from app.core.anthropic.pricing import (
+    get_pricing_for_model as get_anthropic_pricing_for_model,
+)
+from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.usage.pricing import (
     UsageCostBreakdown,
     UsageTokens,
@@ -12,6 +20,9 @@ from app.core.usage.pricing import (
 
 
 class RequestLogLike(Protocol):
+    @property
+    def provider(self) -> str | None: ...
+
     @property
     def model(self) -> str | None: ...
 
@@ -26,6 +37,12 @@ class RequestLogLike(Protocol):
 
     @property
     def cached_input_tokens(self) -> int | None: ...
+
+    @property
+    def cache_creation_tokens(self) -> int | None: ...
+
+    @property
+    def cache_read_tokens(self) -> int | None: ...
 
     @property
     def reasoning_tokens(self) -> int | None: ...
@@ -73,6 +90,25 @@ def output_tokens_from_log(log: RequestLogLike) -> int | None:
 def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = None) -> float | None:
     if not log.model:
         return None
+    if log.provider == ANTHROPIC_PROVIDER_NAME:
+        resolved_anthropic = get_anthropic_pricing_for_model(log.model)
+        if not resolved_anthropic:
+            return None
+        _, anthropic_price = resolved_anthropic
+        cost = calculate_anthropic_cost_from_usage(
+            AnthropicUsage(
+                input_tokens=log.input_tokens,
+                output_tokens=output_tokens_from_log(log),
+                cache_creation_input_tokens=log.cache_creation_tokens,
+                cache_read_input_tokens=log.cache_read_tokens,
+            ),
+            anthropic_price,
+        )
+        if cost is None:
+            return None
+        if precision is None:
+            return cost
+        return round(cost, precision)
     usage = usage_tokens_from_log(log)
     if not usage:
         return None

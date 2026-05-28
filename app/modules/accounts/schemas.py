@@ -72,6 +72,7 @@ class AccountAdditionalQuota(DashboardModel):
 
 class AccountSummary(DashboardModel):
     account_id: str
+    provider: str = "openai"
     email: str
     alias: str | None = None
     display_name: str
