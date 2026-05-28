@@ -138,16 +138,17 @@
 
 ## 8. Progress Log
 
-**Current checkpoint:** CP1 — Schema migration
+**Current checkpoint:** CP2 — Provider dispatch seam
 **Outcome metric:** providers poolable, before = 1 (OpenAI only) / 0 Claude accounts; target = 2 providers, ≥2 Claude accounts balancing + failing over with unified dashboard usage/cost. **Final deliverable:** open upstream PR(s) (Stage C / CP8).
-**Current value:** CP0 complete: one OpenAI provider baseline verified; zero Claude accounts poolable until CP3–CP7 land.
-**Last verified:** 2026-05-28 17:28 EDT — `make migration-check` clean; `make test-unit` passed (2075 passed, 39 skipped); local dashboard served on `127.0.0.1:2457` and Playwright rendered Accounts UI/version 1.19.0.
-**Remaining:** CP1–CP8
+**Current value:** CP1 complete: schema can persist provider-discriminated OpenAI/Anthropic rows; existing rows default to `openai`; zero Claude accounts poolable until CP3–CP7 land.
+**Last verified:** 2026-05-28 17:35 EDT — `make migration-check` clean; targeted provider migration tests passed; `make test-unit` passed (2076 passed, 39 skipped).
+**Remaining:** CP2–CP8
 **Blocked:** No
 
 | Time | Checkpoint | Change | Outcome delta (before → after) | Next |
 | ---- | ---------- | ------ | ------------------------------ | ---- |
 | 2026-05-28 17:28 EDT | CP0 — Baseline | Installed frozen backend/frontend deps, ran migration/unit gates, booted local app with dashboard auth disabled on temp SQLite DB, rendered Accounts UI via Playwright. User updated CP7 intent: open real Anthropic login flows once implemented so real accounts can be used for CLI runtime checks. | Baseline unknown → OpenAI-only baseline verified; providers poolable remains 1 → 1, Claude accounts 0 → 0. | CP1 schema migration: provider columns/defaults, nullable OpenAI-only fields, cache token columns, fresh/existing DB verification. |
+| 2026-05-28 17:35 EDT | CP1 — Schema migration | Added `provider` to `accounts`, `request_logs`, and `usage_history`; made `accounts.id_token_encrypted` nullable; added `cache_creation_tokens` and `cache_read_tokens` to request logs; added OpenSpec change artifacts. | Provider persistence 1-provider implicit → provider-discriminated schema with legacy rows backfilled as `openai`; Claude accounts still 0 until OAuth/proxy land. | CP2 provider dispatch seam over existing OpenAI impl, with OpenAI behavior unchanged. |
 
 ---
 

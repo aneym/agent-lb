@@ -538,6 +538,80 @@ def test_raw_usage_window_latest_index_migration_is_idempotent(tmp_path: Path) -
         assert "idx_usage_window_raw_account_latest" in index_names
 
 
+def test_provider_dimension_migration_backfills_existing_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "provider-dimension.db"
+    url = _db_url(db_path)
+    pre_revision = "20260525_000000_add_usage_raw_window_latest_index"
+    target_revision = "20260528_172900_add_provider_dimension"
+
+    run_upgrade(url, pre_revision, bootstrap_legacy=False)
+
+    sync_url = to_sync_database_url(url)
+    with create_engine(sync_url, future=True).connect() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO accounts (
+                    id, chatgpt_account_id, email, plan_type, access_token_encrypted,
+                    refresh_token_encrypted, id_token_encrypted, last_refresh, status
+                )
+                VALUES (
+                    'acct_openai', 'chatgpt_acct', 'openai@example.com', 'pro',
+                    x'01', x'02', x'03', '2026-05-28 00:00:00', 'active'
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO usage_history (account_id, window, used_percent, input_tokens, output_tokens)
+                VALUES ('acct_openai', '5h', 10.0, 11, 12)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO request_logs (
+                    account_id, request_id, model, input_tokens, output_tokens,
+                    cached_input_tokens, status
+                )
+                VALUES ('acct_openai', 'req_openai', 'gpt-5.5', 13, 14, 15, 'success')
+                """
+            )
+        )
+        connection.commit()
+
+    result = run_upgrade(url, target_revision, bootstrap_legacy=False)
+    assert result.current_revision == target_revision
+
+    with create_engine(sync_url, future=True).connect() as connection:
+        inspector = inspect(connection)
+        account_columns = {column["name"]: column for column in inspector.get_columns("accounts")}
+        usage_columns = {column["name"] for column in inspector.get_columns("usage_history")}
+        log_columns = {column["name"] for column in inspector.get_columns("request_logs")}
+
+        assert account_columns["id_token_encrypted"]["nullable"] is True
+        assert "provider" in account_columns
+        assert "provider" in usage_columns
+        assert "provider" in log_columns
+        assert "cache_creation_tokens" in log_columns
+        assert "cache_read_tokens" in log_columns
+
+        account_provider = connection.execute(text("SELECT provider FROM accounts WHERE id = 'acct_openai'")).scalar_one()
+        usage_provider = connection.execute(
+            text("SELECT provider FROM usage_history WHERE account_id = 'acct_openai'")
+        ).scalar_one()
+        request_provider = connection.execute(
+            text("SELECT provider FROM request_logs WHERE request_id = 'req_openai'")
+        ).scalar_one()
+
+        assert account_provider == "openai"
+        assert usage_provider == "openai"
+        assert request_provider == "openai"
+
+
 def test_check_schema_drift_detects_missing_dashboard_read_indexes(tmp_path: Path) -> None:
     db_path = tmp_path / "missing-dashboard-read-indexes.db"
     url = _db_url(db_path)

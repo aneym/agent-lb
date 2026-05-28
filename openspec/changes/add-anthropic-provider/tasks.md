@@ -1,0 +1,32 @@
+# Tasks
+
+- [x] 1. Add provider schema migration and ORM fields.
+  - [x] Add `provider` to `accounts`, `request_logs`, and `usage_history`, defaulting existing rows to `openai`.
+  - [x] Make OpenAI-only account fields nullable where Anthropic has no equivalent.
+  - [x] Add Anthropic cache token columns to request logs.
+  - [x] Verify migration on fresh and existing SQLite databases.
+- [ ] 2. Add provider dispatch seam.
+  - [ ] Define provider identifiers and thin provider capability wrappers.
+  - [ ] Route OpenAI refresh/account creation through the seam without changing OpenAI proxy behavior.
+  - [ ] Add unit coverage for provider dispatch and OpenAI defaults.
+- [ ] 3. Add Anthropic protocol core.
+  - [ ] Add Messages request/response types and SSE parser coverage for message/content/tool/usage events.
+  - [ ] Add cache-aware Anthropic pricing.
+  - [ ] Add Anthropic model registry sync from mocked `GET /v1/models`.
+- [ ] 4. Add Anthropic OAuth and refresh.
+  - [ ] Implement PKCE authorize/token/refresh flow without `id_token`.
+  - [ ] Persist Anthropic accounts with `provider='anthropic'`.
+  - [ ] Add mocked token exchange and refresh coverage.
+- [ ] 5. Add `/v1/messages` proxy.
+  - [ ] Implement a slim Anthropic proxy service separate from `app/modules/proxy/service.py`.
+  - [ ] Preserve inbound `anthropic-beta` and client system prompt content.
+  - [ ] Inject `anthropic-version`, swap only Authorization, and stream Anthropic SSE through intact.
+  - [ ] Verify provider-filtered account selection and cache-token request logging.
+- [ ] 6. Update dashboard provider UI.
+  - [ ] Add provider discriminator to account schemas.
+  - [ ] Add provider selection to add-account/login flows.
+  - [ ] Render provider badges and Anthropic cache-token cost columns.
+- [ ] 7. Verify Stage A.
+  - [ ] Run backend/frontend targeted tests, migration checks, and the existing OpenAI test suite.
+  - [ ] Update `GOAL.md` Progress Log with each checkpoint result.
+  - [ ] Record any remaining CP7 real-account runtime steps.
