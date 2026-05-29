@@ -28,6 +28,27 @@ class AnthropicUsageCostBreakdown:
 
 
 DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
+    "claude-opus-4-5": AnthropicModelPrice(
+        input_per_1m=5.0,
+        cache_creation_5m_input_per_1m=6.25,
+        cache_creation_1h_input_per_1m=10.0,
+        cache_read_input_per_1m=0.50,
+        output_per_1m=25.0,
+    ),
+    "claude-sonnet-4-5": AnthropicModelPrice(
+        input_per_1m=3.0,
+        cache_creation_5m_input_per_1m=3.75,
+        cache_creation_1h_input_per_1m=6.0,
+        cache_read_input_per_1m=0.30,
+        output_per_1m=15.0,
+    ),
+    "claude-haiku-4-5": AnthropicModelPrice(
+        input_per_1m=1.0,
+        cache_creation_5m_input_per_1m=1.25,
+        cache_creation_1h_input_per_1m=2.0,
+        cache_read_input_per_1m=0.10,
+        output_per_1m=5.0,
+    ),
     "claude-opus-4.1": AnthropicModelPrice(
         input_per_1m=15.0,
         cache_creation_5m_input_per_1m=18.75,
@@ -87,6 +108,11 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
+    # 4.5-generation patterns are longer than the 4.0 ones, so resolve_model_alias's
+    # longest-match wins — e.g. claude-opus-4-5-* maps to its own $5/$25 price, not Opus-4's $15/$75.
+    "claude-opus-4-5*": "claude-opus-4-5",
+    "claude-sonnet-4-5*": "claude-sonnet-4-5",
+    "claude-haiku-4-5*": "claude-haiku-4-5",
     "claude-opus-4-1*": "claude-opus-4.1",
     "claude-opus-4*": "claude-opus-4",
     "claude-sonnet-4*": "claude-sonnet-4",

@@ -9,6 +9,7 @@ from typing import Any, AsyncContextManager
 from urllib.parse import urljoin
 
 import aiohttp
+from pydantic import ValidationError
 
 from app.core.anthropic.models import AnthropicMessageRequest, AnthropicUsage, merge_usage_values
 from app.core.anthropic.parsing import parse_sse_event
@@ -136,11 +137,20 @@ class AnthropicProxyService:
                             raise AnthropicProxyError(resp.status, error_message, code=f"upstream_{resp.status}")
 
                         text_buffer = ""
+                        # Non-streaming responses are a single JSON document, not SSE, so the
+                        # SSE collector never sees usage. Buffer the raw body and parse it at the end.
+                        raw_body = bytearray() if not payload.stream else None
                         async for chunk in resp.content.iter_chunked(_STREAM_CHUNK_SIZE):
                             if not chunk:
                                 continue
-                            text_buffer, usage = _collect_usage_from_chunk(text_buffer, bytes(chunk), usage)
-                            yield bytes(chunk)
+                            chunk_bytes = bytes(chunk)
+                            if raw_body is not None:
+                                raw_body.extend(chunk_bytes)
+                            else:
+                                text_buffer, usage = _collect_usage_from_chunk(text_buffer, chunk_bytes, usage)
+                            yield chunk_bytes
+                        if raw_body is not None:
+                            usage = _usage_from_json_body(bytes(raw_body)) or usage
 
                         await self._load_balancer.record_success(account)
                         await self._persist_request_log(
@@ -324,6 +334,24 @@ def _collect_usage_from_chunk(
             event_usage = event.message.usage
         usage = merge_usage_values(usage, event_usage)
     return normalized, usage
+
+
+def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    usage_data = payload.get("usage")
+    if not isinstance(usage_data, dict):
+        return None
+    try:
+        return AnthropicUsage.model_validate(usage_data)
+    except ValidationError:
+        return None
 
 
 async def _read_error_message(resp: aiohttp.ClientResponse) -> str:
