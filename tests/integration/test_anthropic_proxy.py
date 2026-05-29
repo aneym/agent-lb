@@ -183,3 +183,56 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert log.cache_creation_tokens == 3
     assert log.cache_read_tokens == 4
     assert log.cost_usd is not None
+
+
+ANTHROPIC_JSON_BYTES = (
+    b'{"id":"msg_456","type":"message","role":"assistant","model":"claude-sonnet-4-20250514",'
+    b'"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",'
+    b'"usage":{"input_tokens":12,"output_tokens":7,"cache_creation_input_tokens":2,"cache_read_input_tokens":1}}'
+)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_non_streaming_logs_usage(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    def fake_open_upstream_response(self, session, *, headers, json_body):
+        del self, session, headers, json_body
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20", "x-api-key": "client-placeholder"},
+    )
+    assert response.status_code == 200
+    assert response.content == ANTHROPIC_JSON_BYTES
+
+    async with SessionLocal() as session:
+        result = await session.execute(select(RequestLog))
+        logs = list(result.scalars())
+
+    assert len(logs) == 1
+    log = logs[0]
+    assert log.provider == "anthropic"
+    assert log.status == "success"
+    assert log.input_tokens == 12
+    assert log.output_tokens == 7
+    assert log.cache_creation_tokens == 2
+    assert log.cache_read_tokens == 1
+    assert log.cost_usd is not None

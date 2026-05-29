@@ -154,6 +154,25 @@ def test_pricing_resolves_versioned_model_alias():
     assert price.output_per_1m == 15.0
 
 
+def test_pricing_resolves_current_generation_models():
+    haiku = get_pricing_for_model("claude-haiku-4-5-20251001")
+    assert haiku is not None
+    assert haiku[0] == "claude-haiku-4-5"
+    assert haiku[1].input_per_1m == 1.0
+    assert haiku[1].output_per_1m == 5.0
+
+    sonnet = get_pricing_for_model("claude-sonnet-4-5-20250929")
+    assert sonnet is not None
+    assert sonnet[1].output_per_1m == 15.0
+
+    # Opus 4.5 must NOT inherit Opus-4's old $15/$75 via the shorter claude-opus-4* alias.
+    opus = get_pricing_for_model("claude-opus-4-5-20251101")
+    assert opus is not None
+    assert opus[0] == "claude-opus-4-5"
+    assert opus[1].input_per_1m == 5.0
+    assert opus[1].output_per_1m == 25.0
+
+
 def test_model_registry_parses_anthropic_model_list_payload():
     payload = {
         "data": [
