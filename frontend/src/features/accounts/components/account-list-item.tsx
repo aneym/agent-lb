@@ -15,6 +15,8 @@ import type {
 import { normalizeStatus } from "@/utils/account-status";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import {
+  formatCompactNumber,
+  formatCurrency,
   formatDateTimeInline,
   formatPercentNullable,
   formatQuotaResetLabel,
@@ -46,6 +48,9 @@ export function AccountListItem({
   const seatLabel = account.seatType ? ` | ${formatSlug(account.seatType)}` : "";
   const slotSubtitle = `${formatSlug(account.planType)} | ${workspaceLabel}${seatLabel}`;
   const idSuffix = showAccountId ? ` | ID ${formatCompactAccountId(account.accountId)}` : "";
+  const isAnthropic = (account.provider ?? "openai") === "anthropic";
+  const requestUsage = account.requestUsage ?? null;
+  const hasRequestUsage = (requestUsage?.requestCount ?? 0) > 0;
   const primary = account.usage?.primaryRemainingPercent ?? null;
   const secondary = account.usage?.secondaryRemainingPercent ?? null;
   const monthly = account.usage?.monthlyRemainingPercent ?? null;
@@ -112,38 +117,43 @@ export function AccountListItem({
           <StatusBadge status={status} />
         </div>
       </div>
-      <div
-        className={cn(
-          "mt-2 grid gap-2",
-          visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1",
-        )}
-      >
-        {showMonthlyRow ? (
-          <MiniQuotaRow
-            label="Monthly"
-            percent={monthly}
-            resetAt={account.resetAtMonthly}
-          />
-        ) : null}
-        {showPrimaryRow ? (
-          <MiniQuotaRow
-            label="5h"
-            percent={primary}
-            resetAt={account.resetAtPrimary}
-          />
-        ) : null}
-        {showSecondaryRow ? (
-          <MiniQuotaRow
-            label="Weekly"
-            percent={secondary}
-            resetAt={account.resetAtSecondary}
-          />
-        ) : null}
-      </div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-        <span>{warmupLabel}</span>
-        <span className="truncate">{warmupMeta}</span>
-      </div>
+      {isAnthropic ? (
+        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
+          {hasRequestUsage ? (
+            <>
+              <span>
+                {formatCompactNumber(requestUsage?.totalTokens)} tok | {formatCompactNumber(requestUsage?.requestCount)} req
+              </span>
+              <span className="font-medium">{formatCurrency(requestUsage?.totalCostUsd)}</span>
+            </>
+          ) : (
+            <span>No usage yet</span>
+          )}
+        </div>
+      ) : (
+        <>
+          <div
+            className={cn(
+              "mt-2 grid gap-2",
+              visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1",
+            )}
+          >
+            {showMonthlyRow ? (
+              <MiniQuotaRow
+                label="Monthly"
+                percent={monthly}
+                resetAt={account.resetAtMonthly}
+              />
+            ) : null}
+            {showPrimaryRow ? <MiniQuotaRow label="5h" percent={primary} resetAt={account.resetAtPrimary} /> : null}
+            {showSecondaryRow ? <MiniQuotaRow label="Weekly" percent={secondary} resetAt={account.resetAtSecondary} /> : null}
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+            <span>{warmupLabel}</span>
+            <span className="truncate">{warmupMeta}</span>
+          </div>
+        </>
+      )}
     </button>
   );
 }
