@@ -8,7 +8,14 @@ import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { normalizeStatus } from "@/utils/account-status";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
-import { formatDateTimeInline, formatPercentNullable, formatQuotaResetLabel, formatSlug } from "@/utils/formatters";
+import {
+  formatCompactNumber,
+  formatCurrency,
+  formatDateTimeInline,
+  formatPercentNullable,
+  formatQuotaResetLabel,
+  formatSlug,
+} from "@/utils/formatters";
 
 export type AccountListItemProps = {
   account: AccountSummary;
@@ -28,6 +35,9 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
     : null;
   const baseSubtitle = emailSubtitle ?? formatSlug(account.planType);
   const idSuffix = showAccountId ? ` | ID ${formatCompactAccountId(account.accountId)}` : "";
+  const isAnthropic = (account.provider ?? "openai") === "anthropic";
+  const requestUsage = account.requestUsage ?? null;
+  const hasRequestUsage = (requestUsage?.requestCount ?? 0) > 0;
   const primary = account.usage?.primaryRemainingPercent ?? null;
   const secondary = account.usage?.secondaryRemainingPercent ?? null;
   const hasPrimaryWindow = account.windowMinutesPrimary != null || primary !== null || account.resetAtPrimary != null;
@@ -65,14 +75,32 @@ export function AccountListItem({ account, selected, showAccountId = false, onSe
           <StatusBadge status={status} />
         </div>
       </div>
-      <div className={cn("mt-2 grid gap-2", visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1")}>
-        {showPrimaryRow ? <MiniQuotaRow label="5h" percent={primary} resetAt={account.resetAtPrimary} /> : null}
-        {showSecondaryRow ? <MiniQuotaRow label="Weekly" percent={secondary} resetAt={account.resetAtSecondary} /> : null}
-      </div>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-        <span>{warmupLabel}</span>
-        <span className="truncate">{warmupMeta}</span>
-      </div>
+      {isAnthropic ? (
+        // Claude subscriptions expose no 5h/Weekly % window; show real usage from request logs instead.
+        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
+          {hasRequestUsage ? (
+            <>
+              <span>
+                {formatCompactNumber(requestUsage?.totalTokens)} tok | {formatCompactNumber(requestUsage?.requestCount)} req
+              </span>
+              <span className="font-medium">{formatCurrency(requestUsage?.totalCostUsd)}</span>
+            </>
+          ) : (
+            <span>No usage yet</span>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className={cn("mt-2 grid gap-2", visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1")}>
+            {showPrimaryRow ? <MiniQuotaRow label="5h" percent={primary} resetAt={account.resetAtPrimary} /> : null}
+            {showSecondaryRow ? <MiniQuotaRow label="Weekly" percent={secondary} resetAt={account.resetAtSecondary} /> : null}
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+            <span>{warmupLabel}</span>
+            <span className="truncate">{warmupMeta}</span>
+          </div>
+        </>
+      )}
     </button>
   );
 }
