@@ -58,6 +58,7 @@ from app.modules.proxy.ring_membership import (
     RING_STALE_THRESHOLD_SECONDS,
     RingMembershipService,
 )
+from app.modules.public_usage import api as public_usage_api
 from app.modules.request_logs import api as request_logs_api
 from app.modules.runtime import api as runtime_api
 from app.modules.settings import api as settings_api
@@ -366,6 +367,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(usage_api.router)
+    app.include_router(public_usage_api.router)
     app.include_router(request_logs_api.router)
     app.include_router(conversation_archive_api.router)
     app.include_router(runtime_api.router)
