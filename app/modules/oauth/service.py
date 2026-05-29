@@ -450,7 +450,9 @@ class OauthService:
 
         try:
             provider = get_provider(flow.provider)
-            tokens = await self._exchange_authorization_code(provider.name, code=code, code_verifier=verifier)
+            tokens = await self._exchange_authorization_code(
+                provider.name, code=code, code_verifier=verifier, state=state
+            )
             await self._persist_tokens(tokens, provider_name=provider.name)
             await self._set_success(flow.flow_id)
             asyncio.create_task(self._stop_callback_server_if_idle())
@@ -519,7 +521,9 @@ class OauthService:
 
         try:
             provider = get_provider(flow.provider)
-            tokens = await self._exchange_authorization_code(provider.name, code=code, code_verifier=verifier)
+            tokens = await self._exchange_authorization_code(
+                provider.name, code=code, code_verifier=verifier, state=state
+            )
             await self._persist_tokens(tokens, provider_name=provider.name)
             await self._set_success(flow.flow_id)
             html = _success_html()
@@ -580,6 +584,7 @@ class OauthService:
         *,
         code: str,
         code_verifier: str,
+        state: str | None = None,
     ) -> OAuthTokens:
         provider = get_provider(provider_name)
         oauth_config = provider.oauth_config()
@@ -587,6 +592,7 @@ class OauthService:
             return await exchange_anthropic_authorization_code(
                 code=code,
                 code_verifier=code_verifier,
+                state=state,
                 redirect_uri=oauth_config.redirect_uri,
                 token_url=oauth_config.token_url,
                 client_id=oauth_config.client_id,

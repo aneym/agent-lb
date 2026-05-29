@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from typing import Any, cast
-from urllib.parse import parse_qs
 
 import aiohttp
 import pytest
@@ -64,6 +63,7 @@ async def test_exchange_anthropic_authorization_code_parses_token_metadata_witho
     tokens = await exchange_anthropic_authorization_code(
         code="code-123",
         code_verifier="verifier-456",
+        state="state-789",
         redirect_uri="http://localhost:1455/auth/callback",
         token_url="https://platform.claude.com/v1/oauth/token",
         client_id="client-id",
@@ -78,10 +78,12 @@ async def test_exchange_anthropic_authorization_code_parses_token_metadata_witho
     assert tokens.plan_type == "max"
     assert session.requests[0]["url"] == "https://platform.claude.com/v1/oauth/token"
     assert session.requests[0]["headers"]["anthropic-beta"] == ANTHROPIC_OAUTH_BETA
-    body = parse_qs(session.requests[0]["data"])
-    assert body["grant_type"] == ["authorization_code"]
-    assert body["code"] == ["code-123"]
-    assert body["code_verifier"] == ["verifier-456"]
+    assert session.requests[0]["headers"]["Content-Type"] == "application/json"
+    body = json.loads(session.requests[0]["data"])
+    assert body["grant_type"] == "authorization_code"
+    assert body["code"] == "code-123"
+    assert body["code_verifier"] == "verifier-456"
+    assert body["state"] == "state-789"
 
 
 @pytest.mark.asyncio
@@ -111,7 +113,7 @@ async def test_refresh_anthropic_access_token_returns_optional_id_token() -> Non
     assert result.account_id == "account_456"
     assert result.email == "renewed@example.com"
     assert result.plan_type == "claude"
-    body = parse_qs(session.requests[0]["data"])
-    assert body["grant_type"] == ["refresh_token"]
-    assert body["refresh_token"] == ["old-refresh"]
+    body = json.loads(session.requests[0]["data"])
+    assert body["grant_type"] == "refresh_token"
+    assert body["refresh_token"] == "old-refresh"
     assert "scope" not in body

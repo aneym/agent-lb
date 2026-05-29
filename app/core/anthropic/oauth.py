@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 import aiohttp
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
@@ -79,6 +80,7 @@ async def exchange_anthropic_authorization_code(
     *,
     code: str,
     code_verifier: str,
+    state: str | None = None,
     redirect_uri: str | None = None,
     token_url: str | None = None,
     client_id: str | None = None,
@@ -93,6 +95,10 @@ async def exchange_anthropic_authorization_code(
         "code_verifier": code_verifier,
         "redirect_uri": redirect_uri or settings.anthropic_oauth_redirect_uri,
     }
+    # Claude Code's token endpoint requires the state value (split from the
+    # `code#state` callback) echoed back in the exchange body.
+    if state:
+        payload["state"] = state
     payload_data = await _post_token_request(
         token_url=token_url or settings.anthropic_oauth_token_url,
         payload=payload,
@@ -167,10 +173,13 @@ async def _post_token_request(
     error_prefix: str,
 ) -> AnthropicOAuthTokenPayload:
     settings = get_settings()
-    encoded = urlencode(payload, quote_via=quote)
+    # Claude Code posts the token request as JSON; Anthropic rejects a
+    # form-urlencoded body with "Invalid request format".
+    encoded = json.dumps(dict(payload))
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.oauth_timeout_seconds)
     headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
         "anthropic-beta": ANTHROPIC_OAUTH_BETA,
     }
     request_id = get_request_id()
