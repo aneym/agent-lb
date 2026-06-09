@@ -6,14 +6,18 @@
 - GitHub auth for git/API is available via env vars: `GITHUB_USER`, `GITHUB_TOKEN` (PAT). Do not hardcode or commit tokens.
 - For authenticated git over HTTPS in automation, use: `https://x-access-token:${GITHUB_TOKEN}@github.com/<owner>/<repo>.git`
 
+## Branch Policy (fork)
+
+**Development on this fork (`aneym/codex-lb`) stays on `main`.** Work directly on `main`; do not create or switch to feature branches unless the user explicitly asks. `feat/anthropic-provider` was consolidated into `main` on 2026-06-09 and is retired. The "do not commit directly to main" convention in `.agents/conventions/git-workflow.md` applies only to upstream (`Soju06/codex-lb`) contributions. The local checkout also runs the live launchd service (`com.aneyman.codex-lb`), so the working tree must remain on `main`.
+
 ## Code Conventions
 
 The `/project-conventions` skill is auto-activated on code edits (PreToolUse guard).
 
-| Convention | Location | When |
-|-----------|----------|------|
-| Code Conventions (Full) | `/project-conventions` skill | On code edit (auto-enforced) |
-| Git Workflow | `.agents/conventions/git-workflow.md` | Commit / PR |
+| Convention              | Location                              | When                         |
+| ----------------------- | ------------------------------------- | ---------------------------- |
+| Code Conventions (Full) | `/project-conventions` skill          | On code edit (auto-enforced) |
+| Git Workflow            | `.agents/conventions/git-workflow.md` | Commit / PR                  |
 
 ## Workflow (OpenSpec-first)
 
@@ -21,11 +25,11 @@ This repo uses **OpenSpec as the primary workflow and SSOT** for change-driven d
 
 ### How to work (default)
 
-1) Find the relevant spec(s) in `openspec/specs/**` and treat them as source-of-truth.
-2) If the work changes behavior, requirements, contracts, or schema: create an OpenSpec change in `openspec/changes/**` first (proposal -> tasks).
-3) Implement the tasks; keep code + specs in sync (update `spec.md` as needed).
-4) Validate specs locally: `openspec validate --specs`
-5) When done: verify + archive the change (do not archive unverified changes).
+1. Find the relevant spec(s) in `openspec/specs/**` and treat them as source-of-truth.
+2. If the work changes behavior, requirements, contracts, or schema: create an OpenSpec change in `openspec/changes/**` first (proposal -> tasks).
+3. Implement the tasks; keep code + specs in sync (update `spec.md` as needed).
+4. Validate specs locally: `openspec validate --specs`
+5. When done: verify + archive the change (do not archive unverified changes).
 
 ### Source of Truth
 
