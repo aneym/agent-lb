@@ -123,6 +123,7 @@ async def test_usage_refresh_scheduler_stop_cancels_inflight_singleflight_withou
 @dataclass(frozen=True, slots=True)
 class UsageEntry:
     account_id: str
+    provider: str
     used_percent: float
     input_tokens: int | None
     output_tokens: int | None
@@ -171,6 +172,7 @@ class StubUsageRepository:
         self,
         account_id: str,
         used_percent: float,
+        provider: str = "openai",
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         recorded_at: datetime | None = None,
@@ -184,6 +186,7 @@ class StubUsageRepository:
         self.entries.append(
             UsageEntry(
                 account_id=account_id,
+                provider=provider,
                 used_percent=used_percent,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -201,6 +204,7 @@ class StubUsageRepository:
         entry = UsageHistory(
             id=self._next_id,
             account_id=account_id,
+            provider=provider,
             used_percent=used_percent,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -695,16 +699,17 @@ async def test_usage_updater_includes_chatgpt_account_id_even_when_shared(monkey
 
 
 @pytest.mark.asyncio
-async def test_usage_updater_skips_anthropic_accounts(monkeypatch) -> None:
+async def test_usage_updater_refreshes_openai_and_anthropic_accounts(monkeypatch) -> None:
     monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
 
-    calls: list[str | None] = []
+    openai_calls: list[str | None] = []
+    anthropic_calls = 0
 
     async def stub_fetch_usage(*, account_id: str | None, **_: Any) -> UsagePayload:
-        calls.append(account_id)
+        openai_calls.append(account_id)
         return UsagePayload.model_validate(
             {
                 "rate_limit": {
@@ -717,16 +722,47 @@ async def test_usage_updater_skips_anthropic_accounts(monkeypatch) -> None:
             }
         )
 
+    async def stub_fetch_anthropic_usage(**_: Any) -> UsagePayload:
+        nonlocal anthropic_calls
+        anthropic_calls += 1
+        return UsagePayload.model_validate(
+            {
+                "plan_type": "claude",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 20.0,
+                        "reset_at": 1735689900,
+                        "limit_window_seconds": 5 * 60 * 60,
+                    },
+                    "secondary_window": {
+                        "used_percent": 30.0,
+                        "reset_at": 1736294400,
+                        "limit_window_seconds": 7 * 24 * 60 * 60,
+                    },
+                },
+            }
+        )
+
     monkeypatch.setattr("app.modules.usage.updater.fetch_usage", stub_fetch_usage)
+    monkeypatch.setattr("app.modules.usage.updater.fetch_anthropic_usage", stub_fetch_anthropic_usage)
 
     usage_repo = StubUsageRepository()
     updater = UsageUpdater(usage_repo, accounts_repo=None)
     openai_account = _make_account("acc_openai_usage", "workspace_openai")
     anthropic_account = _make_account("acc_anthropic_usage", "workspace_anthropic", provider="anthropic")
+    anthropic_account.plan_type = "max"
 
     await updater.refresh_accounts([openai_account, anthropic_account], latest_usage={})
 
-    assert calls == ["workspace_openai"]
+    assert openai_calls == ["workspace_openai"]
+    assert anthropic_calls == 1
+    entries_by_account = {(entry.account_id, entry.window): entry for entry in usage_repo.entries}
+    assert entries_by_account[("acc_openai_usage", "primary")].provider == "openai"
+    assert entries_by_account[("acc_anthropic_usage", "primary")].provider == "anthropic"
+    assert entries_by_account[("acc_anthropic_usage", "primary")].used_percent == 20.0
+    assert entries_by_account[("acc_anthropic_usage", "primary")].window_minutes == 300
+    assert entries_by_account[("acc_anthropic_usage", "secondary")].used_percent == 30.0
+    assert entries_by_account[("acc_anthropic_usage", "secondary")].window_minutes == 10080
 
 
 @pytest.mark.asyncio
@@ -1265,7 +1301,7 @@ async def test_usage_refresh_uses_fresh_monthly_row_for_quota_freshness(monkeypa
         account.id,
         100.0,
         window="monthly",
-        recorded_at=datetime.now(),
+        recorded_at=datetime.now(timezone.utc).replace(tzinfo=None),
         reset_at=int(time.time()) + 3600,
         window_minutes=43_200,
     )

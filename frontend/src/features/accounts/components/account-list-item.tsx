@@ -1,4 +1,4 @@
-import { Flame, Shield, ShieldCheck } from "lucide-react";
+import { CalendarClock, Flame, Shield, ShieldCheck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -73,11 +73,19 @@ export function AccountListItem({
   const showSecondaryRow =
     !monthlyOnly && hasSecondaryWindow && (quotaDisplay !== "5h" || !hasPrimaryWindow);
   const visibleQuotaRows = Number(showPrimaryRow) + Number(showSecondaryRow) + Number(showMonthlyRow);
+  const primaryQuotaLabel = isAnthropic ? "Session" : "5h";
+  const secondaryQuotaLabel = isAnthropic ? "Week" : "Weekly";
   const showRoutingPolicy = status !== "reauth" && status !== "deactivated";
   const warmupLabel = account.limitWarmupEnabled ? "Warm-up on" : "Warm-up off";
   const warmupMeta = account.limitWarmup
     ? `${formatSlug(account.limitWarmup.status)} | ${formatSlug(account.limitWarmup.model)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt)}`
     : "No attempts";
+  const subscription = account.subscription ?? null;
+  const subscriptionDate = subscription?.currentPeriodEndAt ?? subscription?.nextChargeAt ?? null;
+  const subscriptionDateLabel =
+    subscription?.status === "cancel_pending" || subscription?.status === "canceled"
+      ? "Active until"
+      : "Next charge";
 
   return (
     <button
@@ -117,20 +125,44 @@ export function AccountListItem({
           <StatusBadge status={status} />
         </div>
       </div>
-      {isAnthropic ? (
-        // Claude subscriptions expose no 5h/Weekly % window; show real usage from request logs instead.
-        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
-          {hasRequestUsage ? (
-            <>
-              <span>
-                {formatCompactNumber(requestUsage?.totalTokens)} tok | {formatCompactNumber(requestUsage?.requestCount)} req
-              </span>
-              <span className="font-medium">{formatCurrency(requestUsage?.totalCostUsd)}</span>
-            </>
-          ) : (
-            <span>No usage yet</span>
-          )}
+      {subscriptionDate ? (
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {subscriptionDateLabel}: {formatDateTimeInline(subscriptionDate)}
+          </span>
         </div>
+      ) : null}
+      {isAnthropic ? (
+        <>
+          {visibleQuotaRows > 0 ? (
+            <div
+              className={cn(
+                "mt-2 grid gap-2",
+                visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1",
+              )}
+            >
+              {showPrimaryRow ? (
+                <MiniQuotaRow label={primaryQuotaLabel} percent={primary} resetAt={account.resetAtPrimary} />
+              ) : null}
+              {showSecondaryRow ? (
+                <MiniQuotaRow label={secondaryQuotaLabel} percent={secondary} resetAt={account.resetAtSecondary} />
+              ) : null}
+            </div>
+          ) : null}
+          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
+            {hasRequestUsage ? (
+              <>
+                <span>
+                  {formatCompactNumber(requestUsage?.totalTokens)} tok | {formatCompactNumber(requestUsage?.requestCount)} req
+                </span>
+                <span className="font-medium">{formatCurrency(requestUsage?.totalCostUsd)}</span>
+              </>
+            ) : (
+              <span>No request usage yet</span>
+            )}
+          </div>
+        </>
       ) : (
         <>
           <div
@@ -146,8 +178,8 @@ export function AccountListItem({
                 resetAt={account.resetAtMonthly}
               />
             ) : null}
-            {showPrimaryRow ? <MiniQuotaRow label="5h" percent={primary} resetAt={account.resetAtPrimary} /> : null}
-            {showSecondaryRow ? <MiniQuotaRow label="Weekly" percent={secondary} resetAt={account.resetAtSecondary} /> : null}
+            {showPrimaryRow ? <MiniQuotaRow label={primaryQuotaLabel} percent={primary} resetAt={account.resetAtPrimary} /> : null}
+            {showSecondaryRow ? <MiniQuotaRow label={secondaryQuotaLabel} percent={secondary} resetAt={account.resetAtSecondary} /> : null}
           </div>
           <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
             <span>{warmupLabel}</span>

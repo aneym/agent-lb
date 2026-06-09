@@ -97,6 +97,13 @@ class Account(Base):
         nullable=False,
     )
     deactivation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    subscription_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    subscription_next_charge_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subscription_current_period_end_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subscription_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    subscription_currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    subscription_last_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subscription_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocked_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     limit_warmup_enabled: Mapped[bool] = mapped_column(

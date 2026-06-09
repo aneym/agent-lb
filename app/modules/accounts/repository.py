@@ -528,6 +528,35 @@ class AccountsRepository:
         await self._session.commit()
         return result.scalar_one_or_none() is not None
 
+    async def update_subscription_ledger(
+        self,
+        account_id: str,
+        *,
+        status: str | None,
+        next_charge_at: datetime | None,
+        current_period_end_at: datetime | None,
+        amount: float | None,
+        currency: str | None,
+        last_verified_at: datetime | None,
+        notes: str | None,
+    ) -> bool:
+        result = await self._session.execute(
+            update(Account)
+            .where(Account.id == account_id)
+            .values(
+                subscription_status=status,
+                subscription_next_charge_at=next_charge_at,
+                subscription_current_period_end_at=current_period_end_at,
+                subscription_amount=amount,
+                subscription_currency=currency,
+                subscription_last_verified_at=last_verified_at,
+                subscription_notes=notes,
+            )
+            .returning(Account.id)
+        )
+        await self._session.commit()
+        return result.scalar_one_or_none() is not None
+
     async def delete(self, account_id: str, *, delete_history: bool = False) -> bool:
         await self._session.execute(delete(UsageHistory).where(UsageHistory.account_id == account_id))
         if delete_history:

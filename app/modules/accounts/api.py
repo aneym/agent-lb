@@ -24,6 +24,8 @@ from app.modules.accounts.schemas import (
     AccountReactivateResponse,
     AccountRoutingPolicyUpdateRequest,
     AccountRoutingPolicyUpdateResponse,
+    AccountSubscriptionUpdateRequest,
+    AccountSubscriptionUpdateResponse,
     AccountsResponse,
     AccountTrendsResponse,
     AccountUpdateRequest,
@@ -267,6 +269,24 @@ async def update_account_routing_policy(
     if not success:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     return AccountRoutingPolicyUpdateResponse(account_id=account_id, routing_policy=payload.routing_policy)
+
+
+@router.put("/{account_id}/subscription", response_model=AccountSubscriptionUpdateResponse)
+async def update_account_subscription(
+    request: Request,
+    account_id: str,
+    payload: AccountSubscriptionUpdateRequest,
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountSubscriptionUpdateResponse:
+    subscription = await context.service.set_subscription_ledger(account_id, payload)
+    if subscription is None:
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    AuditService.log_async(
+        "account_subscription_ledger_updated",
+        actor_ip=request.client.host if request.client else None,
+        details={"account_id": account_id, "subscription_status": subscription.status},
+    )
+    return AccountSubscriptionUpdateResponse(account_id=account_id, subscription=subscription)
 
 
 @router.delete("/{account_id}", response_model=AccountDeleteResponse)

@@ -30,3 +30,22 @@
   - [x] Run backend/frontend targeted tests, migration checks, and the existing OpenAI test suite.
   - [x] Update `GOAL.md` Progress Log with each checkpoint result.
   - [x] Record any remaining CP7 real-account runtime steps.
+- [x] 8. Harden Claude Code/Fable compatibility from live E2E findings.
+  - [x] Accept Claude Code `system` role messages inside Anthropic Messages payloads.
+  - [x] Preserve newer Claude Code fields such as adaptive thinking, context management, and output config.
+  - [x] Parse Anthropic OAuth account email addresses from `account.email_address`.
+- [x] 9. Add Claude Max top-model usage observability.
+  - [x] Reverse-engineer Claude Code `/usage` to the OAuth `GET /api/oauth/usage` endpoint.
+  - [x] Persist Anthropic `five_hour` and all-model `seven_day` utilization as standard quota windows.
+  - [x] Render Claude session/week usage bars and reset times in the account list and detail panel.
+  - [x] Parse Anthropic unified rate-limit reset headers as a fallback signal on upstream 429.
+  - [x] Keep Sonnet-only weekly utilization out of the main dashboard path.
+- [ ] 10. Add Claude session stickiness and quota-scoped cooldown routing.
+  - [x] Preserve Claude Max billing/default model in the `cclb` launcher contract by using only `ANTHROPIC_BASE_URL`.
+  - [x] Derive hashed sticky keys from Claude session/conversation headers, with a stable first-turn fallback.
+  - [x] Pass Anthropic sticky keys through durable `codex_session` selection.
+  - [x] Classify Anthropic requests into standard, top-model, and top-model-thinking quota keys.
+  - [x] Record upstream Anthropic `429` reset evidence as additional quota cooldown rows instead of global account rate limits.
+  - [x] Filter Anthropic account selection by the requested quota-key cooldown while preserving OpenAI behavior.
+  - [x] Cover sticky routing, quota-key failover, account-status preservation, and dashboard payload exposure in focused proxy tests.
+  - [x] Restart local service and verify fresh default/Fable `cc` traffic live with Claude Max billing.

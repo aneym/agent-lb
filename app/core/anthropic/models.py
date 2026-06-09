@@ -57,7 +57,10 @@ class AnthropicMessageRequestContentPart(BaseModel):
 class AnthropicMessageRequestMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    role: Literal["user", "assistant"]
+    # Claude Code (Fable+) emits mid-conversation `system`-role messages that
+    # the upstream Messages API accepts; keep this permissive so the proxy never
+    # rejects a payload Anthropic itself would honor.
+    role: StrictStr
     content: StrictStr | list[AnthropicMessageRequestContentPart]
 
 

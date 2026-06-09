@@ -7,5 +7,23 @@
     "applies_to_plans": ["pro", "prolite", "team", "business", "enterprise"],
     "limit_name_aliases": ["codex_other", "GPT-5.3-Codex-Spark", "gpt-5.3-codex-spark"],
     "metered_feature_aliases": ["codex_bengalfox"]
+  },
+  {
+    "quota_key": "anthropic_standard",
+    "display_label": "Claude standard models",
+    "routing_policy": "normal",
+    "limit_name_aliases": ["anthropic_standard"]
+  },
+  {
+    "quota_key": "anthropic_top",
+    "display_label": "Claude top models",
+    "routing_policy": "normal",
+    "limit_name_aliases": ["anthropic_top"]
+  },
+  {
+    "quota_key": "anthropic_top_thinking",
+    "display_label": "Claude top models with thinking",
+    "routing_policy": "normal",
+    "limit_name_aliases": ["anthropic_top_thinking"]
   }
 ]

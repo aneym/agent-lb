@@ -5,11 +5,13 @@ import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountAliasForm } from "@/features/accounts/components/account-alias-form";
 import { AccountActions } from "@/features/accounts/components/account-actions";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
+import { AccountSubscriptionLedgerPanel } from "@/features/accounts/components/account-subscription-ledger";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
 import { ProviderBadge } from "@/features/accounts/components/provider-badge";
 import type {
   AccountRoutingPolicy,
+  AccountSubscriptionLedger,
   AccountSummary,
 } from "@/features/accounts/schemas";
 import { useAccountTrends } from "@/features/accounts/hooks/use-accounts";
@@ -33,6 +35,10 @@ export type AccountDetailProps = {
     accountId: string,
     routingPolicy: AccountRoutingPolicy,
   ) => void;
+  onSubscriptionSave: (
+    accountId: string,
+    payload: AccountSubscriptionLedger,
+  ) => Promise<unknown>;
   onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
   upstreamProxyAdmin?: UpstreamProxyAdmin | null;
   onProxyBindingSave?: (accountId: string, payload: AccountProxyBindingRequest) => Promise<unknown>;
@@ -51,6 +57,7 @@ export function AccountDetail({
   onExportAuth,
   onLimitWarmupChange,
   onRoutingPolicyChange,
+  onSubscriptionSave,
   onSecurityWorkAuthorizedChange,
   upstreamProxyAdmin = null,
   onProxyBindingSave,
@@ -136,6 +143,11 @@ export function AccountDetail({
         />
       ) : null}
       <AccountUsagePanel account={account} trends={trends} />
+      <AccountSubscriptionLedgerPanel
+        account={account}
+        busy={busy}
+        onSave={onSubscriptionSave}
+      />
       <AccountTokenInfo account={account} />
       <AccountActions
         account={account}

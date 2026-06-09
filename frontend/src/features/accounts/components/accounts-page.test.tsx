@@ -110,6 +110,7 @@ describe("AccountsPage", () => {
       setAliasMutation: idleMutation(),
       limitWarmupMutation: idleMutation(),
       routingPolicyMutation: idleMutation(),
+      subscriptionMutation: idleMutation(),
       updateMutation: idleMutation(),
     } as unknown as ReturnType<typeof useAccounts>);
 

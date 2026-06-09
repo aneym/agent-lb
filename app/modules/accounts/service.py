@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import timedelta
 from typing import cast
 
@@ -25,7 +26,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
 from app.modules.accounts.repository import AccountsRepository
@@ -41,6 +42,7 @@ from app.modules.accounts.schemas import (
     AccountProbeResponse,
     AccountRequestUsage,
     AccountSummary,
+    AccountSubscriptionLedger,
     AccountTrendsResponse,
     CodexAuthJson,
     CodexAuthTokens,
@@ -80,6 +82,26 @@ class AccountNotProbableError(Exception):
 
 class AccountStateTransitionError(Exception):
     """Raised when an operator action is not valid for the account state."""
+
+
+def _additional_quota_window(
+    entry: AdditionalUsageHistory | None,
+    *,
+    now_epoch: int,
+) -> AccountAdditionalWindow | None:
+    if entry is None:
+        return None
+    if entry.reset_at is not None and entry.reset_at <= now_epoch and float(entry.used_percent) >= 100.0:
+        return AccountAdditionalWindow(
+            used_percent=0.0,
+            reset_at=None,
+            window_minutes=None,
+        )
+    return AccountAdditionalWindow(
+        used_percent=entry.used_percent,
+        reset_at=entry.reset_at,
+        window_minutes=entry.window_minutes,
+    )
 
 
 class AccountsService:
@@ -128,6 +150,7 @@ class AccountsService:
         if additional_usage_repo:
             additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
             quota_keys = await additional_usage_repo.list_quota_keys(account_ids=account_ids)
+            now_epoch = int(time.time())
             for quota_key in quota_keys:
                 primary_entries = await additional_usage_repo.latest_by_account(quota_key, "primary")
                 secondary_entries = await additional_usage_repo.latest_by_account(quota_key, "secondary")
@@ -148,20 +171,8 @@ class AccountsService:
                                 quota_key,
                                 overrides=additional_quota_routing_overrides,
                             ),
-                            primary_window=AccountAdditionalWindow(
-                                used_percent=primary_entry.used_percent,
-                                reset_at=primary_entry.reset_at,
-                                window_minutes=primary_entry.window_minutes,
-                            )
-                            if primary_entry is not None
-                            else None,
-                            secondary_window=AccountAdditionalWindow(
-                                used_percent=secondary_entry.used_percent,
-                                reset_at=secondary_entry.reset_at,
-                                window_minutes=secondary_entry.window_minutes,
-                            )
-                            if secondary_entry is not None
-                            else None,
+                            primary_window=_additional_quota_window(primary_entry, now_epoch=now_epoch),
+                            secondary_window=_additional_quota_window(secondary_entry, now_epoch=now_epoch),
                         )
                     )
         for account_quota_list in additional_quotas_by_account.values():
@@ -387,6 +398,37 @@ class AccountsService:
         if result:
             get_account_selection_cache().invalidate()
         return result
+
+    async def set_subscription_ledger(
+        self,
+        account_id: str,
+        payload: AccountSubscriptionLedger,
+    ) -> AccountSubscriptionLedger | None:
+        currency = payload.currency.upper() if payload.currency else None
+        notes = payload.notes.strip() if payload.notes else None
+        if notes == "":
+            notes = None
+        updated = await self._repo.update_subscription_ledger(
+            account_id,
+            status=payload.status,
+            next_charge_at=payload.next_charge_at,
+            current_period_end_at=payload.current_period_end_at,
+            amount=payload.amount,
+            currency=currency,
+            last_verified_at=payload.last_verified_at,
+            notes=notes,
+        )
+        if not updated:
+            return None
+        return AccountSubscriptionLedger(
+            status=payload.status,
+            next_charge_at=payload.next_charge_at,
+            current_period_end_at=payload.current_period_end_at,
+            amount=payload.amount,
+            currency=currency,
+            last_verified_at=payload.last_verified_at,
+            notes=notes,
+        )
 
     async def delete_account(self, account_id: str, *, delete_history: bool = False) -> bool:
         result = await self._repo.delete(account_id, delete_history=delete_history)

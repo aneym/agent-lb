@@ -146,20 +146,34 @@ export function AccountUsagePanel({ account, trends }: AccountUsagePanelProps) {
     account.windowMinutesMonthly != null &&
     account.windowMinutesPrimary == null &&
     account.windowMinutesSecondary == null;
+  const hasPrimaryWindow =
+    account.windowMinutesPrimary != null ||
+    primary !== null ||
+    account.resetAtPrimary != null;
+  const hasSecondaryWindow =
+    account.windowMinutesSecondary != null ||
+    secondary !== null ||
+    account.resetAtSecondary != null;
+  const primaryLabel = isAnthropic ? "Session" : "5h";
+  const secondaryLabel = isAnthropic ? "Week" : monthlyOnly ? "Monthly" : "Weekly";
   const hasTrends =
     primaryTrendPoints.length > 0 || secondaryTrendPoints.length > 0 || secondaryScheduledTrendPoints.length > 0;
 
   return (
     <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Usage</h3>
-      {!isAnthropic && (
+      {(hasPrimaryWindow || hasSecondaryWindow || monthlyOnly) && (
         <div className={cn("grid gap-4", weeklyOnly || monthlyOnly ? "grid-cols-1" : "grid-cols-2")}>
           {monthlyOnly ? (
             <QuotaRow label="Monthly" percent={monthly} resetAt={account.resetAtMonthly} />
           ) : (
             <>
-              {!weeklyOnly && <QuotaRow label="5h" percent={primary} resetAt={account.resetAtPrimary} />}
-              <QuotaRow label="Weekly" percent={secondary} resetAt={account.resetAtSecondary} />
+              {!weeklyOnly && hasPrimaryWindow ? (
+                <QuotaRow label={primaryLabel} percent={primary} resetAt={account.resetAtPrimary} />
+              ) : null}
+              {hasSecondaryWindow ? (
+                <QuotaRow label={secondaryLabel} percent={secondary} resetAt={account.resetAtSecondary} />
+              ) : null}
             </>
           )}
         </div>
@@ -209,18 +223,18 @@ export function AccountUsagePanel({ account, trends }: AccountUsagePanelProps) {
           ))}
         </div>
       ) : null}
-      {!isAnthropic && hasTrends && (
+      {hasTrends && (
         <div className="pt-3">
           <div className="mb-2 flex items-center justify-between">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">7-day trend</h4>
             <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-full bg-chart-1" />
-                5h
+                {primaryLabel}
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-full bg-chart-2" />
-                {monthlyOnly ? "Monthly" : "Weekly"}
+                {secondaryLabel}
               </span>
               {secondaryScheduledTrendPoints.length > 0 ? (
                 <span className="flex items-center gap-1.5">

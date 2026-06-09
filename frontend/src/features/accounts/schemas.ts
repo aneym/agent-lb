@@ -68,6 +68,24 @@ export const AccountAdditionalQuotaSchema = z.object({
   secondaryWindow: AccountAdditionalWindowSchema.nullable().optional(),
 });
 
+export const AccountSubscriptionStatusSchema = z.enum([
+  "active",
+  "cancel_pending",
+  "pause_pending",
+  "paused",
+  "canceled",
+]);
+
+export const AccountSubscriptionLedgerSchema = z.object({
+  status: AccountSubscriptionStatusSchema.nullable().optional(),
+  nextChargeAt: z.string().datetime({ offset: true }).nullable().optional(),
+  currentPeriodEndAt: z.string().datetime({ offset: true }).nullable().optional(),
+  amount: z.number().nonnegative().nullable().optional(),
+  currency: z.string().length(3).nullable().optional(),
+  lastVerifiedAt: z.string().datetime({ offset: true }).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
 export const AccountSummarySchema = z.object({
   accountId: z.string(),
   provider: AccountProviderSchema.optional(),
@@ -85,6 +103,7 @@ export const AccountSummarySchema = z.object({
   resetAtPrimary: z.string().datetime({ offset: true }).nullable().optional(),
   resetAtSecondary: z.string().datetime({ offset: true }).nullable().optional(),
   resetAtMonthly: z.string().datetime({ offset: true }).nullable().optional(),
+  rateLimitResetAt: z.string().datetime({ offset: true }).nullable().optional(),
   windowMinutesPrimary: z.number().nullable().optional(),
   windowMinutesSecondary: z.number().nullable().optional(),
   windowMinutesMonthly: z.number().nullable().optional(),
@@ -99,6 +118,7 @@ export const AccountSummarySchema = z.object({
   creditsBalance: z.number().nullable().optional(),
   requestUsage: AccountRequestUsageSchema.nullable().optional(),
   auth: AccountAuthSchema.nullable().optional(),
+  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
   additionalQuotas: z.array(AccountAdditionalQuotaSchema).default([]),
   limitWarmupEnabled: z.boolean().default(false),
   limitWarmup: AccountLimitWarmupStatusSchema.nullable().optional(),
@@ -222,6 +242,13 @@ export const AccountRoutingPolicyUpdateResponseSchema = z.object({
   routingPolicy: AccountRoutingPolicySchema,
 });
 
+export const AccountSubscriptionUpdateRequestSchema = AccountSubscriptionLedgerSchema;
+
+export const AccountSubscriptionUpdateResponseSchema = z.object({
+  accountId: z.string(),
+  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
+});
+
 export const AccountExportResponseSchema = z.object({
   accountId: z.string(),
   email: z.string(),
@@ -306,6 +333,7 @@ export type AccountUsageTrend = z.infer<typeof AccountUsageTrendSchema>;
 export type AccountRequestUsage = z.infer<typeof AccountRequestUsageSchema>;
 export type AccountSummary = z.infer<typeof AccountSummarySchema>;
 export type AccountRoutingPolicy = z.infer<typeof AccountRoutingPolicySchema>;
+export type AccountSubscriptionLedger = z.infer<typeof AccountSubscriptionLedgerSchema>;
 export type AccountAliasResponse = z.infer<typeof AccountAliasResponseSchema>;
 export type AccountLimitWarmupStatus = z.infer<
   typeof AccountLimitWarmupStatusSchema

@@ -18,7 +18,9 @@ from app.core.usage.types import (
 from app.db.models import Account
 
 PLAN_CAPACITY_CREDITS_PRIMARY = {
+    "claude": 100.0,
     "free": 0.0,
+    "max": 100.0,
     "plus": 225.0,
     "business": 225.0,
     "team": 225.0,
@@ -29,7 +31,9 @@ PLAN_CAPACITY_CREDITS_PRIMARY = {
 }
 
 PLAN_CAPACITY_CREDITS_SECONDARY = {
+    "claude": 100.0,
     "free": 1134.0,
+    "max": 100.0,
     "plus": 7560.0,
     "business": 7560.0,
     "team": 7560.0,

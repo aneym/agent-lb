@@ -2,11 +2,12 @@ import type { AccountSummary } from "@/features/accounts/schemas";
 import type { AccountQuotaDisplayPreference } from "@/hooks/use-account-quota-display";
 import { parseDate } from "@/utils/formatters";
 
-export type AccountSortMode = "reset_soonest" | "reset_latest" | "name_asc" | "name_desc";
+export type AccountSortMode = "reset_soonest" | "reset_latest" | "subscription_soonest" | "name_asc" | "name_desc";
 
 export const ACCOUNT_SORT_OPTIONS: readonly { value: AccountSortMode; label: string }[] = [
   { value: "reset_soonest", label: "Reset time (soonest)" },
   { value: "reset_latest", label: "Reset time (latest)" },
+  { value: "subscription_soonest", label: "Subscription date" },
   { value: "name_asc", label: "Name (A-Z)" },
   { value: "name_desc", label: "Name (Z-A)" },
 ] as const;
@@ -36,6 +37,12 @@ function accountSortLabel(account: AccountSummary): string {
 function accountResetTimestamp(account: AccountSummary, quotaDisplay: AccountQuotaDisplayPreference): number {
   const resets = visibleQuotaResetTimestamps(account, quotaDisplay);
   return resets.length > 0 ? Math.min(...resets) : Number.POSITIVE_INFINITY;
+}
+
+function accountSubscriptionTimestamp(account: AccountSummary): number {
+  const subscription = account.subscription ?? null;
+  const iso = subscription?.currentPeriodEndAt ?? subscription?.nextChargeAt ?? null;
+  return parseDate(iso)?.getTime() ?? Number.POSITIVE_INFINITY;
 }
 
 function compareResetTimestamps(leftReset: number, rightReset: number, direction: "asc" | "desc"): number {
@@ -68,6 +75,13 @@ export function sortAccountsForDisplay(
         );
         if (resetComparison !== 0) {
           return resetComparison;
+        }
+      } else if (sortMode === "subscription_soonest") {
+        const leftSubscription = accountSubscriptionTimestamp(left);
+        const rightSubscription = accountSubscriptionTimestamp(right);
+        const subscriptionComparison = compareResetTimestamps(leftSubscription, rightSubscription, "asc");
+        if (subscriptionComparison !== 0) {
+          return subscriptionComparison;
         }
       } else {
         const leftLabel = accountSortLabel(left);

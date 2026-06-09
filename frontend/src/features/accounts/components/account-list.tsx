@@ -11,8 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AccountListItem } from "@/features/accounts/components/account-list-item";
+import { ProviderIcon } from "@/features/accounts/components/provider-icon";
+import { providerLabel } from "@/features/accounts/components/provider-label";
 import { WindowsOauthHelp } from "@/features/accounts/components/windows-oauth-help";
-import type { AccountSummary } from "@/features/accounts/schemas";
+import type { AccountProvider, AccountSummary } from "@/features/accounts/schemas";
 import {
   ACCOUNT_SORT_OPTIONS,
   DEFAULT_ACCOUNT_SORT_MODE,
@@ -23,6 +25,7 @@ import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { formatSlug } from "@/utils/formatters";
 
 const STATUS_FILTER_OPTIONS = ["all", "active", "paused", "rate_limited", "quota_exceeded", "reauth_required", "deactivated"];
+const PROVIDER_GROUP_ORDER: AccountProvider[] = ["openai", "anthropic"];
 
 export type AccountListProps = {
   accounts: AccountSummary[];
@@ -68,6 +71,15 @@ export function AccountList({
       );
     });
   }, [accounts, quotaDisplay, search, statusFilter, activeSortMode]);
+
+  const grouped = useMemo(
+    () =>
+      PROVIDER_GROUP_ORDER.map((provider) => ({
+        provider,
+        accounts: filtered.filter((account) => (account.provider ?? "openai") === provider),
+      })).filter((group) => group.accounts.length > 0),
+    [filtered],
+  );
 
   return (
     <div className="space-y-3">
@@ -151,14 +163,29 @@ export function AccountList({
             <p className="text-xs text-muted-foreground/70">Try adjusting your filters.</p>
           </div>
         ) : (
-          filtered.map((account) => (
-            <AccountListItem
-              key={account.accountId}
-              account={account}
-              selected={account.accountId === selectedAccountId}
-              showAccountId={account.isEmailDuplicate === true}
-              onSelect={onSelect}
-            />
+          grouped.map((group) => (
+            <section key={group.provider} className="space-y-1.5" aria-label={`${providerLabel(group.provider)} accounts`}>
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-card/95 px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ProviderIcon provider={group.provider} className="size-3.5" />
+                  <span>{providerLabel(group.provider)}</span>
+                </span>
+                <span className="tabular-nums">
+                  {group.accounts.length} {group.accounts.length === 1 ? "account" : "accounts"}
+                </span>
+              </div>
+              <div className="space-y-1">
+                {group.accounts.map((account) => (
+                  <AccountListItem
+                    key={account.accountId}
+                    account={account}
+                    selected={account.accountId === selectedAccountId}
+                    showAccountId={account.isEmailDuplicate === true}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </div>
+            </section>
           ))
         )}
       </div>

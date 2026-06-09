@@ -218,6 +218,35 @@ internal_router = APIRouter(
 )
 
 _TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
+
+
+@usage_router.post("/api/anthropic/session-route")
+async def claim_anthropic_session_route(
+    payload: dict[str, str] = Body(...),
+    context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
+) -> dict[str, str | None]:
+    session_id = (payload.get("sessionId") or "").strip()
+    model = (payload.get("model") or "claude-fable-5").strip()
+    quota_key = (payload.get("quotaKey") or "anthropic_top_thinking").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="sessionId is required")
+    if quota_key not in {"anthropic_standard", "anthropic_top", "anthropic_top_thinking"}:
+        raise HTTPException(status_code=400, detail="quotaKey is invalid")
+    try:
+        account = await context.service.claim_session_route(
+            session_id=session_id,
+            model=model,
+            quota_key=quota_key,
+        )
+    except AnthropicProxyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    return {
+        "accountId": account.id,
+        "email": account.email,
+        "alias": account.alias,
+        "model": model,
+        "quotaKey": quota_key,
+    }
 _UNAVAILABLE_SELECTION_ERROR_CODES = {
     "no_accounts",
     "no_plan_support_for_model",

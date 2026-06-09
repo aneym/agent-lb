@@ -87,6 +87,37 @@ async def test_exchange_anthropic_authorization_code_parses_token_metadata_witho
 
 
 @pytest.mark.asyncio
+async def test_exchange_anthropic_authorization_code_reads_account_email_address() -> None:
+    session = _FakeSession(
+        _FakeResponse(
+            status=200,
+            payload={
+                "access_token": "anthropic-access",
+                "refresh_token": "anthropic-refresh",
+                "token_type": "Bearer",
+                "account": {
+                    "id": "account_789",
+                    "email_address": "account-email@example.com",
+                    "plan_type": "max",
+                },
+            },
+        )
+    )
+
+    tokens = await exchange_anthropic_authorization_code(
+        code="code-123",
+        code_verifier="verifier-456",
+        token_url="https://platform.claude.com/v1/oauth/token",
+        client_id="client-id",
+        session=cast(aiohttp.ClientSession, session),
+    )
+
+    assert tokens.account_id == "account_789"
+    assert tokens.email == "account-email@example.com"
+    assert tokens.plan_type == "max"
+
+
+@pytest.mark.asyncio
 async def test_refresh_anthropic_access_token_returns_optional_id_token() -> None:
     session = _FakeSession(
         _FakeResponse(

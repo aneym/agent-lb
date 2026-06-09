@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Protocol, cast
 
 from app.core.config.settings import get_settings
-from app.core.providers import OPENAI_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
@@ -105,30 +105,34 @@ class UsageRefreshScheduler:
                     request_logs_repo = RequestLogsRepository(session)
                     before_primary = await usage_repo.latest_by_account(window="primary")
                     before_secondary = await usage_repo.latest_by_account(window="secondary")
-                    accounts = _openai_accounts(await accounts_repo.list_accounts())
+                    accounts = _usage_refresh_accounts(await accounts_repo.list_accounts())
                     updater = UsageUpdater(usage_repo, accounts_repo, additional_usage_repo)
                     usage_written = await updater.refresh_accounts(accounts, before_primary)
                     if usage_written:
                         after_primary = await usage_repo.latest_by_account(window="primary")
                         after_secondary = await usage_repo.latest_by_account(window="secondary")
-                        dashboard_settings = await settings_repo.get_or_create()
-                        warmup_service = LimitWarmupService(
-                            warmup_repo,
-                            request_logs_repo,
-                            sender=StreamingLimitWarmupSender(
-                                accounts_repo,
-                                accounts_repo_factory=_background_accounts_repo,
-                            ),
+                        refreshed_accounts = _usage_refresh_accounts(
+                            await accounts_repo.list_accounts(refresh_existing=True),
                         )
-                        refreshed_accounts = _openai_accounts(await accounts_repo.list_accounts(refresh_existing=True))
-                        await warmup_service.run_after_usage_refresh(
-                            accounts=refreshed_accounts,
-                            settings=dashboard_settings,
-                            before_primary=before_primary,
-                            before_secondary=before_secondary,
-                            after_primary=after_primary,
-                            after_secondary=after_secondary,
-                        )
+                        refreshed_openai_accounts = _openai_accounts(refreshed_accounts)
+                        if refreshed_openai_accounts:
+                            dashboard_settings = await settings_repo.get_or_create()
+                            warmup_service = LimitWarmupService(
+                                warmup_repo,
+                                request_logs_repo,
+                                sender=StreamingLimitWarmupSender(
+                                    accounts_repo,
+                                    accounts_repo_factory=_background_accounts_repo,
+                                ),
+                            )
+                            await warmup_service.run_after_usage_refresh(
+                                accounts=refreshed_openai_accounts,
+                                settings=dashboard_settings,
+                                before_primary=before_primary,
+                                before_secondary=before_secondary,
+                                after_primary=after_primary,
+                                after_secondary=after_secondary,
+                            )
                         await reconcile_recoverable_account_statuses(
                             accounts_repo=accounts_repo,
                             usage_repo=usage_repo,
@@ -150,6 +154,10 @@ def build_usage_refresh_scheduler() -> UsageRefreshScheduler:
 
 def _openai_accounts(accounts: list[Account]) -> list[Account]:
     return [account for account in accounts if account.provider == OPENAI_PROVIDER_NAME]
+
+
+def _usage_refresh_accounts(accounts: list[Account]) -> list[Account]:
+    return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
 
 
 @contextlib.asynccontextmanager

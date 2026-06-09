@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 from sqlalchemy import select
 
 import app.modules.proxy.anthropic_service as anthropic_proxy_module
+from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, RequestLog
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog, StickySession, StickySessionKind
 from app.db.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -65,10 +66,11 @@ class _FakeContent:
 
 
 class _FakeResponse:
-    def __init__(self, status: int, body: bytes) -> None:
+    def __init__(self, status: int, body: bytes, headers: dict[str, str] | None = None) -> None:
         self.status = status
         self.content = _FakeContent([body])
         self._body = body
+        self.headers = headers or {}
 
     async def read(self) -> bytes:
         return self._body
@@ -83,6 +85,43 @@ class _FakeResponseContext:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
+
+
+def test_anthropic_rate_limit_error_parses_unified_reset_headers():
+    response = _FakeResponse(
+        429,
+        b'{"error":{"message":"rate limited"}}',
+        headers={
+            "anthropic-ratelimit-unified-reset": "2026-06-09T19:50:00.000000+00:00",
+            "retry-after": "37",
+        },
+    )
+
+    error = anthropic_proxy_module._rate_limit_error_from_response(response, "rate limited")
+
+    assert error["resets_at"] == 1781034600
+    assert error["resets_in_seconds"] == 37
+
+
+def test_anthropic_sticky_key_uses_quota_scoped_session_hash():
+    payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        }
+    )
+
+    key = anthropic_proxy_module._anthropic_sticky_key(
+        payload,
+        {"x-claude-session-id": "session-123"},
+        quota_key=anthropic_proxy_module._anthropic_quota_key(payload),
+    )
+
+    assert key is not None
+    assert key.startswith("claude:anthropic_top_thinking:session:")
+    assert "session-123" not in key
 
 
 async def _insert_account(
@@ -146,7 +185,13 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
         "max_tokens": 32,
         "stream": True,
         "system": "Claude Code system prompt prefix must pass through untouched.",
-        "messages": [{"role": "user", "content": "hello"}],
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "system", "content": "Runtime system context injected by Claude Code."},
+        ],
+        "thinking": {"type": "adaptive"},
+        "context_management": {"edits": [{"type": "clear_tool_uses_20250919"}]},
+        "output_config": {"container": {"type": "auto"}},
     }
     async with async_client.stream(
         "POST",
@@ -168,6 +213,9 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert "x-api-key" not in {key.lower() for key in captured["headers"]}
     assert captured["json_body"]["system"] == payload["system"]
     assert captured["json_body"]["messages"] == payload["messages"]
+    assert captured["json_body"]["thinking"] == payload["thinking"]
+    assert captured["json_body"]["context_management"] == payload["context_management"]
+    assert captured["json_body"]["output_config"] == payload["output_config"]
 
     async with SessionLocal() as session:
         result = await session.execute(select(RequestLog))
@@ -236,3 +284,199 @@ async def test_anthropic_messages_non_streaming_logs_usage(async_client, monkeyp
     assert log.cache_creation_tokens == 2
     assert log.cache_read_tokens == 1
     assert log.cost_usd is not None
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_keep_same_session_on_sticky_account(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-a",
+        provider="anthropic",
+        access_token="anthropic-access-a",
+        email="claude-a@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-b",
+        provider="anthropic",
+        access_token="anthropic-access-b",
+        email="claude-b@example.com",
+    )
+
+    seen_authorizations: list[str] = []
+
+    def fake_open_upstream_response(self, session, *, headers, json_body):
+        del self, session, json_body
+        seen_authorizations.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    payload = {
+        "model": "claude-fable-5",
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "keep me sticky"}],
+        "thinking": {"type": "adaptive"},
+    }
+    for _ in range(2):
+        response = await async_client.post(
+            "/v1/messages",
+            json=payload,
+            headers={
+                "anthropic-beta": "oauth-2025-04-20",
+                "x-claude-session-id": "claude-session-sticky",
+            },
+        )
+        assert response.status_code == 200
+
+    assert len(seen_authorizations) == 2
+    assert seen_authorizations[1] == seen_authorizations[0]
+
+    request = AnthropicMessageRequest.model_validate(payload)
+    sticky_key = anthropic_proxy_module._anthropic_sticky_key(
+        request,
+        {"x-claude-session-id": "claude-session-sticky"},
+        quota_key=anthropic_proxy_module._anthropic_quota_key(request),
+    )
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(StickySession).where(
+                StickySession.key == sticky_key,
+                StickySession.kind == StickySessionKind.CODEX_SESSION,
+            )
+        )
+        sticky = result.scalar_one()
+
+    expected_account_id = "anthropic-a" if seen_authorizations[0].endswith("anthropic-access-a") else "anthropic-b"
+    assert sticky.account_id == expected_account_id
+
+
+@pytest.mark.asyncio
+async def test_anthropic_429_records_quota_cooldown_and_fails_over_without_global_rate_limit(
+    async_client,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-a",
+        provider="anthropic",
+        access_token="anthropic-access-a",
+        email="claude-a@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-b",
+        provider="anthropic",
+        access_token="anthropic-access-b",
+        email="claude-b@example.com",
+    )
+
+    payload = {
+        "model": "claude-fable-5",
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "fail over high tier"}],
+        "thinking": {"type": "adaptive"},
+    }
+    request = AnthropicMessageRequest.model_validate(payload)
+    quota_key = anthropic_proxy_module._anthropic_quota_key(request)
+    sticky_key = anthropic_proxy_module._anthropic_sticky_key(
+        request,
+        {"x-claude-session-id": "claude-session-failover"},
+        quota_key=quota_key,
+    )
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id="anthropic-a",
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+    seen_authorizations: list[str] = []
+    cooldown_reset_at = int((utcnow() + timedelta(minutes=10)).replace(tzinfo=timezone.utc).timestamp())
+    cooldown_reset_header = datetime.fromtimestamp(cooldown_reset_at, tz=timezone.utc).isoformat()
+
+    def fake_open_upstream_response(self, session, *, headers, json_body):
+        del self, session, json_body
+        seen_authorizations.append(headers["Authorization"])
+        if headers["Authorization"] == "Bearer anthropic-access-a":
+            return _FakeResponseContext(
+                _FakeResponse(
+                    429,
+                    b'{"error":{"message":"top model cooldown"}}',
+                    headers={
+                        "anthropic-ratelimit-unified-reset": cooldown_reset_header,
+                    },
+                )
+            )
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=payload,
+        headers={
+            "anthropic-beta": "oauth-2025-04-20",
+            "x-claude-session-id": "claude-session-failover",
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen_authorizations == ["Bearer anthropic-access-a", "Bearer anthropic-access-b"]
+
+    async with SessionLocal() as session:
+        accounts = {
+            account.id: account
+            for account in (
+                await session.execute(select(Account).where(Account.id.in_(["anthropic-a", "anthropic-b"])))
+            )
+            .scalars()
+            .all()
+        }
+        cooldowns = (
+            (
+                await session.execute(
+                    select(AdditionalUsageHistory).where(
+                        AdditionalUsageHistory.quota_key == quota_key,
+                        AdditionalUsageHistory.window == "primary",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        logs = list((await session.execute(select(RequestLog).order_by(RequestLog.id))).scalars())
+        sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+
+    assert accounts["anthropic-a"].status == AccountStatus.ACTIVE
+    assert accounts["anthropic-b"].status == AccountStatus.ACTIVE
+    by_account = {entry.account_id: entry for entry in cooldowns}
+    assert by_account["anthropic-a"].used_percent == 100.0
+    assert by_account["anthropic-a"].reset_at == cooldown_reset_at
+    assert by_account["anthropic-b"].used_percent == 0.0
+    assert [log.status for log in logs] == ["error", "success"]
+    assert [log.account_id for log in logs] == ["anthropic-a", "anthropic-b"]
+    assert sticky.account_id == "anthropic-b"
+
+    accounts_response = await async_client.get("/api/accounts")
+    assert accounts_response.status_code == 200
+    anthropic_a = next(
+        account for account in accounts_response.json()["accounts"] if account["accountId"] == "anthropic-a"
+    )
+    cooldown = next(quota for quota in anthropic_a["additionalQuotas"] if quota["quotaKey"] == quota_key)
+    assert cooldown["displayLabel"] == "Claude top models with thinking"
+    assert cooldown["primaryWindow"]["usedPercent"] == 100.0

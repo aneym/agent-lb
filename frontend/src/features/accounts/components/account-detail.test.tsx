@@ -31,6 +31,7 @@ describe("AccountDetail", () => {
         onExportAuth={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={onRoutingPolicyChange}
+        onSubscriptionSave={vi.fn().mockResolvedValue(undefined)}
         onSecurityWorkAuthorizedChange={vi.fn()}
       />,
     );
@@ -39,5 +40,37 @@ describe("AccountDetail", () => {
     await user.click(await screen.findByRole("option", { name: "Preserve" }));
 
     expect(onRoutingPolicyChange).toHaveBeenCalledWith(account.accountId, "preserve");
+  });
+
+  it("shows cancel-pending subscriptions as active until the period end", () => {
+    const account = createAccountSummary({
+      subscription: {
+        status: "cancel_pending",
+        currentPeriodEndAt: "2026-06-22T04:00:00.000Z",
+        amount: 200,
+        currency: "USD",
+      },
+    });
+
+    renderWithClient(
+      <AccountDetail
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onSetAlias={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+        onSubscriptionSave={vi.fn().mockResolvedValue(undefined)}
+        onSecurityWorkAuthorizedChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("Cancel pending")).not.toHaveLength(0);
+    expect(screen.getByText(/Active until:/)).toBeInTheDocument();
   });
 });

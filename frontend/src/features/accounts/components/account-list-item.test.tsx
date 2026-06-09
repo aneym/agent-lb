@@ -41,7 +41,28 @@ describe("AccountListItem", () => {
 
     render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
 
-    expect(screen.getByText("Anthropic")).toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+  });
+
+  it("labels Anthropic OAuth usage windows as session and week", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      usage: {
+        primaryRemainingPercent: 80,
+        secondaryRemainingPercent: 4,
+      },
+      resetAtPrimary: "2026-01-01T13:00:00.000Z",
+      resetAtSecondary: "2026-01-02T12:00:00.000Z",
+      windowMinutesPrimary: 300,
+      windowMinutesSecondary: 10_080,
+    });
+
+    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+
+    expect(screen.getByText("Session")).toBeInTheDocument();
+    expect(screen.getByText("Week")).toBeInTheDocument();
+    expect(screen.queryByText("5h")).not.toBeInTheDocument();
+    expect(screen.queryByText("Weekly")).not.toBeInTheDocument();
   });
 
   it("omits the 5h row for weekly-only accounts", () => {

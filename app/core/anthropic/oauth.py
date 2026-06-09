@@ -268,7 +268,11 @@ def _metadata_from_payload(payload: AnthropicOAuthTokenPayload) -> AnthropicToke
     )
     email = _first_text(
         payload.email,
+        # Claude Code's token response carries the address under
+        # account.email_address (not account.email).
+        _nested_text(metadata, ("account", "email_address")),
         _nested_text(metadata, ("account", "email")),
+        _nested_text(metadata, ("user", "email_address")),
         _nested_text(metadata, ("user", "email")),
         _nested_text(metadata, ("profile", "email")),
     )

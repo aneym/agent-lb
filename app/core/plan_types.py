@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import AbstractSet, Final
 
 ACCOUNT_PLAN_TYPES: Final[set[str]] = {
+    "claude",
     "free",
+    "max",
     "plus",
     "pro",
     "prolite",
@@ -24,6 +26,8 @@ RATE_LIMIT_PLAN_TYPES: Final[set[str]] = {
 }
 
 ACCOUNT_PLAN_EQUIVALENTS: Final[dict[str, frozenset[str]]] = {
+    "claude": frozenset({"max"}),
+    "max": frozenset({"claude"}),
     "prolite": frozenset({"pro"}),
 }
 

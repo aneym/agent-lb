@@ -17,11 +17,12 @@ from app.core.balancer import (
     QUOTA_EXCEEDED_COOLDOWN_SECONDS,
     account_status_for_permanent_failure,
 )
+from app.core.clients.anthropic_usage import fetch_anthropic_usage
 from app.core.clients.usage import UsageFetchError, fetch_usage
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import OPENAI_PROVIDER_NAME
+from app.core.plan_types import account_plan_matches_allowed, coerce_account_plan_type
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.usage.models import AdditionalRateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
@@ -47,6 +48,7 @@ class UsageRepositoryPort(Protocol):
         self,
         account_id: str,
         used_percent: float,
+        provider: str = "openai",
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         recorded_at: datetime | None = None,
@@ -146,6 +148,7 @@ class _MergedAdditionalWindow:
 # process. Updated only after a successful refresh that wrote data.
 _last_successful_refresh: dict[str, datetime] = {}
 _usage_refresh_auth_cooldowns: dict[str, float] = {}
+_USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
 
 
 class _UsageRefreshSingleflight:
@@ -252,7 +255,7 @@ class UsageUpdater:
         interval = settings.usage_refresh_interval_seconds
         _prune_usage_refresh_auth_cooldowns()
         for account in accounts:
-            if account.provider != OPENAI_PROVIDER_NAME:
+            if account.provider not in _USAGE_REFRESH_PROVIDERS:
                 continue
             if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
                 continue
@@ -383,12 +386,10 @@ class UsageUpdater:
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         payload: UsagePayload | None = None
         try:
-            route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
-            payload = await fetch_usage(
+            payload = await _fetch_usage_payload(
+                account=account,
                 access_token=access_token,
-                account_id=usage_account_id,
-                route=route,
-                allow_direct_egress=route is None,
+                usage_account_id=usage_account_id,
             )
         except UpstreamProxyRouteError as exc:
             logger.warning(
@@ -412,12 +413,10 @@ class UsageUpdater:
                 return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
             access_token = self._encryptor.decrypt(account.access_token_encrypted)
             try:
-                route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
-                payload = await fetch_usage(
+                payload = await _fetch_usage_payload(
+                    account=account,
                     access_token=access_token,
-                    account_id=usage_account_id,
-                    route=route,
-                    allow_direct_egress=route is None,
+                    usage_account_id=usage_account_id,
                 )
             except UpstreamProxyRouteError as route_exc:
                 logger.warning(
@@ -540,6 +539,7 @@ class UsageUpdater:
             entry = await self._usage_repo.add_entry(
                 account_id=account.id,
                 used_percent=float(primary.used_percent),
+                provider=account.provider,
                 input_tokens=None,
                 output_tokens=None,
                 window="primary",
@@ -555,6 +555,7 @@ class UsageUpdater:
             entry = await self._usage_repo.add_entry(
                 account_id=account.id,
                 used_percent=float(secondary.used_percent),
+                provider=account.provider,
                 input_tokens=None,
                 output_tokens=None,
                 window="secondary",
@@ -567,6 +568,7 @@ class UsageUpdater:
             entry = await self._usage_repo.add_entry(
                 account_id=account.id,
                 used_percent=float(monthly.used_percent),
+                provider=account.provider,
                 input_tokens=None,
                 output_tokens=None,
                 window="monthly",
@@ -749,6 +751,23 @@ def _credits_snapshot(payload: UsagePayload) -> tuple[bool | None, bool | None, 
     return credits_has, credits_unlimited, _parse_credits_balance(balance_value)
 
 
+async def _fetch_usage_payload(
+    *,
+    account: Account,
+    access_token: str,
+    usage_account_id: str | None,
+) -> UsagePayload:
+    if account.provider == ANTHROPIC_PROVIDER_NAME:
+        return await fetch_anthropic_usage(access_token=access_token)
+    route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
+    return await fetch_usage(
+        access_token=access_token,
+        account_id=usage_account_id,
+        route=route,
+        allow_direct_egress=route is None,
+    )
+
+
 def _payload_mismatches_account_slot(account: Account, payload: UsagePayload) -> bool:
     payload_workspace_id = _clean_optional(payload.workspace_id)
     if account.workspace_id and payload_workspace_id and account.workspace_id != payload_workspace_id:
@@ -756,7 +775,11 @@ def _payload_mismatches_account_slot(account: Account, payload: UsagePayload) ->
     if not payload_workspace_id:
         payload_plan_type = coerce_account_plan_type(payload.plan_type, account.plan_type or "free")
         stored_plan_type = coerce_account_plan_type(account.plan_type, "free")
-        if payload.plan_type and stored_plan_type not in {"unknown", ""} and payload_plan_type != stored_plan_type:
+        if (
+            payload.plan_type
+            and stored_plan_type not in {"unknown", ""}
+            and not account_plan_matches_allowed(payload_plan_type, {stored_plan_type})
+        ):
             return True
     return False
 

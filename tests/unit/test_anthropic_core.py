@@ -232,3 +232,28 @@ def test_message_request_model_accepts_tools_and_system_prompt():
     assert request.system == "You are Claude Code, Anthropic's official CLI for Claude."
     assert request.tools is not None
     assert request.tools[0].name == "Read"
+
+
+def test_message_request_model_accepts_current_claude_code_fable_payload_shape():
+    request = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-fable-5",
+            "max_tokens": 1024,
+            "stream": True,
+            "system": [{"type": "text", "text": "You are Claude Code."}],
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                {"role": "system", "content": "Runtime system context injected by Claude Code."},
+            ],
+            "thinking": {"type": "adaptive"},
+            "context_management": {"edits": [{"type": "clear_tool_uses_20250919"}]},
+            "output_config": {"container": {"type": "auto"}},
+        }
+    )
+
+    dumped = request.model_dump(mode="json", exclude_none=True)
+
+    assert dumped["messages"][1]["role"] == "system"
+    assert dumped["thinking"] == {"type": "adaptive"}
+    assert dumped["context_management"] == {"edits": [{"type": "clear_tool_uses_20250919"}]}
+    assert dumped["output_config"] == {"container": {"type": "auto"}}

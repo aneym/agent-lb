@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "updatedAt": "2026-06-09T00:00:00.000Z",
+  "accounts": [
+    {
+      "profileHandle": "openai-personal-pro",
+      "provider": "openai",
+      "accountId": null,
+      "email": null,
+      "alias": "Personal Pro",
+      "userDataDir": ".codex-lb/chrome-profiles/openai-personal-pro",
+      "homeUrl": "https://chatgpt.com",
+      "billingUrl": "https://chatgpt.com",
+      "notes": "Keep this entry free of passwords, tokens, card numbers, and recovery codes.",
+      "subscription": {
+        "status": "active",
+        "nextChargeAt": null,
+        "currentPeriodEndAt": null,
+        "amount": null,
+        "currency": "USD",
+        "lastVerifiedAt": null,
+        "notes": null
+      },
+      "subscriptionHistory": []
+    }
+  ]
+}

@@ -64,6 +64,45 @@ describe("AccountList", () => {
     expect(onSelect).toHaveBeenCalledWith("acc-2");
   });
 
+  it("groups accounts by provider with operator labels", () => {
+    render(
+      <AccountList
+        accounts={[
+          {
+            accountId: "acc-openai",
+            provider: "openai",
+            email: "codex@example.com",
+            displayName: "Codex seat",
+            planType: "pro",
+            status: "active",
+            limitWarmupEnabled: false,
+            additionalQuotas: [],
+          },
+          {
+            accountId: "acc-claude",
+            provider: "anthropic",
+            email: "claude@example.com",
+            displayName: "Claude seat",
+            planType: "claude",
+            status: "active",
+            limitWarmupEnabled: false,
+            additionalQuotas: [],
+          },
+        ]}
+        selectedAccountId={null}
+        onSelect={() => {}}
+        onOpenImport={() => {}}
+        onOpenOauth={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Codex accounts" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Claude accounts" })).toBeInTheDocument();
+    expect(screen.getAllByText("1 account")).toHaveLength(2);
+    expect(screen.getByText("Codex seat")).toBeInTheDocument();
+    expect(screen.getByText("Claude seat")).toBeInTheDocument();
+  });
+
   it("sorts accounts by the rows actually rendered", () => {
     useAccountQuotaDisplayStore.setState({ quotaDisplay: "weekly" });
 
@@ -117,6 +156,55 @@ describe("AccountList", () => {
         .getAllByText(/^(Hidden Early|Visible Early)$/)
         .map((el) => el.textContent),
     ).toEqual(["Visible Early", "Hidden Early"]);
+  });
+
+  it("can sort accounts by subscription date", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AccountList
+        accounts={[
+          {
+            accountId: "acc-late",
+            email: "late@example.com",
+            displayName: "Late",
+            planType: "plus",
+            status: "active",
+            limitWarmupEnabled: false,
+            additionalQuotas: [],
+            subscription: {
+              status: "active",
+              nextChargeAt: "2026-02-01T12:00:00.000Z",
+            },
+          },
+          {
+            accountId: "acc-early",
+            email: "early@example.com",
+            displayName: "Early",
+            planType: "plus",
+            status: "active",
+            limitWarmupEnabled: false,
+            additionalQuotas: [],
+            subscription: {
+              status: "cancel_pending",
+              currentPeriodEndAt: "2026-01-10T12:00:00.000Z",
+            },
+          },
+        ]}
+        selectedAccountId={null}
+        onSelect={() => {}}
+        onOpenImport={() => {}}
+        onOpenOauth={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Sort accounts" }));
+    await user.click(await screen.findByRole("option", { name: "Subscription date" }));
+
+    expect(
+      screen.getAllByText(/^(Early|Late)$/).map((el) => el.textContent),
+    ).toEqual(["Early", "Late"]);
+    expect(screen.getByText(/Active until:/)).toBeInTheDocument();
   });
 
   it("ignores elapsed reset timestamps when sorting", () => {

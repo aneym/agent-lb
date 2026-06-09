@@ -14,8 +14,9 @@ import {
   updateAccount,
   updateAccountLimitWarmup,
   updateAccountRoutingPolicy,
+  updateAccountSubscription,
 } from "@/features/accounts/api";
-import type { AccountRoutingPolicy } from "@/features/accounts/schemas";
+import type { AccountRoutingPolicy, AccountSubscriptionLedger } from "@/features/accounts/schemas";
 
 function invalidateAccountRelatedQueries(queryClient: ReturnType<typeof useQueryClient>, accountId?: string) {
   void queryClient.invalidateQueries({ queryKey: ["accounts", "list"] });
@@ -135,6 +136,18 @@ export function useAccountMutations() {
     },
   });
 
+  const subscriptionMutation = useMutation({
+    mutationFn: ({ accountId, payload }: { accountId: string; payload: AccountSubscriptionLedger }) =>
+      updateAccountSubscription(accountId, payload),
+    onSuccess: (_data, variables) => {
+      toast.success("Subscription ledger updated");
+      invalidateAccountRelatedQueries(queryClient, variables.accountId);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Subscription ledger update failed");
+    },
+  });
+
   const exportAuthMutation = useMutation({
     mutationFn: exportAccountAuth,
     onSuccess: () => {
@@ -167,6 +180,7 @@ export function useAccountMutations() {
     exportAuthMutation,
     limitWarmupMutation,
     routingPolicyMutation,
+    subscriptionMutation,
     updateMutation,
   };
 }

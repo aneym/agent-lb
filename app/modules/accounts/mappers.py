@@ -7,15 +7,17 @@ from app.core.auth import DEFAULT_EMAIL, DEFAULT_PLAN, extract_id_token_claims, 
 from app.core.config import settings as config_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
+from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.usage.quota import apply_usage_quota
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
-from app.core.utils.time import from_epoch_seconds
+from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, UsageHistory
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAuthStatus,
     AccountLimitWarmupStatus,
     AccountRequestUsage,
+    AccountSubscriptionLedger,
     AccountSummary,
     AccountTokenStatus,
     AccountUsage,
@@ -127,7 +129,7 @@ def _account_to_summary(
     primary_remaining_percent = usage_core.remaining_percent_from_used(primary_used_percent)
     secondary_remaining_percent = usage_core.remaining_percent_from_used(secondary_used_percent)
 
-    if primary_remaining_percent is None and not weekly_only_usage:
+    if primary_remaining_percent is None and not weekly_only_usage and account.provider != ANTHROPIC_PROVIDER_NAME:
         primary_remaining_percent = 100.0
 
     status_primary_usage = effective_primary_usage
@@ -143,6 +145,11 @@ def _account_to_summary(
         and float(long_quota_usage.used_percent) < 100.0
     )
     if usage_core.capacity_for_plan(plan_type, "primary") == 0.0:
+        runtime_reset_elapsed = (
+            account.status == AccountStatus.RATE_LIMITED
+            and account.reset_at is not None
+            and account.reset_at <= utcnow().timestamp()
+        )
         primary_window_minutes = (
             effective_primary_usage.window_minutes
             if effective_primary_usage is not None
@@ -167,6 +174,12 @@ def _account_to_summary(
                 status_runtime_reset = None
                 status_seed = AccountStatus.ACTIVE
                 allow_missing_runtime_reset_recovery = True
+        elif runtime_reset_elapsed and long_quota_available:
+            status_primary_usage = None
+            status_primary_used_percent = None
+            status_runtime_reset = None
+            status_seed = AccountStatus.ACTIVE
+            allow_missing_runtime_reset_recovery = True
         effective_primary_usage = None
         primary_used_percent = None
         primary_remaining_percent = None
@@ -241,6 +254,7 @@ def _account_to_summary(
         reset_at_primary=reset_at_primary,
         reset_at_secondary=reset_at_secondary,
         reset_at_monthly=reset_at_monthly,
+        rate_limit_reset_at=from_epoch_seconds(account.reset_at) if account.reset_at else None,
         window_minutes_primary=window_minutes_primary,
         window_minutes_secondary=window_minutes_secondary,
         window_minutes_monthly=window_minutes_monthly,
@@ -254,6 +268,7 @@ def _account_to_summary(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
+        subscription=_account_subscription_ledger(account),
         request_usage=request_usage,
         additional_quotas=additional_quotas or [],
         deactivation_reason=account.deactivation_reason,
@@ -261,6 +276,28 @@ def _account_to_summary(
         limit_warmup_enabled=bool(account.limit_warmup_enabled),
         limit_warmup=_limit_warmup_to_status(limit_warmup),
         is_email_duplicate=is_email_duplicate,
+    )
+
+
+def _account_subscription_ledger(account: Account) -> AccountSubscriptionLedger | None:
+    if (
+        account.subscription_status is None
+        and account.subscription_next_charge_at is None
+        and account.subscription_current_period_end_at is None
+        and account.subscription_amount is None
+        and account.subscription_currency is None
+        and account.subscription_last_verified_at is None
+        and account.subscription_notes is None
+    ):
+        return None
+    return AccountSubscriptionLedger(
+        status=account.subscription_status,
+        next_charge_at=account.subscription_next_charge_at,
+        current_period_end_at=account.subscription_current_period_end_at,
+        amount=account.subscription_amount,
+        currency=account.subscription_currency,
+        last_verified_at=account.subscription_last_verified_at,
+        notes=account.subscription_notes,
     )
 
 
@@ -332,10 +369,17 @@ def _effective_status_from_usage(
         if (
             account.blocked_at is None
             and account.reset_at is not None
-            and account.reset_at <= datetime.now(timezone.utc).timestamp()
+            and account.reset_at <= utcnow().timestamp()
         ):
             return status
         return account.status
+    if account.status == AccountStatus.QUOTA_EXCEEDED:
+        now = utcnow().timestamp()
+        primary_exhausted = primary_used_percent is not None and primary_used_percent >= 100.0
+        long_window_available = long_window_used_percent is not None and long_window_used_percent < 100.0
+        runtime_reset_elapsed = runtime_reset is not None and runtime_reset <= now
+        if runtime_reset_elapsed and long_window_available and not primary_exhausted:
+            return AccountStatus.ACTIVE
     return status
 
 

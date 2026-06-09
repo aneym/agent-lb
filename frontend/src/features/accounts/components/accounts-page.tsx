@@ -43,6 +43,7 @@ export function AccountsPage() {
     updateMutation,
     deleteMutation,
     routingPolicyMutation,
+    subscriptionMutation,
     exportAuthMutation,
   } = useAccounts();
   const { upstreamProxyQuery, accountBindingMutation } = useUpstreamProxyAdmin();
@@ -106,6 +107,7 @@ export function AccountsPage() {
     limitWarmupMutation.isPending ||
     deleteMutation.isPending ||
     routingPolicyMutation.isPending ||
+    subscriptionMutation.isPending ||
     exportAuthMutation.isPending ||
     updateMutation.isPending ||
     accountBindingMutation.isPending;
@@ -119,6 +121,7 @@ export function AccountsPage() {
     getErrorMessageOrNull(limitWarmupMutation.error) ||
     getErrorMessageOrNull(deleteMutation.error) ||
     getErrorMessageOrNull(routingPolicyMutation.error) ||
+    getErrorMessageOrNull(subscriptionMutation.error) ||
     getErrorMessageOrNull(exportAuthMutation.error) ||
     getErrorMessageOrNull(updateMutation.error) ||
     getErrorMessageOrNull(upstreamProxyQuery.error) ||
@@ -192,6 +195,9 @@ export function AccountsPage() {
                 accountId,
                 securityWorkAuthorized: enabled,
               })
+            }
+            onSubscriptionSave={(accountId, payload) =>
+              subscriptionMutation.mutateAsync({ accountId, payload })
             }
             upstreamProxyAdmin={upstreamProxyQuery.data ?? null}
             onProxyBindingSave={(accountId, payload) =>

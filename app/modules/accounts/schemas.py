@@ -72,6 +72,16 @@ class AccountAdditionalQuota(DashboardModel):
     secondary_window: AccountAdditionalWindow | None = None
 
 
+class AccountSubscriptionLedger(DashboardModel):
+    status: str | None = Field(default=None, pattern=r"^(active|cancel_pending|pause_pending|paused|canceled)$")
+    next_charge_at: datetime | None = None
+    current_period_end_at: datetime | None = None
+    amount: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    last_verified_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class AccountSummary(DashboardModel):
     account_id: str
     provider: str = "openai"
@@ -89,6 +99,7 @@ class AccountSummary(DashboardModel):
     reset_at_primary: datetime | None = None
     reset_at_secondary: datetime | None = None
     reset_at_monthly: datetime | None = None
+    rate_limit_reset_at: datetime | None = None
     window_minutes_primary: int | None = None
     window_minutes_secondary: int | None = None
     window_minutes_monthly: int | None = None
@@ -104,6 +115,7 @@ class AccountSummary(DashboardModel):
     credits_has: bool | None = None
     credits_unlimited: bool | None = None
     credits_balance: float | None = None
+    subscription: AccountSubscriptionLedger | None = None
     deactivation_reason: str | None = None
     auth: AccountAuthStatus | None = None
     limit_warmup_enabled: bool = False
@@ -189,6 +201,15 @@ class AccountRoutingPolicyUpdateRequest(DashboardModel):
 class AccountRoutingPolicyUpdateResponse(DashboardModel):
     account_id: str
     routing_policy: str
+
+
+class AccountSubscriptionUpdateRequest(AccountSubscriptionLedger):
+    pass
+
+
+class AccountSubscriptionUpdateResponse(DashboardModel):
+    account_id: str
+    subscription: AccountSubscriptionLedger | None = None
 
 
 class AccountDeleteResponse(DashboardModel):

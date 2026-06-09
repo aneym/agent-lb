@@ -12,6 +12,8 @@ import {
   AccountsResponseSchema,
   AccountRoutingPolicyUpdateRequestSchema,
   AccountRoutingPolicyUpdateResponseSchema,
+  AccountSubscriptionUpdateRequestSchema,
+  AccountSubscriptionUpdateResponseSchema,
   AccountTrendsResponseSchema,
   AccountProbeRequestSchema,
   AccountProbeResponseSchema,
@@ -91,6 +93,15 @@ export function updateAccountRoutingPolicy(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/routing-policy`,
     AccountRoutingPolicyUpdateResponseSchema,
     { body: payload },
+  );
+}
+
+export function updateAccountSubscription(accountId: string, payload: unknown) {
+  const validated = AccountSubscriptionUpdateRequestSchema.parse(payload);
+  return put(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription`,
+    AccountSubscriptionUpdateResponseSchema,
+    { body: validated },
   );
 }
 

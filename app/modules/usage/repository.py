@@ -440,6 +440,7 @@ class UsageRepository:
         self,
         account_id: str,
         used_percent: float,
+        provider: str = "openai",
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         recorded_at: datetime | None = None,
@@ -452,6 +453,7 @@ class UsageRepository:
     ) -> UsageHistory:
         entry = UsageHistory(
             account_id=account_id,
+            provider=provider,
             used_percent=used_percent,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

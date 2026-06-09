@@ -911,6 +911,47 @@ async def test_accounts_list_request_usage_includes_anthropic_cache_tokens(async
 
 
 @pytest.mark.asyncio
+async def test_accounts_list_exposes_anthropic_oauth_usage_windows(async_client, db_setup):
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+
+        account = _make_account("acc_claude_windows", "claude-windows@example.com", plan_type="max")
+        account.provider = "anthropic"
+        await accounts_repo.upsert(account)
+        await usage_repo.add_entry(
+            "acc_claude_windows",
+            20.0,
+            provider="anthropic",
+            window="primary",
+            reset_at=1781034600,
+            window_minutes=300,
+        )
+        await usage_repo.add_entry(
+            "acc_claude_windows",
+            96.0,
+            provider="anthropic",
+            window="secondary",
+            reset_at=1781470800,
+            window_minutes=10080,
+        )
+
+    response = await async_client.get("/api/accounts")
+    assert response.status_code == 200
+    payload = response.json()
+    accounts = {item["accountId"]: item for item in payload["accounts"]}
+
+    account_payload = accounts["acc_claude_windows"]
+    assert account_payload["provider"] == "anthropic"
+    assert account_payload["usage"]["primaryRemainingPercent"] == pytest.approx(80.0)
+    assert account_payload["usage"]["secondaryRemainingPercent"] == pytest.approx(4.0)
+    assert account_payload["resetAtPrimary"] == _iso_utc(1781034600)
+    assert account_payload["resetAtSecondary"] == _iso_utc(1781470800)
+    assert account_payload["windowMinutesPrimary"] == 300
+    assert account_payload["windowMinutesSecondary"] == 10080
+
+
+@pytest.mark.asyncio
 async def test_accounts_list_maps_weekly_only_primary_to_secondary(async_client, db_setup):
     async with SessionLocal() as session:
         accounts_repo = AccountsRepository(session)
