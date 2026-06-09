@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { PropsWithChildren } from "react";
 
-import { CodexLogo } from "@/components/brand/codex-logo";
+import { AgentLbLogo } from "@/components/brand/agent-lb-logo";
 import { SpinnerBlock } from "@/components/ui/spinner";
 import { BootstrapSetupScreen } from "@/features/auth/components/bootstrap-setup-screen";
 import { LoginForm } from "@/features/auth/components/login-form";
@@ -51,7 +51,7 @@ export function AuthGate({ children }: PropsWithChildren) {
         <div className="relative w-full max-w-sm animate-fade-in-up">
           <div className="mb-8 flex flex-col items-center gap-3 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 shadow-sm ring-2 ring-primary/10 ring-offset-2 ring-offset-background">
-              <CodexLogo size={28} className="text-primary" />
+              <AgentLbLogo size={28} className="text-primary" />
             </div>
             <div>
               <h1 className="text-xl font-semibold tracking-tight">Agent LB</h1>

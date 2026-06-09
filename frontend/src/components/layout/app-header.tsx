@@ -2,7 +2,7 @@ import { Eye, EyeOff, LogOut, Menu } from "lucide-react";
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
-import { CodexLogo } from "@/components/brand/codex-logo";
+import { AgentLbLogo } from "@/components/brand/agent-lb-logo";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { usePrivacyStore } from "@/hooks/use-privacy";
@@ -43,7 +43,7 @@ export function AppHeader({
         {/* Brand */}
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/5">
-            <CodexLogo size={20} className="text-primary" />
+            <AgentLbLogo size={20} className="text-primary" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold tracking-tight">Agent LB</p>
@@ -106,7 +106,7 @@ export function AppHeader({
               <SheetHeader>
                 <SheetTitle className="flex items-center gap-2.5">
                   <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
-                    <CodexLogo size={16} className="text-primary" />
+                    <AgentLbLogo size={16} className="text-primary" />
                   </div>
                   <span className="text-sm font-semibold">Agent LB</span>
                 </SheetTitle>
