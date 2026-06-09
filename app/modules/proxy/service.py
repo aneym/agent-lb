@@ -852,6 +852,7 @@ class _HTTPBridgeRuntimeConfig:
     queue_limit: int
     prompt_cache_idle_ttl_seconds: float
     gateway_safe_mode: bool
+    response_create_concurrency: int = 64
 
 
 def _estimated_lease_tokens_from_request_usage_budget(budget: ApiKeyRequestUsageBudget | None) -> float:

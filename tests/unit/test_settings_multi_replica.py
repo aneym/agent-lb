@@ -25,9 +25,12 @@ def test_settings_multi_replica_defaults():
     assert settings.bulkhead_proxy_websocket_limit == settings.bulkhead_proxy_limit
     assert settings.bulkhead_proxy_compact_limit == 16
     assert settings.proxy_token_refresh_limit == 64
-    assert settings.proxy_upstream_websocket_connect_limit == 128
-    assert settings.proxy_response_create_limit == 256
-    assert settings.proxy_compact_response_create_limit == 64
+    assert settings.proxy_upstream_websocket_connect_limit == 512
+    assert settings.proxy_response_create_limit == 1024
+    assert settings.proxy_compact_response_create_limit == 128
+    assert settings.http_responses_session_bridge_max_sessions == 1024
+    assert settings.http_responses_session_bridge_queue_limit == 64
+    assert settings.http_responses_session_bridge_response_create_concurrency == 64
     assert settings.compact_request_budget_seconds == 180.0
     assert settings.proxy_request_budget_seconds == 600.0
     assert settings.http_responses_session_bridge_request_budget_seconds == 7200.0

@@ -214,8 +214,9 @@ class Settings(BaseSettings):
     http_responses_session_bridge_idle_ttl_seconds: float = Field(default=120.0, gt=0)
     http_responses_session_bridge_codex_idle_ttl_seconds: float = Field(default=900.0, gt=0)
     http_responses_session_bridge_codex_prewarm_enabled: bool = False
-    http_responses_session_bridge_max_sessions: int = Field(default=256, gt=0)
-    http_responses_session_bridge_queue_limit: int = Field(default=8, gt=0)
+    http_responses_session_bridge_max_sessions: int = Field(default=1024, gt=0)
+    http_responses_session_bridge_queue_limit: int = Field(default=64, gt=0)
+    http_responses_session_bridge_response_create_concurrency: int = Field(default=64, gt=0)
     http_responses_session_bridge_gateway_safe_mode: bool = False
     http_responses_session_bridge_instance_id: str = Field(default_factory=_default_http_bridge_instance_id)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -299,16 +300,16 @@ class Settings(BaseSettings):
     # Backpressure
     backpressure_max_concurrent_requests: int = 0  # 0 = unlimited
 
-    bulkhead_proxy_limit: int = Field(default=512, ge=0)
+    bulkhead_proxy_limit: int = Field(default=1024, ge=0)
     bulkhead_proxy_http_limit: int | None = Field(default=None, ge=0)
     bulkhead_proxy_websocket_limit: int | None = Field(default=None, ge=0)
     bulkhead_proxy_compact_limit: int | None = Field(default=None, ge=0)
     bulkhead_dashboard_limit: int = Field(default=50, ge=0)
     dashboard_bootstrap_token: str | None = None
     proxy_token_refresh_limit: int = Field(default=64, ge=0)
-    proxy_upstream_websocket_connect_limit: int = Field(default=128, ge=0)
-    proxy_response_create_limit: int = Field(default=256, ge=0)
-    proxy_compact_response_create_limit: int = Field(default=64, ge=0)
+    proxy_upstream_websocket_connect_limit: int = Field(default=512, ge=0)
+    proxy_response_create_limit: int = Field(default=1024, ge=0)
+    proxy_compact_response_create_limit: int = Field(default=128, ge=0)
     proxy_admission_wait_timeout_seconds: float = Field(default=10.0, gt=0)
     proxy_account_response_create_limit: int = Field(default=4, ge=0)
     proxy_account_stream_limit: int = Field(default=8, ge=0)

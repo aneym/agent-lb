@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import Integer, and_, cast, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.utils.time import utcnow
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import (
     Account,
     QuotaPlannerDecision,
@@ -100,8 +100,8 @@ class QuotaPlannerRepository:
             mode=mode,
             action=action,
             account_id=account_id,
-            scheduled_at=scheduled_at,
-            executed_at=executed_at,
+            scheduled_at=to_utc_naive(scheduled_at) if scheduled_at is not None else None,
+            executed_at=to_utc_naive(executed_at) if executed_at is not None else None,
             score=score,
             reason=reason,
             forecast_snapshot_hash=forecast_snapshot_hash,

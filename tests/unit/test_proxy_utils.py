@@ -1546,6 +1546,7 @@ async def test_stream_http_bridge_or_retry_bypasses_bridge_for_large_payload(mon
             codex_idle_ttl_seconds=30.0,
             max_sessions=8,
             queue_limit=16,
+            response_create_concurrency=64,
             prompt_cache_idle_ttl_seconds=30.0,
             gateway_safe_mode=False,
         ),
@@ -2177,6 +2178,7 @@ def _make_proxy_settings(*, log_proxy_service_tier_trace: bool) -> SimpleNamespa
         proxy_upstream_websocket_connect_limit=64,
         proxy_response_create_limit=64,
         proxy_compact_response_create_limit=16,
+        http_responses_session_bridge_response_create_concurrency=64,
         proxy_admission_wait_timeout_seconds=10.0,
         max_sse_event_bytes=16 * 1024 * 1024,
         http_responses_session_bridge_instance_id="test-instance",
@@ -17379,6 +17381,66 @@ async def test_response_create_admission_session_gate_timeout_returns_stable_rea
 
 
 @pytest.mark.asyncio
+async def test_response_create_admission_allows_configured_session_gate_concurrency(monkeypatch):
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    settings.proxy_response_create_limit = 64
+    settings.proxy_admission_wait_timeout_seconds = 0.2
+    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
+    first_request = proxy_service._WebSocketRequestState(
+        request_id="ws_req_gate_concurrent_first",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+    )
+    second_request = proxy_service._WebSocketRequestState(
+        request_id="ws_req_gate_concurrent_second",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+    )
+    third_request = proxy_service._WebSocketRequestState(
+        request_id="ws_req_gate_concurrent_third",
+        model="gpt-5.1",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+    )
+    response_create_gate = asyncio.Semaphore(2)
+
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+
+    await service._acquire_request_state_response_create_admission(
+        first_request,
+        response_create_gate=response_create_gate,
+    )
+    await service._acquire_request_state_response_create_admission(
+        second_request,
+        response_create_gate=response_create_gate,
+    )
+    third_task = asyncio.create_task(
+        service._acquire_request_state_response_create_admission(
+            third_request,
+            response_create_gate=response_create_gate,
+        )
+    )
+    await asyncio.sleep(0.01)
+
+    assert third_task.done() is False
+    await proxy_service._release_websocket_response_create_gate(first_request, response_create_gate)
+    await asyncio.wait_for(third_task, timeout=0.1)
+
+    assert third_request.response_create_gate_acquired is True
+
+    await proxy_service._release_websocket_response_create_gate(second_request, response_create_gate)
+    await proxy_service._release_websocket_response_create_gate(third_request, response_create_gate)
+
+
+@pytest.mark.asyncio
 async def test_response_create_admission_waits_on_session_gate_before_shared_capacity(monkeypatch):
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     settings.proxy_response_create_limit = 2
@@ -18218,6 +18280,7 @@ async def test_stream_http_bridge_or_retry_rejects_input_image_file_id(monkeypat
             codex_idle_ttl_seconds=30.0,
             max_sessions=8,
             queue_limit=16,
+            response_create_concurrency=64,
             prompt_cache_idle_ttl_seconds=30.0,
             gateway_safe_mode=False,
         ),
@@ -18338,6 +18401,7 @@ async def test_stream_http_bridge_or_retry_rejects_input_image_sediment_url(monk
             codex_idle_ttl_seconds=30.0,
             max_sessions=8,
             queue_limit=16,
+            response_create_concurrency=64,
             prompt_cache_idle_ttl_seconds=30.0,
             gateway_safe_mode=False,
         ),
@@ -18383,6 +18447,7 @@ async def test_stream_http_bridge_or_retry_routes_input_file_file_id_without_rej
             codex_idle_ttl_seconds=30.0,
             max_sessions=8,
             queue_limit=16,
+            response_create_concurrency=64,
             prompt_cache_idle_ttl_seconds=30.0,
             gateway_safe_mode=False,
         ),
@@ -21202,6 +21267,7 @@ async def test_http_bridge_owner_forward_defers_image_inlining(monkeypatch):
             codex_idle_ttl_seconds=120.0,
             max_sessions=4,
             queue_limit=4,
+            response_create_concurrency=64,
             prompt_cache_idle_ttl_seconds=120.0,
             gateway_safe_mode=False,
         ),
