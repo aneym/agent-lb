@@ -118,6 +118,7 @@ export function AccountListItem({
         </div>
       </div>
       {isAnthropic ? (
+        // Claude subscriptions expose no 5h/Weekly % window; show real usage from request logs instead.
         <div className="mt-2 flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
           {hasRequestUsage ? (
             <>
