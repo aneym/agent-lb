@@ -9,4 +9,4 @@ Device Code OAuth can stay pending forever when the client misses or fails the c
 ## Impact
 - Affects backend OAuth device-flow state management.
 - No request or response schema changes are required.
-- Fixes https://github.com/Soju06/codex-lb/issues/110.
+- Fixes https://github.com/aneym/agent-lb/issues/110.

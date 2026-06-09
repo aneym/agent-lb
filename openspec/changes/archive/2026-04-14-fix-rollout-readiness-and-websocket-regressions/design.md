@@ -21,7 +21,7 @@ This change crosses deployment templates, startup behavior, readiness, websocket
 
 ### Use a hook-backed migration Job as the single writer
 
-The chart will stop auto-enabling `CODEX_LB_DATABASE_MIGRATE_ON_STARTUP` for fresh installs with ExternalSecrets. Instead, migrations stay on the dedicated Job path, and the hook timing moves away from `pre-install` so the Job starts only after chart-managed ConfigMaps, Secrets, and ExternalSecrets are created.
+The chart will stop auto-enabling `AGENT_LB_DATABASE_MIGRATE_ON_STARTUP` for fresh installs with ExternalSecrets. Instead, migrations stay on the dedicated Job path, and the hook timing moves away from `pre-install` so the Job starts only after chart-managed ConfigMaps, Secrets, and ExternalSecrets are created.
 
 Alternative considered: keep startup migrations enabled only for replica `0`.
 Rejected because Deployments do not provide a safe single-writer guarantee and concurrent pod starts can still race.

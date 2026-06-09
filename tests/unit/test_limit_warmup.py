@@ -243,7 +243,7 @@ async def test_fake_request_logs_repo_accepts_useragent_fields() -> None:
         latency_ms=3,
         status="success",
         error_code=None,
-        useragent="codex-lb-limit-warmup",
+        useragent="agent-lb-limit-warmup",
         useragent_group="internal",
     )
 
@@ -283,7 +283,7 @@ async def test_fake_request_logs_repo_accepts_useragent_fields() -> None:
             "upstream_proxy_endpoint_id": None,
             "upstream_proxy_fallback_used": None,
             "upstream_proxy_fail_closed_reason": None,
-            "useragent": "codex-lb-limit-warmup",
+            "useragent": "agent-lb-limit-warmup",
             "useragent_group": "internal",
         }
     ]

@@ -1,13 +1,13 @@
 ## Why
 
-codex-lb 대시보드와 프록시 엔드포인트가 기본적으로 무인증 상태로 노출된다. 현재 TOTP 인증만 존재하지만 환경변수(`CODEX_LB_DASHBOARD_SETUP_TOKEN`) 설정이 전제되어 있어 진입 장벽이 높고, password 계층이 없어 TOTP 단독으로는 완전한 인증 체계가 되지 않는다. 또한 프록시 API(`/v1/*`, `/backend-api/codex/*`)에 대한 접근 제어가 전혀 없어, 누구나 계정 풀을 통한 API 호출이 가능하다.
+agent-lb 대시보드와 프록시 엔드포인트가 기본적으로 무인증 상태로 노출된다. 현재 TOTP 인증만 존재하지만 환경변수(`AGENT_LB_DASHBOARD_SETUP_TOKEN`) 설정이 전제되어 있어 진입 장벽이 높고, password 계층이 없어 TOTP 단독으로는 완전한 인증 체계가 되지 않는다. 또한 프록시 API(`/v1/*`, `/backend-api/codex/*`)에 대한 접근 제어가 전혀 없어, 누구나 계정 풀을 통한 API 호출이 가능하다.
 
 ## What Changes
 
 ### 관리자 인증 (대시보드 세션)
 
 - **Password 인증 계층 추가**: 설정 페이지에서 password를 최초 설정하면 이후 모든 대시보드 API 접근 시 세션 인증 필요
-- **TOTP 설정 흐름 변경**: 기존 `X-Codex-LB-Setup-Token` 헤더 기반 → password 세션 기반으로 전환. 환경변수 의존성 제거
+- **TOTP 설정 흐름 변경**: 기존 `X-Agent-LB-Setup-Token` 헤더 기반 → password 세션 기반으로 전환. 환경변수 의존성 제거
 - **인증 미들웨어 통합**: 기존 TOTP 전용 미들웨어를 password + TOTP 통합 세션 미들웨어로 교체
 - **기본값 비로그인**: password 미설정 시 기존과 동일하게 무인증 동작 (하위 호환)
 - **세션 쿠키 확장**: 기존 `{exp, tv}` → `{exp, pw, tv}` (password 인증 + TOTP 검증 플래그)
@@ -64,7 +64,7 @@ _(기존 spec에 요구사항 수준 변경 없음)_
 - 신규: `GET /api/api-keys`, `POST /api/api-keys`, `PATCH /api/api-keys/{id}`, `DELETE /api/api-keys/{id}`, `POST /api/api-keys/{id}/regenerate`
 - 변경: `GET /api/dashboard-auth/session` → 응답에 `password_required` 필드 추가
 - 변경: `PUT /api/settings` → `api_key_auth_enabled` 필드 추가
-- **BREAKING**: TOTP 설정 엔드포인트에서 `X-Codex-LB-Setup-Token` 헤더 요구 제거 → 세션 인증으로 대체
+- **BREAKING**: TOTP 설정 엔드포인트에서 `X-Agent-LB-Setup-Token` 헤더 요구 제거 → 세션 인증으로 대체
 
 ### 의존성
 

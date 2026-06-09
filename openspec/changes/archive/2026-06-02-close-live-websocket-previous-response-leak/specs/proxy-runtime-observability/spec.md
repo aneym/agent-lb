@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Runtime continuity canary reports raw-error exposure and build parity
-Operators MUST have a local verifier that reports whether the running `codex-lb` runtime is built from the expected code and whether recent Codex client logs contain raw `previous_response_not_found` errors.
+Operators MUST have a local verifier that reports whether the running `agent-lb` runtime is built from the expected code and whether recent Codex client logs contain raw `previous_response_not_found` errors.
 
 #### Scenario: live runtime is checked after a continuity patch
 - **WHEN** an operator runs the verifier on the Mac host

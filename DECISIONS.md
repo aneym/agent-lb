@@ -1,6 +1,6 @@
 # Architectural Decisions
 
-This file records long-lived architecture decisions for codex-lb. New decisions
+This file records long-lived architecture decisions for agent-lb. New decisions
 are appended and superseded by later entries rather than edited in place.
 
 ## ADR-0001: ProxyService target-architecture cutover refactor

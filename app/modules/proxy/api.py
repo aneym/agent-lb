@@ -1345,7 +1345,7 @@ async def v1_images_variations(
         request,
         status_code=404,
         content=images_service_module.make_not_found_error(
-            "/v1/images/variations is not supported by codex-lb. Use /v1/images/edits with an explicit prompt instead."
+            "/v1/images/variations is not supported by agent-lb. Use /v1/images/edits with an explicit prompt instead."
         ),
     )
 
@@ -1844,7 +1844,7 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
                 {
                     "id": slug,
                     "created": created,
-                    "owned_by": "codex-lb",
+                    "owned_by": "agent-lb",
                     "metadata": _to_model_metadata(model),
                     "api_types": ["chat_completions"],
                     "capabilities": _v1_model_capabilities(model),

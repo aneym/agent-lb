@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb proxies OpenAI-compatible APIs to the ChatGPT backend. The backend rejects audio file types, so chat `input_audio` fails downstream. Meanwhile codex-lb locally rejects `input_file.file_id`, but the backend accepts file_id semantics (returns 404 when the id is unknown). We need to align codex-lb behavior with upstream support and errors.
+agent-lb proxies OpenAI-compatible APIs to the ChatGPT backend. The backend rejects audio file types, so chat `input_audio` fails downstream. Meanwhile agent-lb locally rejects `input_file.file_id`, but the backend accepts file_id semantics (returns 404 when the id is unknown). We need to align agent-lb behavior with upstream support and errors.
 
 ## Goals / Non-Goals
 

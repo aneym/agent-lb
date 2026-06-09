@@ -229,7 +229,7 @@ _SYNTHESIZED_TURN_STATE_PATTERN = re.compile(r"^(?:http_)?turn_[0-9a-f]{32}$")
 
 
 def _is_synthesized_turn_state(value: str) -> bool:
-    """True when ``value`` matches a turn-state synthesized by codex-lb itself.
+    """True when ``value`` matches a turn-state synthesized by agent-lb itself.
 
     Used by the file-pin resolver to distinguish a client-supplied
     continuation marker from a synthesizer-generated placeholder so

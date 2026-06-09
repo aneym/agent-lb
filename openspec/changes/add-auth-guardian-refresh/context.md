@@ -19,4 +19,4 @@ Safety constraints:
 
 ## Defaults
 
-The default interval is 6 hours and the default max refresh age is 12 hours. Operators can disable or tune the scheduler with `CODEX_LB_AUTH_GUARDIAN_*` settings.
+The default interval is 6 hours and the default max refresh age is 12 hours. Operators can disable or tune the scheduler with `AGENT_LB_AUTH_GUARDIAN_*` settings.

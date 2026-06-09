@@ -1,5 +1,5 @@
 ## Why
-`uvx codex-lb` currently fails during startup on Windows because `app.core.resilience.memory_monitor` imports the Unix-only standard-library `resource` module at import time. That crash prevents the application from starting before any memory thresholds are evaluated.
+`uvx agent-lb` currently fails during startup on Windows because `app.core.resilience.memory_monitor` imports the Unix-only standard-library `resource` module at import time. That crash prevents the application from starting before any memory thresholds are evaluated.
 
 ## What Changes
 - Make the resilience memory monitor load platform-specific RSS providers conditionally instead of importing `resource` unconditionally.

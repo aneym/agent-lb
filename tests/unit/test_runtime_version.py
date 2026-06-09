@@ -37,7 +37,7 @@ async def test_runtime_version_reports_update_available_for_newer_github_release
     assert status.latest_version == "1.20.0"
     assert status.update_available is True
     assert status.source == "github"
-    assert status.release_url == "https://github.com/Soju06/codex-lb/releases/latest"
+    assert status.release_url == "https://github.com/Soju06/agent-lb/releases/latest"
 
 
 @pytest.mark.asyncio

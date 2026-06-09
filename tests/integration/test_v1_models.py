@@ -102,7 +102,7 @@ async def test_v1_models_list(async_client):
     assert "gpt-5.3-codex" in ids
     for item in data:
         assert item["object"] == "model"
-        assert item["owned_by"] == "codex-lb"
+        assert item["owned_by"] == "agent-lb"
         assert "metadata" in item
         assert item["api_types"] == ["chat_completions"]
         assert item["capabilities"]["context_length"] == item["metadata"]["input_context_window"]

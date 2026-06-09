@@ -1,6 +1,6 @@
 ## Why
 
-Codex-lb currently diverges from OpenAI client expectations for multimodal inputs and unsupported features, leading to confusing upstream errors. We need to normalize inputs, explicitly reject unsupported fields/tools, and document support to make compatibility behavior predictable.
+Agent-lb currently diverges from OpenAI client expectations for multimodal inputs and unsupported features, leading to confusing upstream errors. We need to normalize inputs, explicitly reject unsupported fields/tools, and document support to make compatibility behavior predictable.
 
 ## What Changes
 

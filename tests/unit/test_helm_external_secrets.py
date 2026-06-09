@@ -10,7 +10,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_CHART_DIR = _REPO_ROOT / "deploy" / "helm" / "codex-lb"
+_CHART_DIR = _REPO_ROOT / "deploy" / "helm" / "agent-lb"
 _DEPENDENCY_BUILD_COMPLETE = False
 
 
@@ -37,7 +37,7 @@ def _helm_template(*args: str) -> str:
         pytest.skip("helm is required for chart rendering tests")
     _ensure_chart_dependencies()
     completed = subprocess.run(
-        ["helm", "template", "codex-lb", str(_CHART_DIR), *args],
+        ["helm", "template", "agent-lb", str(_CHART_DIR), *args],
         cwd=_REPO_ROOT,
         check=True,
         capture_output=True,
@@ -63,7 +63,7 @@ def test_external_secrets_install_uses_startup_migration_and_skips_pre_install_h
         "migration.enabled=true",
     )
 
-    assert 'CODEX_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
+    assert 'AGENT_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
     assert '"helm.sh/hook": "post-install,pre-upgrade"' in rendered
     assert '"helm.sh/hook": "pre-install,pre-upgrade"' not in rendered
 
@@ -79,7 +79,7 @@ def test_external_secrets_upgrade_keeps_startup_migration_disabled_and_runs_hook
         "migration.enabled=true",
     )
 
-    assert 'CODEX_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
+    assert 'AGENT_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
     assert '"helm.sh/hook": "post-install,pre-upgrade"' in rendered
 
 
@@ -98,7 +98,7 @@ def test_upgrade_renders_legacy_deployment_cleanup_hook_for_statefulset_migratio
     assert "STATEFULSET_MIN_REPLICAS" in rendered
     assert 'desired = int(spec.get("replicas") or int(os.environ.get("STATEFULSET_MIN_REPLICAS", "1")))' in rendered
     assert "desired = max(desired, min(legacy_ready, max_replicas))" not in rendered
-    assert 'codex-lb.soju.dev/traffic": "workload"' in rendered
+    assert 'agent-lb.soju.dev/traffic": "workload"' in rendered
     assert "if ready >= desired:" in rendered
 
 
@@ -111,7 +111,7 @@ def test_upgrade_renders_legacy_deployment_prepare_hook() -> None:
 
     assert "kind: Job" in rendered
     assert '"helm.sh/hook": pre-upgrade' in rendered
-    assert 'codex-lb.soju.dev/traffic": "legacy"' in rendered
+    assert 'agent-lb.soju.dev/traffic": "legacy"' in rendered
     assert "raise SystemExit(0)" in rendered
 
 
@@ -123,7 +123,7 @@ def test_public_service_can_render_legacy_selector_for_cutover() -> None:
         "migration.serviceSelectorMode=legacy",
     )
 
-    assert "codex-lb.soju.dev/traffic: legacy" in rendered
+    assert "agent-lb.soju.dev/traffic: legacy" in rendered
 
 
 def test_public_service_can_render_workload_selector_after_cutover() -> None:
@@ -134,7 +134,7 @@ def test_public_service_can_render_workload_selector_after_cutover() -> None:
         "migration.serviceSelectorMode=workload",
     )
 
-    assert "codex-lb.soju.dev/traffic: workload" in rendered
+    assert "agent-lb.soju.dev/traffic: workload" in rendered
 
 
 def test_public_service_auto_mode_renders_legacy_selector_on_upgrade_without_lookup() -> None:
@@ -146,7 +146,7 @@ def test_public_service_auto_mode_renders_legacy_selector_on_upgrade_without_loo
         "migration.serviceSelectorMode=auto",
     )
 
-    assert "codex-lb.soju.dev/traffic: legacy" in rendered
+    assert "agent-lb.soju.dev/traffic: legacy" in rendered
 
 
 def test_statefulset_translates_legacy_recreate_strategy_to_rolling_update() -> None:
@@ -171,7 +171,7 @@ def test_public_service_auto_mode_renders_workload_selector_on_install() -> None
         "migration.serviceSelectorMode=auto",
     )
 
-    assert "codex-lb.soju.dev/traffic: workload" in rendered
+    assert "agent-lb.soju.dev/traffic: workload" in rendered
 
 
 def test_legacy_cleanup_hook_includes_image_pull_secrets() -> None:
@@ -194,12 +194,12 @@ def test_chart_managed_secret_uses_post_install_hook_path() -> None:
         "--set",
         "externalSecrets.enabled=false",
         "--set",
-        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/codexlb",
+        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/agentlb",
         "--set",
         "migration.enabled=true",
     )
 
-    assert 'CODEX_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
+    assert 'AGENT_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
     assert '"helm.sh/hook": "post-install,pre-upgrade"' in rendered
     assert "serviceAccountName: default" in rendered
 
@@ -209,7 +209,7 @@ def test_direct_external_database_install_uses_post_install_hook_path() -> None:
         "--set",
         "postgresql.enabled=false",
         "--set",
-        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/codexlb",
+        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/agentlb",
         "--set",
         "migration.enabled=true",
     )
@@ -226,7 +226,7 @@ def test_bundled_mode_overlay_enables_startup_migration_and_skips_schema_gate() 
         "postgresql.auth.password=local-password",
     )
 
-    assert 'CODEX_LB_DATABASE_MIGRATE_ON_STARTUP: "true"' in rendered
+    assert 'AGENT_LB_DATABASE_MIGRATE_ON_STARTUP: "true"' in rendered
     assert "name: wait-for-schema-head" not in rendered
     assert "name: wait-for-database" in rendered
     assert '"helm.sh/hook": "pre-upgrade"' in rendered
@@ -237,14 +237,14 @@ def test_existing_secret_install_keeps_pre_install_hook_path() -> None:
         "--set",
         "postgresql.enabled=false",
         "--set",
-        "auth.existingSecret=codex-lb-secrets",
+        "auth.existingSecret=agent-lb-secrets",
         "--set",
-        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/codexlb",
+        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/agentlb",
         "--set",
         "migration.enabled=true",
     )
 
-    assert 'CODEX_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
+    assert 'AGENT_LB_DATABASE_MIGRATE_ON_STARTUP: "false"' in rendered
     assert '"helm.sh/hook": "pre-install,pre-upgrade"' in rendered
     assert "serviceAccountName: default" in rendered
 
@@ -256,7 +256,7 @@ def test_external_database_existing_secret_install_keeps_pre_install_hook_path()
         "--set",
         "externalDatabase.existingSecret=external-db-secret",
         "--set",
-        "auth.existingSecret=codex-lb-secrets",
+        "auth.existingSecret=agent-lb-secrets",
         "--set",
         "migration.enabled=true",
     )
@@ -271,7 +271,7 @@ def test_external_db_mode_overlay_renders_schema_gate_init_container() -> None:
         "--show-only",
         "templates/deployment.yaml",
         "--set",
-        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/codexlb",
+        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/agentlb",
     )
 
     assert "name: wait-for-schema-head" in rendered
@@ -313,8 +313,8 @@ def test_deployment_anti_affinity_targets_workload_lane_only() -> None:
         "affinity.podAntiAffinity=hard",
     )
 
-    assert "codex-lb.soju.dev/traffic: workload" in rendered
-    assert "codex-lb.soju.dev/traffic: legacy" not in rendered
+    assert "agent-lb.soju.dev/traffic: workload" in rendered
+    assert "agent-lb.soju.dev/traffic: legacy" not in rendered
 
 
 def test_deployment_sets_encryption_key_file_env_by_default() -> None:
@@ -323,8 +323,8 @@ def test_deployment_sets_encryption_key_file_env_by_default() -> None:
         "templates/deployment.yaml",
     )
 
-    assert "CODEX_LB_ENCRYPTION_KEY_FILE" in rendered
-    assert "/var/lib/codex-lb/encryption.key" in rendered
+    assert "AGENT_LB_ENCRYPTION_KEY_FILE" in rendered
+    assert "/var/lib/agent-lb/encryption.key" in rendered
 
 
 def test_ingress_renders_dedicated_responses_ingress_with_session_hash() -> None:
@@ -338,11 +338,11 @@ def test_ingress_renders_dedicated_responses_ingress_with_session_hash() -> None
         "--set",
         "ingress.nginx.enabled=true",
         "--set-string",
-        "ingress.hosts[0].host=codex-lb.localtest.me",
+        "ingress.hosts[0].host=agent-lb.localtest.me",
     )
 
     assert rendered.count("kind: Ingress") == 2
-    assert "name: codex-lb-responses" in rendered
+    assert "name: agent-lb-responses" in rendered
     assert "nginx.ingress.kubernetes.io/upstream-hash-by: $codex_responses_hash_key" in rendered
     assert "nginx.ingress.kubernetes.io/configuration-snippet:" in rendered
     assert 'set $codex_responses_hash_key "$http_authorization:$request_id";' in rendered
@@ -358,7 +358,7 @@ def test_ingress_renders_dedicated_responses_ingress_with_session_hash() -> None
 def test_bundled_kind_smoke_preserves_primary_ingress_paths() -> None:
     script = (_REPO_ROOT / "scripts" / "helm-kind-smoke.sh").read_text()
 
-    assert "--set-string 'ingress.hosts[0].host=codex-lb.localtest.me'" in script
+    assert "--set-string 'ingress.hosts[0].host=agent-lb.localtest.me'" in script
     assert "--set-string 'ingress.hosts[0].paths[0].path=/'" in script
     assert "--set-string 'ingress.hosts[0].paths[0].pathType=Prefix'" in script
     assert 'run_bundled_migration "${release}" "${namespace}"' not in script
@@ -384,13 +384,13 @@ def test_migration_job_image_does_not_duplicate_registry_prefix() -> None:
         "--set",
         "image.registry=ghcr.io",
         "--set",
-        "image.repository=soju06/codex-lb",
+        "image.repository=soju06/agent-lb",
         "--set",
         "image.tag=local-test",
     )
 
     assert "ghcr.io/ghcr.io/" not in rendered
-    assert "ghcr.io/soju06/codex-lb:local-test" in rendered
+    assert "ghcr.io/soju06/agent-lb:local-test" in rendered
 
 
 def test_external_secrets_mode_overlay_renders_schema_gate_init_container() -> None:
@@ -437,21 +437,21 @@ def test_deployment_rolls_when_chart_managed_secret_changes() -> None:
 def test_deployment_can_enable_reloader_for_external_secret_changes() -> None:
     rendered = _helm_template(
         "--set",
-        "auth.existingSecret=codex-lb-secrets",
+        "auth.existingSecret=agent-lb-secrets",
         "--set",
         "rollout.reloader.enabled=true",
     )
 
     assert 'reloader.stakater.com/auto: "true"' in rendered
-    assert 'configmap.reloader.stakater.com/reload: "codex-lb"' in rendered
-    assert 'secret.reloader.stakater.com/reload: "codex-lb-secrets"' in rendered
+    assert 'configmap.reloader.stakater.com/reload: "agent-lb"' in rendered
+    assert 'secret.reloader.stakater.com/reload: "agent-lb-secrets"' in rendered
 
 
 def test_manual_rollout_token_changes_deployment_template() -> None:
-    baseline = _helm_template("--set", "auth.existingSecret=codex-lb-secrets")
+    baseline = _helm_template("--set", "auth.existingSecret=agent-lb-secrets")
     updated = _helm_template(
         "--set",
-        "auth.existingSecret=codex-lb-secrets",
+        "auth.existingSecret=agent-lb-secrets",
         "--set",
         "rollout.manualToken=secret-rotation-2026-04-01",
     )
@@ -492,7 +492,7 @@ def test_external_database_existing_secret_is_used_for_database_url_env() -> Non
     )
 
     assert re.search(
-        r"name: CODEX_LB_DATABASE_URL\s+valueFrom:\s+secretKeyRef:\s+name: external-db-secret\s+key: database-url",
+        r"name: AGENT_LB_DATABASE_URL\s+valueFrom:\s+secretKeyRef:\s+name: external-db-secret\s+key: database-url",
         rendered,
         re.S,
     )
@@ -517,10 +517,10 @@ def test_external_database_url_is_rendered_into_chart_managed_secret_when_postgr
         "--set",
         "postgresql.enabled=false",
         "--set",
-        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/codexlb",
+        "externalDatabase.url=postgresql+asyncpg://user:pass@db.example.com:5432/agentlb",
     )
 
-    assert 'database-url: "postgresql+asyncpg://user:pass@db.example.com:5432/codexlb"' in rendered
+    assert 'database-url: "postgresql+asyncpg://user:pass@db.example.com:5432/agentlb"' in rendered
 
 
 def test_network_policy_does_not_allow_http_ingress_from_all_namespaces_by_default() -> None:

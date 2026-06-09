@@ -113,9 +113,9 @@ _BLOCKED_LITERAL_HOSTS = {"localhost", "localhost.localdomain"}
 _UPSTREAM_RESPONSE_CREATE_MAX_BYTES = get_settings().upstream_response_create_max_bytes
 _UPSTREAM_RESPONSE_CREATE_WARN_BYTES = int(_UPSTREAM_RESPONSE_CREATE_MAX_BYTES * 0.8)
 _RESPONSE_CREATE_TOOL_OUTPUT_OMISSION_NOTICE = (
-    "[codex-lb omitted historical tool output ({bytes} bytes) to fit upstream websocket budget]"
+    "[agent-lb omitted historical tool output ({bytes} bytes) to fit upstream websocket budget]"
 )
-_RESPONSE_CREATE_IMAGE_OMISSION_NOTICE = "[codex-lb omitted historical inline image to fit upstream websocket budget]"
+_RESPONSE_CREATE_IMAGE_OMISSION_NOTICE = "[agent-lb omitted historical inline image to fit upstream websocket budget]"
 _UPSTREAM_TRACE_HEADER_ALLOWLIST = frozenset(
     {
         "accept",
@@ -306,8 +306,8 @@ async def _service_circuit_breaker_context(
             await cb.release_half_open_probe()
 
 
-_HELD_HALF_OPEN_PROBE_FLAG = "_codex_lb_half_open_probe_held"
-_HELD_HALF_OPEN_PROBE_BREAKER = "_codex_lb_half_open_probe_breaker"
+_HELD_HALF_OPEN_PROBE_FLAG = "_agent_lb_half_open_probe_held"
+_HELD_HALF_OPEN_PROBE_BREAKER = "_agent_lb_half_open_probe_breaker"
 
 
 def _bind_half_open_probe(

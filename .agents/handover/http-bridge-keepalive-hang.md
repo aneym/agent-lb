@@ -6,7 +6,7 @@ curl -vv -skL http://127.0.0.1:2455/backend-api/codex/responses \
   -H "Content-Type: application/json" \
   -d '{"model": "bogus", "input": [{"role": "user", "content": "Which model are you?"}], "instructions": "You are a informative model. Answer short but technical.","stream": false, "store": false, "tools": []}'
 
-Sending an unsupported model name causes codex-lb to send `: keepalive` forever instead of returning a terminal error event. First invocation sometimes returns `response.failed` correctly, but subsequent invocations hang indefinitely.
+Sending an unsupported model name causes agent-lb to send `: keepalive` forever instead of returning a terminal error event. First invocation sometimes returns `response.failed` correctly, but subsequent invocations hang indefinitely.
 
 **Symptoms:**
 - Client sees `: keepalive` every ~10s with no `event: response.failed` or `data: [DONE]`

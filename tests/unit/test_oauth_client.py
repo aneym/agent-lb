@@ -48,7 +48,7 @@ def test_build_authorization_url_contains_required_params():
 
 
 def test_build_authorization_url_uses_configured_originator(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("CODEX_LB_OAUTH_ORIGINATOR", "codex_chatgpt_desktop")
+    monkeypatch.setenv("AGENT_LB_OAUTH_ORIGINATOR", "codex_chatgpt_desktop")
     get_settings.cache_clear()
 
     try:
@@ -69,7 +69,7 @@ def test_build_authorization_url_uses_configured_originator(monkeypatch: pytest.
 
 
 def test_build_authorization_url_allows_cli_override(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("CODEX_LB_OAUTH_ORIGINATOR", "codex_cli_rs")
+    monkeypatch.setenv("AGENT_LB_OAUTH_ORIGINATOR", "codex_cli_rs")
     get_settings.cache_clear()
 
     try:

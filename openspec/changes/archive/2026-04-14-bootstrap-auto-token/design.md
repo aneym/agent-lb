@@ -1,6 +1,6 @@
 ## Context
 
-Remote dashboard bootstrap currently requires `CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN` to be set as an env var before first run. Two call sites read it: the session endpoint (to report `bootstrap_token_configured`) and the `setup_password` endpoint (to validate the submitted token). The token is only needed once — during initial password setup from a remote client. Local (localhost) access bypasses bootstrap entirely.
+Remote dashboard bootstrap currently requires `AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN` to be set as an env var before first run. Two call sites read it: the session endpoint (to report `bootstrap_token_configured`) and the `setup_password` endpoint (to validate the submitted token). The token is only needed once — during initial password setup from a remote client. Local (localhost) access bypasses bootstrap entirely.
 
 ## Goals / Non-Goals
 

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-const ACCOUNT_BURNRATE_STORAGE_KEY = "codex-lb-account-burnrate-enabled";
+const ACCOUNT_BURNRATE_STORAGE_KEY = "agent-lb-account-burnrate-enabled";
 
 type DashboardPreferencesState = {
   accountBurnrateEnabled: boolean;

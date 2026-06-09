@@ -1,6 +1,6 @@
 # Git Workflow & Contribution
 
-> **Fork policy override (`aneym/codex-lb`)**: development on this fork happens **directly on `main`** — no feature branches unless explicitly requested. Rules 2 and 7 below (branch naming, "do not commit directly to main") apply only when contributing to upstream `Soju06/codex-lb`. See "Branch Policy (fork)" in `AGENTS.md`.
+> **Fork policy override (`aneym/agent-lb`)**: development on this fork happens **directly on `main`** — no feature branches unless explicitly requested. Rules 2 and 7 below (branch naming, "do not commit directly to main") apply only when contributing to upstream `aneym/agent-lb`. See "Branch Policy (fork)" in `AGENTS.md`.
 
 1. **Important**: Create branches, commits, or PRs **only upon explicit user request**. Implicit actions are not allowed.
 2. **Branch Naming**: Use prefixes like `feature/`, `fix/`, `chore/` (e.g., `feature/add-login`).

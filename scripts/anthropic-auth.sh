@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# anthropic-auth.sh — drive codex-lb's Anthropic (Claude) OAuth flow from the CLI.
+# anthropic-auth.sh — drive agent-lb's Anthropic (Claude) OAuth flow from the CLI.
 #
-# Talks to the locally running codex-lb server over its dashboard API. No browser
+# Talks to the locally running agent-lb server over its dashboard API. No browser
 # automation / Cloudflare bypass: you open the printed URL yourself, approve in
 # Claude, then paste the returned `code#state` back here.
 #

@@ -17,7 +17,9 @@ JsonObject = dict[str, object]
 ProgressLogger = Callable[[str], None]
 
 PROVIDER_RETAG_BACKUP_DIR = "provider-retag"
-_SUPPORTED_PROVIDERS = {"openai", "codex-lb"}
+# "codex-lb" is the legacy provider string written by older releases; accept it
+# for reading/retagging but always write "agent-lb" as the canonical provider tag.
+_SUPPORTED_PROVIDERS = {"openai", "codex-lb", "agent-lb"}
 _STATE_DB_PATTERN = "state_*.sqlite"
 
 

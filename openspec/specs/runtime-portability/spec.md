@@ -23,11 +23,11 @@ The resilience memory monitor MUST NOT prevent application startup on platforms 
 
 ### Requirement: Codex session provider retag CLI
 
-The `codex-lb` CLI SHALL provide a `codex-sessions retag` subcommand that rewrites local Codex session metadata from one supported model provider tag to another supported model provider tag. The command MUST support `openai` and `codex-lb` provider tags, MUST reject unknown providers, and MUST reject retag requests where `--from` and `--to` are the same provider.
+The `agent-lb` CLI SHALL provide a `codex-sessions retag` subcommand that rewrites local Codex session metadata from one supported model provider tag to another supported model provider tag. The command MUST support `openai` and `agent-lb` provider tags, MUST reject unknown providers, and MUST reject retag requests where `--from` and `--to` are the same provider.
 
 #### Scenario: Dry run previews JSONL and SQLite changes without writing
 
-- **WHEN** an operator runs `codex-lb codex-sessions retag --from openai --to codex-lb --dry-run`
+- **WHEN** an operator runs `agent-lb codex-sessions retag --from openai --to agent-lb --dry-run`
 - **THEN** the command scans JSONL session files under the selected Codex home
 - **AND** it scans `state_*.sqlite` databases that contain a `threads.model_provider` column
 - **AND** it reports the matching files and rows
@@ -35,9 +35,9 @@ The `codex-lb` CLI SHALL provide a `codex-sessions retag` subcommand that rewrit
 
 #### Scenario: Confirmed retag updates both storage formats with backup
 
-- **WHEN** an operator runs `codex-lb codex-sessions retag --from openai --to codex-lb --yes`
-- **THEN** matched JSONL session provider tags are rewritten to `codex-lb`
-- **AND** matched SQLite `threads.model_provider` rows are rewritten to `codex-lb`
+- **WHEN** an operator runs `agent-lb codex-sessions retag --from openai --to agent-lb --yes`
+- **THEN** matched JSONL session provider tags are rewritten to `agent-lb`
+- **AND** matched SQLite `threads.model_provider` rows are rewritten to `agent-lb`
 - **AND** the command creates a backup under the selected Codex home before rewriting matched metadata
 - **AND** the command reports a summary of scanned and updated JSONL files and SQLite rows
 

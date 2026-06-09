@@ -2,7 +2,7 @@
 
 ### Requirement: Accounts page surfaces local subscription renewal metadata
 
-The Accounts page SHALL expose a local per-account subscription ledger containing subscription status, next charge timestamp, active-until timestamp, charge amount/currency, last verified timestamp, and free-form notes. This ledger is operator-maintained and SHALL NOT imply that codex-lb has modified vendor-side billing.
+The Accounts page SHALL expose a local per-account subscription ledger containing subscription status, next charge timestamp, active-until timestamp, charge amount/currency, last verified timestamp, and free-form notes. This ledger is operator-maintained and SHALL NOT imply that agent-lb has modified vendor-side billing.
 
 #### Scenario: Account list shows next charge date
 
@@ -27,10 +27,10 @@ The Accounts page SHALL expose a local per-account subscription ledger containin
 
 ### Requirement: Local browser profile registry supports vendor account operations
 
-Project operator guidance SHALL define a gitignored local account profile registry for mapping codex-lb accounts to dedicated browser profiles and SHALL prohibit storing passwords, tokens, card numbers, or recovery codes in that registry.
+Project operator guidance SHALL define a gitignored local account profile registry for mapping agent-lb accounts to dedicated browser profiles and SHALL prohibit storing passwords, tokens, card numbers, or recovery codes in that registry.
 
 #### Scenario: Agent opens the matching vendor account profile
 
 - **WHEN** a future agent is asked to inspect or update a vendor-side subscription for an account with a local registry entry
 - **THEN** the agent uses the account's dedicated browser profile rather than a shared browser cookie jar
-- **AND** records completed vendor-side subscription actions in the local registry and codex-lb ledger
+- **AND** records completed vendor-side subscription actions in the local registry and agent-lb ledger

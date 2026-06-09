@@ -1,6 +1,6 @@
 ## Why
 
-ChatGPT upstream currently rejects `prompt_cache_retention` and `temperature` on Responses endpoints with `unknown_parameter`, which turns otherwise valid requests into hard failures. We need codex-lb to preserve compatibility by dropping these known unsupported fields before forwarding upstream.
+ChatGPT upstream currently rejects `prompt_cache_retention` and `temperature` on Responses endpoints with `unknown_parameter`, which turns otherwise valid requests into hard failures. We need agent-lb to preserve compatibility by dropping these known unsupported fields before forwarding upstream.
 
 ## What Changes
 

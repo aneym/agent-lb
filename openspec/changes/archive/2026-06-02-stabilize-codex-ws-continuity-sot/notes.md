@@ -52,9 +52,9 @@ Older work remains useful where it provides:
 
 Those requirements should be copied into this change as tests or helper behavior when implementation starts. Do not create another previous-response branch without updating this SoT first.
 
-## Implemented codex-lb contract
+## Implemented agent-lb contract
 
-This change now implements the codex-lb side of the contract for direct
+This change now implements the agent-lb side of the contract for direct
 `/backend-api/codex/responses` WebSockets:
 
 - stale upstream `previous_response_id` errors are still fail-closed and never

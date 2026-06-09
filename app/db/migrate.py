@@ -610,7 +610,7 @@ def run_upgrade(
 ) -> MigrationRunResult:
     config = _build_alembic_config(database_url)
     state_before = inspect_migration_state(database_url)
-    config.attributes["codex_lb_fresh_install"] = (
+    config.attributes["agent_lb_fresh_install"] = (
         state_before.current_revision is None
         and not state_before.has_alembic_version_table
         and not state_before.has_legacy_migrations_table
@@ -626,7 +626,7 @@ def run_upgrade(
     if bootstrap_legacy:
         bootstrap_result = _bootstrap_legacy_history(config)
         if bootstrap_result.stamped_revision is not None:
-            config.attributes["codex_lb_fresh_install"] = False
+            config.attributes["agent_lb_fresh_install"] = False
 
     _ensure_alembic_version_table_capacity(config)
     if auto_remap_legacy_revisions:
@@ -736,11 +736,11 @@ def wait_for_head(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Database migration utility for codex-lb.")
+    parser = argparse.ArgumentParser(description="Database migration utility for agent-lb.")
     parser.add_argument(
         "--db-url",
         default=None,
-        help="Database URL to migrate. Defaults to CODEX_LB_DATABASE_URL from settings.",
+        help="Database URL to migrate. Defaults to AGENT_LB_DATABASE_URL from settings.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

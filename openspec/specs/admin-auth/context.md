@@ -10,7 +10,7 @@ The bootstrap token secures the initial remote password setup flow. Without it, 
 
 **Auto-generation (default path):**
 
-On server startup, if no dashboard password is configured and no `CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN` env var is set, the system generates a cryptographically random token (`secrets.token_urlsafe(32)`, 256 bits entropy), stores an encrypted copy plus a SHA-256 hash in the shared `dashboard_settings` row, and prints the plaintext token to server logs. If a replica restarts while passwordless bootstrap is still pending, it decrypts and reuses the same shared token instead of rotating it.
+On server startup, if no dashboard password is configured and no `AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN` env var is set, the system generates a cryptographically random token (`secrets.token_urlsafe(32)`, 256 bits entropy), stores an encrypted copy plus a SHA-256 hash in the shared `dashboard_settings` row, and prints the plaintext token to server logs. If a replica restarts while passwordless bootstrap is still pending, it decrypts and reuses the same shared token instead of rotating it.
 
 **Priority chain:**
 
@@ -29,7 +29,7 @@ If the server restarts before a password is set, the restarting replica reuses t
 
 ### Manual Override
 
-Set `CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN=<value>` as an environment variable before starting. When set:
+Set `AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN=<value>` as an environment variable before starting. When set:
 - Auto-generation is skipped
 - No token is logged
 - The env var value is used for validation

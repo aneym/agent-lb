@@ -1,10 +1,10 @@
-# Goal Brief — codex-lb → add Anthropic Claude as a second provider
+# Goal Brief — agent-lb → add Anthropic Claude as a second provider
 
 - **Date:** 2026-05-28
 - **Owner / requester:** Alex Neyman
 - **Status:** CP7 in progress — Stage A code landed; fresh Anthropic login flow open for user; runtime verification waits on real Claude accounts
-- **Fork target:** https://github.com/Soju06/codex-lb (Python / FastAPI / SQLAlchemy)
-- **Repo:** `/Users/aneyman/repos/swap-lb` (already cloned; full history; remote `upstream` → Soju06/codex-lb)
+- **Fork target:** https://github.com/aneym/agent-lb (Python / FastAPI / SQLAlchemy)
+- **Repo:** `/Users/aneyman/repos/swap-lb` (already cloned; full history; remote `upstream` → aneym/agent-lb)
 - **Branch:** `feat/anthropic-provider` (already created)
 - **This brief:** `/Users/aneyman/repos/swap-lb/GOAL.md`
 
@@ -12,7 +12,7 @@
 
 ## 1. Objective & stopping condition
 
-**Objective.** Fork `Soju06/codex-lb` and add **Anthropic Claude** as a _second provider_ so the same single instance load-balances multiple Claude Pro/Max OAuth accounts for **Claude Code (CLI)** via `ANTHROPIC_BASE_URL`, with the existing dashboard unified to show **both** providers' accounts, usage, and cost — while the OpenAI/ChatGPT path stays byte-identical and upstream-mergeable.
+**Objective.** Fork `aneym/agent-lb` and add **Anthropic Claude** as a _second provider_ so the same single instance load-balances multiple Claude Pro/Max OAuth accounts for **Claude Code (CLI)** via `ANTHROPIC_BASE_URL`, with the existing dashboard unified to show **both** providers' accounts, usage, and cost — while the OpenAI/ChatGPT path stays byte-identical and upstream-mergeable.
 
 **Outcome metric:** number of providers the instance can pool + correct Claude request handling.
 
@@ -34,19 +34,19 @@
   - **Regression:** Codex CLI/desktop/IDE path through the same instance is unaffected.
 
   **Stage C — Upstream contribution (the long-term goal: don't maintain a fork):**
-  - The Anthropic provider is contributed back to `Soju06/codex-lb` as a pull request (or short series — see §5 CP8), structured for maintainer acceptance: additive, well-tested, matching repo conventions, OpenAI path byte-identical.
-  - **Deliverable = an open upstream PR with green CI and a clean additive diff.** **Merge is the maintainer's decision and is explicitly NOT a goal gate** — we cannot block on someone else's review. If upstream merges, codex-lb becomes natively dual-provider and there is nothing to maintain. If the maintainer declines or stalls, the same branch runs as a private fork (Stage A/B already make it fully usable).
+  - The Anthropic provider is contributed back to `aneym/agent-lb` as a pull request (or short series — see §5 CP8), structured for maintainer acceptance: additive, well-tested, matching repo conventions, OpenAI path byte-identical.
+  - **Deliverable = an open upstream PR with green CI and a clean additive diff.** **Merge is the maintainer's decision and is explicitly NOT a goal gate** — we cannot block on someone else's review. If upstream merges, agent-lb becomes natively dual-provider and there is nothing to maintain. If the maintainer declines or stalls, the same branch runs as a private fork (Stage A/B already make it fully usable).
 
 ---
 
 ## 2. Relevant conversation context (distilled — do not re-litigate)
 
-- **Why fork, not CLIProxyAPI, not greenfield.** User loves codex-lb's _integrated single-app dashboard_ + _per-key rate limits_ + operational simplicity. CLIProxyAPI is more actively maintained but its dashboard is a churny multi-service bolt-on and loses per-key limits. Both viable paths require building; the fork keeps the beloved dashboard **and** lets the OpenAI half keep merging from upstream. Decision is final.
+- **Why fork, not CLIProxyAPI, not greenfield.** User loves agent-lb's _integrated single-app dashboard_ + _per-key rate limits_ + operational simplicity. CLIProxyAPI is more actively maintained but its dashboard is a churny multi-service bolt-on and loses per-key limits. Both viable paths require building; the fork keeps the beloved dashboard **and** lets the OpenAI half keep merging from upstream. Decision is final.
 - **Scope is CLI / coding-agent only.** Claude **Desktop chat** is a sealed Electron web client (no base-URL knob, pinned TLS) → **not proxyable, out of scope, accepted.** Codex already covers all its surfaces (CLI + desktop + IDE) via its shared app-server reading `chatgpt_base_url`; Claude is covered only through **Claude Code CLI** via `ANTHROPIC_BASE_URL`. The embedded Claude-Code-in-Desktop agent is a possible _later_ follow-up, not this goal.
 - **ToS / impersonation reality (critical for correctness).** Since Jan 2026 Anthropic only accepts subscription OAuth tokens that look like they came from Claude Code (requires `anthropic-beta: oauth-2025-04-20` and the Claude-Code system-prompt prefix). **The real client here IS Claude Code**, so it already sends the right headers + system prompt. The proxy's job is to **forward them intact** and only swap the `Authorization` bearer to the selected account's token — never strip, rewrite, or run OpenAI payload transforms on Anthropic requests. Personal accounts, local only; **do not** add multi-user/reselling features.
-- **Architecture finding: codex-lb has NO provider abstraction.** OpenAI is baked into the data model, OAuth, refresh, proxy, SSE parser, pricing, balancer, and frontend — but module seams are clean. This is **fork-and-extend with a slim parallel Anthropic stack**, additive and upstream-mergeable.
+- **Architecture finding: agent-lb has NO provider abstraction.** OpenAI is baked into the data model, OAuth, refresh, proxy, SSE parser, pricing, balancer, and frontend — but module seams are clean. This is **fork-and-extend with a slim parallel Anthropic stack**, additive and upstream-mergeable.
 - **The 14,904-line `app/modules/proxy/service.py` is OpenAI-Responses-specific. DO NOT TOUCH IT.** The Anthropic Messages protocol is simpler (one-shot HTTP+SSE, no `previous_response_id`, no websocket, no file pinning) — build a **slim parallel `AnthropicProxyService` (~500–1500 LOC)**. Anthropic requests must **never** pass through the OpenAI rewriters.
-- **End goal is upstream contribution, not a permanent fork.** The whole reason every change stays additive and the OpenAI path stays byte-identical is so the Anthropic provider can be submitted back to `Soju06/codex-lb`. If merged, fork maintenance drops to zero. The earlier "keep it private for ToS reasons" worry is largely moot for _upstream_: codex-lb is **already** a public tool that pools ChatGPT subscription accounts — adding Claude as a second provider is symmetric and doesn't change the project's nature. A private fork is the fallback only if the maintainer passes.
+- **End goal is upstream contribution, not a permanent fork.** The whole reason every change stays additive and the OpenAI path stays byte-identical is so the Anthropic provider can be submitted back to `aneym/agent-lb`. If merged, fork maintenance drops to zero. The earlier "keep it private for ToS reasons" worry is largely moot for _upstream_: agent-lb is **already** a public tool that pools ChatGPT subscription accounts — adding Claude as a second provider is symmetric and doesn't change the project's nature. A private fork is the fallback only if the maintainer passes.
 
 ---
 
@@ -87,11 +87,11 @@
 
 **Must NOT change:** internals of `app/modules/proxy/service.py`; do not add Anthropic logic into `app/core/openai/*`. Keep the OpenAI request path byte-identical so upstream merges stay clean.
 
-**In scope (added):** an upstream pull request to `Soju06/codex-lb` is the final deliverable (see §1 Stage C, §5 CP8).
+**In scope (added):** an upstream pull request to `aneym/agent-lb` is the final deliverable (see §1 Stage C, §5 CP8).
 
 **Non-goals:** Claude Desktop chat capture; TLS-MITM; embedded-desktop-agent integration; multi-user / token reselling; any non-CLI surface. Getting the PR _merged_ is **not** a goal gate (maintainer's call).
 
-**Boundaries:** Local build is unrestricted. **Per-checkpoint `git commit` on `feat/anthropic-provider` is allowed** — a clean commit history is required for the PR. The account-visible steps — `gh repo fork` of Soju06/codex-lb, `git push`, and opening the PR — are the goal's final deliverable but **PAUSE for explicit user authorization** before running. No deploy/publish.
+**Boundaries:** Local build is unrestricted. **Per-checkpoint `git commit` on `feat/anthropic-provider` is allowed** — a clean commit history is required for the PR. The account-visible steps — `gh repo fork` of aneym/agent-lb, `git push`, and opening the PR — are the goal's final deliverable but **PAUSE for explicit user authorization** before running. No deploy/publish.
 
 ---
 
@@ -99,7 +99,7 @@
 
 > Critical path CP0→CP2 is serial (schema + dispatch seam is the keystone). After CP2, Lane A (backend protocol) and Lane B (frontend) run in parallel. See §6.
 
-- **CP0 — Baseline (clone/branch already done).** Repo is cloned at `/Users/aneyman/repos/swap-lb` on branch `feat/anthropic-provider` (remote `upstream` → Soju06/codex-lb), brief at repo root. Remaining: run codex-lb locally per its README; confirm existing dashboard loads + test suite green. **Accept:** app boots, baseline tests pass, dashboard renders the OpenAI accounts UI.
+- **CP0 — Baseline (clone/branch already done).** Repo is cloned at `/Users/aneyman/repos/swap-lb` on branch `feat/anthropic-provider` (remote `upstream` → aneym/agent-lb), brief at repo root. Remaining: run agent-lb locally per its README; confirm existing dashboard loads + test suite green. **Accept:** app boots, baseline tests pass, dashboard renders the OpenAI accounts UI.
 - **CP1 — Schema migration.** Add `provider` column (enum/string, default `'openai'`) to `accounts`, `request_logs`, `usage_history`; make `id_token_encrypted` + `chatgpt_account_id` nullable; add `cache_creation_tokens` + `cache_read_tokens` to `request_logs`. **Accept:** migration applies on fresh + existing DB; existing rows default `openai`; tests pass.
 - **CP2 — Provider dispatch seam.** Introduce a thin `Provider` protocol (model_registry + pricing + sse_parser + request_normalizer + oauth_config). Route refresh + account-creation through provider dispatch as **thin wrappers over the existing OpenAI impl** (keeps upstream mergeable). **Accept:** OpenAI path unchanged + green; dispatch unit-tested.
 - **CP3 — `core/anthropic/` (Lane A).** Messages request/response models; SSE event parser (6 event types + `tool_use`); pricing catalog with cache tiers; model registry syncing from Anthropic `GET /v1/models`. **Accept:** unit tests parse a recorded Anthropic SSE stream into correct events + usage; pricing computes cache-aware cost.
@@ -110,7 +110,7 @@
 - **CP8 — Upstream PR (final deliverable; PAUSES for user go before any GitHub action).**
   - **Issue-first (recommended, can run in parallel from CP1):** open an upstream issue/discussion proposing dual-provider support to gauge the maintainer's appetite. It doesn't block the build — if they're cold on it, you still have a working private fork; if warm, you tailor the PR to their preferences.
   - **Split for reviewability — not one mega-diff:** **PR 1** = the provider-abstraction seam (CP2) as a pure no-behavior-change refactor with all tests green (easy for a maintainer to accept). **PR 2** = the additive Anthropic provider (CP3–CP6) on top of PR 1.
-  - **Submit:** `gh repo fork` Soju06/codex-lb, push the branch(es), open the PR(s) with green CI and a clean diff that leaves the OpenAI path byte-identical; include a short rationale + test plan in the PR body.
+  - **Submit:** `gh repo fork` aneym/agent-lb, push the branch(es), open the PR(s) with green CI and a clean diff that leaves the OpenAI path byte-identical; include a short rationale + test plan in the PR body.
   - **Accept:** PR(s) open upstream, CI green, additive diff. **Merge is the maintainer's decision — NOT a goal gate.**
 
 ---

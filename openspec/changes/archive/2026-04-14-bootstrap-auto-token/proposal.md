@@ -1,6 +1,6 @@
 ## Why
 
-Remote dashboard setup requires manually configuring `CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN` as an environment variable before starting the server. This breaks the "one-command quick start" promise — users must know about the env var, generate a token themselves, and restart. Industry-standard tools (Grafana, GitLab, Portainer) auto-generate a bootstrap credential on first run and print it to logs.
+Remote dashboard setup requires manually configuring `AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN` as an environment variable before starting the server. This breaks the "one-command quick start" promise — users must know about the env var, generate a token themselves, and restart. Industry-standard tools (Grafana, GitLab, Portainer) auto-generate a bootstrap credential on first run and print it to logs.
 
 ## What Changes
 
@@ -8,7 +8,7 @@ Remote dashboard setup requires manually configuring `CODEX_LB_DASHBOARD_BOOTSTR
 - Print the token prominently to server logs (visible via `docker logs`)
 - Wire the auto-generated token into the existing bootstrap validation path so `POST /api/dashboard-auth/password/setup` accepts it
 - Persist only a hash of the auto-generated token in shared storage so any replica can validate it without storing the reusable secret at rest
-- Keep full backward compatibility with manual `CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN` env var
+- Keep full backward compatibility with manual `AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN` env var
 - Update frontend bootstrap screen messaging to reference server logs
 - Add remote setup documentation to README (concise) and OpenSpec context docs (SoT)
 

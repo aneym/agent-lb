@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 # one of these we transparently rewrite it to a value the resolved model
 # advertises in its ``supported_reasoning_levels`` so the request does not
 # hang. ``minimal`` is a valid value on the OpenAI Platform Responses API for
-# GPT-5 family models, but the ChatGPT backend codex-lb proxies to does not
-# accept it as of 2026-04. See https://github.com/Soju06/codex-lb/issues/493
+# GPT-5 family models, but the ChatGPT backend agent-lb proxies to does not
+# accept it as of 2026-04. See https://github.com/Soju06/agent-lb/issues/493
 _UNSUPPORTED_UPSTREAM_REASONING_EFFORTS: frozenset[str] = frozenset({"minimal"})
 _DEFAULT_REASONING_EFFORT_FALLBACK = "low"
 
@@ -72,13 +72,13 @@ _MODEL_ALIAS_TOKENS: frozenset[str] = frozenset(
     }
 )
 
-# Service tier values codex-lb accepts at the API-key surface but that the
+# Service tier values agent-lb accepts at the API-key surface but that the
 # ChatGPT/Codex backend rejects with ``Unsupported service_tier: <value>``.
 # Semantically both ``auto`` and ``default`` mean "let upstream pick" -- the
 # same thing as omitting the field entirely -- so when an enforced API-key
 # policy resolves to one of these, we forward the request without a
 # ``service_tier`` instead of sending a literal that fails upstream. See
-# https://github.com/Soju06/codex-lb/issues/546
+# https://github.com/Soju06/agent-lb/issues/546
 _UPSTREAM_OMIT_SERVICE_TIERS: frozenset[str] = frozenset({"auto", "default"})
 
 
@@ -259,7 +259,7 @@ def normalize_unsupported_reasoning_effort(
 ) -> None:
     """Rewrite ``reasoning.effort`` values the upstream backend rejects.
 
-    Some efforts that codex-lb accepts at the API surface (notably
+    Some efforts that agent-lb accepts at the API surface (notably
     ``"minimal"``) are silently dropped by the ChatGPT/Codex WebSocket
     backend, which causes the response stream to hang with no completion.
     For those values we map to a value the resolved model actually supports
@@ -409,7 +409,7 @@ def enforce_strict_function_tools_format(
     surfaced error is a generic ``upstream_rejected_input`` 502, which
     well-behaved retry loops misclassify as transient. Real OpenAI
     returns a deterministic ``400 invalid_function_parameters`` for the
-    same payload, so codex-lb pre-validates here.
+    same payload, so agent-lb pre-validates here.
 
     ``param_template`` controls how the rejected parameter is named in
     the error envelope: native ``/v1/responses`` callers see

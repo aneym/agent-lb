@@ -7,11 +7,11 @@ The system SHALL accept OpenAI-compatible Responses request controls that client
 #### Scenario: Truncation auto is accepted and stripped
 
 - **WHEN** a client sends a Responses request with `truncation: "auto"`
-- **THEN** codex-lb accepts the request
+- **THEN** agent-lb accepts the request
 - **AND** the upstream payload does not include `truncation`
 
 #### Scenario: Truncation disabled is accepted and stripped
 
 - **WHEN** a client sends a Responses request with `truncation: "disabled"`
-- **THEN** codex-lb accepts the request
+- **THEN** agent-lb accepts the request
 - **AND** the upstream payload does not include `truncation`

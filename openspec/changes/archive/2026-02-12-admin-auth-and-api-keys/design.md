@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb는 현재 TOTP 전용 대시보드 인증만 제공하며, 프록시 엔드포인트는 완전 무인증이다. TOTP 설정에 환경변수(`CODEX_LB_DASHBOARD_SETUP_TOKEN`)가 필요하고, password 계층이 없어 TOTP만으로는 불완전한 인증이다.
+agent-lb는 현재 TOTP 전용 대시보드 인증만 제공하며, 프록시 엔드포인트는 완전 무인증이다. TOTP 설정에 환경변수(`AGENT_LB_DASHBOARD_SETUP_TOKEN`)가 필요하고, password 계층이 없어 TOTP만으로는 불완전한 인증이다.
 
 현재 인증 관련 구조:
 - **미들웨어**: `app/core/middleware/dashboard_auth.py` — `/api/*` 경로에서 TOTP 세션 쿠키만 검증
@@ -131,9 +131,9 @@ WHERE id = :key_id
 
 ### D10. TOTP 설정 가드: 세션 기반
 
-`X-Codex-LB-Setup-Token` 헤더 검증 제거. TOTP 설정/해제 엔드포인트는 통합 인증 미들웨어를 통과한 세션(password 인증 완료)으로 보호된다. 별도 가드 불필요.
+`X-Agent-LB-Setup-Token` 헤더 검증 제거. TOTP 설정/해제 엔드포인트는 통합 인증 미들웨어를 통과한 세션(password 인증 완료)으로 보호된다. 별도 가드 불필요.
 
-`CODEX_LB_DASHBOARD_SETUP_TOKEN` 환경변수 및 관련 설정 필드 제거.
+`AGENT_LB_DASHBOARD_SETUP_TOKEN` 환경변수 및 관련 설정 필드 제거.
 
 ### D11. Settings 캐싱
 

@@ -1,7 +1,7 @@
 # Public LLM-Usage Page — Architecture & Runbook
 
 Internal runbook for the public portfolio usage page. It is backed by **anonymized
-aggregate** LLM-usage data sourced from the codex-lb home server (Studio), published
+aggregate** LLM-usage data sourced from the agent-lb home server (Studio), published
 to a public GitHub repo on a schedule, and read by the portfolio website from
 `raw.githubusercontent.com`.
 
@@ -34,17 +34,17 @@ person, account, or request.
 ```
                           STUDIO (home server, no inbound exposure)
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  request_logs (canonical) ── ~/.codex-lb/store.db                     │
+  │  request_logs (canonical) ── ~/.agent-lb/store.db                     │
   │            │                                                          │
   │            ▼                                                          │
-  │  codex-lb GET /api/usage/public?days=N   (localhost only)            │
+  │  agent-lb GET /api/usage/public?days=N   (localhost only)            │
   │   → anonymized aggregates (totals / daily / by_model / by_provider)  │
   │            │                                                          │
   │            ▼                                                          │
   │  launchd publisher (every 900s)                                      │
-  │   ~/.codex-lb/bin/llm-usage-publish.sh                               │
+  │   ~/.agent-lb/bin/llm-usage-publish.sh                               │
   │   • curl localhost endpoint for each window → usage-<N>.json         │
-  │   • git commit in working clone ~/.codex-lb/llm-usage-repo           │
+  │   • git commit in working clone ~/.agent-lb/llm-usage-repo           │
   │   • git push via repo-scoped SSH deploy key (OUTBOUND only)          │
   └───────────────────────────────────┬─────────────────────────────────┘
                                        │  (outbound SSH, deploy key)
@@ -59,7 +59,7 @@ person, account, or request.
 Key properties:
 
 - **No inbound exposure.** Studio initiates an *outbound* SSH push. Nothing
-  listens for the internet. The codex-lb HTTP server binds locally and the
+  listens for the internet. The agent-lb HTTP server binds locally and the
   `/api/usage/public` route is only reached by the publisher over `localhost`.
 - **No API key on the website.** The site reads a static JSON file from GitHub's
   raw CDN. The CDN serves `Access-Control-Allow-Origin: *` and caches ~5 minutes,
@@ -102,18 +102,18 @@ There are three distinct stores, with three distinct purposes. Keep them straigh
 
 | Tier | What | Where | Backup mechanism | Public? |
 |------|------|-------|------------------|---------|
-| **Canonical** | Raw `request_logs` (full, sensitive) | Studio `~/.codex-lb/store.db` | — (source of truth) | NO |
-| **Private DR** | Full DB snapshot (canonical mirror) | MacBook `~/.codex-lb/backups/` | rsync DR job (existing) | NO |
+| **Canonical** | Raw `request_logs` (full, sensitive) | Studio `~/.agent-lb/store.db` | — (source of truth) | NO |
+| **Private DR** | Full DB snapshot (canonical mirror) | MacBook `~/.agent-lb/backups/` | rsync DR job (existing) | NO |
 | **Public aggregates** | Anonymized `usage-*.json` | GitHub `aneym/llm-usage` | git history = backup | YES |
 
-- **Canonical** raw request logs live only on Studio in `~/.codex-lb/store.db`.
+- **Canonical** raw request logs live only on Studio in `~/.agent-lb/store.db`.
   This is the single writer and the source of truth. It contains everything —
   it never leaves Studio except as an encrypted DR snapshot.
 - **Private DR backup** of the *full* DB is handled by the existing disaster-recovery
-  rsync (separate from this feature): `~/.codex-lb/bin/backup-from-studio.sh`, driven
-  by launchd `com.aneyman.codex-lb-backup` on the MacBook (every 43200s / 12h). It
+  rsync (separate from this feature): `~/.agent-lb/bin/backup-from-studio.sh`, driven
+  by launchd `com.aneyman.agent-lb-backup` on the MacBook (every 43200s / 12h). It
   takes a consistent SQLite `.backup` snapshot on Studio, delta-pulls it plus
-  `encryption.key` to `~/.codex-lb/backups/store-latest.db`, integrity-checks it, and
+  `encryption.key` to `~/.agent-lb/backups/store-latest.db`, integrity-checks it, and
   retains the 14 most recent timestamped copies (APFS clones, near-zero cost). This is
   the private backup of canonical data and is unchanged by the usage page.
 - **Public aggregates** — the *anonymized* JSON files are versioned in the public
@@ -132,14 +132,14 @@ All paths below are on **Studio** unless stated otherwise.
 
 | Component | Repo source | Installed / runtime location |
 |-----------|-------------|------------------------------|
-| Publisher script | `scripts/llm-usage/llm-usage-publish.sh` | `~/.codex-lb/bin/llm-usage-publish.sh` |
+| Publisher script | `scripts/llm-usage/llm-usage-publish.sh` | `~/.agent-lb/bin/llm-usage-publish.sh` |
 | launchd plist | `scripts/llm-usage/com.aneyman.llm-usage-publish.plist` | `~/Library/LaunchAgents/com.aneyman.llm-usage-publish.plist` |
 | launchd label | — | `com.aneyman.llm-usage-publish` (interval 900s) |
 | Deploy key (SSH, repo-scoped) | — (generated on Studio) | `~/.ssh/llm-usage-deploy` (+ `.pub`) |
-| Working clone of public repo | — | `~/.codex-lb/llm-usage-repo` |
-| Publisher log | — | `~/.codex-lb/llm-usage-publish.log` |
+| Working clone of public repo | — | `~/.agent-lb/llm-usage-repo` |
+| Publisher log | — | `~/.agent-lb/llm-usage-publish.log` |
 | Public repo | — | GitHub `aneym/llm-usage` (deploy key has write) |
-| codex-lb HTTP service | `app/main.py` | localhost, default port `2455` (override via `PORT`) |
+| agent-lb HTTP service | `app/main.py` | localhost, default port `2455` (override via `PORT`) |
 | Public usage route/service | `app/modules/public_usage/{api,service,schemas}.py` | `GET /api/usage/public` |
 
 The launchd interval mirrors the convention of the existing backup agent
@@ -154,7 +154,7 @@ The launchd interval mirrors the convention of the existing backup agent
 3. Push uses the repo-scoped deploy key via a per-command
    `GIT_SSH_COMMAND="ssh -i ~/.ssh/llm-usage-deploy -o IdentitiesOnly=yes"`,
    so it never falls back to a personal key.
-4. Append a timestamped line to `~/.codex-lb/llm-usage-publish.log`.
+4. Append a timestamped line to `~/.agent-lb/llm-usage-publish.log`.
 5. Single-flight lock (atomic `mkdir`) so a manual run and the launchd fire can't
    race the same commit/push — same pattern as the backup script.
 
@@ -172,13 +172,13 @@ On Studio:
 
 ```bash
 # Direct run (writes JSON, commits, pushes; honors the single-flight lock):
-~/.codex-lb/bin/llm-usage-publish.sh
+~/.agent-lb/bin/llm-usage-publish.sh
 
 # Or kick the launchd job immediately:
 launchctl kickstart -k gui/$(id -u)/com.aneyman.llm-usage-publish
 
 # Watch the log:
-tail -f ~/.codex-lb/llm-usage-publish.log
+tail -f ~/.agent-lb/llm-usage-publish.log
 ```
 
 Verify the endpoint is healthy first (should return JSON, not 404):
@@ -187,7 +187,7 @@ Verify the endpoint is healthy first (should return JSON, not 404):
 curl -s 'http://127.0.0.1:2455/api/usage/public?days=7' | head -c 400
 ```
 
-A 404 means `public_usage_enabled` is off — set it true and restart codex-lb.
+A 404 means `public_usage_enabled` is off — set it true and restart agent-lb.
 
 ### Reload / reinstall the launchd agent
 
@@ -215,20 +215,20 @@ cat ~/.ssh/llm-usage-deploy.new.pub
 mv ~/.ssh/llm-usage-deploy.new     ~/.ssh/llm-usage-deploy
 mv ~/.ssh/llm-usage-deploy.new.pub ~/.ssh/llm-usage-deploy.pub
 GIT_SSH_COMMAND="ssh -i ~/.ssh/llm-usage-deploy -o IdentitiesOnly=yes" \
-  git -C ~/.codex-lb/llm-usage-repo push
+  git -C ~/.agent-lb/llm-usage-repo push
 
 # 4. Delete the OLD deploy key from the GitHub repo settings.
 ```
 
 ### Recover / re-create the working clone
 
-If `~/.codex-lb/llm-usage-repo` is lost or corrupted, re-clone with the deploy key:
+If `~/.agent-lb/llm-usage-repo` is lost or corrupted, re-clone with the deploy key:
 
 ```bash
 GIT_SSH_COMMAND="ssh -i ~/.ssh/llm-usage-deploy -o IdentitiesOnly=yes" \
-  git clone git@github.com:aneym/llm-usage.git ~/.codex-lb/llm-usage-repo
+  git clone git@github.com:aneym/llm-usage.git ~/.agent-lb/llm-usage-repo
 # Then re-run the publisher; it will regenerate and commit current usage-*.json.
-~/.codex-lb/bin/llm-usage-publish.sh
+~/.agent-lb/bin/llm-usage-publish.sh
 ```
 
 The published time series is preserved in the repo's git history regardless — a
@@ -257,9 +257,9 @@ windows. The response shape matches `PublicUsageResponse` (§2).
 
 ### Troubleshooting
 
-- **Page is stale (> ~20 min):** check `~/.codex-lb/llm-usage-publish.log` for push
-  errors; confirm the launchd job's `last exit` is 0; confirm codex-lb is up on `:2455`.
-- **404 from the endpoint:** `public_usage_enabled` is false — re-enable and restart codex-lb.
+- **Page is stale (> ~20 min):** check `~/.agent-lb/llm-usage-publish.log` for push
+  errors; confirm the launchd job's `last exit` is 0; confirm agent-lb is up on `:2455`.
+- **404 from the endpoint:** `public_usage_enabled` is false — re-enable and restart agent-lb.
 - **Push rejected / auth fail:** deploy key missing write access or removed from the
   repo — re-add or rotate (§ Rotate the deploy key).
 - **Nothing committing:** likely no data change since last run (commit is skipped on

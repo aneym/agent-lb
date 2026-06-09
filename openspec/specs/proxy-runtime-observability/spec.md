@@ -30,7 +30,7 @@ When the proxy resolves or fails closed a continuity-sensitive follow-up request
 The proxy MUST provide an opt-in durable archive of Codex-to-upstream conversation traffic. When enabled, the archive MUST write gzip-compressed newline-delimited JSON records for upstream request payloads, streamed Responses events, compact response payloads, and websocket text or binary frames without performing gzip file I/O in the request event loop during normal operation. The archive writer queue MUST be bounded and MUST apply synchronous write backpressure instead of growing without limit when the background writer is saturated. Archive records MUST include request id, timestamp, direction, traffic kind, transport, account id when known, upstream target metadata, redacted headers, and the full payload or frame body. Credential-bearing headers such as authorization, cookies, proxy authorization, token headers, and API key headers MUST be redacted before persistence. JSON records MUST preserve non-ASCII payload text as UTF-8 rather than Unicode escape sequences. When disabled, no archive file MUST be created by the archive writer.
 
 #### Scenario: operator enables archive for audit
-- **WHEN** `CODEX_LB_CONVERSATION_ARCHIVE_ENABLED=true`
+- **WHEN** `AGENT_LB_CONVERSATION_ARCHIVE_ENABLED=true`
 - **AND** a Codex Responses request is proxied upstream
 - **THEN** the archive records both the outbound upstream payload and inbound upstream events or response body as gzip JSONL
 - **AND** credential-bearing headers are stored as redacted values
@@ -97,7 +97,7 @@ When an HTTP bridge startup wait times out locally, the service MUST log the req
 
 
 ### Requirement: Runtime continuity canary reports raw-error exposure and build parity
-Operators MUST have a local verifier that reports whether the running `codex-lb` runtime is built from the expected code and whether recent Codex client logs contain raw `previous_response_not_found` errors.
+Operators MUST have a local verifier that reports whether the running `agent-lb` runtime is built from the expected code and whether recent Codex client logs contain raw `previous_response_not_found` errors.
 
 #### Scenario: live runtime is checked after a continuity patch
 - **WHEN** an operator runs the verifier on the Mac host

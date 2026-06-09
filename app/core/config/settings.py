@@ -20,7 +20,7 @@ from app.core.utils.proxy_env import outbound_proxy_env_configured
 BASE_DIR = Path(__file__).resolve().parents[3]
 ENV_FILES = (BASE_DIR / ".env", BASE_DIR / ".env.local")
 
-DOCKER_DATA_DIR = Path("/var/lib/codex-lb")
+DOCKER_DATA_DIR = Path("/var/lib/agent-lb")
 DOCKER_CALLBACK_HOST = "0.0.0.0"
 
 
@@ -29,10 +29,10 @@ def _in_container() -> bool:
 
 
 def _default_home_dir() -> Path:
-    env_dir = os.getenv("CODEX_LB_DATA_DIR")
+    env_dir = os.getenv("AGENT_LB_DATA_DIR")
     if env_dir and env_dir.strip():
         return Path(env_dir.strip())
-    home_dir = Path.home() / ".codex-lb"
+    home_dir = Path.home() / ".agent-lb"
     if home_dir.exists():
         return home_dir
     if _in_container():
@@ -48,7 +48,7 @@ def _default_oauth_callback_host() -> str:
 
 def _default_http_bridge_instance_id() -> str:
     hostname = socket.gethostname().strip()
-    return hostname or "codex-lb"
+    return hostname or "agent-lb"
 
 
 def _default_upstream_websocket_trust_env() -> bool:
@@ -134,7 +134,7 @@ def _normalize_cidr_list(value: StringListInput, *, field_name: str, invalid_lab
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="CODEX_LB_",
+        env_prefix="AGENT_LB_",
         env_file=ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore",
@@ -250,7 +250,7 @@ class Settings(BaseSettings):
     images_max_partial_images: int = Field(default=3, ge=0, le=3)
     # NOTE: there is intentionally no ``images_max_n`` setting. The
     # upstream ``image_generation`` tool path accepts only a single
-    # image per call and codex-lb does not yet implement client-side
+    # image per call and agent-lb does not yet implement client-side
     # fan-out, so ``n > 1`` is hard-rejected at the API boundary. The
     # cap is lifted in the same change that introduces fan-out.
     model_registry_enabled: bool = True

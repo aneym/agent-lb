@@ -1,6 +1,6 @@
 ## Why
 
-codex-lb currently treats imported ChatGPT credentials as if email and plan were enough to identify an account. That is unsafe for modern ChatGPT Business/Enterprise workspaces: one login can belong to multiple workspaces, and seat type/plan are mutable attributes of a workspace membership. A free/personal usage-limit event must not overwrite or disable a same-email Business workspace credential.
+agent-lb currently treats imported ChatGPT credentials as if email and plan were enough to identify an account. That is unsafe for modern ChatGPT Business/Enterprise workspaces: one login can belong to multiple workspaces, and seat type/plan are mutable attributes of a workspace membership. A free/personal usage-limit event must not overwrite or disable a same-email Business workspace credential.
 
 ## What Changes
 

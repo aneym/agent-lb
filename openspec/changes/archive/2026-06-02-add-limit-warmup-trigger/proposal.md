@@ -1,7 +1,7 @@
 # Proposal: add-limit-warmup-trigger
 
 ## Why
-Operators who rotate several Codex accounts can lose usable time when a refreshed upstream limit window does not effectively start until the next real request. codex-lb already tracks reset timing from usage refreshes, but it does not offer a safe way to trigger a newly available window without waiting for user traffic.
+Operators who rotate several Codex accounts can lose usable time when a refreshed upstream limit window does not effectively start until the next real request. agent-lb already tracks reset timing from usage refreshes, but it does not offer a safe way to trigger a newly available window without waiting for user traffic.
 
 ## What Changes
 - Add an opt-in, reset-confirmed limit warm-up mechanism for primary (5h) and secondary (weekly) windows.

@@ -84,7 +84,7 @@ class WorkAdmissionController:
             await asyncio.wait_for(gate.semaphore.acquire(), timeout=gate.wait_timeout_seconds)
         except asyncio.TimeoutError:
             available = gate.semaphore._value  # noqa: SLF001
-            message = f"codex-lb is temporarily overloaded during {stage}"
+            message = f"agent-lb is temporarily overloaded during {stage}"
             logger.warning(
                 "proxy_admission_rejected request_id=%s stage=%s status=429 available=%s "
                 "wait_timeout_seconds=%.1f message=%s",

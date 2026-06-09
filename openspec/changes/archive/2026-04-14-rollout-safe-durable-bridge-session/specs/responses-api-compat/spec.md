@@ -91,5 +91,5 @@ When encrypted account tokens are restored into a fresh deployment, the applicat
 
 #### Scenario: serving pod starts with restored encrypted accounts
 - **WHEN** the deployment mounts the secret-backed encryption key
-- **THEN** the application container exports `CODEX_LB_ENCRYPTION_KEY_FILE`
+- **THEN** the application container exports `AGENT_LB_ENCRYPTION_KEY_FILE`
 - **AND** token decryption does not fail due to a generated fallback path on the read-only root filesystem

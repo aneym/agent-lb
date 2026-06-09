@@ -2,14 +2,14 @@
 
 ### Requirement: Proactive active account credential refresh
 
-Codex-LB SHALL periodically refresh active account credentials in the background when an active account's last refresh is older than a configured maximum age.
+Agent-LB SHALL periodically refresh active account credentials in the background when an active account's last refresh is older than a configured maximum age.
 
 #### Scenario: Idle active account becomes stale
 
 - **GIVEN** an account has status `active`
 - **AND** its `last_refresh` is older than the configured Auth Guardian max age
 - **WHEN** Auth Guardian runs on the elected leader
-- **THEN** Codex-LB force-refreshes that account without requiring request traffic to select it first
+- **THEN** Agent-LB force-refreshes that account without requiring request traffic to select it first
 
 ### Requirement: Auth Guardian bounded and safe execution
 

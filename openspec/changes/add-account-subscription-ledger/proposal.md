@@ -1,6 +1,6 @@
 # Add account subscription ledger
 
-Operators need a lightweight way to see each imported account's next vendor charge date from the codex-lb dashboard. The upstream account APIs available to codex-lb expose plan, auth, and usage metadata, but not a reliable billing renewal contract. The dashboard should therefore store a local operator-maintained subscription ledger per account.
+Operators need a lightweight way to see each imported account's next vendor charge date from the agent-lb dashboard. The upstream account APIs available to agent-lb expose plan, auth, and usage metadata, but not a reliable billing renewal contract. The dashboard should therefore store a local operator-maintained subscription ledger per account.
 
 ## Scope
 

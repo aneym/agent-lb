@@ -63,7 +63,7 @@ def _default_registry_path() -> Path:
 
 
 def _registry_path() -> Path:
-    configured = os.environ.get("CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", "").strip()
+    configured = os.environ.get("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
     return _default_registry_path()

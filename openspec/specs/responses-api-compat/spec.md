@@ -957,16 +957,16 @@ When serving or consuming the Codex-native `/backend-api/codex/responses` WebSoc
 - **AND** the client-side recovery path retries once using full conversation history without `previous_response_id` before surfacing a turn-ending error
 - **AND** the downstream/user-visible error path does not expose raw `previous_response_not_found` or the missing upstream response id
 
-#### Scenario: codex-lb sanitizes stale-anchor errors for client classification
+#### Scenario: agent-lb sanitizes stale-anchor errors for client classification
 - **WHEN** upstream emits a direct WebSocket stale-anchor error
-- **THEN** codex-lb MUST NOT forward raw `previous_response_not_found`
-- **AND** codex-lb MUST NOT expose the missing upstream response id downstream
-- **AND** codex-lb MUST preserve a stable sanitized classifier that lets a compatible Codex client distinguish stale-anchor continuity loss from quota, policy, auth, and generic invalid-request failures
+- **THEN** agent-lb MUST NOT forward raw `previous_response_not_found`
+- **AND** agent-lb MUST NOT expose the missing upstream response id downstream
+- **AND** agent-lb MUST preserve a stable sanitized classifier that lets a compatible Codex client distinguish stale-anchor continuity loss from quota, policy, auth, and generic invalid-request failures
 
 #### Scenario: Non-stale-anchor failures do not trigger full-context retry
 - **WHEN** the upstream failure is quota, policy, auth, context-window, or another non-continuity error
 - **THEN** the client MUST NOT convert it into a stale-anchor full-context retry
-- **AND** codex-lb MUST preserve the original error class as much as safely possible
+- **AND** agent-lb MUST preserve the original error class as much as safely possible
 
 ### Requirement: Codex WebSocket continuity source of truth is centralized
 The behavior for Codex-native WebSocket previous-response continuity MUST be specified in this OpenSpec change rather than route-local or branch-local ad hoc patches. Future changes to this behavior MUST update the OpenSpec requirements before modifying code.

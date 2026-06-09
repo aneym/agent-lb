@@ -1,6 +1,6 @@
 ## Why
 
-Issue #883 reports a new upstream monthly usage window leaking into free-account quota state. codex-lb already hides zero-capacity free-plan primary rows from the UI, but one recovery path still treated any persisted primary window as a real 5h limiter when the account was already marked `rate_limited`.
+Issue #883 reports a new upstream monthly usage window leaking into free-account quota state. agent-lb already hides zero-capacity free-plan primary rows from the UI, but one recovery path still treated any persisted primary window as a real 5h limiter when the account was already marked `rate_limited`.
 
 That let a free account keep a fake primary reset deadline derived from the new monthly snapshot. The dashboard/account list then surfaced the account as blocked and could render `Reset now` even though the normalized free-account quota model is monthly-only.
 

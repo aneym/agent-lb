@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb's quota pipeline is built around a fixed two-window model: short-window `primary` quota and long-window `secondary` quota. That assumption is encoded in usage refresh, proxy rate-limit payloads, account/dashboard mappers, trend generation, donut totals, and API-key assigned-account UI.
+agent-lb's quota pipeline is built around a fixed two-window model: short-window `primary` quota and long-window `secondary` quota. That assumption is encoded in usage refresh, proxy rate-limit payloads, account/dashboard mappers, trend generation, donut totals, and API-key assigned-account UI.
 
 Free accounts no longer match that shape. Upstream now reports a single 30-day limit in `primary_window` with `limit_window_seconds == 2592000` and no `secondary_window`. The current code path tries to repair non-5h/non-7d payloads by remapping certain `primary` rows into `secondary`, which makes free accounts appear weekly-only and pollutes stored historical semantics.
 

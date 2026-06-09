@@ -31,7 +31,7 @@ from app.modules.proxy.http_bridge_forwarding import (
 
 @pytest.fixture(autouse=True)
 def _temp_bridge_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
-    monkeypatch.setenv("CODEX_LB_ENCRYPTION_KEY_FILE", str(tmp_path / "bridge.key"))
+    monkeypatch.setenv("AGENT_LB_ENCRYPTION_KEY_FILE", str(tmp_path / "bridge.key"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -310,8 +310,8 @@ async def test_owner_forward_uses_direct_session_without_env_proxy(monkeypatch: 
 
     monkeypatch.setattr("app.modules.proxy.http_bridge_forwarding.aiohttp.ClientSession", FakeSession)
     monkeypatch.setattr("app.modules.proxy.http_bridge_forwarding.time.monotonic", lambda: 10.0)
-    monkeypatch.setenv("CODEX_LB_UPSTREAM_CONNECT_TIMEOUT_SECONDS", "7")
-    monkeypatch.setenv("CODEX_LB_STREAM_IDLE_TIMEOUT_SECONDS", "11")
+    monkeypatch.setenv("AGENT_LB_UPSTREAM_CONNECT_TIMEOUT_SECONDS", "7")
+    monkeypatch.setenv("AGENT_LB_STREAM_IDLE_TIMEOUT_SECONDS", "11")
     get_settings.cache_clear()
 
     client = HTTPBridgeOwnerClient()

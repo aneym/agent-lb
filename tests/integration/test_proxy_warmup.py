@@ -128,7 +128,7 @@ def _install_successful_warmup_stub(monkeypatch: pytest.MonkeyPatch, captured_mo
 
 
 def _set_warmup_model_env(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv("CODEX_LB_WARMUP_MODEL", value)
+    monkeypatch.setenv("AGENT_LB_WARMUP_MODEL", value)
     get_settings.cache_clear()
 
 

@@ -40,7 +40,7 @@ def _indexes(connection: Connection, table_name: str) -> set[str]:
 
 
 def _prompt_cache_ttl_default() -> int:
-    raw = os.getenv("CODEX_LB_OPENAI_CACHE_AFFINITY_MAX_AGE_SECONDS", "300").strip()
+    raw = os.getenv("AGENT_LB_OPENAI_CACHE_AFFINITY_MAX_AGE_SECONDS", "300").strip()
     try:
         value = int(raw)
     except ValueError:

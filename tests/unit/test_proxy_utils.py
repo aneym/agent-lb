@@ -4413,7 +4413,7 @@ async def test_open_upstream_websocket_holds_half_open_probe_until_lifecycle_fin
     )
 
     assert cb.release_calls == 0
-    assert getattr(websocket, "_codex_lb_half_open_probe_held", False) is True
+    assert getattr(websocket, "_agent_lb_half_open_probe_held", False) is True
 
 
 @pytest.mark.asyncio
@@ -6524,11 +6524,11 @@ async def test_stream_responses_trims_overlapping_parallel_http_tool_call_replay
         "tool_uses": [
             {
                 "recipient_name": "functions.exec_command",
-                "parameters": {"cmd": "gh pr view --repo Soju06/codex-lb"},
+                "parameters": {"cmd": "gh pr view --repo Soju06/agent-lb"},
             },
             {
                 "recipient_name": "functions.exec_command",
-                "parameters": {"cmd": "gh pr checks --repo Soju06/codex-lb"},
+                "parameters": {"cmd": "gh pr checks --repo Soju06/agent-lb"},
             },
         ]
     }
@@ -6536,11 +6536,11 @@ async def test_stream_responses_trims_overlapping_parallel_http_tool_call_replay
         "tool_uses": [
             {
                 "recipient_name": "functions.exec_command",
-                "parameters": {"cmd": "gh pr view --repo Soju06/codex-lb"},
+                "parameters": {"cmd": "gh pr view --repo Soju06/agent-lb"},
             },
             {
                 "recipient_name": "github.read_file",
-                "parameters": {"repo": "Soju06/codex-lb", "path": "README.md"},
+                "parameters": {"repo": "Soju06/agent-lb", "path": "README.md"},
             },
         ]
     }
@@ -6581,7 +6581,7 @@ async def test_stream_responses_trims_overlapping_parallel_http_tool_call_replay
     assert json.loads(replay_item_arguments)["tool_uses"] == [
         {
             "recipient_name": "github.read_file",
-            "parameters": {"repo": "Soju06/codex-lb", "path": "README.md"},
+            "parameters": {"repo": "Soju06/agent-lb", "path": "README.md"},
         }
     ]
 
@@ -6671,7 +6671,7 @@ async def test_stream_responses_retries_security_work_warning_on_authorized_acco
     assert len(chunks) == 2
     warning = json.loads(chunks[0].split("data: ", 1)[1])
     event = json.loads(chunks[1].split("data: ", 1)[1])
-    assert warning["type"] == "codex_lb.warning"
+    assert warning["type"] == "agent_lb.warning"
     assert warning["warning"]["code"] == "security_work_authorization_required"
     assert warning["warning"]["action"] == "retry_security_work_authorized"
     assert event["type"] == "response.completed"
@@ -6758,10 +6758,10 @@ async def test_stream_responses_treats_missing_security_work_pool_as_optional(mo
     retry_warning = json.loads(chunks[0].split("data: ", 1)[1])
     missing_pool_warning = json.loads(chunks[1].split("data: ", 1)[1])
     event = json.loads(chunks[2].split("data: ", 1)[1])
-    assert retry_warning["type"] == "codex_lb.warning"
+    assert retry_warning["type"] == "agent_lb.warning"
     assert retry_warning["warning"]["code"] == "security_work_authorization_required"
     assert retry_warning["warning"]["action"] == "retry_security_work_authorized"
-    assert missing_pool_warning["type"] == "codex_lb.warning"
+    assert missing_pool_warning["type"] == "agent_lb.warning"
     assert missing_pool_warning["warning"]["code"] == "no_security_work_authorized_accounts"
     assert missing_pool_warning["warning"]["action"] == "continue_normal_selection"
     assert event["type"] == "response.completed"
@@ -7136,7 +7136,7 @@ async def test_http_bridge_retries_security_work_warning_on_authorized_account(m
     warning_block = await request_state.event_queue.get()
     assert warning_block is not None
     warning = json.loads(warning_block.split("data: ", 1)[1])
-    assert warning["type"] == "codex_lb.warning"
+    assert warning["type"] == "agent_lb.warning"
     assert warning["warning"]["code"] == "security_work_authorization_required"
     assert warning["warning"]["action"] == "retry_security_work_authorized"
     assert request_state.event_queue.empty()
@@ -7644,7 +7644,7 @@ async def test_http_bridge_does_not_replay_security_work_warning_after_response_
     warning_block = await request_state.event_queue.get()
     assert warning_block is not None
     warning = json.loads(warning_block.split("data: ", 1)[1])
-    assert warning["type"] == "codex_lb.warning"
+    assert warning["type"] == "agent_lb.warning"
     assert warning["warning"]["code"] == "security_work_authorization_required"
     assert warning["warning"]["action"] == "forward_original_security_work_error"
     forwarded = await request_state.event_queue.get()
@@ -17873,7 +17873,7 @@ async def test_compact_responses_propagates_selection_error_code(monkeypatch):
 
 
 def test_settings_parses_image_inline_allowlist_from_csv(monkeypatch):
-    monkeypatch.setenv("CODEX_LB_IMAGE_INLINE_ALLOWED_HOSTS", "a.example, b.example ,,C.Example")
+    monkeypatch.setenv("AGENT_LB_IMAGE_INLINE_ALLOWED_HOSTS", "a.example, b.example ,,C.Example")
     from app.core.config.settings import Settings
 
     settings = Settings()

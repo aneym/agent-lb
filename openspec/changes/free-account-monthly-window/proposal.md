@@ -1,8 +1,8 @@
 ## Why
 
-codex-lb currently assumes account quota always fits a 5h `primary` window plus a 7d `secondary` window. Free accounts no longer follow that shape: upstream now returns a single 30d limit in `primary_window`, so the current remap logic misclassifies free-account monthly quota as weekly and causes incorrect bars, trends, donut totals, API-key assigned-account badges, and stored usage semantics.
+agent-lb currently assumes account quota always fits a 5h `primary` window plus a 7d `secondary` window. Free accounts no longer follow that shape: upstream now returns a single 30d limit in `primary_window`, so the current remap logic misclassifies free-account monthly quota as weekly and causes incorrect bars, trends, donut totals, API-key assigned-account badges, and stored usage semantics.
 
-This change aligns codex-lb with the upstream free-account quota model before more monthly-only accounts accumulate misleading history and inconsistent UI state.
+This change aligns agent-lb with the upstream free-account quota model before more monthly-only accounts accumulate misleading history and inconsistent UI state.
 
 ## What Changes
 
@@ -26,5 +26,5 @@ This change aligns codex-lb with the upstream free-account quota model before mo
 
 - Affected backend modules include usage refresh, quota normalization, proxy rate-limit payloads, account mappers, dashboard aggregation, and any logic that currently assumes only `primary` / `secondary` windows.
 - Affected frontend modules include account cards/lists/detail panels, account trends, dashboard donuts and progress bars, overview usage displays, and API-key assigned-account selectors.
-- The `/wham/usage` free-account payload remains the upstream source of truth; codex-lb changes only how it normalizes, stores, and presents that data.
+- The `/wham/usage` free-account payload remains the upstream source of truth; agent-lb changes only how it normalizes, stores, and presents that data.
 - An Alembic migration is required to isolate historical free-account rows before normalized monthly writes begin.

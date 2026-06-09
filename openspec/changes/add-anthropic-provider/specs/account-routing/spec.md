@@ -7,18 +7,18 @@ Anthropic Messages proxy selection SHALL classify each request into an Anthropic
 - **GIVEN** two active Anthropic OAuth accounts
 - **AND** one account is sticky for a top-model thinking request
 - **WHEN** that account returns an upstream `429` with reset evidence
-- **THEN** codex-lb records a cooldown for the top-model-thinking quota key on that account
+- **THEN** agent-lb records a cooldown for the top-model-thinking quota key on that account
 - **AND** it retries another eligible Anthropic account for the same request
 - **AND** it does not change the first account's global status to `rate_limited`
 
 #### Scenario: All accounts cooling down for a quota fail fast
 - **GIVEN** every active Anthropic account has an active cooldown for the requested quota key
 - **WHEN** Claude Code sends a request for that quota key
-- **THEN** codex-lb returns a structured retryable error with reset evidence
+- **THEN** agent-lb returns a structured retryable error with reset evidence
 - **AND** it does not leave the client waiting for an unavailable account
 
 ### Requirement: Claude Code launcher preserves subscription billing
-The local Claude Code load-balanced launcher SHALL route requests by setting `ANTHROPIC_BASE_URL` to codex-lb only. It SHALL NOT set `ANTHROPIC_AUTH_TOKEN`, inject an API key, or add a default `--model` override. Claude Code's own selected model, effort, and Claude Max/OAuth billing mode MUST remain visible to the client.
+The local Claude Code load-balanced launcher SHALL route requests by setting `ANTHROPIC_BASE_URL` to agent-lb only. It SHALL NOT set `ANTHROPIC_AUTH_TOKEN`, inject an API key, or add a default `--model` override. Claude Code's own selected model, effort, and Claude Max/OAuth billing mode MUST remain visible to the client.
 
 #### Scenario: Default Claude Code model is preserved
 - **WHEN** an operator starts Claude Code through the load-balanced launcher without passing `--model`

@@ -17,12 +17,12 @@ OpenCode official auth storage is provider-keyed JSON under `~/.local/share/open
 
 The OpenCode `CodexAuthPlugin` uses the stored `access` token as `Authorization: Bearer <access>` and sets `ChatGPT-Account-Id` when `accountId` exists. If `access` is missing or `expires < Date.now()`, OpenCode refreshes with the stored `refresh` token.
 
-codex-lb already stores `access_token_encrypted`, `refresh_token_encrypted`, `id_token_encrypted`, `chatgpt_account_id`, and `email` per account.
+agent-lb already stores `access_token_encrypted`, `refresh_token_encrypted`, `id_token_encrypted`, `chatgpt_account_id`, and `email` per account.
 
 ## Decisions
 
 ### 1) Export official OpenCode auth shape only
-The downloadable JSON MUST be a complete official OpenCode `auth.json` object for a single account and MUST NOT include codex-lb metadata or custom multi-account fields. This keeps the exported file compatible with stock OpenCode.
+The downloadable JSON MUST be a complete official OpenCode `auth.json` object for a single account and MUST NOT include agent-lb metadata or custom multi-account fields. This keeps the exported file compatible with stock OpenCode.
 
 ### 2) Keep metadata outside the downloadable payload
 The dashboard response MAY include metadata such as account email and filename, but the `authJson` payload itself is only the provider-keyed auth file.

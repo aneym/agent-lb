@@ -622,7 +622,7 @@ async def test_v1_chat_completions_rejects_strict_function_tool_violation(async_
     silently, so the request reached the upstream Codex backend with a
     spec-violating schema and surfaced as a 502 ``upstream_rejected_input``.
     Real OpenAI returns 400 ``invalid_function_parameters`` for the same
-    payload; codex-lb now does too.
+    payload; agent-lb now does too.
     """
     payload = {
         "model": "gpt-5.2",

@@ -1,6 +1,6 @@
 ## Why
 
-codex-lb rotates upstream accounts and does not provide a file upload endpoint, so `file_id` inputs cannot be resolved reliably. Allowing them produces inconsistent behavior and breaks expectations; we need to reject `file_id` early and align error messages with upstream invalid request wording.
+agent-lb rotates upstream accounts and does not provide a file upload endpoint, so `file_id` inputs cannot be resolved reliably. Allowing them produces inconsistent behavior and breaks expectations; we need to reject `file_id` early and align error messages with upstream invalid request wording.
 
 ## What Changes
 

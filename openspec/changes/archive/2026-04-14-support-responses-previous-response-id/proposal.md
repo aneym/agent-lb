@@ -1,5 +1,5 @@
 ## Why
-Codex CLI websocket/resume flows now send previous_response_id for incremental Responses requests. codex-lb still rejects that field, causing websocket-enabled exec/resume failures and leaving users stuck on websocket-off fallback paths with degraded cache behavior.
+Codex CLI websocket/resume flows now send previous_response_id for incremental Responses requests. agent-lb still rejects that field, causing websocket-enabled exec/resume failures and leaving users stuck on websocket-off fallback paths with degraded cache behavior.
 
 ## What Changes
 - Allow and forward previous_response_id on Responses requests where upstream accepts it.

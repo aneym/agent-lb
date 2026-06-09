@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb proxies OpenAI-compatible APIs to the ChatGPT backend while rotating upstream accounts. The system does not provide a file upload endpoint, so `file_id` references are not resolvable and can route to the wrong account. Allowing `file_id` creates inconsistent behavior and downstream 404s. We need to block `file_id` inputs early and return an OpenAI-style invalid_request_error with upstream-matching wording.
+agent-lb proxies OpenAI-compatible APIs to the ChatGPT backend while rotating upstream accounts. The system does not provide a file upload endpoint, so `file_id` references are not resolvable and can route to the wrong account. Allowing `file_id` creates inconsistent behavior and downstream 404s. We need to block `file_id` inputs early and return an OpenAI-style invalid_request_error with upstream-matching wording.
 
 ## Goals / Non-Goals
 

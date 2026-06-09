@@ -1,6 +1,6 @@
 ## Why
 
-SQLite-backed codex-lb instances currently pay a full `PRAGMA integrity_check` cost on every startup, even when no migration work is pending. On the live development database this blocks startup for multiple seconds before the service can accept traffic.
+SQLite-backed agent-lb instances currently pay a full `PRAGMA integrity_check` cost on every startup, even when no migration work is pending. On the live development database this blocks startup for multiple seconds before the service can accept traffic.
 
 The request path also still has avoidable SQLite inefficiencies:
 

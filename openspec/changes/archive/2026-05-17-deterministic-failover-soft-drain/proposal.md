@@ -2,7 +2,7 @@
 
 ## Problem
 
-When an upstream account hits a rate limit (HTTP 429) or quota exhaustion, codex-lb's handling is **inconsistent across transports** and often **leaks the error to the client** instead of transparently switching to another account:
+When an upstream account hits a rate limit (HTTP 429) or quota exhaustion, agent-lb's handling is **inconsistent across transports** and often **leaks the error to the client** instead of transparently switching to another account:
 
 - **SSE streaming**: First-event `response.failed` triggers account failover via `_RetryableStreamError`, but connect-phase `ProxyResponseError(429)` bypasses the retry loop entirely (`status_code != 500` → immediate raise).
 - **Compact HTTP**: 429/quota errors are surfaced because `retryable_same_contract=False` for these codes.

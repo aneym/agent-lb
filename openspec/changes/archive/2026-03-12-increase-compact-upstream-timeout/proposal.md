@@ -6,7 +6,7 @@
 
 ## What Changes
 
-- add a dedicated `CODEX_LB_UPSTREAM_COMPACT_TIMEOUT_SECONDS` setting
+- add a dedicated `AGENT_LB_UPSTREAM_COMPACT_TIMEOUT_SECONDS` setting
 - default that setting to disabled so compact behaves like the original Codex CLI
 - use the setting only when an operator explicitly configures a compact timeout override
 - add regression coverage for compact read timeouts and timeout wiring

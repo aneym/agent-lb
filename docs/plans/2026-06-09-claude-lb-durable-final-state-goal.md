@@ -3,12 +3,12 @@
 - Date: 2026-06-09
 - Requester: Alex
 - Status: In progress
-- Repo/worktree: `/Users/aneyman/repos/codex-lb`
+- Repo/worktree: `/Users/aneyman/repos/agent-lb`
 - Branch policy: work directly on `main` per `AGENTS.md`; preserve unrelated dirty worktree changes.
 
 ## Objective and Stopping Condition
 
-Implement the durable final state for Claude Code load balancing in codex-lb: Claude Code launched through `cclb` must use Claude Max/OAuth billing, preserve Claude Code's best-model default, route each request to an Anthropic account that can serve the requested model/params, keep a Claude conversation sticky to one account for prompt-cache locality until that account is unavailable for that quota key, fail over cleanly when possible, and surface Claude usage/limit state in the dashboard at parity with Codex where the upstream data allows.
+Implement the durable final state for Claude Code load balancing in agent-lb: Claude Code launched through `cclb` must use Claude Max/OAuth billing, preserve Claude Code's best-model default, route each request to an Anthropic account that can serve the requested model/params, keep a Claude conversation sticky to one account for prompt-cache locality until that account is unavailable for that quota key, fail over cleanly when possible, and surface Claude usage/limit state in the dashboard at parity with Codex where the upstream data allows.
 
 Stop only when a fresh Claude Code session through `cclb` can run Fable/default best-model traffic end to end across the local proxy without API usage billing or model downgrade, selector behavior is verified across at least two Anthropic OAuth accounts, per-session stickiness and per-quota failover are covered by tests, the dashboard shows actionable Anthropic usage/limit/reset/availability state, focused backend/frontend tests pass, OpenSpec is updated and validated, and the brief's Progress Log records the verification evidence.
 
@@ -26,18 +26,18 @@ Stop only when a fresh Claude Code session through `cclb` can run Fable/default 
 
 Read these first:
 
-- `/Users/aneyman/repos/codex-lb/AGENTS.md` - branch policy, OpenSpec-first workflow, review trapdoors.
-- `/Users/aneyman/repos/codex-lb/openspec/changes/add-anthropic-provider/` - active Anthropic provider context/tasks already in flight.
-- `/Users/aneyman/repos/codex-lb/app/modules/proxy/anthropic_service.py` - current Claude `/v1/messages` proxy and Anthropic account selection path.
-- `/Users/aneyman/repos/codex-lb/app/modules/proxy/load_balancer.py` - existing selector, sticky affinity, caps, leases, and rate-limit handling.
-- `/Users/aneyman/repos/codex-lb/app/modules/proxy/affinity.py` - Codex/OpenAI sticky key extraction and prompt-cache affinity helpers.
-- `/Users/aneyman/repos/codex-lb/app/modules/proxy/sticky_repository.py` and `/Users/aneyman/repos/codex-lb/app/modules/sticky_sessions/` - sticky session storage and dashboard API.
-- `/Users/aneyman/repos/codex-lb/app/modules/usage/updater.py`, `/Users/aneyman/repos/codex-lb/app/modules/usage/repository.py`, `/Users/aneyman/repos/codex-lb/app/core/usage/refresh_scheduler.py` - Codex/OpenAI usage refresh pattern and any in-flight Anthropic usage work.
-- `/Users/aneyman/repos/codex-lb/app/core/clients/anthropic_usage.py` - untracked/in-flight Anthropic usage client; inspect before editing.
-- `/Users/aneyman/repos/codex-lb/app/core/anthropic/models.py` - Claude Code payload compatibility; Fable sends newer fields and system-role messages.
-- `/Users/aneyman/repos/codex-lb/frontend/src/features/accounts/components/account-list-item.tsx`
-- `/Users/aneyman/repos/codex-lb/frontend/src/features/accounts/components/account-usage-panel.tsx`
-- `/Users/aneyman/repos/codex-lb/frontend/src/features/accounts/schemas.ts`
+- `/Users/aneyman/repos/agent-lb/AGENTS.md` - branch policy, OpenSpec-first workflow, review trapdoors.
+- `/Users/aneyman/repos/agent-lb/openspec/changes/add-anthropic-provider/` - active Anthropic provider context/tasks already in flight.
+- `/Users/aneyman/repos/agent-lb/app/modules/proxy/anthropic_service.py` - current Claude `/v1/messages` proxy and Anthropic account selection path.
+- `/Users/aneyman/repos/agent-lb/app/modules/proxy/load_balancer.py` - existing selector, sticky affinity, caps, leases, and rate-limit handling.
+- `/Users/aneyman/repos/agent-lb/app/modules/proxy/affinity.py` - Codex/OpenAI sticky key extraction and prompt-cache affinity helpers.
+- `/Users/aneyman/repos/agent-lb/app/modules/proxy/sticky_repository.py` and `/Users/aneyman/repos/agent-lb/app/modules/sticky_sessions/` - sticky session storage and dashboard API.
+- `/Users/aneyman/repos/agent-lb/app/modules/usage/updater.py`, `/Users/aneyman/repos/agent-lb/app/modules/usage/repository.py`, `/Users/aneyman/repos/agent-lb/app/core/usage/refresh_scheduler.py` - Codex/OpenAI usage refresh pattern and any in-flight Anthropic usage work.
+- `/Users/aneyman/repos/agent-lb/app/core/clients/anthropic_usage.py` - untracked/in-flight Anthropic usage client; inspect before editing.
+- `/Users/aneyman/repos/agent-lb/app/core/anthropic/models.py` - Claude Code payload compatibility; Fable sends newer fields and system-role messages.
+- `/Users/aneyman/repos/agent-lb/frontend/src/features/accounts/components/account-list-item.tsx`
+- `/Users/aneyman/repos/agent-lb/frontend/src/features/accounts/components/account-usage-panel.tsx`
+- `/Users/aneyman/repos/agent-lb/frontend/src/features/accounts/schemas.ts`
 - `/Users/aneyman/.zshrc` - `claude-lb` / `cclb` launcher. Verify it does not set `ANTHROPIC_AUTH_TOKEN` and does not inject a model default.
 - Claude Code bundle/local state discovery targets:
   - `zsh -ic 'whence -a claude'`
@@ -52,7 +52,7 @@ Known local Anthropic accounts:
 Useful current-state probes:
 
 ```sh
-cd /Users/aneyman/repos/codex-lb
+cd /Users/aneyman/repos/agent-lb
 zsh -ic 'functions claude-lb; functions cclb'
 curl -sS --max-time 5 http://127.0.0.1:2455/api/accounts | jq -r '.accounts[] | select(.provider=="anthropic") | [.accountId,.email,.status,(.rateLimitResetAt // ""),(.requestUsage.requestCount|tostring)] | @tsv'
 curl -sS --max-time 5 'http://127.0.0.1:2455/api/request-logs?limit=30' | jq -r '.requests[] | select(.provider=="anthropic" or (.model|tostring|startswith("claude"))) | [.requestedAt,.accountId,.model,.status,(.errorCode // ""),(.errorMessage // "")] | @tsv'
@@ -156,7 +156,7 @@ Acceptance:
 Use focused checks first, then broader checks after integration:
 
 ```sh
-cd /Users/aneyman/repos/codex-lb
+cd /Users/aneyman/repos/agent-lb
 uv run pytest tests/unit/test_anthropic_core.py tests/unit/test_anthropic_oauth.py tests/integration/test_anthropic_proxy.py
 uv run pytest tests/unit tests/integration -k "anthropic or sticky or usage or account"
 openspec validate --specs
@@ -196,5 +196,5 @@ Live smoke checks should include:
 ## Handoff Prompt
 
 ```text
-/goal Implement the durable final state for Claude Code load balancing: OAuth/Claude Max billing only, no default model downgrade, per-session sticky account affinity, per-model/effort quota-aware account selection, clean failover/reset handling, and dashboard usage/limit parity for Anthropic. Work in /Users/aneyman/repos/codex-lb on main, follow AGENTS.md and OpenSpec-first rules, and treat /Users/aneyman/repos/codex-lb/docs/plans/2026-06-09-claude-lb-durable-final-state-goal.md as the source of truth. Read the brief first, then continue in checkpoints until fresh cclb Fable/default traffic is verified end to end across the local proxy with Claude Max billing, sticky routing, quota-key failover, actionable dashboard state, focused tests passing, OpenSpec validated, and the brief's Progress Log updated. Preserve unrelated dirty worktree changes, keep edits surgical, self-review the diff, and pause only for the brief's explicit stop rules or if live code conflicts with the source map.
+/goal Implement the durable final state for Claude Code load balancing: OAuth/Claude Max billing only, no default model downgrade, per-session sticky account affinity, per-model/effort quota-aware account selection, clean failover/reset handling, and dashboard usage/limit parity for Anthropic. Work in /Users/aneyman/repos/agent-lb on main, follow AGENTS.md and OpenSpec-first rules, and treat /Users/aneyman/repos/agent-lb/docs/plans/2026-06-09-claude-lb-durable-final-state-goal.md as the source of truth. Read the brief first, then continue in checkpoints until fresh cclb Fable/default traffic is verified end to end across the local proxy with Claude Max billing, sticky routing, quota-key failover, actionable dashboard state, focused tests passing, OpenSpec validated, and the brief's Progress Log updated. Preserve unrelated dirty worktree changes, keep edits surgical, self-review the diff, and pause only for the brief's explicit stop rules or if live code conflicts with the source map.
 ```

@@ -2,7 +2,7 @@
 
 Issue #546 reports that setting an API key's `enforced_service_tier` to `default` (or `auto`) breaks every request through that key: the request fails upstream with `invalid_request_error Unsupported service_tier: default` (or `... auto`).
 
-The root cause is in `apply_api_key_enforcement` in `app/modules/proxy/request_policy.py`. The enforcement step writes the literal `enforced_service_tier` value onto `payload.service_tier`, and then the request is forwarded as-is. The ChatGPT/Codex backend rejects both `default` and `auto` as literal values: they are codex-lb's API-key surface conventions for "let upstream pick", not upstream-level service tiers.
+The root cause is in `apply_api_key_enforcement` in `app/modules/proxy/request_policy.py`. The enforcement step writes the literal `enforced_service_tier` value onto `payload.service_tier`, and then the request is forwarded as-is. The ChatGPT/Codex backend rejects both `default` and `auto` as literal values: they are agent-lb's API-key surface conventions for "let upstream pick", not upstream-level service tiers.
 
 Today operators have no working way to enforce "no priority / no flex" — exactly the use case the issue raises ("I want to disable fast mode globally or per-key"). The API-key form accepts the value, but every request through that key fails.
 

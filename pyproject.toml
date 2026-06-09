@@ -1,5 +1,5 @@
 [project]
-name = "codex-lb"
+name = "agent-lb"
 version = "1.20.0-beta.3"
 description = "Codex load balancer and proxy for ChatGPT accounts with usage dashboard"
 readme = "README.md"
@@ -118,8 +118,8 @@ exclude = [".agents/hooks/"]
 python-version = "3.13"
 
 [project.scripts]
-codex-lb = "app.cli:main"
-codex-lb-db = "app.db.migrate:main"
+agent-lb = "app.cli:main"
+agent-lb-db = "app.db.migrate:main"
 
 [build-system]
 requires = ["hatchling==1.30.1"]

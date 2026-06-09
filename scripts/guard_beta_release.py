@@ -23,7 +23,7 @@ RELEASE_MANAGED_FILES = (
     "pyproject.toml",
     "app/__init__.py",
     "frontend/package.json",
-    "deploy/helm/codex-lb/Chart.yaml",
+    "deploy/helm/agent-lb/Chart.yaml",
     "uv.lock",
 )
 

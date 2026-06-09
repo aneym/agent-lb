@@ -33,7 +33,7 @@ The system SHALL expose `POST /v1/images/generations` and accept the OpenAI Imag
 
 - **WHEN** a client sends `/v1/images/generations` or `/v1/images/edits` with `n > 1`
 - **THEN** the service returns 400 with OpenAI `invalid_request_error` and `param: n`, with a message that explains the upstream `image_generation` tool does not yet support multi-image responses
-- **AND** no settings override SHALL raise the accepted request `n` above 1 until codex-lb implements client-side fan-out or upstream exposes first-class multi-image support
+- **AND** no settings override SHALL raise the accepted request `n` above 1 until agent-lb implements client-side fan-out or upstream exposes first-class multi-image support
 
 #### Scenario: Missing model defaults to images_default_model
 

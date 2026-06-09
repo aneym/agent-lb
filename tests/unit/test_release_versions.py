@@ -25,20 +25,20 @@ from scripts.release_versions import (
 def write_minimal_release_files(root: Path, version: str = "1.18.2") -> None:
     (root / "app").mkdir(parents=True)
     (root / "frontend").mkdir(parents=True)
-    (root / "deploy" / "helm" / "codex-lb").mkdir(parents=True)
-    (root / "pyproject.toml").write_text(f'[project]\nname = "codex-lb"\nversion = "{version}"\n', encoding="utf-8")
+    (root / "deploy" / "helm" / "agent-lb").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(f'[project]\nname = "agent-lb"\nversion = "{version}"\n', encoding="utf-8")
     (root / "app" / "__init__.py").write_text(
         f'__version__ = "{version}"  # x-release-please-version\n', encoding="utf-8"
     )
     (root / "frontend" / "package.json").write_text(
         json.dumps({"name": "frontend", "version": version}) + "\n", encoding="utf-8"
     )
-    (root / "deploy" / "helm" / "codex-lb" / "Chart.yaml").write_text(
-        f"apiVersion: v2\nname: codex-lb\nversion: {version}\nappVersion: {version}\n",
+    (root / "deploy" / "helm" / "agent-lb" / "Chart.yaml").write_text(
+        f"apiVersion: v2\nname: agent-lb\nversion: {version}\nappVersion: {version}\n",
         encoding="utf-8",
     )
     (root / "uv.lock").write_text(
-        f'[[package]]\nname = "codex-lb"\nversion = "{version}"\nsource = {{ editable = "." }}\n',
+        f'[[package]]\nname = "agent-lb"\nversion = "{version}"\nsource = {{ editable = "." }}\n',
         encoding="utf-8",
     )
 
@@ -80,7 +80,7 @@ def test_parse_stable_and_beta_versions() -> None:
 
 def test_read_pyproject_version_uses_project_table(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.example]\nversion = "0.0.0"\n\n[project]\nname = "codex-lb"\nversion = "1.19.0"\n',
+        '[tool.example]\nversion = "0.0.0"\n\n[project]\nname = "agent-lb"\nversion = "1.19.0"\n',
         encoding="utf-8",
     )
 

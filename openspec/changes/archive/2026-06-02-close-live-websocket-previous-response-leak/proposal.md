@@ -25,5 +25,5 @@ This change intentionally extends, rather than duplicates, `harden-continuity-fa
 ## Impact
 
 - Affected code: `app/modules/proxy/service.py`, possibly `app/modules/proxy/api.py`, and continuity tests.
-- Affected ops: local `codex-lb` Docker/Colima watchdog recovery.
+- Affected ops: local `agent-lb` Docker/Colima watchdog recovery.
 - User-visible outcome: Codex `Continue` either succeeds, receives a retryable masked continuity error, or starts cleanly after a verified local redeploy. It never displays raw `previous_response_not_found`.

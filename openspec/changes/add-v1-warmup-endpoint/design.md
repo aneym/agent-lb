@@ -1,6 +1,6 @@
 ## Context
 
-`codex-lb` already supports API-key-scoped account selection, request logging, and dashboard/request-log surfaces, but it has no direct endpoint for proactive warmup. Warmup must fan out over an API-key account pool, apply deterministic eligibility rules, and avoid polluting aggregate accounting while still remaining visible in request-log tables.
+`agent-lb` already supports API-key-scoped account selection, request logging, and dashboard/request-log surfaces, but it has no direct endpoint for proactive warmup. Warmup must fan out over an API-key account pool, apply deterministic eligibility rules, and avoid polluting aggregate accounting while still remaining visible in request-log tables.
 
 This change crosses proxy API/service, settings persistence/UI, request-log schema, dashboard aggregates, and API-key usage queries, so a design artifact is needed.
 

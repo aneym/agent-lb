@@ -1,6 +1,6 @@
 # Why
 
-A strict-mode JSON schema violation on a function tool (e.g. `tools[i].function.parameters` with `strict: true` but missing `additionalProperties: false`) currently leaks all the way to the upstream Codex backend, which closes the websocket with `close_code=1000`. codex-lb surfaces this as a generic `502 server_error / upstream_rejected_input` (streaming) or `502` HTTP body (non-streaming). Real OpenAI returns a deterministic `400 invalid_function_parameters` for the same payload (see https://github.com/github/github-mcp-server/issues/376 and OpenAI Structured Outputs docs).
+A strict-mode JSON schema violation on a function tool (e.g. `tools[i].function.parameters` with `strict: true` but missing `additionalProperties: false`) currently leaks all the way to the upstream Codex backend, which closes the websocket with `close_code=1000`. agent-lb surfaces this as a generic `502 server_error / upstream_rejected_input` (streaming) or `502` HTTP body (non-streaming). Real OpenAI returns a deterministic `400 invalid_function_parameters` for the same payload (see https://github.com/github/github-mcp-server/issues/376 and OpenAI Structured Outputs docs).
 
 Two consequences:
 

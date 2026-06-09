@@ -1,6 +1,6 @@
 ## Why
 
-Codex-LB refreshes account credentials reactively when a request selects an account. Idle accounts can sit unused long enough for refresh credentials to age, forcing operators to reauthenticate accounts that could have been kept alive with a safe proactive refresh.
+Agent-LB refreshes account credentials reactively when a request selects an account. Idle accounts can sit unused long enough for refresh credentials to age, forcing operators to reauthenticate accounts that could have been kept alive with a safe proactive refresh.
 
 ## What Changes
 

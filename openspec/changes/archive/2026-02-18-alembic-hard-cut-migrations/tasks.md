@@ -19,7 +19,7 @@
 
 - [x] 4.1 Add `alembic` dependency
 - [x] 4.2 Add PostgreSQL driver parity dependencies (`asyncpg`, `psycopg[binary]`)
-- [x] 4.3 Add migration CLI entrypoint `codex-lb-db`
+- [x] 4.3 Add migration CLI entrypoint `agent-lb-db`
 
 ## 5. Tests
 

@@ -9,6 +9,6 @@ The account list and account detail surfaces SHALL show Anthropic account usage 
 - **THEN** the response includes that cooldown in the account's additional quota data with a human-readable label and reset time
 
 #### Scenario: Request-log evidence remains visible
-- **GIVEN** Anthropic requests have succeeded or failed through codex-lb
+- **GIVEN** Anthropic requests have succeeded or failed through agent-lb
 - **WHEN** an operator inspects Anthropic accounts
 - **THEN** the account surfaces include provider identity, request counts, token totals, cache create/read totals, and recent availability evidence

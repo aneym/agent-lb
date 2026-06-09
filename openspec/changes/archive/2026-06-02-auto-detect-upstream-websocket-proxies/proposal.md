@@ -1,8 +1,8 @@
 ## Why
 
-`codex-lb` already honors `http_proxy` / `https_proxy` for most outbound HTTP calls via `aiohttp`
+`agent-lb` already honors `http_proxy` / `https_proxy` for most outbound HTTP calls via `aiohttp`
 sessions with `trust_env=True`, but the upstream Responses websocket path explicitly disables env
-proxy discovery unless operators set `CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=true`.
+proxy discovery unless operators set `AGENT_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=true`.
 
 That opt-in default makes proxy-enabled deployments look broken: exporting standard proxy variables
 isn't enough for the websocket path that Codex-native traffic prefers, so requests bypass the local
@@ -13,7 +13,7 @@ shell exports.
 ## What Changes
 
 - Auto-enable upstream websocket env-proxy usage whenever standard outbound proxy variables are
-  present, while keeping `CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=false` as an explicit direct-connect
+  present, while keeping `AGENT_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=false` as an explicit direct-connect
   override
 - Resolve websocket proxy URLs from the standard env variables with precedence for websocket- and
   scheme-specific settings before falling back to `https_proxy` for `ws://` URLs and then `all_proxy`

@@ -1,6 +1,6 @@
 ## Why
 
-Before the first upstream model-registry refresh completes, codex-lb still needs
+Before the first upstream model-registry refresh completes, agent-lb still needs
 to serve usable model catalogs. Returning an empty catalog or under-specified
 placeholder entries makes freshly started instances look model-less to Codex and
 OpenAI-compatible clients until a refresh succeeds.

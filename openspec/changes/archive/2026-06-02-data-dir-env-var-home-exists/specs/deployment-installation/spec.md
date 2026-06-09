@@ -2,31 +2,31 @@
 
 ### Requirement: Application data directory resolution is configurable and container-aware
 
-The application MUST resolve its default data directory from operator intent before container heuristics. A non-empty `CODEX_LB_DATA_DIR` value MUST be the highest-priority data directory override. When no override is configured, an existing `$HOME/.codex-lb` directory MUST remain preferred even if the process detects that it is running inside a container. The container data directory (`/var/lib/codex-lb`) MUST be used only when no override is configured, the home data directory does not already exist, and container detection is true.
+The application MUST resolve its default data directory from operator intent before container heuristics. A non-empty `AGENT_LB_DATA_DIR` value MUST be the highest-priority data directory override. When no override is configured, an existing `$HOME/.agent-lb` directory MUST remain preferred even if the process detects that it is running inside a container. The container data directory (`/var/lib/agent-lb`) MUST be used only when no override is configured, the home data directory does not already exist, and container detection is true.
 
 #### Scenario: Explicit data directory override wins
 
-- **GIVEN** `CODEX_LB_DATA_DIR` is configured to a non-empty path
+- **GIVEN** `AGENT_LB_DATA_DIR` is configured to a non-empty path
 - **WHEN** application settings are loaded
 - **THEN** the configured path is used as the data directory
 - **AND** the container detection result does not override it
 
 #### Scenario: Existing home data is reused inside an interactive container
 
-- **GIVEN** `CODEX_LB_DATA_DIR` is not configured
-- **AND** `$HOME/.codex-lb` already exists
+- **GIVEN** `AGENT_LB_DATA_DIR` is not configured
+- **AND** `$HOME/.agent-lb` already exists
 - **AND** container detection is true
 - **WHEN** application settings are loaded
-- **THEN** `$HOME/.codex-lb` is used as the data directory
-- **AND** `/var/lib/codex-lb` is not selected
+- **THEN** `$HOME/.agent-lb` is used as the data directory
+- **AND** `/var/lib/agent-lb` is not selected
 
 #### Scenario: Container default is preserved when no home data exists
 
-- **GIVEN** `CODEX_LB_DATA_DIR` is not configured
-- **AND** `$HOME/.codex-lb` does not exist
+- **GIVEN** `AGENT_LB_DATA_DIR` is not configured
+- **AND** `$HOME/.agent-lb` does not exist
 - **AND** container detection is true
 - **WHEN** application settings are loaded
-- **THEN** `/var/lib/codex-lb` is used as the data directory
+- **THEN** `/var/lib/agent-lb` is used as the data directory
 
 #### Scenario: Related default paths follow the resolved data directory
 
@@ -40,8 +40,8 @@ The application MUST resolve its default data directory from operator intent bef
 
 #### Scenario: Explicit related path overrides are preserved
 
-- **GIVEN** `CODEX_LB_DATA_DIR` is configured
-- **AND** one or more related paths such as `CODEX_LB_DATABASE_URL`, `CODEX_LB_ENCRYPTION_KEY_FILE`, or `CODEX_LB_CONVERSATION_ARCHIVE_DIR` are explicitly configured
+- **GIVEN** `AGENT_LB_DATA_DIR` is configured
+- **AND** one or more related paths such as `AGENT_LB_DATABASE_URL`, `AGENT_LB_ENCRYPTION_KEY_FILE`, or `AGENT_LB_CONVERSATION_ARCHIVE_DIR` are explicitly configured
 - **WHEN** application settings are loaded
 - **THEN** each explicitly configured related path keeps its configured value
 - **AND** only omitted related paths derive from the resolved data directory

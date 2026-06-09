@@ -153,11 +153,11 @@ _SECURITY_WORK_AUTHORIZATION_REQUIRED_CODE = "security_work_authorization_requir
 _NO_SECURITY_WORK_AUTHORIZED_ACCOUNTS_CODE = "no_security_work_authorized_accounts"
 _SECURITY_WORK_RETRY_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work. "
-    "codex-lb is retrying on an account marked as authorized for security work."
+    "agent-lb is retrying on an account marked as authorized for security work."
 )
 _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. codex-lb is continuing with normal account selection; the upstream request may still fail until "
+    "security work. agent-lb is continuing with normal account selection; the upstream request may still fail until "
     "an account with Trusted Access for Cyber is marked as security-work-authorized."
 )
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0

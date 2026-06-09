@@ -54,7 +54,7 @@ Firewall IP resolution MUST optionally use `X-Forwarded-For` only when proxy hea
 
 ### Requirement: Firewall IP cache TTL is operator-configurable with a safe default
 
-The application MUST cache firewall allow/deny decisions per source IP for a configurable TTL, and the default TTL MUST be large enough (at least 30 seconds) that the cache provides material relief on hot paths under load. Operators MUST be able to tune it via `firewall_ip_cache_ttl_seconds` (env `CODEX_LB_FIREWALL_IP_CACHE_TTL_SECONDS`). Explicit cache invalidation paths (allowlist mutation in `/api/firewall/ips`, the `cache_poller` invalidation channel) MUST keep working unchanged.
+The application MUST cache firewall allow/deny decisions per source IP for a configurable TTL, and the default TTL MUST be large enough (at least 30 seconds) that the cache provides material relief on hot paths under load. Operators MUST be able to tune it via `firewall_ip_cache_ttl_seconds` (env `AGENT_LB_FIREWALL_IP_CACHE_TTL_SECONDS`). Explicit cache invalidation paths (allowlist mutation in `/api/firewall/ips`, the `cache_poller` invalidation channel) MUST keep working unchanged.
 
 #### Scenario: Default TTL provides effective caching
 
@@ -64,7 +64,7 @@ The application MUST cache firewall allow/deny decisions per source IP for a con
 
 #### Scenario: Operator override is honoured
 
-- **WHEN** `CODEX_LB_FIREWALL_IP_CACHE_TTL_SECONDS=120` is set
+- **WHEN** `AGENT_LB_FIREWALL_IP_CACHE_TTL_SECONDS=120` is set
 - **AND** the application starts
 - **THEN** the firewall cache TTL is 120 seconds
 

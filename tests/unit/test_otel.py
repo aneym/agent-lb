@@ -188,12 +188,12 @@ def test_init_tracing_returns_false_when_opentelemetry_is_unavailable(monkeypatc
 def test_init_tracing_returns_true_when_opentelemetry_modules_are_available(monkeypatch: pytest.MonkeyPatch):
     state = _install_fake_otel(monkeypatch)
 
-    assert otel.init_tracing(service_name="codex-lb", endpoint="http://collector:4317") is True
+    assert otel.init_tracing(service_name="agent-lb", endpoint="http://collector:4317") is True
     assert otel.is_initialized() is True
     assert state.provider is not None
     assert len(state.provider.processors) == 1
     assert state.exporter_endpoint == "http://collector:4317"
-    assert state.resource_attributes == {"service.name": "codex-lb"}
+    assert state.resource_attributes == {"service.name": "agent-lb"}
     assert state.fastapi_instrumented == 1
     assert state.aiohttp_instrumented == 1
     assert state.sqlalchemy_instrumented == 1

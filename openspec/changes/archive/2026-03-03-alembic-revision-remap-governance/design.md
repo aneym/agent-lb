@@ -25,7 +25,7 @@
    - 기존 14개 리비전을 새 ID로 재작성하고 startup `upgrade` 직전에 `alembic_version` 값을 자동 remap한다.
    - 이유: 코드/파일 구조 일관성을 유지하면서 기존 운영 DB와 호환할 수 있다.
 
-3. **정책 검증 통합 (`codex-lb-db check`)**
+3. **정책 검증 통합 (`agent-lb-db check`)**
    - 단일 head, 리비전 ID 형식, 파일명-리비전 일치, ORM drift를 하나의 검사 명령으로 묶는다.
    - 이유: 머지 게이트를 단순화하고 누락 가능한 수동 점검 단계를 제거한다.
 

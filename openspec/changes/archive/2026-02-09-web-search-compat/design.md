@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb proxies OpenAI-compatible `/v1/responses` and `/v1/chat/completions` to a Codex upstream. The current tool validation rejects all built-in tools, including web_search, which causes 422 errors on both `/v1/*` and `/backend-api/codex/*`. We need to allow web_search while keeping the existing guardrails for other unsupported built-in tools.
+agent-lb proxies OpenAI-compatible `/v1/responses` and `/v1/chat/completions` to a Codex upstream. The current tool validation rejects all built-in tools, including web_search, which causes 422 errors on both `/v1/*` and `/backend-api/codex/*`. We need to allow web_search while keeping the existing guardrails for other unsupported built-in tools.
 
 ## Goals / Non-Goals
 

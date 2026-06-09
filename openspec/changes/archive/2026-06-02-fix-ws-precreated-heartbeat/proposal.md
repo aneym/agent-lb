@@ -4,7 +4,7 @@
 
 Codex WebSocket clients reset their stream idle watchdog only when an application text frame reaches the client. WebSocket protocol ping/pong frames are handled below that layer and do not reset Codex's `idle timeout waiting for websocket` timer.
 
-codex-lb already emits `response.in_progress` keepalives after upstream assigns a `response.id`, but it deliberately emits nothing before `response.created`. If ChatGPT stays silent before assigning the response id while the proxy is still actively waiting, Codex clients can disconnect even though the upstream WebSocket transport is healthy.
+agent-lb already emits `response.in_progress` keepalives after upstream assigns a `response.id`, but it deliberately emits nothing before `response.created`. If ChatGPT stays silent before assigning the response id while the proxy is still actively waiting, Codex clients can disconnect even though the upstream WebSocket transport is healthy.
 
 ## What Changes
 

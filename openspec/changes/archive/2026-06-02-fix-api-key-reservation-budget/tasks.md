@@ -8,7 +8,7 @@
 
 - [x] 2.1 Estimate self-contained Responses/compact request input size from serialized payload bytes.
 - [x] 2.2 Fall back to conservative input reservation for previous-response, conversation, file, or image references.
-- [x] 2.3 Use a bounded default output reservation and avoid trusting output caps that codex-lb does not enforce upstream.
+- [x] 2.3 Use a bounded default output reservation and avoid trusting output caps that agent-lb does not enforce upstream.
 - [x] 2.4 Pass the estimated budget through HTTP and websocket reservation paths.
 
 ## 3. Tests and Validation

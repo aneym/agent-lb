@@ -1,11 +1,11 @@
 ## Context
 
-codex-lb is SQLite-first and ships with SQLite-specific safety/recovery ergonomics. Core ORM usage is SQLAlchemy-based and mostly backend-agnostic, and sticky-session upsert already supports both SQLite and PostgreSQL dialects. The missing pieces are dependency provisioning, documented configuration, backend-agnostic tests, and CI coverage for PostgreSQL.
+agent-lb is SQLite-first and ships with SQLite-specific safety/recovery ergonomics. Core ORM usage is SQLAlchemy-based and mostly backend-agnostic, and sticky-session upsert already supports both SQLite and PostgreSQL dialects. The missing pieces are dependency provisioning, documented configuration, backend-agnostic tests, and CI coverage for PostgreSQL.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Support PostgreSQL as an optional backend via `CODEX_LB_DATABASE_URL`.
+- Support PostgreSQL as an optional backend via `AGENT_LB_DATABASE_URL`.
 - Preserve SQLite as the default backend and default documentation path.
 - Validate PostgreSQL in CI to avoid regression.
 
@@ -17,7 +17,7 @@ codex-lb is SQLite-first and ships with SQLite-specific safety/recovery ergonomi
 ## Decisions
 
 1. **Keep SQLite default**
-   - Continue defaulting `database_url` to SQLite so local `uvx codex-lb` remains zero-config.
+   - Continue defaulting `database_url` to SQLite so local `uvx agent-lb` remains zero-config.
 
 2. **Add PostgreSQL driver at runtime dependency layer**
    - Include `asyncpg` in runtime dependencies so a Postgres DSN works without extra package installation steps.

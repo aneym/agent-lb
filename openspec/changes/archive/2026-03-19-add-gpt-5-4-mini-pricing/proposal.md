@@ -1,6 +1,6 @@
 ## Why
 
-OpenAI has published GPT-5.4 mini pricing, but `codex-lb` does not have a canonical entry for that model family yet. Requests that use GPT-5.4 mini snapshots are therefore undercounted in API-key usage and dashboard cost summaries until the shared pricing registry knows about the model.
+OpenAI has published GPT-5.4 mini pricing, but `agent-lb` does not have a canonical entry for that model family yet. Requests that use GPT-5.4 mini snapshots are therefore undercounted in API-key usage and dashboard cost summaries until the shared pricing registry knows about the model.
 
 ## What Changes
 

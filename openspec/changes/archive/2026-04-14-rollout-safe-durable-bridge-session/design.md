@@ -58,7 +58,7 @@ Ingress-backed deployments need responses-specific sticky routing semantics.
 - General API ingress may continue to hash by `Authorization`.
 - `/v1/responses` and `/backend-api/codex/responses` should use a dedicated ingress that hashes by `x-codex-session-id` instead of API key-wide affinity.
 - Local and bundled smoke installs must not rely on startup migrations; schema migration is handled explicitly before serving traffic.
-- The application container must export `CODEX_LB_ENCRYPTION_KEY_FILE` by default so restored encrypted account tokens remain decryptable on a read-only root filesystem.
+- The application container must export `AGENT_LB_ENCRYPTION_KEY_FILE` by default so restored encrypted account tokens remain decryptable on a read-only root filesystem.
 
 ## Shutdown / Drain
 

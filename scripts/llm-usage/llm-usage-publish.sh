@@ -2,9 +2,9 @@
 # Publishes anonymized aggregate LLM usage to a public GitHub repo (durable backup + CDN-served).
 # Pushes via a repo-scoped SSH deploy key. Idempotent, single-flight, fail-soft.
 set -euo pipefail
-LOG="$HOME/.codex-lb/llm-usage-publish.log"
-LOCK="$HOME/.codex-lb/.llm-usage-publish.lock"
-REPO_DIR="$HOME/.codex-lb/llm-usage-repo"
+LOG="$HOME/.agent-lb/llm-usage-publish.log"
+LOCK="$HOME/.agent-lb/.llm-usage-publish.lock"
+REPO_DIR="$HOME/.agent-lb/llm-usage-repo"
 ENDPOINT="http://127.0.0.1:2455/api/usage/public"
 REMOTE="git@github.com:aneym/llm-usage.git"
 export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/llm-usage-deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"

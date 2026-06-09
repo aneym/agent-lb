@@ -1,6 +1,6 @@
 ## Why
 
-`Codex CLI` can use the Responses-over-WebSocket transport when the provider advertises websocket support and the selected model prefers websockets. `codex-lb` currently exposes only HTTP/SSE on `/backend-api/codex/responses` and `/v1/responses`, so clients configured with `supports_websockets = true` cannot proxy the websocket flow through the load balancer.
+`Codex CLI` can use the Responses-over-WebSocket transport when the provider advertises websocket support and the selected model prefers websockets. `agent-lb` currently exposes only HTTP/SSE on `/backend-api/codex/responses` and `/v1/responses`, so clients configured with `supports_websockets = true` cannot proxy the websocket flow through the load balancer.
 
 ## What Changes
 

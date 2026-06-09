@@ -29,7 +29,7 @@ For OpenAI-style `/v1/responses` and `/v1/responses/compact` requests, the servi
 - **THEN** the compact request reuses the previously selected upstream account
 
 ### Requirement: Normalize prompt cache aliases for upstream compatibility
-Before forwarding Responses payloads upstream, the service MUST normalize OpenAI-compatible camelCase prompt cache controls so codex-lb applies compatibility behavior consistently. The service MUST forward `promptCacheKey` as `prompt_cache_key`, and MUST treat `promptCacheRetention` the same as `prompt_cache_retention` for stripping behavior.
+Before forwarding Responses payloads upstream, the service MUST normalize OpenAI-compatible camelCase prompt cache controls so agent-lb applies compatibility behavior consistently. The service MUST forward `promptCacheKey` as `prompt_cache_key`, and MUST treat `promptCacheRetention` the same as `prompt_cache_retention` for stripping behavior.
 
 #### Scenario: camelCase prompt cache fields provided
 - **WHEN** a client sends `promptCacheKey` or `promptCacheRetention` on a valid Responses request

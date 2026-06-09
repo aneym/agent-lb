@@ -1,6 +1,6 @@
 ## Why
 
-Codex voice input sends audio to `/backend-api/transcribe`, and OpenAI-compatible clients send audio to `/v1/audio/transcriptions`. `codex-lb` currently does not handle either route, so transcription requests cannot be routed through the load balancer.
+Codex voice input sends audio to `/backend-api/transcribe`, and OpenAI-compatible clients send audio to `/v1/audio/transcriptions`. `agent-lb` currently does not handle either route, so transcription requests cannot be routed through the load balancer.
 
 ## What Changes
 

@@ -1,6 +1,6 @@
 ## Why
 
-Operators can see the running codex-lb version in the dashboard footer, but there is no visible signal when the deployed version falls behind the latest GitHub release. This makes small self-hosted deployments easy to leave stale.
+Operators can see the running agent-lb version in the dashboard footer, but there is no visible signal when the deployed version falls behind the latest GitHub release. This makes small self-hosted deployments easy to leave stale.
 
 ## What Changes
 

@@ -253,7 +253,7 @@ export function RoutingSettings({
             <div>
               <p className="text-sm font-medium">Upstream stream transport</p>
               <p className="text-xs text-muted-foreground">
-                Choose how `codex-lb` connects upstream for streaming responses.
+                Choose how `agent-lb` connects upstream for streaming responses.
               </p>
             </div>
             <Select

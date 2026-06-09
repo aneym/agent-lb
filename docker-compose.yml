@@ -18,7 +18,7 @@ services:
       - "2455"
       - --reload
     volumes:
-      - codex-lb-data:/var/lib/codex-lb
+      - agent-lb-data:/var/lib/agent-lb
     develop:
       watch:
         - action: sync
@@ -84,36 +84,36 @@ services:
           set -- postgres
         fi
         exec docker-entrypoint.sh "$@"
-      - codex-lb-postgres-entrypoint-guard
+      - agent-lb-postgres-entrypoint-guard
     environment:
-      POSTGRES_USER: codex_lb
-      POSTGRES_PASSWORD: codex_lb
-      POSTGRES_DB: codex_lb
+      POSTGRES_USER: agent_lb
+      POSTGRES_PASSWORD: agent_lb
+      POSTGRES_DB: agent_lb
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codex_lb -d codex_lb"]
+      test: ["CMD-SHELL", "pg_isready -U agent_lb -d agent_lb"]
       interval: 10s
       timeout: 5s
       retries: 5
     volumes:
-      - codex-lb-postgres-data:/var/lib/postgresql
+      - agent-lb-postgres-data:/var/lib/postgresql
     restart: unless-stopped
 
   postgres-upgrade:
     image: pgautoupgrade/pgautoupgrade:18-alpine@sha256:9fdd8f8da95a5c4ca041290bfe966cd22ccd66f9f3bece17a0d37bd3b7e0a260
     profiles: ["postgres-upgrade"]
     environment:
-      POSTGRES_USER: codex_lb
-      POSTGRES_PASSWORD: codex_lb
-      POSTGRES_DB: codex_lb
+      POSTGRES_USER: agent_lb
+      POSTGRES_PASSWORD: agent_lb
+      POSTGRES_DB: agent_lb
       PGAUTO_ONESHOT: "yes"
     volumes:
-      - codex-lb-postgres-data:/var/lib/postgresql
+      - agent-lb-postgres-data:/var/lib/postgresql
     restart: "no"
 
 volumes:
-  codex-lb-data:
-    name: codex-lb-data
-  codex-lb-postgres-data:
-    name: codex-lb-postgres-data
+  agent-lb-data:
+    name: agent-lb-data
+  agent-lb-postgres-data:
+    name: agent-lb-postgres-data

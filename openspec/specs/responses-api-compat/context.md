@@ -35,12 +35,12 @@ See `openspec/specs/responses-api-compat/spec.md` for normative requirements.
 
 ## Fast Mode and Service Tiers
 
-codex-lb accepts the OpenAI/Codex `service_tier` field on Responses and Chat
+agent-lb accepts the OpenAI/Codex `service_tier` field on Responses and Chat
 Completions compatible routes. The legacy `fast` spelling is accepted as an
 alias and is forwarded upstream as the canonical `priority` tier.
 
 Fast Mode is request-level intent, not a local speed guarantee. The upstream
-Codex backend decides the actual tier for each completed response. codex-lb
+Codex backend decides the actual tier for each completed response. agent-lb
 therefore records three separate values in request logs:
 
 - `requestedServiceTier`: what the client or API key asked for, after alias
@@ -53,7 +53,7 @@ therefore records three separate values in request logs:
 
 If a request is sent with `service_tier: "fast"` or `service_tier: "priority"`
 and the completed row shows `requestedServiceTier: "priority"` but
-`actualServiceTier: "default"`, codex-lb forwarded the priority request and
+`actualServiceTier: "default"`, agent-lb forwarded the priority request and
 upstream chose the default tier. That can happen even when websocket transport
 is active.
 
@@ -66,7 +66,7 @@ Responses request with:
 }
 ```
 
-Clients that expose Fast Mode as `fast` may keep using that spelling; codex-lb
+Clients that expose Fast Mode as `fast` may keep using that spelling; agent-lb
 normalizes it to `priority` before forwarding.
 
 API keys can also force the tier for traffic that uses that key. Set the key's
@@ -81,7 +81,7 @@ To verify a completed Fast Mode request:
 3. `actualServiceTier` is the upstream result. `default` means upstream did not
    grant priority for that response.
 
-This distinction matters for quota and cost accounting: codex-lb prices the
+This distinction matters for quota and cost accounting: agent-lb prices the
 request from the effective billable `serviceTier`, not from the requested tier
 when upstream reports a different actual tier.
 

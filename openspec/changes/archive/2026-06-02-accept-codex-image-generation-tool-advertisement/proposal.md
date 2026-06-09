@@ -39,4 +39,4 @@ None.
 - Tests: backend Codex HTTP/websocket proxy regression coverage and targeted
   request-normalization unit tests.
 - Client compatibility: current Codex app/CLI payloads continue to work against
-  codex-lb without changing `/v1/responses` validation or forwarding semantics.
+  agent-lb without changing `/v1/responses` validation or forwarding semantics.

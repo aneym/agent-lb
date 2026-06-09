@@ -1,6 +1,6 @@
 ## Overview
 
-`database-migrations` capability defines how codex-lb evolves schema safely across fresh installs, partially migrated legacy DBs, and ongoing branch development.
+`database-migrations` capability defines how agent-lb evolves schema safely across fresh installs, partially migrated legacy DBs, and ongoing branch development.
 
 ## Scope and Non-Goals
 
@@ -45,9 +45,9 @@
 - Startup path:
   - inspect state -> (optional SQLite backup) -> bootstrap legacy `schema_migrations` -> remap legacy Alembic IDs -> `upgrade head` -> schema drift check
 - CLI checks:
-  - `codex-lb-db check` validates head count, revision naming/filename policy, and schema drift.
+  - `agent-lb-db check` validates head count, revision naming/filename policy, and schema drift.
 - Emergency toggle:
-  - `CODEX_LB_DATABASE_ALEMBIC_AUTO_REMAP_ENABLED=false` disables auto-remap.
+  - `AGENT_LB_DATABASE_ALEMBIC_AUTO_REMAP_ENABLED=false` disables auto-remap.
 
 ## Example
 

@@ -417,7 +417,7 @@ async def connect_responses_websocket(
         # Long Codex turns can spend minutes in upstream reasoning without
         # sending application frames. Keep transport pings enabled so
         # intermediaries still see liveness, but disable the library's pong
-        # watchdog so codex-lb's own request/idle budgets decide when a
+        # watchdog so agent-lb's own request/idle budgets decide when a
         # healthy long turn has stalled.
         "ping_timeout": None,
         "max_size": settings.max_sse_event_bytes,

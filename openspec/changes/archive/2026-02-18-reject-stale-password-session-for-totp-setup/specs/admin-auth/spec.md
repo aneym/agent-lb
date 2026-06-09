@@ -2,7 +2,7 @@
 
 ### Requirement: TOTP setup requires password session
 
-The system SHALL require a valid password-authenticated session (not the `X-Codex-LB-Setup-Token` header) for TOTP setup and disable operations. The `CODEX_LB_DASHBOARD_SETUP_TOKEN` environment variable and `X-Codex-LB-Setup-Token` header validation MUST be removed.
+The system SHALL require a valid password-authenticated session (not the `X-Agent-LB-Setup-Token` header) for TOTP setup and disable operations. The `AGENT_LB_DASHBOARD_SETUP_TOKEN` environment variable and `X-Agent-LB-Setup-Token` header validation MUST be removed.
 
 A `pw=true` session cookie MUST be considered valid for TOTP setup only while password mode is currently active (`password_hash` is set).
 

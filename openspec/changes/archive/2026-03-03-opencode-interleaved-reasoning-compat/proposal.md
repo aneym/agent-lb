@@ -4,7 +4,7 @@ OpenCode custom provider sessions can emit interleaved reasoning and legacy chat
 
 `Unknown parameter: 'input[1].reasoning_content'`
 
-This blocks prompting for users who enable reasoning controls in OpenCode with `codex-lb`.
+This blocks prompting for users who enable reasoning controls in OpenCode with `agent-lb`.
 
 ## What Changes
 
@@ -12,7 +12,7 @@ This blocks prompting for users who enable reasoning controls in OpenCode with `
 - Normalize assistant message content parts in `input` so text parts use `output_text` instead of `input_text`, matching upstream role-specific schema constraints.
 - Normalize `role: tool` message history to Responses-native `function_call_output` items and reject unsupported/unknown message roles early with clear client errors.
 - Preserve top-level `reasoning` request controls (`effort`, `summary`) so reasoning level selection still works.
-- Document OpenCode model capability config for `codex-lb` (`reasoning` + `interleaved`) to keep reasoning UI available without relying on implicit defaults.
+- Document OpenCode model capability config for `agent-lb` (`reasoning` + `interleaved`) to keep reasoning UI available without relying on implicit defaults.
 - Add unit + integration regression tests for payload sanitization behavior.
 
 ## Capabilities

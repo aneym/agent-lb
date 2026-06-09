@@ -1,7 +1,7 @@
 ## 1. Proxy defaulting
 
 - [x] 1.1 Auto-detect standard outbound proxy env vars for upstream websocket handshakes
-- [x] 1.2 Preserve explicit `CODEX_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=false` as a direct-connect override
+- [x] 1.2 Preserve explicit `AGENT_LB_UPSTREAM_WEBSOCKET_TRUST_ENV=false` as a direct-connect override
 - [x] 1.3 Add SOCKS runtime support for websocket handshakes
 
 ## 2. Coverage and docs

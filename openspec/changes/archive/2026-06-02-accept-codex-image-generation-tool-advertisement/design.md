@@ -2,7 +2,7 @@
 
 Current Codex Desktop/CLI builds advertise a top-level `image_generation` tool
 on backend Codex Responses requests even when the turn is not explicitly asking
-for image generation. codex-lb does not need that ambient advertisement to proxy
+for image generation. agent-lb does not need that ambient advertisement to proxy
 the turn, and preserving it on the backend Codex path can couple normal Codex
 turns to upstream image-tool acceptance. Public `/v1/*` Responses compatibility
 already has a separate built-in-tool forwarding contract; this change keeps that
@@ -26,7 +26,7 @@ both converge on shared request normalization before upstream forwarding.
 **Non-Goals:**
 
 - Changing public `/v1/*` built-in tool validation or forwarding behavior.
-- Implementing local image-generation semantics inside codex-lb.
+- Implementing local image-generation semantics inside agent-lb.
 - Changing chat-completions tool validation behavior.
 
 ## Decisions

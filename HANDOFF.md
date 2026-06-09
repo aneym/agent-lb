@@ -1,4 +1,4 @@
-# Handoff — Anthropic provider for codex-lb
+# Handoff — Anthropic provider for agent-lb
 
 Date: 2026-05-28
 Repo: `/Users/aneyman/repos/swap-lb`
@@ -7,7 +7,7 @@ Remote: `upstream -> https://github.com/Soju06/codex-lb.git`
 
 ## Goal
 
-Add Anthropic Claude as a second provider to codex-lb so one instance can load-balance multiple Claude Pro/Max OAuth accounts for Claude Code via `ANTHROPIC_BASE_URL`, while keeping the OpenAI path byte-identical and preparing the work for upstream contribution.
+Add Anthropic Claude as a second provider to agent-lb so one instance can load-balance multiple Claude Pro/Max OAuth accounts for Claude Code via `ANTHROPIC_BASE_URL`, while keeping the OpenAI path byte-identical and preparing the work for upstream contribution.
 
 ## Current State
 

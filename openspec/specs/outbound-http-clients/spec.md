@@ -48,7 +48,7 @@ Explicit configuration MUST still override auto-detection.
 
 ### Requirement: Runtime version status checks latest GitHub release
 
-The service SHALL expose a dashboard-auth protected runtime version status API that reports the running codex-lb version, the latest known GitHub release version when available, whether an update is available, and the time of the latest lookup attempt. The lookup MUST be cached in-process to avoid per-request GitHub traffic, and lookup failures MUST NOT cause the API to fail.
+The service SHALL expose a dashboard-auth protected runtime version status API that reports the running agent-lb version, the latest known GitHub release version when available, whether an update is available, and the time of the latest lookup attempt. The lookup MUST be cached in-process to avoid per-request GitHub traffic, and lookup failures MUST NOT cause the API to fail.
 
 #### Scenario: Latest release is newer than current version
 

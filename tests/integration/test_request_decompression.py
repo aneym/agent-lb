@@ -18,7 +18,7 @@ async def test_zstd_request_decompression(async_client, monkeypatch):
     }
     body = json.dumps(payload).encode("utf-8")
 
-    monkeypatch.setenv("CODEX_LB_MAX_DECOMPRESSED_BODY_BYTES", str(len(body) + 8))
+    monkeypatch.setenv("AGENT_LB_MAX_DECOMPRESSED_BODY_BYTES", str(len(body) + 8))
     get_settings.cache_clear()
 
     compressed = zstd.ZstdCompressor().compress(body)
@@ -42,7 +42,7 @@ async def test_zstd_request_decompression_rejects_large_payload(async_client, mo
     }
     body = json.dumps(payload).encode("utf-8")
 
-    monkeypatch.setenv("CODEX_LB_MAX_DECOMPRESSED_BODY_BYTES", "128")
+    monkeypatch.setenv("AGENT_LB_MAX_DECOMPRESSED_BODY_BYTES", "128")
     get_settings.cache_clear()
 
     compressed = zstd.ZstdCompressor().compress(body)

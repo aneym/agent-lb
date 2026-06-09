@@ -1,6 +1,6 @@
 ## Why
 
-`/v1` compatibility currently breaks the part of OpenAI-style prompt caching semantics that codex-lb can safely preserve against the ChatGPT Codex backend. The proxy treats `prompt_cache_key` as optional dashboard stickiness instead of required cache affinity, so repeated cache-keyed requests can land on different upstream accounts.
+`/v1` compatibility currently breaks the part of OpenAI-style prompt caching semantics that agent-lb can safely preserve against the ChatGPT Codex backend. The proxy treats `prompt_cache_key` as optional dashboard stickiness instead of required cache affinity, so repeated cache-keyed requests can land on different upstream accounts.
 
 ## What Changes
 

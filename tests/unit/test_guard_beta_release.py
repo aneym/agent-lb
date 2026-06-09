@@ -11,19 +11,19 @@ from scripts.release_versions import update_project_versions
 def write_minimal_release_files(root: Path, version: str = "1.20.0") -> None:
     (root / "app").mkdir(parents=True)
     (root / "frontend").mkdir(parents=True)
-    (root / "deploy" / "helm" / "codex-lb").mkdir(parents=True)
-    (root / "pyproject.toml").write_text(f'[project]\nname = "codex-lb"\nversion = "{version}"\n', encoding="utf-8")
+    (root / "deploy" / "helm" / "agent-lb").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(f'[project]\nname = "agent-lb"\nversion = "{version}"\n', encoding="utf-8")
     (root / "app" / "__init__.py").write_text(f'__version__ = "{version}"\n', encoding="utf-8")
     (root / "frontend" / "package.json").write_text(
         json.dumps({"name": "frontend", "version": version}) + "\n",
         encoding="utf-8",
     )
-    (root / "deploy" / "helm" / "codex-lb" / "Chart.yaml").write_text(
-        f"apiVersion: v2\nname: codex-lb\nversion: {version}\nappVersion: {version}\n",
+    (root / "deploy" / "helm" / "agent-lb" / "Chart.yaml").write_text(
+        f"apiVersion: v2\nname: agent-lb\nversion: {version}\nappVersion: {version}\n",
         encoding="utf-8",
     )
     (root / "uv.lock").write_text(
-        f'[[package]]\nname = "codex-lb"\nversion = "{version}"\nsource = {{ editable = "." }}\n',
+        f'[[package]]\nname = "agent-lb"\nversion = "{version}"\nsource = {{ editable = "." }}\n',
         encoding="utf-8",
     )
 
@@ -54,8 +54,8 @@ def event_file(
     body: str,
     merged: bool = False,
     merge_commit_sha: str | None = None,
-    head_repo: str = "Soju06/codex-lb",
-    base_repo: str = "Soju06/codex-lb",
+    head_repo: str = "Soju06/agent-lb",
+    base_repo: str = "Soju06/agent-lb",
 ) -> Path:
     head_owner, head_name = head_repo.split("/", 1)
     base_owner, base_name = base_repo.split("/", 1)
@@ -211,7 +211,7 @@ def test_pr_guard_rejects_forked_canonical_beta_branch(tmp_path: Path) -> None:
         head_ref=branch,
         head_sha=sha,
         body=validation_body(sha),
-        head_repo="evil-fork/codex-lb",
+        head_repo="evil-fork/agent-lb",
     )
 
     result = run_guard(
@@ -227,8 +227,8 @@ def test_pr_guard_rejects_forked_canonical_beta_branch(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "canonical repository release branch" in result.stderr
-    assert "Expected head repository: Soju06/codex-lb" in result.stderr
-    assert "Actual head repository: evil-fork/codex-lb" in result.stderr
+    assert "Expected head repository: Soju06/agent-lb" in result.stderr
+    assert "Actual head repository: evil-fork/agent-lb" in result.stderr
 
 
 def test_publish_guard_rejects_stale_candidate_sha_evidence(tmp_path: Path) -> None:
@@ -270,15 +270,15 @@ def test_publish_guard_rejects_forked_canonical_beta_branch(tmp_path: Path) -> N
         head_sha=sha,
         body=validation_body(sha),
         merged=True,
-        head_repo="evil-fork/codex-lb",
+        head_repo="evil-fork/agent-lb",
     )
 
     result = run_guard(Path(__file__).resolve().parents[2], repo, "--mode", "publish", "--event-path", str(event))
 
     assert result.returncode == 1
     assert "canonical repository release branch" in result.stderr
-    assert "Expected head repository: Soju06/codex-lb" in result.stderr
-    assert "Actual head repository: evil-fork/codex-lb" in result.stderr
+    assert "Expected head repository: Soju06/agent-lb" in result.stderr
+    assert "Actual head repository: evil-fork/agent-lb" in result.stderr
 
 
 def test_publish_guard_rejects_merge_tree_that_differs_from_validated_head(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@
 
 ## Why
 
-codex-lb currently has one stable release path managed by release-please. Maintainers need a beta channel that is still PR-driven, does not create a long-lived beta branch, and can be promoted to the normal stable release by merging the existing release-please PR.
+agent-lb currently has one stable release path managed by release-please. Maintainers need a beta channel that is still PR-driven, does not create a long-lived beta branch, and can be promoted to the normal stable release by merging the existing release-please PR.
 
 ## What Changes
 

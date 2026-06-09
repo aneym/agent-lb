@@ -1,6 +1,6 @@
 ## Why
 
-Native Codex clients can stream upstream over the Responses WebSocket transport, but `codex-lb` only exposed coarse environment-based control for that path and did not let operators switch the transport from the dashboard. At the same time, two interoperability gaps remained visible during native Codex testing:
+Native Codex clients can stream upstream over the Responses WebSocket transport, but `agent-lb` only exposed coarse environment-based control for that path and did not let operators switch the transport from the dashboard. At the same time, two interoperability gaps remained visible during native Codex testing:
 
 - upstream rejects `service_tier: "fast"` even though Codex fast mode expects priority-tier handling
 - operators needed a safe way to compare requested versus upstream-effective service tiers during native Codex testing without changing billable request-log semantics

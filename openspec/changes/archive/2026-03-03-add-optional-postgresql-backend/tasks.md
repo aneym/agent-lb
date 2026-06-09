@@ -5,7 +5,7 @@
 
 ## 2. Test compatibility across backends
 
-- [x] 2.1 Refactor test DB bootstrap so it respects externally provided `CODEX_LB_DATABASE_URL`
+- [x] 2.1 Refactor test DB bootstrap so it respects externally provided `AGENT_LB_DATABASE_URL`
 - [x] 2.2 Add/extend session import tests for a PostgreSQL URL
 
 ## 3. CI validation

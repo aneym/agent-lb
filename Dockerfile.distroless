@@ -35,7 +35,7 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-RUN mkdir -p /var/lib/codex-lb
+RUN mkdir -p /var/lib/agent-lb
 
 # Stage arch-specific shared libraries for distroless copy
 RUN ARCH="$(uname -m)" && \
@@ -61,7 +61,7 @@ COPY --from=python-build /staged-libs/lib/ /lib/
 COPY --from=python-build /staged-libs/usr/lib/ /usr/lib/
 COPY --from=python-build /usr/local /usr/local
 COPY --from=python-build /opt/venv /opt/venv
-COPY --from=python-build --chown=nonroot:nonroot /var/lib/codex-lb /var/lib/codex-lb
+COPY --from=python-build --chown=nonroot:nonroot /var/lib/agent-lb /var/lib/agent-lb
 COPY --chown=nonroot:nonroot app app
 COPY --chown=nonroot:nonroot config config
 COPY --chown=nonroot:nonroot scripts scripts

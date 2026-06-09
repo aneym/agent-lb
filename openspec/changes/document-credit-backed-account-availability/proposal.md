@@ -1,7 +1,7 @@
 ## Why
 
 Credit-backed ChatGPT accounts can remain usable after the regular quota
-windows report full usage, but codex-lb currently treats those 100% quota
+windows report full usage, but agent-lb currently treats those 100% quota
 samples as hard blocks. Operators also cannot see the live credit balance on
 the account cards, so the dashboard can disagree with routing behavior.
 

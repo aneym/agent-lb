@@ -1,6 +1,6 @@
 ## Why
 
-`codex-lb` currently prices requests only by model name, which makes fast-mode (`service_tier: "priority"`) requests look like standard-tier traffic in both API key cost limits and dashboard/request-log cost reporting. The pricing table also lacks `gpt-5.4`, so those requests are undercounted as zero cost.
+`agent-lb` currently prices requests only by model name, which makes fast-mode (`service_tier: "priority"`) requests look like standard-tier traffic in both API key cost limits and dashboard/request-log cost reporting. The pricing table also lacks `gpt-5.4`, so those requests are undercounted as zero cost.
 
 ## What Changes
 

@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb currently proxies `/v1/responses` and `/v1/chat/completions` to the ChatGPT backend via `/codex/responses`, with partial request validation and a best-effort mapping layer. The codebase already treats Responses as the internal wire and derives Chat Completions from streamed responses, but coverage is incomplete and some OpenAI fields are ignored or loosely validated. The backend is the limiting factor (no access to ChatGPT internals), so compatibility must be achieved via strict request/response handling, normalization, and explicit errors for unsupported features.
+agent-lb currently proxies `/v1/responses` and `/v1/chat/completions` to the ChatGPT backend via `/codex/responses`, with partial request validation and a best-effort mapping layer. The codebase already treats Responses as the internal wire and derives Chat Completions from streamed responses, but coverage is incomplete and some OpenAI fields are ignored or loosely validated. The backend is the limiting factor (no access to ChatGPT internals), so compatibility must be achieved via strict request/response handling, normalization, and explicit errors for unsupported features.
 
 ## Goals / Non-Goals
 

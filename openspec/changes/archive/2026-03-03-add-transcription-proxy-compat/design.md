@@ -1,6 +1,6 @@
 ## Context
 
-`codex-lb` currently proxies Responses and Chat Completions flows, but does not expose transcription endpoints. Recent Codex voice-input behavior sends multipart audio to `/backend-api/transcribe` for ChatGPT-auth mode, and OpenAI-compatible clients use `/v1/audio/transcriptions` with `model=gpt-4o-transcribe`.
+`agent-lb` currently proxies Responses and Chat Completions flows, but does not expose transcription endpoints. Recent Codex voice-input behavior sends multipart audio to `/backend-api/transcribe` for ChatGPT-auth mode, and OpenAI-compatible clients use `/v1/audio/transcriptions` with `model=gpt-4o-transcribe`.
 
 The current proxy stack already provides:
 - account selection and token refresh in `ProxyService`

@@ -14,11 +14,11 @@ The current repository also has too many branch-level / change-level partial fix
 
 - Define upstream `previous_response_id` as an ephemeral anchor, not durable state.
 - Prefer the Codex client soft-reset fix: classify stale-anchor continuity loss, reset incremental WebSocket session state, rebuild from conversation history, and retry once without `previous_response_id` before surfacing an error.
-- Keep codex-lb focused on sanitized/classifiable error semantics for direct `/backend-api/codex/responses` WebSocket traffic.
+- Keep agent-lb focused on sanitized/classifiable error semantics for direct `/backend-api/codex/responses` WebSocket traffic.
 - Do not leak raw `previous_response_not_found` or missing response ids downstream.
 - Treat proxy-side anchorless replay ledgers as optional compatibility fallback for clients that cannot be patched, not the primary design.
 - Consolidate the source of truth: OpenSpec delta + context docs + focused regression tests for long background-terminal waits on the Codex-native direct WebSocket path.
 
 ## Impact
 
-Long-running background terminal waits become recoverable by automatically triggering the same full-session restart behavior that currently works only after the user types another message. codex-lb remains responsible for safe masking/classification, while the client owns the turn-level retry semantics.
+Long-running background terminal waits become recoverable by automatically triggering the same full-session restart behavior that currently works only after the user types another message. agent-lb remains responsible for safe masking/classification, while the client owns the turn-level retry semantics.

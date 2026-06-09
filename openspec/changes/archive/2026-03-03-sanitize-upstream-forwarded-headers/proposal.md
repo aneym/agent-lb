@@ -1,6 +1,6 @@
 ## Why
 
-홈서버 환경(`docker -> nginx reverse proxy -> cloudflare -> user`)에서 codex-lb를 원격 사용하면 upstream(ChatGPT)에서 Cloudflare 차단 페이지가 반환되는 문제가 발생했다. 원인 분석 결과, codex-lb가 inbound 헤더를 그대로 upstream으로 전달하면서 프록시 체인에서 추가된 `Forwarded`, `X-Forwarded-*`, `CF-*` 계열 헤더까지 전파되고 있었다.
+홈서버 환경(`docker -> nginx reverse proxy -> cloudflare -> user`)에서 agent-lb를 원격 사용하면 upstream(ChatGPT)에서 Cloudflare 차단 페이지가 반환되는 문제가 발생했다. 원인 분석 결과, agent-lb가 inbound 헤더를 그대로 upstream으로 전달하면서 프록시 체인에서 추가된 `Forwarded`, `X-Forwarded-*`, `CF-*` 계열 헤더까지 전파되고 있었다.
 
 로컬 직결 환경에서는 재현되지 않고, reverse proxy + Cloudflare 환경에서만 재현된 점과 헤더 제거(`clean`) 경로에서 즉시 정상화된 점을 기준으로, upstream 호출 전에 프록시 식별 헤더를 명시적으로 제거해야 한다.
 

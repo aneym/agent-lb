@@ -400,7 +400,7 @@ export const handlers = [
       updateAvailable: false,
       checkedAt: "2026-05-26T00:00:00Z",
       source: "github",
-      releaseUrl: "https://github.com/Soju06/codex-lb/releases/latest",
+      releaseUrl: "https://github.com/aneym/agent-lb/releases/latest",
     });
   }),
 
@@ -1292,7 +1292,7 @@ export const handlers = [
   http.post("/api/dashboard-auth/totp/setup/start", () => {
     return HttpResponse.json({
       secret: "JBSWY3DPEHPK3PXP",
-      otpauthUri: "otpauth://totp/codex-lb?secret=JBSWY3DPEHPK3PXP",
+      otpauthUri: "otpauth://totp/agent-lb?secret=JBSWY3DPEHPK3PXP",
       qrSvgDataUri: "data:image/svg+xml;base64,PHN2Zy8+",
     });
   }),

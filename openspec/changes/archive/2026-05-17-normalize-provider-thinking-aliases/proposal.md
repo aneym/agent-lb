@@ -1,6 +1,6 @@
 ## Why
 
-Some OpenAI-compatible clients reuse provider-specific reasoning controls when pointed at `codex-lb`. In particular, Qwen/DeepSeek-style `enable_thinking` and Anthropic-style `thinking` fields can leak through the Chat Completions and Responses compatibility layers and reach the upstream ChatGPT backend unchanged, which causes avoidable upstream validation failures.
+Some OpenAI-compatible clients reuse provider-specific reasoning controls when pointed at `agent-lb`. In particular, Qwen/DeepSeek-style `enable_thinking` and Anthropic-style `thinking` fields can leak through the Chat Completions and Responses compatibility layers and reach the upstream ChatGPT backend unchanged, which causes avoidable upstream validation failures.
 
 ## What Changes
 

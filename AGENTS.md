@@ -8,7 +8,7 @@
 
 ## Branch Policy (fork)
 
-**Development on this fork (`aneym/codex-lb`) stays on `main`.** Work directly on `main`; do not create or switch to feature branches unless the user explicitly asks. `feat/anthropic-provider` was consolidated into `main` on 2026-06-09 and is retired. The "do not commit directly to main" convention in `.agents/conventions/git-workflow.md` applies only to upstream (`Soju06/codex-lb`) contributions. The local checkout also runs the live launchd service (`com.aneyman.codex-lb`), so the working tree must remain on `main`.
+**Development on this fork (`aneym/agent-lb`) stays on `main`.** Work directly on `main`; do not create or switch to feature branches unless the user explicitly asks. `feat/anthropic-provider` was consolidated into `main` on 2026-06-09 and is retired. The "do not commit directly to main" convention in `.agents/conventions/git-workflow.md` applies only to upstream (`Soju06/codex-lb`) contributions. The local checkout also runs the live launchd service (`com.aneyman.agent-lb`), so the working tree must remain on `main`.
 
 ## Code Conventions
 
@@ -89,7 +89,7 @@ are encouraged but not substitutes for the cloud gates.
 
 ## PR Readiness / Review Trapdoors
 
-These rules encode recurring review blockers observed across codex-lb PRs.
+These rules encode recurring review blockers observed across agent-lb PRs.
 
 - OpenSpec is a hard gate for behavior, API, schema, CLI,
   dashboard-visible, proxy-routing, operator-contract, and compatibility

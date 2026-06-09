@@ -1,6 +1,6 @@
 ## Why
 
-Deployments that already sit behind Authelia or another reverse proxy still need a local dashboard password today unless operators fully expose the dashboard in unauthenticated mode. That leaves an awkward gap between secure passwordless SSO at the edge and codex-lb's built-in password/TOTP model.
+Deployments that already sit behind Authelia or another reverse proxy still need a local dashboard password today unless operators fully expose the dashboard in unauthenticated mode. That leaves an awkward gap between secure passwordless SSO at the edge and agent-lb's built-in password/TOTP model.
 
 ## What Changes
 

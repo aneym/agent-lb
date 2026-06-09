@@ -2,18 +2,18 @@
 
 ## Purpose
 
-This context explains how codex-lb derives an account's usage and status, and
-how to diagnose disagreements between codex-lb and Codex Desktop or the Codex
+This context explains how agent-lb derives an account's usage and status, and
+how to diagnose disagreements between agent-lb and Codex Desktop or the Codex
 CLI quota pill.
 
-codex-lb treats `/wham/usage` as the source of truth for account usage. Other
+agent-lb treats `/wham/usage` as the source of truth for account usage. Other
 OpenAI account surfaces can display reset state earlier than `/wham/usage`,
 especially during team reset windows, so the dashboard can temporarily show an
 account as `rate_limited` even when Codex Desktop says the quota has reset.
 
 ## Upstream Usage Source
 
-codex-lb refreshes account usage by calling:
+agent-lb refreshes account usage by calling:
 
 ```http
 GET https://chatgpt.com/backend-api/wham/usage
@@ -35,7 +35,7 @@ status from `primary_window.used_percent`:
 - `used_percent >= 100` on the primary rate-limit window: `RATE_LIMITED`
 - `used_percent < 100`: `ACTIVE`
 
-There is no manual reset step inside codex-lb. Recovery is driven by the next
+There is no manual reset step inside agent-lb. Recovery is driven by the next
 refresh tick that observes a sub-100 value from `/wham/usage`.
 
 ## Why Codex Settings Can Disagree
@@ -51,31 +51,31 @@ OpenAI-side data sources:
 
 During a reset window it is normal for Settings -> Account to show the reset
 state while `/wham/usage` still returns `used_percent: 100` for a short period
-afterwards. codex-lb mirrors `/wham/usage` during that window, so the account
+afterwards. agent-lb mirrors `/wham/usage` during that window, so the account
 stays `RATE_LIMITED` or `QUOTA_EXCEEDED` until upstream catches up.
 
 ## Operational Notes
 
 - Wait first. The next request through that account usually wakes the upstream
-  rate limiter; codex-lb auto-recovers on the next refresh tick after the
+  rate limiter; agent-lb auto-recovers on the next refresh tick after the
   upstream payload changes.
 - A force-probe action is planned in
-  [#677](https://github.com/Soju06/codex-lb/issues/677). The dashboard should
+  [#677](https://github.com/aneym/agent-lb/issues/677). The dashboard should
   expose a per-account button that fires one minimal `responses.create` against
   the affected account to nudge the upstream limiter to re-evaluate the window.
-- Do not manually flip the codex-lb account state to `ACTIVE` while
+- Do not manually flip the agent-lb account state to `ACTIVE` while
   `/wham/usage` still reports the account as fully used. That only masks the
   upstream state and can route traffic back to an account that the upstream
   limiter will reject.
 
 ## Verification Example
 
-To confirm that the disagreement is upstream rather than codex-lb's mirror,
-call `/wham/usage` directly with the same account token codex-lb is using:
+To confirm that the disagreement is upstream rather than agent-lb's mirror,
+call `/wham/usage` directly with the same account token agent-lb is using:
 
 ```bash
 ACCESS_TOKEN=...
-ACCOUNT_ID=...   # chatgpt-account-id UUID, not codex-lb's id
+ACCOUNT_ID=...   # chatgpt-account-id UUID, not agent-lb's id
 
 curl -s https://chatgpt.com/backend-api/wham/usage \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
@@ -84,11 +84,11 @@ curl -s https://chatgpt.com/backend-api/wham/usage \
 ```
 
 If `primary_window.used_percent` is still `100` here while Settings -> Account
-shows the account as reset, codex-lb has nothing fresher to mirror. The account
+shows the account as reset, agent-lb has nothing fresher to mirror. The account
 is inside the upstream propagation window, and the practical fix is to wait or,
 once #677 lands, use the Probe action.
 
 ## Related Work
 
-- [#676 - initial bug report on `/wham/usage` vs. Settings UI divergence](https://github.com/Soju06/codex-lb/issues/676)
-- [#677 - dashboard per-account force-probe action](https://github.com/Soju06/codex-lb/issues/677)
+- [#676 - initial bug report on `/wham/usage` vs. Settings UI divergence](https://github.com/aneym/agent-lb/issues/676)
+- [#677 - dashboard per-account force-probe action](https://github.com/aneym/agent-lb/issues/677)

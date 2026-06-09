@@ -2,7 +2,7 @@
 
 ## Problem
 
-Operators running codex-lb against a small pool of ChatGPT accounts sometimes
+Operators running agent-lb against a small pool of ChatGPT accounts sometimes
 prefer to **drive one account at a time** instead of spreading load across the
 pool. The existing `capacity_weighted` (default) and `usage_weighted`
 strategies always touch every healthy account, which:

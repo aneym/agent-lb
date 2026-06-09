@@ -2,7 +2,7 @@
 
 ## Problem
 
-OpenAI can report ChatGPT Pro Lite accounts with `plan_type=prolite`. codex-lb currently preserves that value but does not recognize it as an account plan with known quota capacity or Pro-equivalent model entitlement. As a result, per-account percent-based usage can look healthy while aggregate dashboard remaining credits and capacity-weighted routing treat the account as unknown capacity, and Pro-gated models can fail account selection with `no_accounts`.
+OpenAI can report ChatGPT Pro Lite accounts with `plan_type=prolite`. agent-lb currently preserves that value but does not recognize it as an account plan with known quota capacity or Pro-equivalent model entitlement. As a result, per-account percent-based usage can look healthy while aggregate dashboard remaining credits and capacity-weighted routing treat the account as unknown capacity, and Pro-gated models can fail account selection with `no_accounts`.
 
 ## Scope
 

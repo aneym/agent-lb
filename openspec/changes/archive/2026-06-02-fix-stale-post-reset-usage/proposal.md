@@ -1,6 +1,6 @@
 ## Why
 
-Accounts can stay deprioritised or blocked after an upstream quota/rate-limit window has already reset when codex-lb still has a fresh-looking usage row from the previous window. The freshness gate should not trust rows whose `reset_at` is already in the past, and blocked accounts with an expired persisted reset deadline need one immediate post-reset usage fetch even if the latest primary row is still within the normal refresh interval.
+Accounts can stay deprioritised or blocked after an upstream quota/rate-limit window has already reset when agent-lb still has a fresh-looking usage row from the previous window. The freshness gate should not trust rows whose `reset_at` is already in the past, and blocked accounts with an expired persisted reset deadline need one immediate post-reset usage fetch even if the latest primary row is still within the normal refresh interval.
 
 ## What Changes
 

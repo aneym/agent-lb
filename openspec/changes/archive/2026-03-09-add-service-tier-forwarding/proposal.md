@@ -1,6 +1,6 @@
 ## Why
 
-Codex fast mode is carried over the Responses API as `service_tier: "priority"`. `codex-lb` currently forwards that value only incidentally through permissive request models, which leaves the behavior undocumented and fragile.
+Codex fast mode is carried over the Responses API as `service_tier: "priority"`. `agent-lb` currently forwards that value only incidentally through permissive request models, which leaves the behavior undocumented and fragile.
 
 ## What Changes
 

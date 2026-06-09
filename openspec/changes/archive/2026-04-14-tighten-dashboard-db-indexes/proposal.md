@@ -1,6 +1,6 @@
 ## Why
 
-대시보드가 무거운 codex-lb 트래픽과 함께 느려질 때, `usage_history`와 `request_logs`의 hot query들이 기존 인덱스를 충분히 활용하지 못하는 구간이 확인됐다. 특히 PostgreSQL에서 `latest_by_account()`는 normalized window 인덱스가 있어도 seq scan + external sort를 선택했고, dashboard request-log 집계/옵션 쿼리는 최근 구간을 반복 스캔한 뒤 정렬/집계를 수행했다.
+대시보드가 무거운 agent-lb 트래픽과 함께 느려질 때, `usage_history`와 `request_logs`의 hot query들이 기존 인덱스를 충분히 활용하지 못하는 구간이 확인됐다. 특히 PostgreSQL에서 `latest_by_account()`는 normalized window 인덱스가 있어도 seq scan + external sort를 선택했고, dashboard request-log 집계/옵션 쿼리는 최근 구간을 반복 스캔한 뒤 정렬/집계를 수행했다.
 
 ## What Changes
 

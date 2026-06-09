@@ -1,6 +1,6 @@
 ## Why
 
-`codex-lb` already preserves Codex-specific headers for upstream Responses traffic, but two gaps keep it from cleanly recognizing and defaulting to a Desktop-like Codex persona:
+`agent-lb` already preserves Codex-specific headers for upstream Responses traffic, but two gaps keep it from cleanly recognizing and defaulting to a Desktop-like Codex persona:
 
 - native transport auto-detection only allowlists `codex_cli_rs` and `Codex Desktop`, missing the first-party chat/Desktop originators used in `refs/codex`
 - the browser OAuth authorize URL defaults to the CLI originator instead of the Desktop chat originator used by first-party Desktop flows

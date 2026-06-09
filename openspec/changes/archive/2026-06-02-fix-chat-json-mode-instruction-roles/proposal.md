@@ -2,7 +2,7 @@
 
 Chat Completions JSON mode currently fails when the explicit JSON instruction appears in a `system` or `developer` message. The chat-to-Responses mapper moves those messages into `instructions`, but the upstream JSON-mode validation requires the JSON marker to remain in the input context.
 
-OpenAI-compatible JSON mode allows clients to instruct JSON output via conversation messages, including system messages, so codex-lb should not require clients to duplicate that instruction in a user message.
+OpenAI-compatible JSON mode allows clients to instruct JSON output via conversation messages, including system messages, so agent-lb should not require clients to duplicate that instruction in a user message.
 
 ## What Changes
 

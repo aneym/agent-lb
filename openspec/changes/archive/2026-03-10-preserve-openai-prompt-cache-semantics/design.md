@@ -37,6 +37,6 @@ The existing normalization layer already rewrites OpenAI-compatible alias fields
 
 ## Risks / Trade-offs
 
-- [Risk] OpenAI-style clients may send `prompt_cache_retention` expecting backend support. → Mitigation: continue accepting the field for compatibility but strip it before upstream, preserving the behavior codex-lb can actually guarantee.
+- [Risk] OpenAI-style clients may send `prompt_cache_retention` expecting backend support. → Mitigation: continue accepting the field for compatibility but strip it before upstream, preserving the behavior agent-lb can actually guarantee.
 - [Risk] Always pinning `/v1` prompt-cache traffic may reduce balancing flexibility. → Mitigation: scope the behavior only to requests that explicitly opt in with a non-empty `prompt_cache_key`.
 - [Risk] Route-specific affinity flags can drift over time. → Mitigation: thread the new flag explicitly through the API/service boundary and cover all three `/v1` entry points in tests.

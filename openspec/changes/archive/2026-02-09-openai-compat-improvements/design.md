@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb proxies OpenAI-compatible `/v1/responses` and `/v1/chat/completions` to a Codex upstream. The upstream expects list-based Responses inputs and a limited tool set, which currently causes mismatches and unclear errors for string inputs, chat multimodal content parts, and unsupported parameters. We need deterministic normalization and explicit unsupported errors, plus clearer documentation and live checks.
+agent-lb proxies OpenAI-compatible `/v1/responses` and `/v1/chat/completions` to a Codex upstream. The upstream expects list-based Responses inputs and a limited tool set, which currently causes mismatches and unclear errors for string inputs, chat multimodal content parts, and unsupported parameters. We need deterministic normalization and explicit unsupported errors, plus clearer documentation and live checks.
 
 ## Goals / Non-Goals
 

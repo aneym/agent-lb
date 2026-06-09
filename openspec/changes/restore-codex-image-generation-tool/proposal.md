@@ -2,7 +2,7 @@
 
 Codex Desktop can expose the built-in `image_gen` surface through backend
 Codex Responses requests that advertise the upstream `image_generation` tool.
-codex-lb currently strips that tool on `/backend-api/codex/responses` unless
+agent-lb currently strips that tool on `/backend-api/codex/responses` unless
 the request forces `tool_choice`, so ordinary Codex turns lose the descriptor
 that enables image-generation flows even though public `/v1/responses` and
 `/v1/images/*` already prove upstream accepts the tool.

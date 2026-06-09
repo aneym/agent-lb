@@ -7,13 +7,13 @@
 ## 2. Repair Path
 
 - [ ] 2.1 If the focused regression fails on current repo code, harden the direct WebSocket public error boundary.
-- [ ] 2.2 If current repo code passes but live canary fails, rebuild/redeploy local `codex-lb` from the current commit instead of changing service logic.
+- [ ] 2.2 If current repo code passes but live canary fails, rebuild/redeploy local `agent-lb` from the current commit instead of changing service logic.
 - [ ] 2.3 Make request-log persistence failures visible in health or verifier output.
 
 ## 3. Watchdog Recovery
 
 - [ ] 3.1 Update the local watchdog to use Colima's Docker context/socket explicitly.
-- [ ] 3.2 Verify watchdog restart behavior against the live `codex-lb` container without pushing remote work.
+- [ ] 3.2 Verify watchdog restart behavior against the live `agent-lb` container without pushing remote work.
 
 ## 4. Verification
 

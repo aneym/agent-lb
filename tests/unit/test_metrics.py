@@ -120,14 +120,14 @@ def test_prometheus_metrics_defined_when_dependency_available(monkeypatch: pytes
 
     assert prometheus_module.PROMETHEUS_AVAILABLE is True
     assert prometheus_module.REGISTRY is not None
-    assert prometheus_module.requests_total.name == "codex_lb_requests_total"
-    assert prometheus_module.request_duration_seconds.name == "codex_lb_request_duration_seconds"
-    assert prometheus_module.active_connections.name == "codex_lb_active_connections"
-    assert prometheus_module.bridge_instance_mismatch_total.name == "codex_lb_bridge_instance_mismatch_total"
+    assert prometheus_module.requests_total.name == "agent_lb_requests_total"
+    assert prometheus_module.request_duration_seconds.name == "agent_lb_request_duration_seconds"
+    assert prometheus_module.active_connections.name == "agent_lb_active_connections"
+    assert prometheus_module.bridge_instance_mismatch_total.name == "agent_lb_bridge_instance_mismatch_total"
     assert prometheus_module.bridge_instance_mismatch_total.labelnames == ("outcome",)
-    assert prometheus_module.continuity_owner_resolution_total.name == "codex_lb_continuity_owner_resolution_total"
+    assert prometheus_module.continuity_owner_resolution_total.name == "agent_lb_continuity_owner_resolution_total"
     assert prometheus_module.continuity_owner_resolution_total.labelnames == ("surface", "source", "outcome")
-    assert prometheus_module.continuity_fail_closed_total.name == "codex_lb_continuity_fail_closed_total"
+    assert prometheus_module.continuity_fail_closed_total.name == "agent_lb_continuity_fail_closed_total"
     assert prometheus_module.continuity_fail_closed_total.labelnames == ("surface", "reason")
 
 

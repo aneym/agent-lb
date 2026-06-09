@@ -246,7 +246,7 @@ async def test_latest_by_account_reads_rows_under_legacy_quota_key_alias(
 ) -> None:
     registry = tmp_path / "additional_quota_registry.json"
     _write_registry(registry, quota_key="spark_enterprise", quota_key_aliases=["codex_spark"])
-    monkeypatch.setenv("CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
+    monkeypatch.setenv("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
     clear_additional_quota_registry_cache()
 
     repo = AdditionalUsageRepository(async_session)
@@ -280,7 +280,7 @@ async def test_latest_by_account_merges_alias_rows_conservatively(
 ) -> None:
     registry = tmp_path / "additional_quota_registry.json"
     _write_registry(registry, quota_key="spark_enterprise", quota_key_aliases=["codex_spark"])
-    monkeypatch.setenv("CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
+    monkeypatch.setenv("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
     clear_additional_quota_registry_cache()
 
     repo = AdditionalUsageRepository(async_session)
@@ -325,7 +325,7 @@ async def test_latest_by_account_prefers_newer_alias_row_after_reset(
 ) -> None:
     registry = tmp_path / "additional_quota_registry.json"
     _write_registry(registry, quota_key="spark_enterprise", quota_key_aliases=["codex_spark"])
-    monkeypatch.setenv("CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
+    monkeypatch.setenv("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
     clear_additional_quota_registry_cache()
 
     repo = AdditionalUsageRepository(async_session)
@@ -676,7 +676,7 @@ async def test_history_since_reads_rows_under_legacy_quota_key_alias(
 ) -> None:
     registry = tmp_path / "additional_quota_registry.json"
     _write_registry(registry, quota_key="spark_enterprise", quota_key_aliases=["codex_spark"])
-    monkeypatch.setenv("CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
+    monkeypatch.setenv("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
     clear_additional_quota_registry_cache()
 
     repo = AdditionalUsageRepository(async_session)
@@ -857,7 +857,7 @@ async def test_delete_for_account_and_quota_key_removes_rows_under_legacy_quota_
 ) -> None:
     registry = tmp_path / "additional_quota_registry.json"
     _write_registry(registry, quota_key="spark_enterprise", quota_key_aliases=["codex_spark"])
-    monkeypatch.setenv("CODEX_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
+    monkeypatch.setenv("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
     clear_additional_quota_registry_cache()
 
     repo = AdditionalUsageRepository(async_session)

@@ -1,6 +1,6 @@
 ## Context
 
-codex-lb already adds some cross-cutting response headers through HTTP middleware, such as `x-request-id`. The requested version header has the same scope: it should apply broadly to HTTP responses regardless of whether the route returns JSON, a static file, or a handled framework/domain error.
+agent-lb already adds some cross-cutting response headers through HTTP middleware, such as `x-request-id`. The requested version header has the same scope: it should apply broadly to HTTP responses regardless of whether the route returns JSON, a static file, or a handled framework/domain error.
 
 The repo currently has two possible version sources: FastAPI app metadata in `app/main.py` and the package release version in `app/__init__.py`. The FastAPI metadata is stale (`0.1.0`), while the package version is the maintained release value.
 

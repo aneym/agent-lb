@@ -1,6 +1,6 @@
 ## Overview
 
-`codex-lb` exposes two routers that both proxy the upstream Codex Responses API:
+`agent-lb` exposes two routers that both proxy the upstream Codex Responses API:
 
 - `/backend-api/codex/*` — for the Codex CLI itself; preserves the upstream event stream verbatim because the Codex CLI expects (and uses) `codex.rate_limits` and other vendor-specific events.
 - `/v1/*` — advertised as OpenAI-compatible (see README: Codex CLI uses `/backend-api/codex`, but OpenCode, OpenClaw, and the OpenAI Python SDK all use `/v1`).

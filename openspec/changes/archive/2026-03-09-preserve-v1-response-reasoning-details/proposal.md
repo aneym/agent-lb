@@ -2,7 +2,7 @@
 
 `/v1/responses` non-streaming requests are currently executed as upstream SSE streams and then collapsed into a single JSON response by reading only the terminal `response.completed` or `response.incomplete` event. When the upstream emits reasoning or other rich output items in intermediate events such as `response.output_item.done`, those items are dropped from the final JSON response if the terminal event omits `response.output`.
 
-This makes `codex-lb` lose reasoning-related payloads that clients expect from the v1 Responses API surface.
+This makes `agent-lb` lose reasoning-related payloads that clients expect from the v1 Responses API surface.
 
 ## What Changes
 

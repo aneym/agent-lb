@@ -834,11 +834,11 @@ _SECURITY_WORK_AUTHORIZATION_REQUIRED_HINTS = (
 )
 _SECURITY_WORK_RETRY_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work. "
-    "codex-lb is retrying on an account marked as authorized for security work."
+    "agent-lb is retrying on an account marked as authorized for security work."
 )
 _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
     "Upstream flagged this request as possible cybersecurity work, but no account is marked as authorized for "
-    "security work. codex-lb is continuing with normal account selection; the upstream request may still fail until "
+    "security work. agent-lb is continuing with normal account selection; the upstream request may still fail until "
     "an account with Trusted Access for Cyber is marked as security-work-authorized."
 )
 
@@ -902,7 +902,7 @@ class ProxyService(
         self._websocket_previous_response_account_index: dict[tuple[str, str | None, str | None], str] = {}
         self._websocket_continuity_index: dict[tuple[str, str | None], _WebSocketContinuityState] = {}
         self._background_cleanup_tasks: set[asyncio.Task[None]] = set()
-        # In-memory pin from upstream-issued file_id -> codex-lb account_id.
+        # In-memory pin from upstream-issued file_id -> agent-lb account_id.
         # Used so ``finalize_file`` for a given ``file_id`` is routed to
         # the same account that handled ``create_file``. Cross-instance
         # routing is best-effort: if the finalize request lands on a
@@ -1371,7 +1371,7 @@ class ProxyService(
         # detached/shielded token-refresh task. A client disconnect cancels the
         # request and closes the request-scoped session below; without this the
         # still-running refresh task would touch that closed session and strand
-        # a background-pool connection (the codex-lb pool-exhaustion leak).
+        # a background-pool connection (the agent-lb pool-exhaustion leak).
         async with self._repo_factory() as repos:
             yield repos.accounts
 
@@ -2250,7 +2250,7 @@ def _security_work_advisory_event(
     if account_id:
         warning["account_id"] = account_id
     return {
-        "type": "codex_lb.warning",
+        "type": "agent_lb.warning",
         "warning": warning,
     }
 
@@ -2279,7 +2279,7 @@ def _raise_proxy_unavailable(message: str) -> NoReturn:
     )
 
 
-_FAILED_ACCOUNT_ATTR = "_codex_lb_failed_account"
+_FAILED_ACCOUNT_ATTR = "_agent_lb_failed_account"
 
 
 def _raise_proxy_unavailable_for_account(message: str, account: Account) -> NoReturn:

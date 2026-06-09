@@ -477,7 +477,7 @@ async def test_force_refresh_usage_keeps_rate_limited_account_without_primary_or
 
 @pytest.mark.asyncio
 async def test_force_refresh_bypasses_fresh_usage_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -506,7 +506,7 @@ async def test_force_refresh_bypasses_fresh_usage_cache(monkeypatch: pytest.Monk
 
 @pytest.mark.asyncio
 async def test_force_refresh_does_not_join_stale_refresh_singleflight(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -563,7 +563,7 @@ async def test_force_refresh_does_not_join_stale_refresh_singleflight(monkeypatc
 async def test_force_refresh_preserves_cancellation_while_waiting_on_stale_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -608,8 +608,8 @@ async def test_force_refresh_preserves_cancellation_while_waiting_on_stale_refre
 
 @pytest.mark.asyncio
 async def test_force_refresh_bypasses_auth_failure_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -639,7 +639,7 @@ async def test_force_refresh_bypasses_auth_failure_cooldown(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_force_refresh_respects_usage_refresh_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "false")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "false")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -657,7 +657,7 @@ async def test_force_refresh_respects_usage_refresh_disabled(monkeypatch: pytest
 
 @pytest.mark.asyncio
 async def test_usage_updater_includes_chatgpt_account_id_even_when_shared(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -700,7 +700,7 @@ async def test_usage_updater_includes_chatgpt_account_id_even_when_shared(monkey
 
 @pytest.mark.asyncio
 async def test_usage_updater_refreshes_openai_and_anthropic_accounts(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -767,7 +767,7 @@ async def test_usage_updater_refreshes_openai_and_anthropic_accounts(monkeypatch
 
 @pytest.mark.asyncio
 async def test_usage_refresh_recovers_quota_exceeded_account_when_usage_is_available(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -820,7 +820,7 @@ async def test_usage_refresh_recovers_quota_exceeded_account_when_usage_is_avail
 
 @pytest.mark.asyncio
 async def test_usage_refresh_keeps_recent_quota_exceeded_cooldown(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -866,8 +866,8 @@ async def test_usage_refresh_keeps_recent_quota_exceeded_cooldown(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_usage_refresh_bypasses_freshness_after_quota_cooldown(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -921,8 +921,8 @@ async def test_usage_refresh_bypasses_freshness_after_quota_cooldown(monkeypatch
 
 @pytest.mark.asyncio
 async def test_usage_refresh_preserves_freshness_after_failed_quota_recovery_probe(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -960,7 +960,7 @@ async def test_usage_refresh_preserves_freshness_after_failed_quota_recovery_pro
 
 @pytest.mark.asyncio
 async def test_usage_refresh_does_not_overwrite_newer_status_change(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1011,7 +1011,7 @@ async def test_usage_refresh_does_not_overwrite_newer_status_change(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_usage_refresh_syncs_blocked_at_after_compare_failure(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1062,7 +1062,7 @@ async def test_usage_refresh_syncs_blocked_at_after_compare_failure(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_usage_refresh_does_not_recover_when_secondary_quota_is_missing(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1107,7 +1107,7 @@ async def test_usage_refresh_does_not_recover_when_secondary_quota_is_missing(mo
 
 @pytest.mark.asyncio
 async def test_usage_refresh_does_not_recover_when_secondary_quota_is_still_exhausted(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1152,7 +1152,7 @@ async def test_usage_refresh_does_not_recover_when_secondary_quota_is_still_exha
 
 @pytest.mark.asyncio
 async def test_usage_refresh_demotes_quota_exceeded_to_rate_limited_when_primary_is_exhausted(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1203,7 +1203,7 @@ async def test_usage_refresh_demotes_quota_exceeded_to_rate_limited_when_primary
 
 @pytest.mark.asyncio
 async def test_usage_refresh_recovers_quota_exceeded_free_weekly_account(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1240,7 +1240,7 @@ async def test_usage_refresh_recovers_quota_exceeded_free_weekly_account(monkeyp
 
 @pytest.mark.asyncio
 async def test_usage_refresh_stores_free_monthly_window_without_secondary_remap(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1283,7 +1283,7 @@ async def test_usage_refresh_stores_free_monthly_window_without_secondary_remap(
 
 @pytest.mark.asyncio
 async def test_usage_refresh_uses_fresh_monthly_row_for_quota_freshness(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1314,7 +1314,7 @@ async def test_usage_refresh_uses_fresh_monthly_row_for_quota_freshness(monkeypa
 
 @pytest.mark.asyncio
 async def test_usage_refresh_skips_mismatched_workspace_payload(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1361,7 +1361,7 @@ async def test_usage_refresh_skips_mismatched_workspace_payload(monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_usage_refresh_skips_taken_workspace_slot_payload(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1413,7 +1413,7 @@ async def test_usage_refresh_skips_taken_workspace_slot_payload(monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_usage_refresh_skips_unknown_workspace_plan_mismatch(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1453,7 +1453,7 @@ async def test_usage_refresh_skips_unknown_workspace_plan_mismatch(monkeypatch) 
 async def test_usage_refresh_skips_workspace_account_when_payload_omits_workspace_and_plan_conflicts(
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1596,7 +1596,7 @@ class StubAccountsRepository:
 
 @pytest.mark.asyncio
 async def test_usage_updater_deactivates_on_account_invalid_4xx(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1626,7 +1626,7 @@ async def test_usage_updater_deactivates_on_account_invalid_4xx(monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_usage_updater_does_not_deactivate_on_403(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1651,7 +1651,7 @@ async def test_usage_updater_does_not_deactivate_on_403(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_usage_updater_does_not_deactivate_on_transient_4xx(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1676,7 +1676,7 @@ async def test_usage_updater_does_not_deactivate_on_transient_4xx(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_usage_updater_does_not_deactivate_on_401(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1701,7 +1701,7 @@ async def test_usage_updater_does_not_deactivate_on_401(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_usage_updater_marks_token_invalidated_as_reauth_required(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1736,7 +1736,7 @@ async def test_usage_updater_marks_token_invalidated_as_reauth_required(monkeypa
 
 @pytest.mark.asyncio
 async def test_usage_updater_deactivates_on_401_account_deactivated_code(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1769,7 +1769,7 @@ async def test_usage_updater_deactivates_on_401_account_deactivated_code(monkeyp
 
 @pytest.mark.asyncio
 async def test_usage_updater_deactivates_on_401_deactivated_message_without_code(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1798,8 +1798,8 @@ async def test_usage_updater_deactivates_on_401_deactivated_message_without_code
 
 @pytest.mark.asyncio
 async def test_usage_updater_cools_down_repeated_403_failures(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1830,8 +1830,8 @@ async def test_usage_updater_cools_down_repeated_403_failures(monkeypatch) -> No
 
 @pytest.mark.asyncio
 async def test_usage_updater_subset_refresh_does_not_clear_other_account_cooldowns(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1878,7 +1878,7 @@ def test_mark_usage_refresh_auth_cooldown_ignores_non_auth_status(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_usage_updater_does_not_deactivate_on_5xx(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -1903,7 +1903,7 @@ async def test_usage_updater_does_not_deactivate_on_5xx(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_usage_updater_persists_primary_and_secondary_usage(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1961,7 +1961,7 @@ async def test_usage_updater_persists_primary_and_secondary_usage(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_usage_updater_does_not_sync_conflicting_plan_without_workspace_identity(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -1987,7 +1987,7 @@ async def test_usage_updater_does_not_sync_conflicting_plan_without_workspace_id
 
 @pytest.mark.asyncio
 async def test_usage_updater_computes_reset_at_from_reset_after_seconds(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2023,7 +2023,7 @@ async def test_usage_updater_computes_reset_at_from_reset_after_seconds(monkeypa
 
 @pytest.mark.asyncio
 async def test_usage_updater_refresh_accounts_returns_false_when_rate_limit_missing(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2045,7 +2045,7 @@ async def test_usage_updater_refresh_accounts_returns_false_when_rate_limit_miss
 
 @pytest.mark.asyncio
 async def test_usage_updater_refresh_accounts_returns_false_on_401_retry_failure(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.clients.usage import UsageFetchError
     from app.core.config.settings import get_settings
 
@@ -2087,7 +2087,7 @@ async def test_usage_updater_refresh_accounts_returns_true_when_any_window_writt
     primary_used: float | None,
     secondary_used: float | None,
 ) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2124,7 +2124,7 @@ async def test_usage_updater_refresh_accounts_returns_true_when_any_window_writt
 
 @pytest.mark.asyncio
 async def test_usage_updater_refresh_accounts_returns_true_when_partial_write(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2159,7 +2159,7 @@ async def test_usage_updater_refresh_accounts_returns_true_when_partial_write(mo
 
 @pytest.mark.asyncio
 async def test_usage_updater_singleflights_concurrent_refreshes(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2216,7 +2216,7 @@ async def test_usage_updater_singleflights_concurrent_refreshes(monkeypatch) -> 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_written_to_additional_repo(monkeypatch) -> None:
     """Additional rate limits from payload are persisted via additional_usage_repo."""
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2288,7 +2288,7 @@ async def test_additional_rate_limits_written_to_additional_repo(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_normalize_known_alias_to_canonical_quota_key(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2336,7 +2336,7 @@ async def test_additional_rate_limits_normalize_known_alias_to_canonical_quota_k
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_merge_aliases_before_pruning_quota(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2389,7 +2389,7 @@ async def test_additional_rate_limits_merge_aliases_before_pruning_quota(monkeyp
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_merge_windows_across_aliases(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2449,7 +2449,7 @@ async def test_additional_rate_limits_merge_windows_across_aliases(monkeypatch) 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_null_writes_nothing(monkeypatch) -> None:
     """When additional_rate_limits is null, no additional entries are written."""
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2481,7 +2481,7 @@ async def test_additional_rate_limits_null_writes_nothing(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_sync_even_when_main_rate_limit_missing(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2525,7 +2525,7 @@ async def test_additional_rate_limits_sync_even_when_main_rate_limit_missing(mon
 @pytest.mark.asyncio
 async def test_additional_only_account_not_repolled_within_interval(monkeypatch) -> None:
     """R6-F1: Additional-only accounts must not cause tight re-polling."""
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2571,7 +2571,7 @@ async def test_additional_only_account_not_repolled_within_interval(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_empty_list_writes_nothing(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2605,7 +2605,7 @@ async def test_additional_rate_limits_empty_list_writes_nothing(monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_none_does_not_prune_existing_rows(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2638,7 +2638,7 @@ async def test_additional_rate_limits_none_does_not_prune_existing_rows(monkeypa
 @pytest.mark.asyncio
 async def test_additional_rate_limits_multiple_limits(monkeypatch) -> None:
     """Multiple additional limits produce one entry per limit per window."""
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2706,7 +2706,7 @@ async def test_additional_rate_limits_multiple_limits(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_additional_rate_limits_secondary_none_only_primary(monkeypatch) -> None:
     """When secondary_window is None, only primary entry is written."""
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2756,7 +2756,7 @@ async def test_additional_rate_limits_secondary_none_only_primary(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_prune_stale_limit_names(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2823,7 +2823,7 @@ async def test_additional_rate_limits_prune_stale_limit_names(monkeypatch) -> No
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_prune_stale_secondary_window(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2892,7 +2892,7 @@ async def test_additional_rate_limits_prune_stale_secondary_window(monkeypatch) 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_no_credits_passed(monkeypatch) -> None:
     """Credits data is NOT passed to additional limit entries (no credits_* fields)."""
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
     get_settings.cache_clear()
@@ -2963,7 +2963,7 @@ def test_latest_usage_is_fresh_returns_false_when_reset_at_has_passed() -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_accounts_forces_fetch_after_rate_limit_reset_despite_fresh_usage(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
     from app.core.utils.time import utcnow
 
@@ -3015,8 +3015,8 @@ async def test_refresh_accounts_forces_fetch_after_rate_limit_reset_despite_fres
 
 @pytest.mark.asyncio
 async def test_refresh_accounts_does_not_repeat_post_reset_rate_limit_probe(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
     from app.core.config.settings import get_settings
     from app.core.utils.time import utcnow
 
@@ -3049,7 +3049,7 @@ async def test_refresh_accounts_does_not_repeat_post_reset_rate_limit_probe(monk
 
 @pytest.mark.asyncio
 async def test_refresh_accounts_forces_fetch_after_quota_reset_despite_fresh_primary_usage(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
     from app.core.utils.time import utcnow
 
@@ -3107,8 +3107,8 @@ async def test_refresh_accounts_forces_fetch_after_quota_reset_despite_fresh_pri
 
 @pytest.mark.asyncio
 async def test_refresh_accounts_does_not_repeat_post_reset_quota_probe(monkeypatch) -> None:
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
-    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_INTERVAL_SECONDS", "3600")
     from app.core.config.settings import get_settings
     from app.core.utils.time import utcnow
 

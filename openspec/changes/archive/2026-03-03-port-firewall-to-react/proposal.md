@@ -1,6 +1,6 @@
 ## Why
 
-В `dwnmf/codex-lb` есть рабочий API firewall (allowlist IP + middleware для proxy-маршрутов), но в текущем `Soju06/codex-lb` после React-миграции этот функционал отсутствует.
+В `dwnmf/agent-lb` есть рабочий API firewall (allowlist IP + middleware для proxy-маршрутов), но в текущем `aneym/agent-lb` после React-миграции этот функционал отсутствует.
 
 Нужно восстановить firewall в текущей кодовой базе: backend-контракты и enforcement, а также UI в React-приложении.
 

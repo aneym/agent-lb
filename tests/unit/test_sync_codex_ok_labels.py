@@ -22,7 +22,7 @@ def load_sync_module() -> ModuleType:
 
 def decision(module: ModuleType, **overrides: Any) -> Any:
     values = {
-        "repo": "Soju06/codex-lb",
+        "repo": "Soju06/agent-lb",
         "number": 714,
         "head_sha": "a" * 40,
         "has_ok_label": True,
@@ -55,7 +55,7 @@ def test_apply_decision_tolerates_github_app_write_denial(monkeypatch: pytest.Mo
     warnings = module.apply_decision(decision(module), tolerate_permission_errors=True)
 
     assert len(warnings) == 1
-    assert "remove 🤖 codex: ok from Soju06/codex-lb#714" in warnings[0]
+    assert "remove 🤖 codex: ok from Soju06/agent-lb#714" in warnings[0]
     assert "Resource not accessible by integration" in warnings[0]
 
 
@@ -88,7 +88,7 @@ def test_apply_decision_treats_missing_label_delete_as_done(monkeypatch: pytest.
     assert calls == [
         (
             "DELETE",
-            "/repos/Soju06/codex-lb/issues/714/labels/%F0%9F%A4%96%20codex%3A%20ok",
+            "/repos/Soju06/agent-lb/issues/714/labels/%F0%9F%A4%96%20codex%3A%20ok",
         )
     ]
 
@@ -121,7 +121,7 @@ def test_trigger_codex_review_tolerates_github_app_write_denial(monkeypatch: pyt
     )
 
     assert len(warnings) == 1
-    assert "request Codex review on Soju06/codex-lb#714" in warnings[0]
+    assert "request Codex review on Soju06/agent-lb#714" in warnings[0]
 
 
 def test_workflow_prefers_privileged_token_and_enables_tolerant_apply() -> None:
@@ -148,12 +148,12 @@ def test_main_tolerates_read_errors_when_requested(
 
     monkeypatch.setattr(module, "decide_pr", fake_decide_pr)
 
-    result = module.main(["--repo", "Soju06/codex-lb", "--all-open", "--tolerate-read-errors"])
+    result = module.main(["--repo", "Soju06/agent-lb", "--all-open", "--tolerate-read-errors"])
 
     captured = capsys.readouterr()
     assert result == 0
-    assert "Soju06/codex-lb#710: gh: HTTP 502" in captured.err
-    assert "dry-run Soju06/codex-lb#714" in captured.out
+    assert "Soju06/agent-lb#710: gh: HTTP 502" in captured.err
+    assert "dry-run Soju06/agent-lb#714" in captured.out
 
 
 def test_main_fails_tolerant_run_when_every_pr_read_fails(
@@ -170,7 +170,7 @@ def test_main_fails_tolerant_run_when_every_pr_read_fails(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(module.GhError("gh: HTTP 502")),
     )
 
-    result = module.main(["--repo", "Soju06/codex-lb", "--all-open", "--tolerate-read-errors"])
+    result = module.main(["--repo", "Soju06/agent-lb", "--all-open", "--tolerate-read-errors"])
 
     captured = capsys.readouterr()
     assert result == 1
@@ -188,7 +188,7 @@ def test_main_fails_read_errors_without_tolerance(monkeypatch: pytest.MonkeyPatc
         lambda *_args, **_kwargs: (_ for _ in ()).throw(module.GhError("gh: HTTP 502")),
     )
 
-    assert module.main(["--repo", "Soju06/codex-lb", "--all-open"]) == 1
+    assert module.main(["--repo", "Soju06/agent-lb", "--all-open"]) == 1
 
 
 def test_main_fails_apply_errors_even_with_read_error_tolerance(
@@ -206,8 +206,8 @@ def test_main_fails_apply_errors_even_with_read_error_tolerance(
 
     monkeypatch.setattr(module, "apply_decision", fail_apply)
 
-    result = module.main(["--repo", "Soju06/codex-lb", "--all-open", "--apply", "--tolerate-read-errors"])
+    result = module.main(["--repo", "Soju06/agent-lb", "--all-open", "--apply", "--tolerate-read-errors"])
 
     captured = capsys.readouterr()
     assert result == 1
-    assert "Soju06/codex-lb#714: gh: HTTP 500 while writing labels" in captured.err
+    assert "Soju06/agent-lb#714: gh: HTTP 500 while writing labels" in captured.err

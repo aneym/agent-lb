@@ -21,7 +21,7 @@ class _CliHelpFormatter(argparse.HelpFormatter):
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the codex-lb API server.",
+        description="Run the agent-lb API server.",
         formatter_class=_CliHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -34,7 +34,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     codex_sessions_subparsers = codex_sessions.add_subparsers(dest="codex_sessions_command")
     retag = codex_sessions_subparsers.add_parser(
         "retag",
-        help="Re-tag Codex threads between the openai and codex-lb model providers.",
+        help="Re-tag Codex threads between the openai and agent-lb model providers.",
         formatter_class=_CliHelpFormatter,
     )
     retag.add_argument(

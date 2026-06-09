@@ -20,6 +20,6 @@ None.
 
 ## Impact
 
-- Affects upstream transport selection in [app/core/clients/proxy.py](/Users/hughdo/Desktop/Proj/codex-lb/app/core/clients/proxy.py).
+- Affects upstream transport selection in [app/core/clients/proxy.py](/Users/hughdo/Desktop/Proj/agent-lb/app/core/clients/proxy.py).
 - Adds regression coverage in `tests/unit/test_proxy_utils.py`.
 - Keeps compact request sanitization and explicit transport overrides unchanged.

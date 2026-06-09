@@ -1542,7 +1542,7 @@ def test_make_http_bridge_session_key_ignores_forwarded_affinity_headers_on_publ
 def test_http_bridge_requires_cluster_registration_for_non_loopback_advertise_url() -> None:
     settings = Settings(
         http_responses_session_bridge_instance_id="instance-a",
-        http_responses_session_bridge_advertise_base_url="http://instance-a.codex-lb-bridge.default.svc.cluster.local:2455",
+        http_responses_session_bridge_advertise_base_url="http://instance-a.agent-lb-bridge.default.svc.cluster.local:2455",
     )
 
     assert proxy_service._http_bridge_requires_cluster_registration(settings) is True

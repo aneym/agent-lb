@@ -21,4 +21,4 @@ A small secondary fix in the same change prevents the upstream `fc_...` item id 
 - Restores correct `tool_calls[].function.arguments` per call when upstream emits multiple parallel function calls.
 - No effect on single-tool-call paths, raw `/v1/responses` forwarding, or non-tool text handling.
 - Public client surface unchanged: `tool_calls[].id` / `call_id` continue to expose the upstream `call_...` value; the `fc_...` item id is only used internally for routing.
-- Aligns codex-lb's tool-call routing with OpenAI's reference Responses streaming client and LiteLLM's equivalent fix.
+- Aligns agent-lb's tool-call routing with OpenAI's reference Responses streaming client and LiteLLM's equivalent fix.

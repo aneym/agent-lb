@@ -26,7 +26,7 @@ The system SHALL authenticate the admin via `POST /api/dashboard-auth/password/l
 #### Scenario: Successful password login
 
 - **WHEN** admin submits a valid password to `POST /api/dashboard-auth/password/login`
-- **THEN** the system sets the `codex_lb_dashboard_session` cookie (httponly, secure, samesite=lax, max-age=12h) and returns 200 with session state
+- **THEN** the system sets the `agent_lb_dashboard_session` cookie (httponly, secure, samesite=lax, max-age=12h) and returns 200 with session state
 
 #### Scenario: Invalid password
 
@@ -121,7 +121,7 @@ The system SHALL expose `GET /api/dashboard-auth/session` returning the current 
 
 ### Requirement: TOTP setup requires password session
 
-The system SHALL require a valid password-authenticated session (not the `X-Codex-LB-Setup-Token` header) for TOTP setup and disable operations. The `CODEX_LB_DASHBOARD_SETUP_TOKEN` environment variable and `X-Codex-LB-Setup-Token` header validation MUST be removed.
+The system SHALL require a valid password-authenticated session (not the `X-Agent-LB-Setup-Token` header) for TOTP setup and disable operations. The `AGENT_LB_DASHBOARD_SETUP_TOKEN` environment variable and `X-Agent-LB-Setup-Token` header validation MUST be removed.
 
 #### Scenario: TOTP setup with valid password session
 

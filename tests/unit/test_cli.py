@@ -22,7 +22,7 @@ def test_main_passes_timestamped_log_config(monkeypatch):
         captured["args"] = args
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr(sys, "argv", ["codex-lb"])
+    monkeypatch.setattr(sys, "argv", ["agent-lb"])
     monkeypatch.setattr(cli, "_load_uvicorn", lambda: SimpleNamespace(run=fake_run))
 
     cli.main()
@@ -44,7 +44,7 @@ def test_main_passes_custom_keep_alive_timeout(monkeypatch):
         captured["args"] = args
         captured["kwargs"] = kwargs
 
-    monkeypatch.setattr(sys, "argv", ["codex-lb", "--timeout-keep-alive", "900"])
+    monkeypatch.setattr(sys, "argv", ["agent-lb", "--timeout-keep-alive", "900"])
     monkeypatch.setattr(cli, "_load_uvicorn", lambda: SimpleNamespace(run=fake_run))
 
     cli.main()
@@ -53,7 +53,7 @@ def test_main_passes_custom_keep_alive_timeout(monkeypatch):
 
 
 def test_main_reports_invalid_server_port_env(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["codex-lb"])
+    monkeypatch.setattr(sys, "argv", ["agent-lb"])
     monkeypatch.setenv("PORT", "not-a-port")
 
     with pytest.raises(SystemExit, match="--port/PORT must be an integer"):
@@ -61,7 +61,7 @@ def test_main_reports_invalid_server_port_env(monkeypatch):
 
 
 def test_main_reports_invalid_keep_alive_timeout_env(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["codex-lb"])
+    monkeypatch.setattr(sys, "argv", ["agent-lb"])
     monkeypatch.setenv("UVICORN_TIMEOUT_KEEP_ALIVE", "not-a-timeout")
 
     with pytest.raises(SystemExit, match="--timeout-keep-alive/UVICORN_TIMEOUT_KEEP_ALIVE must be an integer"):
@@ -83,7 +83,7 @@ def test_codex_sessions_retag_refuses_noninteractive_write_without_yes(monkeypat
                 "--from",
                 "openai",
                 "--to",
-                "codex-lb",
+                "agent-lb",
                 "--codex-home",
                 str(tmp_path),
             ]
@@ -104,7 +104,7 @@ def test_codex_sessions_retag_ignores_invalid_server_port_env(monkeypatch, capsy
             "--from",
             "openai",
             "--to",
-            "codex-lb",
+            "agent-lb",
             "--codex-home",
             str(tmp_path),
             "--dry-run",
@@ -128,7 +128,7 @@ def test_codex_sessions_retag_dry_run_skips_confirmation(capsys, tmp_path):
             "--from",
             "openai",
             "--to",
-            "codex-lb",
+            "agent-lb",
             "--codex-home",
             str(tmp_path),
             "--dry-run",
@@ -155,7 +155,7 @@ def test_codex_sessions_retag_reports_file_access_errors(monkeypatch, tmp_path):
                 "--from",
                 "openai",
                 "--to",
-                "codex-lb",
+                "agent-lb",
                 "--codex-home",
                 str(tmp_path),
                 "--dry-run",
@@ -179,7 +179,7 @@ def test_codex_sessions_retag_yes_updates_jsonl_and_sqlite(capsys, tmp_path):
             "--from",
             "openai",
             "--to",
-            "codex-lb",
+            "agent-lb",
             "--codex-home",
             str(tmp_path),
             "--yes",
@@ -190,9 +190,9 @@ def test_codex_sessions_retag_yes_updates_jsonl_and_sqlite(capsys, tmp_path):
     assert "Close Codex/Codex CLI" in captured.err
     assert "Updated JSONL files: 1" in captured.out
     assert "Updated SQLite rows: 1" in captured.out
-    assert json.loads(session_file.read_text(encoding="utf-8"))["model_provider"] == "codex-lb"
+    assert json.loads(session_file.read_text(encoding="utf-8"))["model_provider"] == "agent-lb"
     with sqlite3.connect(state_db) as conn:
-        assert conn.execute("SELECT model_provider FROM threads").fetchone()[0] == "codex-lb"
+        assert conn.execute("SELECT model_provider FROM threads").fetchone()[0] == "agent-lb"
 
 
 def test_utc_default_formatter_formats_without_converter_binding_error():

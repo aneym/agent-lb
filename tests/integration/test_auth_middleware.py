@@ -70,10 +70,10 @@ def _set_dashboard_auth_env(
     trusted_proxy_cidrs: str = "127.0.0.1/32",
     proxy_header: str = "Remote-User",
 ) -> None:
-    monkeypatch.setenv("CODEX_LB_DASHBOARD_AUTH_MODE", mode)
-    monkeypatch.setenv("CODEX_LB_FIREWALL_TRUST_PROXY_HEADERS", str(trust_proxy_headers).lower())
-    monkeypatch.setenv("CODEX_LB_FIREWALL_TRUSTED_PROXY_CIDRS", trusted_proxy_cidrs)
-    monkeypatch.setenv("CODEX_LB_DASHBOARD_AUTH_PROXY_HEADER", proxy_header)
+    monkeypatch.setenv("AGENT_LB_DASHBOARD_AUTH_MODE", mode)
+    monkeypatch.setenv("AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS", str(trust_proxy_headers).lower())
+    monkeypatch.setenv("AGENT_LB_FIREWALL_TRUSTED_PROXY_CIDRS", trusted_proxy_cidrs)
+    monkeypatch.setenv("AGENT_LB_DASHBOARD_AUTH_PROXY_HEADER", proxy_header)
     get_settings.cache_clear()
 
 
@@ -82,7 +82,7 @@ def _set_proxy_unauthenticated_client_cidrs_env(
     *,
     cidrs: str,
 ) -> None:
-    monkeypatch.setenv("CODEX_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS", cidrs)
+    monkeypatch.setenv("AGENT_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS", cidrs)
     get_settings.cache_clear()
 
 
@@ -164,7 +164,7 @@ async def test_proxy_unauthenticated_client_cidr_does_not_allow_other_remote_pee
 
 @pytest.mark.asyncio
 async def test_remote_first_run_requires_bootstrap_token(app_instance, monkeypatch):
-    monkeypatch.setenv("CODEX_LB_DASHBOARD_BOOTSTRAP_TOKEN", "bootstrap-secret")
+    monkeypatch.setenv("AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN", "bootstrap-secret")
     from app.core.config.settings import get_settings
     from app.core.config.settings_cache import get_settings_cache
 

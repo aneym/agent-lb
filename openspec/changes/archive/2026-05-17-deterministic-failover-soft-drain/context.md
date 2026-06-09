@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Make codex-lb's rate-limit and quota handling **deterministic and proactive** so that:
+Make agent-lb's rate-limit and quota handling **deterministic and proactive** so that:
 1. Clients almost never see upstream 429/quota errors when healthy accounts remain.
 2. Accounts approaching their limits are drained before hard failure.
 3. All three transports (SSE streaming, compact HTTP, WebSocket) follow the same failover policy.
@@ -74,7 +74,7 @@ Each failover attempt adds ~10ms (account selection + connect). With max 3 attem
 
 ```
 Client → POST /v1/responses (SSE)
-  codex-lb selects Account A (HEALTHY, 82% used)
+  agent-lb selects Account A (HEALTHY, 82% used)
   → upstream returns HTTP 429 {"error": {"code": "rate_limit_exceeded"}}
   → classify_upstream_failure → failure_class=rate_limit, phase=connect
   → failover_decision(downstream_visible=False, candidates_remaining=2) → failover_next

@@ -8,7 +8,7 @@
 
 ## 2. Documentation
 
-- [x] 2.1 Update README OpenCode `codex-lb` examples to include explicit model capability flags for reasoning (`reasoning`, `interleaved`)
+- [x] 2.1 Update README OpenCode `agent-lb` examples to include explicit model capability flags for reasoning (`reasoning`, `interleaved`)
 
 ## 3. Tests
 

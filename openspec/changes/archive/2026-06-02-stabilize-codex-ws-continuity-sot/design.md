@@ -24,7 +24,7 @@ Current upstream Codex client behavior, verified against `openai/codex`:
 
 Therefore, the direct minimal fix is to make that same full-create reset happen automatically inside the failed turn:
 
-1. Detect a stale-anchor continuity error (`previous_response_not_found` or codex-lb's sanitized equivalent) as recoverable.
+1. Detect a stale-anchor continuity error (`previous_response_not_found` or agent-lb's sanitized equivalent) as recoverable.
 2. Reset/clear the incremental WebSocket session state for the current `ModelClientSession`.
 3. Rebuild the sampling request from conversation history.
 4. Retry once as a full `response.create` without `previous_response_id`.
@@ -42,7 +42,7 @@ This is a client/session retry invariant. The proxy's primary responsibility is 
 
 ## Proxy responsibilities
 
-codex-lb should still enforce these narrower proxy-side invariants:
+agent-lb should still enforce these narrower proxy-side invariants:
 
 - Never leak raw `previous_response_not_found` or the missing `resp_...` id downstream.
 - Preserve enough error identity for Codex to classify the event as stale-anchor continuity loss. If `stream_incomplete` is too generic for the client, add a sanitized stable code/detail such as `codex_previous_response_stale` without exposing the upstream response id.
@@ -69,4 +69,4 @@ This change is the active SoT for this failure mode. Existing older changes rema
 Implementation should now be split into two tracks:
 
 1. **Client soft-reset retry track** — preferred if we can patch the Codex client/fork used by Soju.
-2. **codex-lb compatibility track** — sanitize/classify errors so the client can trigger the soft reset; optionally keep narrow proxy replay only as fallback.
+2. **agent-lb compatibility track** — sanitize/classify errors so the client can trigger the soft reset; optionally keep narrow proxy replay only as fallback.

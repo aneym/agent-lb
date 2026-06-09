@@ -1,16 +1,16 @@
 ## Why
 
 Codex CLI stores the selected `model_provider` in local session metadata. After
-switching a workstation from the upstream OpenAI provider to codex-lb, existing
+switching a workstation from the upstream OpenAI provider to agent-lb, existing
 threads tagged as `openai` can disappear from `codex resume` until their stored
 provider tag is updated.
 
 Manual JSONL or SQLite edits are easy to get wrong, especially across native,
-WSL, and container runtimes, so codex-lb needs a documented CLI repair path.
+WSL, and container runtimes, so agent-lb needs a documented CLI repair path.
 
 ## What Changes
 
-- Add `codex-lb codex-sessions retag` for one-off local Codex session provider
+- Add `agent-lb codex-sessions retag` for one-off local Codex session provider
   retagging.
 - Support both Codex JSONL session files and newer `state_*.sqlite` thread
   metadata.

@@ -35,8 +35,8 @@
 
 ## 6. TOTP Setup Flow Migration
 
-- [x] 6.1 Remove `X-Codex-LB-Setup-Token` header validation from TOTP setup/confirm endpoints in `dashboard_auth/api.py`
-- [x] 6.2 Remove `CODEX_LB_DASHBOARD_SETUP_TOKEN` from `app/core/config/settings.py` and `.env.example`
+- [x] 6.1 Remove `X-Agent-LB-Setup-Token` header validation from TOTP setup/confirm endpoints in `dashboard_auth/api.py`
+- [x] 6.2 Remove `AGENT_LB_DASHBOARD_SETUP_TOKEN` from `app/core/config/settings.py` and `.env.example`
 - [x] 6.3 Update TOTP verify endpoint to issue session with `pw=true, tv=true` (require existing `pw=true` session)
 - [x] 6.4 Update TOTP disable endpoint to require `pw=true` session instead of setup token
 
@@ -99,7 +99,7 @@
 ## 14. Cleanup & Config Removal
 
 - [x] 14.1 Remove `dashboard_setup_token` field from `app/core/config/settings.py`
-- [x] 14.2 Remove `CODEX_LB_DASHBOARD_SETUP_TOKEN` from `.env.example` and any documentation references
+- [x] 14.2 Remove `AGENT_LB_DASHBOARD_SETUP_TOKEN` from `.env.example` and any documentation references
 - [x] 14.3 Remove the `generate_totp_code()` function from `app/core/auth/totp.py` if unused after pyotp migration
 
 ## 15. Tests

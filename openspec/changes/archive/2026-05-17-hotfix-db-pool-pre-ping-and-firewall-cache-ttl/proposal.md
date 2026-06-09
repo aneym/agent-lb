@@ -11,7 +11,7 @@ sqlalchemy.dialects.postgresql.asyncpg.InterfaceError: connection is closed
 ```
 
 This is the same class of pool-health issue documented in
-[#672 (SQLAlchemy QueuePool exhaustion)](https://github.com/Soju06/codex-lb/issues/672).
+[#672 (SQLAlchemy QueuePool exhaustion)](https://github.com/aneym/agent-lb/issues/672).
 The root cause is two-fold:
 
 1. **`pool_pre_ping` is not configured on the async engines.** When the
@@ -46,7 +46,7 @@ hotfix targeted at 1.18.1.
   `tcp_keepalives_idle` boundary.
 - Raise the default `FirewallIPCache` TTL from `2` seconds to `30` seconds.
   Add a `firewall_ip_cache_ttl_seconds` setting (env
-  `CODEX_LB_FIREWALL_IP_CACHE_TTL_SECONDS`) so operators can tune it.
+  `AGENT_LB_FIREWALL_IP_CACHE_TTL_SECONDS`) so operators can tune it.
 - Leave SQLite (file + in-memory) unchanged: aiosqlite has no equivalent
   server-side disconnect and `pool_pre_ping` would only add latency. Same
   reason `pool_recycle` only applies to PostgreSQL.

@@ -5,7 +5,7 @@ The system SHALL let an authenticated dashboard user export one selected account
 
 The exported payload SHALL be provider-keyed with exactly one `openai` OAuth entry containing `type`, `refresh`, `access`, `expires`, and `accountId` fields.
 
-The exported payload SHALL NOT include codex-lb-only account metadata, dashboard settings, API keys, request logs, usage history, or multi-account custom fields.
+The exported payload SHALL NOT include agent-lb-only account metadata, dashboard settings, API keys, request logs, usage history, or multi-account custom fields.
 
 #### Scenario: Export selected account for stock OpenCode
 - **WHEN** an authenticated dashboard user exports account `acc_123`
@@ -18,7 +18,7 @@ The exported payload SHALL NOT include codex-lb-only account metadata, dashboard
 #### Scenario: Export account with unknown ChatGPT account id
 - **WHEN** an authenticated dashboard user exports an account whose real ChatGPT account id is unknown
 - **THEN** `authJson.openai.accountId` is `null`
-- **AND** the system does not substitute the local codex-lb account id
+- **AND** the system does not substitute the local agent-lb account id
 
 #### Scenario: Export missing account
 - **WHEN** an authenticated dashboard user exports an unknown account id

@@ -1,6 +1,6 @@
 ## Why
 
-OpenAI Responses API adoption is accelerating, while a large base still relies on Chat Completions; codex-lb needs full wire compatibility to remain a drop-in backend for both. Doing this now reduces client-side branching and migration risk, while explicitly honoring ChatGPT backend limits.
+OpenAI Responses API adoption is accelerating, while a large base still relies on Chat Completions; agent-lb needs full wire compatibility to remain a drop-in backend for both. Doing this now reduces client-side branching and migration risk, while explicitly honoring ChatGPT backend limits.
 
 ## What Changes
 

@@ -41,4 +41,4 @@ The Helm deployment MUST use a dedicated migration Job as the only automatic sch
 
 - **WHEN** `externalSecrets.enabled=true` on a fresh Helm install
 - **THEN** the chart still uses the dedicated migration Job as the automatic schema writer
-- **AND** application pods keep `CODEX_LB_DATABASE_MIGRATE_ON_STARTUP=false` unless the operator explicitly enables it
+- **AND** application pods keep `AGENT_LB_DATABASE_MIGRATE_ON_STARTUP=false` unless the operator explicitly enables it

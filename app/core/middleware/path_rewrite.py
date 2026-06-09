@@ -2,9 +2,9 @@
 
 Some OpenAI-compatible clients unconditionally append ``/v1/`` to
 whatever base URL the operator configured. When the configured base URL
-already terminates at ``/backend-api/codex`` (codex-lb's Codex-style
+already terminates at ``/backend-api/codex`` (agent-lb's Codex-style
 entry point), those clients end up hitting
-``/backend-api/codex/v1/<rest>`` -- a shape codex-lb does not register
+``/backend-api/codex/v1/<rest>`` -- a shape agent-lb does not register
 because the OpenAI-style endpoints are mounted at the top-level
 ``/v1/<rest>`` and the Codex-style endpoints at
 ``/backend-api/codex/<rest>``.

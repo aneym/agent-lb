@@ -1,6 +1,6 @@
 ## Why
 
-web_search is a core OpenAI built-in tool but is currently blocked by codex-lb validation, causing 422 errors on `/v1/*` and `/backend-api/codex/*`. We need a consistent tool policy that allows web_search across all endpoints while continuing to block other unsupported built-in tools.
+web_search is a core OpenAI built-in tool but is currently blocked by agent-lb validation, causing 422 errors on `/v1/*` and `/backend-api/codex/*`. We need a consistent tool policy that allows web_search across all endpoints while continuing to block other unsupported built-in tools.
 
 ## What Changes
 

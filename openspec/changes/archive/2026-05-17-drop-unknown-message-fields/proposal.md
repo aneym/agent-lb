@@ -2,7 +2,7 @@
 
 ## Problem
 
-codex-lb's `/v1/chat/completions` accepts unknown message-object fields (the standard chat `name` field, arbitrary client-internal bookkeeping keys, etc.) and forwards them verbatim into the upstream Responses API `input` items. The upstream Responses API rejects those keys with a hard error:
+agent-lb's `/v1/chat/completions` accepts unknown message-object fields (the standard chat `name` field, arbitrary client-internal bookkeeping keys, etc.) and forwards them verbatim into the upstream Responses API `input` items. The upstream Responses API rejects those keys with a hard error:
 
 ```
 502 invalid_request_error:
@@ -10,12 +10,12 @@ codex-lb's `/v1/chat/completions` accepts unknown message-object fields (the sta
   Unknown parameter: 'input[N]._<key>'
 ```
 
-OpenAI's own `/v1/chat/completions` does not behave this way — it parses the documented chat-message fields and silently drops everything else. codex-lb advertises chat-completions compatibility, so client code written against the OpenAI contract (which often attaches its own message-object bookkeeping keys, or sets the documented standard `name` field) breaks against codex-lb but works against OpenAI.
+OpenAI's own `/v1/chat/completions` does not behave this way — it parses the documented chat-message fields and silently drops everything else. agent-lb advertises chat-completions compatibility, so client code written against the OpenAI contract (which often attaches its own message-object bookkeeping keys, or sets the documented standard `name` field) breaks against agent-lb but works against OpenAI.
 
 Concrete failure observed against `https://codex.nekos.me/v1/chat/completions` (Hermes Agent, 2026-05-15):
 
 1. Client appends two synthetic recovery messages carrying an internal marker key `_empty_recovery_synthetic` (a normal pattern: bookkeeping flags on the local message buffer that the client never expected to wire).
-2. codex-lb forwards the marker into the Responses `input` items.
+2. agent-lb forwards the marker into the Responses `input` items.
 3. Upstream returns `502 unknown_parameter`.
 4. Because the marker persists in the client's session buffer, every subsequent request in that session replays the poisoned input → identical 502 → retry storm.
 
@@ -31,7 +31,7 @@ This matches OpenAI's chat-completions semantics: known fields are parsed, unkno
 
 ## Why this is correct as a behavior change
 
-- The chat-completions compatibility capability already promises "OpenAI Chat Completions expectations" as the contract. OpenAI ignores unknown message-object keys; codex-lb should too.
+- The chat-completions compatibility capability already promises "OpenAI Chat Completions expectations" as the contract. OpenAI ignores unknown message-object keys; agent-lb should too.
 - The Responses API input message item schema does not include `name` or arbitrary keys — forwarding them was always a violation of the upstream contract, just one that happened to work for clients that never set those fields.
 - No client could have been relying on the previous behavior in any useful way: any request that exercised it returned `502 unknown_parameter` and failed.
 

@@ -1,6 +1,6 @@
 ## Why
 
-This deployment runs codex-lb behind an explicit local proxy chain inside WSL. Outbound HTTP clients currently ignore `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`, which causes GitHub release checks and upstream OAuth/proxy calls to bypass the configured network path.
+This deployment runs agent-lb behind an explicit local proxy chain inside WSL. Outbound HTTP clients currently ignore `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`, which causes GitHub release checks and upstream OAuth/proxy calls to bypass the configured network path.
 
 The ORM enum declarations also rely on SQLAlchemy defaults that use enum member names instead of the lowercase string values already used by the PostgreSQL schema and Alembic migrations. That mismatch risks runtime failures and schema drift when PostgreSQL is enabled.
 

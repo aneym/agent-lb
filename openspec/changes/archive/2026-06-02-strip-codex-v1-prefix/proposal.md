@@ -1,6 +1,6 @@
 ## Why
 
-Issue #267 reports that some OpenAI-compatible clients append `/v1/` to whatever the operator configured as the base URL. With codex-lb's natural base of `https://example.com/backend-api/codex`, those clients end up hitting `https://example.com/backend-api/codex/v1/models`, `…/v1/responses`, etc. None of those routes exist — codex-lb registers the OpenAI-style endpoints at `/v1/<rest>` (top-level) and the Codex backend endpoints at `/backend-api/codex/<rest>`, but not at the combined `/backend-api/codex/v1/<rest>` shape.
+Issue #267 reports that some OpenAI-compatible clients append `/v1/` to whatever the operator configured as the base URL. With agent-lb's natural base of `https://example.com/backend-api/codex`, those clients end up hitting `https://example.com/backend-api/codex/v1/models`, `…/v1/responses`, etc. None of those routes exist — agent-lb registers the OpenAI-style endpoints at `/v1/<rest>` (top-level) and the Codex backend endpoints at `/backend-api/codex/<rest>`, but not at the combined `/backend-api/codex/v1/<rest>` shape.
 
 Because the registered routes are otherwise symmetrical (`router.get("/models")` + `v1_router.get("/models")`, `router.post("/responses")` + `v1_router.post("/responses")`, etc.), every `/backend-api/codex/v1/<rest>` request has a working counterpart at `/backend-api/codex/<rest>`. Today those requests 404 with no operator-facing signal as to why.
 

@@ -19,5 +19,5 @@ the main pool settings are larger.
 Default SQLite/PostgreSQL deployments get the same burst capacity for
 request-adjacent background sessions as the main request pool. Existing
 deployments that intentionally want the old smaller pool can configure
-`CODEX_LB_DATABASE_BACKGROUND_POOL_SIZE=3` and
-`CODEX_LB_DATABASE_BACKGROUND_MAX_OVERFLOW=2`.
+`AGENT_LB_DATABASE_BACKGROUND_POOL_SIZE=3` and
+`AGENT_LB_DATABASE_BACKGROUND_MAX_OVERFLOW=2`.

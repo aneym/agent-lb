@@ -7,7 +7,7 @@
 - Alembic 리비전 ID를 `YYYYMMDD_HHMMSS_slug` 형식으로 표준화한다.
 - 기존 `000~013` 리비전을 타임스탬프 기반 ID로 일괄 재작성한다.
 - 앱 startup migration 경로에서 구 Alembic 리비전 ID를 신 ID로 자동 remap한다.
-- `codex-lb-db check`에 head/네이밍 정책 검증을 추가하고 drift 검증과 통합한다.
+- `agent-lb-db check`에 head/네이밍 정책 검증을 추가하고 drift 검증과 통합한다.
 - CI migration-check를 정책 통합 검증 경로로 고정한다.
 - project-conventions와 OpenSpec SSOT에 마이그레이션 거버넌스 원칙을 명시한다.
 

@@ -28,7 +28,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: codex-lb version
+      label: agent-lb version
       placeholder: "1.17.0"
     validations:
       required: true
@@ -74,7 +74,7 @@ body:
       label: What does the dashboard / logs show?
       description: |
         Paste the relevant rows from the **Accounts** dashboard view (you can
-        crop sensitive bits) and any related lines from the codex-lb log. Mask
+        crop sensitive bits) and any related lines from the agent-lb log. Mask
         emails, account IDs, and tokens.
       render: markdown
     validations:
