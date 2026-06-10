@@ -1,5 +1,11 @@
 # AGENTS
 
+## New Machine Onboarding
+
+Setting up agent-lb on a fresh machine (install, service, account connection, client
+wiring)? Follow `GETTING-STARTED.md` at the repo root — also available as the
+`get-started` skill. The rest of this file is for development work on the codebase.
+
 ## Environment
 
 - Python: .venv/bin/python (uv, CPython 3.13.3)

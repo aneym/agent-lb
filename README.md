@@ -10,23 +10,46 @@ Resources
 
 # agent-lb
 
-Load balancer for ChatGPT accounts. Pool multiple accounts, track usage, manage API keys, view everything in a dashboard.
+Load balancer for ChatGPT and Claude accounts. Pool multiple accounts, track usage, manage API keys, view everything in a dashboard.
 
 | ![dashboard](docs/screenshots/dashboard.jpg) | ![accounts](docs/screenshots/accounts.jpg) |
-|:---:|:---:|
+| :------------------------------------------: | :----------------------------------------: |
 
 <details>
 <summary>More screenshots</summary>
 
-| Settings | Login |
-|:---:|:---:|
+|                  Settings                  |                Login                 |
+| :----------------------------------------: | :----------------------------------: |
 | ![settings](docs/screenshots/settings.jpg) | ![login](docs/screenshots/login.jpg) |
 
-| Dashboard (dark) | Accounts (dark) | Settings (dark) |
-|:---:|:---:|:---:|
+|                    Dashboard (dark)                    |                   Accounts (dark)                    |                   Settings (dark)                    |
+| :----------------------------------------------------: | :--------------------------------------------------: | :--------------------------------------------------: |
 | ![dashboard-dark](docs/screenshots/dashboard-dark.jpg) | ![accounts-dark](docs/screenshots/accounts-dark.jpg) | ![settings-dark](docs/screenshots/settings-dark.jpg) |
 
 </details>
+
+## For AI Agents
+
+Setting up a new machine? Don't read further — paste this into your coding agent (Claude
+Code, Codex CLI, …) and let it drive:
+
+```text
+Clone https://github.com/aneym/agent-lb, cd into it, and read GETTING-STARTED.md.
+Follow it top to bottom to set me up:
+
+1. Install dependencies and start the local agent-lb service.
+2. Walk me through connecting my Claude/ChatGPT accounts ONE AT A TIME — for each
+   account give me the browser URL, wait for me to approve (and paste back the code
+   where required), confirm it connected, then move to the next.
+3. Wire up my CLI clients (ask before touching my dotfiles), run the final
+   verification, and give me a status summary.
+
+If anything is already installed or running, detect it and skip ahead.
+```
+
+The full walkthrough lives in [GETTING-STARTED.md](GETTING-STARTED.md). If your agent is
+Claude Code or Codex launched inside the repo, saying **"get started"** triggers the
+`get-started` skill, which follows the same runbook.
 
 ## Features
 
@@ -93,12 +116,13 @@ Point any OpenAI-compatible client at agent-lb. If [API key auth](#api-key-authe
 
 Model availability is discovered from the upstream Codex model catalog and can vary by account plan, workspace, rollout, and upstream deprecation state. Prefer the live `GET /v1/models` or `GET /backend-api/codex/models` response over a copied static table when configuring clients or API-key model allowlists.
 
-| Logo | Client | Endpoint | Config |
-|---|--------|----------|--------|
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="32" alt="OpenAI"> | **Codex CLI** | `http://127.0.0.1:2455/backend-api/codex` | `~/.codex/config.toml` |
-| <img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="32" alt="OpenCode"> | **OpenCode** | `http://127.0.0.1:2455/v1` | `~/.config/opencode/opencode.json` |
-| <img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="32" alt="OpenClaw"> | **OpenClaw** | `http://127.0.0.1:2455/v1` | `~/.openclaw/openclaw.json` |
-| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="32" alt="Python"> | **OpenAI Python SDK** | `http://127.0.0.1:2455/v1` | Code |
+| Logo                                                                                                              | Client                | Endpoint                                  | Config                             |
+| ----------------------------------------------------------------------------------------------------------------- | --------------------- | ----------------------------------------- | ---------------------------------- |
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="32" alt="OpenAI">                        | **Codex CLI**         | `http://127.0.0.1:2455/backend-api/codex` | `~/.codex/config.toml`             |
+| <img src="https://avatars.githubusercontent.com/u/76263028?s=200" width="32" alt="Anthropic">                     | **Claude Code**       | `http://127.0.0.1:2455`                   | `ANTHROPIC_BASE_URL` / launcher    |
+| <img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="32" alt="OpenCode">                     | **OpenCode**          | `http://127.0.0.1:2455/v1`                | `~/.config/opencode/opencode.json` |
+| <img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="32" alt="OpenClaw">                     | **OpenClaw**          | `http://127.0.0.1:2455/v1`                | `~/.openclaw/openclaw.json`        |
+| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="32" alt="Python"> | **OpenAI Python SDK** | `http://127.0.0.1:2455/v1`                | Code                               |
 
 <details>
 <summary><img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="20" align="center" alt="OpenAI">&ensp;<b>Codex CLI / IDE Extension</b></summary>
@@ -196,6 +220,36 @@ agent-lb codex-sessions retag --from openai --to agent-lb --yes
 </details>
 
 <details>
+<summary><img src="https://avatars.githubusercontent.com/u/76263028?s=200" width="20" align="center" alt="Anthropic">&ensp;<b>Claude Code</b></summary>
+<br>
+
+Connect Claude (Anthropic) accounts first — `scripts/anthropic-auth.sh` or step 4 of
+[GETTING-STARTED.md](GETTING-STARTED.md). Then either launch with the base URL only:
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude
+```
+
+or use the vendored launcher, which adds sticky per-session account routing (preserves
+prompt cache on one account) and a colored remaining-quota banner:
+
+```zsh
+# ~/.zshrc
+cc() { "$HOME/repos/agent-lb/clients/claude-lb-launch" "$@"; }
+```
+
+> **Important**: do **not** set `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` when pointing
+> Claude Code at agent-lb. Setting either flips Claude Code from subscription ("Claude Max")
+> billing to per-token API billing. The launcher strips both defensively and falls back to
+> plain `claude` if the load balancer is down (`CLAUDE_LB_DISABLE=1` forces the bypass).
+
+Sticky routing without the launcher: claim a route via `POST /api/anthropic/session-route`
+with `{"sessionId", "model", "quotaKey"}` and send `x-claude-session-id: <sessionId>` on
+requests.
+
+</details>
+
+<details>
 <summary><img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="20" align="center" alt="OpenCode">&ensp;<b>OpenCode</b></summary>
 <br>
 
@@ -214,37 +268,49 @@ You can clean the config by using this one-liner
     "openai": {
       "options": {
         "baseURL": "http://127.0.0.1:2455/v1",
-        "apiKey": "{env:AGENT_LB_API_KEY}"
+        "apiKey": "{env:AGENT_LB_API_KEY}",
       },
       "models": {
         "gpt-5.4": {
           "name": "GPT-5.4",
           "reasoning": true,
-          "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
-          "limit": { "context": 1050000, "output": 128000 }
+          "options": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "detailed",
+          },
+          "limit": { "context": 1050000, "output": 128000 },
         },
         "gpt-5.3-codex": {
           "name": "GPT-5.3 Codex",
           "reasoning": true,
-          "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
-          "limit": { "context": 272000, "output": 65536 }
+          "options": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "detailed",
+          },
+          "limit": { "context": 272000, "output": 65536 },
         },
         "gpt-5.1-codex-mini": {
           "name": "GPT-5.1 Codex Mini",
           "reasoning": true,
-          "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
-          "limit": { "context": 272000, "output": 65536 }
+          "options": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "detailed",
+          },
+          "limit": { "context": 272000, "output": 65536 },
         },
         "gpt-5.3-codex-spark": {
           "name": "GPT-5.3 Codex Spark",
           "reasoning": true,
-          "options": { "reasoningEffort": "xhigh", "reasoningSummary": "detailed" },
-          "limit": { "context": 128000, "output": 65536 }
-        }
-      }
-    }
+          "options": {
+            "reasoningEffort": "xhigh",
+            "reasoningSummary": "detailed",
+          },
+          "limit": { "context": 128000, "output": 65536 },
+        },
+      },
+    },
   },
-  "model": "openai/gpt-5.3-codex"
+  "model": "openai/gpt-5.3-codex",
 }
 ```
 
@@ -442,10 +508,10 @@ For Helm, pass the same values through `extraEnv`.
 
 ## Data
 
-| Environment | Path |
-|-------------|------|
-| Local / uvx | `~/.agent-lb/` |
-| Docker | `/var/lib/agent-lb/` |
+| Environment | Path                 |
+| ----------- | -------------------- |
+| Local / uvx | `~/.agent-lb/`       |
+| Docker      | `/var/lib/agent-lb/` |
 
 Backup this directory to preserve your data.
 
@@ -486,6 +552,7 @@ cd frontend && bun run dev                     # frontend :5173
 ## Contributors ✨
 
 Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/en/reference/emoji-key/)):
+
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->

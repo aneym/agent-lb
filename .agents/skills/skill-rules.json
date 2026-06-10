@@ -1,6 +1,36 @@
 {
   "version": "1.0",
   "skills": {
+    "get-started": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "Fresh-machine onboarding: install agent-lb, start the service, connect accounts, wire clients (GETTING-STARTED.md)",
+      "promptTriggers": {
+        "keywords": [
+          "get started",
+          "getting started",
+          "set me up",
+          "onboard",
+          "onboarding",
+          "install agent-lb",
+          "set up agent-lb",
+          "connect my accounts",
+          "fresh install"
+        ],
+        "intentPatterns": [
+          "(get|getting) started",
+          "(set|setting) (me |.*)up",
+          "(install|set ?up|onboard).*(agent-lb|load balancer|machine)",
+          "connect.*(account|claude|chatgpt|openai)"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [],
+        "pathExclusions": [],
+        "contentPatterns": []
+      }
+    },
     "codex-review-loop": {
       "type": "domain",
       "enforcement": "suggest",
@@ -58,9 +88,7 @@
           "**/app/main.py",
           "**/tests/**/*.py"
         ],
-        "pathExclusions": [
-          "**/__pycache__/**"
-        ]
+        "pathExclusions": ["**/__pycache__/**"]
       },
       "skipConditions": {
         "sessionSkillUsed": true,
