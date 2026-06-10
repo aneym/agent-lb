@@ -71,6 +71,19 @@ def test_openai_accounts_filters_out_anthropic_accounts() -> None:
     assert refresh_scheduler_module._openai_accounts([openai_account, anthropic_account]) == [openai_account]
 
 
+def test_warmup_eligible_accounts_includes_anthropic_and_openai() -> None:
+    openai_account = _make_account("acc_openai", status=AccountStatus.ACTIVE)
+    openai_account.provider = "openai"
+    anthropic_account = _make_account("acc_anthropic", status=AccountStatus.ACTIVE)
+    anthropic_account.provider = "anthropic"
+    other_account = _make_account("acc_other", status=AccountStatus.ACTIVE)
+    other_account.provider = "gemini"
+
+    eligible = refresh_scheduler_module._warmup_eligible_accounts([openai_account, anthropic_account, other_account])
+
+    assert eligible == [openai_account, anthropic_account]
+
+
 class StubAccountsRepository:
     def __init__(self, accounts: list[Account]) -> None:
         self._accounts = {account.id: account for account in accounts}

@@ -30,6 +30,7 @@ class PlannerSettings:
     working_hours_end: str = "18:00"
     prewarm_enabled: bool = True
     prewarm_lead_minutes: int = 300
+    seed_target_offset_minutes: int = 120
     max_warmups_per_day: int = 3
     max_warmup_credits_per_day: float = 0.0
     min_expected_gain: float = 1.0

@@ -59,6 +59,7 @@ class QuotaPlannerRepository:
         row.working_hours_end = settings.working_hours_end
         row.prewarm_enabled = settings.prewarm_enabled
         row.prewarm_lead_minutes = settings.prewarm_lead_minutes
+        row.seed_target_offset_minutes = settings.seed_target_offset_minutes
         row.max_warmups_per_day = settings.max_warmups_per_day
         row.max_warmup_credits_per_day = settings.max_warmup_credits_per_day
         row.min_expected_gain = settings.min_expected_gain
@@ -305,6 +306,7 @@ def _settings_from_row(row: QuotaPlannerSettings) -> PlannerSettings:
         working_hours_end=row.working_hours_end,
         prewarm_enabled=row.prewarm_enabled,
         prewarm_lead_minutes=row.prewarm_lead_minutes,
+        seed_target_offset_minutes=row.seed_target_offset_minutes,
         max_warmups_per_day=row.max_warmups_per_day,
         max_warmup_credits_per_day=row.max_warmup_credits_per_day,
         min_expected_gain=row.min_expected_gain,

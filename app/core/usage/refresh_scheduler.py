@@ -18,6 +18,7 @@ from app.modules.limit_warmup.service import LimitWarmupService, StreamingLimitW
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.load_balancer import background_recovery_state_from_account
 from app.modules.proxy.rate_limit_cache import get_rate_limit_headers_cache
+from app.modules.quota_planner.repository import QuotaPlannerRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.settings.repository import SettingsRepository
 from app.modules.usage import updater as usage_updater_module
@@ -114,9 +115,10 @@ class UsageRefreshScheduler:
                         refreshed_accounts = _usage_refresh_accounts(
                             await accounts_repo.list_accounts(refresh_existing=True),
                         )
-                        refreshed_openai_accounts = _openai_accounts(refreshed_accounts)
-                        if refreshed_openai_accounts:
+                        warmup_accounts = _warmup_eligible_accounts(refreshed_accounts)
+                        if warmup_accounts:
                             dashboard_settings = await settings_repo.get_or_create()
+                            planner_settings = await QuotaPlannerRepository(session).get_settings()
                             warmup_service = LimitWarmupService(
                                 warmup_repo,
                                 request_logs_repo,
@@ -126,12 +128,13 @@ class UsageRefreshScheduler:
                                 ),
                             )
                             await warmup_service.run_after_usage_refresh(
-                                accounts=refreshed_openai_accounts,
+                                accounts=warmup_accounts,
                                 settings=dashboard_settings,
                                 before_primary=before_primary,
                                 before_secondary=before_secondary,
                                 after_primary=after_primary,
                                 after_secondary=after_secondary,
+                                planner_settings=planner_settings,
                             )
                         await reconcile_recoverable_account_statuses(
                             accounts_repo=accounts_repo,
@@ -157,6 +160,15 @@ def _openai_accounts(accounts: list[Account]) -> list[Account]:
 
 
 def _usage_refresh_accounts(accounts: list[Account]) -> list[Account]:
+    return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
+
+
+def _warmup_eligible_accounts(accounts: list[Account]) -> list[Account]:
+    """Accounts the warm-up service may consider — both OpenAI and Anthropic.
+
+    The service applies its own per-account gating (active status,
+    ``limit_warmup_enabled``, cooldown); this only constrains the provider set.
+    """
     return [account for account in accounts if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}]
 
 

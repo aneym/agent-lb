@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -13,6 +13,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, DashboardSettings, UsageHistory
 from app.modules.limit_warmup import service as limit_warmup_service
 from app.modules.limit_warmup.service import LimitWarmupSendResult, LimitWarmupService, StreamingLimitWarmupSender
+from app.modules.quota_planner.logic import PlannerSettings
 
 pytestmark = pytest.mark.unit
 
@@ -33,6 +34,24 @@ def _account(
         deactivation_reason=None,
         limit_warmup_enabled=enabled,
     )
+
+
+def _anthropic_account(
+    account_id: str = "acc_anthropic", *, enabled: bool = True, status: AccountStatus = AccountStatus.ACTIVE
+) -> Account:
+    account = _account(account_id, enabled=enabled, status=status)
+    account.provider = "anthropic"
+    return account
+
+
+def _planner(**overrides: object) -> PlannerSettings:
+    values: dict[str, object] = {
+        "timezone": "UTC",
+        "working_hours_start": "09:00",
+        "working_hours_end": "18:00",
+    }
+    values.update(overrides)
+    return PlannerSettings(**values)
 
 
 def _usage(account_id: str, *, used_percent: float, reset_at: int, window: str = "primary") -> UsageHistory:
@@ -875,3 +894,205 @@ async def test_recent_attempt_cooldown_blocks_new_reset() -> None:
 
     assert sender.calls == []
     assert len(repo.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_send_routes_anthropic_account_to_messages_primer(monkeypatch: pytest.MonkeyPatch) -> None:
+    account = _anthropic_account()
+    sender = StreamingLimitWarmupSender(cast(Any, _WarmupAccountsRepo()))
+    primer_calls: dict[str, Any] = {}
+
+    async def ensure_fresh(target: Account) -> Account:
+        return target
+
+    async def fake_primer(access_token: str, **kwargs: Any) -> Any:
+        primer_calls["access_token"] = access_token
+        primer_calls["kwargs"] = kwargs
+        return SimpleNamespace(
+            success=True,
+            input_tokens=5,
+            output_tokens=1,
+            cached_input_tokens=0,
+            error_code=None,
+            error_message=None,
+        )
+
+    async def stream(*args: object, **kwargs: object):
+        raise AssertionError("Anthropic primer must not use the OpenAI responses stream")
+        yield ""
+
+    monkeypatch.setattr(sender, "_ensure_fresh", ensure_fresh)
+    monkeypatch.setattr(sender._encryptor, "decrypt", lambda value: "anthropic-token")
+    monkeypatch.setattr(limit_warmup_service, "send_anthropic_primer", fake_primer)
+    monkeypatch.setattr(limit_warmup_service, "stream_responses", stream)
+
+    result = await sender.send(account, model="claude-haiku-4-5", prompt="Say OK.")
+
+    assert result.success is True
+    assert result.input_tokens == 5
+    assert result.output_tokens == 1
+    assert primer_calls["access_token"] == "anthropic-token"
+    assert primer_calls["kwargs"]["model"] == "claude-haiku-4-5"
+
+
+@pytest.mark.asyncio
+async def test_send_routes_openai_account_to_responses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    account = _account()
+    sender = StreamingLimitWarmupSender(cast(Any, _WarmupAccountsRepo()))
+    stream_called: dict[str, bool] = {"used": False}
+
+    async def ensure_fresh(target: Account) -> Account:
+        return target
+
+    async def resolve_route(*args: object, **kwargs: object):
+        return None
+
+    async def stream(*args: object, **kwargs: object):
+        stream_called["used"] = True
+        yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
+
+    async def fail_primer(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("OpenAI account must not use the Anthropic primer")
+
+    monkeypatch.setattr(sender, "_ensure_fresh", ensure_fresh)
+    monkeypatch.setattr(sender._encryptor, "decrypt", lambda value: "access")
+    monkeypatch.setattr(limit_warmup_service, "resolve_upstream_route", resolve_route)
+    monkeypatch.setattr(limit_warmup_service, "stream_responses", stream)
+    monkeypatch.setattr(limit_warmup_service, "send_anthropic_primer", fail_primer)
+
+    result = await sender.send(account, model="gpt-5.2", prompt="Say OK.")
+
+    assert result.success is True
+    assert stream_called["used"] is True
+
+
+@pytest.mark.asyncio
+async def test_seed_fires_for_cold_account_inside_seed_window_and_is_idempotent() -> None:
+    repo = FakeWarmupRepo()
+    logs = FakeRequestLogsRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, logs, sender=sender)
+    account = _account()
+    # Default offset 120 → target reset 11:00, seed band [06:00, 09:00).
+    seed_now = datetime(2026, 6, 10, 7, 0, 0)  # 07:00 UTC ∈ [06:00, 09:00)
+
+    async def run() -> None:
+        await service.run_after_usage_refresh(
+            accounts=[account],
+            settings=_settings(limit_warmup_cooldown_seconds=0),
+            before_primary={},
+            before_secondary={},
+            after_primary={},  # cold: no future reset
+            after_secondary={},
+            planner_settings=_planner(),
+            now=seed_now,
+        )
+
+    await run()
+    await run()
+
+    assert len(sender.calls) == 1
+    assert len(repo.rows) == 1
+    assert repo.rows[0].window == "primary"
+    assert repo.rows[0].status == "succeeded"
+    # Default offset 120 anchors the seed's reset to 11:00 in the planner tz so a
+    # cold account presents a loaded window at 09:00 AND cycles twice before EOD.
+    expected_reset = int(datetime(2026, 6, 10, 11, 0, 0, tzinfo=timezone.utc).timestamp())
+    assert repo.rows[0].reset_at == expected_reset
+
+
+@pytest.mark.asyncio
+async def test_seed_offset_zero_reproduces_legacy_start_anchored_band() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+    account = _account()
+    # offset 0 → target reset == working_hours_start (09:00), seed band [04:00, 09:00).
+    planner = _planner(seed_target_offset_minutes=0)
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(limit_warmup_cooldown_seconds=0),
+        before_primary={},
+        before_secondary={},
+        after_primary={},
+        after_secondary={},
+        planner_settings=planner,
+        now=datetime(2026, 6, 10, 5, 0, 0),  # 05:00 UTC ∈ [04:00, 09:00)
+    )
+
+    assert len(sender.calls) == 1
+    expected_reset = int(datetime(2026, 6, 10, 9, 0, 0, tzinfo=timezone.utc).timestamp())
+    assert repo.rows[0].reset_at == expected_reset
+
+
+@pytest.mark.asyncio
+async def test_seed_does_not_fire_outside_seed_window() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+    account = _account()
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(limit_warmup_cooldown_seconds=0),
+        before_primary={},
+        before_secondary={},
+        after_primary={},
+        after_secondary={},
+        planner_settings=_planner(),
+        now=datetime(2026, 6, 10, 11, 0, 0),  # 11:00 UTC, after work start
+    )
+
+    assert sender.calls == []
+    assert repo.rows == []
+
+
+@pytest.mark.asyncio
+async def test_hold_path_skips_outside_working_hours() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+    account = _account()
+    # Valid reactive candidate (was exhausted, now reset to a future window).
+    before = {account.id: _usage(account.id, used_percent=100, reset_at=9_000_000_000)}
+    after = {account.id: _usage(account.id, used_percent=0, reset_at=9_999_999_999)}
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(limit_warmup_cooldown_seconds=0),
+        before_primary=before,
+        before_secondary={},
+        after_primary=after,
+        after_secondary={},
+        planner_settings=_planner(),
+        now=datetime(2026, 6, 10, 22, 0, 0),  # 22:00 UTC, outside [06:00, 18:00]
+    )
+
+    assert sender.calls == []
+    assert repo.rows == []
+
+
+@pytest.mark.asyncio
+async def test_hold_path_sends_inside_working_hours() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+    account = _account()
+    before = {account.id: _usage(account.id, used_percent=100, reset_at=9_000_000_000)}
+    after = {account.id: _usage(account.id, used_percent=0, reset_at=9_999_999_999)}
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(limit_warmup_cooldown_seconds=0),
+        before_primary=before,
+        before_secondary={},
+        after_primary=after,
+        after_secondary={},
+        planner_settings=_planner(),
+        now=datetime(2026, 6, 10, 12, 0, 0),  # 12:00 UTC, inside [06:00, 18:00]
+    )
+
+    assert len(sender.calls) == 1
+    assert repo.rows[0].window == "primary"
+    assert repo.rows[0].reset_at == 9_999_999_999

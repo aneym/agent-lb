@@ -819,6 +819,16 @@ class QuotaPlannerSettings(Base):
     )
     prewarm_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
     prewarm_lead_minutes: Mapped[int] = mapped_column(Integer, default=300, server_default=text("300"), nullable=False)
+    # Minutes after working_hours_start to aim the seeded window's reset. Offsetting
+    # the first reset into mid-morning (vs landing it exactly at start) lets a cold
+    # account present a loaded window at start AND still cycle twice before day's end —
+    # 3 quota windows in a ~9h day instead of 2. See limit_warmup.service seed math.
+    seed_target_offset_minutes: Mapped[int] = mapped_column(
+        Integer,
+        default=120,
+        server_default=text("120"),
+        nullable=False,
+    )
     max_warmups_per_day: Mapped[int] = mapped_column(Integer, default=3, server_default=text("3"), nullable=False)
     max_warmup_credits_per_day: Mapped[float] = mapped_column(
         Float,
