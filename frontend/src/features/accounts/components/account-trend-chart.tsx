@@ -10,10 +10,15 @@ import {
   YAxis,
 } from "recharts";
 
-import { useChartColors } from "@/hooks/use-chart-colors";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import type { UsageTrendPoint } from "@/features/accounts/schemas";
 import { formatChartDateTime } from "@/utils/formatters";
+
+// Grayscale data ramp (DESIGN.md): series differentiate by gray step and
+// dash pattern, never hue.
+const SERIES_PRIMARY = "var(--chart-1)";
+const SERIES_SECONDARY = "var(--chart-2)";
+const SERIES_SCHEDULED = "var(--chart-3)";
 
 type MergedPoint = {
   t: string;
@@ -29,13 +34,24 @@ function mergePoints(
 ): MergedPoint[] {
   const secondaryMap = new Map(secondary.map((p) => [p.t, p.v]));
   const primaryMap = new Map(primary.map((p) => [p.t, p.v]));
-  const secondaryScheduledMap = new Map(secondaryScheduled.map((p) => [p.t, p.v]));
+  const secondaryScheduledMap = new Map(
+    secondaryScheduled.map((p) => [p.t, p.v]),
+  );
 
-  if (primary.length === 0 && secondary.length === 0 && secondaryScheduled.length === 0) {
+  if (
+    primary.length === 0 &&
+    secondary.length === 0 &&
+    secondaryScheduled.length === 0
+  ) {
     return [];
   }
 
-  const basePoints = primary.length > 0 ? primary : secondary.length > 0 ? secondary : secondaryScheduled;
+  const basePoints =
+    primary.length > 0
+      ? primary
+      : secondary.length > 0
+        ? secondary
+        : secondaryScheduled;
 
   return basePoints.map((p) => ({
     t: p.t,
@@ -83,7 +99,9 @@ function CustomTooltip({ active, payload, label }: ChartTooltipProps) {
               style={{ backgroundColor: entry.color }}
             />
             <span className="text-muted-foreground">{meta?.label}</span>
-            <span className="ml-auto tabular-nums font-medium">{entry.value?.toFixed(1)}%</span>
+            <span className="ml-auto font-mono font-medium tabular-nums">
+              {entry.value?.toFixed(1)}%
+            </span>
           </div>
         );
       })}
@@ -104,10 +122,7 @@ export function AccountTrendChart({
   secondary,
   secondaryScheduled = [],
 }: AccountTrendChartProps) {
-  const chartColors = useChartColors();
   const reducedMotion = useReducedMotion();
-  const c1 = chartColors[0];
-  const c2 = chartColors[1];
   const data = useMemo(
     () => mergePoints(primary, secondary, secondaryScheduled),
     [primary, secondary, secondaryScheduled],
@@ -126,15 +141,20 @@ export function AccountTrendChart({
       <AreaChart data={data} margin={CHART_MARGIN}>
         <defs>
           <linearGradient id="trend-primary" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={c1} stopOpacity={0.12} />
-            <stop offset="100%" stopColor={c1} stopOpacity={0} />
+            <stop offset="0%" stopColor={SERIES_PRIMARY} stopOpacity={0.1} />
+            <stop offset="100%" stopColor={SERIES_PRIMARY} stopOpacity={0} />
           </linearGradient>
           <linearGradient id="trend-secondary" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={c2} stopOpacity={0.12} />
-            <stop offset="100%" stopColor={c2} stopOpacity={0} />
+            <stop offset="0%" stopColor={SERIES_SECONDARY} stopOpacity={0.08} />
+            <stop offset="100%" stopColor={SERIES_SECONDARY} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.06} />
+        <CartesianGrid
+          strokeDasharray="3 3"
+          vertical={false}
+          stroke="currentColor"
+          opacity={0.06}
+        />
         <XAxis
           dataKey="t"
           tickFormatter={formatXTick}
@@ -155,17 +175,17 @@ export function AccountTrendChart({
         />
         <Tooltip
           content={<CustomTooltip />}
-          cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+          cursor={{ stroke: "var(--border)", strokeWidth: 1 }}
         />
         {primary.length > 0 && (
           <Area
             type="monotone"
             dataKey="primary"
-            stroke={c1}
+            stroke={SERIES_PRIMARY}
             strokeWidth={1.5}
             fill="url(#trend-primary)"
             dot={false}
-            activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+            activeDot={{ r: 3, strokeWidth: 1.5, fill: "var(--popover)" }}
             isAnimationActive={!reducedMotion}
             animationDuration={500}
           />
@@ -174,11 +194,11 @@ export function AccountTrendChart({
           <Area
             type="monotone"
             dataKey="secondary"
-            stroke={c2}
+            stroke={SERIES_SECONDARY}
             strokeWidth={1.5}
             fill="url(#trend-secondary)"
             dot={false}
-            activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+            activeDot={{ r: 3, strokeWidth: 1.5, fill: "var(--popover)" }}
             isAnimationActive={!reducedMotion}
             animationDuration={500}
             animationBegin={100}
@@ -188,11 +208,11 @@ export function AccountTrendChart({
           <Line
             type="linear"
             dataKey="secondaryScheduled"
-            stroke={c2}
+            stroke={SERIES_SCHEDULED}
             strokeWidth={1.25}
             strokeDasharray="5 5"
             dot={false}
-            activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+            activeDot={{ r: 3, strokeWidth: 1.5, fill: "var(--popover)" }}
             connectNulls={false}
             isAnimationActive={!reducedMotion}
             animationDuration={500}

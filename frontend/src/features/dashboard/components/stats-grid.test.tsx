@@ -13,11 +13,11 @@ describe("StatsGrid", () => {
     render(
       <StatsGrid
         stats={[
-          { label: "Requests (30d)", value: "228", icon: Activity, trend: SAMPLE_TREND, trendColor: "#3b82f6" },
-          { label: "Tokens (30d)", value: "45K", icon: Coins, trend: SAMPLE_TREND, trendColor: "#8b5cf6" },
-          { label: "Cost (30d)", value: "$1.82", meta: "Avg/day $0.06", icon: DollarSign, trend: SAMPLE_TREND, trendColor: "#10b981" },
-          { label: "Account burn projection (5h/7d)", value: "0.7 / 0.8", meta: "Projected account-equivalents: 0.7/5h · 0.8/7d", icon: Flame, trend: SAMPLE_TREND, trendColor: "#ef4444" },
-          { label: "Error rate (30d)", value: "2.8%", meta: "Top: rate_limit_exceeded", icon: AlertTriangle, trend: SAMPLE_TREND, trendColor: "#f59e0b" },
+          { label: "Requests (30d)", value: "228", icon: Activity, trend: SAMPLE_TREND, trendColor: "var(--chart-1)" },
+          { label: "Tokens (30d)", value: "45K", icon: Coins, trend: SAMPLE_TREND, trendColor: "var(--chart-1)" },
+          { label: "Cost (30d)", value: "$1.82", meta: "Avg/day $0.06", icon: DollarSign, trend: SAMPLE_TREND, trendColor: "var(--chart-1)" },
+          { label: "Account burn projection (5h/7d)", value: "0.7 / 0.8", meta: "Projected account-equivalents: 0.7/5h · 0.8/7d", icon: Flame, trend: SAMPLE_TREND, trendColor: "var(--chart-1)" },
+          { label: "Error rate (30d)", value: "2.8%", meta: "Top: rate_limit_exceeded", icon: AlertTriangle, trend: SAMPLE_TREND, trendColor: "var(--chart-1)" },
         ]}
       />,
     );
@@ -38,7 +38,7 @@ describe("StatsGrid", () => {
     render(
       <StatsGrid
         stats={[
-          { label: "Empty", value: "0", icon: Activity, trend: EMPTY_TREND, trendColor: "#3b82f6" },
+          { label: "Empty", value: "0", icon: Activity, trend: EMPTY_TREND, trendColor: "var(--chart-1)" },
         ]}
       />,
     );

@@ -4,11 +4,7 @@ import type { AccountProvider } from "@/features/accounts/schemas";
 import { ProviderIcon } from "@/features/accounts/components/provider-icon";
 import { providerLabel } from "@/features/accounts/components/provider-label";
 
-const PROVIDER_BADGE_CLASSES: Record<AccountProvider, string> = {
-  openai: "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-400",
-  anthropic: "border-stone-500/20 bg-stone-500/10 text-stone-700 dark:text-stone-300",
-};
-
+/** Monochrome provider badge: outline style, ink text (DESIGN.md §Components). */
 export function ProviderBadge({
   provider,
   className,
@@ -18,10 +14,7 @@ export function ProviderBadge({
 }) {
   const normalizedProvider = provider ?? "openai";
   return (
-    <Badge
-      variant="outline"
-      className={cn(PROVIDER_BADGE_CLASSES[normalizedProvider], className)}
-    >
+    <Badge variant="outline" className={cn("text-foreground", className)}>
       <ProviderIcon provider={normalizedProvider} className="size-3" />
       {providerLabel(normalizedProvider)}
     </Badge>

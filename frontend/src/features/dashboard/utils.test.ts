@@ -2,20 +2,29 @@ import { describe, expect, it } from "vitest";
 
 import type { AccountSummary, Depletion } from "@/features/dashboard/schemas";
 import {
+  accountMatchesProviderScope,
   applySecondaryConstraint,
   buildDashboardView,
   buildDepletionView,
   buildRemainingItems,
   buildWeeklyCreditPace,
+  filterOverviewByProvider,
   sumRemaining,
   weeklyCreditPaceStatus,
   type RemainingItem,
   type WeeklyCreditPace,
 } from "@/features/dashboard/utils";
-import { createDashboardOverview, createDefaultRequestLogs } from "@/test/mocks/factories";
+import {
+  createAccountSummary,
+  createDashboardOverview,
+  createDefaultRequestLogs,
+} from "@/test/mocks/factories";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 
-function account(overrides: Partial<AccountSummary> & Pick<AccountSummary, "accountId" | "email">): AccountSummary {
+function account(
+  overrides: Partial<AccountSummary> &
+    Pick<AccountSummary, "accountId" | "email">,
+): AccountSummary {
   return {
     accountId: overrides.accountId,
     email: overrides.email,
@@ -105,22 +114,31 @@ describe("buildDepletionView", () => {
   });
 });
 
-function remainingItem(overrides: Partial<RemainingItem> & Pick<RemainingItem, "accountId">): RemainingItem {
+function remainingItem(
+  overrides: Partial<RemainingItem> & Pick<RemainingItem, "accountId">,
+): RemainingItem {
   return {
     accountId: overrides.accountId,
     label: overrides.label ?? overrides.accountId,
     labelSuffix: overrides.labelSuffix ?? "",
     isEmail: overrides.isEmail ?? false,
     value: overrides.value ?? 100,
-    remainingPercent: overrides.remainingPercent === undefined ? 80 : overrides.remainingPercent,
-    color: overrides.color ?? "#aaa",
+    remainingPercent:
+      overrides.remainingPercent === undefined
+        ? 80
+        : overrides.remainingPercent,
+    color: overrides.color ?? "var(--chart-3)",
   };
 }
 
 describe("applySecondaryConstraint", () => {
   it("no-op when 7d remaining credits >= 5h remaining credits", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 180, remainingPercent: 80 })];
-    const secondary = [remainingItem({ accountId: "acc-1", value: 6000, remainingPercent: 79 })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 180, remainingPercent: 80 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-1", value: 6000, remainingPercent: 79 }),
+    ];
 
     const result = applySecondaryConstraint(primary, secondary);
 
@@ -129,8 +147,12 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("caps 5h to 7d absolute credits when 7d remaining < 5h remaining", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 })];
-    const secondary = [remainingItem({ accountId: "acc-1", value: 75, remainingPercent: 1 })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-1", value: 75, remainingPercent: 1 }),
+    ];
 
     const result = applySecondaryConstraint(primary, secondary);
 
@@ -139,8 +161,12 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("zeros 5h when 7d is fully depleted", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 })];
-    const secondary = [remainingItem({ accountId: "acc-1", value: 0, remainingPercent: 0 })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-1", value: 0, remainingPercent: 0 }),
+    ];
 
     const result = applySecondaryConstraint(primary, secondary);
 
@@ -149,8 +175,12 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("no-op when 7d has plenty even with low percent (different capacity scales)", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 })];
-    const secondary = [remainingItem({ accountId: "acc-1", value: 3780, remainingPercent: 50 })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-1", value: 3780, remainingPercent: 50 }),
+    ];
 
     const result = applySecondaryConstraint(primary, secondary);
 
@@ -159,7 +189,9 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("preserves null remainingPercent on capped items", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: null })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: null }),
+    ];
     const secondary = [remainingItem({ accountId: "acc-1", value: 50 })];
 
     const result = applySecondaryConstraint(primary, secondary);
@@ -169,8 +201,12 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("returns primary unchanged when no matching secondary account exists", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 })];
-    const secondary = [remainingItem({ accountId: "acc-2", value: 0, remainingPercent: 0 })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-2", value: 0, remainingPercent: 0 }),
+    ];
 
     const result = applySecondaryConstraint(primary, secondary);
 
@@ -179,8 +215,12 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("does not clamp primary when secondary data is missing", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 })];
-    const secondary = [remainingItem({ accountId: "acc-1", value: 0, remainingPercent: null })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-1", value: 0, remainingPercent: null }),
+    ];
 
     const result = applySecondaryConstraint(primary, secondary);
 
@@ -207,13 +247,20 @@ describe("applySecondaryConstraint", () => {
   });
 
   it("returns empty array when primary is empty", () => {
-    const result = applySecondaryConstraint([], [remainingItem({ accountId: "acc-1" })]);
+    const result = applySecondaryConstraint(
+      [],
+      [remainingItem({ accountId: "acc-1" })],
+    );
     expect(result).toEqual([]);
   });
 
   it("does not mutate original primary items", () => {
-    const primary = [remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 })];
-    const secondary = [remainingItem({ accountId: "acc-1", value: 0, remainingPercent: 0 })];
+    const primary = [
+      remainingItem({ accountId: "acc-1", value: 200, remainingPercent: 90 }),
+    ];
+    const secondary = [
+      remainingItem({ accountId: "acc-1", value: 0, remainingPercent: 0 }),
+    ];
 
     applySecondaryConstraint(primary, secondary);
 
@@ -258,8 +305,16 @@ describe("buildRemainingItems", () => {
     const duplicateB = "7f9de2ad-7621-4a6f-88bc-ec7f3d914701_91a95cee";
     const items = buildRemainingItems(
       [
-        account({ accountId: duplicateA, email: "dup@example.com", isEmailDuplicate: false }),
-        account({ accountId: duplicateB, email: "dup@example.com", isEmailDuplicate: true }),
+        account({
+          accountId: duplicateA,
+          email: "dup@example.com",
+          isEmailDuplicate: false,
+        }),
+        account({
+          accountId: duplicateB,
+          email: "dup@example.com",
+          isEmailDuplicate: true,
+        }),
         account({ accountId: "acc-3", email: "unique@example.com" }),
       ],
       null,
@@ -270,7 +325,9 @@ describe("buildRemainingItems", () => {
     expect(items[0].labelSuffix).toBe("");
     expect(items[0].isEmail).toBe(true);
     expect(items[1].label).toBe("dup@example.com");
-    expect(items[1].labelSuffix).toBe(` (${formatCompactAccountId(duplicateB, 5, 4)})`);
+    expect(items[1].labelSuffix).toBe(
+      ` (${formatCompactAccountId(duplicateB, 5, 4)})`,
+    );
     expect(items[1].isEmail).toBe(true);
     expect(items[2].label).toBe("unique@example.com");
     expect(items[2].labelSuffix).toBe("");
@@ -338,13 +395,26 @@ describe("buildWeeklyCreditPace", () => {
   };
 
   function weeklyAccount(overrides: WeeklyAccountOverrides): AccountSummary {
-    const { accountId, fullCredits, remainingCredits, timeLeftPercent: timeLeftOverride, ...accountOverrides } = overrides;
+    const {
+      accountId,
+      fullCredits,
+      remainingCredits,
+      timeLeftPercent: timeLeftOverride,
+      ...accountOverrides
+    } = overrides;
     const windowMinutes = 10_080;
     const timeLeftPercent = timeLeftOverride ?? 50;
-    const resetAt = new Date(now.getTime() + windowMinutes * 60_000 * (timeLeftPercent / 100)).toISOString();
-    const fullCreditBudget = fullCredits !== undefined ? fullCredits : accountOverrides.capacityCreditsSecondary ?? 100_000;
+    const resetAt = new Date(
+      now.getTime() + windowMinutes * 60_000 * (timeLeftPercent / 100),
+    ).toISOString();
+    const fullCreditBudget =
+      fullCredits !== undefined
+        ? fullCredits
+        : (accountOverrides.capacityCreditsSecondary ?? 100_000);
     const remainingCreditBudget =
-      remainingCredits !== undefined ? remainingCredits : accountOverrides.remainingCreditsSecondary ?? 50_000;
+      remainingCredits !== undefined
+        ? remainingCredits
+        : (accountOverrides.remainingCreditsSecondary ?? 50_000);
     return account({
       ...accountOverrides,
       accountId,
@@ -356,10 +426,14 @@ describe("buildWeeklyCreditPace", () => {
             ? (remainingCreditBudget / fullCreditBudget) * 100
             : null,
       },
-      resetAtSecondary: accountOverrides.resetAtSecondary !== undefined ? accountOverrides.resetAtSecondary : resetAt,
-      windowMinutesSecondary: accountOverrides.windowMinutesSecondary !== undefined
-        ? accountOverrides.windowMinutesSecondary
-        : windowMinutes,
+      resetAtSecondary:
+        accountOverrides.resetAtSecondary !== undefined
+          ? accountOverrides.resetAtSecondary
+          : resetAt,
+      windowMinutesSecondary:
+        accountOverrides.windowMinutesSecondary !== undefined
+          ? accountOverrides.windowMinutesSecondary
+          : windowMinutes,
       capacityCreditsSecondary: fullCreditBudget,
       remainingCreditsSecondary: remainingCreditBudget,
     });
@@ -372,7 +446,14 @@ describe("buildWeeklyCreditPace", () => {
 
   it("treats a 99% used account at 99% elapsed as on pace", () => {
     const pace = buildWeeklyCreditPace(
-      [weeklyAccount({ accountId: "acc-close", fullCredits: 100_000, remainingCredits: 1_000, timeLeftPercent: 1 })],
+      [
+        weeklyAccount({
+          accountId: "acc-close",
+          fullCredits: 100_000,
+          remainingCredits: 1_000,
+          timeLeftPercent: 1,
+        }),
+      ],
       now,
     );
 
@@ -390,7 +471,14 @@ describe("buildWeeklyCreditPace", () => {
 
   it("does not report a shortfall when the weekly reset replenishes a sustainable account", () => {
     const pace = buildWeeklyCreditPace(
-      [weeklyAccount({ accountId: "acc-sustainable", fullCredits: 100_000, remainingCredits: 50_000, timeLeftPercent: 50 })],
+      [
+        weeklyAccount({
+          accountId: "acc-sustainable",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          timeLeftPercent: 50,
+        }),
+      ],
       now,
     );
 
@@ -408,7 +496,9 @@ describe("buildWeeklyCreditPace", () => {
           accountId: "acc-stale-reset",
           fullCredits: 700,
           remainingCredits: 600,
-          resetAtSecondary: new Date(now.getTime() - 24 * 3_600_000).toISOString(),
+          resetAtSecondary: new Date(
+            now.getTime() - 24 * 3_600_000,
+          ).toISOString(),
         }),
       ],
       now,
@@ -429,7 +519,9 @@ describe("buildWeeklyCreditPace", () => {
           fullCredits: 70_000,
           remainingCredits: 35_000,
           // One full weekly cycle plus one extra day behind.
-          resetAtSecondary: new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+          resetAtSecondary: new Date(
+            now.getTime() - 8 * 24 * 60 * 60 * 1000,
+          ).toISOString(),
         }),
       ],
       now,
@@ -446,8 +538,18 @@ describe("buildWeeklyCreditPace", () => {
   it("aggregates credit budgets instead of averaging account percentages", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "acc-small", fullCredits: 100_000, remainingCredits: 1_000, timeLeftPercent: 1 }),
-        weeklyAccount({ accountId: "acc-large", fullCredits: 900_000, remainingCredits: 800_000, timeLeftPercent: 80 }),
+        weeklyAccount({
+          accountId: "acc-small",
+          fullCredits: 100_000,
+          remainingCredits: 1_000,
+          timeLeftPercent: 1,
+        }),
+        weeklyAccount({
+          accountId: "acc-large",
+          fullCredits: 900_000,
+          remainingCredits: 800_000,
+          timeLeftPercent: 80,
+        }),
       ],
       now,
     );
@@ -467,7 +569,14 @@ describe("buildWeeklyCreditPace", () => {
 
   it("marks a large account depleted too early as danger", () => {
     const pace = buildWeeklyCreditPace(
-      [weeklyAccount({ accountId: "acc-early", fullCredits: 1_000_000, remainingCredits: 10_000, timeLeftPercent: 80 })],
+      [
+        weeklyAccount({
+          accountId: "acc-early",
+          fullCredits: 1_000_000,
+          remainingCredits: 10_000,
+          timeLeftPercent: 80,
+        }),
+      ],
       now,
     );
 
@@ -489,8 +598,18 @@ describe("buildWeeklyCreditPace", () => {
   it("uses each account reset time before summing credits", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "acc-near", fullCredits: 100_000, remainingCredits: 50_000, timeLeftPercent: 10 }),
-        weeklyAccount({ accountId: "acc-far", fullCredits: 100_000, remainingCredits: 50_000, timeLeftPercent: 90 }),
+        weeklyAccount({
+          accountId: "acc-near",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          timeLeftPercent: 10,
+        }),
+        weeklyAccount({
+          accountId: "acc-far",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          timeLeftPercent: 90,
+        }),
       ],
       now,
     );
@@ -511,8 +630,18 @@ describe("buildWeeklyCreditPace", () => {
   it("bases throttle advice on the full time until the replenishing reset", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "acc-near", fullCredits: 100_000, remainingCredits: 50_000, timeLeftPercent: 10 }),
-        weeklyAccount({ accountId: "acc-far", fullCredits: 100_000, remainingCredits: 50_000, timeLeftPercent: 90 }),
+        weeklyAccount({
+          accountId: "acc-near",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          timeLeftPercent: 10,
+        }),
+        weeklyAccount({
+          accountId: "acc-far",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          timeLeftPercent: 90,
+        }),
       ],
       now,
     );
@@ -526,8 +655,18 @@ describe("buildWeeklyCreditPace", () => {
   it("expires unused account credits at reset instead of carrying them forward", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "unused-near-reset", fullCredits: 1_000, remainingCredits: 1_000, timeLeftPercent: 10 }),
-        weeklyAccount({ accountId: "empty-later-reset", fullCredits: 1_000, remainingCredits: 0, timeLeftPercent: 90 }),
+        weeklyAccount({
+          accountId: "unused-near-reset",
+          fullCredits: 1_000,
+          remainingCredits: 1_000,
+          timeLeftPercent: 10,
+        }),
+        weeklyAccount({
+          accountId: "empty-later-reset",
+          fullCredits: 1_000,
+          remainingCredits: 0,
+          timeLeftPercent: 90,
+        }),
       ],
       now,
     );
@@ -540,8 +679,18 @@ describe("buildWeeklyCreditPace", () => {
   it("does not let a tiny near reset hide depletion before the next meaningful reset", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "tiny-reset", fullCredits: 2, remainingCredits: 0, timeLeftPercent: 1 }),
-        weeklyAccount({ accountId: "large-later", fullCredits: 100_000, remainingCredits: 20_000, timeLeftPercent: 50 }),
+        weeklyAccount({
+          accountId: "tiny-reset",
+          fullCredits: 2,
+          remainingCredits: 0,
+          timeLeftPercent: 1,
+        }),
+        weeklyAccount({
+          accountId: "large-later",
+          fullCredits: 100_000,
+          remainingCredits: 20_000,
+          timeLeftPercent: 50,
+        }),
       ],
       now,
     );
@@ -558,8 +707,18 @@ describe("buildWeeklyCreditPace", () => {
   it("computes break-even pause across different reset deadlines", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "acc-near", fullCredits: 100_000, remainingCredits: 0, timeLeftPercent: 10 }),
-        weeklyAccount({ accountId: "acc-far", fullCredits: 100_000, remainingCredits: 0, timeLeftPercent: 90 }),
+        weeklyAccount({
+          accountId: "acc-near",
+          fullCredits: 100_000,
+          remainingCredits: 0,
+          timeLeftPercent: 10,
+        }),
+        weeklyAccount({
+          accountId: "acc-far",
+          fullCredits: 100_000,
+          remainingCredits: 0,
+          timeLeftPercent: 90,
+        }),
       ],
       now,
     );
@@ -581,8 +740,18 @@ describe("buildWeeklyCreditPace", () => {
   it("continues past a tiny first reset when the weekly pool starts empty", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "tiny-reset", fullCredits: 2, remainingCredits: 0, timeLeftPercent: 1 }),
-        weeklyAccount({ accountId: "large-later", fullCredits: 100_000, remainingCredits: 0, timeLeftPercent: 50 }),
+        weeklyAccount({
+          accountId: "tiny-reset",
+          fullCredits: 2,
+          remainingCredits: 0,
+          timeLeftPercent: 1,
+        }),
+        weeklyAccount({
+          accountId: "large-later",
+          fullCredits: 100_000,
+          remainingCredits: 0,
+          timeLeftPercent: 50,
+        }),
       ],
       now,
     );
@@ -667,9 +836,24 @@ describe("buildWeeklyCreditPace", () => {
   it("skips accounts without complete weekly credit timing data", () => {
     const pace = buildWeeklyCreditPace(
       [
-        weeklyAccount({ accountId: "missing-full", fullCredits: null, remainingCredits: 1_000, timeLeftPercent: 50 }),
-        weeklyAccount({ accountId: "missing-reset", fullCredits: 100_000, remainingCredits: 50_000, resetAtSecondary: null }),
-        weeklyAccount({ accountId: "missing-window", fullCredits: 100_000, remainingCredits: 50_000, windowMinutesSecondary: null }),
+        weeklyAccount({
+          accountId: "missing-full",
+          fullCredits: null,
+          remainingCredits: 1_000,
+          timeLeftPercent: 50,
+        }),
+        weeklyAccount({
+          accountId: "missing-reset",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          resetAtSecondary: null,
+        }),
+        weeklyAccount({
+          accountId: "missing-window",
+          fullCredits: 100_000,
+          remainingCredits: 50_000,
+          windowMinutesSecondary: null,
+        }),
       ],
       now,
     );
@@ -719,13 +903,19 @@ describe("buildDashboardView", () => {
       ],
     });
 
-    const view = buildDashboardView({ ...overview, weeklyCreditPace: serverPace }, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(
+      { ...overview, weeklyCreditPace: serverPace },
+      createDefaultRequestLogs(),
+      false,
+    );
 
     expect(view.weeklyCreditPace).toBe(serverPace);
   });
 
   it("keeps an explicit null backend weekly credit pace instead of falling back locally", () => {
-    const weeklyResetAt = new Date(Date.now() + 3.5 * 24 * 60 * 60 * 1000).toISOString();
+    const weeklyResetAt = new Date(
+      Date.now() + 3.5 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const overview = createDashboardOverview({
       weeklyCreditPace: null,
       accounts: [
@@ -746,7 +936,11 @@ describe("buildDashboardView", () => {
 
     expect(buildWeeklyCreditPace(overview.accounts)).not.toBeNull();
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(
+      overview,
+      createDefaultRequestLogs(),
+      false,
+    );
 
     expect(view.weeklyCreditPace).toBeNull();
   });
@@ -809,14 +1003,20 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(
+      overview,
+      createDefaultRequestLogs(),
+      false,
+    );
 
     expect(view.primaryUsageItems).toHaveLength(2);
     expect(view.primaryUsageItems[0]?.value).toBeCloseTo(75.6);
     expect(view.primaryUsageItems[1]?.value).toBeCloseTo(135);
     expect(overview.summary.primaryWindow.capacityCredits).toBe(450);
     expect(overview.summary.secondaryWindow?.capacityCredits).toBe(15120);
-    expect(view.primaryUsageItems.reduce((total, item) => total + item.value, 0)).toBeCloseTo(210.6);
+    expect(
+      view.primaryUsageItems.reduce((total, item) => total + item.value, 0),
+    ).toBeCloseTo(210.6);
   });
 
   it("keeps primary totals intact for accounts without secondary usage data", () => {
@@ -891,7 +1091,11 @@ describe("buildDashboardView", () => {
       },
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(
+      overview,
+      createDefaultRequestLogs(),
+      false,
+    );
 
     expect(view.primaryUsageItems).toHaveLength(1);
     expect(view.primaryUsageItems[0]?.value).toBeCloseTo(202.5);
@@ -929,7 +1133,11 @@ describe("buildDashboardView", () => {
       ],
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(
+      overview,
+      createDefaultRequestLogs(),
+      false,
+    );
     const burn = view.stats[3];
 
     expect(burn.label).toBe("Account burn projection (5h/7d)");
@@ -946,7 +1154,9 @@ describe("buildDashboardView", () => {
       showAccountBurnrate: false,
     });
 
-    expect(view.stats.map((stat) => stat.label)).not.toContain("Account burn projection (5h/7d)");
+    expect(view.stats.map((stat) => stat.label)).not.toContain(
+      "Account burn projection (5h/7d)",
+    );
     expect(view.stats).toHaveLength(4);
   });
 
@@ -969,10 +1179,164 @@ describe("buildDashboardView", () => {
       ],
     });
 
-    const view = buildDashboardView(overview, createDefaultRequestLogs(), false);
+    const view = buildDashboardView(
+      overview,
+      createDefaultRequestLogs(),
+      false,
+    );
     const burn = view.stats[3];
 
     expect(burn.value).toBe("0.0 / 1.0");
     expect(burn.meta).toBe("Projected account-equivalents: 0.0/5h · 1.0/7d");
+  });
+});
+
+describe("accountMatchesProviderScope", () => {
+  it("matches everything when scope is all", () => {
+    const acc = account({ accountId: "acc-1", email: "one@example.com" });
+    expect(accountMatchesProviderScope(acc, "all")).toBe(true);
+  });
+
+  it("treats a missing provider as openai", () => {
+    const acc = account({ accountId: "acc-1", email: "one@example.com" });
+    expect(accountMatchesProviderScope(acc, "openai")).toBe(true);
+    expect(accountMatchesProviderScope(acc, "anthropic")).toBe(false);
+  });
+
+  it("matches the explicit provider", () => {
+    const acc = {
+      ...account({ accountId: "acc-1", email: "one@example.com" }),
+      provider: "anthropic" as const,
+    };
+    expect(accountMatchesProviderScope(acc, "anthropic")).toBe(true);
+    expect(accountMatchesProviderScope(acc, "openai")).toBe(false);
+  });
+});
+
+describe("filterOverviewByProvider", () => {
+  function mixedOverview() {
+    return createDashboardOverview({
+      accounts: [
+        createAccountSummary({
+          accountId: "acc_codex",
+          email: "codex@example.com",
+          displayName: "codex@example.com",
+          provider: "openai",
+        }),
+        createAccountSummary({
+          accountId: "acc_claude",
+          email: "claude@example.com",
+          displayName: "claude@example.com",
+          provider: "anthropic",
+          usage: {
+            primaryRemainingPercent: 40,
+            secondaryRemainingPercent: 50,
+            monthlyRemainingPercent: null,
+          },
+          remainingCreditsPrimary: 90,
+          remainingCreditsSecondary: 3_780,
+        }),
+      ],
+    });
+  }
+
+  it("returns the overview unchanged for the all scope", () => {
+    const overview = mixedOverview();
+    expect(filterOverviewByProvider(overview, "all")).toBe(overview);
+  });
+
+  it("filters accounts and per-account window entries to the provider", () => {
+    const filtered = filterOverviewByProvider(mixedOverview(), "anthropic");
+
+    expect(filtered.accounts.map((acc) => acc.accountId)).toEqual([
+      "acc_claude",
+    ]);
+    expect(
+      filtered.windows.primary.accounts.map((entry) => entry.accountId),
+    ).toEqual(["acc_claude"]);
+    expect(
+      filtered.windows.secondary?.accounts.map((entry) => entry.accountId),
+    ).toEqual(["acc_claude"]);
+  });
+
+  it("re-sums the summary windows from the filtered entries", () => {
+    const filtered = filterOverviewByProvider(mixedOverview(), "anthropic");
+
+    // One anthropic account: primary window 40% of 225 capacity.
+    expect(filtered.summary.primaryWindow.capacityCredits).toBe(225);
+    expect(filtered.summary.primaryWindow.remainingCredits).toBeCloseTo(90);
+    expect(filtered.summary.primaryWindow.remainingPercent).toBeCloseTo(40);
+    expect(filtered.summary.secondaryWindow?.capacityCredits).toBe(7_560);
+    expect(filtered.summary.secondaryWindow?.remainingCredits).toBeCloseTo(
+      3_780,
+    );
+  });
+
+  it("drops pool-wide server aggregates that cannot be split", () => {
+    const filtered = filterOverviewByProvider(mixedOverview(), "openai");
+
+    expect(filtered.depletionPrimary).toBeNull();
+    expect(filtered.depletionSecondary).toBeNull();
+    expect(filtered.weeklyCreditPace).toBeUndefined();
+  });
+
+  it("rebuilds donut items and center totals from the filtered accounts", () => {
+    const filtered = filterOverviewByProvider(mixedOverview(), "anthropic");
+    const view = buildDashboardView(filtered, [], { providerScoped: true });
+
+    expect(view.primaryUsageItems.map((item) => item.accountId)).toEqual([
+      "acc_claude",
+    ]);
+    expect(view.secondaryUsageItems.map((item) => item.accountId)).toEqual([
+      "acc_claude",
+    ]);
+    expect(view.primaryTotal).toBeCloseTo(90);
+    expect(view.secondaryTotal).toBeCloseTo(3_780);
+  });
+
+  it("yields empty donut data without crashing when the provider has no accounts", () => {
+    const openaiOnly = createDashboardOverview({
+      accounts: [
+        createAccountSummary({
+          accountId: "acc_codex",
+          email: "codex@example.com",
+          provider: "openai",
+        }),
+      ],
+    });
+
+    const filtered = filterOverviewByProvider(openaiOnly, "anthropic");
+    expect(filtered.accounts).toEqual([]);
+    expect(filtered.summary.primaryWindow.capacityCredits).toBe(0);
+    expect(filtered.summary.primaryWindow.remainingPercent).toBe(0);
+
+    const view = buildDashboardView(filtered, [], { providerScoped: true });
+    expect(view.primaryUsageItems).toEqual([]);
+    expect(view.primaryTotal).toBe(0);
+    expect(view.weeklyCreditPace).toBeNull();
+  });
+});
+
+describe("buildDashboardView provider scoping", () => {
+  it("suffixes server-aggregate stat labels with all providers when scoped", () => {
+    const view = buildDashboardView(createDashboardOverview(), [], {
+      providerScoped: true,
+    });
+
+    const labels = view.stats.map((stat) => stat.label);
+    expect(labels).toContain("Requests (7d) · all providers");
+    expect(labels).toContain("Tokens (7d) · all providers");
+    expect(labels).toContain("Est. API Cost (7d) · all providers");
+    expect(labels).toContain("Error rate (7d) · all providers");
+    // Burn projection derives from the (scoped) accounts; no suffix.
+    expect(labels).toContain("Account burn projection (5h/7d)");
+  });
+
+  it("keeps plain labels when not provider scoped", () => {
+    const view = buildDashboardView(createDashboardOverview(), [], {
+      providerScoped: false,
+    });
+
+    expect(view.stats.map((stat) => stat.label)).toContain("Requests (7d)");
   });
 });

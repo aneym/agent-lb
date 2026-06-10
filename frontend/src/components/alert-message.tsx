@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, TriangleAlert } from "lucide-react";
+import { Check, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -8,22 +8,36 @@ export type AlertMessageProps = {
   children: React.ReactNode;
 };
 
+/**
+ * Monochrome alert (DESIGN.md): severity is carried by icon + weight, never hue.
+ * All variants share the same ink-on-muted surface.
+ */
 const variantStyles: Record<AlertMessageProps["variant"], string> = {
-  error: "bg-destructive/10 text-destructive border border-destructive/20",
-  success: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20",
-  warning: "border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  error: "border bg-muted text-foreground font-semibold",
+  success: "border bg-muted text-foreground",
+  warning: "border bg-muted text-foreground",
 };
 
 const variantIcons: Record<AlertMessageProps["variant"], React.ElementType> = {
-  error: AlertCircle,
-  success: CheckCircle2,
+  error: TriangleAlert,
+  success: Check,
   warning: TriangleAlert,
 };
 
-export function AlertMessage({ variant, className, children }: AlertMessageProps) {
+export function AlertMessage({
+  variant,
+  className,
+  children,
+}: AlertMessageProps) {
   const Icon = variantIcons[variant];
   return (
-    <div className={cn("flex items-start gap-2.5 rounded-lg px-3 py-2 text-xs font-medium", variantStyles[variant], className)}>
+    <div
+      className={cn(
+        "flex items-start gap-2.5 rounded-lg px-3 py-2 text-xs font-medium",
+        variantStyles[variant],
+        className,
+      )}
+    >
       <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>{children}</span>
     </div>

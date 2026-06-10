@@ -11,7 +11,15 @@ export type AccountAliasFormProps = {
   onSetAlias: (accountId: string, alias: string | null) => Promise<unknown>;
 };
 
-export function AccountAliasForm({ account, busy, onSetAlias }: AccountAliasFormProps) {
+/**
+ * Inline alias editor for the detail header. Aliases exist to distinguish
+ * accounts that share the same email.
+ */
+export function AccountAliasForm({
+  account,
+  busy,
+  onSetAlias,
+}: AccountAliasFormProps) {
   const [alias, setAlias] = useState(account.alias ?? "");
 
   const normalized = alias.trim();
@@ -21,46 +29,51 @@ export function AccountAliasForm({ account, busy, onSetAlias }: AccountAliasForm
 
   return (
     <form
-      className="rounded-lg border bg-muted/20 p-3"
+      className="flex flex-wrap items-center gap-2"
       onSubmit={(event) => {
         event.preventDefault();
-        void onSetAlias(account.accountId, normalized === "" ? null : normalized);
+        void onSetAlias(
+          account.accountId,
+          normalized === "" ? null : normalized,
+        );
       }}
     >
-      <div className="space-y-1.5">
-        <Label htmlFor="account-alias">Account alias</Label>
-        <p className="text-xs text-muted-foreground">
-          Use a local label to distinguish accounts that share the same email.
-        </p>
-      </div>
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <Input
-          id="account-alias"
-          maxLength={255}
-          placeholder="Personal Plus"
-          value={alias}
-          onChange={(event) => setAlias(event.target.value)}
+      <Label htmlFor="account-alias" className="text-xs text-muted-foreground">
+        Alias
+      </Label>
+      <Input
+        id="account-alias"
+        maxLength={255}
+        placeholder="Personal Plus"
+        title="Local label to distinguish accounts that share the same email"
+        value={alias}
+        onChange={(event) => setAlias(event.target.value)}
+        disabled={busy}
+        className="h-8 w-48 min-w-0 flex-1 text-xs sm:flex-none"
+      />
+      <Button
+        type="submit"
+        size="sm"
+        className="h-8 shrink-0 text-xs"
+        disabled={busy || !dirty}
+      >
+        Save alias
+      </Button>
+      {canClear ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 shrink-0 text-xs"
           disabled={busy}
-        />
-        <Button type="submit" size="sm" className="h-9 shrink-0" disabled={busy || !dirty}>
-          Save alias
+          onClick={() => {
+            setAlias("");
+            void onSetAlias(account.accountId, null);
+          }}
+        >
+          Clear alias
         </Button>
-        {canClear ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-9 shrink-0"
-            disabled={busy}
-            onClick={() => {
-              setAlias("");
-              void onSetAlias(account.accountId, null);
-            }}
-          >
-            Clear alias
-          </Button>
-        ) : null}
-      </div>
+      ) : null}
     </form>
   );
 }

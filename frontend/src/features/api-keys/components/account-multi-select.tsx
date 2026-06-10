@@ -11,12 +11,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusGlyph } from "@/components/ui/status-glyph";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { cn } from "@/lib/utils";
-import { isAccountAssignmentSelectable, normalizeStatus } from "@/utils/account-status";
-import { formatPercentNullable, formatSlug, formatWindowLabel } from "@/utils/formatters";
+import { isAccountAssignmentSelectable } from "@/utils/account-status";
+import {
+  formatPercentNullable,
+  formatSlug,
+  formatWindowLabel,
+} from "@/utils/formatters";
 
 export type AccountMultiSelectProps = {
   value: string[];
@@ -45,14 +49,22 @@ function buildLimitChips(account: AccountSummary): LimitChip[] {
     });
   }
 
-  if (!monthlyOnly && (account.windowMinutesPrimary != null || account.usage?.primaryRemainingPercent != null)) {
+  if (
+    !monthlyOnly &&
+    (account.windowMinutesPrimary != null ||
+      account.usage?.primaryRemainingPercent != null)
+  ) {
     chips.push({
       key: `${account.accountId}-primary`,
       label: `${formatWindowLabel("primary", account.windowMinutesPrimary)} ${formatPercentNullable(account.usage?.primaryRemainingPercent)} left`,
       percent: account.usage?.primaryRemainingPercent ?? null,
     });
   }
-  if (!monthlyOnly && (account.windowMinutesSecondary != null || account.usage?.secondaryRemainingPercent != null)) {
+  if (
+    !monthlyOnly &&
+    (account.windowMinutesSecondary != null ||
+      account.usage?.secondaryRemainingPercent != null)
+  ) {
     chips.push({
       key: `${account.accountId}-secondary`,
       label: `${formatWindowLabel("secondary", account.windowMinutesSecondary)} ${formatPercentNullable(account.usage?.secondaryRemainingPercent)} left`,
@@ -63,22 +75,21 @@ function buildLimitChips(account: AccountSummary): LimitChip[] {
   return chips;
 }
 
+/**
+ * Monochrome chip treatment (DESIGN.md): urgency is carried by weight,
+ * never hue — below 20% remaining the chip turns semibold ink.
+ */
 function chipToneClass(percent: number | null): string {
   if (percent === null) {
     return "border-border bg-muted text-muted-foreground";
   }
-
-  if (percent >= 70) {
-    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (percent < 20) {
+    return "border-border bg-muted font-semibold text-foreground";
   }
-  if (percent >= 30) {
-    return "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300";
-  }
-  return "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-300";
+  return "border-border bg-muted text-foreground";
 }
 
 function AccountOption({ account }: { account: AccountSummary }) {
-  const status = normalizeStatus(account.status);
   const title = account.displayName || account.email;
   const subtitle =
     account.displayName && account.displayName !== account.email
@@ -98,7 +109,7 @@ function AccountOption({ account }: { account: AccountSummary }) {
             {subtitle}
           </div>
         </div>
-        <StatusBadge status={status} />
+        <StatusGlyph status={account.status} className="shrink-0" />
       </div>
 
       <div className="mt-1.5 flex flex-wrap gap-1">
@@ -124,9 +135,15 @@ export function AccountMultiSelect({
   placeholder = "All accounts",
 }: AccountMultiSelectProps) {
   const { accountsQuery } = useAccounts();
-  const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
+  const accounts = useMemo(
+    () => accountsQuery.data ?? [],
+    [accountsQuery.data],
+  );
   const selectableAccounts = useMemo(
-    () => accounts.filter((account) => isAccountAssignmentSelectable(account.status)),
+    () =>
+      accounts.filter((account) =>
+        isAccountAssignmentSelectable(account.status),
+      ),
     [accounts],
   );
   const [search, setSearch] = useState("");
@@ -146,8 +163,13 @@ export function AccountMultiSelect({
   const selectedAccounts = useMemo(
     () =>
       value
-        .map((accountId) => accounts.find((account) => account.accountId === accountId))
-        .filter((account): account is (typeof accounts)[number] => account !== undefined),
+        .map((accountId) =>
+          accounts.find((account) => account.accountId === accountId),
+        )
+        .filter(
+          (account): account is (typeof accounts)[number] =>
+            account !== undefined,
+        ),
     [accounts, value],
   );
 
@@ -174,7 +196,9 @@ export function AccountMultiSelect({
   }, [onChange]);
 
   const label =
-    value.length === 0 ? placeholder : `${value.length} account${value.length > 1 ? "s" : ""} selected`;
+    value.length === 0
+      ? placeholder
+      : `${value.length} account${value.length > 1 ? "s" : ""} selected`;
 
   return (
     <div className="space-y-1.5">
@@ -192,7 +216,10 @@ export function AccountMultiSelect({
             <ChevronsUpDown className="ml-1 size-4 shrink-0 opacity-50" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64">
+        <DropdownMenuContent
+          align="start"
+          className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-64"
+        >
           <div className="px-2 py-1.5">
             <Input
               value={search}
@@ -224,7 +251,9 @@ export function AccountMultiSelect({
             </DropdownMenuCheckboxItem>
           ))}
           {filtered.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">No accounts found</div>
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">
+              No accounts found
+            </div>
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -232,7 +261,11 @@ export function AccountMultiSelect({
       {selectedAccounts.length > 0 ? (
         <div className="flex flex-wrap gap-1">
           {selectedAccounts.map((account) => (
-            <Badge key={account.accountId} variant="secondary" className="gap-1 text-xs">
+            <Badge
+              key={account.accountId}
+              variant="secondary"
+              className="gap-1 text-xs"
+            >
               {account.email}
               <button
                 type="button"

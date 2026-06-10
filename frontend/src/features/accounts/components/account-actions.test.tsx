@@ -20,13 +20,11 @@ describe("AccountActions", () => {
         onDelete={vi.fn()}
         onReauth={vi.fn()}
         onExportAuth={vi.fn()}
-        onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={onRoutingPolicyChange}
       />,
     );
 
-    expect(screen.getByText("Routing policy")).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "Routing policy" }),
     ).toHaveTextContent("Normal");
@@ -46,7 +44,6 @@ describe("AccountActions", () => {
         onDelete={vi.fn()}
         onReauth={onReauth}
         onExportAuth={vi.fn()}
-        onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
       />,
@@ -78,7 +75,6 @@ describe("AccountActions", () => {
         onDelete={vi.fn()}
         onReauth={vi.fn()}
         onExportAuth={vi.fn()}
-        onSecurityWorkAuthorizedChange={vi.fn()}
         onLimitWarmupChange={vi.fn()}
         onRoutingPolicyChange={vi.fn()}
       />,
@@ -107,7 +103,6 @@ describe("AccountActions", () => {
           onDelete={vi.fn()}
           onReauth={vi.fn()}
           onExportAuth={vi.fn()}
-          onSecurityWorkAuthorizedChange={vi.fn()}
           onLimitWarmupChange={vi.fn()}
           onRoutingPolicyChange={vi.fn()}
         />,

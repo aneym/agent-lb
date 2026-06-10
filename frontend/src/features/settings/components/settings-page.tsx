@@ -17,12 +17,17 @@ import { SettingsSkeleton } from "@/features/settings/components/settings-skelet
 import { UpstreamProxySettings } from "@/features/settings/components/upstream-proxy-settings";
 import { StickySessionsSection } from "@/features/sticky-sessions/components/sticky-sessions-section";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
-import { useSettings, useUpstreamProxyAdmin } from "@/features/settings/hooks/use-settings";
+import {
+  useSettings,
+  useUpstreamProxyAdmin,
+} from "@/features/settings/hooks/use-settings";
 import type { SettingsUpdateRequest } from "@/features/settings/schemas";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
 const TotpSettings = lazy(() =>
-  import("@/features/settings/components/totp-settings").then((m) => ({ default: m.TotpSettings })),
+  import("@/features/settings/components/totp-settings").then((m) => ({
+    default: m.TotpSettings,
+  })),
 );
 
 export function SettingsPage() {
@@ -35,8 +40,12 @@ export function SettingsPage() {
     addPoolMemberMutation,
   } = useUpstreamProxyAdmin();
   const authMode = useAuthStore((state) => state.authMode);
-  const passwordManagementEnabled = useAuthStore((state) => state.passwordManagementEnabled);
-  const passwordSessionActive = useAuthStore((state) => state.passwordSessionActive);
+  const passwordManagementEnabled = useAuthStore(
+    (state) => state.passwordManagementEnabled,
+  );
+  const passwordSessionActive = useAuthStore(
+    (state) => state.passwordSessionActive,
+  );
 
   const settings = settingsQuery.data;
   const busy =
@@ -64,7 +73,9 @@ export function SettingsPage() {
           <Settings className="h-5 w-5 text-primary" />
           Settings
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">Configure routing, auth, API key management, and firewall.</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Configure routing, auth, API key management, and firewall.
+        </p>
       </div>
 
       {!settings ? (
@@ -75,15 +86,16 @@ export function SettingsPage() {
 
           {authMode === "trusted_header" ? (
             <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-foreground">
-              Dashboard access is authenticated by a trusted reverse-proxy header. Password and TOTP stay
-              available only as optional fallback login.
+              Dashboard access is authenticated by a trusted reverse-proxy
+              header. Password and TOTP stay available only as optional fallback
+              login.
             </div>
           ) : null}
 
           {authMode === "disabled" ? (
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-medium text-foreground">
-              Dashboard auth is fully bypassed by configuration. Only use this mode behind network restrictions
-              or external access control.
+            <div className="rounded-lg border border-border bg-muted px-3 py-2 text-xs font-medium text-foreground">
+              Dashboard auth is fully bypassed by configuration. Only use this
+              mode behind network restrictions or external access control.
             </div>
           ) : null}
 
@@ -108,21 +120,37 @@ export function SettingsPage() {
                 admin={upstreamProxyQuery.data}
                 busy={busy}
                 onSaveSettings={handleSave}
-                onCreateEndpoint={(payload) => createEndpointMutation.mutateAsync(payload)}
-                onCreatePool={(payload) => createPoolMutation.mutateAsync(payload)}
+                onCreateEndpoint={(payload) =>
+                  createEndpointMutation.mutateAsync(payload)
+                }
+                onCreatePool={(payload) =>
+                  createPoolMutation.mutateAsync(payload)
+                }
                 onAddPoolMember={(poolId, payload) =>
                   addPoolMemberMutation.mutateAsync({ poolId, payload })
                 }
               />
             ) : null}
-            <ImportSettings settings={settings} busy={busy} onSave={handleSave} />
+            <ImportSettings
+              settings={settings}
+              busy={busy}
+              onSave={handleSave}
+            />
             <PasswordSettings disabled={busy} />
             {passwordManagementEnabled ? (
-              <SessionSettings settings={settings} busy={busy} onSave={handleSave} />
+              <SessionSettings
+                settings={settings}
+                busy={busy}
+                onSave={handleSave}
+              />
             ) : null}
             {passwordManagementEnabled && passwordSessionActive ? (
               <Suspense fallback={null}>
-                <TotpSettings settings={settings} disabled={busy} onSave={handleSave} />
+                <TotpSettings
+                  settings={settings}
+                  disabled={busy}
+                  onSave={handleSave}
+                />
               </Suspense>
             ) : null}
 
@@ -130,7 +158,11 @@ export function SettingsPage() {
               apiKeyAuthEnabled={settings.apiKeyAuthEnabled}
               disabled={busy}
               onApiKeyAuthEnabledChange={(enabled) =>
-                void handleSave(buildSettingsUpdateRequest(settings, { apiKeyAuthEnabled: enabled }))
+                void handleSave(
+                  buildSettingsUpdateRequest(settings, {
+                    apiKeyAuthEnabled: enabled,
+                  }),
+                )
               }
             />
             <FirewallSection />
@@ -138,7 +170,10 @@ export function SettingsPage() {
             <StickySessionsSection />
           </div>
 
-          <LoadingOverlay visible={!!settings && busy} label="Saving settings..." />
+          <LoadingOverlay
+            visible={!!settings && busy}
+            label="Saving settings..."
+          />
         </>
       )}
     </div>

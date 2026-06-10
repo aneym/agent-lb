@@ -109,7 +109,7 @@ function ArchiveRecordSummary({ record }: { record: ConversationArchiveRecord })
 function JsonBlock({ title, value }: { title: string; value: unknown }) {
   return (
     <div className="min-w-0 rounded-md border bg-background">
-      <div className="border-b px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
         {title}
       </div>
       <pre className="max-h-72 overflow-auto p-3 text-xs leading-relaxed whitespace-pre-wrap">

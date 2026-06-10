@@ -1,5 +1,7 @@
-import { User } from "lucide-react";
+import { ShieldCheck, User } from "lucide-react";
 
+import { StatusGlyph } from "@/components/ui/status-glyph";
+import { Switch } from "@/components/ui/switch";
 import { isEmailLabel } from "@/components/blur-email";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { AccountAliasForm } from "@/features/accounts/components/account-alias-form";
@@ -7,15 +9,19 @@ import { AccountActions } from "@/features/accounts/components/account-actions";
 import { AccountProxyBinding } from "@/features/accounts/components/account-proxy-binding";
 import { AccountSubscriptionLedgerPanel } from "@/features/accounts/components/account-subscription-ledger";
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
+import { AccountTrendSection } from "@/features/accounts/components/account-trend-section";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
-import { ProviderBadge } from "@/features/accounts/components/provider-badge";
+import { providerLabel } from "@/features/accounts/components/provider-label";
 import type {
   AccountRoutingPolicy,
   AccountSubscriptionLedger,
   AccountSummary,
 } from "@/features/accounts/schemas";
 import { useAccountTrends } from "@/features/accounts/hooks/use-accounts";
-import type { AccountProxyBindingRequest, UpstreamProxyAdmin } from "@/features/settings/schemas";
+import type {
+  AccountProxyBindingRequest,
+  UpstreamProxyAdmin,
+} from "@/features/settings/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { formatSlug } from "@/utils/formatters";
 
@@ -41,7 +47,10 @@ export type AccountDetailProps = {
   ) => Promise<unknown>;
   onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
   upstreamProxyAdmin?: UpstreamProxyAdmin | null;
-  onProxyBindingSave?: (accountId: string, payload: AccountProxyBindingRequest) => Promise<unknown>;
+  onProxyBindingSave?: (
+    accountId: string,
+    payload: AccountProxyBindingRequest,
+  ) => Promise<unknown>;
 };
 
 export function AccountDetail({
@@ -74,7 +83,7 @@ export function AccountDetail({
         <p className="mt-3 text-sm font-medium text-muted-foreground">
           Select an account
         </p>
-        <p className="mt-1 text-xs text-muted-foreground/70">
+        <p className="mt-1 text-xs text-muted-foreground">
           Choose an account from the list to view details.
         </p>
       </div>
@@ -88,80 +97,112 @@ export function AccountDetail({
     account.displayName && account.displayName !== account.email
       ? account.email
       : null;
-  const idSuffix = showAccountId ? ` (${compactId})` : "";
-  const workspaceLabel = account.workspaceLabel || account.workspaceId || "Personal / unknown workspace";
-  const seatLabel = account.seatType ? ` | ${formatSlug(account.seatType)}` : "";
+  const workspaceLabel = account.workspaceLabel || account.workspaceId;
+  const contextParts = [
+    providerLabel(account.provider),
+    formatSlug(account.planType),
+    workspaceLabel ?? null,
+    account.seatType ? formatSlug(account.seatType) : null,
+    showAccountId ? `ID ${compactId}` : null,
+  ].filter((part): part is string => part !== null);
+  const hasTrends =
+    (trends?.primary?.length ?? 0) > 0 ||
+    (trends?.secondary?.length ?? 0) > 0 ||
+    (trends?.secondaryScheduled?.length ?? 0) > 0;
 
   return (
     <div
       key={account.accountId}
-      className="animate-fade-in-up space-y-4 rounded-xl border bg-card p-5"
+      className="animate-fade-in-up rounded-xl border bg-card"
     >
-      {/* Account header */}
-      <div>
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <h2 className="min-w-0 text-base font-semibold">
-            {titleIsEmail ? (
-              <>
-                <span className={blurred ? "privacy-blur" : ""}>{title}</span>
-                {idSuffix}
-              </>
+      {/* Header: identity + status + actions */}
+      <div className="space-y-3 p-5">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h2 className="min-w-0 text-base font-semibold" title={title}>
+            {titleIsEmail && blurred ? (
+              <span className="privacy-blur">{title}</span>
             ) : (
-              <>
-                {title}
-                {!emailSubtitle ? idSuffix : ""}
-              </>
+              title
             )}
           </h2>
-          <ProviderBadge provider={account.provider} />
+          <StatusGlyph status={account.status} className="shrink-0" />
         </div>
         {emailSubtitle ? (
-          <p
-            className="mt-0.5 text-xs text-muted-foreground"
-            title={
-              showAccountId ? `Account ID ${account.accountId}` : undefined
-            }
-          >
-            <span className={blurred ? "privacy-blur" : ""}>
+          <p className="text-xs text-muted-foreground">
+            <span className={blurred ? "privacy-blur" : undefined}>
               {emailSubtitle}
             </span>
-            {showAccountId ? ` | ID ${compactId}` : ""}
           </p>
         ) : null}
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {workspaceLabel} | {formatSlug(account.planType)}{seatLabel}
+        <p className="text-xs text-muted-foreground">
+          {contextParts.join(" · ")}
         </p>
+        <AccountAliasForm
+          account={account}
+          busy={busy}
+          onSetAlias={onSetAlias}
+        />
+        <AccountActions
+          account={account}
+          busy={busy}
+          onPause={onPause}
+          onResume={onResume}
+          onProbe={onProbe}
+          onDelete={onDelete}
+          onReauth={onReauth}
+          onExportAuth={onExportAuth}
+          onLimitWarmupChange={onLimitWarmupChange}
+          onRoutingPolicyChange={onRoutingPolicyChange}
+        />
       </div>
 
-      <AccountAliasForm account={account} busy={busy} onSetAlias={onSetAlias} />
-      {onProxyBindingSave ? (
-        <AccountProxyBinding
-          account={account}
-          admin={upstreamProxyAdmin}
-          busy={busy}
-          onSave={onProxyBindingSave}
-        />
+      {/* Usage */}
+      <div className="border-t p-5">
+        <AccountUsagePanel account={account} />
+      </div>
+
+      {/* Trend */}
+      {hasTrends ? (
+        <div className="border-t p-5">
+          <AccountTrendSection account={account} trends={trends} />
+        </div>
       ) : null}
-      <AccountUsagePanel account={account} trends={trends} />
-      <AccountSubscriptionLedgerPanel
-        account={account}
-        busy={busy}
-        onSave={onSubscriptionSave}
-      />
-      <AccountTokenInfo account={account} />
-      <AccountActions
-        account={account}
-        busy={busy}
-        onPause={onPause}
-        onResume={onResume}
-        onProbe={onProbe}
-        onDelete={onDelete}
-        onReauth={onReauth}
-        onExportAuth={onExportAuth}
-        onLimitWarmupChange={onLimitWarmupChange}
-        onRoutingPolicyChange={onRoutingPolicyChange}
-        onSecurityWorkAuthorizedChange={onSecurityWorkAuthorizedChange}
-      />
+
+      {/* Subscription ledger (collapsed by default) */}
+      <div className="border-t p-5">
+        <AccountSubscriptionLedgerPanel
+          account={account}
+          busy={busy}
+          onSave={onSubscriptionSave}
+        />
+      </div>
+
+      {/* Connection: tokens, proxy binding, trusted access */}
+      <div className="space-y-3 border-t p-5">
+        <h3 className="text-sm font-medium">Connection</h3>
+        <AccountTokenInfo account={account} />
+        {onProxyBindingSave ? (
+          <AccountProxyBinding
+            account={account}
+            admin={upstreamProxyAdmin}
+            busy={busy}
+            onSave={onProxyBindingSave}
+          />
+        ) : null}
+        <label className="flex items-center justify-between gap-3 text-xs">
+          <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">Trusted Access for Cyber</span>
+          </span>
+          <Switch
+            checked={account.securityWorkAuthorized ?? false}
+            disabled={busy}
+            onCheckedChange={(checked) =>
+              onSecurityWorkAuthorizedChange(account.accountId, checked)
+            }
+          />
+        </label>
+      </div>
     </div>
   );
 }

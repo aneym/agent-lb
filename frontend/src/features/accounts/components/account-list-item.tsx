@@ -1,56 +1,64 @@
-import { CalendarClock, Flame, Shield, ShieldCheck } from "lucide-react";
+import { Fragment } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { MonoMeter } from "@/components/ui/mono-meter";
+import { StatusGlyph } from "@/components/ui/status-glyph";
 import { cn } from "@/lib/utils";
-import { isEmailLabel } from "@/components/blur-email";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
-import { StatusBadge } from "@/components/status-badge";
-import { MiniQuotaBar } from "@/components/mini-quota-bar";
-import { ProviderBadge } from "@/features/accounts/components/provider-badge";
-import type {
-  AccountRoutingPolicy,
-  AccountSummary,
-} from "@/features/accounts/schemas";
-import { normalizeStatus } from "@/utils/account-status";
+import type { AccountSummary } from "@/features/accounts/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
-import {
-  formatCompactNumber,
-  formatCurrency,
-  formatDateTimeInline,
-  formatPercentNullable,
-  formatQuotaResetLabel,
-  formatSlug,
-} from "@/utils/formatters";
+import { formatQuotaResetLabel, formatSlug } from "@/utils/formatters";
+
+const ROUTING_POLICY_NOTES: Record<string, string> = {
+  burn_first: "burn first",
+  preserve: "preserve",
+};
 
 export type AccountListItemProps = {
   account: AccountSummary;
   selected: boolean;
-  showAccountId?: boolean;
   onSelect: (accountId: string) => void;
 };
 
 export function AccountListItem({
   account,
   selected,
-  showAccountId = false,
   onSelect,
 }: AccountListItemProps) {
   const blurred = usePrivacyStore((s) => s.blurred);
   const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
-  const status = normalizeStatus(account.status);
-  const title = account.displayName || account.email;
-  const titleIsEmail = isEmailLabel(title, account.email);
-  const emailSubtitle = account.displayName && account.displayName !== account.email
-    ? account.email
-    : null;
-  const workspaceLabel = account.workspaceLabel || account.workspaceId || "Personal / unknown workspace";
-  const seatLabel = account.seatType ? ` | ${formatSlug(account.seatType)}` : "";
-  const slotSubtitle = `${formatSlug(account.planType)} | ${workspaceLabel}${seatLabel}`;
-  const idSuffix = showAccountId ? ` | ID ${formatCompactAccountId(account.accountId)}` : "";
+
+  // Identity first: alias when set (it exists to disambiguate duplicate
+  // emails), otherwise the full email.
+  const alias = account.alias?.trim() ?? "";
+  const title = alias || account.email;
+  const titleIsEmail = title === account.email;
+  const deactivated = account.status === "deactivated";
+
+  const contextParts: string[] = [];
+  if (!titleIsEmail) {
+    contextParts.push(account.email);
+  }
+  contextParts.push(formatSlug(account.planType));
+  const workspaceLabel = account.workspaceLabel || account.workspaceId;
+  if (workspaceLabel) {
+    contextParts.push(
+      account.seatType
+        ? `${workspaceLabel} / ${formatSlug(account.seatType)}`
+        : workspaceLabel,
+    );
+  } else if (account.seatType) {
+    contextParts.push(formatSlug(account.seatType));
+  }
+  const routingNote = ROUTING_POLICY_NOTES[account.routingPolicy ?? "normal"];
+  if (routingNote) {
+    contextParts.push(routingNote);
+  }
+  if (account.isEmailDuplicate && !alias) {
+    contextParts.push(`ID ${formatCompactAccountId(account.accountId)}`);
+  }
+
   const isAnthropic = (account.provider ?? "openai") === "anthropic";
-  const requestUsage = account.requestUsage ?? null;
-  const hasRequestUsage = (requestUsage?.requestCount ?? 0) > 0;
   const primary = account.usage?.primaryRemainingPercent ?? null;
   const secondary = account.usage?.secondaryRemainingPercent ?? null;
   const monthly = account.usage?.monthlyRemainingPercent ?? null;
@@ -66,169 +74,114 @@ export function AccountListItem({
     account.windowMinutesMonthly != null ||
     monthly !== null ||
     account.resetAtMonthly != null;
-  const monthlyOnly = hasMonthlyWindow && !hasPrimaryWindow && !hasSecondaryWindow;
-  const showMonthlyRow = monthlyOnly;
+  const monthlyOnly =
+    hasMonthlyWindow && !hasPrimaryWindow && !hasSecondaryWindow;
   const showPrimaryRow =
-    !monthlyOnly && hasPrimaryWindow && (quotaDisplay !== "weekly" || !hasSecondaryWindow);
+    !monthlyOnly &&
+    hasPrimaryWindow &&
+    (quotaDisplay !== "weekly" || !hasSecondaryWindow);
   const showSecondaryRow =
-    !monthlyOnly && hasSecondaryWindow && (quotaDisplay !== "5h" || !hasPrimaryWindow);
-  const visibleQuotaRows = Number(showPrimaryRow) + Number(showSecondaryRow) + Number(showMonthlyRow);
-  const primaryQuotaLabel = isAnthropic ? "Session" : "5h";
-  const secondaryQuotaLabel = isAnthropic ? "Week" : "Weekly";
-  const showRoutingPolicy = status !== "reauth" && status !== "deactivated";
-  const warmupLabel = account.limitWarmupEnabled ? "Warm-up on" : "Warm-up off";
-  const warmupMeta = account.limitWarmup
-    ? `${formatSlug(account.limitWarmup.status)} | ${formatSlug(account.limitWarmup.model)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt)}`
-    : "No attempts";
-  const subscription = account.subscription ?? null;
-  const subscriptionDate = subscription?.currentPeriodEndAt ?? subscription?.nextChargeAt ?? null;
-  const subscriptionDateLabel =
-    subscription?.status === "cancel_pending" || subscription?.status === "canceled"
-      ? "Active until"
-      : "Next charge";
+    !monthlyOnly &&
+    hasSecondaryWindow &&
+    (quotaDisplay !== "5h" || !hasPrimaryWindow);
+  const visibleMeters =
+    Number(showPrimaryRow) + Number(showSecondaryRow) + Number(monthlyOnly);
 
   return (
     <button
       type="button"
       onClick={() => onSelect(account.accountId)}
+      aria-current={selected ? "true" : undefined}
       className={cn(
-        "w-full rounded-lg px-3 py-2.5 text-left transition-colors",
-        selected ? "bg-primary/8 ring-1 ring-primary/25" : "hover:bg-muted/50",
+        "w-full rounded-md px-3 py-2.5 text-left transition-colors duration-150 ease-out outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+        selected ? "bg-accent ring-1 ring-border" : "hover:bg-accent/50",
+        deactivated && "opacity-60",
       )}
     >
-      <div className="flex items-center gap-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">
-            {titleIsEmail && blurred ? (
-              <span className="privacy-blur">{title}</span>
-            ) : (
-              title
-            )}
-          </p>
-          <p className="truncate text-xs text-muted-foreground" title={showAccountId ? `Account ID ${account.accountId}` : undefined}>
-            {emailSubtitle ? <><span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span> | {slotSubtitle}{idSuffix}</> : <>{slotSubtitle}{idSuffix}</>}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {showRoutingPolicy ? (
-            <RoutingPolicyBadge
-              policy={account.routingPolicy as AccountRoutingPolicy | undefined}
-            />
-          ) : null}
-          {account.securityWorkAuthorized === true ? (
-            <ShieldCheck
-              className="h-3.5 w-3.5 text-emerald-600"
-              aria-label="Trusted Access for Cyber"
-            />
-          ) : null}
-          <ProviderBadge provider={account.provider} />
-          <StatusBadge status={status} />
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <p
+          className={cn(
+            "min-w-0 truncate text-sm",
+            selected ? "font-semibold" : "font-medium",
+          )}
+          title={title}
+        >
+          {titleIsEmail && blurred ? (
+            <span className="privacy-blur">{title}</span>
+          ) : (
+            title
+          )}
+        </p>
+        <StatusGlyph
+          status={account.status}
+          showLabel={account.status !== "active"}
+          className="shrink-0"
+        />
       </div>
-      {subscriptionDate ? (
-        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span className="truncate">
-            {subscriptionDateLabel}: {formatDateTimeInline(subscriptionDate)}
-          </span>
-        </div>
-      ) : null}
-      {isAnthropic ? (
-        <>
-          {visibleQuotaRows > 0 ? (
-            <div
-              className={cn(
-                "mt-2 grid gap-2",
-                visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1",
-              )}
+
+      <p
+        className="mt-0.5 truncate text-xs text-muted-foreground"
+        title={contextParts.join(" · ")}
+      >
+        {contextParts.map((part, index) => (
+          <Fragment key={`${part}-${index}`}>
+            {index > 0 ? <span aria-hidden="true"> · </span> : null}
+            <span
+              className={
+                !titleIsEmail && index === 0 && blurred
+                  ? "privacy-blur"
+                  : undefined
+              }
             >
+              {part}
+            </span>
+          </Fragment>
+        ))}
+      </p>
+
+      {visibleMeters > 0 ? (
+        <div
+          className={cn(
+            "mt-2 grid gap-3",
+            visibleMeters > 1 ? "grid-cols-2" : "grid-cols-1",
+          )}
+        >
+          {monthlyOnly ? (
+            <RowMeter
+              label="Monthly"
+              percent={monthly}
+              resetAt={account.resetAtMonthly}
+            />
+          ) : (
+            <>
               {showPrimaryRow ? (
-                <MiniQuotaRow label={primaryQuotaLabel} percent={primary} resetAt={account.resetAtPrimary} />
+                <RowMeter
+                  label={isAnthropic ? "Session" : "5h"}
+                  percent={primary}
+                  resetAt={account.resetAtPrimary}
+                />
               ) : null}
               {showSecondaryRow ? (
-                <MiniQuotaRow label={secondaryQuotaLabel} percent={secondary} resetAt={account.resetAtSecondary} />
+                <RowMeter
+                  label={isAnthropic ? "Week" : "Weekly"}
+                  percent={secondary}
+                  resetAt={account.resetAtSecondary}
+                />
               ) : null}
-            </div>
-          ) : null}
-          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
-            {hasRequestUsage ? (
-              <>
-                <span>
-                  {formatCompactNumber(requestUsage?.totalTokens)} tok | {formatCompactNumber(requestUsage?.requestCount)} req
-                </span>
-                <span className="font-medium">{formatCurrency(requestUsage?.totalCostUsd)}</span>
-              </>
-            ) : (
-              <span>No request usage yet</span>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div
-            className={cn(
-              "mt-2 grid gap-2",
-              visibleQuotaRows > 1 ? "grid-cols-2" : "grid-cols-1",
-            )}
-          >
-            {showMonthlyRow ? (
-              <MiniQuotaRow
-                label="Monthly"
-                percent={monthly}
-                resetAt={account.resetAtMonthly}
-              />
-            ) : null}
-            {showPrimaryRow ? <MiniQuotaRow label={primaryQuotaLabel} percent={primary} resetAt={account.resetAtPrimary} /> : null}
-            {showSecondaryRow ? <MiniQuotaRow label={secondaryQuotaLabel} percent={secondary} resetAt={account.resetAtSecondary} /> : null}
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-            <span>{warmupLabel}</span>
-            <span className="truncate">{warmupMeta}</span>
-          </div>
-        </>
-      )}
+            </>
+          )}
+        </div>
+      ) : null}
     </button>
   );
 }
 
-function RoutingPolicyBadge({
-  policy,
-}: {
-  policy: AccountRoutingPolicy | undefined;
-}) {
-  if (policy === "burn_first") {
-    return (
-      <Badge
-        variant="outline"
-        className="shrink-0 gap-1 border-amber-300 bg-amber-50 px-1.5 text-[11px] text-amber-700"
-      >
-        <Flame className="h-3 w-3" aria-hidden="true" />
-        Burn first
-      </Badge>
-    );
-  }
-  if (policy === "preserve") {
-    return (
-      <Badge
-        variant="outline"
-        className="shrink-0 gap-1 border-sky-300 bg-sky-50 px-1.5 text-[11px] text-sky-700"
-      >
-        <Shield className="h-3 w-3" aria-hidden="true" />
-        Preserve
-      </Badge>
-    );
-  }
-  return (
-    <Badge
-      variant="outline"
-      className="shrink-0 px-1.5 text-[11px] text-muted-foreground"
-    >
-      Normal
-    </Badge>
-  );
+function formatRowResetLabel(resetAt: string | null): string {
+  const label = formatQuotaResetLabel(resetAt);
+  return label.startsWith("Reset ") ? label : `Reset ${label}`;
 }
 
-function MiniQuotaRow({
+function RowMeter({
   label,
   percent,
   resetAt,
@@ -237,27 +190,36 @@ function MiniQuotaRow({
   percent: number | null;
   resetAt: string | null | undefined;
 }) {
+  if (percent === null) {
+    return (
+      <div className="min-w-0">
+        <div className="mb-1 flex items-baseline justify-between gap-2">
+          <span className="truncate text-[13px] leading-none font-medium">
+            {label}
+          </span>
+          <span className="shrink-0 font-mono text-xs leading-none text-muted-foreground tabular-nums">
+            --
+          </span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          data-testid={`mini-quota-track-${label.toLowerCase()}`}
+          className="h-1 w-full overflow-hidden rounded-full bg-muted"
+        />
+        <p className="mt-1 truncate text-xs leading-none text-muted-foreground">
+          {formatRowResetLabel(resetAt ?? null)}
+        </p>
+      </div>
+    );
+  }
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="tabular-nums font-medium">
-          {formatPercentNullable(percent)}
-        </span>
-      </div>
-      <MiniQuotaBar
-        aria-label={`${label} credits remaining`}
-        percent={percent}
-        testId={`mini-quota-track-${label.toLowerCase()}`}
-      />
-      <div className="text-[10px] text-muted-foreground">
-        {formatMiniQuotaResetLabel(resetAt ?? null)}
-      </div>
-    </div>
+    <MonoMeter
+      label={label}
+      percent={percent}
+      sublabel={formatRowResetLabel(resetAt ?? null)}
+    />
   );
-}
-
-function formatMiniQuotaResetLabel(resetAt: string | null): string {
-  const label = formatQuotaResetLabel(resetAt);
-  return label.startsWith("Reset ") ? label : `Reset ${label}`;
 }

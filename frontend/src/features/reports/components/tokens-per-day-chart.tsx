@@ -32,53 +32,93 @@ export function TokensPerDayChart({ data }: TokensPerDayChartProps) {
       <div className="text-sm font-semibold text-foreground">Tokens by Day</div>
       <div className="mt-4 h-[200px]">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id="inputGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.05} />
-              </linearGradient>
-              <linearGradient id="outputGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#ec4899" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="#ec4899" stopOpacity={0.05} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+          <AreaChart
+            data={chartData}
+            margin={{ top: 5, right: 10, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--border)"
+              vertical={false}
+            />
             <XAxis
               dataKey="date"
-              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
             />
             <YAxis
-              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+              tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
               axisLine={false}
               tickLine={false}
               tickFormatter={formatTokens}
             />
             <Tooltip
-              content={<ChartTooltip names={{ input: "Input", output: "Output" }} formatValue={(v) => formatTokens(v)} />}
+              cursor={{
+                stroke: "var(--foreground)",
+                strokeOpacity: 0.2,
+                strokeWidth: 1,
+              }}
+              content={
+                <ChartTooltip
+                  names={{ input: "Input", output: "Output" }}
+                  formatValue={(v) => formatTokens(v)}
+                />
+              }
             />
+            {/* Two series: differentiated by grayscale ramp step AND dash pattern (DESIGN.md). */}
             <Area
               type="monotone"
               dataKey="input"
-              stroke="#8b5cf6"
+              stroke="var(--chart-1)"
               strokeWidth={2}
-              fill="url(#inputGrad)"
+              fill="var(--chart-1)"
+              fillOpacity={0.08}
               dot={false}
-              activeDot={{ r: 4, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+              activeDot={{ r: 4, strokeWidth: 1.5, fill: "var(--card)" }}
             />
             <Area
               type="monotone"
               dataKey="output"
-              stroke="#ec4899"
+              stroke="var(--chart-2)"
               strokeWidth={2}
-              fill="url(#outputGrad)"
+              strokeDasharray="6 3"
+              fill="var(--chart-2)"
+              fillOpacity={0.06}
               dot={false}
-              activeDot={{ r: 4, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+              activeDot={{ r: 4, strokeWidth: 1.5, fill: "var(--card)" }}
             />
           </AreaChart>
         </ResponsiveContainer>
+      </div>
+      <div className="mt-3 flex items-center gap-4 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <svg width="16" height="4" aria-hidden="true">
+            <line
+              x1="0"
+              y1="2"
+              x2="16"
+              y2="2"
+              stroke="var(--chart-1)"
+              strokeWidth="2"
+            />
+          </svg>
+          Input
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width="16" height="4" aria-hidden="true">
+            <line
+              x1="0"
+              y1="2"
+              x2="16"
+              y2="2"
+              stroke="var(--chart-2)"
+              strokeWidth="2"
+              strokeDasharray="4 2"
+            />
+          </svg>
+          Output
+        </span>
       </div>
     </div>
   );

@@ -237,7 +237,7 @@ export function StickySessionsSection() {
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[5%] min-w-[3rem] pl-4 text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[5%] min-w-[3rem] pl-4 text-xs font-medium text-muted-foreground">
                       <Checkbox
                         aria-label="Select all sticky sessions on current page"
                         checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
@@ -245,7 +245,7 @@ export function StickySessionsSection() {
                         onCheckedChange={(checked) => setAllVisibleSelected(checked === true)}
                       />
                     </TableHead>
-                    <TableHead className="w-[25%] min-w-[14rem] text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[25%] min-w-[14rem] text-xs font-medium text-muted-foreground">
                       <button
                         type="button"
                         className="cursor-pointer text-left transition-colors hover:text-foreground"
@@ -254,10 +254,10 @@ export function StickySessionsSection() {
                         {`Key${sortIndicator(params.sortBy, params.sortDir, "key") ?? ""}`}
                       </button>
                     </TableHead>
-                    <TableHead className="w-[14%] min-w-[8rem] text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[14%] min-w-[8rem] text-xs font-medium text-muted-foreground">
                       Kind
                     </TableHead>
-                    <TableHead className="w-[18%] min-w-[9rem] text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[18%] min-w-[9rem] text-xs font-medium text-muted-foreground">
                       <button
                         type="button"
                         className="cursor-pointer text-left transition-colors hover:text-foreground"
@@ -266,7 +266,7 @@ export function StickySessionsSection() {
                         {`Account${sortIndicator(params.sortBy, params.sortDir, "account") ?? ""}`}
                       </button>
                     </TableHead>
-                    <TableHead className="w-[16%] min-w-[9rem] text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[16%] min-w-[9rem] text-xs font-medium text-muted-foreground">
                       <button
                         type="button"
                         className="cursor-pointer text-left transition-colors hover:text-foreground"
@@ -277,10 +277,10 @@ export function StickySessionsSection() {
                         {`Updated${sortIndicator(params.sortBy, params.sortDir, "updated_at") ?? ""}`}
                       </button>
                     </TableHead>
-                    <TableHead className="w-[16%] min-w-[9rem] text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[16%] min-w-[9rem] text-xs font-medium text-muted-foreground">
                       Expiry
                     </TableHead>
-                    <TableHead className="w-[6%] min-w-[4.5rem] pr-4 text-right align-middle text-[11px] uppercase tracking-wider text-muted-foreground/80">
+                    <TableHead className="w-[6%] min-w-[4.5rem] pr-4 text-right align-middle text-xs font-medium text-muted-foreground">
                       Actions
                     </TableHead>
                   </TableRow>

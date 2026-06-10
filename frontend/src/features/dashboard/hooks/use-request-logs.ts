@@ -8,7 +8,10 @@ import {
   type RequestLogFacetFilters,
   type RequestLogsListFilters,
 } from "@/features/dashboard/api";
-import { FilterStateSchema, type FilterState } from "@/features/dashboard/schemas";
+import {
+  FilterStateSchema,
+  type FilterState,
+} from "@/features/dashboard/schemas";
 
 const DEFAULT_FILTER_STATE: FilterState = {
   search: "",
@@ -58,7 +61,10 @@ function parseFilterState(params: URLSearchParams): FilterState {
   return DEFAULT_FILTER_STATE;
 }
 
-function writeFilterState(state: FilterState, base?: URLSearchParams): URLSearchParams {
+function writeFilterState(
+  state: FilterState,
+  base?: URLSearchParams,
+): URLSearchParams {
   const params = new URLSearchParams(base);
   for (const key of REQUEST_LOG_PARAM_KEYS) {
     params.delete(key);
@@ -86,7 +92,9 @@ function writeFilterState(state: FilterState, base?: URLSearchParams): URLSearch
   return params;
 }
 
-function timeframeToSinceIso(timeframe: FilterState["timeframe"]): string | undefined {
+function timeframeToSinceIso(
+  timeframe: FilterState["timeframe"],
+): string | undefined {
   if (timeframe === "all") {
     return undefined;
   }
@@ -99,37 +107,72 @@ function timeframeToSinceIso(timeframe: FilterState["timeframe"]): string | unde
   return new Date(now - lookup[timeframe]).toISOString();
 }
 
-export function useRequestLogs() {
+/**
+ * Optional account-id scope applied on top of the URL-driven filters
+ * (e.g. the dashboard provider filter).
+ *
+ * - "none": no scope, URL filters apply as-is (default).
+ * - "pending": the scoping data is still loading; queries pause so an
+ *   unscoped page is never fetched and then thrown away.
+ * - "accounts": constrain to these ids. The user's own account selection is
+ *   intersected with the scope; an empty intersection means "no results"
+ *   (`scopeIsEmpty`), never "unfiltered".
+ */
+export type RequestLogsScope =
+  | { kind: "none" }
+  | { kind: "pending" }
+  | { kind: "accounts"; accountIds: string[] };
+
+const NO_SCOPE: RequestLogsScope = { kind: "none" };
+
+export function useRequestLogs(scope: RequestLogsScope = NO_SCOPE) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const filters = useMemo(() => parseFilterState(searchParams), [searchParams]);
-  const since = useMemo(() => timeframeToSinceIso(filters.timeframe), [filters.timeframe]);
+  const since = useMemo(
+    () => timeframeToSinceIso(filters.timeframe),
+    [filters.timeframe],
+  );
+  const effectiveAccountIds = useMemo(() => {
+    if (scope.kind !== "accounts") {
+      return filters.accountIds;
+    }
+    if (filters.accountIds.length === 0) {
+      return scope.accountIds;
+    }
+    const allowed = new Set(scope.accountIds);
+    return filters.accountIds.filter((accountId) => allowed.has(accountId));
+  }, [filters.accountIds, scope]);
+  const scopeIsEmpty =
+    scope.kind === "accounts" && effectiveAccountIds.length === 0;
+  const queriesEnabled = scope.kind !== "pending" && !scopeIsEmpty;
   const listFilters = useMemo<RequestLogsListFilters>(
     () => ({
       search: filters.search || undefined,
       limit: filters.limit,
       offset: filters.offset,
-      accountIds: filters.accountIds,
+      accountIds: effectiveAccountIds,
       apiKeyIds: filters.apiKeyIds,
       statuses: filters.statuses,
       modelOptions: filters.modelOptions,
       since,
     }),
-    [filters, since],
+    [filters, effectiveAccountIds, since],
   );
   const facetFilters = useMemo<RequestLogFacetFilters>(
     () => ({
       since,
-      accountIds: filters.accountIds,
+      accountIds: effectiveAccountIds,
       apiKeyIds: filters.apiKeyIds,
       modelOptions: filters.modelOptions,
     }),
-    [filters.accountIds, filters.apiKeyIds, filters.modelOptions, since],
+    [effectiveAccountIds, filters.apiKeyIds, filters.modelOptions, since],
   );
 
   const logsQuery = useQuery({
     queryKey: ["dashboard", "request-logs", listFilters],
     queryFn: () => getRequestLogs(listFilters),
+    enabled: queriesEnabled,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
@@ -139,6 +182,7 @@ export function useRequestLogs() {
   const optionsQuery = useQuery({
     queryKey: ["dashboard", "request-log-options", facetFilters],
     queryFn: () => getRequestLogOptions(facetFilters),
+    enabled: queriesEnabled,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
@@ -158,6 +202,7 @@ export function useRequestLogs() {
     facetFilters,
     logsQuery,
     optionsQuery,
+    scopeIsEmpty,
     updateFilters,
   };
 }

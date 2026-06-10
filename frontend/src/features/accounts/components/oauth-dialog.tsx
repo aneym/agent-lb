@@ -1,5 +1,18 @@
-import { Check, CircleAlert, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  Check,
+  CircleAlert,
+  Copy,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -42,38 +55,52 @@ const PROVIDER_OPTIONS: Array<{
 function getStage(state: OAuthState): Stage {
   if (state.status === "success") return "success";
   if (state.status === "error") return "error";
-  if (state.method === "browser" && (state.status === "pending" || state.status === "starting")) return "browser";
-  if (state.method === "device" && (state.status === "pending" || state.status === "starting")) return "device";
+  if (
+    state.method === "browser" &&
+    (state.status === "pending" || state.status === "starting")
+  )
+    return "browser";
+  if (
+    state.method === "device" &&
+    (state.status === "pending" || state.status === "starting")
+  )
+    return "device";
   return "intro";
 }
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(async (event: MouseEvent<HTMLButtonElement>) => {
-    const trigger = event.currentTarget;
-    const dialogContainer = trigger.closest("[role='dialog']");
-    const blurAfterCopy = event.detail > 0;
+  const handleCopy = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      const trigger = event.currentTarget;
+      const dialogContainer = trigger.closest("[role='dialog']");
+      const blurAfterCopy = event.detail > 0;
 
-    try {
-      const copiedToClipboard = await copyToClipboard(text, {
-        container: dialogContainer instanceof HTMLElement ? dialogContainer : undefined,
-      });
-      if (!copiedToClipboard) {
+      try {
+        const copiedToClipboard = await copyToClipboard(text, {
+          container:
+            dialogContainer instanceof HTMLElement
+              ? dialogContainer
+              : undefined,
+        });
+        if (!copiedToClipboard) {
+          toast.error("Failed to copy");
+          return;
+        }
+
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
         toast.error("Failed to copy");
-        return;
+      } finally {
+        if (blurAfterCopy) {
+          trigger.blur();
+        }
       }
-
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast.error("Failed to copy");
-    } finally {
-      if (blurAfterCopy) {
-        trigger.blur();
-      }
-    }
-  }, [text]);
+    },
+    [text],
+  );
 
   return (
     <Button
@@ -105,7 +132,12 @@ type ManualCallbackInputProps = {
 };
 
 function ManualCallbackInput(props: ManualCallbackInputProps) {
-  return <ManualCallbackInputBody key={props.disabled ? "disabled" : "enabled"} {...props} />;
+  return (
+    <ManualCallbackInputBody
+      key={props.disabled ? "disabled" : "enabled"}
+      {...props}
+    />
+  );
 }
 
 function ManualCallbackInputBody({
@@ -161,7 +193,10 @@ export type OauthDialogProps = {
   state: OAuthState;
   initialProvider?: AccountProvider;
   onOpenChange: (open: boolean) => void;
-  onStart: (method?: "browser" | "device", provider?: AccountProvider) => Promise<void>;
+  onStart: (
+    method?: "browser" | "device",
+    provider?: AccountProvider,
+  ) => Promise<void>;
   onComplete: () => Promise<void>;
   onManualCallback: (callbackUrl: string) => Promise<void>;
   onReset: () => void;
@@ -177,12 +212,16 @@ export function OauthDialog({
   onManualCallback,
   onReset,
 }: OauthDialogProps) {
-  const [selectedProvider, setSelectedProvider] = useState<AccountProvider>(initialProvider);
-  const [selectedMethod, setSelectedMethod] = useState<"browser" | "device">("browser");
+  const [selectedProvider, setSelectedProvider] =
+    useState<AccountProvider>(initialProvider);
+  const [selectedMethod, setSelectedMethod] = useState<"browser" | "device">(
+    "browser",
+  );
   const stage = getStage(state);
   const activeProvider = stage === "intro" ? selectedProvider : state.provider;
   const completedRef = useRef(false);
-  const browserRefreshInProgress = stage === "browser" && state.status === "starting";
+  const browserRefreshInProgress =
+    stage === "browser" && state.status === "starting";
   const deviceMethodDisabled = selectedProvider === "anthropic";
 
   useEffect(() => {
@@ -228,7 +267,9 @@ export function OauthDialog({
                 : "Add account with OAuth"}
           </DialogTitle>
           {stage === "intro" ? (
-            <DialogDescription>Choose a sign-in method and complete authorization.</DialogDescription>
+            <DialogDescription>
+              Choose a sign-in method and complete authorization.
+            </DialogDescription>
           ) : null}
         </DialogHeader>
 
@@ -236,7 +277,9 @@ export function OauthDialog({
         {stage === "intro" ? (
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground">Provider</p>
+              <p className="text-xs font-medium text-muted-foreground">
+                Provider
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 {PROVIDER_OPTIONS.map((option) => (
                   <button
@@ -257,9 +300,14 @@ export function OauthDialog({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium">{option.title}</p>
-                      <ProviderBadge provider={option.provider} className="text-[10px]" />
+                      <ProviderBadge
+                        provider={option.provider}
+                        className="text-[10px]"
+                      />
                     </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{option.detail}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {option.detail}
+                    </p>
                   </button>
                 ))}
               </div>
@@ -305,7 +353,9 @@ export function OauthDialog({
           <div className="min-w-0 space-y-3 text-sm">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-muted-foreground">Authorization URL</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Authorization URL
+                </p>
                 <Button
                   type="button"
                   size="sm"
@@ -334,15 +384,21 @@ export function OauthDialog({
                 </div>
               ) : state.authorizationUrl ? (
                 <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2">
-                  <p className="min-w-0 flex-1 truncate font-mono text-xs">{state.authorizationUrl}</p>
+                  <p className="min-w-0 flex-1 truncate font-mono text-xs">
+                    {state.authorizationUrl}
+                  </p>
                   <CopyButton text={state.authorizationUrl} />
                 </div>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                Refresh the link if the current sign-in page has already been used.
+                Refresh the link if the current sign-in page has already been
+                used.
               </p>
             </div>
-            <ManualCallbackInput onSubmit={onManualCallback} disabled={browserRefreshInProgress} />
+            <ManualCallbackInput
+              onSubmit={onManualCallback}
+              disabled={browserRefreshInProgress}
+            />
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               <span>Waiting for authorization to complete...</span>
@@ -361,9 +417,13 @@ export function OauthDialog({
 
             {state.userCode ? (
               <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">User code</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  User code
+                </p>
                 <div className="flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2">
-                  <p className="min-w-0 flex-1 font-mono text-lg font-bold tracking-widest">{state.userCode}</p>
+                  <p className="min-w-0 flex-1 font-mono text-lg font-bold tracking-widest">
+                    {state.userCode}
+                  </p>
                   <CopyButton text={state.userCode} />
                 </div>
               </div>
@@ -371,9 +431,13 @@ export function OauthDialog({
 
             {state.verificationUrl ? (
               <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">Verification URL</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  Verification URL
+                </p>
                 <div className="flex min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-muted/20 px-3 py-2">
-                  <p className="min-w-0 flex-1 truncate break-all font-mono text-xs">{state.verificationUrl}</p>
+                  <p className="min-w-0 flex-1 truncate break-all font-mono text-xs">
+                    {state.verificationUrl}
+                  </p>
                   <CopyButton text={state.verificationUrl} />
                 </div>
               </div>
@@ -393,7 +457,7 @@ export function OauthDialog({
 
         {/* Success stage */}
         {stage === "success" ? (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-3 text-sm text-emerald-700 dark:text-emerald-400">
+          <div className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-3 text-sm text-foreground">
             <Check className="h-4 w-4 shrink-0" />
             <p>Account has been added successfully.</p>
           </div>
@@ -445,7 +509,11 @@ export function OauthDialog({
                   className="cursor-pointer disabled:cursor-not-allowed"
                   asChild
                 >
-                  <a href={state.authorizationUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={state.authorizationUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
                     Open sign-in page
                   </a>
@@ -470,7 +538,11 @@ export function OauthDialog({
                   className="cursor-pointer disabled:cursor-not-allowed"
                   asChild
                 >
-                  <a href={state.verificationUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={state.verificationUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
                     Open link
                   </a>

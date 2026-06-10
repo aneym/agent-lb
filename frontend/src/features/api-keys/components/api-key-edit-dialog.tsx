@@ -132,7 +132,7 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
         <div className="grid gap-x-6 sm:grid-cols-2">
           {/* Left column — General */}
           <div className="max-h-[55vh] space-y-3 overflow-y-auto overscroll-contain pl-1 pr-2">
-            <h4 className="sticky top-0 bg-background pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">General</h4>
+            <h4 className="sticky top-0 bg-background pb-1 text-xs font-medium text-muted-foreground">General</h4>
 
             <FormField
               control={form.control}
@@ -246,7 +246,7 @@ function ApiKeyEditForm({ apiKey, busy, onSubmit, onClose }: ApiKeyEditFormProps
 
           {/* Right column — Limits */}
           <div className="max-h-[55vh] space-y-3 overflow-y-auto overscroll-contain pl-1 pr-2 max-sm:mt-3 max-sm:border-t max-sm:pt-3">
-            <h4 className="sticky top-0 bg-background pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Limits</h4>
+            <h4 className="sticky top-0 bg-background pb-1 text-xs font-medium text-muted-foreground">Limits</h4>
             <LimitRulesEditor rules={limitRules} onChange={setLimitRules} />
 
             {apiKey.limits.length > 0 ? (

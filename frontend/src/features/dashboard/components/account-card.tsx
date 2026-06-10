@@ -1,17 +1,18 @@
-import { Clock, ExternalLink, Play, RotateCcw, Zap } from "lucide-react";
+import { ExternalLink, Play, RotateCcw, Zap } from "lucide-react";
 
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/status-badge";
+import { MonoMeter } from "@/components/ui/mono-meter";
+import { StatusGlyph } from "@/components/ui/status-glyph";
 import { cn } from "@/lib/utils";
 import type { AccountSummary } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
+import { normalizeStatus } from "@/utils/account-status";
 import {
-  normalizeStatus,
-  quotaBarColor,
-  quotaBarTrack,
-} from "@/utils/account-status";
-import { formatDateTimeInline, formatPercentNullable, formatQuotaResetLabel, formatSlug } from "@/utils/formatters";
+  formatDateTimeInline,
+  formatQuotaResetLabel,
+  formatSlug,
+} from "@/utils/formatters";
 
 type AccountAction = "details" | "resume" | "reauth" | "warmup-toggle";
 
@@ -30,65 +31,65 @@ function QuotaBar({
   percent: number | null;
   resetLabel: string;
 }) {
-  const clamped = percent === null ? 0 : Math.max(0, Math.min(100, percent));
-  const hasPercent = percent !== null;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span
-          className={cn(
-            "tabular-nums font-medium",
-            !hasPercent
-              ? "text-muted-foreground"
-              : clamped >= 70
-                ? "text-emerald-600 dark:text-emerald-400"
-                : clamped >= 30
-                  ? "text-amber-600 dark:text-amber-400"
-                  : "text-red-600 dark:text-red-400",
-          )}
-        >
-          {formatPercentNullable(percent)}
-        </span>
-      </div>
-      <div className={cn("h-1.5 w-full overflow-hidden rounded-full", quotaBarTrack(clamped))}>
+  if (percent === null) {
+    return (
+      <div className="min-w-0">
+        <div className="mb-1 flex items-baseline justify-between gap-2">
+          <span className="truncate text-[13px] font-medium leading-none">
+            {label}
+          </span>
+          <span className="shrink-0 font-mono text-xs leading-none tabular-nums text-muted-foreground">
+            -
+          </span>
+        </div>
         <div
-          className={cn("h-full rounded-full transition-all duration-500 ease-out", quotaBarColor(clamped))}
-          style={{ width: `${clamped}%` }}
+          className="h-1 w-full overflow-hidden rounded-full bg-muted"
+          aria-hidden="true"
         />
+        <p className="mt-1 truncate text-xs leading-none text-muted-foreground">
+          {resetLabel}
+        </p>
       </div>
-      <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-        <Clock className="h-3 w-3 shrink-0" />
-        <span>{resetLabel}</span>
-      </div>
-    </div>
-  );
+    );
+  }
+  return <MonoMeter percent={percent} label={label} sublabel={resetLabel} />;
 }
 
-export function AccountCard({ account, showAccountId = false, onAction }: AccountCardProps) {
+export function AccountCard({
+  account,
+  showAccountId = false,
+  onAction,
+}: AccountCardProps) {
   const blurred = usePrivacyStore((s) => s.blurred);
   const status = normalizeStatus(account.status);
   const primaryRemaining = account.usage?.primaryRemainingPercent ?? null;
   const secondaryRemaining = account.usage?.secondaryRemainingPercent ?? null;
   const monthlyRemaining = account.usage?.monthlyRemainingPercent ?? null;
-  const weeklyOnly = account.windowMinutesPrimary == null && account.windowMinutesSecondary != null;
+  const weeklyOnly =
+    account.windowMinutesPrimary == null &&
+    account.windowMinutesSecondary != null;
   const monthlyOnly =
     account.windowMinutesMonthly != null &&
     account.windowMinutesPrimary == null &&
     account.windowMinutesSecondary == null;
-  const displayCredits = account.creditsBalance ?? (
-    monthlyOnly
+  const displayCredits =
+    account.creditsBalance ??
+    (monthlyOnly
       ? account.remainingCreditsMonthly
       : weeklyOnly
         ? account.remainingCreditsSecondary
-        : (account.remainingCreditsSecondary ?? account.remainingCreditsPrimary)
-  );
-  const creditsLabel = account.creditsUnlimited ? "Unlimited" : (
-    displayCredits === null || displayCredits === undefined ? "-" : displayCredits.toFixed(2)
-  );
+        : (account.remainingCreditsSecondary ??
+          account.remainingCreditsPrimary));
+  const creditsLabel = account.creditsUnlimited
+    ? "Unlimited"
+    : displayCredits === null || displayCredits === undefined
+      ? "-"
+      : displayCredits.toFixed(2);
 
   const primaryReset = formatQuotaResetLabel(account.resetAtPrimary ?? null);
-  const secondaryReset = formatQuotaResetLabel(account.resetAtSecondary ?? null);
+  const secondaryReset = formatQuotaResetLabel(
+    account.resetAtSecondary ?? null,
+  );
   const monthlyReset = formatQuotaResetLabel(account.resetAtMonthly ?? null);
 
   const title = account.displayName || account.email;
@@ -99,7 +100,9 @@ export function AccountCard({ account, showAccountId = false, onAction }: Accoun
       ? account.email
       : null;
   const idSuffix = showAccountId ? ` | ID ${compactId}` : "";
-  const warmupStatus = account.limitWarmupEnabled ? "Warm-up on" : "Warm-up off";
+  const warmupStatus = account.limitWarmupEnabled
+    ? "Warm-up on"
+    : "Warm-up off";
   const warmupToggleLabel = `${account.limitWarmupEnabled ? "Disable" : "Enable"} limit warm-up for ${title}`;
   const warmupDetail = account.limitWarmup
     ? `${formatSlug(account.limitWarmup.status)} | ${account.limitWarmup.window === "primary" ? "5h" : "weekly"} | ${formatSlug(account.limitWarmup.model)} | ${formatDateTimeInline(account.limitWarmup.completedAt ?? account.limitWarmup.attemptedAt)}`
@@ -111,31 +114,56 @@ export function AccountCard({ account, showAccountId = false, onAction }: Accoun
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold leading-tight">
-            {blurred
-              ? <span className="privacy-blur">{title}</span>
-              : title}
+            {blurred ? <span className="privacy-blur">{title}</span> : title}
           </p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {planLabel}
             {!emailSubtitle ? idSuffix : ""}
           </p>
           {emailSubtitle ? (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={showAccountId ? `Account ID ${account.accountId}` : undefined}>
-              <span className={blurred ? "privacy-blur" : undefined}>{emailSubtitle}</span>{showAccountId ? ` | ID ${compactId}` : ""}
+            <p
+              className="mt-0.5 truncate text-xs text-muted-foreground"
+              title={
+                showAccountId ? `Account ID ${account.accountId}` : undefined
+              }
+            >
+              <span className={blurred ? "privacy-blur" : undefined}>
+                {emailSubtitle}
+              </span>
+              {showAccountId ? ` | ID ${compactId}` : ""}
             </p>
           ) : null}
         </div>
-        <StatusBadge status={status} />
+        <StatusGlyph status={account.status} className="shrink-0" />
       </div>
 
       {/* Quota bars */}
-      <div className={cn("mt-3.5 grid gap-3", weeklyOnly || monthlyOnly ? "grid-cols-1" : "grid-cols-2")}>
+      <div
+        className={cn(
+          "mt-3.5 grid gap-3",
+          weeklyOnly || monthlyOnly ? "grid-cols-1" : "grid-cols-2",
+        )}
+      >
         {monthlyOnly ? (
-          <QuotaBar label="Monthly" percent={monthlyRemaining} resetLabel={monthlyReset} />
+          <QuotaBar
+            label="Monthly"
+            percent={monthlyRemaining}
+            resetLabel={monthlyReset}
+          />
         ) : (
           <>
-            {!weeklyOnly && <QuotaBar label="5h" percent={primaryRemaining} resetLabel={primaryReset} />}
-            <QuotaBar label="Weekly" percent={secondaryRemaining} resetLabel={secondaryReset} />
+            {!weeklyOnly && (
+              <QuotaBar
+                label="5h"
+                percent={primaryRemaining}
+                resetLabel={primaryReset}
+              />
+            )}
+            <QuotaBar
+              label="Weekly"
+              percent={secondaryRemaining}
+              resetLabel={secondaryReset}
+            />
           </>
         )}
       </div>
@@ -143,7 +171,9 @@ export function AccountCard({ account, showAccountId = false, onAction }: Accoun
       <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-muted/40 px-2.5 py-2 text-xs">
         <div className="min-w-0">
           <p className="font-medium">{warmupStatus}</p>
-          <p className="truncate text-[11px] text-muted-foreground">{warmupDetail}</p>
+          <p className="truncate text-[11px] text-muted-foreground">
+            {warmupDetail}
+          </p>
         </div>
         <Button
           type="button"
@@ -187,7 +217,7 @@ export function AccountCard({ account, showAccountId = false, onAction }: Accoun
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 gap-1.5 rounded-lg text-xs text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+            className="h-7 gap-1.5 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
             onClick={() => onAction?.(account, "resume")}
           >
             <Play className="h-3 w-3" />
@@ -199,7 +229,7 @@ export function AccountCard({ account, showAccountId = false, onAction }: Accoun
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 gap-1.5 rounded-lg text-xs text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+            className="h-7 gap-1.5 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
             onClick={() => onAction?.(account, "reauth")}
           >
             <RotateCcw className="h-3 w-3" />

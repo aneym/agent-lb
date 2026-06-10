@@ -4,7 +4,10 @@ import { TimerReset } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { buildSettingsUpdateRequest } from "@/features/settings/payload";
-import type { DashboardSettings, SettingsUpdateRequest } from "@/features/settings/schemas";
+import type {
+  DashboardSettings,
+  SettingsUpdateRequest,
+} from "@/features/settings/schemas";
 
 export type SessionSettingsProps = {
   settings: DashboardSettings;
@@ -23,20 +26,36 @@ function formatStoredHours(ttlSeconds: number): string {
   return Number.isInteger(hours) ? String(hours) : hours.toFixed(2);
 }
 
-export function SessionSettings({ settings, busy, onSave }: SessionSettingsProps) {
-  const [sessionHours, setSessionHours] = useState(formatStoredHours(settings.dashboardSessionTtlSeconds));
+export function SessionSettings({
+  settings,
+  busy,
+  onSave,
+}: SessionSettingsProps) {
+  const [sessionHours, setSessionHours] = useState(
+    formatStoredHours(settings.dashboardSessionTtlSeconds),
+  );
 
   const trimmed = sessionHours.trim();
   const isInteger = INTEGER_HOURS_PATTERN.test(trimmed);
   const parsedHours = isInteger ? Number.parseInt(trimmed, 10) : Number.NaN;
   const parsedSeconds = parsedHours * 3600;
-  const valid = isInteger && Number.isFinite(parsedHours) && parsedHours > 0 && parsedSeconds >= MIN_TTL_SECONDS;
-  const changed = valid && parsedSeconds !== settings.dashboardSessionTtlSeconds;
-  const showLongSessionWarning = valid && parsedSeconds > WARNING_THRESHOLD_SECONDS;
+  const valid =
+    isInteger &&
+    Number.isFinite(parsedHours) &&
+    parsedHours > 0 &&
+    parsedSeconds >= MIN_TTL_SECONDS;
+  const changed =
+    valid && parsedSeconds !== settings.dashboardSessionTtlSeconds;
+  const showLongSessionWarning =
+    valid && parsedSeconds > WARNING_THRESHOLD_SECONDS;
   const showInvalidInputWarning = trimmed !== "" && !valid;
 
   const save = () =>
-    void onSave(buildSettingsUpdateRequest(settings, { dashboardSessionTtlSeconds: parsedSeconds }));
+    void onSave(
+      buildSettingsUpdateRequest(settings, {
+        dashboardSessionTtlSeconds: parsedSeconds,
+      }),
+    );
 
   return (
     <section className="rounded-xl border bg-card p-5">
@@ -49,7 +68,8 @@ export function SessionSettings({ settings, busy, onSave }: SessionSettingsProps
             <div>
               <h3 className="text-sm font-semibold">Session</h3>
               <p className="text-xs text-muted-foreground">
-                Control how long newly issued password-backed dashboard sessions stay signed in.
+                Control how long newly issued password-backed dashboard sessions
+                stay signed in.
               </p>
             </div>
           </div>
@@ -59,7 +79,8 @@ export function SessionSettings({ settings, busy, onSave }: SessionSettingsProps
           <div>
             <p className="text-sm font-medium">Dashboard session lifetime</p>
             <p className="text-xs text-muted-foreground">
-              Absolute lifetime in hours for new password sessions. Existing sessions keep their original expiry.
+              Absolute lifetime in hours for new password sessions. Existing
+              sessions keep their original expiry.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -95,13 +116,15 @@ export function SessionSettings({ settings, busy, onSave }: SessionSettingsProps
 
         {showInvalidInputWarning ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
-            Enter a whole number of hours (1 or more). Decimals such as <code>1.5</code> are not accepted.
+            Enter a whole number of hours (1 or more). Decimals such as{" "}
+            <code>1.5</code> are not accepted.
           </div>
         ) : null}
         {showLongSessionWarning ? (
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-medium text-foreground">
-            Lifetimes over 30 days keep admin sessions valid for a long time. That may be acceptable on a personal
-            laptop, but it increases the impact of a leaked browser profile or stolen cookie.
+          <div className="rounded-lg border border-border bg-muted px-3 py-2 text-xs font-medium text-foreground">
+            Lifetimes over 30 days keep admin sessions valid for a long time.
+            That may be acceptable on a personal laptop, but it increases the
+            impact of a leaked browser profile or stolen cookie.
           </div>
         ) : null}
       </div>

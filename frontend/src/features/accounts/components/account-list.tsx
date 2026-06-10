@@ -1,145 +1,139 @@
-import { ChevronDown, ChevronUp, Plus, Search, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { statusLabel } from "@/components/ui/status-glyph";
+import { AccountFilterToolbar } from "@/features/accounts/components/account-filter-toolbar";
 import { AccountListItem } from "@/features/accounts/components/account-list-item";
-import { ProviderIcon } from "@/features/accounts/components/provider-icon";
 import { providerLabel } from "@/features/accounts/components/provider-label";
 import { WindowsOauthHelp } from "@/features/accounts/components/windows-oauth-help";
-import type { AccountProvider, AccountSummary } from "@/features/accounts/schemas";
 import {
-  ACCOUNT_SORT_OPTIONS,
-  DEFAULT_ACCOUNT_SORT_MODE,
-  sortAccountsForDisplay,
-  type AccountSortMode,
-} from "@/features/accounts/sorting";
+  filterAccounts,
+  groupAccounts,
+  hasActiveAccountFilters,
+  medianWeeklyRemaining,
+  type AccountFilterState,
+  type AccountGroup,
+  type AccountProviderFilter,
+} from "@/features/accounts/filters";
+import type {
+  AccountProvider,
+  AccountSummary,
+} from "@/features/accounts/schemas";
+import { sortAccountsForDisplay } from "@/features/accounts/sorting";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
-import { formatSlug } from "@/utils/formatters";
-
-const STATUS_FILTER_OPTIONS = ["all", "active", "paused", "rate_limited", "quota_exceeded", "reauth_required", "deactivated"];
-const PROVIDER_GROUP_ORDER: AccountProvider[] = ["openai", "anthropic"];
 
 export type AccountListProps = {
   accounts: AccountSummary[];
+  filters: AccountFilterState;
+  onFiltersChange: (patch: Partial<AccountFilterState>) => void;
+  onClearFilters: () => void;
   selectedAccountId: string | null;
   onSelect: (accountId: string) => void;
   onOpenImport: () => void;
   onOpenOauth: () => void;
-  sortMode?: AccountSortMode;
-  onSortModeChange?: (sortMode: AccountSortMode) => void;
 };
+
+function groupHeading(group: AccountGroup): string {
+  const count = group.accounts.length;
+  const noun = count === 1 ? "account" : "accounts";
+  if (group.kind === "provider") {
+    return `${providerLabel(group.id as AccountProvider)} — ${count} ${noun}`;
+  }
+  return `${statusLabel(group.id)} — ${count} ${noun}`;
+}
+
+function activeFilterSummary(filters: AccountFilterState): string {
+  const parts: string[] = [];
+  if (filters.provider !== "all") {
+    parts.push(`provider ${providerLabel(filters.provider)}`);
+  }
+  if (filters.status !== "all") {
+    parts.push(`status ${statusLabel(filters.status)}`);
+  }
+  if (filters.query.trim()) {
+    parts.push(`search "${filters.query.trim()}"`);
+  }
+  return parts.join(", ");
+}
 
 export function AccountList({
   accounts,
+  filters,
+  onFiltersChange,
+  onClearFilters,
   selectedAccountId,
   onSelect,
   onOpenImport,
   onOpenOauth,
-  sortMode,
-  onSortModeChange,
 }: AccountListProps) {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [helpOpen, setHelpOpen] = useState(false);
   const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
-  const activeSortMode = sortMode ?? DEFAULT_ACCOUNT_SORT_MODE;
 
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return sortAccountsForDisplay(accounts, quotaDisplay, activeSortMode).filter((account) => {
-      if (statusFilter !== "all" && account.status !== statusFilter) {
-        return false;
-      }
-      if (!needle) {
-        return true;
-      }
-      return (
-        account.email.toLowerCase().includes(needle) ||
-        (account.alias?.toLowerCase().includes(needle) ?? false) ||
-        account.displayName.toLowerCase().includes(needle) ||
-        account.accountId.toLowerCase().includes(needle) ||
-        account.planType.toLowerCase().includes(needle) ||
-        (account.provider ?? "openai").toLowerCase().includes(needle)
-      );
-    });
-  }, [accounts, quotaDisplay, search, statusFilter, activeSortMode]);
-
-  const grouped = useMemo(
-    () =>
-      PROVIDER_GROUP_ORDER.map((provider) => ({
-        provider,
-        accounts: filtered.filter((account) => (account.provider ?? "openai") === provider),
-      })).filter((group) => group.accounts.length > 0),
-    [filtered],
+  const sorted = useMemo(
+    () => sortAccountsForDisplay(accounts, quotaDisplay, filters.sort),
+    [accounts, quotaDisplay, filters.sort],
   );
+
+  const filtered = useMemo(
+    () => filterAccounts(sorted, filters),
+    [sorted, filters],
+  );
+
+  // Provider counts reflect the other active filters (status + search) so
+  // the segmented control always shows what each click would yield.
+  const providerCounts = useMemo<Record<AccountProviderFilter, number>>(() => {
+    const withoutProvider = filterAccounts(accounts, {
+      ...filters,
+      provider: "all",
+    });
+    const counts: Record<AccountProviderFilter, number> = {
+      all: withoutProvider.length,
+      openai: 0,
+      anthropic: 0,
+    };
+    for (const account of withoutProvider) {
+      counts[account.provider ?? "openai"] += 1;
+    }
+    return counts;
+  }, [accounts, filters]);
+
+  const groups = useMemo(
+    () => groupAccounts(filtered, filters.group),
+    [filtered, filters.group],
+  );
+
+  const filtersActive = hasActiveAccountFilters(filters);
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <div className="relative col-span-2 min-w-0">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" aria-hidden />
-          <Input
-            placeholder="Search accounts..."
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="h-8 pl-8"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger
-            size="sm"
-            className="w-full min-w-0"
-            aria-label="Filter accounts by status"
-          >
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_FILTER_OPTIONS.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option === "all" ? "All statuses" : formatSlug(option)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={activeSortMode}
-          onValueChange={(nextMode) => onSortModeChange?.(nextMode as AccountSortMode)}
-        >
-          <SelectTrigger
-            size="sm"
-            className="w-full min-w-0"
-            aria-label="Sort accounts"
-          >
-            <SelectValue placeholder="Sort accounts" />
-          </SelectTrigger>
-          <SelectContent>
-            {ACCOUNT_SORT_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
       <div className="flex gap-2">
-        <Button type="button" size="sm" variant="outline" onClick={onOpenImport} className="h-8 flex-1 gap-1.5 text-xs">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onOpenImport}
+          className="h-8 flex-1 gap-1.5 text-xs"
+        >
           <Upload className="h-3.5 w-3.5" />
           Import
         </Button>
-        <Button type="button" size="sm" onClick={onOpenOauth} className="h-8 flex-1 gap-1.5 text-xs">
+        <Button
+          type="button"
+          size="sm"
+          onClick={onOpenOauth}
+          className="h-8 flex-1 gap-1.5 text-xs"
+        >
           <Plus className="h-3.5 w-3.5" />
           Add Account
         </Button>
       </div>
+
+      <AccountFilterToolbar
+        filters={filters}
+        providerCounts={providerCounts}
+        onFiltersChange={onFiltersChange}
+      />
 
       <div>
         <Button
@@ -150,43 +144,94 @@ export function AccountList({
           onClick={() => setHelpOpen((current) => !current)}
         >
           Need help?
-          {helpOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          {helpOpen ? (
+            <ChevronUp className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5" />
+          )}
         </Button>
       </div>
 
       {helpOpen ? <WindowsOauthHelp /> : null}
 
-      <div className="max-h-[calc(100vh-16rem)] space-y-1 overflow-y-auto p-1">
+      <div className="max-h-[calc(100vh-18rem)] space-y-3 overflow-y-auto p-1">
         {filtered.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-6 text-center">
-            <p className="text-sm font-medium text-muted-foreground">No matching accounts</p>
-            <p className="text-xs text-muted-foreground/70">Try adjusting your filters.</p>
+          <div className="flex flex-col items-center gap-2 rounded-md border border-dashed p-6 text-center">
+            {!filtersActive ? (
+              <>
+                <p className="text-sm font-medium text-muted-foreground">
+                  No accounts yet
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Add an account or import an auth file to get started.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-muted-foreground">
+                  No matching accounts
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Active filters: {activeFilterSummary(filters)}.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={onClearFilters}
+                >
+                  Clear filters
+                </Button>
+              </>
+            )}
           </div>
         ) : (
-          grouped.map((group) => (
-            <section key={group.provider} className="space-y-1.5" aria-label={`${providerLabel(group.provider)} accounts`}>
-              <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-card/95 px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <ProviderIcon provider={group.provider} className="size-3.5" />
-                  <span>{providerLabel(group.provider)}</span>
-                </span>
-                <span className="tabular-nums">
-                  {group.accounts.length} {group.accounts.length === 1 ? "account" : "accounts"}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {group.accounts.map((account) => (
-                  <AccountListItem
-                    key={account.accountId}
-                    account={account}
-                    selected={account.accountId === selectedAccountId}
-                    showAccountId={account.isEmailDuplicate === true}
-                    onSelect={onSelect}
-                  />
-                ))}
-              </div>
-            </section>
-          ))
+          groups.map((group) => {
+            const median =
+              group.kind === "none"
+                ? null
+                : medianWeeklyRemaining(group.accounts);
+            return (
+              <section
+                key={group.id}
+                className="space-y-1"
+                aria-label={
+                  group.kind === "provider"
+                    ? `${providerLabel(group.id as AccountProvider)} accounts`
+                    : group.kind === "status"
+                      ? `${statusLabel(group.id)} accounts`
+                      : "All accounts"
+                }
+              >
+                {group.kind !== "none" ? (
+                  <div className="sticky top-0 z-10 flex items-baseline justify-between gap-2 border-b bg-card/95 px-2 py-1.5 backdrop-blur">
+                    <span className="truncate text-xs font-medium">
+                      {groupHeading(group)}
+                    </span>
+                    {median !== null ? (
+                      <span
+                        className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums"
+                        title="Median weekly window remaining"
+                      >
+                        wk mdn {Math.round(median)}%
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="space-y-1">
+                  {group.accounts.map((account) => (
+                    <AccountListItem
+                      key={account.accountId}
+                      account={account}
+                      selected={account.accountId === selectedAccountId}
+                      onSelect={onSelect}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })
         )}
       </div>
     </div>

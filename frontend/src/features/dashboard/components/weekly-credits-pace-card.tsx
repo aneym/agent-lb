@@ -85,11 +85,17 @@ function breakEvenLine(pace: WeeklyCreditPace): string {
 }
 
 function proAccountsLine(pace: WeeklyCreditPace): string | null {
-  if (!pace.proAccountsToCoverOverPlan || pace.proAccountEquivalentToCoverOverPlan == null) {
+  if (
+    !pace.proAccountsToCoverOverPlan ||
+    pace.proAccountEquivalentToCoverOverPlan == null
+  ) {
     return null;
   }
-  const equivalent = formatProAccountEquivalent(pace.proAccountEquivalentToCoverOverPlan);
-  const roundedLabel = pace.proAccountsToCoverOverPlan === 1 ? "account" : "accounts";
+  const equivalent = formatProAccountEquivalent(
+    pace.proAccountEquivalentToCoverOverPlan,
+  );
+  const roundedLabel =
+    pace.proAccountsToCoverOverPlan === 1 ? "account" : "accounts";
   return `${equivalent}x Pro weekly pool (~${pace.proAccountsToCoverOverPlan} ${roundedLabel})`;
 }
 
@@ -105,31 +111,33 @@ export function WeeklyCreditsPaceCard({ pace }: WeeklyCreditsPaceCardProps) {
     return null;
   }
 
-  const statusClass =
-    pace.status === "danger"
-      ? "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300"
-      : pace.status === "ahead"
-        ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-        : pace.status === "behind"
-          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-          : "border-border bg-muted/40 text-muted-foreground";
   const actualBarWidth = Math.max(0, Math.min(100, pace.actualUsedPercent));
-  const scheduledMarkerLeft = Math.max(0, Math.min(100, pace.scheduledUsedPercent));
-  const actualBarClass =
-    pace.status === "danger" ? "bg-red-500" : pace.status === "ahead" ? "bg-amber-500" : "bg-primary";
+  const scheduledMarkerLeft = Math.max(
+    0,
+    Math.min(100, pace.scheduledUsedPercent),
+  );
+  // Monochrome: urgency is carried by type weight in "Pace gap", never hue.
+  const paceGapEmphasis = pace.status === "danger" || pace.status === "ahead";
   const throttle = throttleLine(pace);
   const proAccounts = proAccountsLine(pace);
-  const showRecovery = pace.projectedShortfallCredits > 0 || Boolean(throttle) || Boolean(proAccounts);
+  const showRecovery =
+    pace.projectedShortfallCredits > 0 ||
+    Boolean(throttle) ||
+    Boolean(proAccounts);
 
   return (
-    <section className="rounded-xl border bg-card p-5" aria-label="Weekly credits pace">
+    <section
+      className="rounded-xl border bg-card p-5"
+      aria-label="Weekly credits pace"
+    >
       <div className="mb-4 flex justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">Weekly credits pace</h3>
         </div>
-        <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", statusClass)}>
-          <Gauge className="h-4 w-4" aria-hidden="true" />
-        </div>
+        <Gauge
+          className="h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
       </div>
 
       <div className="space-y-4">
@@ -137,58 +145,82 @@ export function WeeklyCreditsPaceCard({ pace }: WeeklyCreditsPaceCardProps) {
           <div className="grid grid-cols-3 gap-2 text-xs">
             <div className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
               <p className="text-muted-foreground">Used now</p>
-              <p className="mt-1 text-sm font-semibold tabular-nums">{formatPercent(pace.actualUsedPercent)}</p>
+              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">
+                {formatPercent(pace.actualUsedPercent)}
+              </p>
             </div>
             <div className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
               <p className="text-muted-foreground">Scheduled by now</p>
-              <p className="mt-1 text-sm font-semibold tabular-nums">{formatPercent(pace.scheduledUsedPercent)}</p>
+              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">
+                {formatPercent(pace.scheduledUsedPercent)}
+              </p>
             </div>
             <div className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
               <p className="text-muted-foreground">Pace gap</p>
-              <p className="mt-1 text-sm font-semibold tabular-nums">{statusLabel(pace)}</p>
+              <p
+                className={cn(
+                  "mt-1 font-mono text-sm tabular-nums",
+                  paceGapEmphasis ? "font-semibold" : "font-medium",
+                )}
+              >
+                {statusLabel(pace)}
+              </p>
             </div>
           </div>
           <div className="relative h-1.5 rounded-full bg-muted">
-            <div className={cn("h-full rounded-full", actualBarClass)} style={{ width: `${actualBarWidth}%` }} />
             <div
-              className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full bg-foreground/70"
+              className="h-full rounded-full bg-foreground transition-[width] duration-200 ease-out motion-reduce:transition-none"
+              style={{ width: `${actualBarWidth}%` }}
+            />
+            <div
+              className="absolute top-1/2 h-3 w-[1.5px] -translate-y-1/2 bg-foreground"
               style={{ left: `${scheduledMarkerLeft}%` }}
             />
           </div>
           <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
-              <span className={cn("h-1.5 w-4 rounded-full", actualBarClass)} />
+              <span className="h-1.5 w-4 rounded-full bg-foreground" />
               Actual
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-3 w-0.5 rounded-full bg-foreground/70" />
+              <span className="h-3 w-[1.5px] bg-foreground" />
               Schedule marker
             </span>
           </div>
-          <div className="rounded-lg border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+          <div className="rounded-lg bg-muted px-3 py-2 text-xs text-foreground">
             <p>{scheduleGapLine(pace)}</p>
             <p className="mt-1">{forecastLine(pace)}</p>
           </div>
         </div>
 
         {showRecovery ? (
-          <div className="rounded-lg border bg-background/60 px-3 py-2 text-xs">
+          <div className="rounded-lg bg-muted px-3 py-2 text-xs">
             <p className="font-medium">Recovery options</p>
             <div className="mt-2 grid gap-1.5">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="shrink-0 text-muted-foreground">Pause</span>
-                <span className="min-w-0 text-right tabular-nums">{breakEvenLine(pace)}</span>
+                <span className="min-w-0 text-right font-mono tabular-nums">
+                  {breakEvenLine(pace)}
+                </span>
               </div>
               {throttle ? (
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="shrink-0 text-muted-foreground">Throttle</span>
-                  <span className="min-w-0 text-right tabular-nums">{throttle}</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    Throttle
+                  </span>
+                  <span className="min-w-0 text-right font-mono tabular-nums">
+                    {throttle}
+                  </span>
                 </div>
               ) : null}
               {proAccounts ? (
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="shrink-0 text-muted-foreground">Add capacity</span>
-                  <span className="min-w-0 text-right tabular-nums">{proAccounts}</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    Add capacity
+                  </span>
+                  <span className="min-w-0 text-right font-mono tabular-nums">
+                    {proAccounts}
+                  </span>
                 </div>
               ) : null}
             </div>

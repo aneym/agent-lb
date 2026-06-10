@@ -1,7 +1,10 @@
 import { Users } from "lucide-react";
 
 import { EmptyState } from "@/components/empty-state";
-import { AccountCard, type AccountCardProps } from "@/features/dashboard/components/account-card";
+import {
+  AccountCard,
+  type AccountCardProps,
+} from "@/features/dashboard/components/account-card";
 import type { AccountSummary } from "@/features/dashboard/schemas";
 
 const ACCOUNT_CARD_VISIBLE_ROWS = 2;
@@ -12,15 +15,23 @@ const ACCOUNT_CARD_ROW_GAP_REM = 1;
 export type AccountCardsProps = {
   accounts: AccountSummary[];
   onAction?: AccountCardProps["onAction"];
+  /** Overrides for the empty state (e.g. when a provider filter is active). */
+  emptyTitle?: string;
+  emptyDescription?: string;
 };
 
-export function AccountCards({ accounts, onAction }: AccountCardsProps) {
+export function AccountCards({
+  accounts,
+  onAction,
+  emptyTitle = "No accounts connected yet",
+  emptyDescription = "Import or authenticate an account to get started.",
+}: AccountCardsProps) {
   if (accounts.length === 0) {
     return (
       <EmptyState
         icon={Users}
-        title="No accounts connected yet"
-        description="Import or authenticate an account to get started."
+        title={emptyTitle}
+        description={emptyDescription}
       />
     );
   }
@@ -34,7 +45,11 @@ export function AccountCards({ accounts, onAction }: AccountCardsProps) {
       }}
     >
       {accounts.map((account, index) => (
-        <div key={account.accountId} className="animate-fade-in-up" style={{ animationDelay: `${index * 75}ms` }}>
+        <div
+          key={account.accountId}
+          className="animate-fade-in-up"
+          style={{ animationDelay: `${index * 75}ms` }}
+        >
           <AccountCard
             account={account}
             showAccountId={account.isEmailDuplicate === true}

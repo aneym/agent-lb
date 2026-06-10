@@ -42,26 +42,6 @@ export const KNOWN_PLAN_TYPES = new Set([
   "edu",
 ]);
 
-export const DONUT_COLORS_LIGHT = [
-  "#3b82f6",
-  "#8b5cf6",
-  "#10b981",
-  "#f59e0b",
-  "#ec4899",
-  "#06b6d4",
-] as const;
-
-export const DONUT_COLORS_DARK = [
-  "#2563eb",
-  "#7c3aed",
-  "#059669",
-  "#d97706",
-  "#db2777",
-  "#0891b2",
-] as const;
-
-export const DONUT_COLORS = DONUT_COLORS_LIGHT;
-
 export const MESSAGE_TONE_META = {
   success: {
     label: "Success",

@@ -1,15 +1,26 @@
-import { cn } from "@/lib/utils";
-import { quotaBarColor, quotaBarTrack } from "@/utils/account-status";
-
 type MiniQuotaBarProps = {
   percent: number | null;
   testId: string;
   "aria-label"?: string;
 };
 
-export function MiniQuotaBar({ percent, testId, "aria-label": ariaLabel }: MiniQuotaBarProps) {
+/**
+ * Monochrome mini meter (DESIGN.md §Status vocabulary): track in --muted,
+ * fill in ink. Urgency is carried by the surrounding readout, never hue.
+ */
+export function MiniQuotaBar({
+  percent,
+  testId,
+  "aria-label": ariaLabel,
+}: MiniQuotaBarProps) {
   if (percent === null) {
-    return <div aria-hidden="true" data-testid={testId} className="h-1 flex-1 overflow-hidden rounded-full bg-muted" />;
+    return (
+      <div
+        aria-hidden="true"
+        data-testid={testId}
+        className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
+      />
+    );
   }
   const clamped = Math.max(0, Math.min(100, percent));
   return (
@@ -20,11 +31,11 @@ export function MiniQuotaBar({ percent, testId, "aria-label": ariaLabel }: MiniQ
       aria-valuemax={100}
       aria-valuenow={clamped}
       data-testid={testId}
-      className={cn("h-1 flex-1 overflow-hidden rounded-full", quotaBarTrack(clamped))}
+      className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
     >
       <div
         data-testid={`${testId}-fill`}
-        className={cn("h-full rounded-full", quotaBarColor(clamped))}
+        className="h-full rounded-full bg-foreground"
         style={{ width: `${clamped}%` }}
       />
     </div>

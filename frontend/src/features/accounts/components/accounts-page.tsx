@@ -13,14 +13,20 @@ import { ImportDialog } from "@/features/accounts/components/import-dialog";
 import { AuthExportDialog } from "@/features/accounts/components/auth-export-dialog";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import {
-  DEFAULT_ACCOUNT_SORT_MODE,
-  sortAccountsForDisplay,
-  type AccountSortMode,
-} from "@/features/accounts/sorting";
+  DEFAULT_ACCOUNT_FILTERS,
+  filterAccounts,
+  readAccountFilters,
+  writeAccountFilters,
+  type AccountFilterState,
+} from "@/features/accounts/filters";
+import { sortAccountsForDisplay } from "@/features/accounts/sorting";
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import { useUpstreamProxyAdmin } from "@/features/settings/hooks/use-settings";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
-import type { AccountAuthExportResponse, AccountProvider } from "@/features/accounts/schemas";
+import type {
+  AccountAuthExportResponse,
+  AccountProvider,
+} from "@/features/accounts/schemas";
 import { getErrorMessageOrNull } from "@/utils/errors";
 
 const OauthDialog = lazy(() =>
@@ -31,7 +37,6 @@ const OauthDialog = lazy(() =>
 
 export function AccountsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [accountSortMode, setAccountSortMode] = useState<AccountSortMode>(DEFAULT_ACCOUNT_SORT_MODE);
   const {
     accountsQuery,
     importMutation,
@@ -46,7 +51,8 @@ export function AccountsPage() {
     subscriptionMutation,
     exportAuthMutation,
   } = useAccounts();
-  const { upstreamProxyQuery, accountBindingMutation } = useUpstreamProxyAdmin();
+  const { upstreamProxyQuery, accountBindingMutation } =
+    useUpstreamProxyAdmin();
   const oauth = useOauth();
 
   const importDialog = useDialogState();
@@ -60,10 +66,45 @@ export function AccountsPage() {
     [accountsQuery.data],
   );
   const quotaDisplay = useAccountQuotaDisplayStore((s) => s.quotaDisplay);
-  const sortedAccounts = useMemo(
-    () => sortAccountsForDisplay(accounts, quotaDisplay, accountSortMode),
-    [accounts, quotaDisplay, accountSortMode],
+
+  // Filter/sort/group state lives in the URL so every list view is
+  // deep-linkable. Defaults are omitted from the params.
+  const filters = useMemo(
+    () => readAccountFilters(searchParams),
+    [searchParams],
   );
+
+  const handleFiltersChange = useCallback(
+    (patch: Partial<AccountFilterState>) => {
+      setSearchParams(
+        (current) =>
+          writeAccountFilters(current, {
+            ...readAccountFilters(current),
+            ...patch,
+          }),
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const handleClearFilters = useCallback(() => {
+    handleFiltersChange({
+      provider: DEFAULT_ACCOUNT_FILTERS.provider,
+      status: DEFAULT_ACCOUNT_FILTERS.status,
+      query: DEFAULT_ACCOUNT_FILTERS.query,
+    });
+  }, [handleFiltersChange]);
+
+  const visibleAccounts = useMemo(
+    () =>
+      filterAccounts(
+        sortAccountsForDisplay(accounts, quotaDisplay, filters.sort),
+        filters,
+      ),
+    [accounts, quotaDisplay, filters],
+  );
+
   const selectedAccountId = searchParams.get("selected");
 
   const handleSelectAccount = useCallback(
@@ -85,8 +126,8 @@ export function AccountsPage() {
     ) {
       return selectedAccountId;
     }
-    return sortedAccounts[0]?.accountId ?? null;
-  }, [accounts, selectedAccountId, sortedAccounts]);
+    return visibleAccounts[0]?.accountId ?? null;
+  }, [accounts, selectedAccountId, visibleAccounts]);
 
   const selectedAccount = useMemo(
     () =>
@@ -144,14 +185,15 @@ export function AccountsPage() {
       {!accountsQuery.data ? (
         <AccountsSkeleton />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)]">
+        <div className="grid gap-4 lg:grid-cols-[24rem_minmax(0,1fr)]">
           <div className="rounded-xl border bg-card p-4">
             <AccountList
               accounts={accounts}
+              filters={filters}
+              onFiltersChange={handleFiltersChange}
+              onClearFilters={handleClearFilters}
               selectedAccountId={resolvedSelectedAccountId}
               onSelect={handleSelectAccount}
-              sortMode={accountSortMode}
-              onSortModeChange={setAccountSortMode}
               onOpenImport={() => importDialog.show()}
               onOpenOauth={() => oauthDialog.show({ provider: "openai" })}
             />
@@ -172,7 +214,9 @@ export function AccountsPage() {
             onDelete={(accountId) => deleteDialog.show(accountId)}
             onReauth={() => {
               if (selectedAccount) {
-                oauthDialog.show({ provider: selectedAccount.provider ?? "openai" });
+                oauthDialog.show({
+                  provider: selectedAccount.provider ?? "openai",
+                });
               }
             }}
             onExportAuth={(accountId) => {

@@ -1,11 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { Cell, Pie, PieChart, Sector, type PieSectorShapeProps } from "recharts";
+import {
+  Cell,
+  Pie,
+  PieChart,
+  Sector,
+  type PieSectorShapeProps,
+} from "recharts";
 
-import { buildDonutPalette } from "@/utils/colors";
 import { formatCompactNumber, formatNumber } from "@/utils/formatters";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { usePrivacyStore } from "@/hooks/use-privacy";
-import { useThemeStore } from "@/hooks/use-theme";
+
+/** Grayscale data ramp; segments cycle the 5 chart tokens (DESIGN.md). */
+const CHART_TOKENS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+] as const;
+
+/** Quiet fill for the already-consumed share — track gray, not a data step. */
+const CONSUMED_FILL = "var(--muted)";
 
 export type DonutChartItem = {
   /** Stable unique key for React reconciliation. Falls back to label if not provided. */
@@ -25,7 +41,10 @@ export type DonutChartProps = {
   centerValue?: number;
   title: string;
   subtitle?: string;
-  safeLine?: { safePercent: number; riskLevel: "safe" | "warning" | "danger" | "critical" } | null;
+  safeLine?: {
+    safePercent: number;
+    riskLevel: "safe" | "warning" | "danger" | "critical";
+  } | null;
   /**
    * Layout for the donut center label/value pair.
    *
@@ -45,7 +64,6 @@ function SafeLineTick({
   riskLevel,
   innerRadius,
   outerRadius,
-  isDark,
 }: {
   cx: number;
   cy: number;
@@ -53,7 +71,6 @@ function SafeLineTick({
   riskLevel: "safe" | "warning" | "danger" | "critical";
   innerRadius: number;
   outerRadius: number;
-  isDark: boolean;
 }) {
   if (riskLevel === "safe") return null;
 
@@ -72,7 +89,7 @@ function SafeLineTick({
       y1={y1}
       x2={x2}
       y2={y2}
-      stroke={isDark ? "#ffffff" : "#000000"}
+      stroke="var(--foreground)"
       strokeWidth={2}
       strokeLinecap="round"
       data-testid="safe-line-tick"
@@ -107,22 +124,30 @@ function formatUsedPercent(percent: number): string {
   return `${percent.toLocaleString("en-US", { maximumFractionDigits })}%`;
 }
 
-export function DonutChart({ items, total, centerValue, title, subtitle, safeLine, centerLayout = "remaining" }: DonutChartProps) {
-  const isDark = useThemeStore((s) => s.theme === "dark");
+export function DonutChart({
+  items,
+  total,
+  centerValue,
+  title,
+  subtitle,
+  safeLine,
+  centerLayout = "remaining",
+}: DonutChartProps) {
   const blurred = usePrivacyStore((s) => s.blurred);
   const reducedMotion = useReducedMotion();
   const [activeLegendId, setActiveLegendId] = useState<string | null>(null);
   const legendRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const consumedColor = isDark ? "#404040" : "#d3d3d3";
-  const palette = buildDonutPalette(items.length, isDark);
   const normalizedItems = items
     .map((item, index) => ({
       ...item,
-      color: item.color ?? palette[index % palette.length],
+      color: item.color ?? CHART_TOKENS[index % CHART_TOKENS.length],
     }))
     .sort((a, b) => b.value - a.value);
 
-  const usedSum = normalizedItems.reduce((acc, item) => acc + Math.max(0, item.value), 0);
+  const usedSum = normalizedItems.reduce(
+    (acc, item) => acc + Math.max(0, item.value),
+    0,
+  );
   const safeCapacity = Math.max(0, total);
   const consumed = Math.max(0, total - usedSum);
   const displayTotal = Math.max(0, centerValue ?? total);
@@ -136,14 +161,26 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
       fill: item.color,
     })),
     ...(consumed > 0
-      ? [{ id: "__consumed__", name: "__consumed__", value: consumed, fill: consumedColor }]
+      ? [
+          {
+            id: "__consumed__",
+            name: "__consumed__",
+            value: consumed,
+            fill: CONSUMED_FILL,
+          },
+        ]
       : []),
   ];
 
   const hasData = chartData.some((d) => d.value > 0);
   if (!hasData) {
     chartData.length = 0;
-    chartData.push({ id: "__empty__", name: "__empty__", value: 1, fill: consumedColor });
+    chartData.push({
+      id: "__empty__",
+      name: "__empty__",
+      value: 1,
+      fill: CONSUMED_FILL,
+    });
   }
 
   useEffect(() => {
@@ -151,21 +188,28 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
       return;
     }
 
-    legendRefs.current[activeLegendId]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    legendRefs.current[activeLegendId]?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
   }, [activeLegendId]);
 
   const renderDonutShape = (props: PieSectorShapeProps) => {
-    const isHighlighted = props.isActive || (props.payload as DonutDatum | undefined)?.id === activeLegendId;
-    const outerRadius = typeof props.outerRadius === "number"
-      ? props.outerRadius + (isHighlighted ? ACTIVE_RADIUS_OFFSET : 0)
-      : OUTER_R + (isHighlighted ? ACTIVE_RADIUS_OFFSET : 0);
+    const isHighlighted =
+      props.isActive ||
+      (props.payload as DonutDatum | undefined)?.id === activeLegendId;
+    const outerRadius =
+      typeof props.outerRadius === "number"
+        ? props.outerRadius + (isHighlighted ? ACTIVE_RADIUS_OFFSET : 0)
+        : OUTER_R + (isHighlighted ? ACTIVE_RADIUS_OFFSET : 0);
 
+    // 2px --card stroke so adjacent grays separate (DESIGN.md §Colors).
     return (
       <Sector
         {...props}
         outerRadius={outerRadius}
-        stroke={isHighlighted ? "hsl(var(--background))" : "none"}
-        strokeWidth={isHighlighted ? 2 : 0}
+        stroke="var(--card)"
+        strokeWidth={2}
       />
     );
   };
@@ -174,18 +218,29 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
     <div className="rounded-xl border bg-card p-5">
       <div className="mb-5">
         <h3 className="text-sm font-semibold">{title}</h3>
-        {subtitle ? <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p> : null}
+        {subtitle ? (
+          <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+        ) : null}
       </div>
 
       <div className="flex items-center gap-6">
         <div className="flex shrink-0 flex-col items-center gap-2">
           <div className="relative h-[152px] w-[152px] overflow-visible">
-            <PieChart width={CHART_SIZE} height={CHART_SIZE} margin={{ top: CHART_MARGIN, right: CHART_MARGIN, bottom: CHART_MARGIN, left: CHART_MARGIN }}>
-             <Pie
-               data={chartData}
-               cx={PIE_CX}
-               cy={PIE_CY}
-               innerRadius={INNER_R}
+            <PieChart
+              width={CHART_SIZE}
+              height={CHART_SIZE}
+              margin={{
+                top: CHART_MARGIN,
+                right: CHART_MARGIN,
+                bottom: CHART_MARGIN,
+                left: CHART_MARGIN,
+              }}
+            >
+              <Pie
+                data={chartData}
+                cx={PIE_CX}
+                cy={PIE_CY}
+                innerRadius={INNER_R}
                 outerRadius={OUTER_R}
                 startAngle={90}
                 endAngle={-270}
@@ -206,96 +261,127 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
               >
                 {chartData.map((entry) => (
                   <Cell key={entry.id} fill={entry.fill} />
-               ))}
-             </Pie>
-           </PieChart>
-           {safeLine && safeLine.riskLevel !== "safe" ? (
-            <svg aria-hidden="true" className="pointer-events-none absolute inset-0" width={CHART_SIZE} height={CHART_SIZE} viewBox={`0 0 ${CHART_SIZE} ${CHART_SIZE}`}>
-              <SafeLineTick
-                cx={PIE_CX + CHART_MARGIN}
-                cy={PIE_CY + CHART_MARGIN}
-                safePercent={safeLine.safePercent}
-                riskLevel={safeLine.riskLevel}
-                innerRadius={INNER_R}
-                outerRadius={OUTER_R}
-                isDark={isDark}
-              />
-            </svg>
-          ) : null}
-          <div className="absolute inset-[22px] flex items-center justify-center rounded-full text-center pointer-events-none">
-             <div>
-               {centerLayout === "credits" ? (
-                 <>
-                   <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Credits</p>
-                   <p
-                     className="text-sm font-semibold tabular-nums leading-tight"
-                     data-testid="donut-center-remaining"
-                   >
-                     {formatNumber(displayTotal)}
-                   </p>
-                   <div className="-mx-1 my-0.5 border-t border-current opacity-20" />
-                   <p
-                     className="text-xs tabular-nums text-muted-foreground leading-tight"
-                     data-testid="donut-center-capacity"
-                   >
-                     {formatNumber(safeCapacity)}
-                   </p>
-                 </>
-               ) : (
-                 <>
-                   <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Remaining</p>
-                   <p className="text-base font-semibold tabular-nums">{formatCompactNumber(displayTotal)}</p>
-                 </>
-               )}
+                ))}
+              </Pie>
+            </PieChart>
+            {safeLine && safeLine.riskLevel !== "safe" ? (
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0"
+                width={CHART_SIZE}
+                height={CHART_SIZE}
+                viewBox={`0 0 ${CHART_SIZE} ${CHART_SIZE}`}
+              >
+                <SafeLineTick
+                  cx={PIE_CX + CHART_MARGIN}
+                  cy={PIE_CY + CHART_MARGIN}
+                  safePercent={safeLine.safePercent}
+                  riskLevel={safeLine.riskLevel}
+                  innerRadius={INNER_R}
+                  outerRadius={OUTER_R}
+                />
+              </svg>
+            ) : null}
+            <div className="absolute inset-[22px] flex items-center justify-center rounded-full text-center pointer-events-none">
+              <div>
+                {centerLayout === "credits" ? (
+                  <>
+                    <p className="text-[10px] font-medium text-muted-foreground">
+                      Credits
+                    </p>
+                    <p
+                      className="font-mono text-sm font-semibold tabular-nums leading-tight"
+                      data-testid="donut-center-remaining"
+                    >
+                      {formatNumber(displayTotal)}
+                    </p>
+                    <div className="-mx-1 my-0.5 border-t border-current opacity-20" />
+                    <p
+                      className="font-mono text-xs tabular-nums text-muted-foreground leading-tight"
+                      data-testid="donut-center-capacity"
+                    >
+                      {formatNumber(safeCapacity)}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[10px] font-medium text-muted-foreground">
+                      Remaining
+                    </p>
+                    <p className="font-mono text-base font-semibold tabular-nums">
+                      {formatCompactNumber(displayTotal)}
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-          </div>
-          <p className="text-[11px] tabular-nums text-muted-foreground" data-testid="donut-caption">
-            Total {formatCompactNumber(safeCapacity)} · {formatUsedPercent(usedPercent)} used
+          <p
+            className="font-mono text-[11px] tabular-nums text-muted-foreground"
+            data-testid="donut-caption"
+          >
+            Total {formatCompactNumber(safeCapacity)} ·{" "}
+            {formatUsedPercent(usedPercent)} used
           </p>
         </div>
 
         <div
           className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           data-testid="donut-legend-list"
-          style={{ maxHeight: `calc(${LEGEND_VISIBLE_COUNT} * ${LEGEND_ROW_HEIGHT_REM}rem + ${(LEGEND_VISIBLE_COUNT - 1) * LEGEND_ROW_GAP_REM}rem)` }}
+          style={{
+            maxHeight: `calc(${LEGEND_VISIBLE_COUNT} * ${LEGEND_ROW_HEIGHT_REM}rem + ${(LEGEND_VISIBLE_COUNT - 1) * LEGEND_ROW_GAP_REM}rem)`,
+          }}
         >
           {normalizedItems.map((item, i) => {
             const legendId = item.id ?? item.label;
             const isActive = activeLegendId === legendId;
 
             return (
-            <button
-              ref={(node) => {
-                legendRefs.current[legendId] = node;
-              }}
-              type="button"
-              key={legendId}
-              className="animate-fade-in-up flex h-7 w-full items-center justify-between px-1.5 gap-3 rounded-lg border bg-transparent text-xs transition-all"
-              style={{ animationDelay: `${i * 75}ms`, borderColor: isActive ? item.color : "transparent" }}
-              onMouseEnter={() => setActiveLegendId(legendId)}
-              onMouseLeave={() => setActiveLegendId(null)}
-              onFocus={() => setActiveLegendId(legendId)}
-              onBlur={() => setActiveLegendId(null)}
-              data-active={isActive ? "true" : "false"}
-              data-testid={`donut-legend-${i}`}
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  aria-hidden
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: item.color }}
-                />
-                <span className="truncate font-medium">
-                  {item.isEmail && blurred
-                    ? <><span className="privacy-blur">{item.label}</span>{item.labelSuffix}</>
-                    : <>{item.label}{item.labelSuffix}</>}
+              <button
+                ref={(node) => {
+                  legendRefs.current[legendId] = node;
+                }}
+                type="button"
+                key={legendId}
+                className="animate-fade-in-up flex h-7 w-full items-center justify-between px-1.5 gap-3 rounded-lg border bg-transparent text-xs transition-all"
+                style={{
+                  animationDelay: `${i * 75}ms`,
+                  borderColor: isActive ? item.color : "transparent",
+                }}
+                onMouseEnter={() => setActiveLegendId(legendId)}
+                onMouseLeave={() => setActiveLegendId(null)}
+                onFocus={() => setActiveLegendId(legendId)}
+                onBlur={() => setActiveLegendId(null)}
+                data-active={isActive ? "true" : "false"}
+                data-testid={`donut-legend-${i}`}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    aria-hidden
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: item.color }}
+                  />
+                  <span
+                    className="truncate whitespace-nowrap font-medium"
+                    title={`${item.label}${item.labelSuffix ?? ""}`}
+                  >
+                    {item.isEmail && blurred ? (
+                      <>
+                        <span className="privacy-blur">{item.label}</span>
+                        {item.labelSuffix}
+                      </>
+                    ) : (
+                      <>
+                        {item.label}
+                        {item.labelSuffix}
+                      </>
+                    )}
+                  </span>
+                </div>
+                <span className="shrink-0 text-right font-mono tabular-nums text-muted-foreground">
+                  {formatCompactNumber(item.value)}
                 </span>
-              </div>
-              <span className="tabular-nums text-muted-foreground">
-                {formatCompactNumber(item.value)}
-              </span>
-            </button>
+              </button>
             );
           })}
           <button
@@ -304,7 +390,12 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
             }}
             type="button"
             className="flex h-7 w-full items-center justify-between px-1.5 gap-3 rounded-lg border bg-transparent text-xs transition-all"
-            style={{ borderColor: activeLegendId === "__consumed__" ? consumedColor : "transparent" }}
+            style={{
+              borderColor:
+                activeLegendId === "__consumed__"
+                  ? "var(--border)"
+                  : "transparent",
+            }}
             onMouseEnter={() => setActiveLegendId("__consumed__")}
             onMouseLeave={() => setActiveLegendId(null)}
             onFocus={() => setActiveLegendId("__consumed__")}
@@ -316,11 +407,14 @@ export function DonutChart({ items, total, centerValue, title, subtitle, safeLin
               <span
                 aria-hidden
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: consumedColor }}
+                style={{ backgroundColor: CONSUMED_FILL }}
               />
               <span className="truncate font-medium">Used</span>
             </div>
-            <span className="tabular-nums text-muted-foreground" data-testid="donut-used-value">
+            <span
+              className="shrink-0 text-right font-mono tabular-nums text-muted-foreground"
+              data-testid="donut-used-value"
+            >
               {formatCompactNumber(consumed)}
             </span>
           </button>

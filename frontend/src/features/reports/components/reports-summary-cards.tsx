@@ -27,10 +27,10 @@ export function ReportsSummaryCards({ summary }: ReportsSummaryCardsProps) {
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       {cards.map((card) => (
         <div key={card.label} className="rounded-xl border bg-card p-4">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div className="text-[13px] font-medium text-muted-foreground">
             {card.label}
           </div>
-          <div className="mt-1 text-[1.625rem] font-semibold tracking-[-0.02em] text-foreground">
+          <div className="mt-1 font-mono text-[1.625rem] font-semibold tabular-nums tracking-[-0.02em] text-foreground">
             {card.value}
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">{card.sub}</div>

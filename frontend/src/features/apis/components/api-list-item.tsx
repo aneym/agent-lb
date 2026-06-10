@@ -1,25 +1,41 @@
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { MiniQuotaBar } from "@/components/mini-quota-bar";
 import type { ApiKey } from "@/features/api-keys/schemas";
 import { formatPercentNullable } from "@/utils/formatters";
 
-function limitBarColor(percent: number): string {
-  if (percent >= 90) return "bg-red-500";
-  if (percent >= 70) return "bg-orange-500";
-  if (percent >= 40) return "bg-amber-500";
-  return "bg-emerald-500";
-}
-
-function MiniUsageBar({ percent }: { percent: number | null }) {
+/** Monochrome meter: ink fill on muted track, never hue (DESIGN.md). */
+function InkBar({
+  percent,
+  testId,
+  "aria-label": ariaLabel,
+}: {
+  percent: number | null;
+  testId?: string;
+  "aria-label"?: string;
+}) {
   if (percent === null) {
-    return <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted" />;
+    return (
+      <div
+        aria-hidden="true"
+        data-testid={testId}
+        className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
+      />
+    );
   }
   const clamped = Math.max(0, Math.min(100, percent));
   return (
-    <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+    <div
+      role="progressbar"
+      aria-label={ariaLabel}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={clamped}
+      data-testid={testId}
+      className="h-1 w-full overflow-hidden rounded-full bg-muted"
+    >
       <div
-        className={cn("h-full rounded-full", limitBarColor(clamped))}
+        data-testid={testId ? `${testId}-fill` : undefined}
+        className="h-full rounded-full bg-foreground"
         style={{ width: `${clamped}%` }}
       />
     </div>
@@ -53,20 +69,20 @@ export function ApiListItem({ apiKey, selected, onSelect }: ApiListItemProps) {
   const expired = isExpired(apiKey);
   const primary = apiKey.pooledRemainingPercentPrimary ?? null;
   const secondary = apiKey.pooledRemainingPercentSecondary ?? null;
-  const hasPrimary = apiKey.pooledCapacityCreditsPrimary > 0 && primary !== null;
+  const hasPrimary =
+    apiKey.pooledCapacityCreditsPrimary > 0 && primary !== null;
   const hasSecondary = secondary !== null;
   const visibleRows = Number(hasPrimary) + Number(hasSecondary);
   const limitPct = formatLimitPercent(apiKey);
+  const inactive = !apiKey.isActive || expired;
 
   return (
     <button
       type="button"
       onClick={() => onSelect(apiKey.id)}
       className={cn(
-        "w-full rounded-lg px-3 py-2.5 text-left transition-colors",
-        selected
-          ? "bg-primary/8 ring-1 ring-primary/25"
-          : "hover:bg-muted/50",
+        "w-full rounded-lg px-3 py-2.5 text-left transition-colors duration-150",
+        selected ? "bg-primary/8 ring-1 ring-primary/25" : "hover:bg-muted/50",
       )}
     >
       <div className="flex items-center gap-2.5">
@@ -74,24 +90,28 @@ export function ApiListItem({ apiKey, selected, onSelect }: ApiListItemProps) {
           <p className="truncate text-sm font-medium">{apiKey.name}</p>
         </div>
         <Badge
-          className={cn(
-            !apiKey.isActive || expired
-              ? "bg-zinc-500 text-white"
-              : "bg-emerald-500 text-white",
-          )}
+          variant="outline"
+          className={cn(inactive && "text-muted-foreground")}
         >
           {!apiKey.isActive ? "Disabled" : expired ? "Expired" : "Active"}
         </Badge>
       </div>
       {visibleRows > 0 ? (
-        <div className={cn("mt-2 grid gap-2", visibleRows > 1 ? "grid-cols-2" : "grid-cols-1")}>
+        <div
+          className={cn(
+            "mt-2 grid gap-2",
+            visibleRows > 1 ? "grid-cols-2" : "grid-cols-1",
+          )}
+        >
           {hasPrimary ? (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-muted-foreground">Pooled 5h</span>
-                <span className="tabular-nums font-medium">{formatPercentNullable(primary)}</span>
+                <span className="font-mono font-medium tabular-nums">
+                  {formatPercentNullable(primary)}
+                </span>
               </div>
-              <MiniQuotaBar
+              <InkBar
                 aria-label="Pooled 5h credits remaining"
                 percent={primary}
                 testId="pooled-quota-track-5h"
@@ -102,9 +122,11 @@ export function ApiListItem({ apiKey, selected, onSelect }: ApiListItemProps) {
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-muted-foreground">Pooled Weekly</span>
-                <span className="tabular-nums font-medium">{formatPercentNullable(secondary)}</span>
+                <span className="font-mono font-medium tabular-nums">
+                  {formatPercentNullable(secondary)}
+                </span>
               </div>
-              <MiniQuotaBar
+              <InkBar
                 aria-label="Pooled weekly credits remaining"
                 percent={secondary}
                 testId="pooled-quota-track-weekly"
@@ -117,9 +139,11 @@ export function ApiListItem({ apiKey, selected, onSelect }: ApiListItemProps) {
         <div className="mt-1.5 space-y-1">
           <div className="flex items-center justify-between text-[11px]">
             <span className="text-muted-foreground">API Limit</span>
-            <span className="tabular-nums font-medium">{formatPercentNullable(limitPct)}</span>
+            <span className="font-mono font-medium tabular-nums">
+              {formatPercentNullable(limitPct)}
+            </span>
           </div>
-          <MiniUsageBar percent={limitPct} />
+          <InkBar aria-label="API limit usage" percent={limitPct} />
         </div>
       ) : null}
     </button>

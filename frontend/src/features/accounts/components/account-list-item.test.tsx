@@ -16,7 +16,17 @@ describe("AccountListItem", () => {
     vi.useRealTimers();
   });
 
-  it("renders neutral quota track when secondary remaining percent is unknown", () => {
+  it("renders the full email as the row title", () => {
+    const account = createAccountSummary();
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByText("primary@example.com")).toBeInTheDocument();
+  });
+
+  it("renders an empty quota track when secondary remaining percent is unknown", () => {
     const account = createAccountSummary({
       usage: {
         primaryRemainingPercent: 82,
@@ -24,24 +34,49 @@ describe("AccountListItem", () => {
       },
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
-    expect(screen.getByTestId("mini-quota-track-weekly")).toHaveClass("bg-muted");
-    expect(screen.queryByTestId("mini-quota-track-weekly-fill")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mini-quota-track-weekly")).toHaveClass(
+      "bg-muted",
+    );
     expect(screen.getByText("5h")).toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
     expect(screen.getByText("Reset in 1h")).toBeInTheDocument();
     expect(screen.getByText("Reset in 1d")).toBeInTheDocument();
   });
 
-  it("renders the account provider badge", () => {
-    const account = createAccountSummary({
-      provider: "anthropic",
-    });
+  it("does not show a status label for active accounts", () => {
+    const account = createAccountSummary({ status: "active" });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
-    expect(screen.getByText("Claude")).toBeInTheDocument();
+    // The glyph carries the status for screen readers only.
+    expect(screen.getByText("Active")).toHaveClass("sr-only");
+  });
+
+  it("shows an icon + label for non-default statuses", () => {
+    const account = createAccountSummary({ status: "quota_exceeded" });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Quota exceeded")).toBeInTheDocument();
+  });
+
+  it("dims deactivated accounts", () => {
+    const account = createAccountSummary({ status: "deactivated" });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByRole("button")).toHaveClass("opacity-60");
+    expect(screen.getByText("Deactivated")).toBeInTheDocument();
   });
 
   it("labels Anthropic OAuth usage windows as session and week", () => {
@@ -57,7 +92,9 @@ describe("AccountListItem", () => {
       windowMinutesSecondary: 10_080,
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
     expect(screen.getByText("Session")).toBeInTheDocument();
     expect(screen.getByText("Week")).toBeInTheDocument();
@@ -77,7 +114,9 @@ describe("AccountListItem", () => {
       windowMinutesSecondary: 10_080,
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
     expect(screen.queryByText("5h")).not.toBeInTheDocument();
     expect(screen.getByText("Weekly")).toBeInTheDocument();
@@ -100,7 +139,9 @@ describe("AccountListItem", () => {
       windowMinutesMonthly: 43_200,
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
     expect(screen.queryByText("5h")).not.toBeInTheDocument();
     expect(screen.queryByText("Weekly")).not.toBeInTheDocument();
@@ -119,10 +160,15 @@ describe("AccountListItem", () => {
       windowMinutesSecondary: null,
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
     expect(screen.getByText("5h")).toBeInTheDocument();
-    expect(screen.getByTestId("mini-quota-track-5h-fill")).toHaveStyle({ width: "64%" });
+    expect(screen.getByRole("progressbar", { name: "5h" })).toHaveAttribute(
+      "aria-valuenow",
+      "64",
+    );
     expect(screen.getByText("Reset in 1h")).toBeInTheDocument();
     expect(screen.queryByText("Weekly")).not.toBeInTheDocument();
   });
@@ -139,10 +185,14 @@ describe("AccountListItem", () => {
       windowMinutesSecondary: null,
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
     expect(screen.getByText("Reset --")).toBeInTheDocument();
-    expect(screen.queryByText("Reset Reset unavailable")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Reset Reset unavailable"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows only the 5h row when the account quota preference is 5h", () => {
@@ -155,7 +205,9 @@ describe("AccountListItem", () => {
       },
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
     expect(screen.getByText("5h")).toBeInTheDocument();
     expect(screen.queryByText("Weekly")).not.toBeInTheDocument();
@@ -169,73 +221,69 @@ describe("AccountListItem", () => {
       },
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
-    expect(screen.getByTestId("mini-quota-track-weekly-fill")).toHaveStyle({ width: "73%" });
+    expect(screen.getByRole("progressbar", { name: "Weekly" })).toHaveAttribute(
+      "aria-valuenow",
+      "73",
+    );
   });
 
-  it("marks burn-first accounts in the list", () => {
+  it("marks burn-first accounts in the context line", () => {
     const account = createAccountSummary({ routingPolicy: "burn_first" });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
-    expect(screen.getByText("Burn first")).toBeInTheDocument();
+    expect(screen.getByText("burn first")).toBeInTheDocument();
   });
 
-  it("marks preserved accounts in the list", () => {
+  it("marks preserved accounts in the context line", () => {
     const account = createAccountSummary({ routingPolicy: "preserve" });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
-    expect(screen.getByText("Preserve")).toBeInTheDocument();
+    expect(screen.getByText("preserve")).toBeInTheDocument();
   });
 
-  it("marks normal accounts in the list", () => {
+  it("does not annotate normal routing policy", () => {
     const account = createAccountSummary({ routingPolicy: "normal" });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
-
-    expect(screen.getByText("Normal")).toBeInTheDocument();
-  });
-
-  it("hides routing policy badges for accounts that require operator recovery", () => {
-    const { rerender } = render(
-      <AccountListItem
-        account={createAccountSummary({ routingPolicy: "normal", status: "reauth_required" })}
-        selected={false}
-        onSelect={vi.fn()}
-      />,
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
     );
 
-    expect(screen.getByText("Re-auth required")).toBeInTheDocument();
+    expect(screen.queryByText("normal")).not.toBeInTheDocument();
     expect(screen.queryByText("Normal")).not.toBeInTheDocument();
-
-    rerender(
-      <AccountListItem
-        account={createAccountSummary({ routingPolicy: "preserve", status: "deactivated" })}
-        selected={false}
-        onSelect={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText("Deactivated")).toBeInTheDocument();
-    expect(screen.queryByText("Preserve")).not.toBeInTheDocument();
   });
 
-  it("keeps workspace context visible when a display alias uses the email subtitle", () => {
+  it("shows the alias as the title and keeps the email visible", () => {
     const account = createAccountSummary({
-      displayName: "Work seat",
+      alias: "Personal Plus",
       email: "work@example.com",
+      isEmailDuplicate: true,
       planType: "team",
       workspaceLabel: "Design Workspace",
       seatType: "member",
     });
 
-    render(<AccountListItem account={account} selected={false} onSelect={vi.fn()} />);
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
 
-    expect(screen.getByText("Work seat")).toBeInTheDocument();
+    expect(screen.getByText("Personal Plus")).toBeInTheDocument();
     expect(
-      screen.getByText((_, element) => element?.textContent === "work@example.com | Team | Design Workspace | Member"),
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          element.textContent ===
+            "work@example.com · Team · Design Workspace / Member",
+      ),
     ).toBeInTheDocument();
   });
 });

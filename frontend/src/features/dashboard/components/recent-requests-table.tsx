@@ -1,4 +1,4 @@
-import { Inbox } from "lucide-react";
+import { Check, Inbox, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { isEmailLabel } from "@/components/blur-email";
@@ -36,29 +36,30 @@ import {
   formatTimeLong,
 } from "@/utils/formatters";
 
-const STATUS_CLASS_MAP: Record<string, string> = {
-  ok: "bg-emerald-500/15 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-400",
-  rate_limit: "bg-orange-500/15 text-orange-700 border-orange-500/20 hover:bg-orange-500/20 dark:text-orange-400",
-  quota: "bg-red-500/15 text-red-700 border-red-500/20 hover:bg-red-500/20 dark:text-red-400",
-  error: "bg-zinc-500/15 text-zinc-700 border-zinc-500/20 hover:bg-zinc-500/20 dark:text-zinc-400",
-};
-
 const TRANSPORT_LABELS: Record<string, string> = {
   http: "HTTP",
   websocket: "WS",
 };
 
-const TRANSPORT_CLASS_MAP: Record<string, string> = {
-  http: "bg-slate-500/10 text-slate-700 border-slate-500/20 hover:bg-slate-500/15 dark:text-slate-300",
-  websocket: "bg-sky-500/15 text-sky-700 border-sky-500/20 hover:bg-sky-500/20 dark:text-sky-300",
-};
-
-const PLAN_CLASS_MAP: Record<string, string> = {
-  free: "bg-zinc-500/10 text-zinc-700 border-zinc-500/20 hover:bg-zinc-500/15 dark:text-zinc-300",
-  plus: "bg-emerald-500/15 text-emerald-700 border-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-400",
-  team: "bg-sky-500/15 text-sky-700 border-sky-500/20 hover:bg-sky-500/20 dark:text-sky-300",
-  pro: "bg-violet-500/15 text-violet-700 border-violet-500/20 hover:bg-violet-500/20 dark:text-violet-300",
-};
+/** Monochrome status cell: glyph shape + label, weight carries urgency (DESIGN.md). */
+function RequestStatusCell({ status }: { status: string }) {
+  const ok = status === "ok";
+  const label = REQUEST_STATUS_LABELS[status] ?? status;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs">
+      {ok ? (
+        <Check
+          size={14}
+          aria-hidden="true"
+          className="shrink-0 text-muted-foreground"
+        />
+      ) : (
+        <X size={14} aria-hidden="true" className="shrink-0" />
+      )}
+      <span className={ok ? undefined : "font-medium"}>{label}</span>
+    </span>
+  );
+}
 
 const REQUEST_KIND_LABELS: Record<string, string> = {
   normal: "Normal",
@@ -86,7 +87,9 @@ function formatRequestCostSummary(request: RequestLog | null): string | null {
   const segments: string[] = [];
   const cachedInputTokens = request.cachedInputTokens ?? 0;
   const nonCachedInputTokens =
-    request.inputTokens == null ? null : Math.max(0, request.inputTokens - cachedInputTokens);
+    request.inputTokens == null
+      ? null
+      : Math.max(0, request.inputTokens - cachedInputTokens);
 
   if (nonCachedInputTokens != null && request.costBreakdown?.inputUsd != null) {
     segments.push(
@@ -94,13 +97,19 @@ function formatRequestCostSummary(request: RequestLog | null): string | null {
     );
   }
 
-  if (request.cachedInputTokens != null && request.costBreakdown?.cachedInputUsd != null) {
+  if (
+    request.cachedInputTokens != null &&
+    request.costBreakdown?.cachedInputUsd != null
+  ) {
     segments.push(
       `${formatCompactNumber(request.cachedInputTokens)} Cached (${formatCurrency(request.costBreakdown.cachedInputUsd)})`,
     );
   }
 
-  if (request.outputTokens != null && request.costBreakdown?.outputUsd != null) {
+  if (
+    request.outputTokens != null &&
+    request.costBreakdown?.outputUsd != null
+  ) {
     segments.push(
       `${formatCompactNumber(request.outputTokens)} Output (${formatCurrency(request.costBreakdown.outputUsd)})`,
     );
@@ -127,14 +136,19 @@ export function RecentRequestsTable({
   onLimitChange,
   onOffsetChange,
 }: RecentRequestsTableProps) {
-  const [selectedRequest, setSelectedRequest] = useState<RequestLog | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<RequestLog | null>(
+    null,
+  );
   const blurred = usePrivacyStore((s) => s.blurred);
   const selectedRequestCostSummary = formatRequestCostSummary(selectedRequest);
 
   const accountLabelMap = useMemo(() => {
     const index = new Map<string, string>();
     for (const account of accounts) {
-      index.set(account.accountId, account.displayName || account.email || account.accountId);
+      index.set(
+        account.accountId,
+        account.displayName || account.email || account.accountId,
+      );
     }
     return index;
   }, [accounts]);
@@ -163,129 +177,174 @@ export function RecentRequestsTable({
 
   return (
     <div className="space-y-3">
-    <div className="rounded-xl border bg-card">
-      <div className="relative overflow-x-auto">
-        <Table className="min-w-[1240px] table-fixed">
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-28 pl-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Time</TableHead>
-              <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Account</TableHead>
-              <TableHead className="w-24 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Plan</TableHead>
-              <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">API Key</TableHead>
-              <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Model</TableHead>
-              <TableHead className="w-20 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Transport</TableHead>
-              <TableHead className="w-24 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Status</TableHead>
-              <TableHead className="w-24 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Tokens</TableHead>
-              <TableHead className="w-16 text-right text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Cost</TableHead>
-              <TableHead className="w-72 pr-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">Details</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {requests.map((request) => {
-              const time = formatTimeLong(request.requestedAt);
-              const accountLabel = request.accountId ? (accountLabelMap.get(request.accountId) ?? request.accountId) : "Unassigned";
-              const isEmailLabel = !!(request.accountId && emailLabelIds.has(request.accountId));
-              const errorPreview = request.errorMessage || request.errorCode || "-";
-              const hasError = !!(request.errorCode || request.errorMessage);
-              const visibleServiceTier = request.actualServiceTier ?? request.serviceTier;
-              const showRequestedTier =
-                !!request.requestedServiceTier && request.requestedServiceTier !== visibleServiceTier;
-              const planType = request.planType?.trim().toLowerCase() || null;
-              const planLabel = planType ? formatSlug(planType) : "--";
+      <div className="rounded-xl border bg-card">
+        <div className="relative overflow-x-auto">
+          <Table className="min-w-[1240px] table-fixed">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-28 pl-4 text-xs font-medium text-muted-foreground">
+                  Time
+                </TableHead>
+                <TableHead className="text-xs font-medium text-muted-foreground">
+                  Account
+                </TableHead>
+                <TableHead className="w-24 text-xs font-medium text-muted-foreground">
+                  Plan
+                </TableHead>
+                <TableHead className="text-xs font-medium text-muted-foreground">
+                  API Key
+                </TableHead>
+                <TableHead className="text-xs font-medium text-muted-foreground">
+                  Model
+                </TableHead>
+                <TableHead className="w-20 text-xs font-medium text-muted-foreground">
+                  Transport
+                </TableHead>
+                <TableHead className="w-24 text-xs font-medium text-muted-foreground">
+                  Status
+                </TableHead>
+                <TableHead className="w-24 text-right text-xs font-medium text-muted-foreground">
+                  Tokens
+                </TableHead>
+                <TableHead className="w-16 text-right text-xs font-medium text-muted-foreground">
+                  Cost
+                </TableHead>
+                <TableHead className="w-72 pr-4 text-xs font-medium text-muted-foreground">
+                  Details
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {requests.map((request) => {
+                const time = formatTimeLong(request.requestedAt);
+                const accountLabel = request.accountId
+                  ? (accountLabelMap.get(request.accountId) ??
+                    request.accountId)
+                  : "Unassigned";
+                const isEmailLabel = !!(
+                  request.accountId && emailLabelIds.has(request.accountId)
+                );
+                const errorPreview =
+                  request.errorMessage || request.errorCode || "-";
+                const hasError = !!(request.errorCode || request.errorMessage);
+                const visibleServiceTier =
+                  request.actualServiceTier ?? request.serviceTier;
+                const showRequestedTier =
+                  !!request.requestedServiceTier &&
+                  request.requestedServiceTier !== visibleServiceTier;
+                const planType = request.planType?.trim().toLowerCase() || null;
+                const planLabel = planType ? formatSlug(planType) : "--";
 
-              return (
-                <TableRow key={request.requestId}>
-                  <TableCell className="pl-4 align-top">
-                    <div className="leading-tight">
-                      <div className="text-sm font-medium">{time.time}</div>
-                      <div className="text-xs text-muted-foreground">{time.date}</div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="truncate align-top text-sm">
-                    {isEmailLabel && blurred ? (
-                      <span className="privacy-blur">{accountLabel}</span>
-                    ) : (
-                      accountLabel
-                    )}
-                  </TableCell>
-                  <TableCell className="align-top">
-                    {planType ? (
-                      <Badge
-                        variant="outline"
-                        className={PLAN_CLASS_MAP[planType] ?? PLAN_CLASS_MAP.free}
-                      >
-                        {planLabel}
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">--</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="truncate align-top text-xs text-muted-foreground">
-                    {request.apiKeyName || "--"}
-                  </TableCell>
-                  <TableCell className="truncate align-top">
-                    <div className="leading-tight">
-                      <span className="font-mono text-xs">
-                        {formatModelLabel(request.model, request.reasoningEffort, visibleServiceTier)}
-                      </span>
-                      {request.requestKind === "warmup" || request.requestKind === "limit_warmup" ? (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {REQUEST_KIND_LABELS.warmup}
+                return (
+                  <TableRow key={request.requestId}>
+                    <TableCell className="pl-4 align-top">
+                      <div className="leading-tight">
+                        <div className="text-sm font-medium">{time.time}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {time.date}
                         </div>
-                      ) : null}
-                      {showRequestedTier ? (
-                        <div className="text-[11px] text-muted-foreground">
-                          Requested {request.requestedServiceTier}
-                        </div>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    {request.transport ? (
-                      <Badge
-                        variant="outline"
-                        className={TRANSPORT_CLASS_MAP[request.transport] ?? TRANSPORT_CLASS_MAP.http}
-                      >
-                        {TRANSPORT_LABELS[request.transport] ?? request.transport}
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">--</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <Badge
-                      variant="outline"
-                      className={STATUS_CLASS_MAP[request.status] ?? STATUS_CLASS_MAP.error}
-                    >
-                      {REQUEST_STATUS_LABELS[request.status] ?? request.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right align-top font-mono text-xs tabular-nums">
-                    <div className="leading-tight">
-                      <div>{formatCompactNumber(request.tokens)}</div>
-                      {request.cachedInputTokens != null && request.cachedInputTokens > 0 && (
-                        <div className="text-[11px] text-muted-foreground">
-                          {formatCompactNumber(request.cachedInputTokens)} Cached
-                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="truncate align-top text-sm">
+                      {isEmailLabel && blurred ? (
+                        <span className="privacy-blur">{accountLabel}</span>
+                      ) : (
+                        accountLabel
                       )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right align-top font-mono text-xs tabular-nums">
-                    {formatCurrency(request.costUsd)}
-                  </TableCell>
-                  <TableCell className="pr-4 align-top whitespace-normal">
-                    {hasError ? (
-                      <div className="space-y-2">
-                        {request.errorCode ? (
-                          <div>
-                            <Badge variant="outline" className="max-w-full font-mono text-[10px]">
-                              <span className="truncate">{request.errorCode}</span>
-                            </Badge>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      {planType ? (
+                        <Badge variant="outline">{planLabel}</Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          --
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="truncate align-top text-xs text-muted-foreground">
+                      {request.apiKeyName || "--"}
+                    </TableCell>
+                    <TableCell className="truncate align-top">
+                      <div className="leading-tight">
+                        <span className="font-mono text-xs">
+                          {formatModelLabel(
+                            request.model,
+                            request.reasoningEffort,
+                            visibleServiceTier,
+                          )}
+                        </span>
+                        {request.requestKind === "warmup" ||
+                        request.requestKind === "limit_warmup" ? (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {REQUEST_KIND_LABELS.warmup}
                           </div>
                         ) : null}
-                        <p className="line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">
-                          {errorPreview}
-                        </p>
+                        {showRequestedTier ? (
+                          <div className="text-[11px] text-muted-foreground">
+                            Requested {request.requestedServiceTier}
+                          </div>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="align-top">
+                      {request.transport ? (
+                        <Badge variant="outline">
+                          {TRANSPORT_LABELS[request.transport] ??
+                            request.transport}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          --
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <RequestStatusCell status={request.status} />
+                    </TableCell>
+                    <TableCell className="text-right align-top font-mono text-xs tabular-nums">
+                      <div className="leading-tight">
+                        <div>{formatCompactNumber(request.tokens)}</div>
+                        {request.cachedInputTokens != null &&
+                          request.cachedInputTokens > 0 && (
+                            <div className="text-[11px] text-muted-foreground">
+                              {formatCompactNumber(request.cachedInputTokens)}{" "}
+                              Cached
+                            </div>
+                          )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right align-top font-mono text-xs tabular-nums">
+                      {formatCurrency(request.costUsd)}
+                    </TableCell>
+                    <TableCell className="pr-4 align-top whitespace-normal">
+                      {hasError ? (
+                        <div className="space-y-2">
+                          {request.errorCode ? (
+                            <div>
+                              <Badge
+                                variant="outline"
+                                className="max-w-full font-mono text-[10px]"
+                              >
+                                <span className="truncate">
+                                  {request.errorCode}
+                                </span>
+                              </Badge>
+                            </div>
+                          ) : null}
+                          <p className="line-clamp-2 break-words text-xs leading-relaxed text-muted-foreground">
+                            {errorPreview}
+                          </p>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={() => setSelectedRequest(request)}
+                          >
+                            View Details
+                          </Button>
+                        </div>
+                      ) : (
                         <Button
                           type="button"
                           variant="ghost"
@@ -295,26 +354,15 @@ export function RecentRequestsTable({
                         >
                           View Details
                         </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => setSelectedRequest(request)}
-                      >
-                        View Details
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
       </div>
-    </div>
 
       <div className="flex justify-end">
         <PaginationControls
@@ -327,11 +375,18 @@ export function RecentRequestsTable({
         />
       </div>
 
-      <Dialog open={selectedRequest !== null} onOpenChange={(open) => { if (!open) setSelectedRequest(null); }}>
+      <Dialog
+        open={selectedRequest !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedRequest(null);
+        }}
+      >
         <DialogContent className="max-h-[85vh] sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Request Details</DialogTitle>
-            <DialogDescription>Inspect request metadata and copy the fields you need.</DialogDescription>
+            <DialogDescription>
+              Inspect request metadata and copy the fields you need.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 overflow-y-auto">
             <div className="space-y-3 rounded-md border bg-muted/30 p-4">
@@ -344,15 +399,70 @@ export function RecentRequestsTable({
                 compactCopy
               />
               <div className="grid gap-3 sm:grid-cols-3">
-                <RequestDetailField label="Status" value={selectedRequest ? (REQUEST_STATUS_LABELS[selectedRequest.status] ?? selectedRequest.status) : "—"} />
-                <RequestDetailField label="Model" value={selectedRequest ? formatModelLabel(selectedRequest.model, selectedRequest.reasoningEffort, selectedRequest.actualServiceTier ?? selectedRequest.serviceTier) : "—"} mono />
-                <RequestDetailField label="Request kind" value={selectedRequest ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ?? selectedRequest.requestKind) : "—"} />
-                <RequestDetailField label="Plan" value={selectedRequest?.planType ? formatSlug(selectedRequest.planType) : "—"} />
+                <RequestDetailField
+                  label="Status"
+                  value={
+                    selectedRequest
+                      ? (REQUEST_STATUS_LABELS[selectedRequest.status] ??
+                        selectedRequest.status)
+                      : "—"
+                  }
+                />
+                <RequestDetailField
+                  label="Model"
+                  value={
+                    selectedRequest
+                      ? formatModelLabel(
+                          selectedRequest.model,
+                          selectedRequest.reasoningEffort,
+                          selectedRequest.actualServiceTier ??
+                            selectedRequest.serviceTier,
+                        )
+                      : "—"
+                  }
+                  mono
+                />
+                <RequestDetailField
+                  label="Request kind"
+                  value={
+                    selectedRequest
+                      ? (REQUEST_KIND_LABELS[selectedRequest.requestKind] ??
+                        selectedRequest.requestKind)
+                      : "—"
+                  }
+                />
+                <RequestDetailField
+                  label="Plan"
+                  value={
+                    selectedRequest?.planType
+                      ? formatSlug(selectedRequest.planType)
+                      : "—"
+                  }
+                />
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                <RequestDetailField label="Transport" value={selectedRequest?.transport ? (TRANSPORT_LABELS[selectedRequest.transport] ?? selectedRequest.transport) : "—"} />
-                <RequestDetailField label="Time" value={selectedRequest ? formatDateTimeInline(selectedRequest.requestedAt) : "—"} />
-                <RequestDetailField label="Error Code" value={selectedRequest?.errorCode ?? "—"} mono />
+                <RequestDetailField
+                  label="Transport"
+                  value={
+                    selectedRequest?.transport
+                      ? (TRANSPORT_LABELS[selectedRequest.transport] ??
+                        selectedRequest.transport)
+                      : "—"
+                  }
+                />
+                <RequestDetailField
+                  label="Time"
+                  value={
+                    selectedRequest
+                      ? formatDateTimeInline(selectedRequest.requestedAt)
+                      : "—"
+                  }
+                />
+                <RequestDetailField
+                  label="Error Code"
+                  value={selectedRequest?.errorCode ?? "—"}
+                  mono
+                />
               </div>
               <RequestDetailField
                 label="User Agent"
@@ -363,7 +473,10 @@ export function RecentRequestsTable({
               />
             </div>
 
-            <RequestArchivePanel requestId={selectedRequest?.requestId} requestedAt={selectedRequest?.requestedAt} />
+            <RequestArchivePanel
+              requestId={selectedRequest?.requestId}
+              requestedAt={selectedRequest?.requestedAt}
+            />
 
             {selectedRequestCostSummary ? (
               <div className="space-y-2">
@@ -380,12 +493,18 @@ export function RecentRequestsTable({
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-medium">Full Error</h3>
                 {selectedRequest?.errorMessage ? (
-                  <CopyButton value={selectedRequest.errorMessage} label="Copy Error" iconOnly />
+                  <CopyButton
+                    value={selectedRequest.errorMessage}
+                    label="Copy Error"
+                    iconOnly
+                  />
                 ) : null}
               </div>
               <div className="max-h-[36vh] overflow-y-auto rounded-md bg-muted/50 p-3">
                 <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                  {selectedRequest?.errorMessage ?? selectedRequest?.errorCode ?? "No error detail recorded."}
+                  {selectedRequest?.errorMessage ??
+                    selectedRequest?.errorCode ??
+                    "No error detail recorded."}
                 </p>
               </div>
             </div>
@@ -417,15 +536,19 @@ function RequestDetailField({
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2">
-        <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">
-          {label}
-        </div>
+        <div className="text-xs font-medium text-muted-foreground">{label}</div>
         {copyValue ? (
-          <CopyButton value={copyValue} label={copyLabel} iconOnly={compactCopy} />
+          <CopyButton
+            value={copyValue}
+            label={copyLabel}
+            iconOnly={compactCopy}
+          />
         ) : null}
       </div>
       <div className="flex flex-col items-start gap-2">
-        <p className={`min-w-0 flex-1 break-all text-sm leading-relaxed ${mono ? "font-mono" : ""}`}>
+        <p
+          className={`min-w-0 flex-1 break-all text-sm leading-relaxed ${mono ? "font-mono" : ""}`}
+        >
           {value}
         </p>
       </div>

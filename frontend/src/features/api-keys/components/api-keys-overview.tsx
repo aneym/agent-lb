@@ -36,9 +36,13 @@ function OverviewStat({ label, value, meta }: OverviewStatProps) {
   const testId = `api-keys-overview-stat-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
     <div className="rounded-xl border bg-card p-4" data-testid={testId}>
-      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-1 text-[1.55rem] font-semibold tracking-tight tabular-nums">{value}</p>
-      {meta ? <p className="mt-1 text-xs text-muted-foreground">{meta}</p> : null}
+      <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-[1.55rem] font-semibold tracking-tight tabular-nums">
+        {value}
+      </p>
+      {meta ? (
+        <p className="mt-1 text-xs text-muted-foreground">{meta}</p>
+      ) : null}
     </div>
   );
 }
@@ -50,16 +54,19 @@ function formatMetricValue(metric: UsageMetric, value: number): string {
   return formatCompactNumber(value);
 }
 
-function buildBreakdownRows(apiKeys: ApiKey[], metric: UsageMetric): BreakdownRow[] {
+function buildBreakdownRows(
+  apiKeys: ApiKey[],
+  metric: UsageMetric,
+): BreakdownRow[] {
   const rows = apiKeys
     .map((apiKey) => {
       const usage = apiKey.usageSummary;
       const value =
         metric === "cost"
-          ? usage?.totalCostUsd ?? 0
+          ? (usage?.totalCostUsd ?? 0)
           : metric === "tokens"
-            ? usage?.totalTokens ?? 0
-            : usage?.requestCount ?? 0;
+            ? (usage?.totalTokens ?? 0)
+            : (usage?.requestCount ?? 0);
 
       return {
         id: apiKey.id,
@@ -97,7 +104,10 @@ function BreakdownPanel({
   const hasRows = rows.length > 0;
 
   return (
-    <div className="rounded-xl border bg-card p-4" data-testid={`api-keys-overview-${metric}-panel`}>
+    <div
+      className="rounded-xl border bg-card p-4"
+      data-testid={`api-keys-overview-${metric}-panel`}
+    >
       <div className="mb-3">
         <h3 className="text-sm font-semibold">{title}</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
@@ -121,10 +131,13 @@ function BreakdownPanel({
               <div className="flex items-center justify-between gap-3 text-xs">
                 <span className="min-w-0 truncate font-medium">
                   {row.label}
-                  <span className="text-muted-foreground">{row.labelSuffix}</span>
+                  <span className="text-muted-foreground">
+                    {row.labelSuffix}
+                  </span>
                 </span>
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {formatMetricValue(metric, row.value)} · {formatSharePercent(row.share)}
+                <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
+                  {formatMetricValue(metric, row.value)} ·{" "}
+                  {formatSharePercent(row.share)}
                 </span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-muted">
@@ -147,32 +160,61 @@ export type ApiKeysOverviewProps = {
 
 export function ApiKeysOverview({ apiKeys }: ApiKeysOverviewProps) {
   const totalKeys = apiKeys.length;
-  const activeKeys = apiKeys.filter((apiKey) => apiKey.isActive && !isExpired(apiKey)).length;
+  const activeKeys = apiKeys.filter(
+    (apiKey) => apiKey.isActive && !isExpired(apiKey),
+  ).length;
   const expiredKeys = apiKeys.filter((apiKey) => isExpired(apiKey)).length;
-  const usedKeys = apiKeys.filter((apiKey) => (apiKey.usageSummary?.requestCount ?? 0) > 0).length;
-  const totalRequests = apiKeys.reduce((sum, apiKey) => sum + (apiKey.usageSummary?.requestCount ?? 0), 0);
-  const totalTokens = apiKeys.reduce((sum, apiKey) => sum + (apiKey.usageSummary?.totalTokens ?? 0), 0);
-  const totalCostUsd = apiKeys.reduce((sum, apiKey) => sum + (apiKey.usageSummary?.totalCostUsd ?? 0), 0);
+  const usedKeys = apiKeys.filter(
+    (apiKey) => (apiKey.usageSummary?.requestCount ?? 0) > 0,
+  ).length;
+  const totalRequests = apiKeys.reduce(
+    (sum, apiKey) => sum + (apiKey.usageSummary?.requestCount ?? 0),
+    0,
+  );
+  const totalTokens = apiKeys.reduce(
+    (sum, apiKey) => sum + (apiKey.usageSummary?.totalTokens ?? 0),
+    0,
+  );
+  const totalCostUsd = apiKeys.reduce(
+    (sum, apiKey) => sum + (apiKey.usageSummary?.totalCostUsd ?? 0),
+    0,
+  );
   const inactiveKeys = totalKeys - activeKeys;
   const idleKeys = totalKeys - usedKeys;
 
   return (
     <section className="space-y-4">
       <div className="flex items-center gap-3">
-        <h2 className="text-[13px] font-medium uppercase tracking-wider text-muted-foreground">Overview</h2>
+        <h2 className="text-base font-semibold text-foreground">Overview</h2>
         <div className="h-px flex-1 bg-border" />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <OverviewStat label="API keys" value={formatCompactNumber(totalKeys)} meta={`${formatCompactNumber(expiredKeys)} expired`} />
-        <OverviewStat label="Active keys" value={formatCompactNumber(activeKeys)} meta={`${formatCompactNumber(inactiveKeys)} inactive`} />
-        <OverviewStat label="Used keys" value={formatCompactNumber(usedKeys)} meta={`${formatCompactNumber(idleKeys)} idle`} />
+        <OverviewStat
+          label="API keys"
+          value={formatCompactNumber(totalKeys)}
+          meta={`${formatCompactNumber(expiredKeys)} expired`}
+        />
+        <OverviewStat
+          label="Active keys"
+          value={formatCompactNumber(activeKeys)}
+          meta={`${formatCompactNumber(inactiveKeys)} inactive`}
+        />
+        <OverviewStat
+          label="Used keys"
+          value={formatCompactNumber(usedKeys)}
+          meta={`${formatCompactNumber(idleKeys)} idle`}
+        />
         <OverviewStat
           label="Lifetime requests"
           value={formatCompactNumber(totalRequests)}
           meta={`${formatCompactNumber(totalTokens)} tokens`}
         />
-        <OverviewStat label="Lifetime cost" value={formatCurrency(totalCostUsd)} meta="Across all keys (lifetime)" />
+        <OverviewStat
+          label="Lifetime cost"
+          value={formatCurrency(totalCostUsd)}
+          meta="Across all keys (lifetime)"
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">

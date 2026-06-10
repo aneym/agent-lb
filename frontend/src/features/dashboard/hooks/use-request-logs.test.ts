@@ -244,3 +244,126 @@ describe("useRequestLogs", () => {
     );
   });
 });
+
+describe("useRequestLogs provider scope", () => {
+  it("constrains the logs query to the scoped account ids", async () => {
+    const accountIdsPerCall: string[][] = [];
+    server.use(
+      http.get("/api/request-logs", ({ request }) => {
+        const url = new URL(request.url);
+        accountIdsPerCall.push(url.searchParams.getAll("accountId"));
+        return HttpResponse.json({ requests: [], total: 0, hasMore: false });
+      }),
+    );
+
+    const queryClient = createTestQueryClient();
+    const wrapper = createWrapper(queryClient, "/dashboard");
+    const { result } = renderHook(
+      () =>
+        useRequestLogs({
+          kind: "accounts",
+          accountIds: ["acc_codex_1", "acc_codex_2"],
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
+    expect(result.current.scopeIsEmpty).toBe(false);
+    expect(accountIdsPerCall[accountIdsPerCall.length - 1]).toEqual([
+      "acc_codex_1",
+      "acc_codex_2",
+    ]);
+  });
+
+  it("intersects a manual account selection with the scope", async () => {
+    const accountIdsPerCall: string[][] = [];
+    server.use(
+      http.get("/api/request-logs", ({ request }) => {
+        const url = new URL(request.url);
+        accountIdsPerCall.push(url.searchParams.getAll("accountId"));
+        return HttpResponse.json({ requests: [], total: 0, hasMore: false });
+      }),
+    );
+
+    const queryClient = createTestQueryClient();
+    const wrapper = createWrapper(
+      queryClient,
+      "/dashboard?accountId=acc_in_scope&accountId=acc_out_of_scope",
+    );
+    const { result } = renderHook(
+      () =>
+        useRequestLogs({
+          kind: "accounts",
+          accountIds: ["acc_in_scope", "acc_other"],
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.logsQuery.isSuccess).toBe(true));
+    expect(accountIdsPerCall[accountIdsPerCall.length - 1]).toEqual([
+      "acc_in_scope",
+    ]);
+  });
+
+  it("reports an empty scope and never fetches when the intersection is empty", async () => {
+    let logsCalls = 0;
+    server.use(
+      http.get("/api/request-logs", () => {
+        logsCalls += 1;
+        return HttpResponse.json({ requests: [], total: 0, hasMore: false });
+      }),
+    );
+
+    const queryClient = createTestQueryClient();
+    const wrapper = createWrapper(
+      queryClient,
+      "/dashboard?accountId=acc_out_of_scope",
+    );
+    const { result } = renderHook(
+      () => useRequestLogs({ kind: "accounts", accountIds: ["acc_in_scope"] }),
+      { wrapper },
+    );
+
+    expect(result.current.scopeIsEmpty).toBe(true);
+    await waitFor(() =>
+      expect(result.current.logsQuery.fetchStatus).toBe("idle"),
+    );
+    expect(logsCalls).toBe(0);
+  });
+
+  it("reports an empty scope when the provider has no accounts at all", async () => {
+    const queryClient = createTestQueryClient();
+    const wrapper = createWrapper(queryClient, "/dashboard");
+    const { result } = renderHook(
+      () => useRequestLogs({ kind: "accounts", accountIds: [] }),
+      { wrapper },
+    );
+
+    expect(result.current.scopeIsEmpty).toBe(true);
+    await waitFor(() =>
+      expect(result.current.logsQuery.fetchStatus).toBe("idle"),
+    );
+  });
+
+  it("pauses queries while the scope is pending", async () => {
+    let logsCalls = 0;
+    server.use(
+      http.get("/api/request-logs", () => {
+        logsCalls += 1;
+        return HttpResponse.json({ requests: [], total: 0, hasMore: false });
+      }),
+    );
+
+    const queryClient = createTestQueryClient();
+    const wrapper = createWrapper(queryClient, "/dashboard");
+    const { result } = renderHook(() => useRequestLogs({ kind: "pending" }), {
+      wrapper,
+    });
+
+    expect(result.current.scopeIsEmpty).toBe(false);
+    await waitFor(() =>
+      expect(result.current.logsQuery.fetchStatus).toBe("idle"),
+    );
+    expect(logsCalls).toBe(0);
+  });
+});

@@ -33,22 +33,28 @@ export function ReportsFilters({
 }: ReportsFiltersProps) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3">
-      {PRESETS.map((preset) => (
-        <Button
-          key={preset.days}
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            onFiltersChange({
-              ...filters,
-              startDate: daysAgoLocalISO(preset.days - 1),
-              endDate: localDateISO(),
-            })
-          }
-        >
-          {preset.label}
-        </Button>
-      ))}
+      {PRESETS.map((preset) => {
+        const selected =
+          filters.startDate === daysAgoLocalISO(preset.days - 1) &&
+          filters.endDate === localDateISO();
+        return (
+          <Button
+            key={preset.days}
+            variant={selected ? "default" : "outline"}
+            size="sm"
+            aria-pressed={selected}
+            onClick={() =>
+              onFiltersChange({
+                ...filters,
+                startDate: daysAgoLocalISO(preset.days - 1),
+                endDate: localDateISO(),
+              })
+            }
+          >
+            {preset.label}
+          </Button>
+        );
+      })}
 
       <MultiSelectFilter
         label="Accounts"
@@ -69,14 +75,18 @@ export function ReportsFilters({
         <input
           type="date"
           value={filters.startDate}
-          onChange={(e) => onFiltersChange({ ...filters, startDate: e.target.value })}
+          onChange={(e) =>
+            onFiltersChange({ ...filters, startDate: e.target.value })
+          }
           className="h-8 rounded-md border bg-transparent px-2 text-xs text-foreground"
         />
         <span className="text-xs text-muted-foreground">—</span>
         <input
           type="date"
           value={filters.endDate}
-          onChange={(e) => onFiltersChange({ ...filters, endDate: e.target.value })}
+          onChange={(e) =>
+            onFiltersChange({ ...filters, endDate: e.target.value })
+          }
           className="h-8 rounded-md border bg-transparent px-2 text-xs text-foreground"
         />
       </div>

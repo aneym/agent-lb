@@ -423,7 +423,7 @@ export function QuotaPlannerSection() {
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-semibold uppercase text-muted-foreground">Recent decisions</h4>
+              <h4 className="text-xs font-medium text-muted-foreground">Recent decisions</h4>
               <span className="text-xs text-muted-foreground">{decisions.length} shown</span>
             </div>
             <div className="overflow-hidden rounded-lg border">

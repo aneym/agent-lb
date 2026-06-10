@@ -12,8 +12,8 @@ describe("UsageDonuts", () => {
   it("renders primary and secondary donut panels with legends", () => {
     render(
       <UsageDonuts
-        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
-        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
+        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "var(--chart-1)" })]}
+        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "var(--chart-2)" })]}
         primaryTotal={200}
         secondaryTotal={200}
       />,
@@ -45,8 +45,8 @@ describe("UsageDonuts", () => {
   it("renders safe line only for the primary donut", () => {
     render(
       <UsageDonuts
-        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
-        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
+        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "var(--chart-1)" })]}
+        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "var(--chart-2)" })]}
         primaryTotal={200}
         secondaryTotal={200}
         safeLinePrimary={{ safePercent: 60, riskLevel: "warning" }}
@@ -59,8 +59,8 @@ describe("UsageDonuts", () => {
   it("renders safe line on both donuts when both have depletion", () => {
     render(
       <UsageDonuts
-        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
-        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
+        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "var(--chart-1)" })]}
+        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "var(--chart-2)" })]}
         primaryTotal={200}
         secondaryTotal={200}
         safeLinePrimary={{ safePercent: 60, riskLevel: "warning" }}
@@ -75,7 +75,7 @@ describe("UsageDonuts", () => {
     render(
       <UsageDonuts
         primaryItems={[]}
-        secondaryItems={[item({ accountId: "acc-1", label: "weekly@example.com", value: 80, remainingPercent: 40, color: "#d9a441" })]}
+        secondaryItems={[item({ accountId: "acc-1", label: "weekly@example.com", value: 80, remainingPercent: 40, color: "var(--chart-2)" })]}
         primaryTotal={0}
         secondaryTotal={200}
         safeLineSecondary={{ safePercent: 60, riskLevel: "warning" }}
@@ -86,15 +86,15 @@ describe("UsageDonuts", () => {
   });
 
   it("shows remaining credits and capacity as stacked values with a divider in the center", () => {
-    // Regression for #371 + redesigned display: dashboard donuts previously
+    // Regression for issue 371 + redesigned display: dashboard donuts previously
     // showed compact-formatted numbers like "7.33k" / "7.56k". Operators
     // asked for the raw remaining/total credit counts instead so the
     // exact distance to the cap is visible at a glance. Now split into
     // stacked rows: remaining on top, capacity below a divider.
     render(
       <UsageDonuts
-        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "#7bb661" })]}
-        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 7331, remainingPercent: 97, color: "#d9a441" })]}
+        primaryItems={[item({ accountId: "acc-1", label: "primary@example.com", value: 120, remainingPercent: 60, color: "var(--chart-1)" })]}
+        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 7331, remainingPercent: 97, color: "var(--chart-2)" })]}
         primaryTotal={225}
         secondaryTotal={7560}
         primaryCenterValue={120}

@@ -9,10 +9,13 @@ import {
   YAxis,
 } from "recharts";
 
-import { useChartColors } from "@/hooks/use-chart-colors";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import type { ApiKeyTrendPoint } from "@/features/apis/schemas";
-import { formatChartDateTime, formatCompactNumber, formatCurrency } from "@/utils/formatters";
+import {
+  formatChartDateTime,
+  formatCompactNumber,
+  formatCurrency,
+} from "@/utils/formatters";
 
 type MergedPoint = {
   t: string;
@@ -57,7 +60,10 @@ function formatTokenTick(value: number): string {
   return String(value);
 }
 
-const SERIES_META: Record<string, { label: string; formatter: (v: number) => string }> = {
+const SERIES_META: Record<
+  string,
+  { label: string; formatter: (v: number) => string }
+> = {
   cost: { label: "Cost", formatter: formatCurrency },
   tokens: { label: "Tokens", formatter: (v) => formatCompactNumber(v) },
 };
@@ -89,7 +95,7 @@ function CustomTooltip({ active, payload, label }: ChartTooltipProps) {
               style={{ backgroundColor: entry.color }}
             />
             <span className="text-muted-foreground">{meta?.label}</span>
-            <span className="ml-auto tabular-nums font-medium">
+            <span className="ml-auto font-mono font-medium tabular-nums">
               {meta?.formatter(entry.value ?? 0)}
             </span>
           </div>
@@ -107,14 +113,20 @@ export type ApiTrendChartProps = {
 };
 
 export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
-  const chartColors = useChartColors();
   const reducedMotion = useReducedMotion();
-  const c1 = chartColors[0];
-  const c2 = chartColors[1];
+  // Grayscale data ramp tokens (DESIGN.md): series separate by gray step + dash.
+  const c1 = "var(--chart-1)";
+  const c2 = "var(--chart-3)";
   const data = useMemo(() => mergePoints(cost, tokens), [cost, tokens]);
 
-  const maxTokens = useMemo(() => Math.max(...data.map((d) => d.tokens), 1), [data]);
-  const maxCost = useMemo(() => Math.max(...data.map((d) => d.cost), 0.01), [data]);
+  const maxTokens = useMemo(
+    () => Math.max(...data.map((d) => d.tokens), 1),
+    [data],
+  );
+  const maxCost = useMemo(
+    () => Math.max(...data.map((d) => d.cost), 0.01),
+    [data],
+  );
 
   if (data.length === 0) {
     return (
@@ -130,17 +142,11 @@ export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <AreaChart data={data} margin={CHART_MARGIN}>
-        <defs>
-          <linearGradient id="api-trend-cost" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={c1} stopOpacity={0.15} />
-            <stop offset="100%" stopColor={c1} stopOpacity={0} />
-          </linearGradient>
-          <linearGradient id="api-trend-tokens" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={c2} stopOpacity={0.15} />
-            <stop offset="100%" stopColor={c2} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.06} />
+        <CartesianGrid
+          strokeDasharray="3 3"
+          vertical={false}
+          stroke="var(--border)"
+        />
         <XAxis
           dataKey="t"
           tickFormatter={formatXTick}
@@ -174,17 +180,24 @@ export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
         />
         <Tooltip
           content={<CustomTooltip />}
-          cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+          cursor={{
+            stroke: "var(--foreground)",
+            strokeOpacity: 0.2,
+            strokeWidth: 1,
+          }}
         />
+        {/* Two series: grayscale ramp steps + dash pattern on the second (DESIGN.md). */}
         <Area
           yAxisId="tokens"
           type="monotone"
           dataKey="tokens"
           stroke={c2}
           strokeWidth={1.5}
-          fill="url(#api-trend-tokens)"
+          strokeDasharray="6 3"
+          fill={c2}
+          fillOpacity={0.06}
           dot={false}
-          activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+          activeDot={{ r: 3, strokeWidth: 1.5, fill: "var(--card)" }}
           isAnimationActive={!reducedMotion}
           animationDuration={500}
         />
@@ -194,9 +207,10 @@ export function ApiTrendChart({ cost, tokens }: ApiTrendChartProps) {
           dataKey="cost"
           stroke={c1}
           strokeWidth={1.5}
-          fill="url(#api-trend-cost)"
+          fill={c1}
+          fillOpacity={0.08}
           dot={false}
-          activeDot={{ r: 3, strokeWidth: 1.5, fill: "hsl(var(--popover))" }}
+          activeDot={{ r: 3, strokeWidth: 1.5, fill: "var(--card)" }}
           isAnimationActive={!reducedMotion}
           animationDuration={500}
           animationBegin={100}

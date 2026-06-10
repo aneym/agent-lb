@@ -1,9 +1,68 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountList } from "@/features/accounts/components/account-list";
+import {
+  DEFAULT_ACCOUNT_FILTERS,
+  type AccountFilterState,
+} from "@/features/accounts/filters";
+import type { AccountSummary } from "@/features/accounts/schemas";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
+
+type HarnessProps = {
+  accounts: AccountSummary[];
+  initialFilters?: Partial<AccountFilterState>;
+  selectedAccountId?: string | null;
+  onSelect?: (accountId: string) => void;
+};
+
+function Harness({
+  accounts,
+  initialFilters,
+  selectedAccountId = null,
+  onSelect = () => {},
+}: HarnessProps) {
+  const [filters, setFilters] = useState<AccountFilterState>({
+    ...DEFAULT_ACCOUNT_FILTERS,
+    ...initialFilters,
+  });
+  return (
+    <AccountList
+      accounts={accounts}
+      filters={filters}
+      onFiltersChange={(patch) =>
+        setFilters((current) => ({ ...current, ...patch }))
+      }
+      onClearFilters={() =>
+        setFilters((current) => ({
+          ...current,
+          provider: "all",
+          status: "all",
+          query: "",
+        }))
+      }
+      selectedAccountId={selectedAccountId}
+      onSelect={onSelect}
+      onOpenImport={() => {}}
+      onOpenOauth={() => {}}
+    />
+  );
+}
+
+function account(overrides: Partial<AccountSummary>): AccountSummary {
+  return {
+    accountId: "acc-default",
+    email: "default@example.com",
+    displayName: "Default",
+    planType: "plus",
+    status: "active",
+    limitWarmupEnabled: false,
+    additionalQuotas: [],
+    ...overrides,
+  };
+}
 
 describe("AccountList", () => {
   beforeEach(() => {
@@ -22,31 +81,18 @@ describe("AccountList", () => {
     const onSelect = vi.fn();
 
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
-            accountId: "acc-1",
-            email: "primary@example.com",
-            displayName: "Primary",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
-          {
+          account({ accountId: "acc-1", email: "primary@example.com" }),
+          account({
             accountId: "acc-2",
             email: "secondary@example.com",
-            displayName: "Secondary",
             planType: "pro",
             status: "paused",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
+          }),
         ]}
         selectedAccountId="acc-1"
         onSelect={onSelect}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
@@ -64,58 +110,137 @@ describe("AccountList", () => {
     expect(onSelect).toHaveBeenCalledWith("acc-2");
   });
 
-  it("groups accounts by provider with operator labels", () => {
+  it("groups accounts by provider with operator labels and counts", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-openai",
             provider: "openai",
             email: "codex@example.com",
-            displayName: "Codex seat",
             planType: "pro",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-claude",
             provider: "anthropic",
             email: "claude@example.com",
-            displayName: "Claude seat",
             planType: "claude",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
-    expect(screen.getByRole("region", { name: "Codex accounts" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Claude accounts" })).toBeInTheDocument();
-    expect(screen.getAllByText("1 account")).toHaveLength(2);
-    expect(screen.getByText("Codex seat")).toBeInTheDocument();
-    expect(screen.getByText("Claude seat")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Codex accounts" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Claude accounts" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Codex — 1 account")).toBeInTheDocument();
+    expect(screen.getByText("Claude — 1 account")).toBeInTheDocument();
+  });
+
+  it("filters by provider through the segmented control", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Harness
+        accounts={[
+          account({
+            accountId: "acc-openai",
+            provider: "openai",
+            email: "codex@example.com",
+          }),
+          account({
+            accountId: "acc-claude",
+            provider: "anthropic",
+            email: "claude@example.com",
+          }),
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Claude\s*1$/ }));
+
+    expect(screen.queryByText("codex@example.com")).not.toBeInTheDocument();
+    expect(screen.getByText("claude@example.com")).toBeInTheDocument();
+  });
+
+  it("groups by status with problems first", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Harness
+        accounts={[
+          account({ accountId: "acc-active", email: "active@example.com" }),
+          account({
+            accountId: "acc-reauth",
+            email: "reauth@example.com",
+            status: "reauth_required",
+          }),
+          account({
+            accountId: "acc-paused",
+            email: "paused@example.com",
+            status: "paused",
+          }),
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Group accounts" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Group: Status" }),
+    );
+
+    const headings = screen
+      .getAllByText(/— \d+ account/)
+      .map((el) => el.textContent);
+    expect(headings).toEqual([
+      "Re-auth required — 1 account",
+      "Paused — 1 account",
+      "Active — 1 account",
+    ]);
+  });
+
+  it("renders a flat list with no headers when grouping is off", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Harness
+        accounts={[
+          account({
+            accountId: "acc-openai",
+            provider: "openai",
+            email: "codex@example.com",
+          }),
+          account({
+            accountId: "acc-claude",
+            provider: "anthropic",
+            email: "claude@example.com",
+          }),
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Group accounts" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Group: None" }),
+    );
+
+    expect(screen.queryByText(/— \d+ account/)).not.toBeInTheDocument();
+    expect(screen.getByText("codex@example.com")).toBeInTheDocument();
+    expect(screen.getByText("claude@example.com")).toBeInTheDocument();
   });
 
   it("sorts accounts by the rows actually rendered", () => {
     useAccountQuotaDisplayStore.setState({ quotaDisplay: "weekly" });
 
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-hidden-early",
             email: "hidden-early@example.com",
-            displayName: "Hidden Early",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             usage: {
               primaryRemainingPercent: 42,
               secondaryRemainingPercent: 18,
@@ -124,15 +249,10 @@ describe("AccountList", () => {
             resetAtSecondary: "2026-01-01T13:00:00.000Z",
             windowMinutesPrimary: 300,
             windowMinutesSecondary: 10_080,
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-visible-early",
             email: "visible-early@example.com",
-            displayName: "Visible Early",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             usage: {
               primaryRemainingPercent: 82,
               secondaryRemainingPercent: 73,
@@ -141,83 +261,63 @@ describe("AccountList", () => {
             resetAtSecondary: "2026-01-01T12:10:00.000Z",
             windowMinutesPrimary: 300,
             windowMinutesSecondary: 10_080,
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
     expect(
       screen
-        .getAllByText(/^(Hidden Early|Visible Early)$/)
+        .getAllByText(/^(hidden-early|visible-early)@example\.com$/)
         .map((el) => el.textContent),
-    ).toEqual(["Visible Early", "Hidden Early"]);
+    ).toEqual(["visible-early@example.com", "hidden-early@example.com"]);
   });
 
   it("can sort accounts by subscription date", async () => {
     const user = userEvent.setup();
 
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-late",
             email: "late@example.com",
-            displayName: "Late",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
             subscription: {
               status: "active",
               nextChargeAt: "2026-02-01T12:00:00.000Z",
             },
-          },
-          {
+          }),
+          account({
             accountId: "acc-early",
             email: "early@example.com",
-            displayName: "Early",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
             subscription: {
               status: "cancel_pending",
               currentPeriodEndAt: "2026-01-10T12:00:00.000Z",
             },
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
     await user.click(screen.getByRole("combobox", { name: "Sort accounts" }));
-    await user.click(await screen.findByRole("option", { name: "Subscription date" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Subscription date" }),
+    );
 
     expect(
-      screen.getAllByText(/^(Early|Late)$/).map((el) => el.textContent),
-    ).toEqual(["Early", "Late"]);
-    expect(screen.getByText(/Active until:/)).toBeInTheDocument();
+      screen
+        .getAllByText(/^(early|late)@example\.com$/)
+        .map((el) => el.textContent),
+    ).toEqual(["early@example.com", "late@example.com"]);
   });
 
   it("ignores elapsed reset timestamps when sorting", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-stale",
             email: "stale@example.com",
-            displayName: "Stale",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             usage: {
               primaryRemainingPercent: 42,
               secondaryRemainingPercent: 18,
@@ -226,15 +326,10 @@ describe("AccountList", () => {
             resetAtSecondary: "2026-01-01T11:45:00.000Z",
             windowMinutesPrimary: 300,
             windowMinutesSecondary: 10_080,
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-fresh",
             email: "fresh@example.com",
-            displayName: "Fresh",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             usage: {
               primaryRemainingPercent: 82,
               secondaryRemainingPercent: 73,
@@ -243,273 +338,174 @@ describe("AccountList", () => {
             resetAtSecondary: "2026-01-01T12:20:00.000Z",
             windowMinutesPrimary: 300,
             windowMinutesSecondary: 10_080,
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
     expect(
-      screen.getAllByText(/^(Fresh|Stale)$/).map((el) => el.textContent),
-    ).toEqual(["Fresh", "Stale"]);
+      screen
+        .getAllByText(/^(fresh|stale)@example\.com$/)
+        .map((el) => el.textContent),
+    ).toEqual(["fresh@example.com", "stale@example.com"]);
   });
 
   it("sorts legacy primary quota rows by their reset timestamp", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-late",
             email: "late@example.com",
-            displayName: "Late",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             usage: {
               primaryRemainingPercent: 42,
               secondaryRemainingPercent: null,
             },
             resetAtPrimary: "2026-01-01T13:00:00.000Z",
             resetAtSecondary: null,
-            windowMinutesPrimary: null,
-            windowMinutesSecondary: null,
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-early",
             email: "early@example.com",
-            displayName: "Early",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             usage: {
               primaryRemainingPercent: 82,
               secondaryRemainingPercent: null,
             },
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
             resetAtSecondary: null,
-            windowMinutesPrimary: null,
-            windowMinutesSecondary: null,
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
     expect(
-      screen.getAllByText(/^(Early|Late)$/).map((el) => el.textContent),
-    ).toEqual(["Early", "Late"]);
+      screen
+        .getAllByText(/^(early|late)@example\.com$/)
+        .map((el) => el.textContent),
+    ).toEqual(["early@example.com", "late@example.com"]);
   });
 
   it("sorts accounts by name", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-z",
             email: "z@example.com",
             displayName: "Zeta",
-            planType: "pro",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:30:00.000Z",
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-a",
             email: "a@example.com",
             displayName: "Alpha",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
-        sortMode="name_asc"
-        onSortModeChange={() => {}}
+        initialFilters={{ sort: "name_asc" }}
       />,
     );
 
-    expect(screen.getAllByText(/^(Alpha|Zeta)$/).map((el) => el.textContent)).toEqual([
-      "Alpha",
-      "Zeta",
-    ]);
+    expect(
+      screen.getAllByText(/^(a|z)@example\.com$/).map((el) => el.textContent),
+    ).toEqual(["a@example.com", "z@example.com"]);
   });
 
   it("supports reverse name sorting", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-b",
             email: "b@example.com",
             displayName: "Beta",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-a",
             email: "a@example.com",
             displayName: "Alpha",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:20:00.000Z",
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
-        sortMode="name_desc"
-        onSortModeChange={() => {}}
+        initialFilters={{ sort: "name_desc" }}
       />,
     );
 
-    expect(screen.getAllByText(/^(Alpha|Beta)$/).map((el) => el.textContent)).toEqual([
-      "Beta",
-      "Alpha",
-    ]);
+    expect(
+      screen.getAllByText(/^(a|b)@example\.com$/).map((el) => el.textContent),
+    ).toEqual(["b@example.com", "a@example.com"]);
   });
 
   it("can sort by latest reset first", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "acc-a",
             email: "a@example.com",
-            displayName: "Alpha",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-z",
             email: "z@example.com",
-            displayName: "Zeta",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:40:00.000Z",
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
-        sortMode="reset_latest"
-        onSortModeChange={() => {}}
+        initialFilters={{ sort: "reset_latest" }}
       />,
     );
 
-    expect(screen.getAllByText(/^(Zeta|Alpha)$/).map((el) => el.textContent)).toEqual([
-      "Zeta",
-      "Alpha",
-    ]);
+    expect(
+      screen.getAllByText(/^(a|z)@example\.com$/).map((el) => el.textContent),
+    ).toEqual(["z@example.com", "a@example.com"]);
   });
 
   it("keeps unknown resets last when sorting by latest reset", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
-            accountId: "acc-unknown",
-            email: "unknown@example.com",
-            displayName: "Unknown",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
-          {
+          account({ accountId: "acc-unknown", email: "unknown@example.com" }),
+          account({
             accountId: "acc-stale",
             email: "stale@example.com",
-            displayName: "Stale",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T11:30:00.000Z",
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-latest",
             email: "latest@example.com",
-            displayName: "Latest",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:40:00.000Z",
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "acc-earlier",
             email: "earlier@example.com",
-            displayName: "Earlier",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             resetAtPrimary: "2026-01-01T12:10:00.000Z",
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
-        sortMode="reset_latest"
-        onSortModeChange={() => {}}
+        initialFilters={{ sort: "reset_latest" }}
       />,
     );
 
-    expect(screen.getAllByText(/^(Latest|Earlier|Stale|Unknown)$/).map((el) => el.textContent)).toEqual([
-      "Latest",
-      "Earlier",
-      "Stale",
-      "Unknown",
+    expect(
+      screen
+        .getAllByText(/^(latest|earlier|stale|unknown)@example\.com$/)
+        .map((el) => el.textContent),
+    ).toEqual([
+      "latest@example.com",
+      "earlier@example.com",
+      "stale@example.com",
+      "unknown@example.com",
     ]);
   });
 
-  it("shows empty state when no items match filter", async () => {
+  it("explains active filters and clears them from the empty state", async () => {
     const user = userEvent.setup();
 
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
-            accountId: "acc-1",
-            email: "primary@example.com",
-            displayName: "Primary",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
+          account({ accountId: "acc-1", email: "primary@example.com" }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
@@ -518,42 +514,32 @@ describe("AccountList", () => {
       "not-found",
     );
     expect(screen.getByText("No matching accounts")).toBeInTheDocument();
+    expect(screen.getByText(/search "not-found"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("primary@example.com")).toBeInTheDocument();
   });
 
   it("filters re-auth required accounts by status", async () => {
     const user = userEvent.setup();
 
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
-            accountId: "acc-active",
-            email: "active@example.com",
-            displayName: "Active",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
-          {
+          account({ accountId: "acc-active", email: "active@example.com" }),
+          account({
             accountId: "acc-reauth",
             email: "reauth@example.com",
-            displayName: "Needs Reauth",
-            planType: "pro",
             status: "reauth_required",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
+          }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Filter accounts by status" }));
-    await user.click(screen.getByRole("option", { name: "Reauth required" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter accounts by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Re-auth required" }));
 
     expect(screen.queryByText("active@example.com")).not.toBeInTheDocument();
     expect(screen.getByText("reauth@example.com")).toBeInTheDocument();
@@ -561,69 +547,44 @@ describe("AccountList", () => {
 
   it("uses the backend duplicate indicator instead of recomputing by email", () => {
     render(
-      <AccountList
+      <Harness
         accounts={[
-          {
+          account({
             accountId: "d48f0bfc-8ea6-48a7-8d76-d0e5ef1816c5_6f12b5d5",
             email: "dup@example.com",
-            displayName: "Same email, different workspace",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             isEmailDuplicate: false,
-            additionalQuotas: [],
-          },
-          {
+          }),
+          account({
             accountId: "7f9de2ad-7621-4a6f-88bc-ec7f3d914701_91a95cee",
             email: "dup@example.com",
-            displayName: "Same email, duplicate slot",
-            planType: "plus",
-            status: "active",
-            limitWarmupEnabled: false,
             isEmailDuplicate: true,
-            additionalQuotas: [],
-          },
-          {
-            accountId: "acc-3",
-            email: "unique@example.com",
-            displayName: "Unique",
-            planType: "pro",
-            status: "active",
-            limitWarmupEnabled: false,
-            additionalQuotas: [],
-          },
+          }),
+          account({ accountId: "acc-3", email: "unique@example.com" }),
         ]}
-        selectedAccountId={null}
-        onSelect={() => {}}
-        onOpenImport={() => {}}
-        onOpenOauth={() => {}}
       />,
     );
 
     expect(
-      screen.queryByText(
-        (_content, el) =>
-          el?.tagName === "P" &&
-          !!el.textContent?.match(
-            /dup@example\.com .* ID d48f0bfc\.\.\.12b5d5/,
-          ),
-      ),
+      screen.queryByText(/ID d48f0bfc\.\.\.12b5d5/),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        (_content, el) =>
-          el?.tagName === "P" &&
-          !!el.textContent?.match(
-            /dup@example\.com .* ID 7f9de2ad\.\.\.a95cee/,
-          ),
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(
-        (_content, el) =>
-          el?.tagName === "P" &&
-          !!el.textContent?.match(/unique@example\.com \| ID/),
-      ),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText(/ID 7f9de2ad\.\.\.a95cee/)).toBeInTheDocument();
+  });
+
+  it("shows the alias prominently for duplicate-email accounts", () => {
+    render(
+      <Harness
+        accounts={[
+          account({
+            accountId: "acc-dup",
+            email: "dup@example.com",
+            alias: "Personal Plus",
+            isEmailDuplicate: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Personal Plus")).toBeInTheDocument();
+    expect(screen.getByText(/dup@example\.com/)).toBeInTheDocument();
   });
 });

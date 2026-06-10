@@ -47,8 +47,12 @@ function codexAuthPreview(exportData: AccountAuthExportResponse): string {
       OPENAI_API_KEY: exportData.codexAuthJson.OPENAI_API_KEY,
       tokens: {
         id_token: truncateSecret(exportData.codexAuthJson.tokens.id_token),
-        access_token: truncateSecret(exportData.codexAuthJson.tokens.access_token),
-        refresh_token: truncateSecret(exportData.codexAuthJson.tokens.refresh_token),
+        access_token: truncateSecret(
+          exportData.codexAuthJson.tokens.access_token,
+        ),
+        refresh_token: truncateSecret(
+          exportData.codexAuthJson.tokens.refresh_token,
+        ),
         account_id: exportData.codexAuthJson.tokens.account_id,
       },
       last_refresh: exportData.codexAuthJson.last_refresh,
@@ -72,8 +76,14 @@ function opencodeAuthPreview(exportData: AccountAuthExportResponse): string {
   )}\n`;
 }
 
-function downloadAuthJson(exportData: AccountAuthExportResponse, format: AuthFormat): void {
-  const content = format === "codex" ? codexAuthString(exportData) : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
+function downloadAuthJson(
+  exportData: AccountAuthExportResponse,
+  format: AuthFormat,
+): void {
+  const content =
+    format === "codex"
+      ? codexAuthString(exportData)
+      : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
   const blob = new Blob([content], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -98,10 +108,15 @@ function AuthExportDialogBody({
   const blurred = usePrivacyStore((s) => s.blurred);
   const [format, setFormat] = useState<AuthFormat>("codex");
 
-  const authPreview = format === "codex" ? codexAuthPreview(exportData) : opencodeAuthPreview(exportData);
+  const authPreview =
+    format === "codex"
+      ? codexAuthPreview(exportData)
+      : opencodeAuthPreview(exportData);
 
   const authJson =
-    format === "codex" ? codexAuthString(exportData) : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
+    format === "codex"
+      ? codexAuthString(exportData)
+      : `${JSON.stringify(exportData.opencodeAuthJson, null, 2)}\n`;
 
   const tokenPreviewRows =
     format === "codex"
@@ -139,23 +154,33 @@ function AuthExportDialogBody({
     <>
       <div className="space-y-4">
         <AlertMessage variant="warning">
-          This payload contains raw access and refresh tokens. Store it only on machines you trust.
+          This payload contains raw access and refresh tokens. Store it only on
+          machines you trust.
         </AlertMessage>
 
         <div className="rounded-lg border bg-muted/20 p-3 text-xs">
           <div className="font-medium">Exported account</div>
           <div className="mt-1 text-muted-foreground">
-            <span className={blurred ? "privacy-blur" : undefined}>{exportData.account.email}</span>
+            <span className={blurred ? "privacy-blur" : undefined}>
+              {exportData.account.email}
+            </span>
           </div>
           <div className="mt-1 font-mono text-muted-foreground">
-            {exportData.account.chatgptAccountId ?? exportData.account.accountId}
+            {exportData.account.chatgptAccountId ??
+              exportData.account.accountId}
           </div>
         </div>
 
         <div className="space-y-2">
           <Label id="auth-export-format-label">Format</Label>
-          <Select value={format} onValueChange={(v) => setFormat(v as AuthFormat)}>
-            <SelectTrigger className="w-[180px]" aria-labelledby="auth-export-format-label">
+          <Select
+            value={format}
+            onValueChange={(v) => setFormat(v as AuthFormat)}
+          >
+            <SelectTrigger
+              className="w-[180px]"
+              aria-labelledby="auth-export-format-label"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -169,7 +194,8 @@ function AuthExportDialogBody({
           <div>
             <div className="text-sm font-medium">Token preview</div>
             <div className="text-xs text-muted-foreground">
-              Truncated on screen for readability. Copy buttons still use the full token.
+              Truncated on screen for readability. Copy buttons still use the
+              full token.
             </div>
           </div>
 
@@ -182,10 +208,12 @@ function AuthExportDialogBody({
                 }`}
               >
                 <div className="min-w-0">
-                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <div className="text-xs font-medium text-muted-foreground">
                     {row.label}
                   </div>
-                  <div className="truncate font-mono text-xs">{truncateSecret(row.value)}</div>
+                  <div className="truncate font-mono text-xs">
+                    {truncateSecret(row.value)}
+                  </div>
                 </div>
                 <CopyButton value={row.value} label={row.copyLabel} iconOnly />
               </div>
@@ -205,10 +233,18 @@ function AuthExportDialogBody({
       </div>
 
       <DialogFooter>
-        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onOpenChange(false)}
+        >
           Close
         </Button>
-        <Button type="button" className="gap-1.5" onClick={() => downloadAuthJson(exportData, format)}>
+        <Button
+          type="button"
+          className="gap-1.5"
+          onClick={() => downloadAuthJson(exportData, format)}
+        >
           <Download className="h-4 w-4" />
           Download
         </Button>
