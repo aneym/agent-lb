@@ -1875,6 +1875,19 @@ class _HTTPBridgeMixin(
         deadline = _websocket_connect_deadline(request_state, _service_get_settings().proxy_request_budget_seconds)
         settings = await _service_get_settings_cache().get()
         excluded_account_ids: set[str] = set()
+        cooldown = self._http_bridge_account_cooldowns.get(key)
+        if cooldown is not None:
+            if _service_time().monotonic() >= cooldown.expires_at:
+                self._http_bridge_account_cooldowns.pop(key, None)
+            elif cooldown.account_id != preferred_account_id:
+                # This bridge key just hit a first-event timeout on the
+                # cooled-down account: exclude it so selection (including the
+                # sticky path, which rebinds the mapping once the pinned
+                # account leaves the candidate pool) picks a different
+                # account. Requests that prefer the failed account
+                # (previous-response continuity anchors) are exempt —
+                # continuity wins over cooldown.
+                excluded_account_ids.add(cooldown.account_id)
         retry_same_account_once = preferred_account_id is not None
         preferred_candidate_id = preferred_account_id
         selected_account_lease: AccountLease | None = None

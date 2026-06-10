@@ -99,6 +99,7 @@ from app.modules.proxy._service.http_bridge.service_stubs import (
     _service_get_settings,
     _service_get_settings_cache,
     _service_time,
+    _service_write_response_create_dump,
     _stream_keepalive_max_count,
     _websocket_downstream_response_id,
     _websocket_event_error_code,
@@ -121,10 +122,15 @@ from app.modules.proxy._service.observability import (
 from app.modules.proxy._service.observability import (
     _truncate_identifier as _truncate_identifier,
 )
+from app.modules.proxy._service.response_create import (
+    strip_encrypted_reasoning_from_request_text,
+)
 from app.modules.proxy._service.support import (
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
+    _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS,
     _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
     _event_type_from_payload,
+    _FilePinEntry,
     _HTTPBridgeOwnerForward,
     _HTTPBridgeSession,
     _HTTPBridgeSessionKey,
@@ -1247,6 +1253,56 @@ class _HTTPBridgeStreamingMixin:
         )
         await self._close_http_bridge_session(session)
 
+    async def _quarantine_http_bridge_first_event_account(
+        self: Any,
+        session: "_HTTPBridgeSession",
+    ) -> None:
+        """Steer the next attempt for this bridge key away from the dead account.
+
+        A first-event timeout means the account's upstream Codex path swallowed
+        a ``response.create`` without ever answering. Retiring the bridge alone
+        is not enough: sticky selection re-pins the same account seconds later
+        and the fresh bridge hangs identically. So additionally:
+
+        1. Record a transient account error (mirrors ``stream_idle_timeout``)
+           so the account-health machinery can cool the account after repeats.
+        2. Pin a short-lived cooldown for this bridge key so the next bridge
+           creation excludes the failed account from selection — which also
+           makes ``_select_with_stickiness`` rebind the sticky mapping to the
+           newly chosen account.
+        3. Delete the sticky mapping directly as a belt-and-braces measure so
+           a retry after cooldown expiry does not re-pin via stale stickiness.
+        """
+        try:
+            await self._handle_stream_error(
+                session.account,
+                {"message": "Upstream produced no events for this turn within the first-event window"},
+                "bridge_first_event_timeout",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record first-event timeout account health penalty account_id=%s",
+                session.account.id,
+                exc_info=True,
+            )
+        self._http_bridge_account_cooldowns[session.key] = _FilePinEntry(
+            account_id=session.account.id,
+            expires_at=_service_time().monotonic() + _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS,
+        )
+        affinity_key = session.affinity.key
+        affinity_kind = session.affinity.kind
+        if affinity_key and affinity_kind is not None:
+            try:
+                async with self._repo_factory() as repos:
+                    await repos.sticky_sessions.delete(affinity_key, kind=affinity_kind)
+            except Exception:
+                logger.warning(
+                    "Failed to clear sticky binding after first-event timeout account_id=%s sticky_kind=%s",
+                    session.account.id,
+                    affinity_kind,
+                    exc_info=True,
+                )
+
     async def _stream_http_bridge_session_events(
         self: Any,
         session: "_HTTPBridgeSession",
@@ -1272,6 +1328,19 @@ class _HTTPBridgeStreamingMixin:
             yielded_any = False
             keepalive_sent = False
             keepalive_count = 0
+            first_event_timeout_seconds = max(
+                0.001,
+                float(
+                    getattr(
+                        _service_get_settings(),
+                        "http_bridge_first_event_timeout_seconds",
+                        60.0,
+                    )
+                ),
+            )
+            first_event_deadline = request_state.started_at + first_event_timeout_seconds
+            first_event_timed_out = False
+            first_event_degraded_retry_attempted = False
             while True:
                 keepalive_interval = getattr(_service_get_settings(), "sse_keepalive_interval_seconds", 10.0)
                 if keepalive_interval > 0:
@@ -1294,6 +1363,116 @@ class _HTTPBridgeStreamingMixin:
                     except asyncio.TimeoutError:
                         keepalive_count += 1
                         downstream_response_id = _websocket_downstream_response_id(request_state)
+                        has_first_event = (
+                            yielded_any
+                            or request_state.response_id is not None
+                            or request_state.response_event_count > 0
+                        )
+                        if not has_first_event and _service_time().monotonic() >= first_event_deadline:
+                            if (
+                                not first_event_degraded_retry_attempted
+                                and request_state.previous_response_id is None
+                                and request_state.request_text
+                                and getattr(
+                                    _service_get_settings(),
+                                    "http_bridge_strip_foreign_encrypted_reasoning",
+                                    True,
+                                )
+                            ):
+                                # Degraded retry: account-bound reasoning
+                                # ``encrypted_content`` blobs are the known
+                                # cause of upstream accepting response.create
+                                # and never answering. If the payload still
+                                # carries any (e.g. it bypassed prepare-time
+                                # stripping), retry once with them removed
+                                # before surfacing the failure.
+                                first_event_degraded_retry_attempted = True
+                                (
+                                    degraded_text,
+                                    stripped_reasoning_items,
+                                    dropped_reasoning_items,
+                                ) = strip_encrypted_reasoning_from_request_text(request_state.request_text)
+                                if degraded_text is not None:
+                                    retried = await self._retry_http_bridge_request_on_fresh_upstream(
+                                        session,
+                                        request_state=request_state,
+                                        text_data=degraded_text,
+                                    )
+                                    if retried:
+                                        request_state.request_text = degraded_text
+                                        _log_http_bridge_event(
+                                            "first_event_degraded_retry",
+                                            session.key,
+                                            account_id=session.account.id,
+                                            model=session.request_model,
+                                            detail=(
+                                                f"dropped_blob_items={stripped_reasoning_items}, "
+                                                f"dropped_plain_items={dropped_reasoning_items}"
+                                            ),
+                                            cache_key_family=session.key.affinity_kind,
+                                            model_class=(
+                                                _extract_model_class(session.request_model)
+                                                if session.request_model
+                                                else None
+                                            ),
+                                        )
+                                        first_event_deadline = (
+                                            _service_time().monotonic() + first_event_timeout_seconds
+                                        )
+                                        keepalive_count = 0
+                                        continue
+                            first_event_timed_out = True
+                            logger.warning(
+                                "HTTP bridge first-event timeout request_id=%s account_id=%s "
+                                "bridge_kind=%s timeout_seconds=%s",
+                                request_state.request_id,
+                                session.account.id,
+                                session.key.affinity_kind,
+                                first_event_timeout_seconds,
+                            )
+                            _log_http_bridge_event(
+                                "first_event_timeout",
+                                session.key,
+                                account_id=session.account.id,
+                                model=session.request_model,
+                                detail=f"timeout_seconds={first_event_timeout_seconds}",
+                                cache_key_family=session.key.affinity_kind,
+                                model_class=(
+                                    _extract_model_class(session.request_model) if session.request_model else None
+                                ),
+                            )
+                            # Capture the exact upstream payload for diagnosis:
+                            # a request that upstream accepts but never answers
+                            # is content-specific, and the body is not
+                            # persisted anywhere else. Dumps land in
+                            # ~/.agent-lb/debug/response-create-dumps/.
+                            try:
+                                _service_write_response_create_dump(
+                                    request_state,
+                                    account_id_value=session.account.id,
+                                    error_code="bridge_first_event_timeout",
+                                    error_message=(
+                                        "Upstream produced no events for this turn within the first-event window"
+                                    ),
+                                    log_prefix="first-event-timeout",
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "Failed to dump first-event-timeout response.create payload request_id=%s",
+                                    request_state.request_id,
+                                    exc_info=True,
+                                )
+                            yield format_sse_event(
+                                cast(
+                                    Mapping[str, JsonValue],
+                                    response_failed_event(
+                                        "bridge_first_event_timeout",
+                                        "Upstream produced no events for this turn within the first-event window",
+                                        response_id=downstream_response_id,
+                                    ),
+                                )
+                            )
+                            break
                         if keepalive_count > max_keepalive_count:
                             logger.info(
                                 "HTTP bridge stream idle timeout request_id=%s keepalive_count=%s "
@@ -1389,3 +1568,28 @@ class _HTTPBridgeStreamingMixin:
             with anyio.CancelScope(shield=True):
                 await self._detach_http_bridge_request(session, request_state=request_state)
                 session.last_used_at = _service_time().monotonic()
+                if first_event_timed_out:
+                    # Self-heal: a bridge whose first turn never produced an
+                    # upstream event is poisoned (the upstream response.create
+                    # appears to have been silently dropped). Penalize the
+                    # account, break the sticky binding, and cool the account
+                    # down for this bridge key so the next attempt selects a
+                    # different account instead of re-pinning the dead one.
+                    await self._quarantine_http_bridge_first_event_account(session)
+                    # Then retire the bridge and its durable session lease so
+                    # the *next* request with the same bridge key starts a
+                    # fresh upstream session instead of re-hitting the dead
+                    # one.
+                    try:
+                        await self._retire_stale_pending_http_bridge_session(
+                            session,
+                            detail="first_event_timeout",
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to retire poisoned HTTP bridge session after first-event timeout "
+                            "request_id=%s account_id=%s",
+                            request_state.request_id,
+                            session.account.id,
+                            exc_info=True,
+                        )

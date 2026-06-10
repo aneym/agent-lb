@@ -901,6 +901,14 @@ class ProxyService(
         self._http_bridge_previous_response_index: dict[tuple[str, str | None], _HTTPBridgeSessionKey] = {}
         self._websocket_previous_response_account_index: dict[tuple[str, str | None, str | None], str] = {}
         self._websocket_continuity_index: dict[tuple[str, str | None], _WebSocketContinuityState] = {}
+        # In-memory cooldown from bridge session key -> account that just
+        # failed a first-event timeout on that key. Consulted when the next
+        # request re-creates the bridge so account selection excludes the
+        # poisoned account instead of letting stickiness re-pin it (the
+        # exclusion also makes the sticky machinery rebind the mapping to a
+        # healthy account). Entries expire after
+        # ``_HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS``.
+        self._http_bridge_account_cooldowns: dict[_HTTPBridgeSessionKey, _FilePinEntry] = {}
         self._background_cleanup_tasks: set[asyncio.Task[None]] = set()
         # In-memory pin from upstream-issued file_id -> agent-lb account_id.
         # Used so ``finalize_file`` for a given ``file_id`` is routed to

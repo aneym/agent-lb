@@ -211,6 +211,21 @@ class Settings(BaseSettings):
     openai_prompt_cache_key_derivation_enabled: bool = True
     http_responses_session_bridge_enabled: bool = True
     http_responses_session_bridge_request_budget_seconds: float = Field(default=7200.0, gt=0)
+    # Maximum time a bridge-backed stream may wait for its *first* upstream event
+    # (response.created / first delta / terminal) before the client is told the
+    # turn failed and the poisoned bridge/durable session is torn down. Guards
+    # against a first-turn response.create that upstream never answers leaving the
+    # client SSE held open until stream_idle_timeout_seconds (~10 min) retires it.
+    http_bridge_first_event_timeout_seconds: float = Field(default=60.0, gt=0)
+    # Reasoning ``encrypted_content`` blobs are bound to the upstream account
+    # that minted them. agent-lb rotates accounts, so transcripts replayed by
+    # long-lived ``store:false`` sessions can carry blobs the selected account
+    # cannot decrypt — upstream then accepts response.create and silently never
+    # answers (close 1000, zero events). When enabled, bridge-prepared
+    # first-turn requests have those blobs stripped (content-less reasoning
+    # items are dropped entirely), and a first-event timeout attempts one
+    # degraded retry with the blobs stripped before surfacing the failure.
+    http_bridge_strip_foreign_encrypted_reasoning: bool = True
     http_responses_session_bridge_idle_ttl_seconds: float = Field(default=120.0, gt=0)
     http_responses_session_bridge_codex_idle_ttl_seconds: float = Field(default=900.0, gt=0)
     http_responses_session_bridge_codex_prewarm_enabled: bool = False

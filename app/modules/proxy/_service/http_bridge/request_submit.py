@@ -102,6 +102,9 @@ from app.modules.proxy._service.observability import (
 from app.modules.proxy._service.observability import (
     _truncate_identifier as _truncate_identifier,
 )
+from app.modules.proxy._service.response_create import (
+    strip_encrypted_reasoning_input_items,
+)
 from app.modules.proxy._service.support import (
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
     _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
@@ -218,6 +221,25 @@ class _HTTPBridgeRequestSubmitMixin:
         request_id: str | None = None,
         request_log_id: str | None = None,
     ) -> tuple[_WebSocketRequestState, str]:
+        stripped_reasoning_count = 0
+        dropped_reasoning_count = 0
+        if (
+            payload.previous_response_id is None
+            and isinstance(payload.input, list)
+            and getattr(_service_get_settings(), "http_bridge_strip_foreign_encrypted_reasoning", True)
+        ):
+            # Replayed reasoning ``encrypted_content`` blobs are bound to the
+            # upstream account that minted them. On a first-turn (unanchored)
+            # request agent-lb cannot guarantee the selected account minted
+            # them, and a foreign blob makes upstream accept the request and
+            # silently never answer. Strip the blobs; drop reasoning items
+            # that are content-less without them (bisection-verified safe).
+            unsanitized_input_items = cast(list[JsonValue], payload.input)
+            sanitized_input_items, stripped_reasoning_count, dropped_reasoning_count = (
+                strip_encrypted_reasoning_input_items(unsanitized_input_items)
+            )
+            if stripped_reasoning_count or dropped_reasoning_count:
+                payload = payload.model_copy(update={"input": sanitized_input_items})
         deduped_replayed_input_count: int | None = None
         deduped_replayed_input_fingerprint: str | None = None
         deduped_replayed_tool_call_count = 0
@@ -279,6 +301,17 @@ class _HTTPBridgeRequestSubmitMixin:
                 input_item_count,
                 deduped_replayed_tool_call_count,
                 payload.previous_response_id,
+            )
+        if stripped_reasoning_count or dropped_reasoning_count:
+            logger.warning(
+                "%s_encrypted_reasoning_stripped request_id=%s request_log_id=%s "
+                "dropped_blob_items=%s dropped_plain_items=%s remaining_items=%s",
+                transport,
+                request_state.request_id,
+                request_state.request_log_id,
+                stripped_reasoning_count,
+                dropped_reasoning_count,
+                input_item_count,
             )
         text_data = json.dumps(upstream_payload, ensure_ascii=True, separators=(",", ":"))
         payload_size = len(text_data.encode("utf-8"))

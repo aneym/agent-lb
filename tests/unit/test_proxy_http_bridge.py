@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections import deque
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
@@ -20,9 +20,16 @@ from fastapi import WebSocket
 from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket, UpstreamWebSocketMessage
 from app.core.config.settings import Settings
+from app.core.openai.requests import ResponsesRequest
 from app.db.models import AccountStatus, HttpBridgeSessionState
 from app.modules.proxy import service as proxy_service
+from app.modules.proxy._service.response_create import (
+    strip_encrypted_reasoning_from_request_text,
+    strip_encrypted_reasoning_input_items,
+)
+from app.modules.proxy._service.support import _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS
 from app.modules.proxy.http_bridge_forwarding import OwnerForwardRelayFailure
+from app.modules.proxy.load_balancer import AccountSelection
 
 pytestmark = pytest.mark.unit
 
@@ -371,6 +378,387 @@ async def test_http_bridge_stream_masks_single_top_level_previous_response_error
     error = response["error"]
     assert isinstance(error, dict)
     assert error["code"] == "stream_incomplete"
+
+
+class _FakeMonotonicClock:
+    """Drop-in for the ``time`` module that lets tests jump monotonic time.
+
+    The bridge stream generator reads the current time via ``_service_time()``
+    which resolves to the ``time`` attribute on the proxy service module, so
+    patching ``proxy_service.time`` with this object makes the first-event
+    deadline check deterministic without sleeping.
+    """
+
+    def __init__(self, value: float = 0.0) -> None:
+        self._value = value
+
+    def monotonic(self) -> float:
+        return self._value
+
+    def advance(self, seconds: float) -> None:
+        self._value += seconds
+
+
+def _make_first_event_timeout_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        sse_keepalive_interval_seconds=0.001,
+        stream_idle_timeout_seconds=600.0,
+        http_bridge_first_event_timeout_seconds=60.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bridge whose first turn never produces an upstream event must fail fast.
+
+    Reproduces the production silent-hold bug: an OpenClaw ``/v1/responses``
+    request (``propagate_http_errors=True``, ``response_id is None``) used to
+    loop silently until ``stream_idle_timeout_seconds`` (~10 min). With the
+    first-event timeout it surfaces a ``bridge_first_event_timeout`` failure and
+    the poisoned session is retired so the next request gets a fresh bridge.
+    """
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+    handle_stream_error = AsyncMock()
+    monkeypatch.setattr(service, "_handle_stream_error", handle_stream_error)
+    sticky_repo = SimpleNamespace(delete=AsyncMock(return_value=True))
+
+    @asynccontextmanager
+    async def fake_repo_factory() -> Any:
+        yield SimpleNamespace(sticky_sessions=sticky_repo)
+
+    monkeypatch.setattr(service, "_repo_factory", fake_repo_factory)
+    payload_dump = Mock(return_value=True)
+    monkeypatch.setattr(proxy_service, "_write_response_create_dump", payload_dump)
+    clock = _FakeMonotonicClock(value=1000.0)
+    monkeypatch.setattr(proxy_service, "time", clock)
+    monkeypatch.setattr(proxy_service, "get_settings", _make_first_event_timeout_settings)
+    monkeypatch.setattr(proxy_service, "_HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS", 0.001)
+
+    session_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-first-event-timeout", None)
+    session = proxy_service._HTTPBridgeSession(
+        key=session_key,
+        headers={"session_id": "sid-first-event-timeout"},
+        affinity=proxy_service._AffinityPolicy(
+            key="sid-first-event-timeout",
+            kind=proxy_service.StickySessionKind.CODEX_SESSION,
+        ),
+        request_model="gpt-5.5",
+        account=cast(Any, SimpleNamespace(id="acc-first-event", status=AccountStatus.ACTIVE)),
+        upstream=cast(UpstreamResponsesWebSocket, SimpleNamespace(close=AsyncMock())),
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque(),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=1,
+        last_used_at=1.0,
+        idle_ttl_seconds=120.0,
+    )
+    # Register the session so we can prove self-heal removes it.
+    service._http_bridge_sessions[session_key] = session
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-first-event-timeout",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        # started_at well before the fake clock value so the deadline is already
+        # in the past once the first keepalive timeout fires.
+        started_at=0.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        request_text='{"type":"response.create","model":"gpt-5.5","input":"heartbeat"}',
+    )
+
+    async def fake_submit_http_bridge_request(
+        target_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+        queue_limit: int,
+    ) -> None:
+        del text_data, queue_limit
+        target_session.pending_requests.append(request_state)
+
+    monkeypatch.setattr(service, "_submit_http_bridge_request", fake_submit_http_bridge_request)
+
+    events = [
+        event
+        async for event in service._stream_http_bridge_session_events(
+            session,
+            request_state=request_state,
+            text_data="{}",
+            queue_limit=8,
+            propagate_http_errors=True,
+            downstream_turn_state=None,
+        )
+    ]
+
+    assert len(events) == 1
+    payload = proxy_service.parse_sse_data_json(events[0])
+    assert isinstance(payload, dict)
+    assert payload["type"] == "response.failed"
+    response = payload["response"]
+    assert isinstance(response, dict)
+    error = response["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "bridge_first_event_timeout"
+
+    # Self-heal: the poisoned bridge must be removed from the live session map so
+    # the next request with the same key starts a fresh upstream session.
+    assert service._http_bridge_sessions.get(session_key) is None
+    assert session.closed is True
+    cast(AsyncMock, session.upstream.close).assert_awaited()
+
+    # Account health: the failure must be recorded as a transient account
+    # error (mirrors the stream_idle_timeout penalty path).
+    handle_stream_error.assert_awaited_once()
+    penalty_args = handle_stream_error.await_args
+    assert penalty_args is not None
+    assert penalty_args.args[0] is session.account
+    assert penalty_args.args[2] == "bridge_first_event_timeout"
+
+    # Stickiness: the failed account is cooled down for this bridge key so the
+    # next bridge creation excludes it from selection...
+    cooldown = service._http_bridge_account_cooldowns[session_key]
+    assert cooldown.account_id == "acc-first-event"
+    assert cooldown.expires_at == pytest.approx(1000.0 + _HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS)
+    # ...and the sticky mapping is cleared so a later retry cannot re-pin the
+    # dead account through a stale binding.
+    sticky_repo.delete.assert_awaited_once_with(
+        "sid-first-event-timeout",
+        kind=proxy_service.StickySessionKind.CODEX_SESSION,
+    )
+
+    # Diagnostics: the exact upstream payload is dumped for offline analysis,
+    # since a request upstream accepts but never answers is content-specific
+    # and the body is not persisted anywhere else.
+    payload_dump.assert_called_once()
+    dump_call = payload_dump.call_args
+    assert dump_call.args[0] is request_state
+    assert dump_call.kwargs["error_code"] == "bridge_first_event_timeout"
+    assert dump_call.kwargs["log_prefix"] == "first-event-timeout"
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_first_event_timeout_not_triggered_after_first_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once any upstream event arrives, the first-event timeout must not fire.
+
+    A healthy stream that has begun emitting must be governed only by the
+    regular keepalive / idle machinery, never retired as a poisoned session.
+    """
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+    retire = AsyncMock()
+    monkeypatch.setattr(service, "_retire_stale_pending_http_bridge_session", retire)
+    clock = _FakeMonotonicClock(value=1000.0)
+    monkeypatch.setattr(proxy_service, "time", clock)
+    monkeypatch.setattr(proxy_service, "get_settings", _make_first_event_timeout_settings)
+    monkeypatch.setattr(proxy_service, "_HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS", 0.001)
+
+    session = _make_bridge_session(key_value="sid-first-event-healthy", queued_request_count=1)
+
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-first-event-healthy",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        transport="http",
+    )
+
+    async def fake_submit_http_bridge_request(
+        target_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+        queue_limit: int,
+    ) -> None:
+        del text_data, queue_limit
+        target_session.pending_requests.append(request_state)
+
+    monkeypatch.setattr(service, "_submit_http_bridge_request", fake_submit_http_bridge_request)
+
+    stream = service._stream_http_bridge_session_events(
+        session,
+        request_state=request_state,
+        text_data="{}",
+        queue_limit=8,
+        propagate_http_errors=True,
+        downstream_turn_state=None,
+    )
+
+    event_queue = request_state.event_queue
+    assert event_queue is not None
+    # Deliver a real first event, then the terminal completion.
+    request_state.response_id = "resp_first_event_healthy"
+    request_state.response_event_count = 1
+    await event_queue.put(
+        proxy_service.format_sse_event(
+            cast(
+                Any,
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_first_event_healthy", "status": "in_progress"},
+                },
+            )
+        )
+    )
+    first = await asyncio.wait_for(anext(stream), timeout=1.0)
+    assert "response.created" in first
+
+    await event_queue.put(None)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(stream), timeout=1.0)
+
+    retire.assert_not_awaited()
+    assert session.key not in service._http_bridge_account_cooldowns
+
+
+async def _drive_create_bridge_session_with_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cooldown_expires_at: float,
+    preferred_account_id: str | None = None,
+) -> tuple[proxy_service.ProxyService, proxy_service._HTTPBridgeSessionKey, dict[str, Any], Any]:
+    """Run ``_create_http_bridge_session`` with a cooldown entry for the key.
+
+    Returns the service, bridge key, the kwargs captured from account
+    selection, and the created session. The fake clock is fixed at 1000.0.
+    """
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "bridge-cooldown", None)
+    monkeypatch.setattr(proxy_service, "get_settings", _make_app_settings)
+    cached_settings = SimpleNamespace(
+        prefer_earlier_reset_accounts=False,
+        prefer_earlier_reset_window="secondary",
+        routing_strategy="capacity_weighted",
+    )
+
+    class _FakeSettingsCache:
+        async def get(self) -> Any:
+            return cached_settings
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _FakeSettingsCache())
+    clock = _FakeMonotonicClock(value=1000.0)
+    monkeypatch.setattr(proxy_service, "time", clock)
+
+    service._http_bridge_account_cooldowns[key] = proxy_service._FilePinEntry(
+        account_id="acc-dead",
+        expires_at=cooldown_expires_at,
+    )
+
+    captured_select_kwargs: dict[str, Any] = {}
+    healthy_account = SimpleNamespace(
+        id="acc-healthy",
+        status=AccountStatus.ACTIVE,
+        chatgpt_account_id=None,
+    )
+
+    async def fake_select(deadline: float, **kwargs: Any) -> AccountSelection:
+        del deadline
+        captured_select_kwargs.update(kwargs)
+        return AccountSelection(account=cast(Any, healthy_account), error_message=None)
+
+    monkeypatch.setattr(service, "_select_account_with_budget_for_stream", fake_select)
+
+    async def fake_ensure_fresh(account: Any, **kwargs: Any) -> Any:
+        del kwargs
+        return account
+
+    monkeypatch.setattr(service, "_ensure_fresh_with_budget", fake_ensure_fresh)
+    upstream = SimpleNamespace(close=AsyncMock())
+
+    async def fake_open_upstream(account: Any, headers: Any, **kwargs: Any) -> Any:
+        del account, headers, kwargs
+        return upstream
+
+    monkeypatch.setattr(service, "_open_upstream_websocket_with_budget", fake_open_upstream)
+
+    async def fake_reader(session: proxy_service._HTTPBridgeSession) -> None:
+        del session
+
+    monkeypatch.setattr(service, "_relay_http_bridge_upstream_messages", fake_reader)
+
+    session = await service._create_http_bridge_session(
+        key,
+        headers={},
+        affinity=proxy_service._AffinityPolicy(
+            key="bridge-cooldown",
+            kind=proxy_service.StickySessionKind.PROMPT_CACHE,
+        ),
+        api_key=None,
+        request_model="gpt-5.5",
+        idle_ttl_seconds=120.0,
+        preferred_account_id=preferred_account_id,
+    )
+    if session.upstream_reader is not None:
+        await session.upstream_reader
+    return service, key, captured_select_kwargs, session
+
+
+@pytest.mark.asyncio
+async def test_create_http_bridge_session_excludes_cooled_down_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While a first-event-timeout cooldown is live, the failed account must be
+    excluded from selection so the follow-up request lands on a different
+    account instead of re-pinning the dead one via stickiness."""
+
+    service, key, select_kwargs, session = await _drive_create_bridge_session_with_cooldown(
+        monkeypatch,
+        cooldown_expires_at=1300.0,
+    )
+
+    assert select_kwargs["exclude_account_ids"] == {"acc-dead"}
+    assert session.account.id == "acc-healthy"
+    # The cooldown stays live until expiry so rapid retries within the window
+    # keep avoiding the dead account.
+    assert key in service._http_bridge_account_cooldowns
+
+
+@pytest.mark.asyncio
+async def test_create_http_bridge_session_prunes_expired_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An expired cooldown entry must be pruned and not excluded — after the
+    window the account is governed by normal health/routing again."""
+
+    service, key, select_kwargs, _session = await _drive_create_bridge_session_with_cooldown(
+        monkeypatch,
+        cooldown_expires_at=900.0,
+    )
+
+    assert select_kwargs["exclude_account_ids"] == set()
+    assert key not in service._http_bridge_account_cooldowns
+
+
+@pytest.mark.asyncio
+async def test_create_http_bridge_session_cooldown_exempts_preferred_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Continuity-anchored requests that prefer the cooled-down account are
+    exempt from the exclusion — previous-response continuity wins."""
+
+    _service, _key, select_kwargs, _session = await _drive_create_bridge_session_with_cooldown(
+        monkeypatch,
+        cooldown_expires_at=1300.0,
+        preferred_account_id="acc-dead",
+    )
+
+    assert select_kwargs["exclude_account_ids"] == set()
 
 
 @pytest.mark.asyncio
@@ -11177,3 +11565,367 @@ async def test_cancel_api_key_reservation_heartbeat_task_does_not_wait_for_task_
     await asyncio.sleep(0)
 
     assert task.cancelled()
+
+
+# ---------------------------------------------------------------------------
+# Foreign encrypted-reasoning stripping (account-bound encrypted_content blobs
+# replayed through rotated accounts make upstream accept response.create and
+# silently never answer — bisection-verified 2026-06-10).
+# ---------------------------------------------------------------------------
+
+_ENCRYPTED_REASONING_WITH_SUMMARY: dict[str, Any] = {
+    "type": "reasoning",
+    "id": "rs_with_summary",
+    "summary": [{"type": "summary_text", "text": "thought about the heartbeat"}],
+    "encrypted_content": "gAAAAA-account-bound-blob-1",
+}
+_ENCRYPTED_REASONING_CONTENTLESS: dict[str, Any] = {
+    "type": "reasoning",
+    "id": "rs_blob_only",
+    "summary": [],
+    "encrypted_content": "gAAAAA-account-bound-blob-2",
+}
+_PLAIN_REASONING: dict[str, Any] = {
+    "type": "reasoning",
+    "id": "rs_plain",
+    "summary": [{"type": "summary_text", "text": "kept as-is"}],
+}
+_USER_MESSAGE: dict[str, Any] = {
+    "type": "message",
+    "role": "user",
+    "content": [{"type": "input_text", "text": "hello"}],
+}
+
+
+def test_strip_encrypted_reasoning_drops_all_reasoning_items_when_any_blob_present() -> None:
+    items: list[Any] = [
+        dict(_USER_MESSAGE),
+        dict(_ENCRYPTED_REASONING_WITH_SUMMARY),
+        dict(_ENCRYPTED_REASONING_CONTENTLESS),
+        dict(_PLAIN_REASONING),
+    ]
+
+    sanitized, dropped_blob_count, dropped_plain_count = strip_encrypted_reasoning_input_items(items)
+
+    # Bisection-verified (2026-06-10): replaying a reasoning item by id without
+    # its blob black-holes upstream the same way as a foreign blob, so once any
+    # blob is present ALL reasoning items must go.
+    assert dropped_blob_count == 2
+    assert dropped_plain_count == 1
+    assert sanitized == [_USER_MESSAGE]
+
+
+def test_strip_encrypted_reasoning_no_matches_returns_unchanged_counts() -> None:
+    items: list[Any] = [dict(_USER_MESSAGE), dict(_PLAIN_REASONING)]
+
+    sanitized, dropped_blob_count, dropped_plain_count = strip_encrypted_reasoning_input_items(items)
+
+    assert (dropped_blob_count, dropped_plain_count) == (0, 0)
+    assert sanitized == items
+
+
+def test_strip_encrypted_reasoning_from_request_text_round_trips() -> None:
+    text = json.dumps(
+        {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "store": False,
+            "include": ["reasoning.encrypted_content"],
+            "input": [_USER_MESSAGE, _ENCRYPTED_REASONING_CONTENTLESS],
+        },
+        separators=(",", ":"),
+    )
+
+    sanitized_text, stripped_count, dropped_count = strip_encrypted_reasoning_from_request_text(text)
+
+    assert sanitized_text is not None
+    assert (stripped_count, dropped_count) == (1, 0)
+    parsed = json.loads(sanitized_text)
+    # The include directive legitimately retains "reasoning.encrypted_content"
+    # (it governs what the response returns); only input items must be blob-free.
+    assert "encrypted_content" not in json.dumps(parsed["input"])
+    assert parsed["input"] == [_USER_MESSAGE]
+    assert parsed["include"] == ["reasoning.encrypted_content"]
+
+
+def test_strip_encrypted_reasoning_from_request_text_returns_none_when_nothing_to_strip() -> None:
+    assert strip_encrypted_reasoning_from_request_text("not json")[0] is None
+    assert strip_encrypted_reasoning_from_request_text('{"input":"plain string"}')[0] is None
+    clean = json.dumps({"input": [_USER_MESSAGE, _PLAIN_REASONING]})
+    assert strip_encrypted_reasoning_from_request_text(clean)[0] is None
+
+
+def _make_strip_settings(*, enabled: bool) -> SimpleNamespace:
+    return SimpleNamespace(http_bridge_strip_foreign_encrypted_reasoning=enabled)
+
+
+def _make_reasoning_replay_payload(**overrides: Any) -> ResponsesRequest:
+    return ResponsesRequest.model_validate(
+        {
+            "model": "gpt-5.5",
+            "instructions": "heartbeat",
+            "store": False,
+            "include": ["reasoning.encrypted_content"],
+            "input": [
+                dict(_USER_MESSAGE),
+                dict(_ENCRYPTED_REASONING_WITH_SUMMARY),
+                dict(_ENCRYPTED_REASONING_CONTENTLESS),
+            ],
+            **overrides,
+        }
+    )
+
+
+def test_prepare_response_bridge_request_state_strips_encrypted_reasoning_on_first_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_strip_settings(enabled=True))
+    payload = _make_reasoning_replay_payload()
+
+    request_state, text_data = service._prepare_response_bridge_request_state(
+        payload,
+        api_key=None,
+        api_key_reservation=None,
+        include_type_field=True,
+        attach_event_queue=True,
+        transport="http",
+        client_metadata=None,
+    )
+
+    upstream_payload = json.loads(text_data)
+    assert isinstance(upstream_payload["input"], list)
+    # The include directive legitimately retains "reasoning.encrypted_content";
+    # only input items must be blob-free.
+    assert "encrypted_content" not in json.dumps(upstream_payload["input"])
+    # ALL reasoning items dropped (blob-less replay is equally poisonous).
+    assert upstream_payload["input"] == [_USER_MESSAGE]
+    assert request_state.input_item_count == 1
+
+
+def test_prepare_response_bridge_request_state_passthrough_when_strip_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_strip_settings(enabled=False))
+    payload = _make_reasoning_replay_payload()
+
+    request_state, text_data = service._prepare_response_bridge_request_state(
+        payload,
+        api_key=None,
+        api_key_reservation=None,
+        include_type_field=True,
+        attach_event_queue=True,
+        transport="http",
+        client_metadata=None,
+    )
+
+    assert "encrypted_content" in text_data
+    upstream_payload = json.loads(text_data)
+    assert len(upstream_payload["input"]) == 3
+    assert request_state.input_item_count == 3
+
+
+def test_prepare_response_bridge_request_state_skips_strip_for_anchored_continuations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anchored continuations are pinned to the minting account, so their
+    reasoning items are left untouched."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_strip_settings(enabled=True))
+    payload = _make_reasoning_replay_payload(previous_response_id="resp_anchor")
+
+    _request_state, text_data = service._prepare_response_bridge_request_state(
+        payload,
+        api_key=None,
+        api_key_reservation=None,
+        include_type_field=True,
+        attach_event_queue=True,
+        transport="http",
+        client_metadata=None,
+    )
+
+    assert "encrypted_content" in text_data
+    assert len(json.loads(text_data)["input"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the payload still carries encrypted reasoning at first-event timeout,
+    the stream retries once with the blobs stripped instead of failing."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+    quarantine = AsyncMock()
+    monkeypatch.setattr(service, "_quarantine_http_bridge_first_event_account", quarantine)
+    retire = AsyncMock()
+    monkeypatch.setattr(service, "_retire_stale_pending_http_bridge_session", retire)
+    degraded_retry = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "_retry_http_bridge_request_on_fresh_upstream", degraded_retry)
+    clock = _FakeMonotonicClock(value=1000.0)
+    monkeypatch.setattr(proxy_service, "time", clock)
+    monkeypatch.setattr(proxy_service, "get_settings", _make_first_event_timeout_settings)
+    monkeypatch.setattr(proxy_service, "_HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS", 0.001)
+
+    session = _make_bridge_session(key_value="sid-degraded-retry", queued_request_count=1)
+    poisoned_text = json.dumps(
+        {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "store": False,
+            "input": [dict(_USER_MESSAGE), dict(_ENCRYPTED_REASONING_CONTENTLESS)],
+        },
+        separators=(",", ":"),
+    )
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-degraded-retry",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        request_text=poisoned_text,
+    )
+
+    async def fake_submit_http_bridge_request(
+        target_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+        queue_limit: int,
+    ) -> None:
+        del text_data, queue_limit
+        target_session.pending_requests.append(request_state)
+
+    monkeypatch.setattr(service, "_submit_http_bridge_request", fake_submit_http_bridge_request)
+
+    stream = service._stream_http_bridge_session_events(
+        session,
+        request_state=request_state,
+        text_data=poisoned_text,
+        queue_limit=8,
+        propagate_http_errors=True,
+        downstream_turn_state=None,
+    )
+    first_event_task = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0.05)
+
+    # The degraded retry fired with the blobs stripped, no failure surfaced.
+    degraded_retry.assert_awaited_once()
+    retry_kwargs = degraded_retry.await_args.kwargs
+    assert "encrypted_content" not in retry_kwargs["text_data"]
+    assert json.loads(retry_kwargs["text_data"])["input"] == [_USER_MESSAGE]
+    assert request_state.request_text == retry_kwargs["text_data"]
+    assert first_event_task.done() is False
+
+    # Upstream answers after the retry; the stream completes normally.
+    event_queue = request_state.event_queue
+    assert event_queue is not None
+    request_state.response_id = "resp_degraded_ok"
+    request_state.response_event_count = 1
+    await event_queue.put(
+        proxy_service.format_sse_event(
+            cast(
+                Any,
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_degraded_ok", "status": "in_progress"},
+                },
+            )
+        )
+    )
+    first = await asyncio.wait_for(first_event_task, timeout=1.0)
+    assert "response.created" in first
+    await event_queue.put(None)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(stream), timeout=1.0)
+
+    quarantine.assert_not_awaited()
+    retire.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_first_event_timeout_degraded_retry_failure_falls_back_to_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the degraded retry cannot be performed, the first-event timeout
+    failure surfaces as before (single attempt, no retry loop)."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+    quarantine = AsyncMock()
+    monkeypatch.setattr(service, "_quarantine_http_bridge_first_event_account", quarantine)
+    retire = AsyncMock()
+    monkeypatch.setattr(service, "_retire_stale_pending_http_bridge_session", retire)
+    degraded_retry = AsyncMock(return_value=False)
+    monkeypatch.setattr(service, "_retry_http_bridge_request_on_fresh_upstream", degraded_retry)
+    payload_dump = Mock(return_value=True)
+    monkeypatch.setattr(proxy_service, "_write_response_create_dump", payload_dump)
+    clock = _FakeMonotonicClock(value=1000.0)
+    monkeypatch.setattr(proxy_service, "time", clock)
+    monkeypatch.setattr(proxy_service, "get_settings", _make_first_event_timeout_settings)
+    monkeypatch.setattr(proxy_service, "_HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS", 0.001)
+
+    session = _make_bridge_session(key_value="sid-degraded-fail", queued_request_count=1)
+    poisoned_text = json.dumps(
+        {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "input": [dict(_USER_MESSAGE), dict(_ENCRYPTED_REASONING_CONTENTLESS)],
+        },
+        separators=(",", ":"),
+    )
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-degraded-fail",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        request_text=poisoned_text,
+    )
+
+    async def fake_submit_http_bridge_request(
+        target_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+        queue_limit: int,
+    ) -> None:
+        del text_data, queue_limit
+        target_session.pending_requests.append(request_state)
+
+    monkeypatch.setattr(service, "_submit_http_bridge_request", fake_submit_http_bridge_request)
+
+    events = [
+        event
+        async for event in service._stream_http_bridge_session_events(
+            session,
+            request_state=request_state,
+            text_data=poisoned_text,
+            queue_limit=8,
+            propagate_http_errors=True,
+            downstream_turn_state=None,
+        )
+    ]
+
+    degraded_retry.assert_awaited_once()
+    assert len(events) == 1
+    payload = proxy_service.parse_sse_data_json(events[0])
+    assert isinstance(payload, dict)
+    response = payload["response"]
+    assert isinstance(response, dict)
+    error = response["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "bridge_first_event_timeout"
+    quarantine.assert_awaited_once()
+    retire.assert_awaited_once()

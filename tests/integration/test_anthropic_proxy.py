@@ -130,6 +130,7 @@ async def _insert_account(
     provider: str,
     access_token: str,
     email: str,
+    status: AccountStatus = AccountStatus.ACTIVE,
 ) -> None:
     encryptor = TokenEncryptor()
     async with SessionLocal() as session:
@@ -144,11 +145,45 @@ async def _insert_account(
                 refresh_token_encrypted=encryptor.encrypt(f"refresh-{account_id}"),
                 id_token_encrypted=encryptor.encrypt(f"id-{account_id}") if provider == "openai" else None,
                 last_refresh=utcnow() + timedelta(days=1),
-                status=AccountStatus.ACTIVE,
+                status=status,
                 deactivation_reason=None,
             )
         )
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_session_route_surfaces_provider_status_failure(async_client):
+    for index in range(3):
+        await _insert_account(
+            account_id=f"anthropic-rate-limited-{index}",
+            provider="anthropic",
+            access_token=f"anthropic-access-{index}",
+            email=f"claude-{index}@example.com",
+            status=AccountStatus.RATE_LIMITED,
+        )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-route-rate-limited-accounts",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "message": (
+                "3 Anthropic accounts exist, but none are selectable for "
+                "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
+                "OpenAI accounts are not eligible for Claude routing."
+            ),
+            "type": "server_error",
+            "code": "no_available_anthropic_accounts",
+        }
+    }
 
 
 @pytest.mark.asyncio

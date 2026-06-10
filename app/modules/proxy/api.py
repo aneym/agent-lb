@@ -220,11 +220,11 @@ internal_router = APIRouter(
 _TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 
 
-@usage_router.post("/api/anthropic/session-route")
+@usage_router.post("/api/anthropic/session-route", response_model=None)
 async def claim_anthropic_session_route(
     payload: dict[str, str] = Body(...),
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
-) -> dict[str, str | None]:
+) -> dict[str, str | None] | JSONResponse:
     session_id = (payload.get("sessionId") or "").strip()
     model = (payload.get("model") or "claude-fable-5").strip()
     quota_key = (payload.get("quotaKey") or "anthropic_top_thinking").strip()
@@ -239,7 +239,14 @@ async def claim_anthropic_session_route(
             quota_key=quota_key,
         )
     except AnthropicProxyError as exc:
-        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=openai_error(
+                exc.code,
+                exc.message,
+                error_type=_openai_error_type_for_status(exc.status_code),
+            ),
+        )
     return {
         "accountId": account.id,
         "email": account.email,
@@ -247,6 +254,20 @@ async def claim_anthropic_session_route(
         "model": model,
         "quotaKey": quota_key,
     }
+
+
+def _openai_error_type_for_status(status_code: int) -> str:
+    if status_code == 401:
+        return "authentication_error"
+    if status_code == 403:
+        return "permission_error"
+    if status_code == 429:
+        return "rate_limit_error"
+    if status_code < 500:
+        return "invalid_request_error"
+    return "server_error"
+
+
 _UNAVAILABLE_SELECTION_ERROR_CODES = {
     "no_accounts",
     "no_plan_support_for_model",

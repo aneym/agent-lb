@@ -2183,6 +2183,7 @@ def _make_proxy_settings(*, log_proxy_service_tier_trace: bool) -> SimpleNamespa
         max_sse_event_bytes=16 * 1024 * 1024,
         http_responses_session_bridge_instance_id="test-instance",
         http_responses_session_bridge_instance_ring=[],
+        http_bridge_first_event_timeout_seconds=60.0,
     )
 
 
@@ -20100,7 +20101,10 @@ async def test_http_bridge_session_events_emit_codex_keepalive_before_response_i
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        started_at=0.0,
+        # Recent start so the first-event timeout deadline stays in the future
+        # during this sub-second keepalive assertion; this test exercises the
+        # codex-keepalive backstop, not the first-event timeout.
+        started_at=time.monotonic(),
         response_id=None,
         event_queue=asyncio.Queue(),
         request_text='{"type":"response.create"}',
@@ -20218,7 +20222,9 @@ async def test_http_bridge_session_events_keepalive_backstop(monkeypatch):
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        started_at=0.0,
+        # Recent start so the first-event timeout does not pre-empt the
+        # keepalive/idle backstop this test asserts.
+        started_at=time.monotonic(),
         response_id=None,
         event_queue=asyncio.Queue(),
         request_text='{"type":"response.create"}',
@@ -20284,7 +20290,9 @@ async def test_http_bridge_session_events_keepalive_backstop_respects_idle_timeo
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        started_at=0.0,
+        # Recent start so the (shorter) stream_idle_timeout wins; the first-event
+        # timeout deadline stays in the future for this test.
+        started_at=time.monotonic(),
         response_id=None,
         event_queue=asyncio.Queue(),
         request_text='{"type":"response.create"}',
@@ -20419,7 +20427,9 @@ async def test_http_bridge_session_events_keepalive_backstop_uses_replay_downstr
         service_tier=None,
         reasoning_effort=None,
         api_key_reservation=None,
-        started_at=0.0,
+        # Recent start so the first-event timeout does not pre-empt the
+        # replay-backstop keepalive/idle assertion.
+        started_at=time.monotonic(),
         response_id=None,
         replay_downstream_response_id="resp_created_then_closed",
         event_queue=asyncio.Queue(),

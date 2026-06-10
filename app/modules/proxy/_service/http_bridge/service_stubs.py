@@ -334,6 +334,10 @@ def _upstream_turn_state_from_socket(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_upstream_turn_state_from_socket")(*args, **kwargs)
 
 
+def _service_write_response_create_dump(*args: Any, **kwargs: Any) -> Any:
+    return _service_global("_write_response_create_dump")(*args, **kwargs)
+
+
 def _record_same_account_takeover(*args: Any, **kwargs: Any) -> Any:
     return _service_global("_record_same_account_takeover")(*args, **kwargs)
 

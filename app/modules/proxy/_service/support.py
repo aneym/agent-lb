@@ -31,6 +31,12 @@ _REQUEST_TRANSPORT_WEBSOCKET = "websocket"
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset({"turn_state_header", "session_header"})
+# How long a bridge key keeps avoiding the account that just failed a
+# first-event timeout. The cooldown only needs to outlive the client's next
+# retry so the fresh bridge selects a different account (that selection also
+# rebinds the sticky mapping away from the dead account); after expiry normal
+# routing applies again.
+_HTTP_BRIDGE_FIRST_EVENT_COOLDOWN_SECONDS = 300.0
 
 
 def _request_log_useragent_fields(headers: Mapping[str, str]) -> tuple[str | None, str | None]:

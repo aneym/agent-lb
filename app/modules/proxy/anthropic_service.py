@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import Counter
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -256,12 +257,36 @@ class AnthropicProxyService:
             routing_strategy="usage_weighted",
         )
         if selection.account is None:
+            message = await self._selection_failure_message(
+                model=model,
+                quota_key=quota_key,
+                fallback=selection.error_message or "No available Anthropic accounts",
+            )
             raise AnthropicProxyError(
                 503,
-                selection.error_message or "No available Anthropic accounts",
+                message,
                 code=selection.error_code or "no_available_anthropic_accounts",
             )
         return selection.account
+
+    async def _selection_failure_message(self, *, model: str, quota_key: str, fallback: str) -> str:
+        async with self._repo_factory() as repos:
+            accounts = [
+                account
+                for account in await repos.accounts.list_accounts()
+                if account.provider.lower() == ANTHROPIC_PROVIDER_NAME
+            ]
+            account_count = len(accounts)
+            status_counts = Counter(_account_status_label(account) for account in accounts)
+        if account_count == 0:
+            return fallback
+        status_summary = ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
+        noun = "account" if account_count == 1 else "accounts"
+        return (
+            f"{account_count} Anthropic {noun} exist, but none are selectable for "
+            f"{model}/{quota_key}; statuses: {status_summary}. "
+            "OpenAI accounts are not eligible for Claude routing."
+        )
 
     async def _anthropic_quota_eligibility(self, quota_key: str) -> _AnthropicQuotaEligibility:
         now = int(time.time())
@@ -516,6 +541,11 @@ def _anthropic_content_text(content: object) -> str | None:
             if isinstance(value, str):
                 parts.append(value)
     return "".join(parts) if parts else None
+
+
+def _account_status_label(account: Account) -> str:
+    status = account.status
+    return status.value if hasattr(status, "value") else str(status)
 
 
 def _hash_for_key(value: str) -> str:
