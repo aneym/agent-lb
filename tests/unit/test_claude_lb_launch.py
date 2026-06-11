@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import time
 from pathlib import Path
 
 
@@ -48,3 +49,68 @@ def test_format_lb_pick_error_preserves_plain_text_body() -> None:
     launcher = load_launcher_module()
 
     assert launcher.format_lb_pick_error("upstream unavailable") == "upstream unavailable"
+
+
+def test_retry_at_from_error_body_prefers_retry_at_iso() -> None:
+    launcher = load_launcher_module()
+    body = (
+        '{"error":{"message":"cooling down","code":"anthropic_quota_cooldown",'
+        '"retryAt":"2026-06-10T18:20:01Z","retryAfterSeconds":900}}'
+    )
+
+    assert launcher.retry_at_from_error_body(body) == 1781115601
+
+
+def test_retry_at_from_error_body_falls_back_to_retry_after_seconds() -> None:
+    launcher = load_launcher_module()
+    body = '{"error":{"message":"cooling down","retryAfterSeconds":120}}'
+
+    retry_at = launcher.retry_at_from_error_body(body)
+    assert retry_at is not None
+    assert abs(retry_at - (time.time() + 120)) < 5
+
+
+def test_retry_at_from_error_body_returns_none_without_metadata() -> None:
+    launcher = load_launcher_module()
+
+    assert launcher.retry_at_from_error_body('{"error":{"message":"nope"}}') is None
+    assert launcher.retry_at_from_error_body("not json") is None
+
+
+def test_should_wait_for_reset_honors_mode_and_deadline(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    now = time.time()
+
+    monkeypatch.delenv("CLAUDE_LB_WAIT_FOR_LIMIT", raising=False)
+    assert launcher.should_wait_for_reset(int(now + 60), now + 3600) is True
+    assert launcher.should_wait_for_reset(int(now + 7200), now + 3600) is False
+    assert launcher.should_wait_for_reset(None, now + 3600) is False
+
+    monkeypatch.setenv("CLAUDE_LB_WAIT_FOR_LIMIT", "never")
+    assert launcher.should_wait_for_reset(int(now + 60), now + 3600) is False
+
+
+def test_build_resume_command_preserves_model_and_output_format(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.delenv("CC_EFFORT_LEVEL", raising=False)
+    monkeypatch.delenv("CC_PERMISSION_MODE", raising=False)
+
+    command = launcher.build_resume_command(
+        ["-p", "do the thing", "--model", "claude-fable-5", "--output-format", "json"],
+        "11111111-2222-3333-4444-555555555555",
+    )
+
+    assert command[:1] == ["claude"]
+    assert command[command.index("--model") + 1] == "claude-fable-5"
+    assert command[command.index("--output-format") + 1] == "json"
+    assert command[command.index("--resume") + 1] == "11111111-2222-3333-4444-555555555555"
+    assert "-p" in command
+    assert "do the thing" not in command
+
+
+def test_headless_invocation_detects_print_flags() -> None:
+    launcher = load_launcher_module()
+
+    assert launcher.headless_invocation(["-p", "hi"]) is True
+    assert launcher.headless_invocation(["--print", "hi"]) is True
+    assert launcher.headless_invocation(["chat"]) is False

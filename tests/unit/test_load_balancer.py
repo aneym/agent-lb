@@ -148,6 +148,40 @@ def test_select_account_prefers_lower_secondary_used_with_same_reset_bucket():
     assert result.account.account_id == "b"
 
 
+def test_select_account_primary_reset_preference_drains_primary_capacity_before_secondary():
+    now = time.time()
+    primary_reset_at = int(now + 30 * 60)
+    states = [
+        AccountState(
+            "weekly-room-primary-tight",
+            AccountStatus.ACTIVE,
+            used_percent=80.0,
+            secondary_used_percent=5.0,
+            primary_reset_at=primary_reset_at,
+            secondary_reset_at=int(now + 7 * 24 * 3600),
+        ),
+        AccountState(
+            "primary-room-weekly-tighter",
+            AccountStatus.ACTIVE,
+            used_percent=10.0,
+            secondary_used_percent=90.0,
+            primary_reset_at=primary_reset_at,
+            secondary_reset_at=int(now + 7 * 24 * 3600),
+        ),
+    ]
+
+    result = select_account(
+        states,
+        now=now,
+        prefer_earlier_reset=True,
+        prefer_earlier_reset_window="primary",
+        routing_strategy="usage_weighted",
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "primary-room-weekly-tighter"
+
+
 def test_select_account_deprioritizes_missing_secondary_reset_at():
     now = time.time()
     states = [

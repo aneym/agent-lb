@@ -239,13 +239,20 @@ async def claim_anthropic_session_route(
             quota_key=quota_key,
         )
     except AnthropicProxyError as exc:
+        content = openai_error(
+            exc.code,
+            exc.message,
+            error_type=_openai_error_type_for_status(exc.status_code),
+        )
+        if exc.retry_at is not None and isinstance(content.get("error"), dict):
+            content["error"]["retryAt"] = (
+                datetime.fromtimestamp(exc.retry_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            )
+            content["error"]["retryAfterSeconds"] = max(0, int(exc.retry_at) - int(time.time()))
         return JSONResponse(
             status_code=exc.status_code,
-            content=openai_error(
-                exc.code,
-                exc.message,
-                error_type=_openai_error_type_for_status(exc.status_code),
-            ),
+            content=content,
+            headers=_retry_headers(exc.retry_at),
         )
     return {
         "accountId": account.id,
@@ -642,10 +649,21 @@ async def v1_messages(
         )
     except AnthropicProxyError as exc:
         await _release_reservation(reservation)
-        return _anthropic_error_response(exc.status_code, exc.code, exc.message)
+        return _anthropic_proxy_error_response(exc)
+
+    if not payload.stream:
+        try:
+            body = await _collect_anthropic_body(stream.body)
+        except AnthropicProxyError as exc:
+            await _release_reservation(reservation)
+            return _anthropic_proxy_error_response(exc)
+        return Response(content=body, media_type=stream.media_type)
 
     return StreamingResponse(
-        inject_sse_keepalives(stream.body, get_settings().sse_keepalive_interval_seconds),
+        inject_sse_keepalives(
+            _anthropic_stream_error_guard(stream.body, streaming=bool(payload.stream)),
+            get_settings().sse_keepalive_interval_seconds,
+        ),
         media_type=stream.media_type,
     )
 
@@ -3225,7 +3243,13 @@ def _estimate_anthropic_request_usage(payload: AnthropicMessageRequest) -> ApiKe
     )
 
 
-def _anthropic_error_response(status_code: int, error_type: str, message: str) -> JSONResponse:
+def _anthropic_error_response(
+    status_code: int,
+    error_type: str,
+    message: str,
+    *,
+    retry_at: int | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={
@@ -3235,7 +3259,54 @@ def _anthropic_error_response(status_code: int, error_type: str, message: str) -
                 "message": message,
             },
         },
+        headers=_retry_headers(retry_at),
     )
+
+
+def _retry_headers(retry_at: int | None) -> dict[str, str] | None:
+    if retry_at is None:
+        return None
+    return {
+        "retry-after": str(max(0, int(retry_at) - int(time.time()))),
+        "anthropic-ratelimit-unified-reset": str(int(retry_at)),
+    }
+
+
+def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
+    # Exhaustion with a known reset is an upstream rate limit regardless of the
+    # internal status; surface Claude Code's native shape so it can show the
+    # reset time or ride out short waits with its own retry loop.
+    if exc.retry_at is not None or exc.status_code == 429:
+        return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
+    return _anthropic_error_response(exc.status_code, exc.code, exc.message)
+
+
+async def _collect_anthropic_body(body: AsyncIterator[bytes]) -> bytes:
+    chunks = bytearray()
+    async for chunk in body:
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+async def _anthropic_stream_error_guard(
+    body: AsyncIterator[bytes],
+    *,
+    streaming: bool,
+) -> AsyncIterator[bytes]:
+    """Surface mid-stream proxy failures as structured errors instead of truncation."""
+    try:
+        async for chunk in body:
+            yield chunk
+    except AnthropicProxyError as exc:
+        error_type = "rate_limit_error" if (exc.retry_at is not None or exc.status_code == 429) else exc.code
+        envelope = json.dumps(
+            {"type": "error", "error": {"type": error_type, "message": exc.message}},
+            ensure_ascii=False,
+        )
+        if streaming:
+            yield f"event: error\ndata: {envelope}\n\n".encode()
+        else:
+            yield envelope.encode()
 
 
 async def _release_reservation(reservation: ApiKeyUsageReservationData | None) -> None:

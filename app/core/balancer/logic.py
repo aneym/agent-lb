@@ -545,6 +545,16 @@ def select_account(
 
     def _reset_first_sort_key(state: AccountState) -> tuple[int, float, float, float, float, str]:
         reset_bucket_days = _reset_preference_bucket(state, current, prefer_earlier_reset_window)
+        if prefer_earlier_reset_window == "primary":
+            primary_used, secondary_used, last_selected, account_id = _primary_usage_sort_key(state)
+            return (
+                reset_bucket_days,
+                _planner_cost(state, routing_costs),
+                primary_used,
+                secondary_used,
+                last_selected,
+                account_id,
+            )
         secondary_used, primary_used, last_selected, account_id = _usage_sort_key(state)
         return (
             reset_bucket_days,

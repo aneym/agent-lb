@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -13,6 +15,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog, StickySession, StickySessionKind
 from app.db.session import SessionLocal
+from app.modules.proxy.load_balancer import AccountSelection
 
 pytestmark = pytest.mark.integration
 
@@ -103,6 +106,18 @@ def test_anthropic_rate_limit_error_parses_unified_reset_headers():
     assert error["resets_in_seconds"] == 37
 
 
+def test_anthropic_rate_limit_error_parses_epoch_reset_headers():
+    response = _FakeResponse(
+        429,
+        b'{"error":{"message":"rate limited"}}',
+        headers={"anthropic-ratelimit-unified-reset": "1781034600"},
+    )
+
+    error = anthropic_proxy_module._rate_limit_error_from_response(response, "rate limited")
+
+    assert error["resets_at"] == 1781034600
+
+
 def test_anthropic_sticky_key_uses_quota_scoped_session_hash():
     payload = AnthropicMessageRequest.model_validate(
         {
@@ -184,6 +199,138 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
             "code": "no_available_anthropic_accounts",
         }
     }
+
+
+async def _insert_quota_cooldown(*, account_id: str, quota_key: str, reset_at: int) -> None:
+    async with SessionLocal() as session:
+        session.add(
+            AdditionalUsageHistory(
+                account_id=account_id,
+                quota_key=quota_key,
+                limit_name=quota_key,
+                metered_feature="anthropic_messages",
+                window="primary",
+                used_percent=100.0,
+                reset_at=reset_at,
+                window_minutes=10,
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async_client):
+    await _insert_account(
+        account_id="anthropic-cooling",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(minutes=7)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-cooling",
+        quota_key="anthropic_top_thinking",
+        reset_at=reset_at,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    body = response.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "rate_limit_error"
+    assert "cooling down" in body["error"]["message"]
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
+    assert 0 < int(response.headers["retry-after"]) <= 7 * 60
+
+
+@pytest.mark.asyncio
+async def test_anthropic_session_route_includes_retry_metadata(async_client):
+    await _insert_account(
+        account_id="anthropic-cooling",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(minutes=7)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-cooling",
+        quota_key="anthropic_top_thinking",
+        reset_at=reset_at,
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-route-cooldown",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 429
+    error = response.json()["error"]
+    assert error["code"] == "anthropic_quota_cooldown"
+    assert error["retryAt"] == datetime.fromtimestamp(reset_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    assert 0 < error["retryAfterSeconds"] <= 7 * 60
+    assert response.headers["retry-after"] == str(error["retryAfterSeconds"])
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_mid_stream_failure_emits_sse_error_event(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-only",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(minutes=9)).replace(tzinfo=timezone.utc).timestamp())
+
+    def fake_open_upstream_response(self, session, *, headers, json_body):
+        del self, session, headers, json_body
+        return _FakeResponseContext(
+            _FakeResponse(
+                429,
+                b'{"error":{"message":"top model cooldown"}}',
+                headers={"anthropic-ratelimit-unified-reset": str(reset_at)},
+            )
+        )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    ) as response:
+        assert response.status_code == 200
+        body = await response.aread()
+
+    text = body.decode("utf-8")
+    assert "event: error\n" in text
+    error_data = json.loads(text.split("event: error\ndata: ", 1)[1].split("\n\n", 1)[0])
+    assert error_data["type"] == "error"
+    assert error_data["error"]["type"] == "rate_limit_error"
 
 
 @pytest.mark.asyncio
@@ -319,6 +466,105 @@ async def test_anthropic_messages_non_streaming_logs_usage(async_client, monkeyp
     assert log.cache_creation_tokens == 2
     assert log.cache_read_tokens == 1
     assert log.cost_usd is not None
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_non_streaming_upstream_529_returns_native_error(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-overloaded",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    def fake_open_upstream_response(self, session, *, headers, json_body):
+        del self, session, headers, json_body
+        return _FakeResponseContext(
+            _FakeResponse(
+                529,
+                b'{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+            )
+        )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 529
+    assert response.json() == {
+        "type": "error",
+        "error": {"type": "overloaded_error", "message": "Overloaded"},
+    }
+
+    async with SessionLocal() as session:
+        log = (await session.execute(select(RequestLog))).scalar_one()
+
+    assert log.status == "error"
+    assert log.error_code == "upstream_529"
+    assert log.error_message == "Overloaded"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_passes_primary_reset_preference_to_selector(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-primary-reset",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    class _SettingsCache:
+        async def get(self) -> SimpleNamespace:
+            return SimpleNamespace(prefer_earlier_reset_accounts=True)
+
+    seen_selection_kwargs: list[dict[str, Any]] = []
+
+    async def fake_select_account(self, **kwargs):
+        del self
+        seen_selection_kwargs.append(kwargs)
+        async with SessionLocal() as session:
+            account = await session.get(Account, "anthropic-primary-reset")
+        return AccountSelection(account=account, error_message=None)
+
+    def fake_open_upstream_response(self, session, *, headers, json_body):
+        del self, session, headers, json_body
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(anthropic_proxy_module, "get_settings_cache", lambda: _SettingsCache())
+    monkeypatch.setattr(anthropic_proxy_module.LoadBalancer, "select_account", fake_select_account)
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 200
+    assert seen_selection_kwargs[0]["prefer_earlier_reset_accounts"] is True
+    assert seen_selection_kwargs[0]["prefer_earlier_reset_window"] == "primary"
+    assert seen_selection_kwargs[0]["routing_strategy"] == "usage_weighted"
 
 
 @pytest.mark.asyncio

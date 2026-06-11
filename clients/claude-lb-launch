@@ -18,6 +18,11 @@
 #   CC_EFFORT_LEVEL      passed through as --effort
 #   CC_PERMISSION_MODE   passed through as --permission-mode
 #   NO_COLOR             disable the colored banner
+#   CLAUDE_LB_WAIT_FOR_LIMIT      auto (default) waits for advertised limit
+#                                 resets before launching; never disables
+#   CLAUDE_LB_WAIT_MAX_SECONDS    cap on total waiting (default 21600 = 6h)
+#   CLAUDE_LB_AUTO_RESUME         1 (default) auto-resumes headless (-p) runs
+#                                 interrupted by account limits; 0 disables
 
 from __future__ import annotations
 
@@ -31,6 +36,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
@@ -372,6 +379,88 @@ def format_lb_pick_error(body: str) -> str:
     return _prettify_anthropic_selection_error(_error_message_from_body(body))
 
 
+WAIT_BUFFER_SECONDS = 20
+RESUME_MAX_ATTEMPTS = 5
+
+
+def _epoch_from_iso(value: str) -> int | None:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        return int(datetime.fromisoformat(normalized).timestamp())
+    except ValueError:
+        return None
+
+
+def retry_at_from_error_body(body: str) -> int | None:
+    """Extract the LB's advertised limit-reset epoch from an error envelope."""
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return None
+    retry_at = error.get("retryAt")
+    if isinstance(retry_at, str):
+        epoch = _epoch_from_iso(retry_at)
+        if epoch is not None:
+            return epoch
+    retry_after = error.get("retryAfterSeconds")
+    if isinstance(retry_after, (int, float)) and retry_after >= 0:
+        return int(time.time() + retry_after)
+    return None
+
+
+def wait_mode() -> str:
+    value = (os.environ.get("CLAUDE_LB_WAIT_FOR_LIMIT") or "auto").strip().lower()
+    return value if value in {"auto", "always", "never"} else "auto"
+
+
+def wait_max_seconds() -> int:
+    try:
+        return max(0, int(os.environ.get("CLAUDE_LB_WAIT_MAX_SECONDS", "21600")))
+    except ValueError:
+        return 21600
+
+
+def should_wait_for_reset(retry_at: int | None, deadline: float) -> bool:
+    if retry_at is None or wait_mode() == "never":
+        return False
+    return retry_at + WAIT_BUFFER_SECONDS <= deadline
+
+
+def wait_until_reset(retry_at: int, reason: str) -> None:
+    target = retry_at + WAIT_BUFFER_SECONDS
+    local_label = time.strftime("%H:%M:%S", time.localtime(target))
+    print(
+        f"cc: {reason} Waiting until {_c(local_label, '1;33')} for limits to reset (Ctrl-C to abort).",
+        file=sys.stderr,
+    )
+    while True:
+        remaining = target - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(remaining, 30.0))
+
+
+def claim_session_route(session_id: str, model: str, quota_key: str) -> tuple[dict | None, str, int | None]:
+    """Claim a sticky route. Returns (claim, error_message, retry_at_epoch)."""
+    try:
+        claim = lb_post_json(
+            "/api/anthropic/session-route",
+            {"sessionId": session_id, "model": model, "quotaKey": quota_key},
+            timeout=5.0,
+        )
+        return claim, "", None
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        return None, format_lb_pick_error(body), retry_at_from_error_body(body)
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+        return None, str(error), None
+
+
 def print_lb_banner(argv: list[str], session_id: str) -> bool:
     try:
         lb_json("/health", timeout=2.0)
@@ -384,19 +473,22 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     quota_key, quota_label = anthropic_quota_key(model, effort)
     model_label = model.replace("claude-", "")
 
-    try:
-        claim = lb_post_json(
-            "/api/anthropic/session-route",
-            {"sessionId": session_id, "model": model, "quotaKey": quota_key},
-            timeout=5.0,
-        )
-    except urllib.error.HTTPError as error:
-        message = format_lb_pick_error(error.read().decode("utf-8", errors="replace"))
-        print(f"cc: Claude LB could not pick an account for {model_label}/{quota_label}: {message}", file=sys.stderr)
-        return False
-    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        print(f"cc: Claude LB could not pick an account for {model_label}/{quota_label}: {error}", file=sys.stderr)
-        return False
+    deadline = time.time() + wait_max_seconds()
+    while True:
+        claim, error_message, retry_at = claim_session_route(session_id, model, quota_key)
+        if claim is not None:
+            break
+        if not should_wait_for_reset(retry_at, deadline):
+            print(
+                f"cc: Claude LB could not pick an account for {model_label}/{quota_label}: {error_message}",
+                file=sys.stderr,
+            )
+            return False
+        try:
+            wait_until_reset(retry_at, error_message)
+        except KeyboardInterrupt:
+            print("cc: aborted while waiting for limits to reset", file=sys.stderr)
+            sys.exit(130)
 
     selected_account_id = str(claim.get("accountId") or "")
 
@@ -457,15 +549,85 @@ def build_command(argv: list[str]) -> list[str]:
     return command
 
 
+def headless_invocation(argv: list[str]) -> bool:
+    return "-p" in argv or "--print" in argv
+
+
+def auto_resume_enabled() -> bool:
+    value = (os.environ.get("CLAUDE_LB_AUTO_RESUME") or "1").strip().lower()
+    return value not in {"0", "never", "off", "false"}
+
+
+def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
+    command = ["claude"]
+    effort = os.environ.get("CC_EFFORT_LEVEL")
+    if effort:
+        command.extend(["--effort", effort])
+    permission_mode = os.environ.get("CC_PERMISSION_MODE")
+    if permission_mode:
+        command.extend(["--permission-mode", permission_mode])
+    for flag in ("--model", "--output-format"):
+        value = arg_value(argv, flag)
+        if value:
+            command.extend([flag, value])
+    command.extend(
+        [
+            "--resume",
+            claude_session_id,
+            "-p",
+            "You were interrupted by a usage limit that has now reset. "
+            "Continue the task exactly where you left off.",
+        ]
+    )
+    return command
+
+
+def run_headless_with_resume(
+    command: list[str],
+    argv: list[str],
+    session_id: str,
+    model: str,
+    quota_key: str,
+) -> int:
+    """Run headless Claude; on limit-confirmed failure, wait for reset and resume."""
+    claude_session_id = arg_value(argv, "--session-id")
+    if not claude_session_id:
+        claude_session_id = str(uuid.uuid4())
+        command = [*command, "--session-id", claude_session_id]
+    deadline = time.time() + wait_max_seconds()
+    current = command
+    for attempt in range(RESUME_MAX_ATTEMPTS + 1):
+        result = subprocess.run(current)
+        if result.returncode == 0:
+            return 0
+        # Only retry when the LB confirms the failure is account exhaustion
+        # with a known reset; any other failure propagates immediately.
+        claim, _, retry_at = claim_session_route(session_id, model, quota_key)
+        if claim is not None or not should_wait_for_reset(retry_at, deadline):
+            return result.returncode
+        if attempt == RESUME_MAX_ATTEMPTS:
+            return result.returncode
+        try:
+            wait_until_reset(retry_at, "Claude run interrupted by account limits.")
+        except KeyboardInterrupt:
+            print("cc: aborted while waiting for limits to reset", file=sys.stderr)
+            return 130
+        print(f"cc: resuming session {claude_session_id} (attempt {attempt + 1})", file=sys.stderr)
+        current = build_resume_command(argv, claude_session_id)
+    return 1
+
+
 def main() -> None:
     if len(sys.argv) >= 6 and sys.argv[1] == "--lb-shim":
         run_lb_shim(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), sys.argv[5])
         return
 
+    argv = sys.argv[1:]
+    routed = False
+    session_id = ""
     if lb_enabled():
         session_id = os.environ.get("CLAUDE_LB_SESSION_ID") or f"cc-{os.getpid()}-{int(time.time())}"
-        routed = False
-        if print_lb_banner(sys.argv[1:], session_id):
+        if print_lb_banner(argv, session_id):
             try:
                 os.environ["ANTHROPIC_BASE_URL"] = start_lb_shim(session_id)
                 # Routing through the LB means OAuth/Max billing; an auth token
@@ -481,10 +643,14 @@ def main() -> None:
                 file=sys.stderr,
             )
 
-    command = build_command(sys.argv[1:])
+    command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         return
+    if routed and auto_resume_enabled() and headless_invocation(argv):
+        model = requested_model(argv)
+        quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
+        sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))
     os.execvp(command[0], command)
 
 

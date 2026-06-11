@@ -21,6 +21,7 @@ from app.core.balancer.types import UpstreamError
 from app.core.clients.http import lease_http_session
 from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
+from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.utils.request_id import ensure_request_id
@@ -52,12 +53,26 @@ class _AnthropicQuotaEligibility:
     next_reset_at: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _AnthropicErrorDetails:
+    message: str
+    error_type: str | None = None
+
+
 class AnthropicProxyError(Exception):
-    def __init__(self, status_code: int, message: str, *, code: str = "anthropic_proxy_error") -> None:
+    def __init__(
+        self,
+        status_code: int,
+        message: str,
+        *,
+        code: str = "anthropic_proxy_error",
+        retry_at: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message
         self.code = code
+        self.retry_at = retry_at
 
 
 class AnthropicProxyService:
@@ -148,7 +163,7 @@ class AnthropicProxyService:
                             last_error_message = error_message
                             continue
                         if resp.status >= 400:
-                            error_message = await _read_error_message(resp)
+                            error_details = await _read_error_details(resp)
                             await self._load_balancer.record_error(account)
                             await self._persist_request_log(
                                 account=account,
@@ -157,10 +172,14 @@ class AnthropicProxyService:
                                 started_at=started_at,
                                 status="error",
                                 error_code=f"upstream_{resp.status}",
-                                error_message=error_message,
+                                error_message=error_details.message,
                                 api_key=api_key,
                             )
-                            raise AnthropicProxyError(resp.status, error_message, code=f"upstream_{resp.status}")
+                            raise AnthropicProxyError(
+                                resp.status,
+                                error_details.message,
+                                code=error_details.error_type or _anthropic_error_type_for_status(resp.status),
+                            )
 
                         text_buffer = ""
                         # Non-streaming responses are a single JSON document, not SSE, so the
@@ -208,7 +227,15 @@ class AnthropicProxyService:
                 error_message=message,
                 api_key=api_key,
             )
-            raise AnthropicProxyError(last_error_status or 503, message, code="no_available_anthropic_accounts")
+            # Upstream 429s above recorded cooldowns, so eligibility now knows the
+            # earliest reset; surface it so clients can schedule a retry.
+            eligibility = await self._anthropic_quota_eligibility(quota_key)
+            raise AnthropicProxyError(
+                last_error_status or 503,
+                message,
+                code="no_available_anthropic_accounts",
+                retry_at=eligibility.next_reset_at,
+            )
 
         return AnthropicProxyStream(body=body(), media_type=media_type)
 
@@ -246,7 +273,9 @@ class AnthropicProxyService:
                 429,
                 f"All Anthropic accounts are cooling down for quota '{quota_key}'.{reset_suffix}",
                 code="anthropic_quota_cooldown",
+                retry_at=eligibility.next_reset_at,
             )
+        settings = await get_settings_cache().get()
         selection = await self._load_balancer.select_account(
             model=model,
             provider=ANTHROPIC_PROVIDER_NAME,
@@ -254,22 +283,35 @@ class AnthropicProxyService:
             exclude_account_ids=exclude_account_ids,
             sticky_key=sticky_key,
             sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
+            prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,
+            prefer_earlier_reset_window="primary",
             routing_strategy="usage_weighted",
         )
         if selection.account is None:
-            message = await self._selection_failure_message(
+            message, retry_at = await self._selection_failure_details(
                 model=model,
                 quota_key=quota_key,
                 fallback=selection.error_message or "No available Anthropic accounts",
+                quota_reset_at=eligibility.next_reset_at,
             )
             raise AnthropicProxyError(
                 503,
                 message,
                 code=selection.error_code or "no_available_anthropic_accounts",
+                retry_at=retry_at,
             )
         return selection.account
 
-    async def _selection_failure_message(self, *, model: str, quota_key: str, fallback: str) -> str:
+    async def _selection_failure_details(
+        self,
+        *,
+        model: str,
+        quota_key: str,
+        fallback: str,
+        quota_reset_at: int | None = None,
+    ) -> tuple[str, int | None]:
+        now = int(time.time())
+        reset_candidates: list[int] = [quota_reset_at] if quota_reset_at is not None else []
         async with self._repo_factory() as repos:
             accounts = [
                 account
@@ -278,15 +320,31 @@ class AnthropicProxyService:
             ]
             account_count = len(accounts)
             status_counts = Counter(_account_status_label(account) for account in accounts)
+            reset_candidates.extend(int(account.reset_at) for account in accounts if account.reset_at)
+            primary_usage = await repos.usage.latest_by_account(
+                "primary",
+                account_ids=[account.id for account in accounts],
+            )
+            reset_candidates.extend(
+                int(entry.reset_at)
+                for entry in primary_usage.values()
+                if entry.reset_at and float(entry.used_percent) >= 100.0
+            )
+        future_resets = [candidate for candidate in reset_candidates if candidate > now]
+        retry_at = min(future_resets) if future_resets else None
         if account_count == 0:
-            return fallback
+            return fallback, retry_at
         status_summary = ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
         noun = "account" if account_count == 1 else "accounts"
-        return (
+        reset_suffix = (
+            f" Limits reset at {datetime.fromtimestamp(retry_at).isoformat()}." if retry_at is not None else ""
+        )
+        message = (
             f"{account_count} Anthropic {noun} exist, but none are selectable for "
             f"{model}/{quota_key}; statuses: {status_summary}. "
-            "OpenAI accounts are not eligible for Claude routing."
+            f"OpenAI accounts are not eligible for Claude routing.{reset_suffix}"
         )
+        return message, retry_at
 
     async def _anthropic_quota_eligibility(self, quota_key: str) -> _AnthropicQuotaEligibility:
         now = int(time.time())
@@ -614,20 +672,50 @@ def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:
 
 
 async def _read_error_message(resp: aiohttp.ClientResponse) -> str:
+    return (await _read_error_details(resp)).message
+
+
+async def _read_error_details(resp: aiohttp.ClientResponse) -> _AnthropicErrorDetails:
     raw = await resp.read()
     if not raw:
-        return f"Anthropic upstream returned HTTP {resp.status}"
+        return _AnthropicErrorDetails(f"Anthropic upstream returned HTTP {resp.status}")
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return raw.decode("utf-8", errors="replace")
+        return _AnthropicErrorDetails(raw.decode("utf-8", errors="replace"))
     if isinstance(payload, dict):
         error = payload.get("error")
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            return error["message"]
+        if isinstance(error, dict):
+            message = error.get("message")
+            error_type = error.get("type")
+            if isinstance(message, str):
+                return _AnthropicErrorDetails(
+                    message,
+                    error_type if isinstance(error_type, str) else None,
+                )
         if isinstance(payload.get("message"), str):
-            return payload["message"]
-    return f"Anthropic upstream returned HTTP {resp.status}"
+            error_type = payload.get("type")
+            return _AnthropicErrorDetails(
+                payload["message"],
+                error_type if isinstance(error_type, str) else None,
+            )
+    return _AnthropicErrorDetails(f"Anthropic upstream returned HTTP {resp.status}")
+
+
+def _anthropic_error_type_for_status(status_code: int) -> str:
+    if status_code == 429:
+        return "rate_limit_error"
+    if status_code == 529:
+        return "overloaded_error"
+    if status_code == 504:
+        return "timeout_error"
+    if status_code >= 500:
+        return "api_error"
+    if status_code in {401, 403}:
+        return "authentication_error"
+    if status_code == 404:
+        return "not_found_error"
+    return "invalid_request_error"
 
 
 def _rate_limit_error_from_response(resp: aiohttp.ClientResponse, message: str) -> UpstreamError:
@@ -662,7 +750,7 @@ def _anthropic_rate_limit_reset_at(headers: Mapping[str, str]) -> int | None:
         "anthropic-priority-input-tokens-reset",
         "anthropic-priority-output-tokens-reset",
     ]
-    epochs = [_parse_rfc3339_epoch(_get_header(headers, name)) for name in reset_candidates]
+    epochs = [_parse_reset_epoch(_get_header(headers, name)) for name in reset_candidates]
     future_epochs = [epoch for epoch in epochs if epoch is not None and epoch > int(time.time())]
     if future_epochs:
         return min(future_epochs)
@@ -680,10 +768,21 @@ def _retry_after_seconds(headers: Mapping[str, str]) -> int | None:
         return None
 
 
-def _parse_rfc3339_epoch(value: str | None) -> int | None:
+def _parse_reset_epoch(value: str | None) -> int | None:
+    """Parse a reset header as RFC 3339 or Unix epoch (seconds or milliseconds)."""
     if not value:
         return None
     normalized = value.strip()
+    try:
+        epoch = float(normalized)
+    except ValueError:
+        pass
+    else:
+        if epoch <= 0:
+            return None
+        if epoch > 1e12:  # milliseconds
+            epoch /= 1000.0
+        return int(epoch)
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
     try:
