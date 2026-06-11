@@ -411,6 +411,44 @@ print(response.choices[0].message.content)
 
 </details>
 
+## macOS Menu Bar App
+
+A native macOS 26 menu bar companion (`clients/macos-menubar/`) puts the
+dashboard's vitals one click away: a status-bar ring gauge that drains with
+the pool's 5-hour window, separated 5-hour / weekly limit cards with
+`next reset in … · +n cr` recovery, a provider scope control (All / Codex /
+Claude) that filters every stat exactly like the dashboard, an account list
+with status/sort/search filtering and pause/reactivate, recent requests, and
+service start/restart/stop via launchd.
+
+```bash
+cd clients/macos-menubar
+make install   # build, bundle, and register as a login LaunchAgent (starts now + at every login)
+```
+
+`make install` is the supported way to run it: it registers the app in the
+GUI launchd domain, which makes startup automatic at login. (Launching the
+bundle with `open` from an SSH session silently fails to register the menu
+bar item on macOS 26 — use the LaunchAgent.) `make uninstall` removes it;
+`make test` runs the unit suite.
+
+**Remote machines (Tailscale):** copy `AgentLB.app` anywhere (e.g.
+`~/Applications`), point it at the service host, and register the agent for
+the copied path:
+
+```bash
+defaults write com.aneyman.agentlb.menubar baseURL "https://<host>.<tailnet>.ts.net:2455"
+make install-agent APP_PATH=$HOME/Applications/AgentLB.app
+```
+
+When the base URL isn't local the app runs in remote mode: the header shows
+the host and the launchd service controls hide. If your menu bar is full
+(notched MacBooks hide overflow items), nudge the icon right of the notch:
+
+```bash
+defaults write com.aneyman.agentlb.menubar "NSStatusItem Preferred Position Item-0" -float 220
+```
+
 ## API Key Authentication
 
 API key auth is **disabled by default**. In that mode, only local requests to the protected proxy routes can

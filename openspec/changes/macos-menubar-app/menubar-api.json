@@ -1,0 +1,143 @@
+{
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "description": "Simple liveness check; always returns {status:'ok'} when the process is up.",
+      "auth": "none",
+      "response_shape": "{\"status\": \"ok\"}",
+      "menubar_value": "Primary 'is the process alive?' ping \u2014 cheapest possible check, no DB hit."
+    },
+    {
+      "method": "GET",
+      "path": "/health/live",
+      "description": "Kubernetes-style liveness probe; same as /health but returns HealthCheckResponse envelope.",
+      "auth": "none",
+      "response_shape": "{\"status\": \"ok\", \"checks\": null, \"bridge_ring\": null}",
+      "menubar_value": "Alternate liveness check used by watchdog probes."
+    },
+    {
+      "method": "GET",
+      "path": "/health/ready",
+      "description": "Readiness probe: checks DB connectivity and bridge ring membership. Returns 503 when draining or not in ring.",
+      "auth": "none",
+      "response_shape": "{\"status\": \"ok\", \"checks\": {\"database\": \"ok\"}, \"bridge_ring\": {\"ring_fingerprint\": \"a3f8432d...\", \"ring_size\": 1, \"instance_id\": \"alexs-Mac-Studio.local\", \"is_member\": true, \"error\": null}}",
+      "menubar_value": "Deep health including DB + ring \u2014 show yellow badge when 503 vs green for 200."
+    },
+    {
+      "method": "GET",
+      "path": "/health/startup",
+      "description": "Startup probe; returns 503 until the app fully initialises (schedulers started, bridge registered).",
+      "auth": "none",
+      "response_shape": "{\"status\": \"ok\", \"checks\": null, \"bridge_ring\": null}",
+      "menubar_value": "low"
+    },
+    {
+      "method": "GET",
+      "path": "/api/accounts",
+      "description": "List all accounts with full per-account quota, usage, auth, and rate-limit state.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"accounts\": [{\"accountId\": \"2c436b54-a7e2-4299-9d6b-689ad2dda8cb\", \"provider\": \"anthropic\", \"email\": \"a.neyman17@gmail.com\", \"alias\": null, \"displayName\": \"a.neyman17@gmail.com\", \"workspaceId\": null, \"workspaceLabel\": null, \"seatType\": null, \"planType\": \"claude\", \"routingPolicy\": \"normal\", \"status\": \"active\", \"securityWorkAuthorized\": false, \"usage\": {\"primaryRemainingPercent\": 62.0, \"secondaryRemainingPercent\": 51.0, \"monthlyRemainingPercent\": null}, \"resetAtPrimary\": \"2026-06-10T23:50:00Z\", \"resetAtSecondary\": \"2026-06-14T20:59:59Z\", \"resetAtMonthly\": null, \"rateLimitResetAt\": \"2026-06-10T18:20:00Z\", \"windowMinutesPrimary\": 300, \"windowMinutesSecondary\": 10080, \"windowMinutesMonthly\": null, \"lastRefreshAt\": \"2026-06-10T20:09:28.958334Z\", \"capacityCreditsPrimary\": 100.0, \"remainingCreditsPrimary\": 62.0, \"capacityCreditsSecondary\": 100.0, \"remainingCreditsSecondary\": 51.0, \"capacityCreditsMonthly\": null, \"remainingCreditsMonthly\": null, \"requestUsage\": {\"requestCount\": 2682, \"totalTokens\": 4190148, \"cachedInputTokens\": 1902356, \"cacheCreationTokens\": 17004705, \"cacheReadTokens\": 334663200, \"totalCostUsd\": 187.776385}, \"additionalQuotas\": [{\"quotaKey\": \"anthropic_standard\", \"limitName\": \"anthropic_standard\", \"meteredFeature\": \"anthropic_messages\", \"displayLabel\": \"Claude standard models\", \"routingPolicy\": \"normal\", \"primaryWindow\": {\"usedPercent\": 0.0, \"resetAt\": null, \"windowMinutes\": null}, \"secondaryWindow\": null}], \"creditsHas\": null, \"creditsUnlimited\": null, \"creditsBalance\": null, \"subscription\": null, \"deactivationReason\": null, \"auth\": null, \"limitWarmupEnabled\": false, \"limitWarmup\": null, \"isEmailDuplicate\": false}]}",
+      "menubar_value": "Core data source for the account list menu \u2014 status, remaining credits, reset times, rate-limit state per account."
+    },
+    {
+      "method": "GET",
+      "path": "/api/usage/summary",
+      "description": "Aggregate quota windows (primary/secondary/monthly) plus 7-day cost and error-rate metrics across all accounts.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"primaryWindow\": {\"remainingPercent\": 95.47, \"capacityCredits\": 7800.0, \"remainingCredits\": 7447.0, \"resetAt\": \"2026-06-10T21:14:57Z\", \"windowMinutes\": 300}, \"secondaryWindow\": {\"remainingPercent\": 54.6, \"capacityCredits\": 252300.0, \"remainingCredits\": 137756.0, \"resetAt\": \"2026-06-11T00:25:24Z\", \"windowMinutes\": 10080}, \"monthlyWindow\": null, \"cost\": {\"currency\": \"USD\", \"totalUsd7d\": 6159.252347}, \"metrics\": {\"requests7d\": 60805, \"tokensSecondaryWindow\": 3849949176, \"cachedTokensSecondaryWindow\": 3064481840, \"errorRate7d\": 0.006825, \"topError\": \"rate_limit_exceeded\"}}",
+      "menubar_value": "Best single summary for the menu bar popover: pool-wide remaining credits, next reset time, 7-day cost, error rate."
+    },
+    {
+      "method": "GET",
+      "path": "/api/usage/history",
+      "description": "Per-account average remaining credits over the last N hours (1-168). Query param: hours (default 24).",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"windowHours\": 24, \"accounts\": [{\"accountId\": \"2c436b54-...\", \"remainingPercentAvg\": 74.1, \"capacityCredits\": 100.0, \"remainingCredits\": 74.1}]}",
+      "menubar_value": "Trend sparkline data: plot each account's credit burn over the chosen window."
+    },
+    {
+      "method": "GET",
+      "path": "/api/usage/window",
+      "description": "Per-account snapshot for a specific quota window. Query param: window ('primary'|'secondary').",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"windowKey\": \"primary\", \"windowMinutes\": 300, \"accounts\": [{\"accountId\": \"...\", \"remainingPercentAvg\": null, \"capacityCredits\": 1500.0, \"remainingCredits\": 1485.0}]}",
+      "menubar_value": "low"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/overview",
+      "description": "Full dashboard payload: all AccountSummary objects, quota windows, MetricsTrends (requests/tokens/cost/error_rate series), depletion forecasts, weekly credit pace. Query param: timeframe ('1d'|'7d'|'30d', default '7d').",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"lastSyncAt\": \"2026-06-10T20:59:56.979683Z\", \"timeframe\": {\"key\": \"7d\", \"windowMinutes\": 10080, \"bucketSeconds\": 21600, \"bucketCount\": 28}, \"accounts\": [\"...(AccountSummary array)...\"], \"summary\": {\"primaryWindow\": {\"remainingPercent\": float, \"capacityCredits\": float, \"remainingCredits\": float, \"resetAt\": \"datetime|null\", \"windowMinutes\": \"int|null\"}, \"secondaryWindow\": \"UsageWindow|null\", \"cost\": {\"currency\": \"USD\", \"totalUsd\": float}, \"metrics\": {\"requests\": \"int|null\", \"tokens\": \"int|null\", \"cachedInputTokens\": \"int|null\", \"errorRate\": \"float|null\", \"errorCount\": \"int|null\", \"topError\": \"str|null\"}}, \"windows\": {\"primary\": {\"windowKey\": \"primary\", \"windowMinutes\": int, \"accounts\": []}, \"secondary\": \"...|null\"}, \"trends\": {\"requests\": [{\"t\": \"datetime\", \"v\": float}], \"tokens\": [], \"cost\": [], \"errorRate\": []}, \"depletionPrimary\": {\"risk\": 0.98, \"riskLevel\": \"critical\", \"burnRate\": 0.0, \"safeUsagePercent\": 83.34, \"projectedExhaustionAt\": null, \"secondsUntilExhaustion\": null}, \"depletionSecondary\": \"...|null\", \"weeklyCreditPace\": {\"totalFullCredits\": 252200.0, \"totalActualRemainingCredits\": 137689.0, \"totalExpectedRemainingCredits\": 24772.3, \"actualUsedPercent\": 45.4, \"scheduledUsedPercent\": 90.18, \"deltaPercent\": -44.77, \"scheduleGapCredits\": 0.0, \"overPlanCredits\": 0.0, \"projectedShortfallCredits\": 0.0, \"status\": \"behind\", \"accountCount\": 7, \"staleAccountCount\": 1, \"inactiveAccountCount\": 0, \"confidence\": \"medium\", \"scheduledBurnRateCreditsPerHour\": 1501.19}}",
+      "menubar_value": "Most data-rich endpoint; good for a detail panel. Heavier than /api/usage/summary \u2014 poll less frequently."
+    },
+    {
+      "method": "GET",
+      "path": "/api/dashboard/projections",
+      "description": "Depletion risk and weekly credit-pace projections only (no account list, lighter than /overview).",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"depletionPrimary\": {\"risk\": 0.98, \"riskLevel\": \"critical\", \"burnRate\": 0.0, \"safeUsagePercent\": 83.34, \"projectedExhaustionAt\": null, \"secondsUntilExhaustion\": null}, \"depletionSecondary\": {\"risk\": 0.67, \"riskLevel\": \"warning\", \"burnRate\": 0.0, \"safeUsagePercent\": 85.02, \"projectedExhaustionAt\": null, \"secondsUntilExhaustion\": null}, \"weeklyCreditPace\": {\"totalFullCredits\": 252200.0, \"totalActualRemainingCredits\": 137689.0, \"totalExpectedRemainingCredits\": 24772.3, \"actualUsedPercent\": 45.4, \"scheduledUsedPercent\": 90.18, \"deltaPercent\": -44.77, \"scheduleGapCredits\": 0.0, \"overPlanCredits\": 0.0, \"projectedShortfallCredits\": 0.0, \"pauseForBreakEvenHours\": null, \"paceMultiplier\": null, \"throttleToPercent\": null, \"reduceByPercent\": null, \"proAccountEquivalentToCoverOverPlan\": null, \"proAccountsToCoverOverPlan\": null, \"projectedDepletionHours\": null, \"projectedMinimumRemainingCredits\": 137689.0, \"forecastBurnRateCreditsPerHour\": null, \"scheduledBurnRateCreditsPerHour\": 1501.19, \"status\": \"behind\", \"accountCount\": 7, \"staleAccountCount\": 1, \"inactiveAccountCount\": 0, \"confidence\": \"medium\"}}",
+      "menubar_value": "Best for a 'pool health badge': riskLevel ('safe'|'warning'|'danger'|'critical') drives icon color; weeklyCreditPace.status drives sub-label."
+    },
+    {
+      "method": "GET",
+      "path": "/api/request-logs",
+      "description": "Paginated recent proxy request log. Supports filters: limit (1-1000), offset, search, accountId[], apiKeyId[], status[], model[], since, until.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"requests\": [{\"requestedAt\": \"2026-06-10T20:59:52.998720Z\", \"accountId\": \"2c436b54-...\", \"planType\": \"claude\", \"apiKeyId\": null, \"apiKeyName\": null, \"requestId\": \"e3e44a60-...\", \"requestKind\": \"normal\", \"model\": \"claude-sonnet-4-6\", \"source\": null, \"useragent\": null, \"useragentGroup\": null, \"transport\": \"http\", \"serviceTier\": null, \"requestedServiceTier\": null, \"actualServiceTier\": null, \"status\": \"ok\", \"errorCode\": null, \"errorMessage\": null, \"failurePhase\": null, \"failureDetail\": null, \"failureExceptionType\": null, \"upstreamStatusCode\": null, \"upstreamErrorCode\": null, \"bridgeStage\": null, \"tokens\": 713, \"inputTokens\": 91, \"outputTokens\": 622, \"cachedInputTokens\": 0, \"reasoningEffort\": null, \"costUsd\": 0.009603, \"costBreakdown\": {\"inputUsd\": null, \"cachedInputUsd\": null, \"outputUsd\": null, \"totalUsd\": 0.009603}, \"latencyMs\": 12161, \"latencyFirstTokenMs\": null}], \"total\": 142968, \"hasMore\": true}",
+      "menubar_value": "Recent activity feed \u2014 show last 5-10 requests with model, status, cost, latency in the popover."
+    },
+    {
+      "method": "GET",
+      "path": "/api/request-logs/options",
+      "description": "Returns distinct filter facets (accountIds[], modelOptions[], apiKeys[], statuses[]) usable as filter chip data for the log view.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"accountIds\": [\"2c436b54-...\"], \"modelOptions\": [{\"model\": \"claude-sonnet-4-6\", \"reasoningEffort\": null}], \"apiKeys\": [{\"id\": \"...\", \"name\": \"...\", \"keyPrefix\": \"sk-...\"}], \"statuses\": [\"ok\", \"error\"]}",
+      "menubar_value": "low"
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/version",
+      "description": "Current and latest agent-lb version, whether an update is available, and a link to releases.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"currentVersion\": \"1.20.0-beta.3\", \"latestVersion\": null, \"updateAvailable\": false, \"checkedAt\": \"2026-06-10T20:55:09.275625Z\", \"source\": null, \"releaseUrl\": \"https://github.com/Soju06/agent-lb/releases/latest\"}",
+      "menubar_value": "Show update-available badge on the menu bar icon when updateAvailable=true."
+    },
+    {
+      "method": "GET",
+      "path": "/api/quota-planner/settings",
+      "description": "Current quota planner configuration: mode, schedule, prewarm settings, forecast params.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"mode\": \"shadow\", \"timezone\": \"America/New_York\", \"workingDays\": [0,1,2,3,4], \"workingHoursStart\": \"09:00\", \"workingHoursEnd\": \"18:00\", \"prewarmEnabled\": true, \"prewarmLeadMinutes\": 300, \"maxWarmupsPerDay\": 3, \"maxWarmupCreditsPerDay\": 0.0, \"minExpectedGain\": 1.0, \"forecastQuantile\": \"p75\", \"allowSyntheticTraffic\": false, \"warmupModelPreference\": null, \"dryRun\": true}",
+      "menubar_value": "low"
+    },
+    {
+      "method": "GET",
+      "path": "/api/quota-planner/decisions",
+      "description": "Recent quota planner decisions (warmup actions or no-ops). Query param: limit (1-200, default 50).",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "[{\"id\": \"4d213e08-...\", \"createdAt\": \"2026-06-10T20:58:14.014861Z\", \"mode\": \"shadow\", \"accountId\": null, \"action\": \"no_op\", \"scheduledAt\": null, \"executedAt\": null, \"score\": 0.0, \"reason\": \"no_positive_peak_aligned_gain;...\", \"details\": {\"noop_reason\": \"no_positive_peak_aligned_gain\", \"target_peak_at\": \"...\", \"peak_demand_units\": 29841.1, \"loss\": 1485811.14, \"unmet_demand\": 1485811.14}, \"status\": \"skipped\", \"idempotencyKey\": \"202606102058:shadow:no_op\"}]",
+      "menubar_value": "Show last warmup decision and its status (skipped/executed/failed) in a detail section."
+    },
+    {
+      "method": "POST",
+      "path": "/api/accounts/{account_id}/pause",
+      "description": "Pause a specific account, removing it from active load-balancer rotation.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"status\": \"paused\"}",
+      "menubar_value": "Quick-action toggle from the account context menu \u2014 pause a rate-limited or misbehaving account."
+    },
+    {
+      "method": "POST",
+      "path": "/api/accounts/{account_id}/reactivate",
+      "description": "Reactivate a paused or deactivated account back into load-balancer rotation.",
+      "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
+      "response_shape": "{\"status\": \"reactivated\"}",
+      "menubar_value": "Companion to pause \u2014 re-enable an account from the context menu."
+    }
+  ],
+  "base": "http://127.0.0.1:2455",
+  "auth_notes": "When AGENT_LB_DASHBOARD_AUTH_MODE=disabled (the local setup), all /api/* dashboard endpoints accept requests with no credentials \u2014 no token, cookie, or header required. The auth middleware short-circuits to an anonymous DashboardRequestAuth with mode='disabled'. In standard mode the dashboard requires a session cookie obtained via POST /api/auth/login (TOTP optional). In trusted_header mode a configured HTTP header from a trusted-proxy CIDR carries the actor identity. Since auth is disabled locally, the menu bar app can call all /api/* endpoints directly from localhost with no auth headers. The three /health/* endpoints are always unauthenticated.",
+  "service_control": "Check running status: `launchctl list com.aneyman.agent-lb` \u2014 PID column is non-empty when running, exit code 0. The process liveness is also confirmed by GET http://127.0.0.1:2455/health returning {status:'ok'}.\n\nStart (if stopped): `launchctl load ~/Library/LaunchAgents/com.aneyman.agent-lb.plist`\nStop: `launchctl unload ~/Library/LaunchAgents/com.aneyman.agent-lb.plist`\nRestart (kill + relaunch via watchdog): `launchctl kickstart -k gui/501/com.aneyman.agent-lb`\nFull restart via unload/load: `launchctl unload ~/Library/LaunchAgents/com.aneyman.agent-lb.plist && launchctl load ~/Library/LaunchAgents/com.aneyman.agent-lb.plist`\n\nWatchdog label: com.aneyman.agent-lb-watchdog (separate plist, keeps the main service alive \u2014 do not unload unless you want the service permanently stopped).\n\nDetect running vs stopped:\n1. Fast process check: `launchctl list com.aneyman.agent-lb | awk 'NR==2{print $1}'` \u2014 prints a PID when running, '-' when stopped.\n2. HTTP check: GET /health/ready returns HTTP 200 + {status:'ok'} when fully up, HTTP 503 when starting or draining, connection refused when down.\n3. HTTP check: GET /health/startup returns HTTP 200 when startup is complete, 503 while initialising."
+}
