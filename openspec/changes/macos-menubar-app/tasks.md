@@ -19,5 +19,5 @@
 
 - [x] 3.1 Unit tests: fixture decoding, launchctl command builders, format helpers (`swift test` green).
 - [x] 3.2 `make bundle` produces signed `AgentLB.app`; `scripts/verify-e2e.sh` passes.
-- [ ] 3.3 (partial: app live on studio + MacBook-over-Tailscale, functional checks green; popover screenshot pending screen unlock) Live E2E on this machine: app launches, status item renders, popover shows real pool/account data from the running service; screenshot evidence.
+- [x] 3.3 (verified 2026-06-11: popover screenshot on studio matches design — 460×701 panel exactly equals PanelLayout computed height; ring icon in menu bar; MacBook remote install verified by user) Live E2E on this machine: app launches, status item renders, popover shows real pool/account data from the running service; screenshot evidence.
 - [x] 3.4 Design/code review pass (HIG + Liquid Glass usage, correctness, concurrency).
