@@ -48,3 +48,28 @@ async def test_list_accounts_refresh_existing_reloads_identity_map(db_setup):
         refreshed = (await reader_repo.list_accounts(refresh_existing=True))[0]
         assert refreshed is loaded
         assert refreshed.limit_warmup_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_new_account_defaults_to_limit_warmup_enabled(db_setup):
+    del db_setup
+    account = Account(
+        id="acc_warmup_default",
+        chatgpt_account_id="chatgpt_warmup_default",
+        email="acc_warmup_default@example.com",
+        plan_type="plus",
+        access_token_encrypted=b"access",
+        refresh_token_encrypted=b"refresh",
+        id_token_encrypted=b"id",
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    async with SessionLocal() as session:
+        repo = AccountsRepository(session)
+        await repo.upsert(account)
+
+    async with SessionLocal() as reader_session:
+        reader_repo = AccountsRepository(reader_session)
+        loaded = (await reader_repo.list_accounts())[0]
+        assert loaded.limit_warmup_enabled is True

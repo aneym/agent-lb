@@ -495,6 +495,10 @@ async def test_run_startup_migrations_drops_accounts_email_unique_with_non_casca
             assert "plan_type" in request_log_columns
             assert "source" in request_log_columns
             assert "limit_warmup_enabled" in account_columns
+            account_warmup_default = next(
+                str(row[4]) for row in account_columns_rows if len(row) > 4 and str(row[1]) == "limit_warmup_enabled"
+            )
+            assert account_warmup_default in {"1", "true", "TRUE"}
             legacy_plan_type = (
                 await session.execute(text("SELECT plan_type FROM request_logs WHERE id=1"))
             ).scalar_one()

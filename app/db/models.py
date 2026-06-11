@@ -108,8 +108,8 @@ class Account(Base):
     blocked_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     limit_warmup_enabled: Mapped[bool] = mapped_column(
         Boolean,
-        default=False,
-        server_default=false(),
+        default=True,
+        server_default=true(),
         nullable=False,
     )
     security_work_authorized: Mapped[bool] = mapped_column(

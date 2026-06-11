@@ -28,6 +28,20 @@ class AnthropicUsageCostBreakdown:
 
 
 DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
+    "claude-fable-5": AnthropicModelPrice(
+        input_per_1m=10.0,
+        cache_creation_5m_input_per_1m=12.50,
+        cache_creation_1h_input_per_1m=20.0,
+        cache_read_input_per_1m=1.0,
+        output_per_1m=50.0,
+    ),
+    "claude-mythos-5": AnthropicModelPrice(
+        input_per_1m=10.0,
+        cache_creation_5m_input_per_1m=12.50,
+        cache_creation_1h_input_per_1m=20.0,
+        cache_read_input_per_1m=1.0,
+        output_per_1m=50.0,
+    ),
     "claude-opus-4-5": AnthropicModelPrice(
         input_per_1m=5.0,
         cache_creation_5m_input_per_1m=6.25,
@@ -110,6 +124,8 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
     # 4.5-generation patterns are longer than the 4.0 ones, so resolve_model_alias's
     # longest-match wins — e.g. claude-opus-4-5-* maps to its own $5/$25 price, not Opus-4's $15/$75.
+    "claude-fable-5*": "claude-fable-5",
+    "claude-mythos-5*": "claude-mythos-5",
     "claude-opus-4-5*": "claude-opus-4-5",
     "claude-sonnet-4-5*": "claude-sonnet-4-5",
     "claude-haiku-4-5*": "claude-haiku-4-5",

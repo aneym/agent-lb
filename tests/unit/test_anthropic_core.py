@@ -145,6 +145,24 @@ def test_pricing_computes_cache_aware_cost_for_sonnet():
     assert breakdown.total_usd == pytest.approx(0.009435)
 
 
+def test_pricing_computes_cache_aware_cost_for_fable():
+    usage = AnthropicUsage(
+        input_tokens=1_000_000,
+        output_tokens=100_000,
+        cache_creation_input_tokens=1_000_000,
+        cache_read_input_tokens=1_000_000,
+    )
+
+    breakdown = calculate_anthropic_cost_breakdown(usage, DEFAULT_PRICING_MODELS["claude-fable-5"])
+
+    assert breakdown is not None
+    assert breakdown.input_usd == pytest.approx(10.0)
+    assert breakdown.cache_creation_input_usd == pytest.approx(12.50)
+    assert breakdown.cache_read_input_usd == pytest.approx(1.0)
+    assert breakdown.output_usd == pytest.approx(5.0)
+    assert breakdown.total_usd == pytest.approx(28.50)
+
+
 def test_pricing_resolves_versioned_model_alias():
     resolved = get_pricing_for_model("claude-sonnet-4-20250514")
 
@@ -155,6 +173,20 @@ def test_pricing_resolves_versioned_model_alias():
 
 
 def test_pricing_resolves_current_generation_models():
+    fable = get_pricing_for_model("claude-fable-5[1m]")
+    assert fable is not None
+    assert fable[0] == "claude-fable-5"
+    assert fable[1].input_per_1m == 10.0
+    assert fable[1].cache_creation_5m_input_per_1m == 12.50
+    assert fable[1].cache_creation_1h_input_per_1m == 20.0
+    assert fable[1].cache_read_input_per_1m == 1.0
+    assert fable[1].output_per_1m == 50.0
+
+    mythos = get_pricing_for_model("claude-mythos-5-20260609")
+    assert mythos is not None
+    assert mythos[0] == "claude-mythos-5"
+    assert mythos[1].output_per_1m == 50.0
+
     haiku = get_pricing_for_model("claude-haiku-4-5-20251001")
     assert haiku is not None
     assert haiku[0] == "claude-haiku-4-5"
