@@ -47,7 +47,7 @@ final class AppState {
           await checkHealth()
           if tick.isMultiple(of: 4) {
             // §8.1: the 120 s tick also fetches the usage summary so the
-            // status-bar ring arc tracks the pool while the popover is closed.
+            // status-bar ring arc tracks weekly/monthly pool usage while the popover is closed.
             // Accounts + recent are kept warm too: the MenuBarExtra panel
             // sizes itself from whatever data exists at the moment it first
             // lays out and macOS 26 never re-measures it spontaneously (see
@@ -299,10 +299,18 @@ final class AppState {
         state = .healthy
       }
     }
-    // §8.1: the arc is the pool's primary remaining percent.
+    // §8.1: the arc is the pool's weekly/monthly remaining percent. This is
+    // the right glanceable signal for the menu bar: 5-hour credits are noisy,
+    // weekly/monthly capacity is the strategic constraint.
     statusIcon = StatusIconRenderer.icon(
       for: state,
-      percent: summary?.primaryWindow?.remainingPercent
+      percent: Self.statusIconPercent(from: summary)
     )
+  }
+
+  nonisolated static func statusIconPercent(from summary: UsageSummary?) -> Double? {
+    summary?.secondaryWindow?.remainingPercent
+      ?? summary?.monthlyWindow?.remainingPercent
+      ?? summary?.primaryWindow?.remainingPercent
   }
 }

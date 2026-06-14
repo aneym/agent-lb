@@ -17,6 +17,16 @@ single endpoint MUST degrade only its own section, never blank the panel.
 - **THEN** pool percentages, reset countdowns, account rows, and recent
   requests render from live API data within one refresh tick
 
+#### Scenario: Status icon tracks long-window capacity
+
+- **WHEN** `/api/usage/summary` includes a weekly `secondaryWindow`
+- **THEN** the menu bar status icon ring MUST use that weekly remaining
+  percent for its progress arc instead of the 5-hour `primaryWindow`
+- **AND** if `secondaryWindow` is absent but `monthlyWindow` is present, the
+  status icon ring MUST use the monthly remaining percent
+- **AND** if neither long window is present, it MAY fall back to the primary
+  remaining percent
+
 #### Scenario: One endpoint fails
 
 - **WHEN** `/api/request-logs` returns 500 while other endpoints succeed
