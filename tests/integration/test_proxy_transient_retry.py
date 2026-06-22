@@ -103,6 +103,22 @@ def _stream_timeout_sse_event() -> str:
     )
 
 
+def _stream_incomplete_sse_event(response_id: str = "resp_incomplete") -> str:
+    return _sse_event(
+        {
+            "type": "response.failed",
+            "response": {
+                "id": response_id,
+                "status": "failed",
+                "error": {
+                    "code": "stream_incomplete",
+                    "message": "Upstream websocket closed before response.completed",
+                },
+            },
+        }
+    )
+
+
 def _success_sse_event(response_id: str = "resp_ok") -> str:
     return _sse_event(
         {
@@ -541,6 +557,94 @@ async def test_stream_mid_stream_error_is_surfaced_without_failover(async_client
     assert failed[0].get("response", {}).get("error", {}).get("code") == "rate_limit_exceeded"
     assert len(completed) == 0
     assert seen_account_ids == ["acc_midstream_a"]
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_protocol_only_truncation_retries_before_public_output(async_client, monkeypatch):
+    """Hermes-style lifecycle-only failures are hidden and retried for /v1/responses streams."""
+    await _import_account(async_client, "acc_public_protocol", "public-protocol@example.com")
+
+    call_count = 0
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield _sse_event(
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_protocol_failed", "object": "response", "status": "in_progress"},
+                }
+            )
+            yield _sse_event(
+                {
+                    "type": "response.in_progress",
+                    "response": {"id": "resp_protocol_failed", "object": "response", "status": "in_progress"},
+                }
+            )
+            yield _stream_incomplete_sse_event("resp_protocol_failed")
+            return
+        yield _sse_event(
+            {
+                "type": "response.created",
+                "response": {"id": "resp_protocol_ok", "object": "response", "status": "in_progress", "output": []},
+            }
+        )
+        yield _sse_event({"type": "response.output_text.delta", "delta": "recovered"})
+        yield _success_sse_event("resp_protocol_ok")
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {"model": "gpt-5.1", "input": "hi", "stream": True}
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    events = _extract_events(lines)
+    event_text = json.dumps(events)
+    event_types = [event.get("type") for event in events]
+    assert call_count == 2
+    assert "resp_protocol_failed" not in event_text
+    assert "response.failed" not in event_types
+    assert "response.output_text.delta" in event_types
+    assert event_types[-1] == "response.completed"
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_visible_output_failure_is_not_replayed(async_client, monkeypatch):
+    """Once public semantic output is visible, retry would duplicate text and must stay disabled."""
+    await _import_account(async_client, "acc_public_visible", "public-visible@example.com")
+
+    call_count = 0
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        nonlocal call_count
+        call_count += 1
+        yield _sse_event(
+            {
+                "type": "response.created",
+                "response": {"id": "resp_visible_failure", "object": "response", "status": "in_progress", "output": []},
+            }
+        )
+        yield _sse_event({"type": "response.output_text.delta", "delta": "partial"})
+        yield _stream_incomplete_sse_event("resp_visible_failure")
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {"model": "gpt-5.1", "input": "hi", "stream": True}
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    events = _extract_events(lines)
+    event_types = [event.get("type") for event in events]
+    deltas = [event.get("delta") for event in events if event.get("type") == "response.output_text.delta"]
+    failed = [event for event in events if event.get("type") == "response.failed"]
+    assert call_count == 1
+    assert deltas == ["partial"]
+    assert len(failed) == 1
+    assert failed[0].get("response", {}).get("error", {}).get("code") == "stream_incomplete"
+    assert "response.completed" not in event_types
 
 
 @pytest.mark.asyncio

@@ -358,6 +358,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _pop_replayable_precreated_websocket_request_state,
     _pop_terminal_websocket_request_state,
     _prepare_websocket_request_state_for_auth_replay,
+    _prepare_websocket_request_state_for_visible_output_replay,
     _record_websocket_continuity_completion,
     _release_websocket_response_create_gate,
     _rewrite_websocket_continuity_corruption_event,
@@ -2866,10 +2867,7 @@ class _WebSocketMixin:
                     upstream_control.replay_request_state = request_state
             else:
                 upstream_control.reconnect_requested = True
-                request_state.replay_count += 1
-                request_state.awaiting_response_created = True
-                request_state.response_id = None
-                _clear_websocket_request_error_overrides(request_state)
+                _prepare_websocket_request_state_for_visible_output_replay(request_state)
                 upstream_control.suppress_downstream_event = True
                 upstream_control.replay_request_state = request_state
                 await proxy._handle_stream_error(

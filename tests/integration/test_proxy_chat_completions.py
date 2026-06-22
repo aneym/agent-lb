@@ -58,6 +58,34 @@ async def test_v1_chat_completions_stream(async_client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_v1_chat_completions_enables_protocol_only_retry(async_client, monkeypatch):
+    email = "chatretryflag@example.com"
+    raw_account_id = "acc_chatretryflag"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    observed: dict[str, bool | None] = {"retry_protocol_only_failures": None}
+
+    async def fake_stream_responses(self, payload, headers, **kwargs):
+        del self, payload, headers
+        observed["retry_protocol_only_failures"] = kwargs.get("retry_protocol_only_failures")
+        yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+        yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
+
+    monkeypatch.setattr(proxy_module.ProxyService, "stream_responses", fake_stream_responses)
+
+    payload = {"model": "gpt-5.2", "messages": [{"role": "user", "content": "hi"}], "stream": True}
+    async with async_client.stream("POST", "/v1/chat/completions", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    assert any("chat.completion.chunk" in line for line in lines)
+    assert observed["retry_protocol_only_failures"] is True
+
+
+@pytest.mark.asyncio
 async def test_v1_chat_completions_opportunistic_denial_runs_before_api_key_reservation(async_client, monkeypatch):
     settings = await async_client.put(
         "/api/settings",

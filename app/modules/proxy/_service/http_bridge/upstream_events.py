@@ -588,6 +588,7 @@ class _HTTPBridgeUpstreamEventsMixin:
             event_type=event_type,
             payload=payload,
             has_other_pending_requests=has_other_pending_requests,
+            allow_protocol_only_started=True,
         )
         auth_error_code = _websocket_precreated_auth_error_code(
             status_request_state,
@@ -660,8 +661,6 @@ class _HTTPBridgeUpstreamEventsMixin:
                     if status_request_state not in session.pending_requests:
                         session.pending_requests.appendleft(status_request_state)
                         session.queued_request_count += 1
-                    status_request_state.awaiting_response_created = True
-                    status_request_state.response_id = None
                 retried = await self._retry_http_bridge_precreated_request(session)
                 if retried:
                     return

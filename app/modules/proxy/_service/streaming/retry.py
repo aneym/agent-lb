@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from collections.abc import Mapping as MappingABC
 from typing import Any, AsyncIterator, Mapping, cast
 
 import aiohttp
@@ -17,7 +18,7 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.retry import backoff_seconds
-from app.core.utils.sse import format_sse_event
+from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.db.models import StickySessionKind
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy._service.observability import (
@@ -49,10 +50,47 @@ from app.modules.proxy.helpers import (
 from app.modules.proxy.load_balancer import AccountLease
 
 _REQUEST_TRANSPORT_HTTP = "http"
+_PROTOCOL_ONLY_STREAM_EVENT_TYPES = frozenset({"response.created", "response.in_progress", "response.queued"})
+_PROTOCOL_ONLY_TERMINAL_ERROR_TYPES = frozenset({"response.failed", "error"})
 
 
 def _facade() -> Any:
     return sys.modules["app.modules.proxy.service"]
+
+
+def _protocol_only_stream_event_type(line: str) -> str | None:
+    payload = parse_sse_data_json(line)
+    if payload is None:
+        return None
+    event_type = payload.get("type")
+    return event_type if isinstance(event_type, str) else None
+
+
+def _protocol_only_stream_error(line: str) -> tuple[str | None, str | None]:
+    payload = parse_sse_data_json(line)
+    if payload is None:
+        return None, None
+    event_type = payload.get("type")
+    error_value: Any = None
+    if event_type == "response.failed":
+        response_value = payload.get("response")
+        if isinstance(response_value, MappingABC):
+            error_value = response_value.get("error")
+    elif event_type == "error":
+        error_value = payload.get("error")
+        if not isinstance(error_value, MappingABC):
+            error_value = payload
+    if not isinstance(error_value, MappingABC):
+        return None, None
+    code_value = error_value.get("code")
+    type_value = error_value.get("type")
+    message_value = error_value.get("message")
+    code = _normalize_error_code(
+        code_value if isinstance(code_value, str) else None,
+        type_value if isinstance(type_value, str) else None,
+    )
+    message = message_value if isinstance(message_value, str) else None
+    return code, message
 
 
 class _StreamingRetryMixin:
@@ -70,6 +108,7 @@ class _StreamingRetryMixin:
         request_transport: str,
         rewritten_file_account_id: str | None = None,
         upstream_stream_transport_override: str | None = None,
+        retry_protocol_only_failures: bool = False,
     ) -> AsyncIterator[str]:
         proxy = cast(_StreamingServiceProtocol, self)
         useragent, useragent_group = _request_log_useragent_fields(headers)
@@ -613,6 +652,10 @@ class _StreamingRetryMixin:
                         )
                         try:
                             settlement = _StreamSettlement()
+                            protocol_only_buffer: list[str] = []
+                            protocol_only_buffer_committed = not retry_protocol_only_failures
+                            protocol_only_terminal_error_code: str | None = None
+                            protocol_only_terminal_error_message: str | None = None
                             async for line in proxy._stream_once(
                                 account,
                                 payload,
@@ -635,9 +678,28 @@ class _StreamingRetryMixin:
                                 preferred_account_id=preferred_account_id,
                                 tool_call_dedupe=tool_call_dedupe,
                             ):
+                                if retry_protocol_only_failures and not protocol_only_buffer_committed:
+                                    protocol_only_buffer.append(line)
+                                    event_type = _protocol_only_stream_event_type(line)
+                                    if event_type in _PROTOCOL_ONLY_STREAM_EVENT_TYPES or event_type is None:
+                                        continue
+                                    if event_type in _PROTOCOL_ONLY_TERMINAL_ERROR_TYPES:
+                                        (
+                                            protocol_only_terminal_error_code,
+                                            protocol_only_terminal_error_message,
+                                        ) = _protocol_only_stream_error(line)
+                                        continue
+                                    protocol_only_buffer_committed = True
+                                    for buffered_line in protocol_only_buffer:
+                                        yield buffered_line
+                                    protocol_only_buffer.clear()
+                                    continue
                                 yield line
                         except (_TransientStreamError, ProxyResponseError) as tex:
-                            if settlement.downstream_visible:
+                            downstream_visible = settlement.downstream_visible
+                            if retry_protocol_only_failures and not protocol_only_buffer_committed:
+                                downstream_visible = False
+                            if downstream_visible:
                                 failed_response_id = settlement.response_id or request_id
                                 if isinstance(tex, ProxyResponseError):
                                     error = _parse_openai_error(tex.payload)
@@ -749,7 +811,7 @@ class _StreamingRetryMixin:
                                 if getattr(base_settings, "deterministic_failover_enabled", True):
                                     action = failover_decision(
                                         failure_class=classified["failure_class"],
-                                        downstream_visible=settlement.downstream_visible,
+                                        downstream_visible=downstream_visible,
                                         candidates_remaining=max_attempts - attempt - 1,
                                     )
                                 else:
@@ -780,7 +842,7 @@ class _StreamingRetryMixin:
                             if (
                                 transient_retries < _facade()._MAX_TRANSIENT_SAME_ACCOUNT_RETRIES
                                 and _facade()._remaining_budget_seconds(deadline) > 0
-                                and not settlement.downstream_visible
+                                and not downstream_visible
                             ):
                                 delay = backoff_seconds(transient_retries)
                                 _facade().logger.info(
@@ -795,7 +857,7 @@ class _StreamingRetryMixin:
                                 )
                                 await asyncio.sleep(delay)
                                 continue  # inner loop: retry same account
-                            # Exhausted same-account retries — penalize and failover
+                            # Exhausted same-account retries -- penalize and failover
                             _facade().logger.warning(
                                 "Transient retries exhausted for account "
                                 "request_id=%s account_id=%s retries=%s code=%s",
@@ -817,6 +879,51 @@ class _StreamingRetryMixin:
                             break  # outer loop: select different account
                         finally:
                             pop_stream_timeout_overrides(stream_timeout_tokens)
+                        if retry_protocol_only_failures and not protocol_only_buffer_committed and protocol_only_buffer:
+                            error_code = protocol_only_terminal_error_code or settlement.error_code
+                            error_message = protocol_only_terminal_error_message or settlement.error_message
+                            if _facade()._should_retry_transient_stream_error(error_code, error_message):
+                                transient_retries += 1
+                                error_payload = settlement.error or {"message": error_message or "Upstream error"}
+                                if (
+                                    transient_retries < _facade()._MAX_TRANSIENT_SAME_ACCOUNT_RETRIES
+                                    and _facade()._remaining_budget_seconds(deadline) > 0
+                                ):
+                                    delay = backoff_seconds(transient_retries)
+                                    _facade().logger.info(
+                                        "Protocol-only stream failure, retrying before public output "
+                                        "request_id=%s account_id=%s retry=%s/%s delay=%.2fs code=%s",
+                                        request_id,
+                                        account.id,
+                                        transient_retries,
+                                        _facade()._MAX_TRANSIENT_SAME_ACCOUNT_RETRIES,
+                                        delay,
+                                        error_code,
+                                    )
+                                    await asyncio.sleep(delay)
+                                    continue
+                                _facade().logger.warning(
+                                    "Protocol-only stream retries exhausted for account "
+                                    "request_id=%s account_id=%s retries=%s code=%s",
+                                    request_id,
+                                    account.id,
+                                    transient_retries,
+                                    error_code,
+                                )
+                                await proxy._handle_stream_error(
+                                    account,
+                                    error_payload,
+                                    error_code or "upstream_error",
+                                )
+                                await proxy._load_balancer.record_errors(account, transient_retries - 1)
+                                await _release_tracked_stream_lease(current_account_lease)
+                                current_account_lease = None
+                                excluded_account_ids.add(account.id)
+                                break
+                            protocol_only_buffer_committed = True
+                            for buffered_line in protocol_only_buffer:
+                                yield buffered_line
+                            protocol_only_buffer.clear()
                         if settlement.account_health_error:
                             await proxy._handle_stream_error(
                                 account,

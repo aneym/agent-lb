@@ -31,6 +31,7 @@ _REQUEST_TRANSPORT_WEBSOCKET = "websocket"
 _WEBSOCKET_FULL_REPLAY_WAIT_MIN_ITEMS = 20
 _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS = 0.05
 _HARD_HTTP_BRIDGE_AFFINITY_KINDS = frozenset({"turn_state_header", "session_header"})
+_PROTOCOL_ONLY_RESPONSE_EVENT_TYPES = frozenset({"response.created", "response.in_progress", "response.queued"})
 # How long a bridge key keeps avoiding the account that just failed a
 # first-event timeout. The cooldown only needs to outlive the client's next
 # retry so the fresh bridge selects a different account (that selection also
@@ -330,7 +331,7 @@ def _clear_websocket_request_error_overrides(request_state: _WebSocketRequestSta
 def _record_response_event(request_state: _WebSocketRequestState | None, event_type: str | None) -> None:
     if request_state is None or event_type is None or not event_type.startswith("response."):
         return
-    if event_type in {"response.failed", "response.incomplete"}:
+    if event_type in {"response.failed", "response.incomplete"} or event_type in _PROTOCOL_ONLY_RESPONSE_EVENT_TYPES:
         return
     request_state.response_event_count += 1
 
@@ -348,15 +349,15 @@ def _websocket_request_can_replay_before_visible_output(request_state: _WebSocke
     precreated_pending = request_state.response_id is None and request_state.awaiting_response_created
     if precreated_pending and request_state.previous_response_id is not None and not has_retry_safe_fresh_payload:
         return False
-    created_only_pending = (
+    protocol_only_pending = (
         request_state.response_id is not None
         and not request_state.awaiting_response_created
-        and request_state.response_event_count <= 1
+        and request_state.response_event_count == 0
         and (request_state.previous_response_id is None or has_retry_safe_fresh_payload)
     )
     if precreated_pending and request_state.response_event_count > 0:
         return False
-    return precreated_pending or created_only_pending
+    return precreated_pending or protocol_only_pending
 
 
 def _record_websocket_route_metadata(

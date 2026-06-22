@@ -2125,6 +2125,7 @@ async def v1_chat_completions(
         api_key=api_key,
         api_key_reservation=reservation,
         suppress_text_done_events=True,
+        retry_protocol_only_failures=True,
     )
     startup_probe_timeout = (
         _CURSOR_CHAT_COMPLETIONS_STARTUP_ERROR_PROBE_SECONDS
@@ -2259,6 +2260,7 @@ async def _stream_responses(
             forwarded_request=forwarded_request,
             forwarded_affinity_kind=forwarded_affinity_kind,
             forwarded_affinity_key=forwarded_affinity_key,
+            retry_protocol_only_failures=enforce_openai_sdk_contract,
         )
     else:
         stream = context.service.stream_responses(
@@ -2270,6 +2272,7 @@ async def _stream_responses(
             api_key=api_key,
             api_key_reservation=reservation,
             suppress_text_done_events=suppress_text_done_events,
+            retry_protocol_only_failures=enforce_openai_sdk_contract,
         )
     stream, startup_error = await _probe_stream_startup_error(
         stream,

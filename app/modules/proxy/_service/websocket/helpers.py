@@ -546,21 +546,26 @@ def _websocket_precreated_retry_error_code(
     event_type: str | None,
     payload: dict[str, JsonValue] | None,
     has_other_pending_requests: bool,
+    allow_protocol_only_started: bool = False,
 ) -> str | None:
     if request_state is None:
         return None
     if has_other_pending_requests:
         return None
-    if request_state.response_id is not None:
-        return None
-    if request_state.response_event_count > 0:
-        return None
-    if not request_state.awaiting_response_created:
-        return None
-    if not request_state.request_text:
-        return None
-    if request_state.replay_count >= 1:
-        return None
+    if allow_protocol_only_started:
+        if not _websocket_request_can_replay_before_visible_output(request_state):
+            return None
+    else:
+        if request_state.response_id is not None:
+            return None
+        if request_state.response_event_count > 0:
+            return None
+        if not request_state.awaiting_response_created:
+            return None
+        if not request_state.request_text:
+            return None
+        if request_state.replay_count >= 1:
+            return None
     if event_type not in {"error", "response.failed"}:
         return None
 

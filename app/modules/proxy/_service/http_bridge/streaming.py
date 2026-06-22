@@ -219,6 +219,7 @@ class _HTTPBridgeStreamingMixin:
         forwarded_request: bool = False,
         forwarded_affinity_kind: str | None = None,
         forwarded_affinity_key: str | None = None,
+        retry_protocol_only_failures: bool = False,
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream_http", payload, headers)
         proxy_api_authorization = _header_value_case_insensitive(headers, "authorization")
@@ -237,6 +238,7 @@ class _HTTPBridgeStreamingMixin:
             proxy_api_authorization=proxy_api_authorization,
             forwarded_affinity_kind=forwarded_affinity_kind,
             forwarded_affinity_key=forwarded_affinity_key,
+            retry_protocol_only_failures=retry_protocol_only_failures,
         )
 
     async def _stream_http_bridge_or_retry(
@@ -255,6 +257,7 @@ class _HTTPBridgeStreamingMixin:
         proxy_api_authorization: str | None = None,
         forwarded_affinity_kind: str | None = None,
         forwarded_affinity_key: str | None = None,
+        retry_protocol_only_failures: bool = False,
     ) -> AsyncIterator[str]:
         dashboard_settings = await _service_get_settings_cache().get()
         runtime_config = _http_bridge_runtime_config(dashboard_settings, _service_get_settings())
@@ -299,6 +302,7 @@ class _HTTPBridgeStreamingMixin:
                 request_transport=_REQUEST_TRANSPORT_HTTP,
                 rewritten_file_account_id=rewritten_file_account_id,
                 upstream_stream_transport_override=force_upstream_stream_transport,
+                retry_protocol_only_failures=retry_protocol_only_failures,
             ):
                 yield line
             return
