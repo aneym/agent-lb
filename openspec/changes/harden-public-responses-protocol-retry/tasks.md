@@ -4,6 +4,7 @@
 - [x] 1.2 Buffer lifecycle-only SSE events before semantic output when the public retry option is enabled.
 - [x] 1.3 Retry transient lifecycle-only terminal failures within the existing same-account retry and account-failover budgets.
 - [x] 1.4 Extend the native HTTP bridge terminal-error replay path for protocol-only GPT `upstream_stream_truncated` failures while preserving backend Codex behavior.
+- [x] 1.5 Retry replay-safe HTTP bridge first-event timeouts on a fresh account before surfacing `bridge_first_event_timeout`.
 
 ## 2. Regression Coverage
 
@@ -11,3 +12,4 @@
 - [x] 2.2 Keep or extend coverage proving backend `/backend-api/codex/responses` still surfaces failures after an emitted lifecycle event.
 - [x] 2.3 Add native HTTP bridge coverage for lifecycle-only retry and no replay after visible output.
 - [x] 2.4 Run targeted tests plus OpenSpec validation for the change.
+- [x] 2.5 Add native HTTP bridge coverage for first-event timeout failover before downstream failure.

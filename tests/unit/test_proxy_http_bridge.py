@@ -437,6 +437,8 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
     monkeypatch.setattr(proxy_service, "time", clock)
     monkeypatch.setattr(proxy_service, "get_settings", _make_first_event_timeout_settings)
     monkeypatch.setattr(proxy_service, "_HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS", 0.001)
+    retry_fresh = AsyncMock(return_value=False)
+    monkeypatch.setattr(service, "_retry_http_bridge_request_on_fresh_upstream", retry_fresh)
 
     session_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-first-event-timeout", None)
     session = proxy_service._HTTPBridgeSession(
@@ -508,6 +510,8 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
     error = response["error"]
     assert isinstance(error, dict)
     assert error["code"] == "bridge_first_event_timeout"
+    retry_fresh.assert_awaited_once()
+    assert request_state.excluded_account_ids == {"acc-first-event"}
 
     # Self-heal: the poisoned bridge must be removed from the live session map so
     # the next request with the same key starts a fresh upstream session.
@@ -543,6 +547,127 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
     assert dump_call.args[0] is request_state
     assert dump_call.kwargs["error_code"] == "bridge_first_event_timeout"
     assert dump_call.kwargs["log_prefix"] == "first-event-timeout"
+
+
+@pytest.mark.asyncio
+async def test_http_bridge_first_event_timeout_retries_fresh_account_before_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay-safe first turns fail over before surfacing a no-byte timeout."""
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
+    quarantined_account_ids: list[str] = []
+
+    async def fake_quarantine(target_session: proxy_service._HTTPBridgeSession) -> None:
+        quarantined_account_ids.append(target_session.account.id)
+
+    monkeypatch.setattr(service, "_quarantine_http_bridge_first_event_account", fake_quarantine)
+    retire = AsyncMock()
+    monkeypatch.setattr(service, "_retire_stale_pending_http_bridge_session", retire)
+    payload_dump = Mock(return_value=True)
+    monkeypatch.setattr(proxy_service, "_write_response_create_dump", payload_dump)
+    clock = _FakeMonotonicClock(value=1000.0)
+    monkeypatch.setattr(proxy_service, "time", clock)
+    monkeypatch.setattr(proxy_service, "get_settings", _make_first_event_timeout_settings)
+    monkeypatch.setattr(proxy_service, "_HTTP_BRIDGE_STARTUP_KEEPALIVE_GRACE_SECONDS", 0.001)
+
+    session_key = proxy_service._HTTPBridgeSessionKey("session_header", "sid-first-event-failover", None)
+    session = proxy_service._HTTPBridgeSession(
+        key=session_key,
+        headers={"session_id": "sid-first-event-failover"},
+        affinity=proxy_service._AffinityPolicy(
+            key="sid-first-event-failover",
+            kind=proxy_service.StickySessionKind.CODEX_SESSION,
+        ),
+        request_model="gpt-5.5",
+        account=cast(Any, SimpleNamespace(id="acc-silent", status=AccountStatus.ACTIVE)),
+        upstream=cast(UpstreamResponsesWebSocket, SimpleNamespace(close=AsyncMock())),
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque(),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=1,
+        last_used_at=1.0,
+        idle_ttl_seconds=120.0,
+    )
+    request_state = proxy_service._WebSocketRequestState(
+        request_id="req-first-event-failover",
+        model="gpt-5.5",
+        service_tier=None,
+        reasoning_effort=None,
+        api_key_reservation=None,
+        started_at=0.0,
+        awaiting_response_created=True,
+        event_queue=asyncio.Queue(),
+        transport="http",
+        request_text='{"type":"response.create","model":"gpt-5.5","input":"heartbeat"}',
+    )
+
+    async def fake_submit_http_bridge_request(
+        target_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+        queue_limit: int,
+    ) -> None:
+        del text_data, queue_limit
+        target_session.pending_requests.append(request_state)
+
+    retry_calls: list[tuple[str, set[str], str]] = []
+
+    async def fake_retry_fresh(
+        target_session: proxy_service._HTTPBridgeSession,
+        *,
+        request_state: proxy_service._WebSocketRequestState,
+        text_data: str,
+    ) -> bool:
+        retry_calls.append((target_session.account.id, set(request_state.excluded_account_ids), text_data))
+        target_session.account = cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE))
+        return True
+
+    monkeypatch.setattr(service, "_submit_http_bridge_request", fake_submit_http_bridge_request)
+    monkeypatch.setattr(service, "_retry_http_bridge_request_on_fresh_upstream", fake_retry_fresh)
+
+    stream = service._stream_http_bridge_session_events(
+        session,
+        request_state=request_state,
+        text_data="{}",
+        queue_limit=8,
+        propagate_http_errors=True,
+        downstream_turn_state=None,
+    )
+    first_event_task = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0.05)
+
+    assert retry_calls == [("acc-silent", {"acc-silent"}, request_state.request_text)]
+    assert quarantined_account_ids == ["acc-silent"]
+    assert first_event_task.done() is False
+
+    event_queue = request_state.event_queue
+    assert event_queue is not None
+    request_state.response_id = "resp_first_event_failover"
+    request_state.response_event_count = 1
+    await event_queue.put(
+        proxy_service.format_sse_event(
+            cast(
+                Any,
+                {
+                    "type": "response.created",
+                    "response": {"id": "resp_first_event_failover", "status": "in_progress"},
+                },
+            )
+        )
+    )
+    first = await asyncio.wait_for(first_event_task, timeout=1.0)
+    assert "response.created" in first
+
+    await event_queue.put(None)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(stream), timeout=1.0)
+
+    retire.assert_not_awaited()
+    payload_dump.assert_not_called()
 
 
 @pytest.mark.asyncio

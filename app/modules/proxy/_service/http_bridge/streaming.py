@@ -1345,6 +1345,8 @@ class _HTTPBridgeStreamingMixin:
             first_event_deadline = request_state.started_at + first_event_timeout_seconds
             first_event_timed_out = False
             first_event_degraded_retry_attempted = False
+            first_event_failover_retry_attempted = False
+            first_event_quarantined_account_ids: set[str] = set()
             while True:
                 keepalive_interval = getattr(_service_get_settings(), "sse_keepalive_interval_seconds", 10.0)
                 if keepalive_interval > 0:
@@ -1373,6 +1375,7 @@ class _HTTPBridgeStreamingMixin:
                             or request_state.response_event_count > 0
                         )
                         if not has_first_event and _service_time().monotonic() >= first_event_deadline:
+                            degraded_retry_candidate = False
                             if (
                                 not first_event_degraded_retry_attempted
                                 and request_state.previous_response_id is None
@@ -1397,6 +1400,7 @@ class _HTTPBridgeStreamingMixin:
                                     dropped_reasoning_items,
                                 ) = strip_encrypted_reasoning_from_request_text(request_state.request_text)
                                 if degraded_text is not None:
+                                    degraded_retry_candidate = True
                                     retried = await self._retry_http_bridge_request_on_fresh_upstream(
                                         session,
                                         request_state=request_state,
@@ -1420,11 +1424,49 @@ class _HTTPBridgeStreamingMixin:
                                                 else None
                                             ),
                                         )
-                                        first_event_deadline = (
-                                            _service_time().monotonic() + first_event_timeout_seconds
-                                        )
+                                        first_event_deadline = _service_time().monotonic() + first_event_timeout_seconds
                                         keepalive_count = 0
                                         continue
+                            if (
+                                not first_event_failover_retry_attempted
+                                and not degraded_retry_candidate
+                                and request_state.previous_response_id is None
+                                and request_state.preferred_account_id is None
+                                and request_state.request_text
+                                and request_state.response_event_count == 0
+                                and not yielded_any
+                            ):
+                                failed_account_id = session.account.id
+                                first_event_failover_retry_attempted = True
+                                await self._quarantine_http_bridge_first_event_account(session)
+                                first_event_quarantined_account_ids.add(failed_account_id)
+                                request_state.excluded_account_ids.add(failed_account_id)
+                                retried = await self._retry_http_bridge_request_on_fresh_upstream(
+                                    session,
+                                    request_state=request_state,
+                                    text_data=request_state.request_text,
+                                )
+                                if retried:
+                                    _log_http_bridge_event(
+                                        "first_event_failover_retry",
+                                        session.key,
+                                        account_id=session.account.id,
+                                        model=session.request_model,
+                                        detail=(
+                                            f"failed_account_id={failed_account_id}, "
+                                            f"timeout_seconds={first_event_timeout_seconds}"
+                                        ),
+                                        cache_key_family=session.key.affinity_kind,
+                                        model_class=(
+                                            _extract_model_class(session.request_model)
+                                            if session.request_model
+                                            else None
+                                        ),
+                                    )
+                                    first_event_deadline = _service_time().monotonic() + first_event_timeout_seconds
+                                    keepalive_count = 0
+                                    keepalive_sent = False
+                                    continue
                             first_event_timed_out = True
                             logger.warning(
                                 "HTTP bridge first-event timeout request_id=%s account_id=%s "
@@ -1579,7 +1621,8 @@ class _HTTPBridgeStreamingMixin:
                     # account, break the sticky binding, and cool the account
                     # down for this bridge key so the next attempt selects a
                     # different account instead of re-pinning the dead one.
-                    await self._quarantine_http_bridge_first_event_account(session)
+                    if session.account.id not in first_event_quarantined_account_ids:
+                        await self._quarantine_http_bridge_first_event_account(session)
                     # Then retire the bridge and its durable session lease so
                     # the *next* request with the same bridge key starts a
                     # fresh upstream session instead of re-hitting the dead

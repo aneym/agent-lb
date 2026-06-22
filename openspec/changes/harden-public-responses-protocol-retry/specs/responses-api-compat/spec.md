@@ -22,3 +22,16 @@ When serving an OpenAI SDK-compatible public streaming Responses request, the se
 - **WHEN** the same upstream attempt later fails with a transient stream error
 - **THEN** the service MUST surface the failure on the same downstream stream
 - **AND** the service MUST NOT retry or fail over the request after the visible output
+
+#### Scenario: HTTP bridge retries replay-safe first-event timeout before downstream failure
+- **GIVEN** a public streaming `POST /v1/responses` request is using the HTTP Responses session bridge
+- **AND** the request has no `previous_response_id`, no preferred account owner, and no downstream-visible events
+- **WHEN** the selected upstream account accepts `response.create` but produces no first event before the first-event timeout
+- **THEN** the service MUST quarantine and exclude that account for the bridge key
+- **AND** the service MUST retry the same request on a fresh eligible account before forwarding `bridge_first_event_timeout`
+- **AND** if the retry produces a first event, the downstream stream MUST continue without the timeout failure
+
+#### Scenario: HTTP bridge preserves account ownership on first-event timeout
+- **GIVEN** a public streaming `POST /v1/responses` request is bound to a previous response or preferred account owner
+- **WHEN** the selected upstream account produces no first event before the first-event timeout
+- **THEN** the service MUST NOT replay the request on a different account solely because no first event arrived
