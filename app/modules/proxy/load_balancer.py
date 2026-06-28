@@ -41,6 +41,7 @@ from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
     account_cap_rejections_total,
     account_lease_acquired_total,
+    account_lease_active,
     account_lease_released_total,
     account_lease_stale_reclaimed_total,
 )
@@ -1738,13 +1739,21 @@ def _account_cap_error_code(lease_kind: AccountLeaseKind | None) -> str | None:
 
 
 def _record_account_lease_acquired(kind: AccountLeaseKind) -> None:
-    if PROMETHEUS_AVAILABLE and account_lease_acquired_total is not None:
+    if not PROMETHEUS_AVAILABLE:
+        return
+    if account_lease_acquired_total is not None:
         account_lease_acquired_total.labels(kind=kind).inc()
+    if account_lease_active is not None:
+        account_lease_active.labels(kind=kind).inc()
 
 
 def _record_account_lease_released(kind: AccountLeaseKind, reason: str) -> None:
-    if PROMETHEUS_AVAILABLE and account_lease_released_total is not None:
+    if not PROMETHEUS_AVAILABLE:
+        return
+    if account_lease_released_total is not None:
         account_lease_released_total.labels(kind=kind, reason=reason).inc()
+    if account_lease_active is not None:
+        account_lease_active.labels(kind=kind).dec()
 
 
 def _record_account_lease_stale_reclaimed(kind: AccountLeaseKind) -> None:

@@ -22,6 +22,7 @@ _SENSITIVE_LOG_VALUE_PATTERNS = (
     re.compile(r"(?i)(authorization\s*[=:]\s*)(?!\s*bearer\b)([^,&]+)"),
 )
 _LOG_REDACTION = "[REDACTED]"
+_MAX_LOG_VALUE_CHARS = 1000
 
 
 def _redact_log_value(value: str | None) -> str | None:
@@ -31,7 +32,8 @@ def _redact_log_value(value: str | None) -> str | None:
     redacted = collapsed
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[0].sub(_redact_keyed_secret, redacted)
     redacted = _SENSITIVE_LOG_VALUE_PATTERNS[1].sub(_redact_bearer_token, redacted)
-    return _SENSITIVE_LOG_VALUE_PATTERNS[2].sub(_redact_authorization_value, redacted)
+    redacted = _SENSITIVE_LOG_VALUE_PATTERNS[2].sub(_redact_authorization_value, redacted)
+    return _truncate_log_value(redacted)
 
 
 def _redact_keyed_secret(match: re.Match[str]) -> str:
@@ -195,14 +197,27 @@ def log_error_response(
     exc_info: bool = False,
 ) -> None:
     level = logging.ERROR if status_code >= 500 else logging.WARNING
+    request_id = get_request_id()
+    safe_message = _redact_log_value(message)
     logger.log(
         level,
-        "%s request_id=%s method=%s path=%s status=%s",
+        "%s request_id=%s method=%s path=%s status=%s code=%s message=%s",
         category,
-        get_request_id(),
+        request_id,
         request.method,
         request.url.path,
         status_code,
+        code,
+        safe_message,
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": status_code,
+            "error_code": code,
+            "error_message": safe_message,
+            "error_category": category,
+        },
         exc_info=exc_info,
     )
 
@@ -212,3 +227,9 @@ def _collapse_log_value(value: str | None) -> str | None:
         return None
     collapsed = " ".join(value.split())
     return collapsed or None
+
+
+def _truncate_log_value(value: str) -> str:
+    if len(value) <= _MAX_LOG_VALUE_CHARS:
+        return value
+    return f"{value[:_MAX_LOG_VALUE_CHARS]}... [truncated]"

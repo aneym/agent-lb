@@ -4,12 +4,14 @@ import json
 import logging
 
 import pytest
+from starlette.requests import Request
 
 from app.core.runtime_logging import (
     JsonFormatter,
     UtcDefaultFormatter,
     _redact_log_value,
     build_log_config,
+    log_error_response,
 )
 
 pytestmark = pytest.mark.unit
@@ -29,6 +31,45 @@ def test_redact_log_value_masks_basic_authorization_credentials():
     redacted = _redact_log_value(value)
 
     assert redacted == "Authorization: [REDACTED], status=failed"
+
+
+def _request(path: str = "/backend-api/codex/responses") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": b"",
+            "headers": [],
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 1234),
+        }
+    )
+
+
+def test_log_error_response_includes_structured_error_detail_without_secrets(caplog):
+    logger = logging.getLogger("tests.structured_logging")
+    caplog.set_level(logging.WARNING, logger=logger.name)
+
+    log_error_response(
+        logger,
+        _request(),
+        429,
+        "account_stream_cap",
+        "Bearer abc.def token=secret saturated",
+        category="proxy_error_response",
+    )
+
+    record = next(record for record in caplog.records if record.name == logger.name)
+    assert record.error_code == "account_stream_cap"
+    assert record.error_message == "Bearer [REDACTED] token=[REDACTED] saturated"
+    assert record.error_category == "proxy_error_response"
+    assert record.path == "/backend-api/codex/responses"
+    assert "code=account_stream_cap" in record.getMessage()
+    assert "Bearer abc.def" not in record.getMessage()
+    assert "token=secret" not in record.getMessage()
 
 
 @pytest.fixture

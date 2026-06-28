@@ -195,6 +195,13 @@ if PROMETHEUS_AVAILABLE:
         ["kind", "reason"],
         registry=REGISTRY,
     )
+    account_lease_active = Gauge(
+        "agent_lb_account_lease_active",
+        "Current active account pressure leases by kind",
+        ["kind"],
+        registry=REGISTRY,
+        **_gauge_kwargs,
+    )
     account_lease_stale_reclaimed_total = Counter(
         "agent_lb_account_lease_stale_reclaimed_total",
         "Total stale account pressure leases reclaimed by kind",
@@ -251,6 +258,7 @@ else:
     continuity_fail_closed_total: CounterLike | None = None
     account_lease_acquired_total: CounterLike | None = None
     account_lease_released_total: CounterLike | None = None
+    account_lease_active: GaugeLike | None = None
     account_lease_stale_reclaimed_total: CounterLike | None = None
     account_cap_rejections_total: CounterLike | None = None
 
@@ -267,6 +275,7 @@ __all__ = [
     "REGISTRY",
     "active_connections",
     "account_cap_rejections_total",
+    "account_lease_active",
     "account_lease_acquired_total",
     "account_lease_released_total",
     "account_lease_stale_reclaimed_total",

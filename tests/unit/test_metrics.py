@@ -102,13 +102,20 @@ def _load_metrics_modules(
     else:
         monkeypatch.delitem(sys.modules, "prometheus_client", raising=False)
         real_import = builtins.__import__
+        real_import_module = importlib.import_module
 
         def _missing_prometheus_import(name, globals=None, locals=None, fromlist=(), level=0):
             if name == "prometheus_client":
                 raise ImportError("prometheus_client is not installed")
             return real_import(name, globals, locals, fromlist, level)
 
+        def _missing_prometheus_import_module(name, package=None):
+            if name == "prometheus_client" or name.startswith("prometheus_client."):
+                raise ImportError("prometheus_client is not installed")
+            return real_import_module(name, package)
+
         monkeypatch.setattr(builtins, "__import__", _missing_prometheus_import)
+        monkeypatch.setattr(importlib, "import_module", _missing_prometheus_import_module)
 
     prometheus_module = importlib.import_module("app.core.metrics.prometheus")
     middleware_module = importlib.import_module("app.core.metrics.middleware")
@@ -128,6 +135,14 @@ def test_prometheus_metrics_defined_when_dependency_available(monkeypatch: pytes
     assert prometheus_module.continuity_owner_resolution_total.name == "agent_lb_continuity_owner_resolution_total"
     assert prometheus_module.continuity_owner_resolution_total.labelnames == ("surface", "source", "outcome")
     assert prometheus_module.continuity_fail_closed_total.name == "agent_lb_continuity_fail_closed_total"
+    assert prometheus_module.account_lease_acquired_total.name == "agent_lb_account_lease_acquired_total"
+    assert prometheus_module.account_lease_acquired_total.labelnames == ("kind",)
+    assert prometheus_module.account_lease_released_total.name == "agent_lb_account_lease_released_total"
+    assert prometheus_module.account_lease_released_total.labelnames == ("kind", "reason")
+    assert prometheus_module.account_lease_active.name == "agent_lb_account_lease_active"
+    assert prometheus_module.account_lease_active.labelnames == ("kind",)
+    assert prometheus_module.account_cap_rejections_total.name == "agent_lb_account_cap_rejections_total"
+    assert prometheus_module.account_cap_rejections_total.labelnames == ("kind",)
     assert prometheus_module.continuity_fail_closed_total.labelnames == ("surface", "reason")
 
 

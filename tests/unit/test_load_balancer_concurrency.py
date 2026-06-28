@@ -136,7 +136,7 @@ def _usage_row_with_percent(
     return row
 
 
-def _account_cap_settings(*, response_create_limit: int = 4, stream_limit: int = 0) -> SimpleNamespace:
+def _account_cap_settings(*, response_create_limit: int = 0, stream_limit: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         proxy_account_lease_ttl_seconds=900.0,
         proxy_request_budget_seconds=7200.0,
@@ -342,7 +342,14 @@ async def test_account_stream_cap_returns_stable_local_reason_until_released(
 
 
 @pytest.mark.asyncio
-async def test_account_response_create_cap_prefers_unsaturated_account() -> None:
+async def test_account_response_create_cap_prefers_unsaturated_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        load_balancer_module,
+        "get_settings",
+        lambda: _account_cap_settings(response_create_limit=4),
+    )
     now_epoch = int(datetime.now(tz=timezone.utc).timestamp())
     account_a = _make_account("acc-response-create-cap-a")
     account_b = _make_account("acc-response-create-cap-b")
@@ -371,6 +378,87 @@ async def test_account_response_create_cap_prefers_unsaturated_account() -> None
 
     for lease in [*saturated_leases, selected.lease]:
         await balancer.release_account_lease(lease)
+
+
+@pytest.mark.asyncio
+async def test_response_create_cap_zero_keeps_create_leases_as_pressure_without_rejecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        load_balancer_module,
+        "get_settings",
+        lambda: _account_cap_settings(response_create_limit=0),
+    )
+    now_epoch = int(datetime.now(tz=timezone.utc).timestamp())
+    account = _make_account("acc-unbounded-response-create")
+    accounts_repo = _StubAccountsRepository([account])
+    usage_repo = _StubUsageRepository(
+        primary={account.id: _usage_row(44, account.id, window="primary", reset_at=now_epoch + 300)},
+        secondary={account.id: _usage_row(45, account.id, window="secondary", reset_at=now_epoch + 3600)},
+    )
+    balancer = LoadBalancer(lambda: _repo_factory(accounts_repo, usage_repo))
+
+    leases = [await balancer.acquire_account_lease(account.id, kind="response_create") for _ in range(8)]
+    selected = await balancer.select_account(
+        routing_strategy="usage_weighted",
+        lease_kind="response_create",
+    )
+
+    assert all(lease is not None for lease in leases)
+    assert selected.account is not None
+    assert selected.account.id == account.id
+    assert selected.error_code is None
+    assert selected.lease is not None
+    assert await balancer.account_pressure_snapshot(account.id) == (9, 0, 0.0)
+
+    for lease in [*leases, selected.lease]:
+        await balancer.release_account_lease(lease)
+
+    assert await balancer.account_pressure_snapshot(account.id) == (0, 0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_response_create_pressure_updates_active_lease_metric_when_uncapped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _MetricChild:
+        def __init__(self) -> None:
+            self.value = 0.0
+
+        def inc(self) -> None:
+            self.value += 1
+
+        def dec(self) -> None:
+            self.value -= 1
+
+    class _Gauge:
+        def __init__(self) -> None:
+            self.children: dict[str, _MetricChild] = {}
+
+        def labels(self, *, kind: str) -> _MetricChild:
+            return self.children.setdefault(kind, _MetricChild())
+
+    gauge = _Gauge()
+    monkeypatch.setattr(load_balancer_module, "PROMETHEUS_AVAILABLE", True)
+    monkeypatch.setattr(load_balancer_module, "account_lease_active", gauge)
+    monkeypatch.setattr(load_balancer_module, "account_lease_acquired_total", None)
+    monkeypatch.setattr(load_balancer_module, "account_lease_released_total", None)
+    monkeypatch.setattr(
+        load_balancer_module,
+        "get_settings",
+        lambda: _account_cap_settings(response_create_limit=0),
+    )
+    account = _make_account("acc-unbounded-response-create-metric")
+    balancer = LoadBalancer(lambda: _repo_factory(_StubAccountsRepository([account]), _StubUsageRepository({}, {})))
+
+    lease = await balancer.acquire_account_lease(account.id, kind="response_create")
+
+    assert lease is not None
+    assert gauge.children["response_create"].value == 1
+
+    await balancer.release_account_lease(lease)
+
+    assert gauge.children["response_create"].value == 0
 
 
 @pytest.mark.asyncio
