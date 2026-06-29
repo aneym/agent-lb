@@ -24,6 +24,27 @@ routing, removals, verification, or dedicated browser-profile work — use the
 
 **Development on this fork (`aneym/agent-lb`) stays on `main`.** Work directly on `main`; do not create or switch to feature branches unless the user explicitly asks. `feat/anthropic-provider` was consolidated into `main` on 2026-06-09 and is retired. The "do not commit directly to main" convention in `.agents/conventions/git-workflow.md` applies only to upstream (`Soju06/codex-lb`) contributions. The local checkout also runs the live launchd service (`com.aneyman.agent-lb`), so the working tree must remain on `main`.
 
+## Auto-publish (standing authorization)
+
+Validated changes ship immediately — no per-change confirmation. After a change
+passes its **validation gate**, commit directly to `main` and `git push origin main`
+right away. This is a standing instruction from the repo owner.
+
+"Validated" means the change was actually **exercised**, not merely asserted:
+
+- **Launcher / client (`clients/**`)**: byte-compiles (`python -m py_compile`) and a
+  `CLAUDE_LB_DRY_RUN=1` (or real) round-trip behaves correctly.
+- **Server (`app/**`)**: imports clean, `ruff check app clients` passes, the relevant
+  tests pass, and — for runtime behavior — the service starts and the affected endpoint
+  returns the expected response. Restart the live `com.aneyman.agent-lb` service so the
+  running process matches what was pushed (the resilient launcher absorbs the brief
+  restart; avoid restarting while long streams are mid-flight when it can be helped).
+- **Cross-machine**: after pushing, fast-forward every other instance (e.g. the laptop)
+  so all checkouts converge on `origin/main`.
+
+OpenSpec still gates behavior/API/schema changes (see below) — create the change folder
+as part of the same validated push, don't skip it.
+
 ## Code Conventions
 
 The `/project-conventions` skill is auto-activated on code edits (PreToolUse guard).
