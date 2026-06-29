@@ -87,6 +87,14 @@ PROBE_NETWORK_FAILURE_STATUS = 0
 _CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 _SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT = 500
 
+# Short-TTL cache for the expensive per-account request-usage aggregation (a dedup
+# window over the full request_logs history, ~2s on a large DB). request-usage is a
+# cumulative, non-real-time token/cost tally, so brief staleness is acceptable; only
+# the dashboard (GET /api/accounts?fresh=1) computes it, and this keeps repeated
+# dashboard polls from re-running the scan. Keyed by the account-id set.
+_REQUEST_USAGE_CACHE_TTL_SECONDS = 20.0
+_request_usage_cache: dict[frozenset[str], tuple[float, dict[str, AccountRequestUsage]]] = {}
+
 
 class InvalidAuthJsonError(Exception):
     pass
@@ -137,7 +145,7 @@ class AccountsService:
         self._encryptor = TokenEncryptor()
         self._auth_manager = auth_manager
 
-    async def list_accounts(self) -> list[AccountSummary]:
+    async def list_accounts(self, *, include_request_usage: bool = False) -> list[AccountSummary]:
         accounts = await self._repo.list_accounts()
         if not accounts:
             return []
@@ -146,21 +154,16 @@ class AccountsService:
         primary_usage = await self._usage_repo.latest_by_account(window="primary") if self._usage_repo else {}
         secondary_usage = await self._usage_repo.latest_by_account(window="secondary") if self._usage_repo else {}
         monthly_usage = await self._usage_repo.latest_by_account(window="monthly") if self._usage_repo else {}
-        request_usage_rows = await self._repo.list_request_usage_summary_by_account(account_ids)
         limit_warmups_by_account = (
             await self._limit_warmup_repo.latest_by_account(account_ids) if self._limit_warmup_repo else {}
         )
-        request_usage_by_account = {
-            account_id: AccountRequestUsage(
-                request_count=row.request_count,
-                total_tokens=row.total_tokens,
-                cached_input_tokens=row.cached_input_tokens,
-                cache_creation_tokens=row.cache_creation_tokens,
-                cache_read_tokens=row.cache_read_tokens,
-                total_cost_usd=row.total_cost_usd,
-            )
-            for account_id, row in request_usage_rows.items()
-        }
+        # request-usage is an expensive dedup aggregation over the full request_logs
+        # history and is consumed only by the dashboard token/cost columns — not the cc
+        # banner or menubar. Keep it off the hot path: compute (cached) only when asked
+        # for via GET /api/accounts?fresh=1.
+        request_usage_by_account: dict[str, AccountRequestUsage] = {}
+        if include_request_usage:
+            request_usage_by_account = await self._request_usage_by_account(account_ids)
         additional_quotas_by_account: dict[str, list[AccountAdditionalQuota]] = {}
         additional_usage_repo = cast(AdditionalUsageRepository | None, self._additional_usage_repo)
         if additional_usage_repo:
@@ -168,8 +171,12 @@ class AccountsService:
             quota_keys = await additional_usage_repo.list_quota_keys(account_ids=account_ids)
             now_epoch = int(time.time())
             for quota_key in quota_keys:
-                primary_entries = await additional_usage_repo.latest_by_account(quota_key, "primary")
-                secondary_entries = await additional_usage_repo.latest_by_account(quota_key, "secondary")
+                primary_entries = await additional_usage_repo.latest_by_account(
+                    quota_key, "primary", account_ids=account_ids
+                )
+                secondary_entries = await additional_usage_repo.latest_by_account(
+                    quota_key, "secondary", account_ids=account_ids
+                )
                 for account_id in (set(primary_entries) | set(secondary_entries)) & account_id_set:
                     primary_entry = primary_entries.get(account_id)
                     secondary_entry = secondary_entries.get(account_id)
@@ -204,6 +211,33 @@ class AccountsService:
             limit_warmups_by_account=limit_warmups_by_account,
             encryptor=self._encryptor,
         )
+
+    async def _request_usage_by_account(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
+        """Per-account cumulative request-usage, short-TTL cached.
+
+        The underlying query is a dedup window over the full request_logs history
+        (~2s on a large DB). It backs the dashboard token/cost columns only, so a few
+        seconds of staleness is fine and keeps repeated dashboard polls cheap.
+        """
+        key = frozenset(account_ids)
+        now = time.monotonic()
+        cached = _request_usage_cache.get(key)
+        if cached is not None and (now - cached[0]) < _REQUEST_USAGE_CACHE_TTL_SECONDS:
+            return cached[1]
+        rows = await self._repo.list_request_usage_summary_by_account(account_ids)
+        result = {
+            account_id: AccountRequestUsage(
+                request_count=row.request_count,
+                total_tokens=row.total_tokens,
+                cached_input_tokens=row.cached_input_tokens,
+                cache_creation_tokens=row.cache_creation_tokens,
+                cache_read_tokens=row.cache_read_tokens,
+                total_cost_usd=row.total_cost_usd,
+            )
+            for account_id, row in rows.items()
+        }
+        _request_usage_cache[key] = (now, result)
+        return result
 
     async def get_account_trends(self, account_id: str) -> AccountTrendsResponse | None:
         account = await self._repo.get_by_id(account_id)

@@ -554,7 +554,9 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     selected_account_id = str(claim.get("accountId") or "")
 
     try:
-        payload = lb_json("/api/accounts", timeout=4.0)
+        # Banner enrichment only — the route is already claimed. Keep this off the
+        # startup critical path: cap the wait and fall back to the claim-based banner.
+        payload = lb_json("/api/accounts", timeout=_env_float("CLAUDE_LB_BANNER_TIMEOUT", 1.5))
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(

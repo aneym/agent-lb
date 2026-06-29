@@ -33,7 +33,9 @@ const ACCOUNTS_BASE_PATH = "/api/accounts";
 const OAUTH_BASE_PATH = "/api/oauth";
 
 export function listAccounts() {
-  return get(ACCOUNTS_BASE_PATH, AccountsResponseSchema);
+  // ?fresh=1 opts into the per-account request-usage token/cost columns; the
+  // server defers that ~2s aggregation by default so cc/menubar startup stays fast.
+  return get(`${ACCOUNTS_BASE_PATH}?fresh=1`, AccountsResponseSchema);
 }
 
 export function importAccount(file: File) {
@@ -89,7 +91,9 @@ export function updateAccountRoutingPolicy(
   accountId: string,
   routingPolicy: AccountRoutingPolicy,
 ) {
-  const payload = AccountRoutingPolicyUpdateRequestSchema.parse({ routingPolicy });
+  const payload = AccountRoutingPolicyUpdateRequestSchema.parse({
+    routingPolicy,
+  });
   return put(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/routing-policy`,
     AccountRoutingPolicyUpdateResponseSchema,
@@ -121,7 +125,10 @@ export function getAccountTrends(accountId: string) {
 }
 
 export function probeAccount(accountId: string, payload?: unknown) {
-  const validated = payload === undefined ? undefined : AccountProbeRequestSchema.parse(payload);
+  const validated =
+    payload === undefined
+      ? undefined
+      : AccountProbeRequestSchema.parse(payload);
   return post(
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/probe`,
     AccountProbeResponseSchema,
@@ -165,11 +172,18 @@ export function completeOauth(payload?: unknown) {
 
 export function submitManualOauthCallback(payload: unknown) {
   const validated = ManualOauthCallbackRequestSchema.parse(payload);
-  return post(`${OAUTH_BASE_PATH}/manual-callback`, ManualOauthCallbackResponseSchema, {
-    body: validated,
-  });
+  return post(
+    `${OAUTH_BASE_PATH}/manual-callback`,
+    ManualOauthCallbackResponseSchema,
+    {
+      body: validated,
+    },
+  );
 }
 
 export function getRuntimeConnectAddress() {
-  return get("/api/settings/runtime/connect-address", RuntimeConnectAddressResponseSchema);
+  return get(
+    "/api/settings/runtime/connect-address",
+    RuntimeConnectAddressResponseSchema,
+  );
 }

@@ -687,7 +687,7 @@ async def test_accounts_list_includes_request_usage_cost_rollup(async_client, db
             error_code=None,
         )
 
-    response = await async_client.get("/api/accounts")
+    response = await async_client.get("/api/accounts?fresh=1")
     assert response.status_code == 200
     payload = response.json()
     accounts = {item["accountId"]: item for item in payload["accounts"]}
@@ -703,6 +703,41 @@ async def test_accounts_list_includes_request_usage_cost_rollup(async_client, db
     assert other_usage is not None
     assert other_usage["requestCount"] == 1
     assert other_usage["totalTokens"] == 1_500
+
+
+@pytest.mark.asyncio
+async def test_accounts_list_defers_request_usage_unless_fresh(async_client, db_setup):
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        logs_repo = RequestLogsRepository(session)
+        await accounts_repo.upsert(_make_account("acc_defer", "defer@example.com"))
+        await logs_repo.add_log(
+            account_id="acc_defer",
+            request_id="req_defer_1",
+            model="gpt-5.1-codex",
+            input_tokens=1_000,
+            output_tokens=500,
+            cached_input_tokens=0,
+            latency_ms=150,
+            status="success",
+            error_code=None,
+        )
+
+    # Default (cc banner / menubar) keeps the expensive request-usage aggregation off
+    # the hot path: requestUsage is omitted (null) so startup stays fast.
+    default_response = await async_client.get("/api/accounts")
+    assert default_response.status_code == 200
+    default_accounts = {item["accountId"]: item for item in default_response.json()["accounts"]}
+    assert default_accounts["acc_defer"]["requestUsage"] is None
+
+    # ?fresh=1 (dashboard) opts into the per-account token/cost rollup.
+    fresh_response = await async_client.get("/api/accounts?fresh=1")
+    assert fresh_response.status_code == 200
+    fresh_accounts = {item["accountId"]: item for item in fresh_response.json()["accounts"]}
+    fresh_usage = fresh_accounts["acc_defer"]["requestUsage"]
+    assert fresh_usage is not None
+    assert fresh_usage["requestCount"] == 1
+    assert fresh_usage["totalTokens"] == 1_500
 
 
 @pytest.mark.asyncio
@@ -725,7 +760,7 @@ async def test_accounts_list_request_usage_cost_rollup_respects_service_tier(asy
             error_code=None,
         )
 
-    response = await async_client.get("/api/accounts")
+    response = await async_client.get("/api/accounts?fresh=1")
     assert response.status_code == 200
     payload = response.json()
     accounts = {item["accountId"]: item for item in payload["accounts"]}
@@ -759,7 +794,7 @@ async def test_accounts_list_request_usage_uses_persisted_cost(async_client, db_
         await session.execute(update(log.__class__).where(log.__class__.id == log.id).values(cost_usd=12.345678))
         await session.commit()
 
-    response = await async_client.get("/api/accounts")
+    response = await async_client.get("/api/accounts?fresh=1")
     assert response.status_code == 200
     payload = response.json()
     accounts = {item["accountId"]: item for item in payload["accounts"]}
@@ -807,7 +842,7 @@ async def test_accounts_list_request_usage_deduplicates_request_id_rows(async_cl
         await session.execute(update(RequestLog).where(RequestLog.id == second_attempt.id).values(cost_usd=2.0))
         await session.commit()
 
-    response = await async_client.get("/api/accounts")
+    response = await async_client.get("/api/accounts?fresh=1")
     assert response.status_code == 200
     payload = response.json()
     accounts = {item["accountId"]: item for item in payload["accounts"]}
@@ -859,7 +894,7 @@ async def test_accounts_list_request_usage_counts_repeated_request_id_by_request
         await session.execute(update(RequestLog).where(RequestLog.id == older_backfill.id).values(cost_usd=9.0))
         await session.commit()
 
-    response = await async_client.get("/api/accounts")
+    response = await async_client.get("/api/accounts?fresh=1")
     assert response.status_code == 200
     payload = response.json()
     accounts = {item["accountId"]: item for item in payload["accounts"]}
@@ -897,7 +932,7 @@ async def test_accounts_list_request_usage_includes_anthropic_cache_tokens(async
             error_code=None,
         )
 
-    response = await async_client.get("/api/accounts")
+    response = await async_client.get("/api/accounts?fresh=1")
     assert response.status_code == 200
     payload = response.json()
     accounts = {item["accountId"]: item for item in payload["accounts"]}

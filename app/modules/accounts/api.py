@@ -44,9 +44,12 @@ router = APIRouter(
 
 @router.get("", response_model=AccountsResponse)
 async def list_accounts(
+    fresh: bool = False,
     context: AccountsContext = Depends(get_accounts_context),
 ) -> AccountsResponse:
-    accounts = await context.service.list_accounts()
+    # Default (cc banner, menubar) skips the expensive request-usage aggregation;
+    # the dashboard opts in with ?fresh=1 for its per-account token/cost columns.
+    accounts = await context.service.list_accounts(include_request_usage=fresh)
     return AccountsResponse(accounts=accounts)
 
 
