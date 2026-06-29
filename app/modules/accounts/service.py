@@ -95,6 +95,19 @@ _SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT = 500
 _REQUEST_USAGE_CACHE_TTL_SECONDS = 20.0
 _request_usage_cache: dict[frozenset[str], tuple[float, dict[str, AccountRequestUsage]]] = {}
 
+# Short-TTL cache for the per-account additional-quota windows. Assembling these is
+# ~14 serial DB round-trips (a single AsyncSession can't run them concurrently), and
+# the data is background-refreshed by the usage scheduler, so a few seconds of
+# staleness is fine and keeps repeated cc/menubar startup calls cheap.
+_ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS = 12.0
+_additional_quotas_cache: dict[frozenset[str], tuple[float, dict[str, list[AccountAdditionalQuota]]]] = {}
+
+
+def clear_account_caches() -> None:
+    """Clear the in-process accounts read caches (used by tests for isolation)."""
+    _request_usage_cache.clear()
+    _additional_quotas_cache.clear()
+
 
 class InvalidAuthJsonError(Exception):
     pass
@@ -164,42 +177,7 @@ class AccountsService:
         request_usage_by_account: dict[str, AccountRequestUsage] = {}
         if include_request_usage:
             request_usage_by_account = await self._request_usage_by_account(account_ids)
-        additional_quotas_by_account: dict[str, list[AccountAdditionalQuota]] = {}
-        additional_usage_repo = cast(AdditionalUsageRepository | None, self._additional_usage_repo)
-        if additional_usage_repo:
-            additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
-            quota_keys = await additional_usage_repo.list_quota_keys(account_ids=account_ids)
-            now_epoch = int(time.time())
-            for quota_key in quota_keys:
-                primary_entries = await additional_usage_repo.latest_by_account(
-                    quota_key, "primary", account_ids=account_ids
-                )
-                secondary_entries = await additional_usage_repo.latest_by_account(
-                    quota_key, "secondary", account_ids=account_ids
-                )
-                for account_id in (set(primary_entries) | set(secondary_entries)) & account_id_set:
-                    primary_entry = primary_entries.get(account_id)
-                    secondary_entry = secondary_entries.get(account_id)
-                    reference_entry = primary_entry or secondary_entry
-                    if reference_entry is None:
-                        continue
-                    additional_quotas_by_account.setdefault(account_id, []).append(
-                        AccountAdditionalQuota(
-                            quota_key=quota_key,
-                            limit_name=reference_entry.limit_name,
-                            metered_feature=reference_entry.metered_feature,
-                            display_label=get_additional_display_label_for_quota_key(quota_key)
-                            or reference_entry.limit_name,
-                            routing_policy=get_additional_quota_routing_policy(
-                                quota_key,
-                                overrides=additional_quota_routing_overrides,
-                            ),
-                            primary_window=_additional_quota_window(primary_entry, now_epoch=now_epoch),
-                            secondary_window=_additional_quota_window(secondary_entry, now_epoch=now_epoch),
-                        )
-                    )
-        for account_quota_list in additional_quotas_by_account.values():
-            account_quota_list.sort(key=lambda quota: quota.display_label or quota.quota_key or quota.limit_name)
+        additional_quotas_by_account = await self._additional_quotas_by_account(account_ids, account_id_set)
 
         return build_account_summaries(
             accounts=accounts,
@@ -237,6 +215,54 @@ class AccountsService:
             for account_id, row in rows.items()
         }
         _request_usage_cache[key] = (now, result)
+        return result
+
+    async def _additional_quotas_by_account(
+        self, account_ids: list[str], account_id_set: set[str]
+    ) -> dict[str, list[AccountAdditionalQuota]]:
+        """Per-account additional-quota windows, short-TTL cached (see module cache)."""
+        key = frozenset(account_ids)
+        now = time.monotonic()
+        cached = _additional_quotas_cache.get(key)
+        if cached is not None and (now - cached[0]) < _ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS:
+            return cached[1]
+        result: dict[str, list[AccountAdditionalQuota]] = {}
+        additional_usage_repo = cast(AdditionalUsageRepository | None, self._additional_usage_repo)
+        if additional_usage_repo:
+            additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
+            quota_keys = await additional_usage_repo.list_quota_keys(account_ids=account_ids)
+            now_epoch = int(time.time())
+            for quota_key in quota_keys:
+                primary_entries = await additional_usage_repo.latest_by_account(
+                    quota_key, "primary", account_ids=account_ids
+                )
+                secondary_entries = await additional_usage_repo.latest_by_account(
+                    quota_key, "secondary", account_ids=account_ids
+                )
+                for account_id in (set(primary_entries) | set(secondary_entries)) & account_id_set:
+                    primary_entry = primary_entries.get(account_id)
+                    secondary_entry = secondary_entries.get(account_id)
+                    reference_entry = primary_entry or secondary_entry
+                    if reference_entry is None:
+                        continue
+                    result.setdefault(account_id, []).append(
+                        AccountAdditionalQuota(
+                            quota_key=quota_key,
+                            limit_name=reference_entry.limit_name,
+                            metered_feature=reference_entry.metered_feature,
+                            display_label=get_additional_display_label_for_quota_key(quota_key)
+                            or reference_entry.limit_name,
+                            routing_policy=get_additional_quota_routing_policy(
+                                quota_key,
+                                overrides=additional_quota_routing_overrides,
+                            ),
+                            primary_window=_additional_quota_window(primary_entry, now_epoch=now_epoch),
+                            secondary_window=_additional_quota_window(secondary_entry, now_epoch=now_epoch),
+                        )
+                    )
+        for account_quota_list in result.values():
+            account_quota_list.sort(key=lambda quota: quota.display_label or quota.quota_key or quota.limit_name)
+        _additional_quotas_cache[key] = (now, result)
         return result
 
     async def get_account_trends(self, account_id: str) -> AccountTrendsResponse | None:

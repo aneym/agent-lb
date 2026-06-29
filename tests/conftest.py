@@ -87,6 +87,17 @@ async def async_client(app_instance):
 
 
 @pytest.fixture(autouse=True)
+def _clear_account_read_caches():
+    # The accounts service keeps short-TTL in-process caches (request-usage,
+    # additional-quota windows); clear them between tests so cached results never
+    # leak across cases or mask freshly-written data.
+    from app.modules.accounts.service import clear_account_caches
+
+    clear_account_caches()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def temp_key_file(monkeypatch):
     key_path = TEST_DB_DIR / f"encryption-{uuid4().hex}.key"
     monkeypatch.setenv("AGENT_LB_ENCRYPTION_KEY_FILE", str(key_path))
