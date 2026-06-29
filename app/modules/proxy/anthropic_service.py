@@ -255,17 +255,13 @@ class AnthropicProxyService:
                 api_key=api_key,
             )
             # Upstream 429s above recorded cooldowns, so eligibility now knows the
-            # earliest reset; surface it so clients can schedule a retry. We
-            # reached here only after selecting at least one account, so the pool
-            # is non-empty — floor the hint to a short retry when no reset is
-            # known so the client backs off and resumes instead of dying.
+            # earliest reset; surface it so clients can schedule a retry.
             eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
             raise AnthropicProxyError(
                 last_error_status or 503,
                 message,
                 code=_no_available_accounts_code(provider_name),
-                retry_at=eligibility.next_reset_at
-                or int(time.time()) + _ANTHROPIC_NO_CAPACITY_RETRY_FLOOR_SECONDS,
+                retry_at=eligibility.next_reset_at,
             )
 
         return AnthropicProxyStream(body=body(), media_type=media_type)
@@ -314,8 +310,7 @@ class AnthropicProxyService:
                     f"for quota '{quota_key}'.{reset_suffix}"
                 ),
                 code=_quota_cooldown_code(provider_name),
-                retry_at=eligibility.next_reset_at
-                or int(time.time()) + _ANTHROPIC_NO_CAPACITY_RETRY_FLOOR_SECONDS,
+                retry_at=eligibility.next_reset_at,
             )
         settings = await get_settings_cache().get()
         selection = await self._load_balancer.select_account(
@@ -429,13 +424,7 @@ class AnthropicProxyService:
             selection_error_code,
             retry_at,
         )
-        # Routable accounts exist but none are currently selectable. Even when
-        # no precise reset is known, advertise a short bounded retry so clients
-        # back off and resume rather than treating the gap as fatal. The human
-        # message keeps the real (possibly absent) reset; only the returned
-        # retry hint is floored.
-        effective_retry_at = retry_at if retry_at is not None else now + _ANTHROPIC_NO_CAPACITY_RETRY_FLOOR_SECONDS
-        return message, effective_retry_at
+        return message, retry_at
 
     async def _provider_quota_eligibility(self, provider_name: str, quota_key: str) -> _AnthropicQuotaEligibility:
         now = int(time.time())

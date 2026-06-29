@@ -277,20 +277,17 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
     )
 
     assert response.status_code == 503
-    error = response.json()["error"]
-    assert error["message"] == (
-        "3 Anthropic accounts exist, but none are selectable for "
-        "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
-        "OpenAI accounts are not eligible for Claude routing."
-    )
-    assert error["type"] == "server_error"
-    assert error["code"] == "no_available_anthropic_accounts"
-    # Routable accounts exist but are all transiently unavailable: even with no
-    # known reset, the proxy advertises a short bounded retry so the launcher
-    # backs off and resumes instead of treating the gap as fatal.
-    assert 0 < error["retryAfterSeconds"] <= 30
-    assert "retryAt" in error
-    assert 0 < int(response.headers["retry-after"]) <= 30
+    assert response.json() == {
+        "error": {
+            "message": (
+                "3 Anthropic accounts exist, but none are selectable for "
+                "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
+                "OpenAI accounts are not eligible for Claude routing."
+            ),
+            "type": "server_error",
+            "code": "no_available_anthropic_accounts",
+        }
+    }
 
 
 async def _insert_quota_cooldown(
@@ -532,39 +529,6 @@ async def test_anthropic_messages_all_routable_accounts_cooling_returns_429_desp
     assert "cooling down" in body["error"]["message"]
     assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
     assert 0 < int(response.headers["retry-after"]) <= 6 * 60
-
-
-@pytest.mark.asyncio
-async def test_anthropic_messages_transient_exhaustion_returns_429_with_bounded_retry(async_client):
-    """Durability: routable accounts exist but are all transiently unavailable
-    with no known reset. /v1/messages must return a native 429 with a bounded
-    Retry-After so the agent backs off and resumes, rather than a bare 503 with
-    no retry hint that the agent treats as fatal."""
-    for index in range(3):
-        await _insert_account(
-            account_id=f"anthropic-transient-{index}",
-            provider="anthropic",
-            access_token=f"anthropic-access-{index}",
-            email=f"transient-{index}@example.com",
-            status=AccountStatus.RATE_LIMITED,
-        )
-
-    response = await async_client.post(
-        "/v1/messages",
-        json={
-            "model": "claude-fable-5",
-            "max_tokens": 32,
-            "messages": [{"role": "user", "content": "hello"}],
-            "thinking": {"type": "adaptive"},
-        },
-        headers={"anthropic-beta": "oauth-2025-04-20"},
-    )
-
-    assert response.status_code == 429
-    body = response.json()
-    assert body["type"] == "error"
-    assert body["error"]["type"] == "rate_limit_error"
-    assert 0 < int(response.headers["retry-after"]) <= 30
 
 
 @pytest.mark.asyncio
