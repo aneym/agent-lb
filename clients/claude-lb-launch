@@ -78,6 +78,20 @@ def run_lb_shim(port: int, session_id: str, parent_pid: int, upstream_base_url: 
             self._forward()
 
         def _forward(self) -> None:
+            # Local-only readiness probe: answered in-process so `start_lb_shim`
+            # tests "is the shim socket up" (~ms) instead of round-tripping a
+            # GET /health all the way to the remote LB over Tailscale (seconds).
+            # Claude only ever calls real Anthropic API paths, never this one.
+            if self.path == "/__cc_shim_ready":
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", "4")
+                self.send_header("connection", "close")
+                self.end_headers()
+                self.wfile.write(b'"ok"')
+                self.close_connection = True
+                return
+
             try:
                 os.kill(parent_pid, 0)
             except OSError:
@@ -186,7 +200,7 @@ def start_lb_shim(session_id: str) -> str:
     deadline = time.time() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", 8.0)
     while time.time() < deadline:
         try:
-            request = urllib.request.Request(f"{shim_base_url}/health", headers={"accept": "application/json"})
+            request = urllib.request.Request(f"{shim_base_url}/__cc_shim_ready", headers={"accept": "application/json"})
             with urllib.request.urlopen(request, timeout=0.4):
                 return shim_base_url
         except Exception:
