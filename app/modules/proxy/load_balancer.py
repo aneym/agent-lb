@@ -835,7 +835,7 @@ class LoadBalancer:
                 effective_limit_name,
                 additional_quota_routing_policies,
             )
-            accounts = _selectable_accounts(all_accounts)
+            accounts = selectable_accounts(all_accounts)
             if account_ids is not None:
                 allowed_account_ids = set(account_ids)
                 accounts = [account for account in accounts if account.id in allowed_account_ids]
@@ -2207,7 +2207,15 @@ def _filter_accounts_for_model(accounts: list[Account], model: str) -> list[Acco
     ]
 
 
-def _selectable_accounts(accounts: list[Account]) -> list[Account]:
+def selectable_accounts(accounts: list[Account]) -> list[Account]:
+    """Accounts the load balancer is willing to route to.
+
+    Filters out rows that can never serve traffic — reauth-required,
+    deactivated, or paused status, and subscriptions that have been
+    canceled. This is the single source of truth for the "routable
+    pool" so selection, quota prefilters, and failure diagnostics all
+    reason about the same population.
+    """
     return [
         account
         for account in accounts

@@ -134,3 +134,23 @@ def test_headless_invocation_detects_print_flags() -> None:
     assert launcher.headless_invocation(["-p", "hi"]) is True
     assert launcher.headless_invocation(["--print", "hi"]) is True
     assert launcher.headless_invocation(["chat"]) is False
+
+
+def test_shim_connect_error_is_retryable_only_for_connection_failures() -> None:
+    import socket
+    import urllib.error
+
+    launcher = load_launcher_module()
+    classify = launcher._is_retryable_shim_connect_error
+
+    # Connection refused/reset (LB restarting) — safe to retry, request never landed.
+    assert classify(ConnectionRefusedError()) is True
+    assert classify(ConnectionResetError()) is True
+    assert classify(urllib.error.URLError(ConnectionRefusedError())) is True
+
+    # A real HTTP response — never retried; its status passes straight through.
+    assert classify(urllib.error.HTTPError("http://lb", 503, "Service Unavailable", {}, None)) is False
+
+    # Read timeout — request may be in flight, so do not re-send (no double-process).
+    assert classify(urllib.error.URLError(socket.timeout())) is False
+    assert classify(RuntimeError("boom")) is False

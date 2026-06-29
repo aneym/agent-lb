@@ -417,7 +417,7 @@ def test_selectable_accounts_excludes_canceled_subscriptions() -> None:
     cancel_pending = _make_account("acc-cancel-pending", "cancel-pending@example.com")
     cancel_pending.subscription_status = "cancel_pending"
 
-    selected = load_balancer_module._selectable_accounts([active, canceled, cancel_pending])
+    selected = load_balancer_module.selectable_accounts([active, canceled, cancel_pending])
 
     assert [account.id for account in selected] == ["acc-active", "acc-cancel-pending"]
 

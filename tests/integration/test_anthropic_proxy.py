@@ -232,6 +232,7 @@ async def _insert_account(
     access_token: str,
     email: str,
     status: AccountStatus = AccountStatus.ACTIVE,
+    subscription_status: str | None = None,
 ) -> None:
     encryptor = TokenEncryptor()
     plan_type = "max" if provider == "anthropic" else "glm-coding" if provider == "glm" else "plus"
@@ -249,6 +250,7 @@ async def _insert_account(
                 last_refresh=utcnow() + timedelta(days=1),
                 status=status,
                 deactivation_reason=None,
+                subscription_status=subscription_status,
             )
         )
         await session.commit()
@@ -275,17 +277,20 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
     )
 
     assert response.status_code == 503
-    assert response.json() == {
-        "error": {
-            "message": (
-                "3 Anthropic accounts exist, but none are selectable for "
-                "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
-                "OpenAI accounts are not eligible for Claude routing."
-            ),
-            "type": "server_error",
-            "code": "no_available_anthropic_accounts",
-        }
-    }
+    error = response.json()["error"]
+    assert error["message"] == (
+        "3 Anthropic accounts exist, but none are selectable for "
+        "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
+        "OpenAI accounts are not eligible for Claude routing."
+    )
+    assert error["type"] == "server_error"
+    assert error["code"] == "no_available_anthropic_accounts"
+    # Routable accounts exist but are all transiently unavailable: even with no
+    # known reset, the proxy advertises a short bounded retry so the launcher
+    # backs off and resumes instead of treating the gap as fatal.
+    assert 0 < error["retryAfterSeconds"] <= 30
+    assert "retryAt" in error
+    assert 0 < int(response.headers["retry-after"]) <= 30
 
 
 async def _insert_quota_cooldown(
@@ -470,6 +475,153 @@ async def test_anthropic_session_route_explains_active_account_blocked_by_model_
     assert "1 account remained after the anthropic_top prefilter" in error["message"]
     assert error["retryAt"] == datetime.fromtimestamp(reset_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
     assert 0 < error["retryAfterSeconds"] <= 4 * 60
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_all_routable_accounts_cooling_returns_429_despite_unusable_rows(async_client):
+    """Regression for the 6-account routing incident.
+
+    When every *routable* account is cooling down on the model quota, the
+    proxy must return a clean 429 with retry metadata — not a confusing
+    503 that treats canceled/deactivated rows as 'remaining candidates'.
+    Here one usable account is thinking-cooled while a canceled-subscription
+    row and a deactivated row are present but unroutable.
+    """
+    await _insert_account(
+        account_id="anthropic-usable-cooling",
+        provider="anthropic",
+        access_token="anthropic-access-usable",
+        email="usable@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-canceled-sub",
+        provider="anthropic",
+        access_token="anthropic-access-canceled",
+        email="canceled@example.com",
+        subscription_status="canceled",
+    )
+    await _insert_account(
+        account_id="anthropic-deactivated",
+        provider="anthropic",
+        access_token="anthropic-access-deactivated",
+        email="deactivated@example.com",
+        status=AccountStatus.DEACTIVATED,
+    )
+    reset_at = int((utcnow() + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-usable-cooling",
+        quota_key="anthropic_top_thinking",
+        reset_at=reset_at,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    body = response.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "rate_limit_error"
+    assert "cooling down" in body["error"]["message"]
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
+    assert 0 < int(response.headers["retry-after"]) <= 6 * 60
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_transient_exhaustion_returns_429_with_bounded_retry(async_client):
+    """Durability: routable accounts exist but are all transiently unavailable
+    with no known reset. /v1/messages must return a native 429 with a bounded
+    Retry-After so the agent backs off and resumes, rather than a bare 503 with
+    no retry hint that the agent treats as fatal."""
+    for index in range(3):
+        await _insert_account(
+            account_id=f"anthropic-transient-{index}",
+            provider="anthropic",
+            access_token=f"anthropic-access-{index}",
+            email=f"transient-{index}@example.com",
+            status=AccountStatus.RATE_LIMITED,
+        )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    body = response.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "rate_limit_error"
+    assert 0 < int(response.headers["retry-after"]) <= 30
+
+
+@pytest.mark.asyncio
+async def test_anthropic_session_route_failure_counts_only_routable_accounts(async_client, monkeypatch):
+    """The selection-failure message must count only routable accounts and
+    label stored-but-unusable rows separately, instead of inflating the
+    headline total with canceled/deactivated rows."""
+    await _insert_account(
+        account_id="anthropic-routable",
+        provider="anthropic",
+        access_token="anthropic-access-routable",
+        email="routable@example.com",
+        status=AccountStatus.RATE_LIMITED,
+    )
+    await _insert_account(
+        account_id="anthropic-canceled",
+        provider="anthropic",
+        access_token="anthropic-access-canceled",
+        email="canceled@example.com",
+        subscription_status="canceled",
+    )
+    await _insert_account(
+        account_id="anthropic-deactivated",
+        provider="anthropic",
+        access_token="anthropic-access-deactivated",
+        email="deactivated@example.com",
+        status=AccountStatus.DEACTIVATED,
+    )
+
+    async def fake_select_account(self, **kwargs):
+        del self
+        # Only the routable row reaches the load balancer; canceled and
+        # deactivated rows are filtered out by the eligibility prefilter.
+        assert kwargs["account_ids"] == ["anthropic-routable"]
+        return AccountSelection(
+            account=None,
+            error_message="No available accounts",
+            error_code="no_available_anthropic_accounts",
+        )
+
+    monkeypatch.setattr(anthropic_proxy_module.LoadBalancer, "select_account", fake_select_account)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-route-routable-count",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top",
+        },
+    )
+
+    assert response.status_code == 503
+    message = response.json()["error"]["message"]
+    assert "1 Anthropic account exist" in message
+    assert "statuses: rate_limited=1." in message
+    assert "deactivated=1" not in message
+    assert "+2 stored but not routable" in message
 
 
 @pytest.mark.asyncio

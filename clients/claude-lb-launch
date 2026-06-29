@@ -119,18 +119,43 @@ def run_lb_shim(port: int, session_id: str, parent_pid: int, upstream_base_url: 
                 headers=headers,
                 method=self.command,
             )
-            try:
-                response = urllib.request.urlopen(request, timeout=600)
-                self._copy_response(response)
-            except urllib.error.HTTPError as error:
-                self._copy_response(error)
-            except Exception as error:
-                message = json.dumps({"error": {"message": str(error), "code": "claude_lb_shim_error"}}).encode()
-                self.send_response(502)
-                self.send_header("content-type", "application/json")
-                self.send_header("content-length", str(len(message)))
-                self.end_headers()
-                self.wfile.write(message)
+            # Absorb a brief LB restart: if the connection is refused/reset
+            # (service bouncing) the request never reached the LB, so retry a
+            # few times with bounded backoff before surfacing an error. This
+            # keeps the agent alive across a service restart instead of failing
+            # the in-flight request. Real HTTP responses (including 429/503 with
+            # Retry-After) pass straight through for the agent to handle.
+            connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", 6))
+            backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", 0.5))
+            backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", 4.0))
+            attempt = 0
+            while True:
+                try:
+                    response = urllib.request.urlopen(request, timeout=600)
+                    self._copy_response(response)
+                    return
+                except urllib.error.HTTPError as error:
+                    self._copy_response(error)
+                    return
+                except Exception as error:
+                    parent_alive = True
+                    try:
+                        os.kill(parent_pid, 0)
+                    except OSError:
+                        parent_alive = False
+                    if attempt < connect_retries and parent_alive and _is_retryable_shim_connect_error(error):
+                        time.sleep(min(backoff * (2**attempt), backoff_cap))
+                        attempt += 1
+                        continue
+                    message = json.dumps(
+                        {"error": {"message": str(error), "code": "claude_lb_shim_error"}}
+                    ).encode()
+                    self.send_response(502)
+                    self.send_header("content-type", "application/json")
+                    self.send_header("content-length", str(len(message)))
+                    self.end_headers()
+                    self.wfile.write(message)
+                    return
 
         def _copy_response(self, response: object) -> None:
             status = getattr(response, "status", None) or getattr(response, "code", 502)
@@ -244,6 +269,22 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, "") or default)
     except (TypeError, ValueError):
         return default
+
+
+def _is_retryable_shim_connect_error(error: BaseException) -> bool:
+    """True for connection-level failures that mean the request never reached a
+    live LB (e.g. connection refused/reset while the service restarts).
+
+    These are safe to retry because no response was produced and the upstream
+    did not process the request. A real HTTP response (HTTPError) is never
+    retried — its status, including 429/503 with Retry-After, is passed straight
+    through to the agent. Read timeouts are excluded too, since the request may
+    already be in flight and re-sending could double-process it.
+    """
+    if isinstance(error, urllib.error.HTTPError):
+        return False
+    reason = getattr(error, "reason", None)
+    return isinstance(error, ConnectionError) or isinstance(reason, ConnectionError)
 
 
 def lb_health_probe() -> tuple[bool, str]:

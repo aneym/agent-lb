@@ -28,7 +28,7 @@ from app.core.utils.request_id import ensure_request_id
 from app.db.models import Account, StickySessionKind
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
-from app.modules.proxy.load_balancer import LoadBalancer
+from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
 logger = logging.getLogger(__name__)
@@ -255,13 +255,17 @@ class AnthropicProxyService:
                 api_key=api_key,
             )
             # Upstream 429s above recorded cooldowns, so eligibility now knows the
-            # earliest reset; surface it so clients can schedule a retry.
+            # earliest reset; surface it so clients can schedule a retry. We
+            # reached here only after selecting at least one account, so the pool
+            # is non-empty — floor the hint to a short retry when no reset is
+            # known so the client backs off and resumes instead of dying.
             eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
             raise AnthropicProxyError(
                 last_error_status or 503,
                 message,
                 code=_no_available_accounts_code(provider_name),
-                retry_at=eligibility.next_reset_at,
+                retry_at=eligibility.next_reset_at
+                or int(time.time()) + _ANTHROPIC_NO_CAPACITY_RETRY_FLOOR_SECONDS,
             )
 
         return AnthropicProxyStream(body=body(), media_type=media_type)
@@ -310,7 +314,8 @@ class AnthropicProxyService:
                     f"for quota '{quota_key}'.{reset_suffix}"
                 ),
                 code=_quota_cooldown_code(provider_name),
-                retry_at=eligibility.next_reset_at,
+                retry_at=eligibility.next_reset_at
+                or int(time.time()) + _ANTHROPIC_NO_CAPACITY_RETRY_FLOOR_SECONDS,
             )
         settings = await get_settings_cache().get()
         selection = await self._load_balancer.select_account(
@@ -360,11 +365,16 @@ class AnthropicProxyService:
         now = int(time.time())
         reset_candidates: list[int] = [quota_reset_at] if quota_reset_at is not None else []
         async with self._repo_factory() as repos:
-            accounts = [
+            provider_accounts = [
                 account
                 for account in await repos.accounts.list_accounts()
                 if account.provider.lower() == provider_name
             ]
+            # Headline counts and status summary reflect only the routable
+            # pool — counting canceled/deactivated rows would inflate the
+            # total and imply spare capacity that can never serve traffic.
+            accounts = selectable_accounts(provider_accounts)
+            unusable_count = len(provider_accounts) - len(accounts)
             account_count = len(accounts)
             status_counts = Counter(_account_status_label(account) for account in accounts)
             reset_candidates.extend(int(account.reset_at) for account in accounts if account.reset_at)
@@ -395,9 +405,14 @@ class AnthropicProxyService:
             retry_at=retry_at,
         )
         quota_sentence = f"Model quota: {quota_detail}. " if quota_detail else ""
+        stored_note = (
+            f" (+{unusable_count} stored but not routable: canceled, deactivated, paused, or reauth-required)"
+            if unusable_count
+            else ""
+        )
         message = (
             f"{account_count} {_provider_label(provider_name)} {noun} exist, but none are selectable for "
-            f"{model}/{quota_key}; statuses: {status_summary}. "
+            f"{model}/{quota_key}; statuses: {status_summary}.{stored_note} "
             f"{quota_sentence}"
             f"{_other_provider_routing_message(provider_name)}{reset_suffix}"
         )
@@ -414,16 +429,28 @@ class AnthropicProxyService:
             selection_error_code,
             retry_at,
         )
-        return message, retry_at
+        # Routable accounts exist but none are currently selectable. Even when
+        # no precise reset is known, advertise a short bounded retry so clients
+        # back off and resume rather than treating the gap as fatal. The human
+        # message keeps the real (possibly absent) reset; only the returned
+        # retry hint is floored.
+        effective_retry_at = retry_at if retry_at is not None else now + _ANTHROPIC_NO_CAPACITY_RETRY_FLOOR_SECONDS
+        return message, effective_retry_at
 
     async def _provider_quota_eligibility(self, provider_name: str, quota_key: str) -> _AnthropicQuotaEligibility:
         now = int(time.time())
         async with self._repo_factory() as repos:
-            account_ids = [
-                account.id
+            provider_accounts = [
+                account
                 for account in await repos.accounts.list_accounts()
                 if account.provider.lower() == provider_name
             ]
+            # Scope eligibility to the same routable pool the load balancer
+            # uses. Canceled-subscription, deactivated, paused, and
+            # reauth-required rows can never be selected, so counting them
+            # as "remaining candidates" produces misleading diagnostics and
+            # masks the real "all usable accounts are cooling down" state.
+            account_ids = [account.id for account in selectable_accounts(provider_accounts)]
             latest = await repos.additional_usage.latest_by_account(
                 quota_key,
                 _ANTHROPIC_COOLDOWN_WINDOW,

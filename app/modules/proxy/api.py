@@ -3307,9 +3307,10 @@ def _retry_headers(retry_at: int | None) -> dict[str, str] | None:
 
 
 def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
-    # Exhaustion with a known reset is an upstream rate limit regardless of the
-    # internal status; surface Claude Code's native shape so it can show the
-    # reset time or ride out short waits with its own retry loop.
+    # Exhaustion or a momentary capacity shortage carries a retry hint (the
+    # service floors transient-but-reset-unknown failures); surface Claude
+    # Code's native rate-limit shape so it shows the reset time or rides out the
+    # wait with its own retry loop instead of failing the agent.
     if exc.retry_at is not None or exc.status_code == 429:
         return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
     return _anthropic_error_response(exc.status_code, exc.code, exc.message)
