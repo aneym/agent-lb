@@ -183,7 +183,7 @@ def start_lb_shim(session_id: str) -> str:
         start_new_session=True,
     )
     shim_base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 2.0
+    deadline = time.time() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", 8.0)
     while time.time() < deadline:
         try:
             request = urllib.request.Request(f"{shim_base_url}/health", headers={"accept": "application/json"})
