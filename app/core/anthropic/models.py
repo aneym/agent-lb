@@ -90,6 +90,7 @@ class AnthropicMessageRequest(BaseModel):
     metadata: JsonObject | None = None
     stop_sequences: list[StrictStr] | None = None
     stream: StrictBool | None = None
+    speed: StrictStr | None = None
     temperature: StrictFloat | StrictInt | None = None
     thinking: JsonObject | None = None
     tool_choice: AnthropicToolChoice | None = None

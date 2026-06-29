@@ -54,6 +54,7 @@ from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.usage.quota import apply_usage_quota
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
+from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
@@ -784,7 +785,10 @@ class LoadBalancer:
         account_ids: Collection[str] | None = None,
     ) -> _SelectionInputs:
         provider_name = normalize_provider_name(provider)
-        effective_limit_name = additional_limit_name or _gated_limit_name_for_model(model)
+        effective_limit_name = additional_limit_name or _gated_limit_name_for_model(
+            model,
+            provider_name=provider_name,
+        )
         additional_quota_routing_policies: dict[str, str] = {}
         if effective_limit_name is not None:
             additional_quota_routing_policies = await _load_dashboard_additional_quota_routing_overrides()
@@ -2208,10 +2212,13 @@ def _selectable_accounts(accounts: list[Account]) -> list[Account]:
         account
         for account in accounts
         if account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
+        and is_subscription_usable(account)
     ]
 
 
-def _gated_limit_name_for_model(model: str | None) -> str | None:
+def _gated_limit_name_for_model(model: str | None, *, provider_name: str | None = None) -> str | None:
+    if normalize_provider_name(provider_name) != OPENAI_PROVIDER_NAME:
+        return None
     return get_additional_quota_key_for_model_id(model)
 
 

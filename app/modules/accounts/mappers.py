@@ -24,6 +24,7 @@ from app.modules.accounts.schemas import (
     AccountUsageTrend,
     UsageTrendPoint,
 )
+from app.modules.accounts.subscription_status import normalize_subscription_status
 from app.modules.usage.mappers import usage_history_to_window_row
 
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
@@ -291,7 +292,7 @@ def _account_subscription_ledger(account: Account) -> AccountSubscriptionLedger 
     ):
         return None
     return AccountSubscriptionLedger(
-        status=account.subscription_status,
+        status=normalize_subscription_status(account.subscription_status),
         next_charge_at=account.subscription_next_charge_at,
         current_period_end_at=account.subscription_current_period_end_at,
         amount=account.subscription_amount,
@@ -366,11 +367,7 @@ def _effective_status_from_usage(
             credits_balance=credits_balance,
         ):
             return status
-        if (
-            account.blocked_at is None
-            and account.reset_at is not None
-            and account.reset_at <= utcnow().timestamp()
-        ):
+        if account.blocked_at is None and account.reset_at is not None and account.reset_at <= utcnow().timestamp():
             return status
         return account.status
     if account.status == AccountStatus.QUOTA_EXCEEDED:

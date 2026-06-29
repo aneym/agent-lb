@@ -4,8 +4,10 @@ import base64
 import json
 
 import pytest
+from sqlalchemy import select
 
 from app.core.auth import DEFAULT_EMAIL, generate_unique_account_id, parse_auth_json
+from app.core.crypto import TokenEncryptor
 from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 
@@ -49,6 +51,39 @@ async def test_import_and_list_accounts(async_client):
     assert list_response.status_code == 200
     accounts = list_response.json()["accounts"]
     assert any(account["accountId"] == expected_account_id for account in accounts)
+
+
+@pytest.mark.asyncio
+async def test_import_glm_api_key_account(async_client):
+    response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={
+            "provider": "glm",
+            "apiKey": "zai-test-key",
+            "email": "glm-user@example.com",
+            "accountId": "zai_glm_test",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    expected_account_id = generate_unique_account_id("zai_glm_test", "glm-user@example.com")
+    assert data["accountId"] == expected_account_id
+    assert data["email"] == "glm-user@example.com"
+    assert data["planType"] == "glm-coding"
+
+    accounts = (await async_client.get("/api/accounts")).json()["accounts"]
+    imported = next(account for account in accounts if account["accountId"] == expected_account_id)
+    assert imported["provider"] == "glm"
+    assert imported["alias"] == "GLM Coding Plan"
+
+    async with SessionLocal() as session:
+        account = (await session.execute(select(Account).where(Account.id == expected_account_id))).scalar_one()
+    encryptor = TokenEncryptor()
+    assert account.provider == "glm"
+    assert encryptor.decrypt(account.access_token_encrypted) == "zai-test-key"
+    assert encryptor.decrypt(account.refresh_token_encrypted) == "zai-test-key"
+    assert account.id_token_encrypted is None
 
 
 @pytest.mark.asyncio
@@ -149,6 +184,45 @@ async def test_update_account_subscription_ledger_does_not_pause_account(async_c
     assert matched["status"] == "active"
     assert matched["subscription"]["status"] == "cancel_pending"
     assert matched["subscription"]["currentPeriodEndAt"] == "2026-06-22T04:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_normalizes_existing_subscription_status(async_client):
+    email = "subscription-normalized@example.com"
+    raw_account_id = "acc_subscription_normalized"
+    payload = {
+        "email": email,
+        "chatgpt_account_id": raw_account_id,
+        "https://api.openai.com/auth": {"chatgpt_plan_type": "pro"},
+    }
+    auth_json = {
+        "tokens": {
+            "idToken": _encode_jwt(payload),
+            "accessToken": "access",
+            "refreshToken": "refresh",
+            "accountId": raw_account_id,
+        },
+    }
+
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    async with SessionLocal() as session:
+        account = await session.get(Account, expected_account_id)
+        assert account is not None
+        account.subscription_status = " CANCELED "
+        await session.commit()
+
+    accounts = await async_client.get("/api/accounts")
+    assert accounts.status_code == 200
+    matched = next(
+        (account for account in accounts.json()["accounts"] if account["accountId"] == expected_account_id),
+        None,
+    )
+    assert matched is not None
+    assert matched["subscription"]["status"] == "canceled"
 
 
 @pytest.mark.asyncio

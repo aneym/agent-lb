@@ -10,6 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: write
   contents: write
   pull-requests: read
 
@@ -104,6 +105,10 @@ jobs:
               --title "Release ${TAG}" \
               --notes-file "${notes_file}" \
               --prerelease
+            gh workflow run release.yml \
+              --repo "${GITHUB_REPOSITORY}" \
+              --ref "${TAG}" \
+              -f "tag=${TAG}"
           else
             gh release create "${TAG}" \
               --target "${SHA}" \

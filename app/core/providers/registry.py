@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.core.providers.anthropic import ANTHROPIC_PROVIDER_NAME, AnthropicProvider
+from app.core.providers.glm import GLM_PROVIDER_NAME, GlmProvider
 from app.core.providers.openai import OPENAI_PROVIDER_NAME, OpenAIProvider
 from app.core.providers.types import Provider
 
@@ -13,6 +14,7 @@ class ProviderLookupError(ValueError):
 
 _PROVIDERS: dict[str, Provider] = {
     ANTHROPIC_PROVIDER_NAME: AnthropicProvider(),
+    GLM_PROVIDER_NAME: GlmProvider(),
     OPENAI_PROVIDER_NAME: OpenAIProvider(),
 }
 

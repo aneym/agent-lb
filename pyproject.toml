@@ -1,7 +1,7 @@
 [project]
 name = "agent-lb"
 version = "1.20.0-beta.3"
-description = "Codex load balancer and proxy for ChatGPT accounts with usage dashboard"
+description = "ChatGPT and Claude account load balancer & proxy with usage tracking, dashboard, and OpenAI/Anthropic-compatible endpoints"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Soju06", email = "qlskssk@gmail.com" }]
@@ -9,19 +9,26 @@ maintainers = [
     { name = "Soju06", email = "qlskssk@gmail.com" },
     { name = "choi138", email = "kidjustinchoi@gmail.com" },
     { name = "aaiyer", email = "aaiyer0@proton.me" },
+    { name = "Alex Neyman" },
 ]
+
 keywords = [
     "codex",
     "load-balancer",
     "proxy",
     "fastapi",
+    "openai",
     "chatgpt",
+    "anthropic",
+    "claude",
+    "opencode",
+    "openclaw",
     "rate-limit",
     "usage",
     "dashboard",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Framework :: FastAPI",
     "License :: OSI Approved :: MIT License",
@@ -62,6 +69,12 @@ dependencies = [
     "websockets>=16.0",
     "zstandard>=0.25.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/aneym/agent-lb"
+Repository = "https://github.com/aneym/agent-lb"
+Issues = "https://github.com/aneym/agent-lb/issues"
+Releases = "https://github.com/aneym/agent-lb/releases"
 
 [project.optional-dependencies]
 metrics = ["prometheus-client>=0.20"]
@@ -128,6 +141,19 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 artifacts = ["app/static/**"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/app",
+    "/config",
+    "/LICENSE",
+    "/README.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "**/__pycache__",
+    "**/*.py[cod]",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app","config"]

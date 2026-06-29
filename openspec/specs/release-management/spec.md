@@ -1,17 +1,21 @@
 # release-management Specification
 
 ## Purpose
-TBD - created by archiving change add-beta-release-channel. Update Purpose after archive.
+Define release train management for beta and stable releases, including
+release-please integration, beta PR preparation, prerelease publishing, and
+stable promotion boundaries.
+
 ## Requirements
 ### Requirement: Beta releases are prepared through release PRs
 
-Beta releases SHALL be prepared by an automatically maintained pull request against `main` that updates the release-managed version files to `X.Y.Z-beta.N`. The beta preparation flow SHALL run after release-please completes and after pushes to `main`, SHALL derive `X.Y.Z` from the open release-please PR branch, and SHALL do nothing when there is no open release-please PR. Beta release PRs SHALL NOT update `.github/release-please-manifest.json` because stable version ownership remains with release-please.
+Beta releases SHALL be prepared by an automatically maintained pull request against `main` that updates the release-managed version files to `X.Y.Z-beta.N`. The `uv.lock` package entry SHALL use the PEP 440-normalized prerelease spelling (`X.Y.ZbN`) for the same logical beta version, while other release-managed files SHALL use `X.Y.Z-beta.N`. The beta preparation flow SHALL run after release-please completes and after pushes to `main`, SHALL derive `X.Y.Z` from the open release-please PR branch, and SHALL do nothing when there is no open release-please PR. Beta release PRs SHALL NOT update `.github/release-please-manifest.json` because stable version ownership remains with release-please.
 
 #### Scenario: automation syncs the next beta from the release-please PR
 
 - **GIVEN** release-please has opened or updated `release-please--branches--main` with `pyproject.toml` version `1.19.0`
 - **WHEN** the beta PR sync workflow runs
 - **THEN** it creates or updates a pull request that sets release-managed files to `1.19.0-beta.N`
+- **AND** it sets the `uv.lock` package entry to the PEP 440-normalized spelling `1.19.0bN`
 - **AND** `N` is one higher than the highest existing `v1.19.0-beta.N` tag
 - **AND** `.github/release-please-manifest.json` remains unchanged
 
@@ -31,18 +35,20 @@ Beta releases SHALL be prepared by an automatically maintained pull request agai
 #### Scenario: merged beta release already covers main
 
 - **GIVEN** tag `v1.19.0-beta.1` points to `HEAD`
-- **AND** release-managed files all contain `1.19.0-beta.1`
+- **AND** release-managed files resolve to `1.19.0-beta.1`
+- **AND** the `uv.lock` package entry contains `1.19.0b1`
 - **WHEN** the beta PR sync workflow runs for base version `1.19.0`
 - **THEN** it exits without creating `1.19.0-beta.2`
 
 ### Requirement: Merged beta release PRs publish GitHub prereleases
 
-When a pull request from a `release/beta-*` branch is merged into `main`, the release automation SHALL require `RELEASE_PLEASE_TOKEN` rather than falling back to `GITHUB_TOKEN`, verify that all release-managed version files agree on a beta version, create the matching `vX.Y.Z-beta.N` tag at the merge commit, and publish a GitHub prerelease for that tag. Re-running the workflow after the tag already exists SHALL be safe and SHALL NOT create a second tag.
+When a pull request from a `release/beta-*` branch is merged into `main`, the release automation SHALL require `RELEASE_PLEASE_TOKEN` rather than falling back to `GITHUB_TOKEN`, verify that all release-managed version files agree on the same logical beta version, create the matching `vX.Y.Z-beta.N` tag at the merge commit, and publish a GitHub prerelease for that tag. Re-running the workflow after the tag already exists SHALL be safe and SHALL NOT create a second tag.
 
 #### Scenario: beta PR merge publishes a prerelease tag
 
 - **GIVEN** a merged pull request from `release/beta-1.19.0-beta.1`
-- **AND** release-managed files all contain `1.19.0-beta.1`
+- **AND** release-managed files resolve to `1.19.0-beta.1`
+- **AND** the `uv.lock` package entry contains `1.19.0b1`
 - **AND** `RELEASE_PLEASE_TOKEN` is configured
 - **WHEN** the beta publish workflow runs
 - **THEN** it creates tag `v1.19.0-beta.1` at the merge commit
@@ -72,4 +78,3 @@ A beta-tested release train SHALL be promoted by merging the normal release-plea
 - **THEN** release-please creates the stable `v1.19.0` release
 - **AND** the release publishing workflow publishes stable artifacts for `1.19.0`
 - **AND** stable Docker aliases `latest`, `1`, and `1.19` are updated only by the stable release
-

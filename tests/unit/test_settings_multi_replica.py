@@ -12,6 +12,7 @@ pytestmark = pytest.mark.unit
 def test_settings_multi_replica_defaults():
     settings = Settings()
     assert settings.metrics_enabled is False
+    assert settings.metrics_host == "127.0.0.1"
     assert settings.metrics_port == 9090
     assert settings.log_format == "text"
     assert settings.leader_election_enabled is False
@@ -28,6 +29,8 @@ def test_settings_multi_replica_defaults():
     assert settings.proxy_upstream_websocket_connect_limit == 512
     assert settings.proxy_response_create_limit == 1024
     assert settings.proxy_compact_response_create_limit == 128
+    assert settings.proxy_account_response_create_limit == 0
+    assert settings.proxy_account_stream_limit == 0
     assert settings.http_responses_session_bridge_max_sessions == 1024
     assert settings.http_responses_session_bridge_queue_limit == 64
     assert settings.http_responses_session_bridge_response_create_concurrency == 64
@@ -52,6 +55,12 @@ def test_settings_metrics_enabled_from_env(monkeypatch):
     monkeypatch.setenv("AGENT_LB_METRICS_ENABLED", "true")
     settings = Settings()
     assert settings.metrics_enabled is True
+
+
+def test_settings_metrics_host_from_env(monkeypatch):
+    monkeypatch.setenv("AGENT_LB_METRICS_HOST", "0.0.0.0")
+    settings = Settings()
+    assert settings.metrics_host == "0.0.0.0"
 
 
 def test_settings_metrics_port_from_env(monkeypatch):

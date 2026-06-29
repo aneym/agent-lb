@@ -115,7 +115,7 @@ class ModelRefreshScheduler:
 def _group_by_plan(accounts: list[Account]) -> dict[str, list[Account]]:
     grouped: dict[str, list[Account]] = {}
     for account in accounts:
-        if account.provider != OPENAI_PROVIDER_NAME:
+        if (account.provider or OPENAI_PROVIDER_NAME) != OPENAI_PROVIDER_NAME:
             continue
         if account.status != AccountStatus.ACTIVE:
             continue

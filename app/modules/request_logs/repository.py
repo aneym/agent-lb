@@ -16,6 +16,7 @@ from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, RequestKind, RequestLog
 from app.db.session import sqlite_writer_section
+from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,8 @@ class RequestLogsRepository:
         self,
         since: datetime,
         bucket_seconds: int = 21600,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
     ) -> list[BucketModelAggregate]:
         bind = self._session.get_bind()
         dialect = bind.dialect.name if bind else "sqlite"
@@ -97,21 +100,29 @@ class RequestLogsRepository:
             bucket_expr = cast(epoch_col / bucket_seconds, Integer) * bucket_seconds
         bucket_col = bucket_expr.label("bucket_epoch")
 
+        conditions = [
+            RequestLog.requested_at >= since,
+            self._exclude_warmup_clause(),
+        ]
+        if exclude_canceled_subscription_accounts:
+            conditions.append(_visible_account_log_clause())
+
+        stmt = select(
+            bucket_col,
+            RequestLog.model,
+            RequestLog.service_tier,
+            func.count().label("request_count"),
+            func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)).label("error_count"),
+            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+            func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
+            func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("reasoning_tokens"),
+            func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+        )
+        if exclude_canceled_subscription_accounts:
+            stmt = stmt.outerjoin(Account, Account.id == RequestLog.account_id)
         stmt = (
-            select(
-                bucket_col,
-                RequestLog.model,
-                RequestLog.service_tier,
-                func.count().label("request_count"),
-                func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)).label("error_count"),
-                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
-                func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-                func.coalesce(func.sum(RequestLog.reasoning_tokens), 0).label("reasoning_tokens"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
-            )
-            .where(RequestLog.requested_at >= since)
-            .where(self._exclude_warmup_clause())
+            stmt.where(and_(*conditions))
             .group_by(bucket_col, RequestLog.model, RequestLog.service_tier)
             .order_by(bucket_col)
         )
@@ -132,7 +143,19 @@ class RequestLogsRepository:
             for row in result.all()
         ]
 
-    async def aggregate_activity_since(self, since: datetime) -> RequestActivityAggregate:
+    async def aggregate_activity_since(
+        self,
+        since: datetime,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
+    ) -> RequestActivityAggregate:
+        conditions = [
+            RequestLog.requested_at >= since,
+            self._exclude_warmup_clause(),
+        ]
+        if exclude_canceled_subscription_accounts:
+            conditions.append(_visible_account_log_clause())
+
         stmt = select(
             func.count().label("request_count"),
             func.coalesce(
@@ -143,10 +166,10 @@ class RequestLogsRepository:
             func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
             func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
-        ).where(
-            RequestLog.requested_at >= since,
-            self._exclude_warmup_clause(),
         )
+        if exclude_canceled_subscription_accounts:
+            stmt = stmt.outerjoin(Account, Account.id == RequestLog.account_id)
+        stmt = stmt.where(and_(*conditions))
         result = await self._session.execute(stmt)
         row = result.one()
         return RequestActivityAggregate(
@@ -158,19 +181,30 @@ class RequestLogsRepository:
             cost_usd=float(row.cost_usd or 0.0),
         )
 
-    async def top_error_since(self, since: datetime) -> str | None:
+    async def top_error_since(
+        self,
+        since: datetime,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
+    ) -> str | None:
+        conditions = [
+            RequestLog.requested_at >= since,
+            self._exclude_warmup_clause(),
+            RequestLog.status != "success",
+            RequestLog.error_code.is_not(None),
+        ]
+        if exclude_canceled_subscription_accounts:
+            conditions.append(_visible_account_log_clause())
+
         stmt = (
             select(RequestLog.error_code, func.count(RequestLog.id).label("error_count"))
-            .where(
-                RequestLog.requested_at >= since,
-                self._exclude_warmup_clause(),
-                RequestLog.status != "success",
-                RequestLog.error_code.is_not(None),
-            )
             .group_by(RequestLog.error_code)
             .order_by(func.count(RequestLog.id).desc(), RequestLog.error_code.asc())
             .limit(1)
         )
+        if exclude_canceled_subscription_accounts:
+            stmt = stmt.outerjoin(Account, Account.id == RequestLog.account_id)
+        stmt = stmt.where(and_(*conditions))
         result = await self._session.execute(stmt)
         row = result.first()
         return str(row[0]) if row and row[0] else None
@@ -559,6 +593,15 @@ class RequestLogsRepository:
             ApiKey,
             ApiKey.id == RequestLog.api_key_id,
         )
+
+
+def _visible_account_log_clause() -> ColumnElement[bool]:
+    return or_(
+        RequestLog.account_id.is_(None),
+        Account.id.is_(None),
+        Account.subscription_status.is_(None),
+        func.lower(func.trim(Account.subscription_status)) != CANCELED_SUBSCRIPTION_STATUS,
+    )
 
 
 async def _safe_rollback(session: AsyncSession) -> None:

@@ -9,7 +9,7 @@ from app.core.anthropic.pricing import (
 from app.core.anthropic.pricing import (
     get_pricing_for_model as get_anthropic_pricing_for_model,
 )
-from app.core.providers import ANTHROPIC_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage.pricing import (
     UsageCostBreakdown,
     UsageTokens,
@@ -90,7 +90,8 @@ def output_tokens_from_log(log: RequestLogLike) -> int | None:
 def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = None) -> float | None:
     if not log.model:
         return None
-    if log.provider == ANTHROPIC_PROVIDER_NAME:
+    provider = getattr(log, "provider", None) or OPENAI_PROVIDER_NAME
+    if provider == ANTHROPIC_PROVIDER_NAME:
         resolved_anthropic = get_anthropic_pricing_for_model(log.model)
         if not resolved_anthropic:
             return None

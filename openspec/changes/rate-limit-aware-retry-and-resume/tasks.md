@@ -23,4 +23,5 @@
 - [x] 3.2 Unit tests: launcher retry-metadata parsing, wait decision, resume command.
 - [x] 3.3 Ruff + full Anthropic proxy test module green.
 - [x] 3.4 Restart live service and demonstrate wait/auto-launch end to end.
-- [ ] 3.5 Validate the OpenSpec change (CLI availability permitting — `openspec` binary not installed on this machine).
+- [x] 3.5 Validate the OpenSpec change.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate rate-limit-aware-retry-and-resume --strict` -> valid.

@@ -9,6 +9,7 @@ from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import UsageHistory
 from app.modules.accounts.mappers import build_account_summaries
+from app.modules.accounts.subscription_status import subscription_usable_accounts
 from app.modules.dashboard.builders import (
     build_dashboard_overview_summary,
     build_overview_timeframe,
@@ -61,11 +62,12 @@ class DashboardService:
     ) -> DashboardOverviewResponse:
         now = utcnow()
         overview_timeframe = resolve_overview_timeframe(timeframe_key)
-        accounts = await self._repo.list_accounts()
+        accounts = subscription_usable_accounts(await self._repo.list_accounts())
         account_ids = [account.id for account in accounts]
-        primary_usage = await self._repo.latest_usage_by_account("primary")
-        secondary_usage = await self._repo.latest_usage_by_account("secondary")
-        monthly_usage = await self._repo.latest_usage_by_account("monthly")
+        account_id_set = set(account_ids)
+        primary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("primary"), account_id_set)
+        secondary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("secondary"), account_id_set)
+        monthly_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("monthly"), account_id_set)
         limit_warmups_by_account = await self._repo.latest_limit_warmups_by_account(account_ids)
 
         account_summaries = sorted(
@@ -97,6 +99,7 @@ class DashboardService:
         bucket_rows = await self._repo.aggregate_logs_by_bucket(
             bucket_query_since,
             overview_timeframe.bucket_seconds,
+            exclude_canceled_subscription_accounts=True,
         )
         trends, _, _ = build_trends_from_buckets(
             bucket_rows,
@@ -104,8 +107,14 @@ class DashboardService:
             bucket_seconds=overview_timeframe.bucket_seconds,
             bucket_count=overview_timeframe.bucket_count,
         )
-        activity_aggregate = await self._repo.aggregate_activity_since(bucket_since)
-        top_error = await self._repo.top_error_since(bucket_since)
+        activity_aggregate = await self._repo.aggregate_activity_since(
+            bucket_since,
+            exclude_canceled_subscription_accounts=True,
+        )
+        top_error = await self._repo.top_error_since(
+            bucket_since,
+            exclude_canceled_subscription_accounts=True,
+        )
         activity_metrics, activity_cost = build_activity_summaries(
             activity_aggregate,
             top_error=top_error,
@@ -149,10 +158,11 @@ class DashboardService:
 
     async def get_projections(self) -> DashboardProjectionsResponse:
         now = utcnow()
-        accounts = await self._repo.list_accounts()
-        primary_usage = await self._repo.latest_usage_by_account("primary")
-        secondary_usage = await self._repo.latest_usage_by_account("secondary")
-        monthly_usage = await self._repo.latest_usage_by_account("monthly")
+        accounts = subscription_usable_accounts(await self._repo.list_accounts())
+        account_id_set = {account.id for account in accounts}
+        primary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("primary"), account_id_set)
+        secondary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("secondary"), account_id_set)
+        monthly_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("monthly"), account_id_set)
         account_summaries = build_account_summaries(
             accounts=accounts,
             primary_usage=primary_usage,
@@ -334,6 +344,13 @@ def _build_depletion_by_window(
 
 def _rows_from_latest(latest: dict[str, UsageHistory]) -> list[UsageWindowRow]:
     return [usage_history_to_window_row(entry) for entry in latest.values()]
+
+
+def _usage_for_accounts(
+    usage: dict[str, UsageHistory],
+    account_ids: set[str],
+) -> dict[str, UsageHistory]:
+    return {account_id: row for account_id, row in usage.items() if account_id in account_ids}
 
 
 def _should_use_weekly_primary_history(

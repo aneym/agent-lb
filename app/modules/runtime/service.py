@@ -16,8 +16,8 @@ from app.modules.runtime.schemas import RuntimeVersionResponse
 
 logger = logging.getLogger(__name__)
 
-_GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Soju06/agent-lb/releases/latest"
-_LATEST_RELEASE_PAGE_URL = "https://github.com/Soju06/agent-lb/releases/latest"
+_GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/aneym/agent-lb/releases/latest"
+_LATEST_RELEASE_PAGE_URL = "https://github.com/aneym/agent-lb/releases/latest"
 _VERSION_RE = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
     r"(?:-(?P<prerelease>[0-9A-Za-z.-]+))?$"

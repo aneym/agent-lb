@@ -25,6 +25,12 @@ from app.core.utils.json_guards import is_json_mapping
 from app.modules.proxy._service.support import (
     _WebSocketRequestState,
 )
+from app.modules.proxy._service.support import (
+    strip_encrypted_reasoning_from_request_text as strip_encrypted_reasoning_from_request_text,
+)
+from app.modules.proxy._service.support import (
+    strip_encrypted_reasoning_input_items as strip_encrypted_reasoning_input_items,
+)
 
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
@@ -276,75 +282,6 @@ def _inject_missing_interrupted_function_call_outputs(
         *[_synthetic_interrupted_function_call_output(call_id) for call_id in missing_call_ids],
         *input_items,
     ]
-
-
-def strip_encrypted_reasoning_input_items(
-    input_items: Sequence[JsonValue],
-) -> tuple[list[JsonValue], int, int]:
-    """Drop replayed reasoning items whose transcript carries account-bound
-    ``encrypted_content``.
-
-    Reasoning ``encrypted_content`` blobs are encrypted by the upstream account
-    that minted them. When a long-lived ``store:false`` client session replays
-    its transcript through agent-lb, account rotation means those blobs can land
-    on an account that cannot decrypt them — upstream then accepts the
-    ``response.create`` and silently never answers (close 1000, zero events).
-
-    Bisection-verified semantics: when ANY reasoning item carries a blob, ALL
-    reasoning items are dropped — replaying a reasoning item by id without its
-    blob (``store:false``) black-holes upstream exactly the same way, so
-    keeping blob-stripped items is not safe. Payloads with no blobs at all are
-    returned unchanged.
-
-    Returns ``(sanitized_items, dropped_blob_item_count,
-    dropped_plain_item_count)``.
-    """
-    reasoning_items = [
-        cast(dict[str, JsonValue], item)
-        for item in input_items
-        if isinstance(item, dict) and item.get("type") == "reasoning"
-    ]
-    blob_count = sum(
-        1
-        for item in reasoning_items
-        if isinstance(item.get("encrypted_content"), str) and item.get("encrypted_content")
-    )
-    if not blob_count:
-        return list(input_items), 0, 0
-    sanitized: list[JsonValue] = [
-        item
-        for item in input_items
-        if not (isinstance(item, dict) and item.get("type") == "reasoning")
-    ]
-    return sanitized, blob_count, len(reasoning_items) - blob_count
-
-
-def strip_encrypted_reasoning_from_request_text(
-    request_text: str,
-) -> tuple[str | None, int, int]:
-    """Apply :func:`strip_encrypted_reasoning_input_items` to a serialized
-    ``response.create`` payload.
-
-    Returns ``(sanitized_text, stripped_item_count, dropped_item_count)``;
-    ``sanitized_text`` is ``None`` when the text is not a JSON object with a
-    list input or when no reasoning items carried ``encrypted_content``.
-    """
-    try:
-        payload = json.loads(request_text)
-    except json.JSONDecodeError:
-        return None, 0, 0
-    if not isinstance(payload, dict):
-        return None, 0, 0
-    input_items = payload.get("input")
-    if not isinstance(input_items, list):
-        return None, 0, 0
-    sanitized_items, stripped_count, dropped_count = strip_encrypted_reasoning_input_items(
-        cast(list[JsonValue], input_items)
-    )
-    if not stripped_count and not dropped_count:
-        return None, 0, 0
-    payload["input"] = sanitized_items
-    return json.dumps(payload, ensure_ascii=True, separators=(",", ":")), stripped_count, dropped_count
 
 
 def _response_output_item_done_function_call_id(payload: dict[str, JsonValue] | None) -> str | None:

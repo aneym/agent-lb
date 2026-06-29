@@ -150,6 +150,70 @@ async def test_dashboard_overview_combines_data(async_client, db_setup):
 
 
 @pytest.mark.asyncio
+async def test_dashboard_overview_hides_canceled_subscription_accounts(async_client, db_setup):
+    now = utcnow().replace(microsecond=0)
+    active = _make_account("acc_dash_active_sub", "dash-active@example.com")
+    canceled = _make_account("acc_dash_canceled_sub", "dash-canceled@example.com")
+    canceled.subscription_status = "canceled"
+
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+        logs_repo = RequestLogsRepository(session)
+
+        await accounts_repo.upsert(active)
+        await accounts_repo.upsert(canceled)
+        await usage_repo.add_entry(
+            active.id,
+            20.0,
+            window="primary",
+            recorded_at=now - timedelta(minutes=2),
+        )
+        await usage_repo.add_entry(
+            canceled.id,
+            80.0,
+            window="primary",
+            recorded_at=now - timedelta(minutes=1),
+        )
+        await logs_repo.add_log(
+            account_id=active.id,
+            request_id="req_dash_active_sub",
+            model="gpt-5.1",
+            input_tokens=20,
+            output_tokens=10,
+            latency_ms=40,
+            status="success",
+            error_code=None,
+            requested_at=now - timedelta(minutes=1),
+        )
+        await logs_repo.add_log(
+            account_id=canceled.id,
+            request_id="req_dash_canceled_sub",
+            model="gpt-5.1",
+            input_tokens=200,
+            output_tokens=100,
+            latency_ms=40,
+            status="error",
+            error_code="subscription_canceled",
+            requested_at=now - timedelta(minutes=1),
+        )
+
+    response = await async_client.get("/api/dashboard/overview")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert [account["accountId"] for account in payload["accounts"]] == [active.id]
+    assert payload["summary"]["primaryWindow"]["capacityCredits"] == pytest.approx(225.0)
+    assert payload["summary"]["cost"]["totalUsd"] == pytest.approx(0.000125)
+    assert payload["summary"]["metrics"]["requests"] == 1
+    assert payload["summary"]["metrics"]["tokens"] == 30
+    assert payload["summary"]["metrics"]["errorCount"] == 0
+    assert payload["summary"]["metrics"]["topError"] is None
+    assert [account["accountId"] for account in payload["windows"]["primary"]["accounts"]] == [active.id]
+    assert sum(point["v"] for point in payload["trends"]["requests"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_dashboard_overview_metrics_keep_soft_deleted_request_logs(async_client, db_setup):
     now = utcnow().replace(microsecond=0)
 

@@ -5963,6 +5963,7 @@ async def test_v1_responses_http_bridge_does_not_evict_active_session_when_pool_
         request_model="gpt-5.1",
         idle_ttl_seconds=120.0,
         max_sessions=1,
+        response_create_concurrency=1,
     )
     async with first_session.pending_lock:
         first_session.pending_requests.append(
@@ -6129,6 +6130,7 @@ async def test_v1_responses_http_bridge_does_not_evict_queued_session_when_pool_
         request_model="gpt-5.1",
         idle_ttl_seconds=120.0,
         max_sessions=1,
+        response_create_concurrency=1,
     )
 
     await first_session.response_create_gate.acquire()

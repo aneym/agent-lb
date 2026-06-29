@@ -73,4 +73,39 @@ describe("AccountDetail", () => {
     expect(screen.getAllByText("Cancel pending")).not.toHaveLength(0);
     expect(screen.getByText(/Active until:/)).toBeInTheDocument();
   });
+
+  it("shows a check sub action for canceled subscriptions", async () => {
+    const user = userEvent.setup();
+    const onSubscriptionCheck = vi.fn().mockResolvedValue(undefined);
+    const account = createAccountSummary({
+      subscription: {
+        status: "canceled",
+        currentPeriodEndAt: "2026-06-13T15:38:02.000Z",
+        lastVerifiedAt: "2026-06-13T15:38:02.000Z",
+      },
+    });
+
+    renderWithClient(
+      <AccountDetail
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onSetAlias={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+        onSubscriptionSave={vi.fn().mockResolvedValue(undefined)}
+        onSubscriptionCheck={onSubscriptionCheck}
+        onSecurityWorkAuthorizedChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Check sub/i }));
+
+    expect(onSubscriptionCheck).toHaveBeenCalledWith(account.accountId);
+  });
 });

@@ -16,7 +16,7 @@ from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.exceptions import DashboardAuthError, ProxyAuthError, ProxyUpstreamError
-from app.core.request_locality import is_local_request
+from app.core.request_locality import is_local_request, resolve_request_client_host
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import utcnow
 from app.db.session import get_background_session
@@ -60,7 +60,7 @@ async def validate_proxy_api_key_authorization(
     settings = await get_settings_cache().get()
     if not settings.api_key_auth_enabled:
         if request is not None and not is_local_request(request):
-            if not _is_proxy_unauthenticated_socket_peer_allowed(request):
+            if not _is_proxy_unauthenticated_client_allowed(request):
                 raise ProxyAuthError("Proxy authentication must be configured before remote access is allowed")
         return None
 
@@ -157,18 +157,25 @@ def get_dashboard_request_auth_mode() -> DashboardAuthMode:
     return get_settings().dashboard_auth_mode
 
 
-def _is_proxy_unauthenticated_socket_peer_allowed(request: HTTPConnection) -> bool:
-    socket_host = request.client.host if request.client else None
-    if socket_host is None:
+def _is_proxy_unauthenticated_client_allowed(request: HTTPConnection) -> bool:
+    """Return True if the resolved client IP is in the configured unauthenticated CIDR allowlist.
+
+    Uses the trusted-proxy-aware resolved client IP (honoring X-Forwarded-For only when the
+    socket peer is in ``firewall_trusted_proxy_cidrs``).  This prevents a misconfigured
+    allowlist entry (e.g. 127.0.0.1/32) from accidentally granting access to public traffic
+    arriving through a local reverse proxy such as Tailscale Funnel.
+    """
+    client_host = resolve_request_client_host(request)
+    if client_host is None:
         return False
 
     try:
-        socket_ip = ip_address(socket_host)
+        client_ip = ip_address(client_host)
     except ValueError:
         return False
 
     configured_cidrs = get_settings().proxy_unauthenticated_client_cidrs
-    return any(socket_ip in ip_network(cidr, strict=False) for cidr in configured_cidrs)
+    return any(client_ip in ip_network(cidr, strict=False) for cidr in configured_cidrs)
 
 
 # --- Codex usage caller identity auth ---

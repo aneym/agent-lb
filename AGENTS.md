@@ -6,6 +6,14 @@ Setting up agent-lb on a fresh machine (install, service, account connection, cl
 wiring)? Follow `GETTING-STARTED.md` at the repo root — also available as the
 `get-started` skill. The rest of this file is for development work on the codebase.
 
+## Account Operations
+
+For ongoing account-specific work after setup — quota reset checks, stuck or
+rate-limited account triage, billing/subscription changes, pause/reactivate
+routing, removals, verification, or dedicated browser-profile work — use the
+`agent-lb-account-operator` skill and the local
+`.agent-lb/account-profiles.json` registry.
+
 ## Environment
 
 - Python: .venv/bin/python (uv, CPython 3.13.3)
@@ -68,6 +76,8 @@ Prompting cue (use when writing docs):
 - Verify before archive: `/opsx:verify <change>`
 - Sync delta specs → main specs: `/opsx:sync <change>`
 - Archive: `/opsx:archive <change>`
+- If the local `openspec` executable is missing, use the npm-distributed CLI
+  without adding a repo dependency: `npx --yes @fission-ai/openspec@latest validate --specs`.
 
 ## Contributing & Merge Gates
 
@@ -97,6 +107,11 @@ are encouraged but not substitutes for the cloud gates.
 
 These rules encode recurring review blockers observed across agent-lb PRs.
 
+- Dashboard, report, and operator-summary account totals should count only
+  authenticated, subscription-usable accounts. Unauthenticated, unsubscribed,
+  deactivated, or rotation-only stored accounts may remain visible where useful,
+  but they must not inflate headline pool/account totals unless the UI/API
+  explicitly labels the number as all stored accounts.
 - OpenSpec is a hard gate for behavior, API, schema, CLI,
   dashboard-visible, proxy-routing, operator-contract, and compatibility
   changes. Create or update `openspec/changes/<slug>/` before coding, keep

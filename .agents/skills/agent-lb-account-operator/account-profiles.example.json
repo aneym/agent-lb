@@ -22,6 +22,27 @@
         "notes": null
       },
       "subscriptionHistory": []
+    },
+    {
+      "profileHandle": "anthropic-personal-max",
+      "provider": "anthropic",
+      "accountId": null,
+      "email": null,
+      "alias": "Personal Max",
+      "userDataDir": ".agent-lb/chrome-profiles/anthropic-personal-max",
+      "homeUrl": "https://claude.ai",
+      "billingUrl": "https://claude.ai/settings/billing",
+      "notes": "Keep this entry free of passwords, tokens, card numbers, and recovery codes.",
+      "subscription": {
+        "status": "active",
+        "nextChargeAt": null,
+        "currentPeriodEndAt": null,
+        "amount": null,
+        "currency": "USD",
+        "lastVerifiedAt": null,
+        "notes": null
+      },
+      "subscriptionHistory": []
     }
   ]
 }

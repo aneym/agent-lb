@@ -1,7 +1,10 @@
 # account-routing Specification
 
 ## Purpose
-TBD - created by archiving change add-relative-availability-routing. Update Purpose after archive.
+Define account selection and routing behavior for proxy traffic, including
+relative-availability scoring, dashboard tuning, and privacy-preserving routing
+diagnostics.
+
 ## Requirements
 ### Requirement: Relative availability routing
 The proxy account selector SHALL support a `relative_availability` routing strategy. The strategy SHALL evaluate only accounts that have passed the existing eligibility, health-tier, model-plan, quota, cooldown, circuit-breaker, and budget-safety gates. For each candidate, it SHALL compute a raw score from remaining secondary-window credits divided by seconds until the secondary-window reset, using bounded fallbacks for unknown or near-immediate reset times, and SHALL select from the highest weighted candidates according to the configured power and top-K cutoff.
@@ -37,4 +40,3 @@ Relative-availability selection diagnostics SHALL identify accounts using stable
 - **WHEN** relative-availability routing logs candidate or winner diagnostics
 - **THEN** the log message includes the candidate account ID
 - **AND** the log message does not include the account email address
-

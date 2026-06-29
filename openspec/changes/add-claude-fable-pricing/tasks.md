@@ -16,4 +16,5 @@
 ## 4. Validation
 
 - [x] 4.1 Run targeted pricing tests.
-- [ ] 4.2 Run strict OpenSpec validation. Blocked locally: `openspec` is not installed on PATH, `uv run openspec` cannot spawn it, `uvx openspec` cannot resolve a package, and `npx --yes openspec` cannot determine an executable.
+- [x] 4.2 Run strict OpenSpec validation.
+      - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate add-claude-fable-pricing --strict` -> valid.

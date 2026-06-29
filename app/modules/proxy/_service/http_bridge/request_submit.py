@@ -102,9 +102,6 @@ from app.modules.proxy._service.observability import (
 from app.modules.proxy._service.observability import (
     _truncate_identifier as _truncate_identifier,
 )
-from app.modules.proxy._service.response_create import (
-    strip_encrypted_reasoning_input_items,
-)
 from app.modules.proxy._service.support import (
     _HARD_HTTP_BRIDGE_AFFINITY_KINDS,  # noqa: F401
     _WEBSOCKET_FULL_REPLAY_WAIT_POLL_SECONDS,  # noqa: F401
@@ -115,6 +112,7 @@ from app.modules.proxy._service.support import (
     _request_log_useragent_fields,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketRequestState,
+    strip_encrypted_reasoning_input_items,
 )
 from app.modules.proxy._service.support import (
     _websocket_route_log_kwargs as _websocket_route_log_kwargs,

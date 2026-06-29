@@ -10,7 +10,7 @@ on:
         required: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -82,6 +82,33 @@ jobs:
 
       - name: Build sdist + wheel
         run: uvx --from build==1.3.0 python -m build
+
+      - name: Verify dist artifact names
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          metadata = subprocess.check_output(
+              ["python", "-m", "scripts.verify_release_version", "--tag", os.environ["RELEASE_TAG"]],
+              text=True,
+          )
+          values = dict(line.split("=", 1) for line in metadata.splitlines() if "=" in line)
+          pypi_version = values["pypi_version"]
+          expected = {
+              f"agent_lb-{pypi_version}-py3-none-any.whl",
+              f"agent_lb-{pypi_version}.tar.gz",
+          }
+          actual = {path.name for path in Path("dist").iterdir() if path.is_file()}
+          if actual != expected:
+              raise SystemExit(
+                  f"unexpected dist artifacts: expected {sorted(expected)}, got {sorted(actual)}"
+              )
+
+          print(f"dist artifacts verified: {', '.join(sorted(actual))}")
+          PY
 
       - name: Verify wheel contains frontend assets
         shell: bash

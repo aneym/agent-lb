@@ -1,7 +1,10 @@
 # audio-transcriptions-compat Specification
 
 ## Purpose
-TBD - created by archiving change add-transcription-proxy-compat. Update Purpose after archive.
+Define transcription proxy compatibility for Codex-native and OpenAI-compatible
+audio transcription routes, including multipart forwarding, policy enforcement,
+account selection, and retry budgeting.
+
 ## Requirements
 ### Requirement: Native transcription proxy endpoint
 The system SHALL expose `POST /backend-api/transcribe` for multipart audio transcription requests. The endpoint MUST accept a multipart `file` part and MAY accept a `prompt` part, and MUST forward requests to upstream `/transcribe` using selected account credentials. While forwarding multipart form data, the service MUST strip inbound `Content-Type` header values case-insensitively so the upstream client can generate a correct boundary.
@@ -85,4 +88,3 @@ The system MUST enforce a configurable total request budget for transcription pr
 - **WHEN** the first transcription attempt returns 401 and token refresh succeeds while request budget remains
 - **THEN** the retry uses the refreshed account metadata
 - **AND** the retry only proceeds if enough request budget remains for another attempt
-

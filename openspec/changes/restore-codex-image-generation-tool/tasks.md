@@ -2,8 +2,5 @@
 - [x] 2. Add failing regression coverage for backend Codex request normalization preserving `image_generation`.
 - [x] 3. Implement the minimal request-policy change.
 - [x] 4. Verify focused tests and live agent-lb image-generation surfaces.
-- [x] 5. Attempt OpenSpec validation.
-  - `openspec validate --specs`, `uv run openspec validate --specs`,
-    `uvx openspec validate --specs`, and `npx openspec validate --specs`
-    were attempted from this checkout, but the OpenSpec CLI is unavailable in
-    the local environment/package registries. See `verify-report.md`.
+- [x] 5. Validate the OpenSpec change.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate restore-codex-image-generation-tool --strict` -> valid.

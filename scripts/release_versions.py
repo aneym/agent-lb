@@ -108,7 +108,7 @@ def update_project_versions(root: Path, version: str) -> None:
     stable train remains owned by release-please.
     """
 
-    parse_version(version)
+    release = parse_version(version)
 
     pyproject = root / "pyproject.toml"
     _write_text(
@@ -147,7 +147,7 @@ def update_project_versions(root: Path, version: str) -> None:
     uv_text = uv_lock.read_text(encoding="utf-8")
     uv_text, count = re.subn(
         r'(\[\[package\]\]\nname = "agent-lb"\nversion = ")[^"]+("\nsource = \{ editable = "\." \})',
-        rf"\g<1>{version}\2",
+        rf"\g<1>{release.pypi_version}\2",
         uv_text,
         count=1,
     )
@@ -185,8 +185,26 @@ def read_project_versions(root: Path) -> dict[str, str]:
     }
 
 
+def expected_project_versions(expected_version: str) -> dict[str, str]:
+    release = parse_version(expected_version)
+    expected = release.version
+    return {
+        "pyproject.toml": expected,
+        "app/__init__.py": expected,
+        "frontend/package.json": expected,
+        "deploy/helm/agent-lb/Chart.yaml version": expected,
+        "deploy/helm/agent-lb/Chart.yaml appVersion": expected,
+        "uv.lock": release.pypi_version,
+    }
+
+
+def project_version_mismatches(root: Path, expected_version: str) -> dict[str, str]:
+    expected = expected_project_versions(expected_version)
+    return {name: actual for name, actual in read_project_versions(root).items() if actual != expected[name]}
+
+
 def assert_project_versions(root: Path, expected_version: str) -> None:
-    mismatches = {name: actual for name, actual in read_project_versions(root).items() if actual != expected_version}
+    mismatches = project_version_mismatches(root, expected_version)
     if mismatches:
         detail = ", ".join(f"{name}={actual!r}" for name, actual in sorted(mismatches.items()))
         raise ValueError(f"release version drift: expected {expected_version!r}; {detail}")

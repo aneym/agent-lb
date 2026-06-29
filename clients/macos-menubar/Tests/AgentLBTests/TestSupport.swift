@@ -15,7 +15,8 @@ func makeTestAccount(
   resetAtPrimary: Date? = nil,
   resetAtSecondary: Date? = nil,
   rateLimitResetAt: Date? = nil,
-  deactivationReason: String? = nil
+  deactivationReason: String? = nil,
+  subscription: AccountSubscriptionLedger? = nil
 ) -> Account {
   Account(
     accountId: id,
@@ -42,7 +43,8 @@ func makeTestAccount(
     rateLimitResetAt: rateLimitResetAt,
     lastRefreshAt: nil,
     deactivationReason: deactivationReason,
-    isEmailDuplicate: nil
+    isEmailDuplicate: nil,
+    subscription: subscription
   )
 }
 

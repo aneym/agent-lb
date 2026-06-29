@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Save } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw, Save } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 
@@ -54,12 +54,16 @@ export type AccountSubscriptionLedgerProps = {
     accountId: string,
     payload: AccountSubscriptionLedger,
   ) => Promise<unknown>;
+  onCheckSubscription?: (accountId: string) => Promise<unknown>;
+  checking?: boolean;
 };
 
 export function AccountSubscriptionLedgerPanel({
   account,
   busy,
   onSave,
+  onCheckSubscription,
+  checking = false,
 }: AccountSubscriptionLedgerProps) {
   const initialForm = useMemo(
     () => formFromSubscription(account.subscription),
@@ -92,6 +96,8 @@ export function AccountSubscriptionLedgerPanel({
     subscription?.amount != null
       ? formatAmount(subscription.amount, currencyLabel)
       : `-- ${currencyLabel}`;
+  const showCheckSubscription =
+    subscription?.status === "canceled" && onCheckSubscription;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,40 +116,58 @@ export function AccountSubscriptionLedgerPanel({
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setExpanded((current) => !current)}
-        aria-expanded={expanded}
-        aria-controls="subscription-ledger-form"
-        className="flex w-full items-start justify-between gap-3 rounded-sm text-left transition-colors duration-150 ease-out outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
-      >
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-sm font-medium">
-            {expanded ? (
-              <ChevronDown
-                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
-            ) : (
-              <ChevronRight
-                className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                aria-hidden="true"
-              />
-            )}
-            Subscription
-          </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>{status}</span>
-            <span>
-              {primaryDateLabel}:{" "}
-              <span className="font-mono tabular-nums">
-                {formatDateTimeInline(primaryDate)}
+      <div className="flex items-start justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          aria-expanded={expanded}
+          aria-controls="subscription-ledger-form"
+          className="min-w-0 flex-1 rounded-sm text-left transition-colors duration-150 ease-out outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              {expanded ? (
+                <ChevronDown
+                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              ) : (
+                <ChevronRight
+                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              )}
+              Subscription
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{status}</span>
+              <span>
+                {primaryDateLabel}:{" "}
+                <span className="font-mono tabular-nums">
+                  {formatDateTimeInline(primaryDate)}
+                </span>
               </span>
-            </span>
-            <span className="font-mono tabular-nums">{amountLabel}</span>
+              <span className="font-mono tabular-nums">{amountLabel}</span>
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        {showCheckSubscription ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5 text-xs"
+            disabled={busy || checking}
+            onClick={() => void onCheckSubscription?.(account.accountId)}
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5${checking ? " animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            Check sub
+          </Button>
+        ) : null}
+      </div>
 
       {expanded ? (
         <form

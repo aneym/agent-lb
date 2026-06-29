@@ -104,6 +104,30 @@ _LEGACY_EXTRA_COLUMNS = frozenset(
         ("request_logs", "slim_summary_json"),
     }
 )
+_EXISTING_COLUMN_REVISION_SKIPS: tuple[tuple[str, str, dict[str, frozenset[str]]], ...] = (
+    (
+        "20260609_150000_add_account_subscription_ledger",
+        "20260609_120000_merge_provider_and_useragent_heads",
+        {
+            "accounts": frozenset(
+                {
+                    "subscription_status",
+                    "subscription_next_charge_at",
+                    "subscription_current_period_end_at",
+                    "subscription_amount",
+                    "subscription_currency",
+                    "subscription_last_verified_at",
+                    "subscription_notes",
+                }
+            )
+        },
+    ),
+    (
+        "20260610_180000_add_seed_target_offset_minutes",
+        "20260609_150000_add_account_subscription_ledger",
+        {"quota_planner_settings": frozenset({"seed_target_offset_minutes"})},
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -601,6 +625,64 @@ def check_schema_drift(database_url: str) -> tuple[str, ...]:
     return tuple(repr(diff) for diff in diffs) + manual_diffs
 
 
+def _head_revision_target(config: Config, revision: str) -> str | None:
+    head_revision = _head_revision(config)
+    if revision in {"head", head_revision}:
+        return head_revision
+    return None
+
+
+def _required_columns_exist(sync_database_url: str, required_columns: dict[str, frozenset[str]]) -> bool:
+    with _sync_connection(sync_database_url) as connection:
+        inspector = inspect(connection)
+        for table_name, column_names in required_columns.items():
+            if not inspector.has_table(table_name):
+                return False
+            existing = {str(column["name"]) for column in inspector.get_columns(table_name) if column.get("name")}
+            if not column_names.issubset(existing):
+                return False
+    return True
+
+
+def _revision_is_pending(current_revision: str | None, revision: str) -> bool:
+    if current_revision is None:
+        return True
+    if "," in current_revision:
+        return False
+    return current_revision < revision
+
+
+def _upgrade_with_existing_column_revision_skips(
+    config: Config,
+    *,
+    revision: str,
+    sync_database_url: str,
+) -> None:
+    if _head_revision_target(config, revision) is None:
+        command.upgrade(config, revision)
+        return
+
+    # Metadata-created or partially bootstrapped schemas can already have these
+    # columns while still needing older data migrations. Run up to each affected
+    # parent, stamp the schema-only add-column revision, then continue normally.
+    for skip_revision, parent_revision, required_columns in _EXISTING_COLUMN_REVISION_SKIPS:
+        current_revision = _read_current_revision(sync_database_url)
+        if not _revision_is_pending(current_revision, skip_revision):
+            continue
+        if not _required_columns_exist(sync_database_url, required_columns):
+            continue
+        command.upgrade(config, parent_revision)
+        current_revision = _read_current_revision(sync_database_url)
+        if current_revision != skip_revision:
+            logger.info(
+                "Stamping Alembic revision because physical columns already exist revision=%s",
+                skip_revision,
+            )
+            command.stamp(config, skip_revision)
+
+    command.upgrade(config, revision)
+
+
 def run_upgrade(
     database_url: str,
     revision: str = "head",
@@ -631,9 +713,10 @@ def run_upgrade(
     _ensure_alembic_version_table_capacity(config)
     if auto_remap_legacy_revisions:
         _remap_legacy_alembic_revisions(config)
-    command.upgrade(config, revision)
 
     sync_database_url = _required_sqlalchemy_url(config)
+    _upgrade_with_existing_column_revision_skips(config, revision=revision, sync_database_url=sync_database_url)
+
     current_revision = _read_current_revision(sync_database_url)
 
     if bootstrap_result.unknown_migrations:

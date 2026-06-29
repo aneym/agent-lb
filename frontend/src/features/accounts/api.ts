@@ -12,6 +12,7 @@ import {
   AccountsResponseSchema,
   AccountRoutingPolicyUpdateRequestSchema,
   AccountRoutingPolicyUpdateResponseSchema,
+  AccountSubscriptionCheckResponseSchema,
   AccountSubscriptionUpdateRequestSchema,
   AccountSubscriptionUpdateResponseSchema,
   AccountTrendsResponseSchema,
@@ -102,6 +103,13 @@ export function updateAccountSubscription(accountId: string, payload: unknown) {
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription`,
     AccountSubscriptionUpdateResponseSchema,
     { body: validated },
+  );
+}
+
+export function checkAccountSubscription(accountId: string) {
+  return post(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/subscription/check`,
+    AccountSubscriptionCheckResponseSchema,
   );
 }
 

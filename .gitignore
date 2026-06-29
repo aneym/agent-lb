@@ -39,7 +39,9 @@ frontend/coverage/
 
 # Local
 .local/
+.agent-lb/
 .worktrees/
+.agents/worktrees/
 certs/
 
 .codex-lb/

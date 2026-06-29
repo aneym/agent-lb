@@ -2,7 +2,8 @@
 
 ## 1. Specs
 - [x] 1.1 Add `/api/reports` and reports page report-payload requirements.
-- [ ] 1.2 Validate OpenSpec changes.
+- [x] 1.2 Validate OpenSpec changes.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate add-reports-page --strict` -> valid.
 
 ## 2. Backend
 - [x] 2.1 Add nullable `accountId` handling in report DTO/schema and aggregation.

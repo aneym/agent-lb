@@ -23,7 +23,7 @@ contact the maintainer via the email address listed in
 
 A good report makes triage much faster:
 
-- **Affected version(s)**: e.g. `agent-lb 1.16.0`, ghcr image digest, or commit SHA.
+- **Affected version(s)**: e.g. `agent-lb 1.20.0-beta.3`, ghcr image digest, or commit SHA.
 - **Deployment**: uvx / pip / Docker / Helm / from source.
 - **Impact**: what can an attacker do? (data disclosure, account takeover,
   RCE, DoS, auth bypass, log injection, etc.)
@@ -38,9 +38,10 @@ In scope:
 - The agent-lb proxy (`app/`) — auth, routing, account management, the
   dashboard backend, the `/v1/*` and `/backend-api/*` surfaces.
 - The dashboard frontend (`frontend/`).
-- The published Docker image (`ghcr.io/aneym/agent-lb`) and Helm chart
-  (`oci://ghcr.io/aneym/charts/agent-lb`).
-- Released PyPI artifacts (`agent-lb` on PyPI).
+- Published artifacts once available: Docker images
+  (`ghcr.io/aneym/agent-lb`), Helm charts
+  (`oci://ghcr.io/aneym/charts/agent-lb`), and PyPI distributions
+  (`agent-lb` on PyPI).
 
 Out of scope (please don't file these as security advisories):
 
@@ -76,9 +77,9 @@ backports — please upgrade.
 
 | Version    | Supported          |
 |------------|--------------------|
-| 1.17.x     | ✅ active           |
-| 1.16.x     | ✅ critical fixes   |
-| < 1.16     | ❌ upgrade required |
+| 1.20.x beta | ✅ active           |
+| 1.19.x      | ✅ critical fixes   |
+| < 1.19      | ❌ upgrade required |
 
 ## Hall of fame
 

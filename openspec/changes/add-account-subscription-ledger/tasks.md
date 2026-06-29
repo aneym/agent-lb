@@ -4,4 +4,5 @@
 - [x] 3.1 Add dashboard account detail editor and list next-charge visibility.
 - [x] 3.2 Add local browser-profile operator skill and gitignored registry template.
 - [x] 4.1 Add backend and frontend regression coverage.
-- [x] 5.1 Run focused validation. (`openspec` CLI unavailable on PATH; backend/frontend checks passed.)
+- [x] 5.1 Run focused validation.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate add-account-subscription-ledger --strict` -> valid.

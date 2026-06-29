@@ -16,8 +16,11 @@ describe("accounts flow integration", () => {
     expect((await screen.findAllByText("primary@example.com")).length).toBeGreaterThan(0);
     expect(screen.getByText("secondary@example.com")).toBeInTheDocument();
 
-    await user.click(screen.getByText("secondary@example.com"));
-    expect(await screen.findByText("Token Status")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /secondary@example\.com/ }),
+    );
+    expect(await screen.findByText("Connection")).toBeInTheDocument();
+    expect(screen.getByText("Access token")).toBeInTheDocument();
 
     const resumeButton = screen.queryByRole("button", { name: "Resume" });
     if (resumeButton) {
@@ -40,7 +43,7 @@ describe("accounts flow integration", () => {
     renderWithProviders(<App />);
 
     expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
-    const aliasInput = await screen.findByLabelText("Account alias");
+    const aliasInput = await screen.findByLabelText("Alias");
     await user.clear(aliasInput);
     await user.type(aliasInput, "Personal Plus");
     await user.click(screen.getByRole("button", { name: "Save alias" }));
@@ -54,6 +57,7 @@ describe("accounts flow integration", () => {
     expect(screen.queryByText("secondary@example.com")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Clear alias" }));
+    await user.clear(screen.getByPlaceholderText("Search accounts..."));
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "primary@example.com" })).toBeInTheDocument();
     });

@@ -218,6 +218,43 @@ def lb_post_json(path: str, payload: dict[str, str], *, timeout: float = 4.0) ->
     return json.loads(response_body) if response_body else {}
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def lb_health_probe() -> tuple[bool, str]:
+    """Probe /health, retrying briefly so a transient LB restart or tailscale
+    blip does not force the whole session onto plain-claude fallback.
+
+    The healthy path returns on the first probe (tens of ms); only failures
+    pay the retry/backoff cost. Tunable via CLAUDE_LB_HEALTH_RETRIES /
+    CLAUDE_LB_HEALTH_TIMEOUT / CLAUDE_LB_HEALTH_RETRY_GAP.
+    """
+    retries = max(1, _env_int("CLAUDE_LB_HEALTH_RETRIES", 4))
+    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
+    gap = _env_float("CLAUDE_LB_HEALTH_RETRY_GAP", 0.75)
+    last_error = "no response"
+    for attempt in range(retries):
+        try:
+            lb_json("/health", timeout=timeout)
+            return True, ""
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            last_error = str(error) or error.__class__.__name__
+            if attempt + 1 < retries:
+                time.sleep(gap)
+    return False, last_error
+
+
 def arg_value(argv: list[str], *names: str) -> str | None:
     for index, value in enumerate(argv):
         for name in names:
@@ -369,10 +406,21 @@ def _prettify_anthropic_selection_error(message: str) -> str:
     else:
         summary = f"Claude accounts are all at limit or unavailable ({count} accounts; {status_summary})"
 
+    quota_detail = ""
+    quota_marker = "Model quota: "
+    if quota_marker in message:
+        raw_quota_detail = message.split(quota_marker, 1)[1]
+        raw_quota_detail = raw_quota_detail.split(" OpenAI accounts", 1)[0]
+        raw_quota_detail = raw_quota_detail.split(" Limits reset", 1)[0].strip()
+        if raw_quota_detail.endswith("."):
+            raw_quota_detail = raw_quota_detail[:-1]
+        if raw_quota_detail:
+            quota_detail = f" Model quota: {raw_quota_detail}."
+
     suffix = ""
     if "OpenAI accounts are not eligible for Claude routing" in message:
         suffix = " OpenAI accounts cannot serve Claude."
-    return f"{summary}.{suffix}"
+    return f"{summary}.{quota_detail}{suffix}"
 
 
 def format_lb_pick_error(body: str) -> str:
@@ -462,10 +510,9 @@ def claim_session_route(session_id: str, model: str, quota_key: str) -> tuple[di
 
 
 def print_lb_banner(argv: list[str], session_id: str) -> bool:
-    try:
-        lb_json("/health", timeout=2.0)
-    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        print(f"cc: Claude LB unavailable at {AGENT_LB_BASE_URL}: {error}", file=sys.stderr)
+    healthy, health_error = lb_health_probe()
+    if not healthy:
+        print(f"cc: Claude LB unavailable at {AGENT_LB_BASE_URL}: {health_error}", file=sys.stderr)
         return False
 
     model = requested_model(argv)

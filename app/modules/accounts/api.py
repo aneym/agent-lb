@@ -11,6 +11,7 @@ from app.modules.accounts.repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
     AccountAliasResponse,
+    AccountApiKeyImportRequest,
     AccountAuthExportResponse,
     AccountDeleteResponse,
     AccountExportResponse,
@@ -24,9 +25,10 @@ from app.modules.accounts.schemas import (
     AccountReactivateResponse,
     AccountRoutingPolicyUpdateRequest,
     AccountRoutingPolicyUpdateResponse,
+    AccountsResponse,
+    AccountSubscriptionCheckResponse,
     AccountSubscriptionUpdateRequest,
     AccountSubscriptionUpdateResponse,
-    AccountsResponse,
     AccountTrendsResponse,
     AccountUpdateRequest,
     AccountUpdateResponse,
@@ -141,6 +143,26 @@ async def import_account(
         raise DashboardBadRequestError("Invalid auth.json payload", code="invalid_auth_json") from exc
     except AccountIdentityConflictError as exc:
         raise DashboardConflictError(str(exc), code="duplicate_identity_conflict") from exc
+
+
+@router.post("/import/api-key", response_model=AccountImportResponse)
+async def import_api_key_account(
+    payload: AccountApiKeyImportRequest,
+    request: Request,
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountImportResponse:
+    try:
+        response = await context.service.import_api_key_account(payload)
+    except ValueError as exc:
+        raise DashboardBadRequestError(str(exc), code="invalid_api_key_account") from exc
+    except AccountIdentityConflictError as exc:
+        raise DashboardConflictError(str(exc), code="duplicate_identity_conflict") from exc
+    AuditService.log_async(
+        "account_created",
+        actor_ip=request.client.host if request.client else None,
+        details={"account_id": response.account_id, "provider": payload.provider},
+    )
+    return response
 
 
 @router.post("/{account_id}/reactivate", response_model=AccountReactivateResponse)
@@ -269,6 +291,35 @@ async def update_account_routing_policy(
     if not success:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
     return AccountRoutingPolicyUpdateResponse(account_id=account_id, routing_policy=payload.routing_policy)
+
+
+@router.post("/{account_id}/subscription/check", response_model=AccountSubscriptionCheckResponse)
+async def check_account_subscription(
+    request: Request,
+    account_id: str,
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountSubscriptionCheckResponse:
+    try:
+        result = await context.service.check_subscription(account_id)
+    except RefreshError as exc:
+        raise DashboardConflictError(
+            f"Subscription check could not refresh account credentials: {exc.message}",
+            code="account_subscription_check_refresh_failed",
+        ) from exc
+    except AccountStateTransitionError as exc:
+        raise DashboardConflictError(str(exc), code="account_subscription_check_invalid") from exc
+    if result is None:
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    AuditService.log_async(
+        "account_subscription_checked",
+        actor_ip=request.client.host if request.client else None,
+        details={
+            "account_id": result.account_id,
+            "working": result.working,
+            "probe_status_code": result.probe_status_code,
+        },
+    )
+    return result
 
 
 @router.put("/{account_id}/subscription", response_model=AccountSubscriptionUpdateResponse)

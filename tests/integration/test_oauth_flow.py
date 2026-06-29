@@ -928,10 +928,7 @@ async def test_anthropic_manual_callback_persists_provider_account(async_client,
     response = await async_client.post(
         "/api/oauth/manual-callback",
         json={
-            "callbackUrl": (
-                "anthropic-code#"
-                f"{_oauth_state_token(payload['authorizationUrl'])}"
-            ),
+            "callbackUrl": (f"anthropic-code#{_oauth_state_token(payload['authorizationUrl'])}"),
             "flowId": payload["flowId"],
         },
     )

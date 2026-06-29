@@ -49,6 +49,7 @@ export function AccountsPage() {
     deleteMutation,
     routingPolicyMutation,
     subscriptionMutation,
+    subscriptionCheckMutation,
     exportAuthMutation,
   } = useAccounts();
   const { upstreamProxyQuery, accountBindingMutation } =
@@ -149,6 +150,7 @@ export function AccountsPage() {
     deleteMutation.isPending ||
     routingPolicyMutation.isPending ||
     subscriptionMutation.isPending ||
+    subscriptionCheckMutation.isPending ||
     exportAuthMutation.isPending ||
     updateMutation.isPending ||
     accountBindingMutation.isPending;
@@ -163,6 +165,7 @@ export function AccountsPage() {
     getErrorMessageOrNull(deleteMutation.error) ||
     getErrorMessageOrNull(routingPolicyMutation.error) ||
     getErrorMessageOrNull(subscriptionMutation.error) ||
+    getErrorMessageOrNull(subscriptionCheckMutation.error) ||
     getErrorMessageOrNull(exportAuthMutation.error) ||
     getErrorMessageOrNull(updateMutation.error) ||
     getErrorMessageOrNull(upstreamProxyQuery.error) ||
@@ -243,6 +246,10 @@ export function AccountsPage() {
             onSubscriptionSave={(accountId, payload) =>
               subscriptionMutation.mutateAsync({ accountId, payload })
             }
+            onSubscriptionCheck={(accountId) =>
+              subscriptionCheckMutation.mutateAsync(accountId)
+            }
+            subscriptionCheckBusy={subscriptionCheckMutation.isPending}
             upstreamProxyAdmin={upstreamProxyQuery.data ?? null}
             onProxyBindingSave={(accountId, payload) =>
               accountBindingMutation.mutateAsync({ accountId, payload })

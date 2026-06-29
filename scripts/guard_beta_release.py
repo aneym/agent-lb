@@ -17,7 +17,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from scripts.release_versions import ReleaseVersion, parse_version, read_project_versions, read_pyproject_version
+from scripts.release_versions import (
+    ReleaseVersion,
+    expected_project_versions,
+    parse_version,
+    read_project_versions,
+    read_pyproject_version,
+)
 
 RELEASE_MANAGED_FILES = (
     "pyproject.toml",
@@ -40,6 +46,10 @@ _LIVE_SMOKE_ACCEPTED_LABELS = (
 )
 
 _SHA_RE = re.compile(r"\b[0-9a-f]{40}\b", re.IGNORECASE)
+_CHECKED_ITEM_RE = re.compile(
+    r"^\s*-\s*\[x\]\s*(?P<label>[^\n]+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 class GuardError(RuntimeError):
@@ -123,19 +133,38 @@ def changed_release_files(root: Path, base_ref: str) -> list[str]:
 
 def read_consistent_release_version(root: Path) -> ReleaseVersion:
     versions = read_project_versions(root)
-    unique_versions = set(versions.values())
-    if len(unique_versions) != 1:
+    release = parse_version(versions["pyproject.toml"])
+    expected = expected_project_versions(release.version)
+    mismatches = {name: version for name, version in versions.items() if version != expected[name]}
+    if mismatches:
         detail = ", ".join(f"{name}={version!r}" for name, version in sorted(versions.items()))
         raise GuardError(f"Release-managed version files must agree before beta release gating: {detail}")
-    return parse_version(next(iter(unique_versions)))
+    return release
 
 
 def _normalized_body(body: str) -> str:
     return re.sub(r"\s+", " ", body.casefold())
 
 
+def _checked_evidence_items(body: str) -> list[str]:
+    return [match.group("label").strip().casefold() for match in _CHECKED_ITEM_RE.finditer(body)]
+
+
+def _matches_evidence_label(item: str, label: str) -> bool:
+    label = label.casefold()
+    return (
+        item == label or item.startswith(f"{label} ") or item.startswith(f"{label}:") or item.startswith(f"{label} -")
+    )
+
+
+def _matches_choice_label(item: str, label: str) -> bool:
+    label = label.casefold()
+    return item == label or item.startswith(f"{label}:") or item.startswith(f"{label} -")
+
+
 def require_validation_evidence(body: str, expected_sha: str) -> None:
     normalized = _normalized_body(body)
+    checked_items = _checked_evidence_items(body)
     missing: list[str] = []
 
     if "release-candidate validation" not in normalized:
@@ -146,15 +175,20 @@ def require_validation_evidence(body: str, expected_sha: str) -> None:
         missing.append(f"the exact validated candidate SHA `{expected_sha}`")
 
     for label in _REQUIRED_EVIDENCE_LABELS:
-        checked_pattern = re.compile(rf"- \[x\] [^\n]*{re.escape(label)}", re.IGNORECASE)
-        if not checked_pattern.search(body):
+        if not any(_matches_evidence_label(item, label) for item in checked_items):
             missing.append(f"checked evidence item `{label}`")
 
-    if not any(
-        re.search(rf"- \[x\] [^\n]*{re.escape(label)}", body, flags=re.IGNORECASE)
-        for label in _LIVE_SMOKE_ACCEPTED_LABELS
-    ):
+    checked_live_smoke_labels = []
+    for label in _LIVE_SMOKE_ACCEPTED_LABELS:
+        if any(_matches_choice_label(item, label) for item in checked_items):
+            checked_live_smoke_labels.append(label)
+    if not checked_live_smoke_labels:
         missing.append("checked evidence item for live upstream/account smoke, or an explicit not-required entry")
+    elif len(checked_live_smoke_labels) > 1:
+        raise GuardError(
+            "Beta release PR validation must choose exactly one live upstream/account smoke item.\n"
+            "Do not check both `Live upstream/account smoke` and `Live upstream/account smoke not required`."
+        )
 
     if missing:
         detail = "\n".join(f"- {item}" for item in missing)

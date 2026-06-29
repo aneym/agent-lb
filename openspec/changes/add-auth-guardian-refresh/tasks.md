@@ -11,4 +11,5 @@
 
 - [x] 2.1 Add unit tests for candidate selection, forced refresh, leader-election skip, and backoff.
 - [x] 2.2 Run focused backend unit tests and lint.
-- [ ] 2.3 Run `openspec validate --specs` when the CLI is available.
+- [x] 2.3 Validate all specs.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate --specs` -> 30 specs passed.

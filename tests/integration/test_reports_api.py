@@ -157,6 +157,66 @@ async def test_reports_api_includes_preserved_deleted_account_history(async_clie
     ]
 
 
+async def test_reports_api_hides_currently_canceled_subscription_accounts(async_client, db_setup):
+    start_at = _naive_utc(datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc))
+    active = _make_account("acc_reports_active_sub", "reports-active@example.com")
+    canceled = _make_account("acc_reports_canceled_sub", "reports-canceled@example.com")
+    canceled.subscription_status = " CANCELED "
+    async with SessionLocal() as session:
+        session.add_all([active, canceled])
+        session.add_all(
+            [
+                RequestLog(
+                    account_id=active.id,
+                    request_id="report-active-subscription",
+                    requested_at=start_at,
+                    model="gpt-5.1",
+                    status="success",
+                    input_tokens=10,
+                    output_tokens=5,
+                    cached_input_tokens=1,
+                    cost_usd=0.25,
+                ),
+                RequestLog(
+                    account_id=canceled.id,
+                    request_id="report-canceled-subscription",
+                    requested_at=start_at,
+                    model="gpt-5.1",
+                    status="success",
+                    input_tokens=99,
+                    output_tokens=99,
+                    cached_input_tokens=99,
+                    cost_usd=9.99,
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await async_client.get(
+        "/api/reports",
+        params={
+            "start_date": start_at.date().isoformat(),
+            "end_date": start_at.date().isoformat(),
+        },
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["summary"]["totalRequests"] == 1
+    assert payload["summary"]["activeAccounts"] == 1
+    assert payload["summary"]["totalCostUsd"] == 0.25
+    assert payload["daily"][0]["requests"] == 1
+    assert payload["daily"][0]["activeAccounts"] == 1
+    assert payload["byAccount"] == [
+        {
+            "accountId": active.id,
+            "alias": None,
+            "costUsd": 0.25,
+            "requests": 1,
+        }
+    ]
+
+
 async def test_reports_api_includes_end_date_until_next_midnight(async_client, db_setup):
     end_day_last_second = _naive_utc(datetime(2026, 6, 1, 23, 59, 59, tzinfo=timezone.utc))
     next_day_midnight = _naive_utc(datetime(2026, 6, 2, 0, 0, 0, tzinfo=timezone.utc))

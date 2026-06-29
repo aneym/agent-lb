@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.providers import normalize_provider_name
 from app.core.utils.time import utcnow
 from app.db.models import (
     Account,
@@ -159,6 +160,7 @@ class AccountsRepository:
         merge_by_email: bool | None = None,
         merge_by_chatgpt_identity: bool = False,
     ) -> Account:
+        account.provider = normalize_provider_name(account.provider)
         dialect_name = self._dialect_name()
         sqlite_lock_acquired = False
         if merge_by_email is None:
@@ -743,7 +745,7 @@ class AccountsRepository:
 
 
 def _apply_account_updates(target: Account, source: Account) -> None:
-    target.provider = source.provider
+    target.provider = normalize_provider_name(source.provider)
     if source.chatgpt_account_id is not None:
         target.chatgpt_account_id = source.chatgpt_account_id
     target.email = source.email

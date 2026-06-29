@@ -8,6 +8,7 @@ import {
   createRequestLogEntry,
   createRequestLogFilterOptions,
   createRequestLogsResponse,
+  createUpstreamProxyAdmin,
   type AccountSummary,
   type AccountTrendsResponse,
   type RequestLogEntry,
@@ -492,6 +493,12 @@ export const unauthenticatedSession = createDashboardAuthSession({
 });
 
 export const settings = createDashboardSettings();
+
+export const upstreamProxyAdmin = createUpstreamProxyAdmin({
+  routingEnabled: true,
+  defaultPoolId: "pool_primary",
+  bindings: [{ accountId: "acc_04", poolId: "pool_primary", isActive: true }],
+});
 
 export const filterOptions = createRequestLogFilterOptions({
   accountIds: accounts.map((a) => a.accountId),

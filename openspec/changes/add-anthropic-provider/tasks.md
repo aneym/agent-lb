@@ -40,7 +40,7 @@
   - [x] Render Claude session/week usage bars and reset times in the account list and detail panel.
   - [x] Parse Anthropic unified rate-limit reset headers as a fallback signal on upstream 429.
   - [x] Keep Sonnet-only weekly utilization out of the main dashboard path.
-- [ ] 10. Add Claude session stickiness and quota-scoped cooldown routing.
+- [x] 10. Add Claude session stickiness and quota-scoped cooldown routing.
   - [x] Preserve Claude Max billing/default model in the `cclb` launcher contract by using only `ANTHROPIC_BASE_URL`.
   - [x] Derive hashed sticky keys from Claude session/conversation headers, with a stable first-turn fallback.
   - [x] Pass Anthropic sticky keys through durable `codex_session` selection.
@@ -49,3 +49,4 @@
   - [x] Filter Anthropic account selection by the requested quota-key cooldown while preserving OpenAI behavior.
   - [x] Cover sticky routing, quota-key failover, account-status preservation, and dashboard payload exposure in focused proxy tests.
   - [x] Restart local service and verify fresh default/Fable `cc` traffic live with Claude Max billing.
+  - 2026-06-14 verification refresh: `npx --yes @fission-ai/openspec@latest validate add-anthropic-provider --strict` -> valid; `uv run pytest -q tests/integration/test_anthropic_proxy.py tests/unit/test_claude_lb_launch.py` -> 25 passed; `uv run pytest -q tests/integration/test_proxy_sticky_sessions.py` -> 18 passed.

@@ -4,12 +4,14 @@ import asyncio
 import json
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import cast
+from urllib.parse import urljoin
 
 import aiohttp
 from pydantic import ValidationError
 
+from app.core.anthropic.oauth import ANTHROPIC_OAUTH_BETA
 from app.core.auth import (
     DEFAULT_EMAIL,
     DEFAULT_PLAN,
@@ -24,7 +26,14 @@ from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import OPENAI_PROVIDER_NAME, get_provider
+from app.core.providers import (
+    ANTHROPIC_PROVIDER_NAME,
+    GLM_DEFAULT_PLAN,
+    GLM_PROVIDER_NAME,
+    OPENAI_PROVIDER_NAME,
+    get_provider,
+    normalize_provider_name,
+)
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.modules.accounts.auth_manager import AuthManager
@@ -33,6 +42,7 @@ from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAdditionalWindow,
+    AccountApiKeyImportRequest,
     AccountAuthExportResponse,
     AccountAuthExportTokens,
     AccountExportResponse,
@@ -41,14 +51,16 @@ from app.modules.accounts.schemas import (
     AccountOpenCodeAuthExportResponse,
     AccountProbeResponse,
     AccountRequestUsage,
-    AccountSummary,
+    AccountSubscriptionCheckResponse,
     AccountSubscriptionLedger,
+    AccountSummary,
     AccountTrendsResponse,
     CodexAuthJson,
     CodexAuthTokens,
     OpenCodeAuthJson,
     OpenCodeOAuthAuth,
 )
+from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS, normalize_subscription_status
 from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.usage.additional_quota_keys import (
@@ -64,12 +76,16 @@ _SPARKLINE_DAYS = 7
 _DETAIL_BUCKET_SECONDS = 3600  # 1h → 168 points
 
 DEFAULT_PROBE_MODEL = "gpt-5.5"
+DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = "claude-haiku-4-5"
+DEFAULT_GLM_PROBE_MODEL = "glm-5.2"
 PROBE_REQUEST_TIMEOUT_SECONDS = 30.0
 PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
 # Network/upstream failure sentinel for ``probe_status_code`` — kept as ``0`` so
 # the value is distinguishable from any real HTTP status the upstream might
 # return.
 PROBE_NETWORK_FAILURE_STATUS = 0
+_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+_SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT = 500
 
 
 class InvalidAuthJsonError(Exception):
@@ -333,6 +349,52 @@ class AccountsService:
             status=saved.status,
         )
 
+    async def import_api_key_account(self, payload: AccountApiKeyImportRequest) -> AccountImportResponse:
+        provider_name = normalize_provider_name(payload.provider)
+        if provider_name != GLM_PROVIDER_NAME:
+            raise ValueError(f"Provider {provider_name} does not support API-key account import")
+        provider = get_provider(provider_name)
+        api_key = payload.api_key.get_secret_value().strip()
+        if not api_key:
+            raise ValueError("apiKey is required")
+        email = payload.email.strip().lower()
+        raw_account_id = (payload.account_id or "zai_glm_coding").strip()
+        account_id = generate_unique_account_id(raw_account_id, email)
+        plan_type = coerce_account_plan_type(payload.plan_type, GLM_DEFAULT_PLAN)
+
+        account = Account(
+            id=account_id,
+            provider=provider.name,
+            chatgpt_account_id=raw_account_id,
+            email=email,
+            workspace_id=None,
+            workspace_label=None,
+            seat_type=None,
+            plan_type=plan_type,
+            access_token_encrypted=self._encryptor.encrypt(api_key),
+            refresh_token_encrypted=self._encryptor.encrypt(api_key),
+            id_token_encrypted=None,
+            last_refresh=utcnow(),
+            status=AccountStatus.ACTIVE,
+            deactivation_reason=None,
+        )
+
+        saved = await self._repo.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
+        if payload.alias is not None:
+            alias = payload.alias.strip() or None
+            await self._repo.update_alias(saved.id, alias)
+            saved.alias = alias
+        get_account_selection_cache().invalidate()
+        return AccountImportResponse(
+            account_id=saved.id,
+            email=saved.email,
+            workspace_id=saved.workspace_id,
+            workspace_label=saved.workspace_label,
+            seat_type=saved.seat_type,
+            plan_type=saved.plan_type,
+            status=saved.status,
+        )
+
     async def reactivate_account(self, account_id: str) -> bool:
         account = await self._repo.get_by_id(account_id)
         if account is None:
@@ -408,26 +470,84 @@ class AccountsService:
         notes = payload.notes.strip() if payload.notes else None
         if notes == "":
             notes = None
+        next_charge_at = to_utc_naive(payload.next_charge_at) if payload.next_charge_at else None
+        current_period_end_at = to_utc_naive(payload.current_period_end_at) if payload.current_period_end_at else None
+        last_verified_at = to_utc_naive(payload.last_verified_at) if payload.last_verified_at else None
         updated = await self._repo.update_subscription_ledger(
             account_id,
             status=payload.status,
-            next_charge_at=payload.next_charge_at,
-            current_period_end_at=payload.current_period_end_at,
+            next_charge_at=next_charge_at,
+            current_period_end_at=current_period_end_at,
             amount=payload.amount,
             currency=currency,
-            last_verified_at=payload.last_verified_at,
+            last_verified_at=last_verified_at,
             notes=notes,
         )
         if not updated:
             return None
+        get_account_selection_cache().invalidate()
         return AccountSubscriptionLedger(
             status=payload.status,
-            next_charge_at=payload.next_charge_at,
-            current_period_end_at=payload.current_period_end_at,
+            next_charge_at=next_charge_at,
+            current_period_end_at=current_period_end_at,
             amount=payload.amount,
             currency=currency,
-            last_verified_at=payload.last_verified_at,
+            last_verified_at=last_verified_at,
             notes=notes,
+        )
+
+    async def check_subscription(self, account_id: str) -> AccountSubscriptionCheckResponse | None:
+        account = await self._repo.get_by_id(account_id)
+        if account is None:
+            return None
+        if normalize_subscription_status(account.subscription_status) != CANCELED_SUBSCRIPTION_STATUS:
+            raise AccountStateTransitionError("Subscription checks are only available for canceled accounts")
+
+        check_account = account
+        if self._auth_manager is not None:
+            check_account = await self._auth_manager.ensure_fresh(account, force=False)
+
+        access_token = self._encryptor.decrypt(check_account.access_token_encrypted)
+        provider = normalize_provider_name(check_account.provider)
+        message: str | None = None
+        if provider == ANTHROPIC_PROVIDER_NAME:
+            probe_status, message = await self._send_anthropic_subscription_check_request(access_token=access_token)
+        elif provider == OPENAI_PROVIDER_NAME:
+            probe_status = await self._send_probe_request(
+                access_token=access_token,
+                chatgpt_account_id=check_account.chatgpt_account_id,
+                model=DEFAULT_PROBE_MODEL,
+            )
+        else:
+            raise AccountStateTransitionError(f"Provider {provider} cannot be subscription-checked")
+
+        working = 200 <= probe_status < 300
+        now = utcnow()
+        notes = _subscription_check_notes(
+            working=working,
+            probe_status=probe_status,
+            checked_at=now,
+            message=message,
+        )
+        subscription = await self.set_subscription_ledger(
+            account_id,
+            AccountSubscriptionLedger(
+                status="active" if working else "canceled",
+                next_charge_at=account.subscription_next_charge_at,
+                current_period_end_at=account.subscription_current_period_end_at,
+                amount=account.subscription_amount,
+                currency=account.subscription_currency,
+                last_verified_at=now,
+                notes=notes,
+            ),
+        )
+        return AccountSubscriptionCheckResponse(
+            status="checked",
+            account_id=account_id,
+            working=working,
+            probe_status_code=probe_status,
+            subscription=subscription,
+            message=message,
         )
 
     async def delete_account(self, account_id: str, *, delete_history: bool = False) -> bool:
@@ -503,13 +623,27 @@ class AccountsService:
 
         access_token = self._encryptor.decrypt(probe_account.access_token_encrypted)
         probe_model = model or DEFAULT_PROBE_MODEL
-        probe_status = await self._send_probe_request(
-            access_token=access_token,
-            chatgpt_account_id=probe_account.chatgpt_account_id,
-            model=probe_model,
-        )
+        provider = normalize_provider_name(probe_account.provider)
+        if provider == GLM_PROVIDER_NAME:
+            probe_status, _ = await self._send_messages_probe_request(
+                access_token=access_token,
+                base_url=get_settings().glm_anthropic_upstream_base_url,
+                model=model or DEFAULT_GLM_PROBE_MODEL,
+            )
+        elif provider == ANTHROPIC_PROVIDER_NAME:
+            probe_status, _ = await self._send_messages_probe_request(
+                access_token=access_token,
+                base_url=get_settings().anthropic_upstream_base_url,
+                model=model or DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
+            )
+        else:
+            probe_status = await self._send_probe_request(
+                access_token=access_token,
+                chatgpt_account_id=probe_account.chatgpt_account_id,
+                model=probe_model,
+            )
 
-        if self._usage_repo and self._usage_updater:
+        if self._usage_repo and self._usage_updater and provider != GLM_PROVIDER_NAME:
             await self._usage_updater.force_refresh(probe_account)
             get_account_selection_cache().invalidate()
 
@@ -588,8 +722,94 @@ class AccountsService:
             )
             return PROBE_NETWORK_FAILURE_STATUS
 
+    async def _send_messages_probe_request(
+        self,
+        *,
+        access_token: str,
+        base_url: str,
+        model: str,
+    ) -> tuple[int, str | None]:
+        settings = get_settings()
+        url = urljoin(base_url.rstrip("/") + "/", "v1/messages")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "anthropic-version": settings.anthropic_version,
+            "anthropic-beta": ANTHROPIC_OAUTH_BETA,
+            "content-type": "application/json",
+            "accept": "application/json",
+        }
+        body = {
+            "model": model,
+            "max_tokens": 4,
+            "system": [{"type": "text", "text": _CLAUDE_CODE_IDENTITY}],
+            "messages": [{"role": "user", "content": "Reply OK only."}],
+            "stream": False,
+        }
+        timeout = aiohttp.ClientTimeout(
+            total=PROBE_REQUEST_TIMEOUT_SECONDS,
+            connect=PROBE_CONNECT_TIMEOUT_SECONDS,
+        )
+        try:
+            async with lease_http_session() as session:
+                async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
+                    if resp.status >= 400:
+                        return resp.status, await _read_subscription_check_error(resp)
+                    return resp.status, None
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning("Anthropic subscription check failed error=%s", exc)
+            return PROBE_NETWORK_FAILURE_STATUS, str(exc)
+
+    async def _send_anthropic_subscription_check_request(
+        self,
+        *,
+        access_token: str,
+    ) -> tuple[int, str | None]:
+        return await self._send_messages_probe_request(
+            access_token=access_token,
+            base_url=get_settings().anthropic_upstream_base_url,
+            model=DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
+        )
+
 
 def _opencode_auth_export_filename(account: Account) -> str:
     source = account.email or account.id
     safe = "".join(char if char.isalnum() or char in "._-" else "-" for char in source).strip("-._")
     return f"opencode-auth-{safe or account.id}.json"
+
+
+async def _read_subscription_check_error(resp: aiohttp.ClientResponse) -> str:
+    raw = await resp.read()
+    text = raw.decode("utf-8", errors="replace").strip() if raw else ""
+    if not text:
+        return f"Subscription check returned HTTP {resp.status}"
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        message = text
+    else:
+        error = parsed.get("error") if isinstance(parsed, dict) else None
+        if isinstance(error, dict):
+            message_value = error.get("message") or error.get("type")
+            message = str(message_value) if message_value is not None else text
+        else:
+            message = text
+    if len(message) > _SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT:
+        return message[: _SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT - 1] + "..."
+    return message
+
+
+def _subscription_check_notes(
+    *,
+    working: bool,
+    probe_status: int,
+    checked_at: datetime,
+    message: str | None,
+) -> str:
+    date = checked_at.date().isoformat()
+    if working:
+        return f"Subscription check succeeded on {date}; account is locally active."
+    suffix = f" {message}" if message else ""
+    return (
+        f"Subscription check returned HTTP {probe_status} on {date}; "
+        f"keeping account canceled until reactivated.{suffix}"
+    )

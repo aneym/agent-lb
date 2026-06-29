@@ -13,6 +13,7 @@ import {
   overview,
   requestLogs,
   settings,
+  upstreamProxyAdmin,
   unauthenticatedSession,
 } from "./fixtures";
 
@@ -58,6 +59,7 @@ async function interceptApi(page: Page, session: SessionOverride = authSession) 
       return fulfill(route, createRequestLogsResponse(slice, requestLogs.length, offset + limit < requestLogs.length));
     }
     if (p === "/api/accounts") return fulfill(route, { accounts });
+    if (p === "/api/settings/upstream-proxy") return fulfill(route, upstreamProxyAdmin);
     const trendsMatch = p.match(/^\/api\/accounts\/([^/]+)\/trends$/);
     if (trendsMatch) {
       const trends = accountTrends[trendsMatch[1]];
@@ -111,7 +113,7 @@ async function capture(
     (document.head ?? document.documentElement).appendChild(style);
   }, DISABLE_ANIMATIONS_CSS);
 
-  await page.goto(`http://localhost:4173${opts.route}`, { waitUntil: "networkidle" });
+  await page.goto(opts.route, { waitUntil: "networkidle" });
 
   if (opts.waitFor) {
     await page.waitForSelector(opts.waitFor, { timeout: 10_000 });
@@ -159,11 +161,11 @@ test("accounts — dark", async ({ page }) => {
 });
 
 test("settings — light", async ({ page }) => {
-  await capture(page, { file: "settings.jpg", theme: "light", route: "/settings", fullPage: true });
+  await capture(page, { file: "settings.jpg", theme: "light", route: "/settings" });
 });
 
 test("settings — dark", async ({ page }) => {
-  await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings", fullPage: true });
+  await capture(page, { file: "settings-dark.jpg", theme: "dark", route: "/settings" });
 });
 
 test("login", async ({ page }) => {

@@ -44,6 +44,7 @@ describe("useAccounts", () => {
       routingPolicy: "preserve",
     });
     expect(routingPolicyResult.routingPolicy).toBe("preserve");
+    await result.current.subscriptionCheckMutation.mutateAsync(firstAccountId as string);
 
     const imported = await result.current.importMutation.mutateAsync(
       new File(["{}"], "auth.json", { type: "application/json" }),

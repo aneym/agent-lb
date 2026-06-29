@@ -11,7 +11,16 @@ metadata:
 # Agent LB Account Operator
 
 Use this skill when the user asks to add, cancel, pause, reactivate, verify, or
-open an OpenAI/ChatGPT/Anthropic account that agent-lb routes through.
+open an OpenAI/ChatGPT/Anthropic account that agent-lb routes through. Also use
+it for account-specific support work such as quota reset checks,
+stuck/rate-limited account triage, subscription/account status checks, routing
+imbalance reports, or pause/reactivate routing requests.
+
+If the user is setting up a fresh machine or wiring clients, use `get-started`
+first. Use this skill for account-specific browser profiles, billing/admin
+actions, subscription-ledger updates, account status diagnostics, quota/rate
+limit triage, routing pause/reactivate work, routing imbalance diagnostics,
+account removal, or verification.
 
 ## Local Registry
 
@@ -41,8 +50,14 @@ and subscription ledger fields.
    generic Chrome session.
 4. If no profile exists, add an entry with `profileHandle`, `provider`,
    `accountId` or email if known, and a dedicated `userDataDir`.
-5. Record manual billing actions in `subscriptionHistory` with exact dates.
-6. Update agent-lb's subscription ledger after each human/browser billing action.
+5. If the user asks to add, open, verify, pause, or remove an account without
+   naming the provider, ask whether it is OpenAI/ChatGPT or Anthropic/Claude
+   before touching browser state or API rows.
+6. Record manual billing actions in `subscriptionHistory` with exact dates.
+7. Update agent-lb's subscription ledger after each human/browser billing action.
+8. For quota reset, stuck account, rate-limited account, subscription status, or
+   routing imbalance reports, inspect the matching dashboard/API account row and
+   local profile notes before recommending billing, routing, or browser actions.
 
 ## Browser Profiles
 

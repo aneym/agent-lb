@@ -15,6 +15,7 @@ from scripts.release_versions import (
     next_beta_number,
     parse_tag,
     parse_version,
+    read_project_versions,
     read_pyproject_version,
     releasable_commits_since,
     tag_targets_head,
@@ -23,6 +24,7 @@ from scripts.release_versions import (
 
 
 def write_minimal_release_files(root: Path, version: str = "1.18.2") -> None:
+    lock_version = parse_version(version).pypi_version
     (root / "app").mkdir(parents=True)
     (root / "frontend").mkdir(parents=True)
     (root / "deploy" / "helm" / "agent-lb").mkdir(parents=True)
@@ -38,7 +40,7 @@ def write_minimal_release_files(root: Path, version: str = "1.18.2") -> None:
         encoding="utf-8",
     )
     (root / "uv.lock").write_text(
-        f'[[package]]\nname = "agent-lb"\nversion = "{version}"\nsource = {{ editable = "." }}\n',
+        f'[[package]]\nname = "agent-lb"\nversion = "{lock_version}"\nsource = {{ editable = "." }}\n',
         encoding="utf-8",
     )
 
@@ -117,8 +119,23 @@ def test_update_project_versions_keeps_all_release_files_in_sync(tmp_path: Path)
     update_project_versions(tmp_path, "1.19.0-beta.1")
 
     assert_project_versions(tmp_path, "1.19.0-beta.1")
+    versions = read_project_versions(tmp_path)
+    assert versions["pyproject.toml"] == "1.19.0-beta.1"
+    assert versions["uv.lock"] == "1.19.0b1"
     package_version = json.loads((tmp_path / "frontend" / "package.json").read_text(encoding="utf-8"))["version"]
     assert package_version == "1.19.0-beta.1"
+
+
+def test_assert_project_versions_rejects_unnormalized_prerelease_lock_version(tmp_path: Path) -> None:
+    write_minimal_release_files(tmp_path)
+    update_project_versions(tmp_path, "1.19.0-beta.1")
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "agent-lb"\nversion = "1.19.0-beta.1"\nsource = { editable = "." }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"uv\.lock='1\.19\.0-beta\.1'"):
+        assert_project_versions(tmp_path, "1.19.0-beta.1")
 
 
 def test_next_beta_number_uses_existing_tags(tmp_path: Path) -> None:

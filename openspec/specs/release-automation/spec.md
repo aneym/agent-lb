@@ -1,7 +1,10 @@
 # release-automation Specification
 
 ## Purpose
-TBD - created by archiving change cleanup-superseded-beta-release-prs. Update Purpose after archive.
+Define maintenance automation for release PR hygiene, including cleanup of
+superseded automation-managed beta release pull requests and preservation of
+current, manual, or protected release work.
+
 ## Requirements
 ### Requirement: Superseded beta release PR cleanup
 
@@ -28,4 +31,3 @@ The beta release sync workflow SHALL close open automation-managed beta release 
 - **AND** the PR lacks the beta automation sentinel text or carries a protected operator label
 - **WHEN** cleanup evaluates open beta PRs
 - **THEN** the workflow does not close or delete that PR
-

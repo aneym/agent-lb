@@ -151,7 +151,7 @@ jobs:
           ## Release-candidate validation
           Validated candidate: ${candidate_sha}
 
-          Complete these checks on the exact candidate SHA above before merging. The beta release guard and publish workflow fail while any item remains unchecked or the SHA is stale.
+          Complete these checks on the exact candidate SHA above before merging. The beta release guard and publish workflow fail while any required item remains unchecked, both live-smoke options are checked, or the SHA is stale.
 
           - [ ] Backend/unit/integration gates
           - [ ] Frontend tests/build

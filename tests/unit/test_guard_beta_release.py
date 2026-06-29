@@ -54,8 +54,8 @@ def event_file(
     body: str,
     merged: bool = False,
     merge_commit_sha: str | None = None,
-    head_repo: str = "Soju06/agent-lb",
-    base_repo: str = "Soju06/agent-lb",
+    head_repo: str = "aneym/agent-lb",
+    base_repo: str = "aneym/agent-lb",
 ) -> Path:
     head_owner, head_name = head_repo.split("/", 1)
     base_owner, base_name = base_repo.split("/", 1)
@@ -201,6 +201,32 @@ def test_pr_guard_accepts_validated_canonical_beta_pr(tmp_path: Path) -> None:
     assert "Beta release PR guard passed" in result.stdout
 
 
+def test_pr_guard_rejects_conflicting_live_smoke_evidence(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sha = init_repo_with_beta_commit(repo)
+    branch = "release/beta-1.20.0-beta.3"
+    body = validation_body(sha).replace(
+        "- [x] Live upstream/account smoke not required",
+        "- [x] Live upstream/account smoke\n- [x] Live upstream/account smoke not required",
+    )
+    event = event_file(tmp_path, head_ref=branch, head_sha=sha, body=body)
+
+    result = run_guard(
+        Path(__file__).resolve().parents[2],
+        repo,
+        "--base-ref",
+        "HEAD~1",
+        "--head-ref",
+        branch,
+        "--event-path",
+        str(event),
+    )
+
+    assert result.returncode == 1
+    assert "choose exactly one live upstream/account smoke item" in result.stderr
+
+
 def test_pr_guard_rejects_forked_canonical_beta_branch(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -227,7 +253,7 @@ def test_pr_guard_rejects_forked_canonical_beta_branch(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "canonical repository release branch" in result.stderr
-    assert "Expected head repository: Soju06/agent-lb" in result.stderr
+    assert "Expected head repository: aneym/agent-lb" in result.stderr
     assert "Actual head repository: evil-fork/agent-lb" in result.stderr
 
 
@@ -277,7 +303,7 @@ def test_publish_guard_rejects_forked_canonical_beta_branch(tmp_path: Path) -> N
 
     assert result.returncode == 1
     assert "canonical repository release branch" in result.stderr
-    assert "Expected head repository: Soju06/agent-lb" in result.stderr
+    assert "Expected head repository: aneym/agent-lb" in result.stderr
     assert "Actual head repository: evil-fork/agent-lb" in result.stderr
 
 

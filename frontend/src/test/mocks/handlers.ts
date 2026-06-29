@@ -632,6 +632,32 @@ export const handlers = [
     });
   }),
 
+  http.post("/api/accounts/:accountId/subscription/check", ({ params }) => {
+    const accountId = String(params.accountId);
+    const account = findAccount(accountId);
+    if (!account) {
+      return HttpResponse.json(
+        { error: { code: "account_not_found", message: "Account not found" } },
+        { status: 404 },
+      );
+    }
+    const subscription = {
+      ...(account.subscription ?? {}),
+      status: "active" as const,
+      lastVerifiedAt: new Date().toISOString(),
+      notes: "Subscription check succeeded.",
+    };
+    account.subscription = subscription;
+    return HttpResponse.json({
+      status: "checked",
+      accountId,
+      working: true,
+      probeStatusCode: 200,
+      subscription,
+      message: null,
+    });
+  }),
+
 	http.post("/api/accounts/:accountId/export/auth", ({ params }) => {
 		const accountId = String(params.accountId);
 		const account = findAccount(accountId);

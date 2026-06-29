@@ -153,6 +153,22 @@ from app.modules.usage.repository import UsageRepository
 
 logger = logging.getLogger(__name__)
 
+_ANTHROPIC_SESSION_ROUTE_QUOTA_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "anthropic_standard",
+        "anthropic_top",
+        "anthropic_top_thinking",
+        "anthropic_fast",
+    }
+)
+_ANTHROPIC_SESSION_ROUTE_AFFINITY_QUOTA_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "anthropic_standard",
+        "anthropic_top",
+        "anthropic_top_thinking",
+    }
+)
+
 _PUBLIC_RESPONSE_OUTPUT_ITEM_TYPES = frozenset(
     {
         "message",
@@ -228,15 +244,21 @@ async def claim_anthropic_session_route(
     session_id = (payload.get("sessionId") or "").strip()
     model = (payload.get("model") or "claude-fable-5").strip()
     quota_key = (payload.get("quotaKey") or "anthropic_top_thinking").strip()
+    affinity_quota_key = (payload.get("affinityQuotaKey") or "").strip()
+    if not affinity_quota_key:
+        affinity_quota_key = _default_anthropic_affinity_quota_key(model, quota_key)
     if not session_id:
         raise HTTPException(status_code=400, detail="sessionId is required")
-    if quota_key not in {"anthropic_standard", "anthropic_top", "anthropic_top_thinking"}:
+    if quota_key not in _ANTHROPIC_SESSION_ROUTE_QUOTA_KEYS:
         raise HTTPException(status_code=400, detail="quotaKey is invalid")
+    if affinity_quota_key not in _ANTHROPIC_SESSION_ROUTE_AFFINITY_QUOTA_KEYS:
+        raise HTTPException(status_code=400, detail="affinityQuotaKey is invalid")
     try:
         account = await context.service.claim_session_route(
             session_id=session_id,
             model=model,
             quota_key=quota_key,
+            affinity_quota_key=affinity_quota_key,
         )
     except AnthropicProxyError as exc:
         content = openai_error(
@@ -260,7 +282,16 @@ async def claim_anthropic_session_route(
         "alias": account.alias,
         "model": model,
         "quotaKey": quota_key,
+        "affinityQuotaKey": affinity_quota_key,
     }
+
+
+def _default_anthropic_affinity_quota_key(model: str, quota_key: str) -> str:
+    if quota_key != "anthropic_fast":
+        return quota_key
+    if "haiku" in model.lower():
+        return "anthropic_standard"
+    return "anthropic_top_thinking"
 
 
 def _openai_error_type_for_status(status_code: int) -> str:
@@ -3911,6 +3942,15 @@ def _normalize_public_stream_payload(
             )
         return payload, None
     if event_type in ("response.completed", "response.incomplete"):
+        if not enforce_openai_sdk_contract:
+            # Codex-native surface (/backend-api/codex/*): forward the upstream
+            # terminal envelope verbatim. The Codex CLI consumes its own output
+            # item types — notably the ``compaction`` item produced by
+            # remote-compaction v2, which carries ``encrypted_content`` instead
+            # of text. The public-contract normalization below would drop or
+            # re-type such items, leaving the Codex CLI with zero compaction
+            # output items ("expected exactly one compaction output item").
+            return payload, None
         response = payload.get("response")
         if not is_json_mapping(response):
             return (
@@ -3940,6 +3980,10 @@ def _normalize_public_stream_payload(
         normalized_payload["response"] = normalized_response
         return normalized_payload, violation_kind
     if event_type in ("response.output_item.added", "response.output_item.done"):
+        if not enforce_openai_sdk_contract:
+            # Codex-native surface: forward output items verbatim so the Codex
+            # CLI receives its native item types (e.g. ``compaction``) unaltered.
+            return payload, None
         item = payload.get("item")
         if not is_json_mapping(item):
             return None, "invalid_output_item"

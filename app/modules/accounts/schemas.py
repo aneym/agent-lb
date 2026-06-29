@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -145,6 +145,15 @@ class AccountImportResponse(DashboardModel):
     status: str
 
 
+class AccountApiKeyImportRequest(DashboardModel):
+    provider: str = Field(default="glm", pattern=r"^glm$")
+    api_key: SecretStr = Field(min_length=1)
+    email: str = Field(default="glm@z.ai", min_length=3, max_length=320)
+    account_id: str | None = Field(default=None, min_length=1, max_length=128)
+    alias: str | None = Field(default="GLM Coding Plan", max_length=200)
+    plan_type: str = Field(default="glm-coding", min_length=1, max_length=64)
+
+
 class OpenCodeOAuthAuth(DashboardModel):
     type: str = "oauth"
     refresh: str
@@ -210,6 +219,15 @@ class AccountSubscriptionUpdateRequest(AccountSubscriptionLedger):
 class AccountSubscriptionUpdateResponse(DashboardModel):
     account_id: str
     subscription: AccountSubscriptionLedger | None = None
+
+
+class AccountSubscriptionCheckResponse(DashboardModel):
+    status: str
+    account_id: str
+    working: bool
+    probe_status_code: int
+    subscription: AccountSubscriptionLedger | None = None
+    message: str | None = None
 
 
 class AccountDeleteResponse(DashboardModel):

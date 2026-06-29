@@ -31,14 +31,20 @@ struct AccountFilter: Equatable, Sendable {
 
   // MARK: - Classification
 
-  /// Effective status; mirrors AccountRow presentation priority:
-  /// rate-limited (synthetic, `rateLimitResetAt` in the future) beats paused
-  /// beats deactivated.
+  /// Effective status; mirrors AccountRow presentation priority. Reset
+  /// timestamps are detail for already-blocked accounts; they do not make an
+  /// otherwise active account synthetic-rate-limited.
   static func classify(_ account: Account, now: Date) -> Status {
-    if let reset = account.rateLimitResetAt, reset > now { return .rateLimited }
     if account.status == "paused" { return .paused }
     if account.status == "deactivated" || account.deactivationReason != nil { return .inactive }
+    if account.status == "rate_limited" || account.status == "quota_exceeded" {
+      return .rateLimited
+    }
     return .active
+  }
+
+  static func isLocallyCanceled(_ account: Account) -> Bool {
+    account.subscription?.status == "canceled"
   }
 
   /// Earliest *future* reset across the primary/secondary windows — the
@@ -55,7 +61,10 @@ struct AccountFilter: Equatable, Sendable {
   func apply(to accounts: [Account], now: Date) -> [Account] {
     sorted(
       accounts.filter {
-        matchesProvider($0) && matchesStatus($0, now: now) && matchesQuery($0)
+        !Self.isLocallyCanceled($0)
+          && matchesProvider($0)
+          && matchesStatus($0, now: now)
+          && matchesQuery($0)
       },
       now: now
     )
@@ -65,7 +74,7 @@ struct AccountFilter: Equatable, Sendable {
   /// the provider chips show what each selection would yield (§8.2).
   func providerCounts(in accounts: [Account], now: Date) -> [Provider: Int] {
     var counts: [Provider: Int] = [.all: 0, .anthropic: 0, .openai: 0]
-    for account in accounts where matchesStatus(account, now: now) && matchesQuery(account) {
+    for account in accounts where !Self.isLocallyCanceled(account) && matchesStatus(account, now: now) && matchesQuery(account) {
       counts[.all, default: 0] += 1
       if let provider = Provider(rawValue: account.provider.lowercased()) {
         counts[provider, default: 0] += 1

@@ -1410,12 +1410,10 @@ class _HTTPBridgeMixin(
                     parameter.kind is inspect.Parameter.VAR_KEYWORD
                     for parameter in create_signature.parameters.values()
                 )
-                if (
-                    create_signature is not None
-                    and not create_accepts_var_keyword
-                    and "request_usage_budget" not in create_signature.parameters
-                ):
-                    create_kwargs.pop("request_usage_budget", None)
+                if create_signature is not None and not create_accepts_var_keyword:
+                    create_kwargs = {
+                        name: value for name, value in create_kwargs.items() if name in create_signature.parameters
+                    }
                 created_session = await create_session(key, **create_kwargs)
                 await self._claim_durable_http_bridge_session(
                     created_session,

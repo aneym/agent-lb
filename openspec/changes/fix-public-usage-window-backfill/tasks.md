@@ -11,4 +11,4 @@ Verification:
 - `uv run pytest tests/integration/test_public_usage.py` passed on 2026-05-30.
 - Studio canonical service was restarted on 2026-05-30; `GET /api/usage/public?days=7` returned exactly 7 rows from 2026-05-24 through 2026-05-30.
 - Studio publisher ran successfully on 2026-05-30 and pushed fresh public snapshots through commit `3816639`.
-- `openspec validate --specs` could not run because `openspec` is not installed on this shell PATH or in `uv run`.
+- 2026-06-14: `npx --yes @fission-ai/openspec@latest validate fix-public-usage-window-backfill --strict` -> valid.

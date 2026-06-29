@@ -184,11 +184,11 @@ class Settings(BaseSettings):
     anthropic_oauth_token_url: str = "https://platform.claude.com/v1/oauth/token"
     anthropic_oauth_client_id: str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     anthropic_oauth_scope: str = (
-        "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers "
-        "user:file_upload"
+        "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
     )
     anthropic_oauth_redirect_uri: str = "https://platform.claude.com/oauth/code/callback"
     anthropic_version: str = "2023-06-01"
+    glm_anthropic_upstream_base_url: str = "https://api.z.ai/api/anthropic"
     token_refresh_timeout_seconds: float = 8.0
     auth_guardian_enabled: bool = False
     auth_guardian_interval_seconds: int = Field(default=21600, gt=0)

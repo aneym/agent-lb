@@ -45,6 +45,8 @@ export type AccountDetailProps = {
     accountId: string,
     payload: AccountSubscriptionLedger,
   ) => Promise<unknown>;
+  onSubscriptionCheck?: (accountId: string) => Promise<unknown>;
+  subscriptionCheckBusy?: boolean;
   onSecurityWorkAuthorizedChange: (accountId: string, enabled: boolean) => void;
   upstreamProxyAdmin?: UpstreamProxyAdmin | null;
   onProxyBindingSave?: (
@@ -67,6 +69,8 @@ export function AccountDetail({
   onLimitWarmupChange,
   onRoutingPolicyChange,
   onSubscriptionSave,
+  onSubscriptionCheck,
+  subscriptionCheckBusy = false,
   onSecurityWorkAuthorizedChange,
   upstreamProxyAdmin = null,
   onProxyBindingSave,
@@ -174,6 +178,8 @@ export function AccountDetail({
           account={account}
           busy={busy}
           onSave={onSubscriptionSave}
+          onCheckSubscription={onSubscriptionCheck}
+          checking={subscriptionCheckBusy}
         />
       </div>
 

@@ -23,7 +23,8 @@ final class AccountFilterTests: XCTestCase {
     resetAtPrimary: Date? = nil,
     resetAtSecondary: Date? = nil,
     rateLimitResetAt: Date? = nil,
-    deactivationReason: String? = nil
+    deactivationReason: String? = nil,
+    subscription: AccountSubscriptionLedger? = nil
   ) -> Account {
     makeTestAccount(
       id: id,
@@ -33,7 +34,8 @@ final class AccountFilterTests: XCTestCase {
       resetAtPrimary: resetAtPrimary,
       resetAtSecondary: resetAtSecondary,
       rateLimitResetAt: rateLimitResetAt,
-      deactivationReason: deactivationReason
+      deactivationReason: deactivationReason,
+      subscription: subscription
     )
   }
 
@@ -62,24 +64,67 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(filter.apply(to: [upper], now: now).count, 1)
   }
 
-  // MARK: - Status filter
+  func testCanceledSubscriptionsAreHiddenFromMenubarAccounts() {
+    let active = makeAccount(id: "active", displayName: "active@example.com")
+    let canceled = makeAccount(
+      id: "canceled",
+      displayName: "canceled@example.com",
+      subscription: AccountSubscriptionLedger(
+        status: "canceled",
+        nextChargeAt: nil,
+        currentPeriodEndAt: nil,
+        lastVerifiedAt: nil
+      )
+    )
+    let cancelPending = makeAccount(
+      id: "cancel-pending",
+      displayName: "cancel-pending@example.com",
+      subscription: AccountSubscriptionLedger(
+        status: "cancel_pending",
+        nextChargeAt: nil,
+        currentPeriodEndAt: nil,
+        lastVerifiedAt: nil
+      )
+    )
 
-  func testRateLimitedIsSynthetic() {
-    // Only the fixture account with rateLimitResetAt in the future counts.
-    let filter = AccountFilter(status: .rateLimited)
-    let result = filter.apply(to: accounts, now: now)
-    XCTAssertEqual(result.map(\.accountId), ["2c436b54-a7e2-4299-9d6b-689ad2dda8cb"])
+    let result = AccountFilter().apply(to: [canceled, active, cancelPending], now: now)
+
+    XCTAssertEqual(result.map(\.accountId), ["active", "cancel-pending"])
   }
 
-  func testRateLimitedExpiresWithTime() {
-    let later = Format.iso8601.date(from: "2026-06-11T00:00:00Z")!
+  // MARK: - Status filter
+
+  func testFutureResetMetadataDoesNotMakeActiveAccountRateLimited() {
     let filter = AccountFilter(status: .rateLimited)
-    XCTAssertTrue(filter.apply(to: accounts, now: later).isEmpty)
+    XCTAssertTrue(filter.apply(to: accounts, now: now).isEmpty)
+
+    let activeWithFutureReset = makeAccount(
+      id: "active-reset",
+      rateLimitResetAt: now.addingTimeInterval(600)
+    )
+    XCTAssertEqual(AccountFilter.classify(activeWithFutureReset, now: now), .active)
+  }
+
+  func testBlockedBackendStatusCountsAsRateLimited() {
+    let blocked = makeAccount(
+      id: "blocked",
+      status: "rate_limited",
+      rateLimitResetAt: now.addingTimeInterval(600)
+    )
+    let filter = AccountFilter(status: .rateLimited)
+    XCTAssertEqual(filter.apply(to: accounts + [blocked], now: now).map(\.accountId), ["blocked"])
+    XCTAssertEqual(AccountFilter.classify(blocked, now: now), .rateLimited)
+  }
+
+  func testQuotaExceededBackendStatusCountsAsRateLimited() {
+    let blocked = makeAccount(id: "quota", status: "quota_exceeded")
+    XCTAssertEqual(AccountFilter.classify(blocked, now: now), .rateLimited)
   }
 
   func testActiveExcludesRateLimited() {
+    let blocked = makeAccount(id: "blocked", status: "rate_limited")
     let filter = AccountFilter(status: .active)
-    XCTAssertEqual(filter.apply(to: accounts, now: now).count, 7)
+    XCTAssertEqual(filter.apply(to: accounts + [blocked], now: now).count, 8)
   }
 
   func testPausedAndInactiveClassification() {
@@ -97,13 +142,13 @@ final class AccountFilterTests: XCTestCase {
     )
   }
 
-  func testRateLimitedBeatsPaused() {
+  func testPausedBeatsFutureResetMetadata() {
     let both = makeAccount(
       id: "both",
       status: "paused",
       rateLimitResetAt: now.addingTimeInterval(600)
     )
-    XCTAssertEqual(AccountFilter.classify(both, now: now), .rateLimited)
+    XCTAssertEqual(AccountFilter.classify(both, now: now), .paused)
   }
 
   // MARK: - Query filter
@@ -209,11 +254,32 @@ final class AccountFilterTests: XCTestCase {
   }
 
   func testProviderCountsWithStatusFilter() {
+    let blocked = makeAccount(id: "blocked", provider: "anthropic", status: "rate_limited")
     let filter = AccountFilter(status: .rateLimited)
-    let counts = filter.providerCounts(in: accounts, now: now)
+    let counts = filter.providerCounts(in: accounts + [blocked], now: now)
     XCTAssertEqual(counts[.all], 1)
     XCTAssertEqual(counts[.anthropic], 1)
     XCTAssertEqual(counts[.openai], 0)
+  }
+
+  func testProviderCountsExcludeCanceledSubscriptions() {
+    let canceled = makeAccount(
+      id: "canceled",
+      provider: "anthropic",
+      subscription: AccountSubscriptionLedger(
+        status: "canceled",
+        nextChargeAt: nil,
+        currentPeriodEndAt: nil,
+        lastVerifiedAt: nil
+      )
+    )
+    let active = makeAccount(id: "active", provider: "openai")
+
+    let counts = AccountFilter().providerCounts(in: [canceled, active], now: now)
+
+    XCTAssertEqual(counts[.all], 1)
+    XCTAssertEqual(counts[.anthropic], 0)
+    XCTAssertEqual(counts[.openai], 1)
   }
 
   // MARK: - hasActiveFilters

@@ -21,7 +21,7 @@ Agent ground rules for this walkthrough:
 
 ```bash
 curl -fsS http://127.0.0.1:2455/health   # already running? skip to step 4
-ls ~/Library/LaunchAgents/com.agent-lb.plist 2>/dev/null
+ls ~/Library/LaunchAgents/com.aneyman.agent-lb.plist 2>/dev/null
 ```
 
 If the server is healthy, jump to **step 4 (connect accounts)** and only revisit earlier
@@ -56,7 +56,7 @@ is editable — pulling new commits takes effect on the next service restart.
 scripts/install-service.sh
 ```
 
-This installs a `com.agent-lb` launchd LaunchAgent (KeepAlive, starts at login, logs to
+This installs a `com.aneyman.agent-lb` launchd LaunchAgent (KeepAlive, starts at login, logs to
 `~/.agent-lb/agent-lb.{out,err}.log`), starts it, and waits for `/health`. Re-run the same
 script after pulling updates to restart. `--uninstall` removes it; `--print` shows the plist
 without installing.
@@ -135,6 +135,19 @@ alias cc='ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude'
 Either way: **base URL only — never set `ANTHROPIC_AUTH_TOKEN`** (see ground rules). The
 launcher strips it defensively and falls back to plain `claude` if the LB is down.
 
+### Anthropic-compatible SDKs
+
+Point Messages API SDK code at `http://127.0.0.1:2455` (root, not `/v1`).
+Keep LB credentials in `AGENT_LB_API_KEY` and pass them explicitly from
+server-side code or a trusted local script. For the Anthropic Python SDK, use
+`auth_token=os.environ.get("AGENT_LB_API_KEY", "sk-local")` so the SDK sends
+`Authorization: Bearer ...`; do not export `ANTHROPIC_AUTH_TOKEN` or
+`ANTHROPIC_API_KEY` as Agent LB placeholders.
+
+Browser-direct code and deployed loopback URLs cannot reach or spend local
+subscription accounts through the LB. Use a reachable Agent LB URL for deployed
+server-side integrations.
+
 ### Codex CLI
 
 In `~/.codex/config.toml`:
@@ -153,9 +166,15 @@ requires_openai_auth = true
 If the human has existing Codex sessions to migrate:
 `agent-lb codex-sessions retag --from openai --to agent-lb --dry-run` (then `--yes`).
 
-### Anything OpenAI-compatible (OpenCode, SDKs)
+### Anything OpenAI-compatible (OpenCode, OpenClaw, SDKs)
 
 Point it at `http://127.0.0.1:2455/v1`.
+
+For Vercel AI SDK, OpenAI SDK, and other app integrations, set that base URL
+from server-side code. If the app is deployed somewhere else, `127.0.0.1:2455`
+points at that remote runtime instead of the user's Mac; use a reachable Agent
+LB URL instead. Browser-direct code cannot reach or spend local subscription
+accounts through the LB.
 
 ## 6. Optional: build the dashboard
 
@@ -178,12 +197,28 @@ Then `http://127.0.0.1:2455` serves it after a service restart.
 ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude -p 'reply with OK'
 ```
 
+For OpenAI-compatible `/v1` clients (OpenCode, OpenClaw, SDKs), discover a live
+model first and reuse it:
+
+```bash
+MODEL_ID="$(curl -fsS http://127.0.0.1:2455/v1/models | uv run python -c 'import json, sys; print(json.load(sys.stdin)["data"][0]["id"])')"
+curl -fsS http://127.0.0.1:2455/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"reply with OK\"}]}"
+```
+
 and/or a Codex one-shot if Codex is configured.
 
 3. Report a short status summary to the human: service state, accounts connected, which
    clients are wired, log location.
 
 ## Ongoing operations
+
+For account-specific operations after setup — quota reset checks, stuck or
+rate-limited account triage, pause/reactivate routing, billing/subscription
+changes, or browser-profile work — use the `agent-lb-account-operator` skill
+and the local `.agent-lb/account-profiles.json` registry. Keep one provider
+account per dedicated browser profile and do not store secrets there.
 
 | Task                                    | Command                                                                         |
 | --------------------------------------- | ------------------------------------------------------------------------------- |

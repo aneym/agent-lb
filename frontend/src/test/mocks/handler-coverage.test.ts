@@ -36,6 +36,7 @@ const EXPECTED_ENDPOINTS = [
 	"POST /api/accounts/:accountId/pause",
 	"POST /api/accounts/:accountId/reactivate",
 	"POST /api/accounts/:accountId/probe",
+	"POST /api/accounts/:accountId/subscription/check",
 	"PUT /api/accounts/:accountId/alias",
 	"PUT /api/accounts/:accountId/limit-warmup",
 	"PUT /api/accounts/:accountId/routing-policy",

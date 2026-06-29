@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import {
+  checkAccountSubscription,
   deleteAccount,
   exportAccountAuth,
   getAccountTrends,
@@ -148,6 +149,17 @@ export function useAccountMutations() {
     },
   });
 
+  const subscriptionCheckMutation = useMutation({
+    mutationFn: checkAccountSubscription,
+    onSuccess: (data, accountId) => {
+      toast.success(data.working ? "Subscription active" : "Subscription still canceled");
+      invalidateAccountRelatedQueries(queryClient, accountId);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Subscription check failed");
+    },
+  });
+
   const exportAuthMutation = useMutation({
     mutationFn: exportAccountAuth,
     onSuccess: () => {
@@ -181,6 +193,7 @@ export function useAccountMutations() {
     limitWarmupMutation,
     routingPolicyMutation,
     subscriptionMutation,
+    subscriptionCheckMutation,
     updateMutation,
   };
 }

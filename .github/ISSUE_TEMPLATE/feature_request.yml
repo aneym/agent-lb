@@ -15,6 +15,9 @@ body:
           changes will eventually live as an `openspec/changes/<change>/`
           proposal — you don't need to write the spec yourself, but think about
           *what changes* in observable behavior, not just *how* to implement it.
+        - For security vulnerabilities, use a
+          [private advisory](https://github.com/aneym/agent-lb/security/advisories/new)
+          - do not post them publicly.
 
   - type: checkboxes
     id: preflight
@@ -32,7 +35,7 @@ body:
       label: Problem / motivation
       description: What user-facing pain point or limitation does this address?
       placeholder: |
-        e.g. "When a ChatGPT account hits its 5h quota, agent-lb continues to
+        e.g. "When an upstream account hits its 5h quota, agent-lb continues to
         route to it for ~30s before marking it cooled, causing intermittent 429s
         on user-visible requests."
     validations:
@@ -66,6 +69,8 @@ body:
         - Authentication / OAuth
         - Chat Completions API surface
         - Responses API surface
+        - Anthropic-compatible API surface
+        - Client launchers / integrations
         - Images / files API
         - Helm / Docker / packaging
         - OpenSpec / docs

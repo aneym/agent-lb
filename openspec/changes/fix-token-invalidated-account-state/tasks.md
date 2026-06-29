@@ -23,5 +23,6 @@
 
 - [x] 3.1 Add deltas for Responses auth failover, routing exclusion, and
   dashboard status display.
-- [ ] 3.2 Validate the change and all specs locally when the OpenSpec CLI is
-  available.
+- [x] 3.2 Validate the change and all specs locally.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate fix-token-invalidated-account-state --strict` -> valid.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate --specs` -> 30 specs passed.

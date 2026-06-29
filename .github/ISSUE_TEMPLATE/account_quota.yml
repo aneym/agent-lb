@@ -15,6 +15,8 @@ body:
         - Refresh / OAuth callback fails for one or more accounts
         - "Requested account is always the same" routing imbalance
 
+        For security vulnerabilities, use a [private advisory](https://github.com/aneym/agent-lb/security/advisories/new) - do not post them publicly.
+
   - type: checkboxes
     id: preflight
     attributes:
@@ -29,24 +31,26 @@ body:
     id: version
     attributes:
       label: agent-lb version
-      placeholder: "1.17.0"
+      placeholder: "1.20.0-beta.3"
     validations:
       required: true
 
   - type: dropdown
     id: account_plan
     attributes:
-      label: Affected account plan(s)
+      label: Affected provider / account plan(s)
       multiple: true
       options:
-        - Free
-        - Plus
-        - Pro
-        - Team
-        - Business
-        - Enterprise
-        - Edu
-        - API-key only
+        - ChatGPT Free
+        - ChatGPT Plus
+        - ChatGPT Pro
+        - ChatGPT Team
+        - ChatGPT Business
+        - ChatGPT Enterprise
+        - ChatGPT Edu
+        - Claude account
+        - OpenAI API-key only (no ChatGPT account)
+        - Anthropic API-key only (no Claude account)
         - Mixed pool
     validations:
       required: true
@@ -93,14 +97,14 @@ body:
         From the dashboard or `/v1/usage`. Use the most recent reset for the
         affected account — primary/5h quota row preferred. Leave blank if not
         applicable (e.g. dashboard-only display bug).
-      placeholder: "2026-05-14 03:00 UTC"
+      placeholder: "YYYY-MM-DD HH:MM UTC"
 
   - type: textarea
     id: when
     attributes:
       label: When did it start?
       description: |
-        E.g. "after upgrading from 1.15.0 → 1.16.0", "after a 429 burst at 03:00 UTC",
+        E.g. "after upgrading from 1.19.0 → 1.20.0-beta.3", "after a 429 burst at 03:00 UTC",
         "right after I added a new account".
 
   - type: textarea

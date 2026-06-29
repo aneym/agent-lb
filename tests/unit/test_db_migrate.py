@@ -599,7 +599,9 @@ def test_provider_dimension_migration_backfills_existing_rows(tmp_path: Path) ->
         assert "cache_creation_tokens" in log_columns
         assert "cache_read_tokens" in log_columns
 
-        account_provider = connection.execute(text("SELECT provider FROM accounts WHERE id = 'acct_openai'")).scalar_one()
+        account_provider = connection.execute(
+            text("SELECT provider FROM accounts WHERE id = 'acct_openai'")
+        ).scalar_one()
         usage_provider = connection.execute(
             text("SELECT provider FROM usage_history WHERE account_id = 'acct_openai'")
         ).scalar_one()

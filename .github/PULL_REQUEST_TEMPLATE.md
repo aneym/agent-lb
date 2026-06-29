@@ -28,17 +28,19 @@ agent-lb is OpenSpec-first. If this PR changes observable behavior, requirements
 contracts, or schema, it needs an OpenSpec change under openspec/changes/<change>/.
 
 If this PR touches an upstream-mimicking code path (Codex CLI / ChatGPT request
-shape, image pipeline, response.create framing, etc.), it must stay
-**codex-faithful** — i.e. preserve the exact wire format the real upstream
-emits. Call out anything that intentionally diverges, and link the spec section
-that records the divergence.
+shape, OpenAI-compatible SDK routes, Claude Code / Anthropic request shape,
+image pipeline, response.create framing, Messages SSE framing, OAuth flows,
+etc.), it must stay **provider-faithful** — i.e. preserve the exact wire format
+the real upstream emits for that provider. Call out anything that intentionally
+diverges, and link the spec section that records the divergence.
 -->
 
 - [ ] This PR includes / updates an OpenSpec change
 - [ ] Not applicable — bug fix that matches the existing spec
 - [ ] Not applicable — docs / CI / chore only
-- [ ] This PR touches a codex-faithful path (image pipeline, request/response
-      shape, SSE framing, OAuth flow) and preserves upstream-equivalent behavior
+- [ ] This PR touches a provider-faithful path (OpenAI/Codex or
+      Anthropic/Claude request/response shape, SSE framing, OAuth flow) and
+      preserves upstream-equivalent behavior
 
 Change directory: <!-- openspec/changes/<change>/ -->
 
@@ -54,6 +56,18 @@ Change directory: <!-- openspec/changes/<change>/ -->
 <!--
 How did you verify this works? Paste the commands you ran and the relevant outputs.
 Required: unit tests for new logic, integration tests for new endpoints.
+For release, package, Helm, Docker, PyPI/GHCR, or public metadata changes:
+include the candidate SHA/tag plus local and public artifact proof commands.
+If publication is approval-gated and not run from this PR, name the local
+artifact proof, live blocker snapshot, PR-head proof command, runtime proof
+command, pre-publish readiness command, and post-approval proof command that
+must pass, such as
+`./scripts/public-release-local-artifact-proof.sh <approved-release-tag>`,
+`./scripts/public-release-live-snapshot.sh <approved-release-tag>`,
+`./scripts/public-release-pr-head-proof.sh <pr-number>`,
+`./scripts/public-release-runtime-proof.sh <approved-release-tag>`,
+`./scripts/public-release-publish-readiness.sh <approved-release-tag>`, and
+`./scripts/public-release-postpublish-proof.sh <approved-release-tag>`.
 -->
 
 ```
@@ -61,9 +75,15 @@ Required: unit tests for new logic, integration tests for new endpoints.
 # uv run pytest tests/integration/test_<area>.py -q
 ```
 
-## Screenshots / output (optional)
+## Screenshots / output
 
-<!-- For dashboard / UI changes: before/after screenshots. For proxy behavior: example request + response, or a log excerpt. -->
+<!--
+Required for dashboard, UI, or public screenshot changes: include before/after
+screenshots or explain why screenshots are not applicable.
+
+For proxy/API behavior: include an example request + response, stream excerpt,
+or relevant log excerpt.
+-->
 
 ## Checklist
 
@@ -72,4 +92,10 @@ Required: unit tests for new logic, integration tests for new endpoints.
 - [ ] Added or updated tests covering the change.
 - [ ] Ran `uv run pre-commit run local-ci --hook-stage manual --all-files` or the relevant `make <target>` subset locally.
 - [ ] If touching specs: `openspec validate --specs` passes and `/opsx:verify` is clean.
+- [ ] Dashboard/UI-visible changes include screenshots or a clear not-applicable reason.
+- [ ] Release/package/publication changes include candidate SHA/tag and PyPI/GHCR/Helm/release-asset proof, or explicitly say publication is approval-gated and name the local artifact proof, live blocker snapshot, PR-head proof, runtime proof, pre-publish readiness, plus post-approval proof commands.
+- [ ] Public client/onboarding changes keep `AGENTS.md`, `README.md`, `GETTING-STARTED.md`, `.agents/skills/get-started/SKILL.md`, `.agents/skills/skill-rules.json`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
+- [ ] Public client, release-version, account-plan, or support-intake changes keep `.github/ISSUE_TEMPLATE/bug_report.yml`, `.github/ISSUE_TEMPLATE/account_quota.yml`, `.github/ISSUE_TEMPLATE/feature_request.yml`, `.github/DISCUSSION_TEMPLATE/q-and-a.yml`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
+- [ ] Security/support-window changes keep `.github/SECURITY.md`, `README.md`, `deploy/helm/agent-lb/README.md`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
+- [ ] Account admin, browser-profile, billing, subscription-ledger, pause/reactivate, removal, or verification guidance changes keep `AGENTS.md`, `README.md`, `GETTING-STARTED.md`, `.agents/skills/agent-lb-account-operator/SKILL.md`, `.agents/skills/agent-lb-account-operator/account-profiles.example.json`, `.agents/skills/skill-rules.json`, and `tests/unit/test_public_release_docs.py` in sync, or explain why a surface is not affected.
 - [ ] CHANGELOG is **not** edited by hand (release-please handles it).

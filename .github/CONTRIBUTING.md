@@ -240,6 +240,51 @@ Before a PR is squash-merged into `main`:
 5. **`Fixes #N` / `Closes #N` in the PR body** for anything that
    resolves an issue, so the issue close stays automatic and the merge
    stays traceable. Use `Refs #N` / `Related to #N` for partial cover.
+6. **Release/package/publication PRs must prove artifacts.** If the PR
+   changes packaging, Helm, Docker, PyPI/GHCR publication, GitHub release
+   metadata, public screenshots, or release workflow behavior, the PR body
+   must name the candidate SHA/tag and include the relevant artifact proof:
+   local wheel/sdist proof, PyPI version lookup, `pip index`, Docker manifest,
+   Helm chart manifest, GitHub release asset check, or screenshot paths. If
+   publication is intentionally approval-gated, say so explicitly and leave the
+   local artifact proof, live blocker snapshot, PR-head proof, runtime proof,
+   pre-publish readiness, and post-approval proof commands that must pass, such as
+   `./scripts/public-release-local-artifact-proof.sh <approved-release-tag>`,
+   `./scripts/public-release-live-snapshot.sh <approved-release-tag>`,
+   `./scripts/public-release-pr-head-proof.sh <pr-number>`,
+   `./scripts/public-release-runtime-proof.sh <approved-release-tag>`,
+   `./scripts/public-release-publish-readiness.sh <approved-release-tag>`, and
+   `./scripts/public-release-postpublish-proof.sh <approved-release-tag>`.
+7. **Public client/onboarding docs stay in sync.** If the PR adds or changes
+   user-facing client setup, SDK, launcher, OAuth, or endpoint wiring guidance,
+   update `AGENTS.md`, `README.md`, `GETTING-STARTED.md`,
+   `.agents/skills/get-started/SKILL.md`,
+   `.agents/skills/skill-rules.json`, and
+   `tests/unit/test_public_release_docs.py` together, or explain why a surface
+   is not affected.
+8. **Public support intake stays in sync.** If the PR adds or changes public
+   clients, release-version examples, account-plan choices, or support-intake
+   wording, update `.github/ISSUE_TEMPLATE/bug_report.yml`,
+   `.github/ISSUE_TEMPLATE/account_quota.yml`,
+   `.github/ISSUE_TEMPLATE/feature_request.yml`,
+   `.github/DISCUSSION_TEMPLATE/q-and-a.yml`, and
+   `tests/unit/test_public_release_docs.py` together, or explain why a surface
+   is not affected.
+9. **Security support policy stays in sync.** If the PR changes supported
+   versions, vulnerability reporting, package/container artifact names,
+   release train, or published-artifact security wording, update
+   `.github/SECURITY.md`, `README.md`, `deploy/helm/agent-lb/README.md`, and
+   `tests/unit/test_public_release_docs.py` together, or explain why a surface
+   is not affected.
+10. **Account operator guidance stays in sync.** If the PR adds or changes
+   account admin, dedicated browser-profile, billing, subscription-ledger,
+   pause/reactivate, removal, or verification guidance, update
+   `AGENTS.md`, `README.md`, `GETTING-STARTED.md`,
+   `.agents/skills/agent-lb-account-operator/SKILL.md`,
+   `.agents/skills/agent-lb-account-operator/account-profiles.example.json`,
+   `.agents/skills/skill-rules.json`, and
+   `tests/unit/test_public_release_docs.py` together, or explain why a surface
+   is not affected.
 
 ### Collaborator rules
 
@@ -313,6 +358,23 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 
 Contributors **never** need to edit `CHANGELOG.md`, version strings, or tag
 manually.
+
+### Beta release candidates
+
+Beta releases are prepared by automation from the open release-please PR:
+
+1. `Sync Beta Release PR` opens or updates a `release/beta-*` PR with only the
+   release-managed version files.
+2. The beta PR body includes a release-candidate validation checklist tied to a
+   specific candidate SHA. Complete the backend, frontend, package, container,
+   and exactly one live upstream/account smoke option before merge.
+3. Merging the `release/beta-*` PR triggers `Publish Beta Release`, which
+   refuses to publish if the checklist evidence is missing or stale, creates the
+   beta tag, and publishes the GitHub prerelease plus PyPI, Docker, and Helm
+   artifacts.
+
+Do not manually dispatch beta publishing for a dirty local tree. The published
+tag must point at the reviewed and merged beta candidate commit.
 
 ## Security issues
 

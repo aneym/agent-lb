@@ -1,7 +1,10 @@
 # api-firewall Specification
 
 ## Purpose
-TBD - created by archiving change port-firewall-to-react. Update Purpose after archive.
+Define dashboard-managed API firewall behavior for allowlist CRUD,
+proxy-path enforcement, trusted local access, and firewall state visibility in
+the React dashboard.
+
 ## Requirements
 ### Requirement: Firewall allowlist management API
 Dashboard API MUST expose firewall allowlist management endpoints at `/api/firewall/ips` for listing, creating, and deleting allowed client IP addresses.
@@ -73,4 +76,3 @@ The application MUST cache firewall allow/deny decisions per source IP for a con
 - **WHEN** an operator adds or removes an entry via `POST /api/firewall/ips` or `DELETE /api/firewall/ips/{ip}`
 - **THEN** the firewall cache is invalidated for all IPs before the API response is returned
 - **AND** the next request from any IP re-checks the database
-

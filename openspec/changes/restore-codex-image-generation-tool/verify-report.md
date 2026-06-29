@@ -11,9 +11,8 @@ that `/backend-api/codex/responses` forwards `image_generation` and that
 `/v1/images/generations` can return PNG image data without an exported
 `OPENAI_API_KEY`.
 
-OpenSpec validation was attempted but could not be executed in this local
-environment because the `openspec` command is unavailable and no runnable
-package was resolvable via `uvx` or `npx`.
+OpenSpec validation was refreshed on 2026-06-14 with the npm-distributed
+`@fission-ai/openspec` CLI and passed.
 
 ## Commands
 
@@ -31,24 +30,11 @@ package was resolvable via `uvx` or `npx`.
 - Additional local runtime smoke: `/v1/images/generations`
   - Result: ran with `env -u OPENAI_API_KEY` and returned PNG image data.
 
-## OpenSpec Validation Attempt
+## OpenSpec Validation
 
-Attempted commands:
+Command:
 
-- `openspec validate --specs`
-- `uv run openspec validate --specs`
-- `uvx openspec validate --specs`
-- `npx --yes openspec validate --specs`
-- `npx --yes openspec@0.0.0 validate --specs`
+- `npx --yes @fission-ai/openspec@latest validate restore-codex-image-generation-tool --strict`
+  - Result: `Change 'restore-codex-image-generation-tool' is valid`
 
-Observed result:
-
-- `openspec` is not present on PATH.
-- `uv run openspec` cannot spawn an executable.
-- `uvx openspec` cannot resolve a package.
-- `npx openspec` resolves metadata for an `openspec@0.0.0` package but cannot
-  determine an executable.
-- `@openspec/cli` and `@open-spec/cli` are not present in the npm registry.
-
-This OpenSpec CLI gate remains deferred to an environment where the project
-maintainers have the OpenSpec executable available.
+The current repo validation path is `npx --yes @fission-ai/openspec@latest ...`.

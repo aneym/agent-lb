@@ -7,6 +7,7 @@
 ## 2. Verification
 
 - [x] 2.1 Run the targeted Anthropic proxy test.
-- [ ] 2.2 Validate the OpenSpec change.
+- [x] 2.2 Validate the OpenSpec change.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate surface-anthropic-session-route-errors --strict` -> valid.
 - [x] 2.3 Restart the local agent-lb service and verify the live route returns the real failure message.
 - [x] 2.4 Run the launcher formatting unit test.

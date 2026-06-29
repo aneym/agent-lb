@@ -9,6 +9,7 @@
 - [x] 1.7 Keep `ProxyService` public imports and behavior unchanged.
 - [x] 1.8 Lock the proxy decomposition target architecture in `DECISIONS.md`.
 - [x] 1.9 Add proxy architecture fitness ratchets via `scripts/check_proxy_architecture.py` and `make architecture-check`.
+  - [x] 2026-06-14T02:03:58Z: `make architecture-check` passed after the target was wired to the repo Python contract with `PYTHON ?= .venv/bin/python`.
 - [x] 1.10 Extract HTTP bridge helpers and session lifecycle methods into a private proxy package.
 - [x] 1.11 Extract WebSocket proxy methods and state helpers into a private proxy package.
 - [x] 1.12 Extract streaming retry methods into a private proxy package.
@@ -33,4 +34,6 @@ Future follow-up, outside this change: extract account selection, budget, and ad
 - [x] 2.3 Run `uv run ruff check` on touched Python files.
 - [x] 2.4 Run `uv run ty check` on touched Python files.
 - [x] 2.5 Run OpenSpec validation.
+  - [x] 2026-06-14T02:03:58Z: `npx --yes @fission-ai/openspec@latest validate decompose-proxy-service --strict` passed after adding the `proxy-service-architecture` spec delta.
+  - [x] 2026-06-14T02:03:58Z: a strict validation loop over active OpenSpec changes reported `validated 54 active changes`.
 - [x] 2.6 Review diff for accidental behavior changes beyond code movement.

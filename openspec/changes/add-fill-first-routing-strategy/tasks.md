@@ -18,4 +18,5 @@
 - [x] T16: Update the public `select_account` docstring in `app/core/balancer/logic.py` to list `fill_first` alongside the other strategies
 - [x] T17: Add a spec delta in `openspec/changes/add-fill-first-routing-strategy/specs/proxy-admission-control/spec.md` describing the new routing strategy as a normative requirement (deterministic, highest primary `used_percent`, `account_id` tiebreaker, inherits the `effective_pool` ladder, no random)
 - [x] T18: Verify the existing test suite passes without regression (`uv run pytest tests/unit -q`, frontend `bun run test` rerun after the schema-default change)
-- [ ] T19: Run `openspec validate --specs` clean (deferred to CI; the local `openspec` CLI is not installed in this development environment)
+- [x] T19: Run `openspec validate --specs` clean.
+  - 2026-06-14: `npx --yes @fission-ai/openspec@latest validate --specs` -> 30 specs passed.

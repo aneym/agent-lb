@@ -198,14 +198,51 @@ async def test_settings_api_returns_known_additional_quota_policies(async_client
     payload = response.json()
 
     assert payload["additionalQuotaRoutingPolicies"] == {}
-    assert payload["additionalQuotaPolicies"] == [
-        {
+    policies_by_key = {policy["quotaKey"]: policy for policy in payload["additionalQuotaPolicies"]}
+    assert policies_by_key == {
+        "codex_spark": {
             "quotaKey": "codex_spark",
             "displayLabel": "GPT-5.3-Codex-Spark",
             "routingPolicy": "burn_first",
             "modelIds": ["gpt_5_3_codex_spark"],
-        }
-    ]
+        },
+        "anthropic_standard": {
+            "quotaKey": "anthropic_standard",
+            "displayLabel": "Claude standard models",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
+        "anthropic_top": {
+            "quotaKey": "anthropic_top",
+            "displayLabel": "Claude top models",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
+        "anthropic_top_thinking": {
+            "quotaKey": "anthropic_top_thinking",
+            "displayLabel": "Claude top models with thinking",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
+        "anthropic_fast": {
+            "quotaKey": "anthropic_fast",
+            "displayLabel": "Claude fast mode",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
+        "glm_coding": {
+            "quotaKey": "glm_coding",
+            "displayLabel": "GLM Coding Plan",
+            "routingPolicy": "normal",
+            "modelIds": ["glm_4_5_air", "glm_5_2", "glm_5_2_1m"],
+        },
+        "glm_coding_thinking": {
+            "quotaKey": "glm_coding_thinking",
+            "displayLabel": "GLM Coding Plan with thinking",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
+    }
 
     update_payload = {
         "stickyThreadsEnabled": payload["stickyThreadsEnabled"],
@@ -216,7 +253,10 @@ async def test_settings_api_returns_known_additional_quota_policies(async_client
     assert response.status_code == 200
     updated = response.json()
     assert updated["additionalQuotaRoutingPolicies"] == {"codex_spark": "preserve"}
-    assert updated["additionalQuotaPolicies"][0]["routingPolicy"] == "preserve"
+    updated_policies_by_key = {policy["quotaKey"]: policy for policy in updated["additionalQuotaPolicies"]}
+    assert updated_policies_by_key["codex_spark"]["routingPolicy"] == "preserve"
+    assert updated_policies_by_key["anthropic_standard"]["routingPolicy"] == "normal"
+    assert updated_policies_by_key["anthropic_fast"]["routingPolicy"] == "normal"
 
 
 @pytest.mark.asyncio

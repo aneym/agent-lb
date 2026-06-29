@@ -249,6 +249,15 @@ export const AccountSubscriptionUpdateResponseSchema = z.object({
   subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
 });
 
+export const AccountSubscriptionCheckResponseSchema = z.object({
+  status: z.string(),
+  accountId: z.string(),
+  working: z.boolean(),
+  probeStatusCode: z.number().int(),
+  subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
+  message: z.string().nullable().optional(),
+});
+
 export const AccountExportResponseSchema = z.object({
   accountId: z.string(),
   email: z.string(),
@@ -334,6 +343,9 @@ export type AccountRequestUsage = z.infer<typeof AccountRequestUsageSchema>;
 export type AccountSummary = z.infer<typeof AccountSummarySchema>;
 export type AccountRoutingPolicy = z.infer<typeof AccountRoutingPolicySchema>;
 export type AccountSubscriptionLedger = z.infer<typeof AccountSubscriptionLedgerSchema>;
+export type AccountSubscriptionCheckResponse = z.infer<
+  typeof AccountSubscriptionCheckResponseSchema
+>;
 export type AccountAliasResponse = z.infer<typeof AccountAliasResponseSchema>;
 export type AccountLimitWarmupStatus = z.infer<
   typeof AccountLimitWarmupStatusSchema

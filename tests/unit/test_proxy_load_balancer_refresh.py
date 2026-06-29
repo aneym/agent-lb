@@ -410,6 +410,18 @@ def test_filter_accounts_for_model_keeps_anthropic_accounts_outside_openai_plan_
     assert filtered == [anthropic_account]
 
 
+def test_selectable_accounts_excludes_canceled_subscriptions() -> None:
+    active = _make_account("acc-active", "active@example.com")
+    canceled = _make_account("acc-canceled", "canceled@example.com")
+    canceled.subscription_status = "canceled"
+    cancel_pending = _make_account("acc-cancel-pending", "cancel-pending@example.com")
+    cancel_pending.subscription_status = "cancel_pending"
+
+    selected = load_balancer_module._selectable_accounts([active, canceled, cancel_pending])
+
+    assert [account.id for account in selected] == ["acc-active", "acc-cancel-pending"]
+
+
 @pytest.mark.asyncio
 async def test_select_account_prefers_budget_safe_account_when_any_exist() -> None:
     safe_account = _make_account("acc-safe", "safe@example.com")

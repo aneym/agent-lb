@@ -84,6 +84,7 @@ function mockAccounts(accounts: AccountSummary[]) {
     limitWarmupMutation: idleMutation(),
     routingPolicyMutation: idleMutation(),
     subscriptionMutation: idleMutation(),
+    subscriptionCheckMutation: idleMutation(),
     updateMutation: idleMutation(),
   } as unknown as ReturnType<typeof useAccounts>);
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AccountAuthExportResponseSchema,
   AccountProbeResponseSchema,
+  AccountSubscriptionCheckResponseSchema,
   AccountSummarySchema,
   ImportStateSchema,
   OAuthStateSchema,
@@ -211,5 +212,26 @@ describe("AccountProbeResponseSchema", () => {
 
     expect(parsed.probeStatusCode).toBe(200);
     expect(parsed.accountId).toBe("acc-1");
+  });
+});
+
+describe("AccountSubscriptionCheckResponseSchema", () => {
+  it("parses subscription check responses", () => {
+    const parsed = AccountSubscriptionCheckResponseSchema.parse({
+      status: "checked",
+      accountId: "acc-1",
+      working: false,
+      probeStatusCode: 403,
+      message: "OAuth authentication is currently not allowed.",
+      subscription: {
+        status: "canceled",
+        lastVerifiedAt: ISO,
+        notes: "Subscription check returned HTTP 403.",
+      },
+    });
+
+    expect(parsed.accountId).toBe("acc-1");
+    expect(parsed.working).toBe(false);
+    expect(parsed.subscription?.status).toBe("canceled");
   });
 });

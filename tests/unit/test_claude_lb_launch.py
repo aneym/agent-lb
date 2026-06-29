@@ -20,7 +20,7 @@ def test_format_lb_pick_error_prettifies_anthropic_selection_failure() -> None:
     launcher = load_launcher_module()
     body = (
         '{"error":{"message":"3 Anthropic accounts exist, but none are selectable for '
-        'claude-fable-5/anthropic_top_thinking; statuses: active=1, rate_limited=2. '
+        "claude-fable-5/anthropic_top_thinking; statuses: active=1, rate_limited=2. "
         'OpenAI accounts are not eligible for Claude routing.",'
         '"type":"server_error","code":"no_available_anthropic_accounts"}}'
     )
@@ -31,11 +31,31 @@ def test_format_lb_pick_error_prettifies_anthropic_selection_failure() -> None:
     )
 
 
+def test_format_lb_pick_error_preserves_anthropic_quota_detail() -> None:
+    launcher = load_launcher_module()
+    body = (
+        '{"error":{"message":"2 Anthropic accounts exist, but none are selectable for '
+        "claude-fable-5/anthropic_top; statuses: active=1, quota_exceeded=1. "
+        "Model quota: anthropic_top cooldown excluded 1 account until 2026-06-12T09:20:24; "
+        "1 account remained after the anthropic_top prefilter; "
+        "selector reason: no_available_anthropic_accounts. "
+        'OpenAI accounts are not eligible for Claude routing. Limits reset at 2026-06-12T09:20:24.",'
+        '"type":"server_error","code":"no_available_anthropic_accounts"}}'
+    )
+
+    assert launcher.format_lb_pick_error(body) == (
+        "Claude accounts are all at limit or unavailable (2 accounts; active=1, quota_exceeded=1). "
+        "Model quota: anthropic_top cooldown excluded 1 account until 2026-06-12T09:20:24; "
+        "1 account remained after the anthropic_top prefilter; "
+        "selector reason: no_available_anthropic_accounts. OpenAI accounts cannot serve Claude."
+    )
+
+
 def test_format_lb_pick_error_handles_all_rate_limited_accounts() -> None:
     launcher = load_launcher_module()
     body = (
         '{"error":{"message":"3 Anthropic accounts exist, but none are selectable for '
-        'claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. '
+        "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
         'OpenAI accounts are not eligible for Claude routing.",'
         '"type":"server_error","code":"no_available_anthropic_accounts"}}'
     )

@@ -2,13 +2,14 @@
 
 ## ADDED Requirements
 
-### Requirement: Messages endpoint surfaces structured rate-limit retry metadata
+### Requirement: Messages endpoint MUST surface structured rate-limit retry metadata
 
-When `/v1/messages` cannot serve a request because all Anthropic accounts are
+The proxy MUST respond before the stream starts with structured retry metadata
+when `/v1/messages` cannot serve a request because all Anthropic accounts are
 exhausted (quota cooldown or selection failure) and the earliest reset time is
-known, the proxy MUST respond before the stream starts with HTTP 429, an
-Anthropic-native envelope `{"type":"error","error":{"type":"rate_limit_error",
-"message":...}}`, a `retry-after` header (seconds until reset), and an
+known. The response MUST use HTTP 429, an Anthropic-native envelope
+`{"type":"error","error":{"type":"rate_limit_error","message":...}}`, a
+`retry-after` header (seconds until reset), and an
 `anthropic-ratelimit-unified-reset` header (Unix epoch seconds of the reset).
 
 #### Scenario: All accounts cooling down for the requested quota
@@ -25,12 +26,13 @@ Anthropic-native envelope `{"type":"error","error":{"type":"rate_limit_error",
 - **WHEN** a client posts to `/v1/messages`
 - **THEN** the proxy responds with the existing non-429 error envelope and MUST NOT fabricate retry headers
 
-### Requirement: Mid-stream failures emit a structured error event
+### Requirement: Mid-stream failures MUST emit a structured error event
 
-If account selection retries are exhausted after the `/v1/messages` response has
-started, the proxy MUST emit a structured error instead of truncating the body:
-an SSE `event: error` block carrying the Anthropic-native error envelope for
-streaming requests, or the JSON error envelope for non-streaming requests.
+The proxy MUST emit a structured error instead of truncating the body when
+account selection retries are exhausted after the `/v1/messages` response has
+started. Streaming requests MUST receive an SSE `event: error` block carrying
+the Anthropic-native error envelope, and non-streaming requests MUST receive
+the JSON error envelope.
 
 #### Scenario: Upstream rate-limits every retry attempt mid-stream
 
@@ -46,10 +48,11 @@ streaming requests, or the JSON error envelope for non-streaming requests.
 - **AND** the response body preserves the Anthropic-native `overloaded_error` type and exact upstream message
 - **AND** the proxy MUST NOT return HTTP 200 with a JSON error body
 
-### Requirement: Session-route errors carry retry timing
+### Requirement: Session-route errors MUST carry retry timing
 
-When `/api/anthropic/session-route` rejects a claim because accounts are
-exhausted and the earliest reset is known, the error envelope MUST include
+The session-route API MUST return retry timing when
+`/api/anthropic/session-route` rejects a claim because accounts are exhausted
+and the earliest reset is known. The error envelope MUST include
 `error.retryAt` (RFC 3339 UTC) and `error.retryAfterSeconds` (non-negative
 integer), and the response MUST include a `retry-after` header.
 
@@ -60,14 +63,14 @@ integer), and the response MUST include a `retry-after` header.
 - **THEN** the error envelope contains `retryAt` and `retryAfterSeconds`
 - **AND** the response carries a `retry-after` header
 
-### Requirement: Anthropic routing prefers the expiring primary window
+### Requirement: Anthropic routing MUST prefer the expiring primary window
 
-When the dashboard setting `preferEarlierResetAccounts` is enabled, Anthropic
-`/v1/messages` account selection MUST pass reset preference into the shared
-load balancer with the `primary` reset window, because Claude's short 5-hour
-limit is the quota that should be depleted before it refreshes. Within the
-earliest primary reset window, the load balancer MUST prefer the account with
-more primary capacity remaining before considering secondary-window pressure.
+Anthropic `/v1/messages` account selection MUST pass reset preference into the
+shared load balancer with the `primary` reset window when the dashboard setting
+`preferEarlierResetAccounts` is enabled, because Claude's short 5-hour limit is
+the quota that should be depleted before it refreshes. Within the earliest
+primary reset window, the load balancer MUST prefer the account with more
+primary capacity remaining before considering secondary-window pressure.
 
 #### Scenario: Claude message selection honors primary reset preference
 

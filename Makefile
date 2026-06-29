@@ -1,5 +1,6 @@
 PYTEST_ARGS := -q -ra -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true --timeout=180 --timeout-method=thread --durations=20
 POSTGRES_TEST_DATABASE_URL ?= postgresql+asyncpg://agent_lb:agent_lb@127.0.0.1:5432/agent_lb
+PYTHON ?= .venv/bin/python
 POSTGRES_PYTEST_TARGETS := \
 	tests/integration/test_migrations.py::test_postgresql_migration_contract_policy_and_drift_match \
 	tests/integration/test_migrations.py::test_postgresql_upgrade_head_from_empty_database \
@@ -46,7 +47,7 @@ lint: architecture-check
 	uvx ruff format --check .
 
 architecture-check:
-	python scripts/check_proxy_architecture.py
+	$(PYTHON) scripts/check_proxy_architecture.py
 
 typecheck:
 	uv sync --dev --frozen
@@ -99,7 +100,7 @@ package: frontend-build
 	uv run python -c "import app; import app.main; print('import ok')"
 	rm -rf build dist *.egg-info
 	uvx --from build==1.3.0 python -m build
-	python scripts/verify-wheel-assets.py
+	$(PYTHON) scripts/verify-wheel-assets.py
 
 .PHONY: docker
 docker:

@@ -23,7 +23,7 @@ from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
-from app.core.providers import ANTHROPIC_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME
 from app.core.utils.request_id import ensure_request_id
 from app.db.models import Account, StickySessionKind
 from app.modules.accounts.auth_manager import AuthManager
@@ -38,6 +38,9 @@ _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
+_ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
+_ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
+_ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,10 +96,18 @@ class AnthropicProxyService:
         started_at = time.monotonic()
         selected_account_ids: set[str] = set()
         media_type = "text/event-stream" if payload.stream else "application/json"
-        quota_key = _anthropic_quota_key(payload)
-        sticky_key = _anthropic_sticky_key(payload, inbound_headers, quota_key=quota_key)
+        provider_name = _messages_provider_name(payload)
+        quota_key = _messages_quota_key(payload, provider_name=provider_name)
+        affinity_quota_key = _messages_affinity_quota_key(payload, provider_name=provider_name)
+        sticky_key = _messages_sticky_key(
+            payload,
+            inbound_headers,
+            provider_name=provider_name,
+            quota_key=affinity_quota_key,
+        )
         first_account = await self._select_account(
             payload.model,
+            provider_name=provider_name,
             exclude_account_ids=selected_account_ids,
             sticky_key=sticky_key,
             quota_key=quota_key,
@@ -114,6 +125,7 @@ class AnthropicProxyService:
                 else:
                     account = await self._select_account(
                         payload.model,
+                        provider_name=provider_name,
                         exclude_account_ids=selected_account_ids,
                         sticky_key=sticky_key,
                         quota_key=quota_key,
@@ -121,16 +133,27 @@ class AnthropicProxyService:
                     selected_account_ids.add(account.id)
                 last_account = account
                 access_token = await self._fresh_access_token(account)
-                headers = _build_anthropic_headers(inbound_headers, access_token)
+                headers = _build_anthropic_headers(
+                    inbound_headers,
+                    access_token,
+                    provider_name=provider_name,
+                    fast_mode=_anthropic_fast_mode_requested(payload),
+                )
                 body_payload = payload.model_dump(mode="json", exclude_none=True)
 
                 async with lease_http_session() as session:
-                    async with self._open_upstream_response(session, headers=headers, json_body=body_payload) as resp:
+                    async with self._open_upstream_response(
+                        session,
+                        provider_name=provider_name,
+                        headers=headers,
+                        json_body=body_payload,
+                    ) as resp:
                         if resp.status in {401, 403}:
                             error_message = await _read_error_message(resp)
                             await self._load_balancer.mark_permanent_failure(account, "invalid_api_key")
                             await self._persist_request_log(
                                 account=account,
+                                provider_name=provider_name,
                                 request_id=request_id,
                                 model=payload.model,
                                 started_at=started_at,
@@ -151,6 +174,7 @@ class AnthropicProxyService:
                             )
                             await self._persist_request_log(
                                 account=account,
+                                provider_name=provider_name,
                                 request_id=request_id,
                                 model=payload.model,
                                 started_at=started_at,
@@ -167,6 +191,7 @@ class AnthropicProxyService:
                             await self._load_balancer.record_error(account)
                             await self._persist_request_log(
                                 account=account,
+                                provider_name=provider_name,
                                 request_id=request_id,
                                 model=payload.model,
                                 started_at=started_at,
@@ -201,6 +226,7 @@ class AnthropicProxyService:
                         await self._clear_quota_cooldown(account, quota_key=quota_key)
                         await self._persist_request_log(
                             account=account,
+                            provider_name=provider_name,
                             request_id=request_id,
                             model=payload.model,
                             started_at=started_at,
@@ -216,24 +242,25 @@ class AnthropicProxyService:
                         return
 
             await self._release_api_key_reservation(api_key_reservation)
-            message = last_error_message or "No available Anthropic accounts"
+            message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
             await self._persist_request_log(
                 account=last_account,
+                provider_name=provider_name,
                 request_id=request_id,
                 model=payload.model,
                 started_at=started_at,
                 status="error",
-                error_code="no_available_anthropic_accounts",
+                error_code=_no_available_accounts_code(provider_name),
                 error_message=message,
                 api_key=api_key,
             )
             # Upstream 429s above recorded cooldowns, so eligibility now knows the
             # earliest reset; surface it so clients can schedule a retry.
-            eligibility = await self._anthropic_quota_eligibility(quota_key)
+            eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
             raise AnthropicProxyError(
                 last_error_status or 503,
                 message,
-                code="no_available_anthropic_accounts",
+                code=_no_available_accounts_code(provider_name),
                 retry_at=eligibility.next_reset_at,
             )
 
@@ -243,11 +270,17 @@ class AnthropicProxyService:
         self,
         session: aiohttp.ClientSession,
         *,
+        provider_name: str,
         headers: Mapping[str, str],
         json_body: Mapping[str, Any],
     ) -> AsyncContextManager[aiohttp.ClientResponse]:
         settings = get_settings()
-        url = urljoin(settings.anthropic_upstream_base_url.rstrip("/") + "/", "v1/messages")
+        base_url = (
+            settings.glm_anthropic_upstream_base_url
+            if provider_name == GLM_PROVIDER_NAME
+            else settings.anthropic_upstream_base_url
+        )
+        url = urljoin(base_url.rstrip("/") + "/", "v1/messages")
         timeout = aiohttp.ClientTimeout(
             total=settings.proxy_request_budget_seconds,
             connect=settings.upstream_connect_timeout_seconds,
@@ -258,11 +291,12 @@ class AnthropicProxyService:
         self,
         model: str,
         *,
+        provider_name: str,
         exclude_account_ids: set[str],
         sticky_key: str | None,
         quota_key: str,
     ) -> Account:
-        eligibility = await self._anthropic_quota_eligibility(quota_key)
+        eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
         if not eligibility.account_ids and eligibility.blocked_count > 0:
             reset_suffix = (
                 f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at).isoformat()}."
@@ -271,14 +305,17 @@ class AnthropicProxyService:
             )
             raise AnthropicProxyError(
                 429,
-                f"All Anthropic accounts are cooling down for quota '{quota_key}'.{reset_suffix}",
-                code="anthropic_quota_cooldown",
+                (
+                    f"All {_provider_label(provider_name)} accounts are cooling down "
+                    f"for quota '{quota_key}'.{reset_suffix}"
+                ),
+                code=_quota_cooldown_code(provider_name),
                 retry_at=eligibility.next_reset_at,
             )
         settings = await get_settings_cache().get()
         selection = await self._load_balancer.select_account(
             model=model,
-            provider=ANTHROPIC_PROVIDER_NAME,
+            provider=provider_name,
             account_ids=eligibility.account_ids,
             exclude_account_ids=exclude_account_ids,
             sticky_key=sticky_key,
@@ -291,13 +328,18 @@ class AnthropicProxyService:
             message, retry_at = await self._selection_failure_details(
                 model=model,
                 quota_key=quota_key,
-                fallback=selection.error_message or "No available Anthropic accounts",
+                provider_name=provider_name,
+                fallback=selection.error_message or f"No available {_provider_label(provider_name)} accounts",
                 quota_reset_at=eligibility.next_reset_at,
+                quota_blocked_count=eligibility.blocked_count,
+                quota_candidate_count=len(eligibility.account_ids),
+                selection_error_code=selection.error_code,
+                selection_error_message=selection.error_message,
             )
             raise AnthropicProxyError(
                 503,
                 message,
-                code=selection.error_code or "no_available_anthropic_accounts",
+                code=selection.error_code or _no_available_accounts_code(provider_name),
                 retry_at=retry_at,
             )
         return selection.account
@@ -307,8 +349,13 @@ class AnthropicProxyService:
         *,
         model: str,
         quota_key: str,
+        provider_name: str,
         fallback: str,
         quota_reset_at: int | None = None,
+        quota_blocked_count: int = 0,
+        quota_candidate_count: int | None = None,
+        selection_error_code: str | None = None,
+        selection_error_message: str | None = None,
     ) -> tuple[str, int | None]:
         now = int(time.time())
         reset_candidates: list[int] = [quota_reset_at] if quota_reset_at is not None else []
@@ -316,7 +363,7 @@ class AnthropicProxyService:
             accounts = [
                 account
                 for account in await repos.accounts.list_accounts()
-                if account.provider.lower() == ANTHROPIC_PROVIDER_NAME
+                if account.provider.lower() == provider_name
             ]
             account_count = len(accounts)
             status_counts = Counter(_account_status_label(account) for account in accounts)
@@ -339,20 +386,43 @@ class AnthropicProxyService:
         reset_suffix = (
             f" Limits reset at {datetime.fromtimestamp(retry_at).isoformat()}." if retry_at is not None else ""
         )
+        quota_detail = _anthropic_selection_quota_detail(
+            quota_key=quota_key,
+            blocked_count=quota_blocked_count,
+            candidate_count=quota_candidate_count,
+            selection_error_code=selection_error_code,
+            selection_error_message=selection_error_message,
+            retry_at=retry_at,
+        )
+        quota_sentence = f"Model quota: {quota_detail}. " if quota_detail else ""
         message = (
-            f"{account_count} Anthropic {noun} exist, but none are selectable for "
+            f"{account_count} {_provider_label(provider_name)} {noun} exist, but none are selectable for "
             f"{model}/{quota_key}; statuses: {status_summary}. "
-            f"OpenAI accounts are not eligible for Claude routing.{reset_suffix}"
+            f"{quota_sentence}"
+            f"{_other_provider_routing_message(provider_name)}{reset_suffix}"
+        )
+        logger.warning(
+            (
+                "Anthropic account selection failed model=%s quota_key=%s statuses=%s "
+                "quota_blocked=%s quota_candidates=%s selection_error_code=%s retry_at=%s"
+            ),
+            model,
+            quota_key,
+            status_summary,
+            quota_blocked_count,
+            quota_candidate_count,
+            selection_error_code,
+            retry_at,
         )
         return message, retry_at
 
-    async def _anthropic_quota_eligibility(self, quota_key: str) -> _AnthropicQuotaEligibility:
+    async def _provider_quota_eligibility(self, provider_name: str, quota_key: str) -> _AnthropicQuotaEligibility:
         now = int(time.time())
         async with self._repo_factory() as repos:
             account_ids = [
                 account.id
                 for account in await repos.accounts.list_accounts()
-                if account.provider.lower() == ANTHROPIC_PROVIDER_NAME
+                if account.provider.lower() == provider_name
             ]
             latest = await repos.additional_usage.latest_by_account(
                 quota_key,
@@ -360,8 +430,7 @@ class AnthropicProxyService:
                 account_ids=account_ids,
             )
             cooldowns = {
-                account_id: (float(entry.used_percent), entry.reset_at)
-                for account_id, entry in latest.items()
+                account_id: (float(entry.used_percent), entry.reset_at) for account_id, entry in latest.items()
             }
 
         eligible_account_ids: list[str] = []
@@ -444,6 +513,7 @@ class AnthropicProxyService:
         self,
         *,
         account: Account | None,
+        provider_name: str,
         request_id: str,
         model: str,
         started_at: float,
@@ -470,7 +540,7 @@ class AnthropicProxyService:
                     error_code=error_code,
                     error_message=error_message,
                     plan_type=account.plan_type if account else None,
-                    provider=ANTHROPIC_PROVIDER_NAME,
+                    provider=provider_name,
                     transport="http",
                 )
         except Exception:
@@ -506,10 +576,20 @@ class AnthropicProxyService:
             service = ApiKeysService(repos.api_keys)
             await service.release_usage_reservation(reservation.reservation_id)
 
-    async def claim_session_route(self, *, session_id: str, model: str, quota_key: str) -> Account:
-        sticky_key = f"claude:{quota_key}:session:{_hash_for_key(session_id)}"
+    async def claim_session_route(
+        self,
+        *,
+        session_id: str,
+        model: str,
+        quota_key: str,
+        affinity_quota_key: str | None = None,
+        provider_name: str = ANTHROPIC_PROVIDER_NAME,
+    ) -> Account:
+        sticky_quota_key = affinity_quota_key or quota_key
+        sticky_key = f"{_sticky_prefix(provider_name)}:{sticky_quota_key}:session:{_hash_for_key(session_id)}"
         account = await self._select_account(
             model,
+            provider_name=provider_name,
             exclude_account_ids=set(),
             sticky_key=sticky_key,
             quota_key=quota_key,
@@ -532,6 +612,47 @@ def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
     return "anthropic_top"
 
 
+def _messages_provider_name(payload: AnthropicMessageRequest) -> str:
+    model = payload.model.strip().lower()
+    return GLM_PROVIDER_NAME if model.startswith("glm-") else ANTHROPIC_PROVIDER_NAME
+
+
+def _messages_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
+    if provider_name == GLM_PROVIDER_NAME:
+        return "glm_coding_thinking" if payload.thinking else "glm_coding"
+    if _anthropic_fast_mode_requested(payload):
+        return _ANTHROPIC_FAST_QUOTA_KEY
+    return _anthropic_quota_key(payload)
+
+
+def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
+    if provider_name == GLM_PROVIDER_NAME:
+        return "glm_coding_thinking" if payload.thinking else "glm_coding"
+    return _anthropic_quota_key(payload)
+
+
+def _anthropic_fast_mode_requested(payload: AnthropicMessageRequest) -> bool:
+    speed = payload.speed
+    return isinstance(speed, str) and speed.strip().lower() == "fast"
+
+
+def _messages_sticky_key(
+    payload: AnthropicMessageRequest,
+    headers: Mapping[str, str],
+    *,
+    provider_name: str,
+    quota_key: str,
+) -> str | None:
+    header_value = _anthropic_session_header(headers)
+    prefix = _sticky_prefix(provider_name)
+    if header_value:
+        return f"{prefix}:{quota_key}:session:{_hash_for_key(header_value)}"
+    derived = _derive_anthropic_session_material(payload)
+    if not derived:
+        return None
+    return f"{prefix}:{quota_key}:derived:{_hash_for_key(derived)}"
+
+
 def _anthropic_sticky_key(
     payload: AnthropicMessageRequest,
     headers: Mapping[str, str],
@@ -545,6 +666,28 @@ def _anthropic_sticky_key(
     if not derived:
         return None
     return f"claude:{quota_key}:derived:{_hash_for_key(derived)}"
+
+
+def _sticky_prefix(provider_name: str) -> str:
+    return "glm" if provider_name == GLM_PROVIDER_NAME else "claude"
+
+
+def _provider_label(provider_name: str) -> str:
+    return "GLM" if provider_name == GLM_PROVIDER_NAME else "Anthropic"
+
+
+def _no_available_accounts_code(provider_name: str) -> str:
+    return "no_available_glm_accounts" if provider_name == GLM_PROVIDER_NAME else "no_available_anthropic_accounts"
+
+
+def _quota_cooldown_code(provider_name: str) -> str:
+    return "glm_quota_cooldown" if provider_name == GLM_PROVIDER_NAME else "anthropic_quota_cooldown"
+
+
+def _other_provider_routing_message(provider_name: str) -> str:
+    if provider_name == GLM_PROVIDER_NAME:
+        return "OpenAI and Anthropic accounts are not eligible for GLM routing."
+    return "OpenAI accounts are not eligible for Claude routing."
 
 
 def _anthropic_session_header(headers: Mapping[str, str]) -> str | None:
@@ -606,6 +749,31 @@ def _account_status_label(account: Account) -> str:
     return status.value if hasattr(status, "value") else str(status)
 
 
+def _anthropic_selection_quota_detail(
+    *,
+    quota_key: str,
+    blocked_count: int,
+    candidate_count: int | None,
+    selection_error_code: str | None,
+    selection_error_message: str | None,
+    retry_at: int | None,
+) -> str | None:
+    parts: list[str] = []
+    if blocked_count > 0:
+        noun = "account" if blocked_count == 1 else "accounts"
+        reset_text = f" until {datetime.fromtimestamp(retry_at).isoformat()}" if retry_at is not None else ""
+        parts.append(f"{quota_key} cooldown excluded {blocked_count} {noun}{reset_text}")
+    if candidate_count is not None and (blocked_count > 0 or selection_error_code):
+        noun = "account" if candidate_count == 1 else "accounts"
+        parts.append(f"{candidate_count} {noun} remained after the {quota_key} prefilter")
+    if selection_error_code:
+        reason = selection_error_code
+        if selection_error_message and selection_error_message != "No available accounts":
+            reason = f"{selection_error_message} ({selection_error_code})"
+        parts.append(f"selector reason: {reason}")
+    return "; ".join(parts) if parts else None
+
+
 def _hash_for_key(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()[:32]
 
@@ -616,7 +784,13 @@ def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, 
     return reset_at is None or int(reset_at) > now
 
 
-def _build_anthropic_headers(inbound_headers: Mapping[str, str], access_token: str) -> dict[str, str]:
+def _build_anthropic_headers(
+    inbound_headers: Mapping[str, str],
+    access_token: str,
+    *,
+    provider_name: str = ANTHROPIC_PROVIDER_NAME,
+    fast_mode: bool = False,
+) -> dict[str, str]:
     settings = get_settings()
     headers = {
         key: value
@@ -631,7 +805,30 @@ def _build_anthropic_headers(inbound_headers: Mapping[str, str], access_token: s
         headers["content-type"] = "application/json"
     if "accept" not in lower_keys:
         headers["accept"] = "text/event-stream"
+    if provider_name == ANTHROPIC_PROVIDER_NAME:
+        required_betas = [_ANTHROPIC_OAUTH_BETA]
+        if fast_mode:
+            required_betas.append(_ANTHROPIC_FAST_MODE_BETA)
+        _merge_anthropic_beta_header(headers, required_betas)
     return headers
+
+
+def _merge_anthropic_beta_header(headers: dict[str, str], required_betas: list[str]) -> None:
+    beta_key = next((key for key in headers if key.lower() == "anthropic-beta"), "anthropic-beta")
+    existing = headers.get(beta_key, "")
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw_value in [*existing.split(","), *required_betas]:
+        beta = raw_value.strip()
+        if not beta:
+            continue
+        normalized = beta.lower()
+        if normalized in seen:
+            continue
+        merged.append(beta)
+        seen.add(normalized)
+    if merged:
+        headers[beta_key] = ", ".join(merged)
 
 
 def _collect_usage_from_chunk(
@@ -749,6 +946,8 @@ def _anthropic_rate_limit_reset_at(headers: Mapping[str, str]) -> int | None:
         "anthropic-ratelimit-output-tokens-reset",
         "anthropic-priority-input-tokens-reset",
         "anthropic-priority-output-tokens-reset",
+        "anthropic-fast-input-tokens-reset",
+        "anthropic-fast-output-tokens-reset",
     ]
     epochs = [_parse_reset_epoch(_get_header(headers, name)) for name in reset_candidates]
     future_epochs = [epoch for epoch in epochs if epoch is not None and epoch > int(time.time())]

@@ -101,7 +101,7 @@
       "path": "/api/runtime/version",
       "description": "Current and latest agent-lb version, whether an update is available, and a link to releases.",
       "auth": "dashboard session (bypassed when AGENT_LB_DASHBOARD_AUTH_MODE=disabled)",
-      "response_shape": "{\"currentVersion\": \"1.20.0-beta.3\", \"latestVersion\": null, \"updateAvailable\": false, \"checkedAt\": \"2026-06-10T20:55:09.275625Z\", \"source\": null, \"releaseUrl\": \"https://github.com/Soju06/agent-lb/releases/latest\"}",
+      "response_shape": "{\"currentVersion\": \"1.20.0-beta.3\", \"latestVersion\": null, \"updateAvailable\": false, \"checkedAt\": \"2026-06-10T20:55:09.275625Z\", \"source\": null, \"releaseUrl\": \"https://github.com/aneym/agent-lb/releases/latest\"}",
       "menubar_value": "Show update-available badge on the menu bar icon when updateAvailable=true."
     },
     {

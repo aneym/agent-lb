@@ -1028,7 +1028,11 @@ def _http_bridge_runtime_config(
         codex_idle_ttl_seconds=app_settings.http_responses_session_bridge_codex_idle_ttl_seconds,
         max_sessions=app_settings.http_responses_session_bridge_max_sessions,
         queue_limit=app_settings.http_responses_session_bridge_queue_limit,
-        response_create_concurrency=app_settings.http_responses_session_bridge_response_create_concurrency,
+        response_create_concurrency=getattr(
+            app_settings,
+            "http_responses_session_bridge_response_create_concurrency",
+            64,
+        ),
         prompt_cache_idle_ttl_seconds=float(
             dashboard_settings.http_responses_session_bridge_prompt_cache_idle_ttl_seconds,
         ),

@@ -1,6 +1,6 @@
 # agent-lb Helm Chart
 
-Production-ready Helm chart for [agent-lb](https://github.com/aneym/agent-lb), an OpenAI API load balancer with account pooling, usage tracking, and dashboard.
+Production-ready Helm chart for [agent-lb](https://github.com/aneym/agent-lb), a ChatGPT and Claude account load balancer with API proxying, usage tracking, and dashboard.
 
 ## Design Goal
 
@@ -27,6 +27,11 @@ This is a project support policy. Cloud providers may keep older versions availa
 
 ## Install Modes
 
+OCI examples below require the approval-gated release workflow to publish the
+beta chart artifact first. Before that artifact is public, use the matching
+**From source** command in each section after
+`helm dependency build deploy/helm/agent-lb/`.
+
 ### 1. Bundled
 
 Use the bundled Bitnami PostgreSQL sub-chart. This is the easiest self-contained install mode for demos, development clusters, and disposable environments.
@@ -42,6 +47,8 @@ Example:
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   --set postgresql.auth.password=change-me \
   --set config.databaseMigrateOnStartup=true \
   --set migration.schemaGate.enabled=false
@@ -81,6 +88,8 @@ Example using a direct URL:
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   --set postgresql.enabled=false \
   --set externalDatabase.url='postgresql+asyncpg://user:pass@db.example.com:5432/agentlb'
 ```
@@ -89,6 +98,8 @@ Example using separate secrets:
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   --set postgresql.enabled=false \
   --set externalDatabase.existingSecret=agent-lb-db \
   --set auth.existingSecret=agent-lb-app
@@ -120,6 +131,8 @@ Example:
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   --set postgresql.enabled=false \
   --set externalSecrets.enabled=true \
   --set externalSecrets.secretStoreRef.name=my-store
@@ -138,7 +151,8 @@ helm upgrade --install agent-lb deploy/helm/agent-lb/ \
 
 ## Quick Start
 
-No repo clone required — install directly from the OCI registry.
+No repo clone required after the beta chart has been published — install
+directly from the OCI registry with the exact prerelease version and `--devel`.
 
 ### Docker Desktop / kind style cluster
 
@@ -146,6 +160,8 @@ Bundled PostgreSQL:
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   --set postgresql.auth.password=local-dev-password \
   --set config.databaseMigrateOnStartup=true \
   --set migration.schemaGate.enabled=false
@@ -155,6 +171,8 @@ helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   --set postgresql.enabled=false \
   --set externalDatabase.url='postgresql+asyncpg://user:pass@db.example.com:5432/agentlb'
 ```
@@ -380,6 +398,8 @@ Install with:
 
 ```bash
 helm install agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
   -f deploy/helm/agent-lb/values-prod.yaml \
   --set externalDatabase.url='postgresql+asyncpg://user:pass@db.example.com:5432/agentlb'
 ```
@@ -494,7 +514,10 @@ gatewayApi:
 ## Upgrade Contract
 
 ```bash
-helm upgrade agent-lb oci://ghcr.io/aneym/charts/agent-lb <your values...>
+helm upgrade agent-lb oci://ghcr.io/aneym/charts/agent-lb \
+  --version 1.20.0-beta.3 \
+  --devel \
+  <your values...>
 ```
 
 - External DB installs can migrate before StatefulSet creation.

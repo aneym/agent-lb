@@ -16,7 +16,7 @@ def test_cleanup_plan_closes_only_superseded_managed_beta_prs() -> None:
             "number": 807,
             "title": "chore: release v1.19.1-beta.1",
             "headRefName": "release/beta-1.19.1-beta.1",
-            "headRepositoryOwner": {"login": "Soju06"},
+            "headRepositoryOwner": {"login": "aneym"},
             "labels": [],
             "body": "Synced automatically from release-please PR #806; no manual beta workflow dispatch is required.",
         },
@@ -24,7 +24,7 @@ def test_cleanup_plan_closes_only_superseded_managed_beta_prs() -> None:
             "number": 827,
             "title": "chore: release v1.20.0-beta.1",
             "headRefName": "release/beta-1.20.0-beta.1",
-            "headRepositoryOwner": {"login": "Soju06"},
+            "headRepositoryOwner": {"login": "aneym"},
             "labels": [],
             "body": "Synced automatically from release-please PR #806; no manual beta workflow dispatch is required.",
         },
@@ -32,7 +32,7 @@ def test_cleanup_plan_closes_only_superseded_managed_beta_prs() -> None:
             "number": 900,
             "title": "chore: release v1.18.0-beta.1",
             "headRefName": "release/beta-1.18.0-beta.1",
-            "headRepositoryOwner": {"login": "Soju06"},
+            "headRepositoryOwner": {"login": "aneym"},
             "labels": [{"name": "pinned"}],
             "body": "Synced automatically from release-please PR #806; no manual beta workflow dispatch is required.",
         },
@@ -40,7 +40,7 @@ def test_cleanup_plan_closes_only_superseded_managed_beta_prs() -> None:
             "number": 901,
             "title": "manual beta experiment",
             "headRefName": "release/beta-manual-test",
-            "headRepositoryOwner": {"login": "Soju06"},
+            "headRepositoryOwner": {"login": "aneym"},
             "labels": [],
             "body": "Manual release testing branch.",
         },
@@ -58,14 +58,14 @@ def test_cleanup_plan_closes_only_superseded_managed_beta_prs() -> None:
         prs,
         current_branch="release/beta-1.20.0-beta.1",
         current_tag="v1.20.0-beta.1",
-        repo="Soju06/agent-lb",
-        repo_owner="Soju06",
+        repo="aneym/agent-lb",
+        repo_owner="aneym",
         release_pr="806",
     )
 
     assert [action.pr_number for action in plan] == [807]
     assert plan[0].head_ref == "release/beta-1.19.1-beta.1"
-    assert plan[0].delete_ref_api_path == "repos/Soju06/agent-lb/git/refs/heads/release/beta-1.19.1-beta.1"
+    assert plan[0].delete_ref_api_path == "repos/aneym/agent-lb/git/refs/heads/release/beta-1.19.1-beta.1"
     assert "v1.20.0-beta.1" in plan[0].comment
     assert "release-please PR #806" in plan[0].comment
 
@@ -87,10 +87,10 @@ def test_execute_cleanup_comments_closes_and_deletes_branch(monkeypatch: pytest.
                 pr_number=807,
                 head_ref="release/beta-1.19.1-beta.1",
                 comment="Superseded by v1.20.0-beta.1",
-                delete_ref_api_path="repos/Soju06/agent-lb/git/refs/heads/release/beta-1.19.1-beta.1",
+                delete_ref_api_path="repos/aneym/agent-lb/git/refs/heads/release/beta-1.19.1-beta.1",
             )
         ],
-        repo="Soju06/agent-lb",
+        repo="aneym/agent-lb",
         dry_run=False,
     )
 
@@ -100,16 +100,16 @@ def test_execute_cleanup_comments_closes_and_deletes_branch(monkeypatch: pytest.
             "comment",
             "807",
             "--repo",
-            "Soju06/agent-lb",
+            "aneym/agent-lb",
             "--body",
             "Superseded by v1.20.0-beta.1",
         ],
-        ["pr", "close", "807", "--repo", "Soju06/agent-lb"],
+        ["pr", "close", "807", "--repo", "aneym/agent-lb"],
         [
             "api",
             "-X",
             "DELETE",
-            "repos/Soju06/agent-lb/git/refs/heads/release/beta-1.19.1-beta.1",
+            "repos/aneym/agent-lb/git/refs/heads/release/beta-1.19.1-beta.1",
         ],
     ]
 
@@ -120,7 +120,7 @@ def test_cleanup_script_dry_run_lists_superseded_pr(tmp_path: Path) -> None:
             "number": 807,
             "title": "chore: release v1.19.1-beta.1",
             "headRefName": "release/beta-1.19.1-beta.1",
-            "headRepositoryOwner": {"login": "Soju06"},
+            "headRepositoryOwner": {"login": "aneym"},
             "labels": [],
             "body": "Synced automatically from release-please PR #806; no manual beta workflow dispatch is required.",
         }
@@ -142,9 +142,9 @@ def test_cleanup_script_dry_run_lists_superseded_pr(tmp_path: Path) -> None:
             "-m",
             "scripts.cleanup_superseded_beta_prs",
             "--repo",
-            "Soju06/agent-lb",
+            "aneym/agent-lb",
             "--repo-owner",
-            "Soju06",
+            "aneym",
             "--current-branch",
             "release/beta-1.20.0-beta.1",
             "--current-tag",
@@ -166,5 +166,5 @@ def test_cleanup_script_dry_run_lists_superseded_pr(tmp_path: Path) -> None:
         "pr",
         "list",
         "--repo",
-        "Soju06/agent-lb",
+        "aneym/agent-lb",
     ]

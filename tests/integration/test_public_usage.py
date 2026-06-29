@@ -50,16 +50,33 @@ async def test_public_usage_aggregates_without_auth(async_client):
     now = utcnow()
     yesterday = now - timedelta(days=1)
     await _insert_log(
-        request_id="r1", provider="openai", model="gpt-5.4-mini", when=now,
-        input_tokens=100, output_tokens=50, cost_usd=0.02,
+        request_id="r1",
+        provider="openai",
+        model="gpt-5.4-mini",
+        when=now,
+        input_tokens=100,
+        output_tokens=50,
+        cost_usd=0.02,
     )
     await _insert_log(
-        request_id="r2", provider="anthropic", model="claude-haiku-4-5-20251001", when=now,
-        input_tokens=30, output_tokens=5, cost_usd=0.01,
+        request_id="r2",
+        provider="anthropic",
+        model="claude-haiku-4-5-20251001",
+        when=now,
+        input_tokens=30,
+        output_tokens=5,
+        cost_usd=0.01,
     )
     await _insert_log(
-        request_id="r3", provider="openai", model="gpt-5.4-mini", when=yesterday,
-        input_tokens=200, output_tokens=100, cost_usd=0.04, status="error", latency_ms=100,
+        request_id="r3",
+        provider="openai",
+        model="gpt-5.4-mini",
+        when=yesterday,
+        input_tokens=200,
+        output_tokens=100,
+        cost_usd=0.04,
+        status="error",
+        latency_ms=100,
     )
 
     # No auth headers — this surface is public.

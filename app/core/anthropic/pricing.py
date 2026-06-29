@@ -201,9 +201,7 @@ def calculate_anthropic_cost_breakdown(
     cache_creation_tokens = _token_count(usage.cache_creation_input_tokens)
     cache_read_tokens = _token_count(usage.cache_read_input_tokens)
     cache_creation_rate = (
-        price.cache_creation_1h_input_per_1m
-        if cache_creation_tier == "1h"
-        else price.cache_creation_5m_input_per_1m
+        price.cache_creation_1h_input_per_1m if cache_creation_tier == "1h" else price.cache_creation_5m_input_per_1m
     )
 
     input_usd = (input_tokens / 1_000_000) * price.input_per_1m

@@ -62,14 +62,36 @@ class DashboardRepository:
         self,
         since: datetime,
         bucket_seconds: int = 21600,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
     ) -> list[BucketModelAggregate]:
-        return await self._logs_repo.aggregate_by_bucket(since, bucket_seconds)
+        return await self._logs_repo.aggregate_by_bucket(
+            since,
+            bucket_seconds,
+            exclude_canceled_subscription_accounts=exclude_canceled_subscription_accounts,
+        )
 
-    async def aggregate_activity_since(self, since: datetime) -> RequestActivityAggregate:
-        return await self._logs_repo.aggregate_activity_since(since)
+    async def aggregate_activity_since(
+        self,
+        since: datetime,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
+    ) -> RequestActivityAggregate:
+        return await self._logs_repo.aggregate_activity_since(
+            since,
+            exclude_canceled_subscription_accounts=exclude_canceled_subscription_accounts,
+        )
 
-    async def top_error_since(self, since: datetime) -> str | None:
-        return await self._logs_repo.top_error_since(since)
+    async def top_error_since(
+        self,
+        since: datetime,
+        *,
+        exclude_canceled_subscription_accounts: bool = False,
+    ) -> str | None:
+        return await self._logs_repo.top_error_since(
+            since,
+            exclude_canceled_subscription_accounts=exclude_canceled_subscription_accounts,
+        )
 
     async def list_additional_quota_keys(
         self,

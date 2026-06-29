@@ -242,18 +242,21 @@ struct AccountRow: View {
 
   private enum Presentation {
     case active
-    case rateLimited(Date)
+    case rateLimited(Date?)
     case paused
     case deactivated(reauth: Bool)
   }
 
-  // §1.2 override priority: rate-limited, then paused, then deactivated.
+  // §1.2 override priority: operator-disabled routing state, then blocked
+  // routing state. Reset metadata only adds detail to a blocked state.
   private var presentation: Presentation {
-    if let reset = account.rateLimitResetAt, reset > now { return .rateLimited(reset) }
     if account.status == "paused" { return .paused }
     if account.status == "deactivated" || account.deactivationReason != nil {
       let reauth = (account.deactivationReason ?? "").localizedCaseInsensitiveContains("auth")
       return .deactivated(reauth: reauth)
+    }
+    if account.status == "rate_limited" || account.status == "quota_exceeded" {
+      return .rateLimited(account.rateLimitResetAt)
     }
     return .active
   }
@@ -351,16 +354,24 @@ struct AccountRow: View {
     }
   }
 
-  // §9.3: rate-limited / paused / deactivated trailing states unchanged;
-  // active rows carry no trailing number — per-window numbers live only
-  // in the window grid below.
+  // §9.3: active rows do not show limit status unless the backend status is
+  // blocked; local subscription labels are display-only and never change
+  // routing classification.
   @ViewBuilder
   private var trailingStatus: some View {
     switch presentation {
     case .active:
-      EmptyView()
+      if let subscriptionStatus {
+        Text(subscriptionStatus)
+          .font(.system(size: 12))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .fixedSize()
+      } else {
+        EmptyView()
+      }
     case .rateLimited(let reset):
-      Text("limited · \(Format.hhmm(reset))")
+      Text(rateLimitLabel(reset: reset))
         .font(.system(size: 12, weight: .bold, design: .monospaced))
         .monospacedDigit()
     case .paused:
@@ -371,6 +382,30 @@ struct AccountRow: View {
       Text(reauth ? "re-auth needed" : "inactive")
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
+    }
+  }
+
+  private func rateLimitLabel(reset: Date?) -> String {
+    guard let reset, reset > now else { return "limited" }
+    return "limited · \(Format.hhmm(reset))"
+  }
+
+  private var subscriptionStatus: String? {
+    guard let subscription = account.subscription else { return nil }
+    switch subscription.status {
+    case "cancel_pending":
+      if let end = subscription.currentPeriodEndAt, end > now {
+        return "ends · \(Format.countdownCompact(to: end, relativeTo: now))"
+      }
+      return "cancel pending"
+    case "pause_pending":
+      return "pause pending"
+    case "paused":
+      return "sub paused"
+    case "canceled":
+      return "canceled"
+    default:
+      return nil
     }
   }
 

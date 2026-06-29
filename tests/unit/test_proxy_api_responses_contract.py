@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -997,3 +998,101 @@ async def test_internal_bridge_responses_disables_openai_sdk_contract(
     assert kwargs.get("enforce_openai_sdk_contract") is False, (
         f"internal_bridge_responses must pass enforce_openai_sdk_contract=False; got kwargs={kwargs!r}"
     )
+
+
+# --- Codex remote-compaction v2 passthrough -------------------------------
+#
+# Codex CLI remote-compaction v2 streams a normal turn to
+# ``/backend-api/codex/responses`` with a ``compaction_trigger`` input item and
+# expects the response to carry exactly one output item of type ``compaction``
+# (an opaque ``encrypted_content`` blob, no text). Because that item type is not
+# on the public OpenAI-SDK passthrough allowlist, the normalizer used to drop or
+# re-type it on the Codex-native surface too, so the CLI saw zero compaction
+# output items and aborted with:
+#   "remote compaction v2 expected exactly one compaction output item, got 0
+#    from 0 output items".
+# On the Codex-native surface (enforce_openai_sdk_contract=False) the normalizer
+# must forward output items and terminal envelopes verbatim.
+
+_COMPACTION_ITEM: dict[str, Any] = {
+    "type": "compaction",
+    "encrypted_content": "gAAAAABmENCRYPTED",
+    "metadata": {"trigger": "auto"},
+}
+_COMPACTION_CREATED = {
+    "type": "response.created",
+    "sequence_number": 0,
+    "response": {"id": "resp_c", "object": "response", "status": "in_progress", "output": []},
+}
+_COMPACTION_ITEM_DONE = {
+    "type": "response.output_item.done",
+    "sequence_number": 1,
+    "output_index": 0,
+    "item": _COMPACTION_ITEM,
+}
+_COMPACTION_COMPLETED = {
+    "type": "response.completed",
+    "sequence_number": 2,
+    "response": {
+        "id": "resp_c",
+        "object": "response",
+        "status": "completed",
+        "output": [_COMPACTION_ITEM],
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_normalize_public_responses_stream_forwards_codex_compaction_item_verbatim() -> None:
+    blocks = [
+        block
+        async for block in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                f"data: {json.dumps(_COMPACTION_CREATED)}\n\n",
+                f"data: {json.dumps(_COMPACTION_ITEM_DONE)}\n\n",
+                f"data: {json.dumps(_COMPACTION_COMPLETED)}\n\n",
+            ),
+            enforce_openai_sdk_contract=False,
+        )
+    ]
+
+    payloads = [p for b in blocks if (p := proxy_api_module._parse_sse_payload(b)) is not None]
+
+    done_events = [p for p in payloads if p.get("type") == "response.output_item.done"]
+    assert len(done_events) == 1
+    # The compaction item passes through byte-for-byte (type + encrypted_content).
+    assert done_events[0]["item"] == _COMPACTION_ITEM
+
+    completed_events = [p for p in payloads if p.get("type") == "response.completed"]
+    assert len(completed_events) == 1
+    response = completed_events[0]["response"]
+    assert isinstance(response, dict)
+    assert response["output"] == [_COMPACTION_ITEM]
+    # No contract-failure substitution on the Codex-native surface.
+    assert all(p.get("type") != "response.failed" for p in payloads)
+    assert blocks[-1] == "data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_normalize_public_responses_stream_strips_compaction_item_under_sdk_contract() -> None:
+    # Boundary guard: the public /v1 OpenAI-SDK contract has no ``compaction``
+    # output item type, so under enforce_openai_sdk_contract=True the unsupported
+    # item is dropped and a compaction-only terminal becomes a contract failure
+    # rather than leaking a non-standard item to OpenAI SDK consumers. This keeps
+    # the Codex fix scoped to the Codex-native surface only.
+    blocks = [
+        block
+        async for block in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                f"data: {json.dumps(_COMPACTION_CREATED)}\n\n",
+                f"data: {json.dumps(_COMPACTION_ITEM_DONE)}\n\n",
+                f"data: {json.dumps(_COMPACTION_COMPLETED)}\n\n",
+            ),
+        )
+    ]
+
+    payloads = [p for b in blocks if (p := proxy_api_module._parse_sse_payload(b)) is not None]
+    types = [p.get("type") for p in payloads]
+    assert "response.output_item.done" not in types
+    assert "response.completed" not in types
+    assert "response.failed" in types

@@ -1,7 +1,10 @@
 # github-automation Specification
 
 ## Purpose
-TBD - created by archiving change fix-codex-review-label-token. Update Purpose after archive.
+Define GitHub automation behavior for Codex review label synchronization,
+including trusted checkout, privileged token fallback, and resilient handling of
+write-denied PR mutations.
+
 ## Requirements
 ### Requirement: Codex review label sync write-token fallback
 
@@ -29,4 +32,3 @@ The Codex label synchronization script MUST distinguish GitHub write-permission 
 
 - **WHEN** the script cannot read required PR state, check state, merge state, or Codex review evidence
 - **THEN** the workflow fails rather than silently treating the PR as synchronized
-

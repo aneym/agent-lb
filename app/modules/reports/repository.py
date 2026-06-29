@@ -7,6 +7,7 @@ from sqlalchemy import Integer, and_, cast, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, RequestLog
+from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
 
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
 _INTERNAL_WARMUP_REQUEST_KINDS = ("warmup", "limit_warmup")
@@ -61,6 +62,7 @@ class ReportsRepository:
             RequestLog.requested_at >= start_date,
             RequestLog.requested_at < end_date,
             _normal_traffic_clause(),
+            _visible_account_log_clause(),
         ]
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
@@ -81,6 +83,7 @@ class ReportsRepository:
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
                 func.count(func.distinct(RequestLog.account_id)).label("active_accounts"),
             )
+            .outerjoin(Account, Account.id == RequestLog.account_id)
             .where(and_(*conditions))
             .group_by(date_col)
             .order_by(date_col)
@@ -112,6 +115,7 @@ class ReportsRepository:
             RequestLog.requested_at < end_date,
             _normal_traffic_clause(),
             RequestLog.model.is_not(None),
+            _visible_account_log_clause(),
         ]
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
@@ -123,6 +127,7 @@ class ReportsRepository:
                 RequestLog.model,
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
             )
+            .outerjoin(Account, Account.id == RequestLog.account_id)
             .where(and_(*conditions))
             .group_by(RequestLog.model)
             .order_by(func.coalesce(func.sum(RequestLog.cost_usd), 0.0).desc())
@@ -147,6 +152,7 @@ class ReportsRepository:
             RequestLog.requested_at >= start_date,
             RequestLog.requested_at < end_date,
             _normal_traffic_clause(),
+            _visible_account_log_clause(),
         ]
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
@@ -159,6 +165,7 @@ class ReportsRepository:
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
                 func.count().label("request_count"),
             )
+            .outerjoin(Account, Account.id == RequestLog.account_id)
             .where(and_(*conditions))
             .group_by(RequestLog.account_id)
             .order_by(func.coalesce(func.sum(RequestLog.cost_usd), 0.0).desc())
@@ -196,6 +203,7 @@ class ReportsRepository:
             RequestLog.requested_at < end_date,
             _normal_traffic_clause(),
             RequestLog.account_id.is_not(None),
+            _visible_account_log_clause(),
         ]
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
@@ -203,7 +211,9 @@ class ReportsRepository:
             conditions.append(RequestLog.model == model)
 
         result = await self._session.execute(
-            select(func.count(func.distinct(RequestLog.account_id))).where(and_(*conditions))
+            select(func.count(func.distinct(RequestLog.account_id)))
+            .outerjoin(Account, Account.id == RequestLog.account_id)
+            .where(and_(*conditions))
         )
         return int(result.scalar_one() or 0)
 
@@ -215,4 +225,13 @@ def _normal_traffic_clause():
             RequestLog.request_kind.is_(None),
             RequestLog.request_kind.not_in(_INTERNAL_WARMUP_REQUEST_KINDS),
         ),
+    )
+
+
+def _visible_account_log_clause():
+    return or_(
+        RequestLog.account_id.is_(None),
+        Account.id.is_(None),
+        Account.subscription_status.is_(None),
+        func.lower(func.trim(Account.subscription_status)) != CANCELED_SUBSCRIPTION_STATUS,
     )

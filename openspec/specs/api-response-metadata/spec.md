@@ -1,7 +1,10 @@
 # api-response-metadata Specification
 
 ## Purpose
-TBD - created by archiving change add-app-version-response-header. Update Purpose after archive.
+Define global HTTP response metadata behavior for surfacing the running
+agent-lb package version on handled HTTP responses while avoiding websocket and
+server-error paths.
+
 ## Requirements
 ### Requirement: HTTP 2xx-4xx responses include the running app version header
 The system MUST attach `X-App-Version` to HTTP responses whose final status code is in the `200-499` range. The header value MUST equal the running agent-lb package version. This requirement applies across dashboard, health, proxy, and static-file HTTP routes, including handled framework or domain `4xx` responses. If a response already sets `X-App-Version`, the system MUST preserve the explicit value rather than overwrite it.
@@ -32,4 +35,3 @@ The system MUST NOT add `X-App-Version` to HTTP responses whose final status cod
 #### Scenario: Websocket route does not gain app version response metadata
 - **WHEN** a client connects to a websocket route
 - **THEN** the global HTTP app-version response-header policy does not apply to websocket traffic
-

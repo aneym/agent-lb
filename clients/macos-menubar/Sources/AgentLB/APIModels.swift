@@ -29,8 +29,16 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let lastRefreshAt: Date?
   let deactivationReason: String?
   let isEmailDuplicate: Bool?
+  let subscription: AccountSubscriptionLedger?
 
   var id: String { accountId }
+}
+
+struct AccountSubscriptionLedger: Decodable, Sendable, Equatable {
+  let status: String?
+  let nextChargeAt: Date?
+  let currentPeriodEndAt: Date?
+  let lastVerifiedAt: Date?
 }
 
 struct AccountUsage: Decodable, Sendable, Equatable {

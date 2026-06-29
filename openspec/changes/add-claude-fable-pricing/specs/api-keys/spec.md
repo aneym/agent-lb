@@ -1,3 +1,5 @@
+## ADDED Requirements
+
 ### Requirement: Claude Fable pricing is recognized
 
 The system MUST recognize Claude Fable 5 pricing when computing request costs. Aliases for the same model family, including suffixed model identifiers such as `claude-fable-5[1m]`, MUST resolve to the canonical `claude-fable-5` price table entry.

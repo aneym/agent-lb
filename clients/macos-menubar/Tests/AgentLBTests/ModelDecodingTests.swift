@@ -55,6 +55,51 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertEqual(response.accounts.count, 8)
   }
 
+  func testAccountSubscriptionLedgerDecoding() throws {
+    let json = """
+    {
+      "accounts": [{
+        "accountId": "sub-ledger",
+        "provider": "anthropic",
+        "email": "sub@example.com",
+        "displayName": "sub@example.com",
+        "status": "active",
+        "usage": {
+          "primaryRemainingPercent": 100,
+          "secondaryRemainingPercent": 99,
+          "monthlyRemainingPercent": null
+        },
+        "remainingCreditsPrimary": null,
+        "capacityCreditsPrimary": null,
+        "remainingCreditsSecondary": null,
+        "capacityCreditsSecondary": null,
+        "resetAtPrimary": null,
+        "resetAtSecondary": null,
+        "resetAtMonthly": null,
+        "rateLimitResetAt": null,
+        "lastRefreshAt": null,
+        "deactivationReason": null,
+        "isEmailDuplicate": false,
+        "subscription": {
+          "status": "cancel_pending",
+          "nextChargeAt": null,
+          "currentPeriodEndAt": "2026-06-22T00:00:00Z",
+          "lastVerifiedAt": "2026-06-13T15:30:00Z",
+          "amount": "20.00",
+          "currency": "USD",
+          "notes": "operator reported cancellation"
+        }
+      }]
+    }
+    """.data(using: .utf8)!
+
+    let response = try decoder.decode(AccountsResponse.self, from: json)
+    let account = try XCTUnwrap(response.accounts.first)
+    XCTAssertEqual(account.subscription?.status, "cancel_pending")
+    XCTAssertNotNil(account.subscription?.currentPeriodEndAt)
+    XCTAssertNotNil(account.subscription?.lastVerifiedAt)
+  }
+
   // MARK: - summary.json
 
   func testSummaryDecoding() throws {
