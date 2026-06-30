@@ -1266,14 +1266,20 @@ class _HTTPBridgeStreamingMixin:
         is not enough: sticky selection re-pins the same account seconds later
         and the fresh bridge hangs identically. So additionally:
 
-        1. Record a transient account error (mirrors ``stream_idle_timeout``)
-           so the account-health machinery can cool the account after repeats.
+        1. Classify the failure via ``_handle_stream_error``, which treats
+           ``bridge_first_event_timeout`` as ACCOUNT-NEUTRAL — it does NOT
+           record an account-health error / increment ``error_count``, because
+           a zero-event upstream is almost always upstream slowness (e.g. a
+           large compaction payload) rather than an account fault, and
+           penalizing it drained the codex pool to a spurious ``no_accounts``
+           503. Steering is therefore done ENTIRELY by steps 2-3 below, not by
+           account-health backoff.
         2. Pin a short-lived cooldown for this bridge key so the next bridge
            creation excludes the failed account from selection — which also
            makes ``_select_with_stickiness`` rebind the sticky mapping to the
            newly chosen account.
-        3. Delete the sticky mapping directly as a belt-and-braces measure so
-           a retry after cooldown expiry does not re-pin via stale stickiness.
+        3. Delete the sticky mapping directly so a retry after cooldown expiry
+           does not re-pin via stale stickiness.
         """
         try:
             await self._handle_stream_error(
@@ -1283,7 +1289,7 @@ class _HTTPBridgeStreamingMixin:
             )
         except Exception:
             logger.warning(
-                "Failed to record first-event timeout account health penalty account_id=%s",
+                "Failed to classify first-event timeout account_id=%s",
                 session.account.id,
                 exc_info=True,
             )
@@ -1615,10 +1621,12 @@ class _HTTPBridgeStreamingMixin:
                 if first_event_timed_out:
                     # Self-heal: a bridge whose first turn never produced an
                     # upstream event is poisoned (the upstream response.create
-                    # appears to have been silently dropped). Penalize the
-                    # account, break the sticky binding, and cool the account
-                    # down for this bridge key so the next attempt selects a
-                    # different account instead of re-pinning the dead one.
+                    # appears to have been silently dropped). The first-event
+                    # timeout is account-NEUTRAL (no health penalty); steering
+                    # relies solely on breaking the sticky binding and cooling
+                    # the account down for THIS bridge key so the next attempt
+                    # selects a different account instead of re-pinning the
+                    # dead one.
                     if session.account.id not in first_event_quarantined_account_ids:
                         await self._quarantine_http_bridge_first_event_account(session)
                     # Then retire the bridge and its durable session lease so

@@ -1,0 +1,6 @@
+- [x] Add `bridge_first_event_timeout` to `_is_account_neutral_error_code` in `app/modules/proxy/service.py` so `_handle_stream_error` does not record an account-health error for it.
+- [x] Raise `_COMPACT_MAX_ACCOUNT_ATTEMPTS` from 2 to 4 in `app/modules/proxy/service.py`.
+- [x] Add regression coverage in `tests/unit/test_proxy_http_bridge.py`: a `bridge_first_event_timeout` does NOT call `load_balancer.record_error` (account-neutral), while a genuine transient code (`stream_idle_timeout`) still does; plus a unit assertion of the neutral-code set.
+- [x] Update the stale "must be recorded as a transient account error" comment in `test_http_bridge_first_event_timeout_emits_failure_and_invalidates_session`.
+- [x] `ruff check app clients` and the relevant proxy test modules pass.
+- [x] Document the first-event-timeout account-neutral contract under `responses-api-compat`.

@@ -519,8 +519,10 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
     assert session.closed is True
     cast(AsyncMock, session.upstream.close).assert_awaited()
 
-    # Account health: the failure must be recorded as a transient account
-    # error (mirrors the stream_idle_timeout penalty path).
+    # Account health: the first-event timeout is delegated to _handle_stream_error,
+    # which now classifies "bridge_first_event_timeout" as ACCOUNT-NEUTRAL (no
+    # health penalty) — see test_first_event_timeout_is_account_neutral_no_health_penalty.
+    # The per-bridge-key cooldown below is what steers the retry off this account.
     handle_stream_error.assert_awaited_once()
     penalty_args = handle_stream_error.await_args
     assert penalty_args is not None
@@ -547,6 +549,56 @@ async def test_http_bridge_first_event_timeout_emits_failure_and_invalidates_ses
     assert dump_call.args[0] is request_state
     assert dump_call.kwargs["error_code"] == "bridge_first_event_timeout"
     assert dump_call.kwargs["log_prefix"] == "first-event-timeout"
+
+
+def test_bridge_first_event_timeout_is_account_neutral_code() -> None:
+    """The first-event timeout must be in the account-neutral set so it does not
+    feed account-health error backoff."""
+    assert proxy_service._is_account_neutral_error_code("bridge_first_event_timeout") is True
+    assert proxy_service._is_account_neutral_error_code("proxy_unavailable") is True
+    # Genuine account-attributable faults stay non-neutral.
+    assert proxy_service._is_account_neutral_error_code("stream_idle_timeout") is False
+    assert proxy_service._is_account_neutral_error_code("server_error") is False
+
+
+@pytest.mark.asyncio
+async def test_first_event_timeout_is_account_neutral_no_health_penalty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a ``bridge_first_event_timeout`` must NOT record an account
+    health error. Recording it let a few large-payload compaction timeouts push
+    every codex account past the error_count>=3 backoff threshold (logic.py),
+    draining the routable pool to a spurious ``no_accounts`` 503 that broke
+    context compaction. Neutral classification keeps the pool intact; the
+    per-bridge-key cooldown still steers the retry to a different account.
+    """
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    record_error = AsyncMock()
+    service._load_balancer = cast(
+        Any,
+        SimpleNamespace(
+            record_error=record_error,
+            mark_rate_limit=AsyncMock(),
+            mark_quota_exceeded=AsyncMock(),
+            mark_permanent_failure=AsyncMock(),
+        ),
+    )
+    account = cast(Any, SimpleNamespace(id="acc-neutral", status=AccountStatus.ACTIVE))
+
+    classified = await service._handle_stream_error(
+        account,
+        cast(Any, {"message": "Upstream produced no events for this turn"}),
+        "bridge_first_event_timeout",
+    )
+    assert classified is not None
+    # The keystone assertion: account health is untouched by a first-event timeout.
+    record_error.assert_not_awaited()
+
+    # Contrast: a genuine transient stream fault is still recorded as account health.
+    await service._handle_stream_error(
+        account, cast(Any, {"message": "idle"}), "stream_idle_timeout"
+    )
+    record_error.assert_awaited_once_with(account)
 
 
 @pytest.mark.asyncio

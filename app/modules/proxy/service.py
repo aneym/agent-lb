@@ -797,7 +797,12 @@ _UPSTREAM_UNAVAILABLE_NON_TRANSIENT_MESSAGE_MARKERS = (
 )
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
 _MAX_TRANSIENT_SAME_ACCOUNT_RETRIES = 3
-_COMPACT_MAX_ACCOUNT_ATTEMPTS = 2
+# Compaction is a single critical call: if it 503s, the client session cannot
+# shrink and overflows. Two account attempts is below a typical codex pool, so a
+# transient-error burst on the first two selected accounts exhausts the loop and
+# raises `no_accounts` while other healthy accounts were never tried. Cover the
+# pool (match/exceed the streaming path) so compaction fails over across it.
+_COMPACT_MAX_ACCOUNT_ATTEMPTS = 4
 _STREAM_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES = frozenset(
@@ -1905,7 +1910,23 @@ class ProxyService(
 
 
 def _is_account_neutral_error_code(code: str | None) -> bool:
-    return is_local_overload_error_code(code) or code == "proxy_unavailable"
+    # A first-event timeout means the upstream produced ZERO events within the
+    # first-event window. That is almost always upstream slowness (e.g. a large
+    # context-compaction payload whose connect+serialize+send eats the window)
+    # or a silently-dropped response.create — NOT a fault of this account's
+    # credentials or quota. Recording an account-health error here lets a
+    # handful of such timeouts push every codex account past the error_count>=3
+    # backoff threshold (app/core/balancer/logic.py), draining the routable pool
+    # to a spurious `no_accounts` 503 that breaks compaction for ALL callers.
+    # The per-bridge-key cooldown + sticky rebind (http_bridge/streaming.py) already
+    # steer the retry to a different account, so treat the first-event timeout as
+    # account-neutral — honoring the documented invariant that idle/no-event
+    # disconnects must not mark an otherwise-healthy account unhealthy.
+    return (
+        is_local_overload_error_code(code)
+        or code == "proxy_unavailable"
+        or code == "bridge_first_event_timeout"
+    )
 
 
 def _is_local_account_cap_code(code: str | None) -> bool:

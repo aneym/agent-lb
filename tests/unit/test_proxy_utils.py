@@ -16903,6 +16903,71 @@ async def test_compact_responses_records_transient_error_for_generic_upstream_fa
     record_success.assert_not_awaited()
 
 
+def test_compact_max_account_attempts_covers_pool():
+    """Pin the compaction failover budget: it must cover a typical codex pool so a
+    single critical compaction call does not 503 with healthy accounts untried.
+    Guards against a regression back to 2 (which stranded compaction during a
+    transient-error burst on the first two selected accounts)."""
+    from app.modules.proxy._service.compact import _compact_max_account_attempts
+
+    assert proxy_service._COMPACT_MAX_ACCOUNT_ATTEMPTS >= 4
+    assert _compact_max_account_attempts() >= 4
+
+
+@pytest.mark.asyncio
+async def test_compact_responses_fails_over_across_more_than_two_accounts(monkeypatch):
+    """Regression for _COMPACT_MAX_ACCOUNT_ATTEMPTS 2->4: a compaction request whose
+    first three selected accounts return transient server errors must keep failing
+    over to additional DISTINCT accounts and succeed on the fourth, instead of
+    giving up after two and surfacing no_accounts. excluded_account_ids must
+    accumulate the failed accounts so each attempt selects a new one."""
+    settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
+    request_logs = _RequestLogsRecorder()
+    service = proxy_service.ProxyService(_repo_factory(request_logs))
+    accts = [_make_account(f"acc_compact_failover_{i}") for i in range(4)]
+    select_account = AsyncMock(
+        side_effect=[AccountSelection(account=a, error_message=None) for a in accts]
+    )
+
+    monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(service._load_balancer, "select_account", select_account)
+    monkeypatch.setattr(service._load_balancer, "record_error", AsyncMock())
+    monkeypatch.setattr(service._load_balancer, "record_errors", AsyncMock())
+    monkeypatch.setattr(service._load_balancer, "record_success", AsyncMock())
+    monkeypatch.setattr(service._load_balancer, "mark_rate_limit", AsyncMock())
+    monkeypatch.setattr(service._load_balancer, "mark_quota_exceeded", AsyncMock())
+    monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(side_effect=lambda account, **kwargs: account))
+    monkeypatch.setattr(service, "_settle_compact_api_key_usage", AsyncMock())
+
+    healthy_id = accts[3].chatgpt_account_id
+
+    async def fake_compact(payload, headers, access_token, account_id):
+        del payload, headers, access_token
+        if account_id == healthy_id:
+            return OpenAIResponsePayload.model_validate({"output": []})
+        raise proxy_module.ProxyResponseError(
+            500, openai_error("server_error", "boom", error_type="server_error")
+        )
+
+    monkeypatch.setattr(proxy_service, "core_compact_responses", fake_compact)
+
+    payload = ResponsesCompactRequest.model_validate({"model": "gpt-5.1", "instructions": "hi", "input": []})
+
+    result = await service.compact_responses(payload, {"session_id": "sid-compact-failover"})
+
+    assert result.model_extra == {"output": []}
+    # Tried all 4 distinct accounts (capped at 2 before the fix -> would 503).
+    assert select_account.await_count == 4
+    assert select_account.await_args_list[1].kwargs["exclude_account_ids"] == {accts[0].id}
+    assert select_account.await_args_list[2].kwargs["exclude_account_ids"] == {accts[0].id, accts[1].id}
+    assert select_account.await_args_list[3].kwargs["exclude_account_ids"] == {
+        accts[0].id,
+        accts[1].id,
+        accts[2].id,
+    }
+
+
 @pytest.mark.asyncio
 async def test_compact_previous_response_not_found_is_masked_without_account_penalty(monkeypatch, caplog):
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
