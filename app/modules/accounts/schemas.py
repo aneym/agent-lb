@@ -96,6 +96,9 @@ class AccountSummary(DashboardModel):
     routing_policy: str = Field(default="normal", pattern=r"^(normal|burn_first|preserve)$")
     status: str
     security_work_authorized: bool = False
+    # Anthropic only: weekly usage below the Fable threshold, i.e. the balancer
+    # will consider this account for Fable-class requests. Null for other providers.
+    fable_eligible: bool | None = None
     usage: AccountUsage | None = None
     reset_at_primary: datetime | None = None
     reset_at_secondary: datetime | None = None

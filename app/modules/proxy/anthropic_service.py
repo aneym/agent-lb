@@ -25,7 +25,7 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME
 from app.core.utils.request_id import ensure_request_id
-from app.db.models import Account, StickySessionKind
+from app.db.models import Account, StickySessionKind, UsageHistory
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
@@ -54,6 +54,9 @@ class _AnthropicQuotaEligibility:
     account_ids: list[str]
     blocked_count: int = 0
     next_reset_at: int | None = None
+    # Accounts past the Fable weekly threshold: preferred (burn_first) for
+    # non-Fable traffic so under-threshold accounts keep Fable headroom.
+    burn_first_account_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,7 +317,7 @@ class AnthropicProxyService:
         sticky_key: str | None,
         quota_key: str,
     ) -> Account:
-        eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
+        eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=model)
         if not eligibility.account_ids and eligibility.blocked_count > 0:
             reset_suffix = (
                 f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at).isoformat()}."
@@ -336,6 +339,7 @@ class AnthropicProxyService:
             provider=provider_name,
             account_ids=eligibility.account_ids,
             exclude_account_ids=exclude_account_ids,
+            burn_first_account_ids=eligibility.burn_first_account_ids,
             sticky_key=sticky_key,
             sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
             prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,
@@ -444,8 +448,16 @@ class AnthropicProxyService:
         )
         return message, retry_at
 
-    async def _provider_quota_eligibility(self, provider_name: str, quota_key: str) -> _AnthropicQuotaEligibility:
+    async def _provider_quota_eligibility(
+        self,
+        provider_name: str,
+        quota_key: str,
+        *,
+        model: str | None = None,
+    ) -> _AnthropicQuotaEligibility:
         now = int(time.time())
+        settings = get_settings()
+        fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
         async with self._repo_factory() as repos:
             provider_accounts = [
                 account
@@ -466,6 +478,9 @@ class AnthropicProxyService:
             cooldowns = {
                 account_id: (float(entry.used_percent), entry.reset_at) for account_id, entry in latest.items()
             }
+            weekly_usage: dict[str, UsageHistory] = {}
+            if fable_routing:
+                weekly_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
 
         eligible_account_ids: list[str] = []
         reset_candidates: list[int] = []
@@ -478,10 +493,41 @@ class AnthropicProxyService:
                     reset_candidates.append(int(cooldown[1]))
                 continue
             eligible_account_ids.append(account_id)
+
+        burn_first_account_ids: frozenset[str] = frozenset()
+        if fable_routing and eligible_account_ids:
+            threshold = settings.anthropic_fable_weekly_max_used_percent
+
+            def _weekly_used(account_id: str) -> float:
+                entry = weekly_usage.get(account_id)
+                return float(entry.used_percent) if entry is not None else 0.0
+
+            over_threshold = frozenset(
+                account_id for account_id in eligible_account_ids if _weekly_used(account_id) >= threshold
+            )
+            if _is_fable_model(model):
+                under_threshold = [
+                    account_id for account_id in eligible_account_ids if account_id not in over_threshold
+                ]
+                if under_threshold:
+                    eligible_account_ids = under_threshold
+                elif over_threshold:
+                    # The local threshold is a preference, not an oracle —
+                    # upstream decides whether Fable is actually refused.
+                    logger.warning(
+                        "All eligible Anthropic accounts are past the Fable weekly threshold "
+                        "(%.0f%%); falling back to the full pool model=%s",
+                        threshold,
+                        model,
+                    )
+            else:
+                burn_first_account_ids = over_threshold
+
         return _AnthropicQuotaEligibility(
             account_ids=eligible_account_ids,
             blocked_count=blocked_count,
             next_reset_at=min(reset_candidates) if reset_candidates else None,
+            burn_first_account_ids=burn_first_account_ids,
         )
 
     async def _record_quota_cooldown(self, account: Account, *, quota_key: str, error: UpstreamError) -> None:
@@ -645,6 +691,10 @@ def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
     if payload.thinking:
         return "anthropic_top_thinking"
     return "anthropic_top"
+
+
+def _is_fable_model(model: str | None) -> bool:
+    return bool(model) and "fable" in model.lower()
 
 
 def _messages_provider_name(payload: AnthropicMessageRequest) -> str:

@@ -1414,3 +1414,144 @@ async def test_anthropic_fast_429_records_fast_cooldown_and_allows_standard_fall
     )
     assert fast_quota["displayLabel"] == "Claude fast mode"
     assert fast_quota["primaryWindow"]["usedPercent"] == 100.0
+
+
+async def _insert_weekly_usage(*, account_id: str, used_percent: float) -> None:
+    from app.db.models import UsageHistory
+
+    reset_at = int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
+    async with SessionLocal() as session:
+        session.add(
+            UsageHistory(
+                account_id=account_id,
+                provider="anthropic",
+                window="secondary",
+                used_percent=used_percent,
+                reset_at=reset_at,
+                window_minutes=10080,
+                recorded_at=utcnow(),
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_fable_requests_route_to_accounts_under_weekly_threshold(async_client):
+    await _insert_account(
+        account_id="anthropic-weekly-hot",
+        provider="anthropic",
+        access_token="anthropic-access-hot",
+        email="hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-weekly-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-fresh",
+        email="fresh@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-weekly-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-weekly-fresh", used_percent=10.0)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-threshold",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-weekly-fresh"
+
+
+@pytest.mark.asyncio
+async def test_fable_requests_fall_back_when_all_accounts_over_threshold(async_client):
+    for index, used in enumerate((70.0, 90.0)):
+        await _insert_account(
+            account_id=f"anthropic-weekly-over-{index}",
+            provider="anthropic",
+            access_token=f"anthropic-access-over-{index}",
+            email=f"over-{index}@example.com",
+        )
+        await _insert_weekly_usage(account_id=f"anthropic-weekly-over-{index}", used_percent=used)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-fallback",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    # Local threshold is a preference, not an oracle: the request still routes.
+    assert response.status_code == 200
+    assert response.json()["accountId"].startswith("anthropic-weekly-over-")
+
+
+@pytest.mark.asyncio
+async def test_non_fable_requests_prefer_accounts_over_weekly_threshold(async_client):
+    await _insert_account(
+        account_id="anthropic-burn-hot",
+        provider="anthropic",
+        access_token="anthropic-access-burn-hot",
+        email="burn-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-burn-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-burn-fresh",
+        email="burn-fresh@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-burn-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-burn-fresh", used_percent=10.0)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-haiku-burn",
+            "model": "claude-haiku-4-5",
+            "quotaKey": "anthropic_standard",
+        },
+    )
+
+    # usage_weighted alone would pick the fresh account; the burn_first stamp
+    # on the over-threshold account must win so Fable headroom is preserved.
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-burn-hot"
+
+
+@pytest.mark.asyncio
+async def test_non_fable_burn_preference_respects_preserve_policy(async_client):
+    await _insert_account(
+        account_id="anthropic-preserve-hot",
+        provider="anthropic",
+        access_token="anthropic-access-preserve-hot",
+        email="preserve-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-preserve-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-preserve-fresh",
+        email="preserve-fresh@example.com",
+    )
+    async with SessionLocal() as session:
+        account = await session.get(Account, "anthropic-preserve-hot")
+        account.routing_policy = "preserve"
+        await session.commit()
+    await _insert_weekly_usage(account_id="anthropic-preserve-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-preserve-fresh", used_percent=10.0)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-haiku-preserve",
+            "model": "claude-haiku-4-5",
+            "quotaKey": "anthropic_standard",
+        },
+    )
+
+    # The stored preserve policy must not be overridden by the burn stamp.
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-preserve-fresh"

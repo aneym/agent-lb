@@ -247,6 +247,7 @@ def _account_to_summary(
         status=effective_status.value,
         routing_policy=_normalize_account_routing_policy(account.routing_policy),
         security_work_authorized=bool(account.security_work_authorized),
+        fable_eligible=_fable_eligible(account, secondary_used_percent),
         usage=AccountUsage(
             primary_remaining_percent=primary_remaining_percent,
             secondary_remaining_percent=secondary_remaining_percent,
@@ -306,6 +307,20 @@ def _normalize_account_routing_policy(value: str | None) -> str:
     if value in _ACCOUNT_ROUTING_POLICIES:
         return value
     return "normal"
+
+
+def _fable_eligible(account: Account, secondary_used_percent: float | None) -> bool | None:
+    """Whether the balancer will consider this account for Fable-class requests.
+
+    Anthropic accounts only; an account with no weekly usage sample yet counts
+    as eligible (fresh window).
+    """
+    if account.provider != ANTHROPIC_PROVIDER_NAME:
+        return None
+    threshold = config_settings.get_settings().anthropic_fable_weekly_max_used_percent
+    if secondary_used_percent is None:
+        return True
+    return float(secondary_used_percent) < threshold
 
 
 def _limit_warmup_to_status(entry: AccountLimitWarmup | None) -> AccountLimitWarmupStatus | None:

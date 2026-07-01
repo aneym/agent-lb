@@ -49,3 +49,14 @@ async def test_anthropic_stream_error_guard_releases_api_key_reservation(
     assert chunks[0] == b"event: ping\n\n"
     assert b"event: error\n" in chunks[1]
     assert released == [reservation]
+
+
+def test_is_fable_model_classification() -> None:
+    from app.modules.proxy.anthropic_service import _is_fable_model
+
+    assert _is_fable_model("claude-fable-5") is True
+    assert _is_fable_model("CLAUDE-FABLE-5-20260101") is True
+    assert _is_fable_model("claude-opus-4-8") is False
+    assert _is_fable_model("claude-haiku-4-5") is False
+    assert _is_fable_model("") is False
+    assert _is_fable_model(None) is False

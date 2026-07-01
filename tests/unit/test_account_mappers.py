@@ -170,3 +170,18 @@ def test_normalize_account_routing_policy() -> None:
     assert _normalize_account_routing_policy("preserve") == "preserve"
     assert _normalize_account_routing_policy("legacy") == "normal"
     assert _normalize_account_routing_policy(None) == "normal"
+
+
+def test_fable_eligible_flag_by_provider_and_threshold() -> None:
+    anthropic = _account(AccountStatus.ACTIVE)
+    anthropic.provider = "anthropic"
+    openai = _account(AccountStatus.ACTIVE)
+    openai.provider = "openai"
+
+    # Anthropic: under threshold eligible, at/over threshold not, no sample eligible.
+    assert mappers._fable_eligible(anthropic, 10.0) is True
+    assert mappers._fable_eligible(anthropic, 50.0) is False
+    assert mappers._fable_eligible(anthropic, 90.0) is False
+    assert mappers._fable_eligible(anthropic, None) is True
+    # Other providers: null.
+    assert mappers._fable_eligible(openai, 10.0) is None

@@ -304,6 +304,7 @@ class LoadBalancer:
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
         exclude_account_ids: Collection[str] | None = None,
+        burn_first_account_ids: Collection[str] | None = None,
         require_security_work_authorized: bool = False,
         budget_threshold_pct: float = 95.0,
         secondary_budget_threshold_pct: float = 100.0,
@@ -314,6 +315,7 @@ class LoadBalancer:
     ) -> AccountSelection:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
+        request_burn_first_ids = frozenset(burn_first_account_ids or ())
         provider_name = normalize_provider_name(provider)
 
         async def load_selection_inputs() -> _SelectionInputs:
@@ -418,6 +420,7 @@ class LoadBalancer:
                         runtime=self._runtime,
                         routing_policy_override=selection_inputs.routing_policy_override,
                         ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
+                        burn_first_account_ids=request_burn_first_ids,
                     )
                     effective_routing_costs = (
                         routing_costs_by_account_id
@@ -598,6 +601,7 @@ class LoadBalancer:
                         runtime=self._runtime,
                         routing_policy_override=selection_inputs.routing_policy_override,
                         ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
+                        burn_first_account_ids=request_burn_first_ids,
                     )
                     effective_routing_costs = (
                         routing_costs_by_account_id
@@ -1673,6 +1677,7 @@ def _build_states(
     runtime: dict[str, RuntimeState],
     routing_policy_override: str | None = None,
     ignore_standard_quota_account_ids: frozenset[str] = frozenset(),
+    burn_first_account_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[AccountState], dict[str, Account]]:
     states: list[AccountState] = []
     account_map: dict[str, Account] = {}
@@ -1693,6 +1698,12 @@ def _build_states(
         )
         if routing_policy_override is not None and account.id in ignore_standard_quota_account_ids:
             state.routing_policy = routing_policy_override
+        # Request-scoped burn preference (e.g. non-Fable Anthropic traffic
+        # draining accounts past the Fable weekly threshold). Applied to the
+        # per-request state only — never persisted — and only over a stored
+        # `normal` policy so operator preserve/burn choices win.
+        if account.id in burn_first_account_ids and state.routing_policy == _ROUTING_POLICY_NORMAL:
+            state.routing_policy = ROUTING_POLICY_BURN_FIRST
         state.ignore_standard_quota = account.id in ignore_standard_quota_account_ids
         states.append(state)
         account_map[account.id] = account
