@@ -198,6 +198,12 @@ class Settings(BaseSettings):
     auth_guardian_jitter_seconds: float = Field(default=300.0, ge=0)
     auth_guardian_failure_backoff_base_seconds: float = Field(default=300.0, ge=0)
     auth_guardian_failure_backoff_max_seconds: float = Field(default=3600.0, ge=0)
+    account_pulse_enabled: bool = True
+    account_pulse_interval_seconds: int = Field(default=21600, gt=0)
+    account_pulse_concurrency: int = Field(default=2, gt=0)
+    account_pulse_jitter_seconds: float = Field(default=300.0, ge=0)
+    account_pulse_failure_backoff_base_seconds: float = Field(default=600.0, ge=0)
+    account_pulse_failure_backoff_max_seconds: float = Field(default=21600.0, ge=0)
     transcription_request_budget_seconds: float = Field(default=120.0, gt=0)
     token_refresh_interval_days: int = 8
     usage_fetch_timeout_seconds: float = 10.0

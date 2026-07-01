@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 from datetime import datetime, timedelta
 from typing import cast
-from urllib.parse import urljoin
 
-import aiohttp
 from pydantic import ValidationError
 
-from app.core.anthropic.oauth import ANTHROPIC_OAUTH_BETA
 from app.core.auth import (
     DEFAULT_EMAIL,
     DEFAULT_PLAN,
@@ -22,7 +18,6 @@ from app.core.auth import (
 )
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
-from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
@@ -36,6 +31,7 @@ from app.core.providers import (
 )
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
+from app.modules.accounts import probes
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
 from app.modules.accounts.repository import AccountsRepository
@@ -75,17 +71,14 @@ logger = logging.getLogger(__name__)
 _SPARKLINE_DAYS = 7
 _DETAIL_BUCKET_SECONDS = 3600  # 1h → 168 points
 
-DEFAULT_PROBE_MODEL = "gpt-5.5"
-DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = "claude-haiku-4-5"
-DEFAULT_GLM_PROBE_MODEL = "glm-5.2"
-PROBE_REQUEST_TIMEOUT_SECONDS = 30.0
-PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
-# Network/upstream failure sentinel for ``probe_status_code`` — kept as ``0`` so
-# the value is distinguishable from any real HTTP status the upstream might
-# return.
-PROBE_NETWORK_FAILURE_STATUS = 0
-_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
-_SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT = 500
+# Probe senders and defaults live in app.modules.accounts.probes so background
+# schedulers can reuse them; re-exported here for the existing import surface.
+DEFAULT_PROBE_MODEL = probes.DEFAULT_PROBE_MODEL
+DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL
+DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
+PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
+PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
+PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
 
 # Short-TTL cache for the expensive per-account request-usage aggregation (a dedup
 # window over the full request_logs history, ~2s on a large DB). request-usage is a
@@ -739,49 +732,11 @@ class AccountsService:
         chatgpt_account_id: str | None,
         model: str,
     ) -> int:
-        settings = get_settings()
-        base = settings.upstream_base_url.rstrip("/")
-        if "/backend-api" not in base:
-            base = f"{base}/backend-api"
-        url = f"{base}/codex/responses"
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json",
-        }
-        if chatgpt_account_id and not chatgpt_account_id.startswith(("email_", "local_")):
-            headers["chatgpt-account-id"] = chatgpt_account_id
-        body = {
-            "model": model,
-            "instructions": "Respond with a single dot.",
-            "input": [
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": "."}],
-                }
-            ],
-            # The codex/responses upstream rejects ``max_output_tokens``
-            # ("Unsupported parameter") — the probe must not send it.
-            "stream": True,
-            "store": False,
-        }
-        timeout = aiohttp.ClientTimeout(
-            total=PROBE_REQUEST_TIMEOUT_SECONDS,
-            sock_connect=PROBE_CONNECT_TIMEOUT_SECONDS,
+        return await probes.send_openai_probe(
+            access_token=access_token,
+            chatgpt_account_id=chatgpt_account_id,
+            model=model,
         )
-        try:
-            async with lease_http_session() as session:
-                async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
-                    # Initiating the request is enough to wake the upstream
-                    # rate-limiter; we do not consume the SSE body.
-                    return resp.status
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.warning(
-                "Probe upstream request failed account=%s error=%s",
-                chatgpt_account_id,
-                exc,
-            )
-            return PROBE_NETWORK_FAILURE_STATUS
 
     async def _send_messages_probe_request(
         self,
@@ -790,35 +745,11 @@ class AccountsService:
         base_url: str,
         model: str,
     ) -> tuple[int, str | None]:
-        settings = get_settings()
-        url = urljoin(base_url.rstrip("/") + "/", "v1/messages")
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "anthropic-version": settings.anthropic_version,
-            "anthropic-beta": ANTHROPIC_OAUTH_BETA,
-            "content-type": "application/json",
-            "accept": "application/json",
-        }
-        body = {
-            "model": model,
-            "max_tokens": 4,
-            "system": [{"type": "text", "text": _CLAUDE_CODE_IDENTITY}],
-            "messages": [{"role": "user", "content": "Reply OK only."}],
-            "stream": False,
-        }
-        timeout = aiohttp.ClientTimeout(
-            total=PROBE_REQUEST_TIMEOUT_SECONDS,
-            connect=PROBE_CONNECT_TIMEOUT_SECONDS,
+        return await probes.send_messages_probe(
+            access_token=access_token,
+            base_url=base_url,
+            model=model,
         )
-        try:
-            async with lease_http_session() as session:
-                async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
-                    if resp.status >= 400:
-                        return resp.status, await _read_subscription_check_error(resp)
-                    return resp.status, None
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.warning("Anthropic subscription check failed error=%s", exc)
-            return PROBE_NETWORK_FAILURE_STATUS, str(exc)
 
     async def _send_anthropic_subscription_check_request(
         self,
@@ -838,25 +769,6 @@ def _opencode_auth_export_filename(account: Account) -> str:
     return f"opencode-auth-{safe or account.id}.json"
 
 
-async def _read_subscription_check_error(resp: aiohttp.ClientResponse) -> str:
-    raw = await resp.read()
-    text = raw.decode("utf-8", errors="replace").strip() if raw else ""
-    if not text:
-        return f"Subscription check returned HTTP {resp.status}"
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        message = text
-    else:
-        error = parsed.get("error") if isinstance(parsed, dict) else None
-        if isinstance(error, dict):
-            message_value = error.get("message") or error.get("type")
-            message = str(message_value) if message_value is not None else text
-        else:
-            message = text
-    if len(message) > _SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT:
-        return message[: _SUBSCRIPTION_CHECK_ERROR_MESSAGE_LIMIT - 1] + "..."
-    return message
 
 
 def _subscription_check_notes(

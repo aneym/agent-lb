@@ -43,6 +43,7 @@ from app.core.resilience.memory_monitor import configure as configure_memory_mon
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.modules.accounts import api as accounts_api
+from app.modules.accounts.pulse import build_account_pulse_scheduler
 from app.modules.api_keys import api as api_keys_api
 from app.modules.api_keys.reset_scheduler import build_api_key_limit_reset_scheduler
 from app.modules.audit import api as audit_api
@@ -153,12 +154,14 @@ async def lifespan(app: FastAPI):
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
     quota_planner_scheduler = build_quota_planner_scheduler()
     auth_guardian_scheduler = build_auth_guardian_scheduler()
+    account_pulse_scheduler = build_account_pulse_scheduler()
     await usage_scheduler.start()
     await api_key_limit_reset_scheduler.start()
     await model_scheduler.start()
     await sticky_session_cleanup_scheduler.start()
     await quota_planner_scheduler.start()
     await auth_guardian_scheduler.start()
+    await account_pulse_scheduler.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
         import uvicorn
 
@@ -318,6 +321,7 @@ async def lifespan(app: FastAPI):
             metrics_server.should_exit = True
 
         await cache_poller.stop()
+        await account_pulse_scheduler.stop()
         await quota_planner_scheduler.stop()
         await auth_guardian_scheduler.stop()
         await sticky_session_cleanup_scheduler.stop()
