@@ -77,6 +77,41 @@ async def test_export_account_auth_combined(async_client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_account_auth_anthropic_without_id_token(async_client) -> None:
+    from app.core.crypto import TokenEncryptor
+    from app.core.utils.time import utcnow
+    from app.db.models import Account, AccountStatus
+    from app.db.session import SessionLocal
+    from app.modules.accounts.repository import AccountsRepository
+
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="acc_anthropic_export",
+        chatgpt_account_id=None,
+        email="anthropic-export@example.com",
+        plan_type="claude",
+        access_token_encrypted=encryptor.encrypt("anthropic-access"),
+        refresh_token_encrypted=encryptor.encrypt("anthropic-refresh"),
+        # Anthropic OAuth issues no id_token; the column stays NULL.
+        id_token_encrypted=None,
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    account.provider = "anthropic"
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(account)
+
+    response = await async_client.post("/api/accounts/acc_anthropic_export/export/auth")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tokens"]["idToken"] == ""
+    assert payload["tokens"]["accessToken"] == "anthropic-access"
+    assert payload["tokens"]["refreshToken"] == "anthropic-refresh"
+
+
+@pytest.mark.asyncio
 async def test_export_account_auth_missing_account_returns_404(async_client) -> None:
     response = await async_client.post("/api/accounts/missing-account/export/auth")
 

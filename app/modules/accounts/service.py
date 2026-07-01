@@ -312,7 +312,8 @@ class AccountsService:
 
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
         refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
-        id_token = self._encryptor.decrypt(account.id_token_encrypted)
+        # Anthropic OAuth issues no id_token; the column is NULL for those rows.
+        id_token = self._encryptor.decrypt(account.id_token_encrypted) if account.id_token_encrypted else ""
         expires = token_expiry_epoch_ms(access_token) or 0
 
         tokens = AccountAuthExportTokens(
