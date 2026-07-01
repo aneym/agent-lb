@@ -1,3 +1,4 @@
+import Darwin
 import SwiftUI
 
 @main
@@ -5,6 +6,13 @@ struct AgentLBApp: App {
   @State private var appState: AppState
 
   init() {
+    if !SingleInstanceGuard.acquire(lockURL: SingleInstanceGuard.defaultLockURL()) {
+      FileHandle.standardError.write(
+        Data("AgentLB: another instance holds the single-instance lock; exiting.\n".utf8)
+      )
+      exit(0)
+    }
+
     let state = AppState()
     state.startBackgroundPolling()
     _appState = State(initialValue: state)
