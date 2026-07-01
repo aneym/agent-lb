@@ -76,20 +76,20 @@ final class AccountFilterTests: XCTestCase {
         lastVerifiedAt: nil
       )
     )
-    let cancelPending = makeAccount(
-      id: "cancel-pending",
-      displayName: "cancel-pending@example.com",
+    let subscriptionPaused = makeAccount(
+      id: "subscription-paused",
+      displayName: "subscription-paused@example.com",
       subscription: AccountSubscriptionLedger(
-        status: "cancel_pending",
+        status: "paused",
         nextChargeAt: nil,
         currentPeriodEndAt: nil,
         lastVerifiedAt: nil
       )
     )
 
-    let result = AccountFilter().apply(to: [canceled, active, cancelPending], now: now)
+    let result = AccountFilter().apply(to: [canceled, active, subscriptionPaused], now: now)
 
-    XCTAssertEqual(result.map(\.accountId), ["active", "cancel-pending"])
+    XCTAssertEqual(result.map(\.accountId), ["active", "subscription-paused"])
   }
 
   // MARK: - Status filter

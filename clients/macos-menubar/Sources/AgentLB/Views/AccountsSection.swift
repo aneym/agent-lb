@@ -393,11 +393,6 @@ struct AccountRow: View {
   private var subscriptionStatus: String? {
     guard let subscription = account.subscription else { return nil }
     switch subscription.status {
-    case "cancel_pending":
-      if let end = subscription.currentPeriodEndAt, end > now {
-        return "ends · \(Format.countdownCompact(to: end, relativeTo: now))"
-      }
-      return "cancel pending"
     case "pause_pending":
       return "pause pending"
     case "paused":

@@ -36,17 +36,16 @@ account into the rate-limited filter or row presentation.
 
 The menu bar account list SHALL decode the account subscription ledger returned
 by `/api/accounts` and render compact subscription labels for otherwise active
-rows whose local subscription status is `cancel_pending`, `pause_pending`,
-`paused`, or `canceled`. Rendering a subscription label SHALL NOT change the
-load-balancer status, pause the account, deactivate it, or move it out of the
-Active status filter.
+rows whose local subscription status is `pause_pending`, `paused`, or
+`canceled`. Rendering a subscription label SHALL NOT change the load-balancer
+status, pause the account, deactivate it, or move it out of the Active status
+filter.
 
-#### Scenario: Cancel-pending subscription remains routable
+#### Scenario: Local subscription label remains separate from routing status
 
 - **WHEN** an account has backend status `active`
-- **AND** its local subscription status is `cancel_pending`
-- **THEN** the account row displays a compact cancel-pending or active-until
-  label
+- **AND** its local subscription status is `pause_pending`
+- **THEN** the account row displays a compact subscription label
 - **AND** the account remains classified as active
 
 #### Scenario: Subscription pause is distinct from routing pause

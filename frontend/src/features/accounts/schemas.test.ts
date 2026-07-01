@@ -4,6 +4,7 @@ import {
   AccountAuthExportResponseSchema,
   AccountProbeResponseSchema,
   AccountSubscriptionCheckResponseSchema,
+  AccountSubscriptionStatusSchema,
   AccountSummarySchema,
   ImportStateSchema,
   OAuthStateSchema,
@@ -233,5 +234,13 @@ describe("AccountSubscriptionCheckResponseSchema", () => {
     expect(parsed.accountId).toBe("acc-1");
     expect(parsed.working).toBe(false);
     expect(parsed.subscription?.status).toBe("canceled");
+  });
+});
+
+describe("AccountSubscriptionStatusSchema", () => {
+  it("rejects legacy cancellation-pending status values", () => {
+    expect(
+      AccountSubscriptionStatusSchema.safeParse("cancel_pending").success,
+    ).toBe(false);
   });
 });

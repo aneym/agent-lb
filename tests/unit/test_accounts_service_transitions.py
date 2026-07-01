@@ -109,22 +109,22 @@ async def test_subscription_ledger_normalizes_aware_datetimes_for_storage() -> N
     result = await service.set_subscription_ledger(
         _ACCOUNT_ID,
         AccountSubscriptionLedger(
-            status="cancel_pending",
+            status="paused",
             current_period_end_at=current_period_end_at,
             last_verified_at=last_verified_at,
-            notes="  Canceled in vendor billing UI.  ",
+            notes="  Paused in vendor billing UI.  ",
         ),
     )
 
     repo.update_subscription_ledger.assert_awaited_once_with(
         _ACCOUNT_ID,
-        status="cancel_pending",
+        status="paused",
         next_charge_at=None,
         current_period_end_at=current_period_end_at.replace(tzinfo=None),
         amount=None,
         currency=None,
         last_verified_at=last_verified_at.replace(tzinfo=None),
-        notes="Canceled in vendor billing UI.",
+        notes="Paused in vendor billing UI.",
     )
     assert result is not None
     assert result.current_period_end_at == current_period_end_at.replace(tzinfo=None)

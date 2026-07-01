@@ -7,9 +7,8 @@ proof that an account is rate-limited. That makes recovered or otherwise active
 accounts show as `limited` even when the backend status is `active` and routing
 can select the account.
 
-Operators also need local vendor subscription ledger updates, such as
-cancel-pending accounts, to be visible in the same account list without changing
-load-balancer routing state.
+Operators also need local vendor subscription ledger updates to be visible in
+the same account list without changing load-balancer routing state.
 
 ## What Changes
 
@@ -19,8 +18,8 @@ load-balancer routing state.
   metadata.
 - Decode the account subscription ledger in the menu bar client and surface
   compact non-active subscription labels on otherwise active rows.
-- Record the operator-reported canceled accounts as local `cancel_pending`
-  subscription ledger entries without pausing or deactivating them.
+- Record operator-reported subscription ledger entries without pausing or
+  deactivating account routing unless the backend status changes separately.
 
 ## Non-Goals
 

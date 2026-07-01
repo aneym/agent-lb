@@ -15,14 +15,14 @@ The Accounts page SHALL expose a local per-account subscription ledger containin
 - **THEN** the dashboard calls the account subscription update API
 - **AND** refreshes account data after a successful save
 
-#### Scenario: Canceled subscription remains active through current period
+#### Scenario: Active-until date remains distinct from next charge
 
-- **WHEN** an account subscription has status `cancel_pending` and an active-until timestamp
+- **WHEN** an account subscription has an active-until timestamp
 - **THEN** the account detail view distinguishes the active-until timestamp from the next charge timestamp
 
 #### Scenario: Load-balancer pause stays separate from vendor subscription state
 
-- **WHEN** a user marks an account subscription as `cancel_pending`, `pause_pending`, `paused`, or `canceled`
+- **WHEN** a user marks an account subscription as `pause_pending`, `paused`, or `canceled`
 - **THEN** the account's load-balancer account status is not changed unless the user separately invokes the existing pause/resume action
 
 ### Requirement: Local browser profile registry supports vendor account operations

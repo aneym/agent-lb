@@ -42,10 +42,11 @@ describe("AccountDetail", () => {
     expect(onRoutingPolicyChange).toHaveBeenCalledWith(account.accountId, "preserve");
   });
 
-  it("shows cancel-pending subscriptions as active until the period end", () => {
+  it("shows current-period end dates without a pending-cancel status", async () => {
+    const user = userEvent.setup();
     const account = createAccountSummary({
       subscription: {
-        status: "cancel_pending",
+        status: "active",
         currentPeriodEndAt: "2026-06-22T04:00:00.000Z",
         amount: 200,
         currency: "USD",
@@ -70,8 +71,21 @@ describe("AccountDetail", () => {
       />,
     );
 
-    expect(screen.getAllByText("Cancel pending")).not.toHaveLength(0);
+    expect(screen.getAllByText("Active")).not.toHaveLength(0);
+    expect(screen.queryByText("Cancel pending")).not.toBeInTheDocument();
     expect(screen.getByText(/Active until:/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Subscription/i }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Subscription status" }),
+    );
+
+    expect(
+      screen.queryByRole("option", { name: "Cancel pending" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Pause pending" }),
+    ).toBeInTheDocument();
   });
 
   it("shows a check sub action for canceled subscriptions", async () => {

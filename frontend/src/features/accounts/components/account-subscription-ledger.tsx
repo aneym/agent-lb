@@ -29,7 +29,6 @@ type LedgerStatus = NonNullable<AccountSubscriptionLedger["status"]>;
 
 const LEDGER_STATUSES = [
   "active",
-  "cancel_pending",
   "pause_pending",
   "paused",
   "canceled",
@@ -86,11 +85,9 @@ export function AccountSubscriptionLedgerPanel({
     : "Untracked";
   const primaryDate =
     subscription?.currentPeriodEndAt ?? subscription?.nextChargeAt ?? null;
-  const primaryDateLabel =
-    subscription?.status === "cancel_pending" ||
-    subscription?.status === "canceled"
-      ? "Active until"
-      : "Next charge";
+  const primaryDateLabel = subscription?.currentPeriodEndAt
+    ? "Active until"
+    : "Next charge";
   const currencyLabel = subscription?.currency ?? form.currency;
   const amountLabel =
     subscription?.amount != null

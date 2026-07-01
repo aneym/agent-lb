@@ -161,17 +161,17 @@ async def test_update_account_subscription_ledger_does_not_pause_account(async_c
     assert response.status_code == 200
 
     ledger = {
-        "status": "cancel_pending",
+        "status": "paused",
         "nextChargeAt": None,
         "currentPeriodEndAt": "2026-06-22T04:00:00.000Z",
         "amount": 200,
         "currency": "usd",
         "lastVerifiedAt": "2026-06-09T18:00:00.000Z",
-        "notes": "Canceled in vendor billing UI.",
+        "notes": "Paused in vendor billing UI.",
     }
     update = await async_client.put(f"/api/accounts/{expected_account_id}/subscription", json=ledger)
     assert update.status_code == 200
-    assert update.json()["subscription"]["status"] == "cancel_pending"
+    assert update.json()["subscription"]["status"] == "paused"
     assert update.json()["subscription"]["currency"] == "USD"
 
     accounts = await async_client.get("/api/accounts")
@@ -182,8 +182,78 @@ async def test_update_account_subscription_ledger_does_not_pause_account(async_c
     )
     assert matched is not None
     assert matched["status"] == "active"
-    assert matched["subscription"]["status"] == "cancel_pending"
+    assert matched["subscription"]["status"] == "paused"
     assert matched["subscription"]["currentPeriodEndAt"] == "2026-06-22T04:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_update_account_subscription_ledger_rejects_cancel_pending_status(async_client):
+    email = "subscription-reject-cancel-pending@example.com"
+    raw_account_id = "acc_subscription_reject_cancel_pending"
+    payload = {
+        "email": email,
+        "chatgpt_account_id": raw_account_id,
+        "https://api.openai.com/auth": {"chatgpt_plan_type": "pro"},
+    }
+    auth_json = {
+        "tokens": {
+            "idToken": _encode_jwt(payload),
+            "accessToken": "access",
+            "refreshToken": "refresh",
+            "accountId": raw_account_id,
+        },
+    }
+
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    update = await async_client.put(
+        f"/api/accounts/{expected_account_id}/subscription",
+        json={"status": "cancel_pending"},
+    )
+
+    assert update.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_maps_legacy_cancel_pending_subscription_status_to_active(async_client):
+    email = "subscription-legacy-cancel-pending@example.com"
+    raw_account_id = "acc_subscription_legacy_cancel_pending"
+    payload = {
+        "email": email,
+        "chatgpt_account_id": raw_account_id,
+        "https://api.openai.com/auth": {"chatgpt_plan_type": "pro"},
+    }
+    auth_json = {
+        "tokens": {
+            "idToken": _encode_jwt(payload),
+            "accessToken": "access",
+            "refreshToken": "refresh",
+            "accountId": raw_account_id,
+        },
+    }
+
+    expected_account_id = generate_unique_account_id(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    async with SessionLocal() as session:
+        account = await session.get(Account, expected_account_id)
+        assert account is not None
+        account.subscription_status = " cancel_pending "
+        await session.commit()
+
+    accounts = await async_client.get("/api/accounts")
+    assert accounts.status_code == 200
+    matched = next(
+        (account for account in accounts.json()["accounts"] if account["accountId"] == expected_account_id),
+        None,
+    )
+    assert matched is not None
+    assert matched["subscription"]["status"] == "active"
 
 
 @pytest.mark.asyncio

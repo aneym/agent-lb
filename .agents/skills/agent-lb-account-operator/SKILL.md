@@ -82,19 +82,18 @@ billing pages, and login state do not bleed across accounts.
 Use these statuses in the agent-lb dashboard/API ledger:
 
 - `active`: subscription is expected to renew on `nextChargeAt`.
-- `cancel_pending`: vendor cancellation completed, access remains until
-  `currentPeriodEndAt`.
 - `pause_pending`: operator intends to pause/cancel before `nextChargeAt`, but
   vendor action is not yet complete.
 - `paused`: vendor subscription or local routing should be treated as paused;
   check notes for which one.
 - `canceled`: vendor access period ended or subscription is fully canceled.
 
-For screenshots like "will remain active until ... Jun 22, 2026", record:
+For screenshots like "will remain active until ... Jun 22, 2026", keep the
+subscription active and record the date separately:
 
 ```json
 {
-  "status": "cancel_pending",
+  "status": "active",
   "currentPeriodEndAt": "2026-06-22T04:00:00.000Z",
   "nextChargeAt": null
 }

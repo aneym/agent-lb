@@ -5,6 +5,7 @@ from typing import List
 
 from pydantic import Field, SecretStr
 
+from app.modules.accounts.subscription_status import SUBSCRIPTION_STATUS_PATTERN
 from app.modules.shared.schemas import DashboardModel
 
 
@@ -73,7 +74,7 @@ class AccountAdditionalQuota(DashboardModel):
 
 
 class AccountSubscriptionLedger(DashboardModel):
-    status: str | None = Field(default=None, pattern=r"^(active|cancel_pending|pause_pending|paused|canceled)$")
+    status: str | None = Field(default=None, pattern=SUBSCRIPTION_STATUS_PATTERN)
     next_charge_at: datetime | None = None
     current_period_end_at: datetime | None = None
     amount: float | None = Field(default=None, ge=0)

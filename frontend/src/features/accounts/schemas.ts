@@ -70,7 +70,6 @@ export const AccountAdditionalQuotaSchema = z.object({
 
 export const AccountSubscriptionStatusSchema = z.enum([
   "active",
-  "cancel_pending",
   "pause_pending",
   "paused",
   "canceled",

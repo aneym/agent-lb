@@ -291,7 +291,7 @@ describe("AccountList", () => {
             accountId: "acc-early",
             email: "early@example.com",
             subscription: {
-              status: "cancel_pending",
+              status: "active",
               currentPeriodEndAt: "2026-01-10T12:00:00.000Z",
             },
           }),

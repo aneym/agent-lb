@@ -7,7 +7,7 @@
 - [x] 2.1 Update the menu bar account model to decode subscription ledger data.
 - [x] 2.2 Update account row/filter classification so future reset metadata does not create synthetic limited status for active accounts.
 - [x] 2.3 Show compact subscription ledger labels for otherwise active rows.
-- [x] 2.4 Record the operator-reported canceled accounts as local cancel-pending ledger entries.
+- [x] 2.4 Record operator-reported subscription ledger entries without changing routing state.
 
 ## 3. Verification
 

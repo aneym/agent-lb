@@ -414,12 +414,12 @@ def test_selectable_accounts_excludes_canceled_subscriptions() -> None:
     active = _make_account("acc-active", "active@example.com")
     canceled = _make_account("acc-canceled", "canceled@example.com")
     canceled.subscription_status = "canceled"
-    cancel_pending = _make_account("acc-cancel-pending", "cancel-pending@example.com")
-    cancel_pending.subscription_status = "cancel_pending"
+    subscription_paused = _make_account("acc-subscription-paused", "subscription-paused@example.com")
+    subscription_paused.subscription_status = "paused"
 
-    selected = load_balancer_module.selectable_accounts([active, canceled, cancel_pending])
+    selected = load_balancer_module.selectable_accounts([active, canceled, subscription_paused])
 
-    assert [account.id for account in selected] == ["acc-active", "acc-cancel-pending"]
+    assert [account.id for account in selected] == ["acc-active", "acc-subscription-paused"]
 
 
 @pytest.mark.asyncio

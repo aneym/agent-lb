@@ -13,10 +13,10 @@ account from account selection even if its account auth status is otherwise
 - **WHEN** account selection builds candidates for routing
 - **THEN** the account is not eligible for selection
 
-#### Scenario: Cancel-pending subscription remains routable while it works
+#### Scenario: Non-canceled subscription metadata remains routable while it works
 
 - **GIVEN** an account has status `active`
-- **AND** its local subscription ledger status is `cancel_pending`
+- **AND** its local subscription ledger status is `paused`
 - **WHEN** account selection builds candidates for routing
 - **THEN** the account may remain eligible subject to existing routing, quota,
   and health gates

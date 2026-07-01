@@ -81,7 +81,7 @@ final class ModelDecodingTests: XCTestCase {
         "deactivationReason": null,
         "isEmailDuplicate": false,
         "subscription": {
-          "status": "cancel_pending",
+          "status": "active",
           "nextChargeAt": null,
           "currentPeriodEndAt": "2026-06-22T00:00:00Z",
           "lastVerifiedAt": "2026-06-13T15:30:00Z",
@@ -95,7 +95,7 @@ final class ModelDecodingTests: XCTestCase {
 
     let response = try decoder.decode(AccountsResponse.self, from: json)
     let account = try XCTUnwrap(response.accounts.first)
-    XCTAssertEqual(account.subscription?.status, "cancel_pending")
+    XCTAssertEqual(account.subscription?.status, "active")
     XCTAssertNotNil(account.subscription?.currentPeriodEndAt)
     XCTAssertNotNil(account.subscription?.lastVerifiedAt)
   }
