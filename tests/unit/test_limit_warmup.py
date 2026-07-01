@@ -580,6 +580,29 @@ async def test_reset_confirmed_candidate_sends_one_warmup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscription_canceled_account_is_skipped() -> None:
+    repo = FakeWarmupRepo()
+    logs = FakeRequestLogsRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, logs, sender=sender)
+    account = _account()
+    account.subscription_status = "canceled"
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(),
+        before_primary={account.id: _usage(account.id, used_percent=100, reset_at=1000)},
+        before_secondary={},
+        after_primary={account.id: _usage(account.id, used_percent=0, reset_at=2000)},
+        after_secondary={},
+    )
+
+    assert sender.calls == []
+    assert repo.rows == []
+    assert logs.logs == []
+
+
+@pytest.mark.asyncio
 async def test_warmup_request_log_persists_route_metadata() -> None:
     repo = FakeWarmupRepo()
     logs = FakeRequestLogsRepo()

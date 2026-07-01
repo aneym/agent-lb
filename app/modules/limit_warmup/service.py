@@ -25,6 +25,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, DashboardSettings, UsageHistory
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
+from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer
 from app.modules.quota_planner.logic import PlannerSettings, _parse_hhmm, _to_planner_tz
 from app.modules.usage.mappers import usage_history_to_window_row
@@ -742,7 +743,7 @@ def _selected_windows(value: str) -> tuple[str, ...]:
 
 
 def _account_is_safe_candidate(account: Account) -> bool:
-    return account.status == AccountStatus.ACTIVE
+    return account.status == AccountStatus.ACTIVE and is_subscription_usable(account)
 
 
 def _in_cooldown(attempt: AccountLimitWarmup | None, *, cooldown_seconds: int) -> bool:

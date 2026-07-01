@@ -9,7 +9,7 @@ This change adds the per-account "force-probe" admin endpoint requested in upstr
 - Add `POST /api/accounts/{account_id}/probe` (admin / dashboard auth) returning the probe HTTP status plus before/after `primary_used_percent`, `secondary_used_percent`, and account `status`.
 - The endpoint:
   1. Looks up the account; returns 404 if missing; 409 if `paused`/`deactivated` (probing a hard-blocked account is rejected).
-  2. Decrypts the account access token and sends a single minimal `responses.create` directly to `{upstream_base_url}/codex/responses` (stream=true, store=false, max_output_tokens=1). The call bypasses load-balancer scoring (it does not touch `LoadBalancer.select_account`) and consumes a tiny amount of upstream quota by design.
+  2. Decrypts the account access token and sends a single minimal `responses.create` directly to `{upstream_base_url}/codex/responses` (stream=true, store=false; no `max_output_tokens` — the upstream rejects that parameter with 400 "Unsupported parameter" as of 2026-07-01). The call bypasses load-balancer scoring (it does not touch `LoadBalancer.select_account`) and consumes a tiny amount of upstream quota by design.
   3. Triggers an immediate `UsageUpdater.refresh_accounts([account], ...)` so the post-probe `/wham/usage` snapshot is persisted.
   4. Reloads the account + latest primary/secondary usage and returns the before/after snapshot.
 - Add `AccountProbeRequest` (optional `model`, default `gpt-5.5`) and `AccountProbeResponse` schemas in `app/modules/accounts/schemas.py`.
@@ -21,6 +21,6 @@ This change adds the per-account "force-probe" admin endpoint requested in upstr
 
 - Operators get a first-class manual recovery action for stuck-rate-limited accounts after OpenAI reset events. Closes the chicken-and-egg trap that #677 describes (LB excludes blocked accounts from selection, so blocked accounts can never wake the upstream limiter via organic traffic).
 - Single endpoint, single concern. No changes to selector decision logic, the proxy pipeline, the existing usage refresh cadence, or persistence beyond what `UsageUpdater.refresh_accounts` already writes.
-- The probe consumes a tiny amount of upstream quota (one `responses.create` with `max_output_tokens=1`) per invocation. The endpoint requires dashboard auth, so casual misuse is not a concern.
+- The probe consumes a tiny amount of upstream quota (one minimal `responses.create` whose SSE body is never consumed) per invocation. The endpoint requires dashboard auth, so casual misuse is not a concern.
 - Dashboard account actions expose a Force probe button for eligible accounts and keep it disabled for paused or deactivated accounts.
 - No change to public client surfaces (`/backend-api/codex/responses`, `/v1/responses`, etc.). The new endpoint lives under the existing dashboard `/api/accounts/*` namespace.

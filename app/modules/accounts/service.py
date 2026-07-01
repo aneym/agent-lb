@@ -760,7 +760,8 @@ class AccountsService:
                     "content": [{"type": "input_text", "text": "."}],
                 }
             ],
-            "max_output_tokens": 1,
+            # The codex/responses upstream rejects ``max_output_tokens``
+            # ("Unsupported parameter") — the probe must not send it.
             "stream": True,
             "store": False,
         }
