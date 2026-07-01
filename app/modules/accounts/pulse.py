@@ -152,17 +152,20 @@ class AccountPulseScheduler:
         if not await self.leader_election_factory().try_acquire():
             return
         async with self._lock:
+            # Candidate filtering must happen inside the repo session: the ORM
+            # instances detach once the session closes and attribute access
+            # raises DetachedInstanceError. Only ids may escape this block.
             async with self.repo_factory() as repo:
                 accounts = await repo.list_accounts(refresh_existing=True)
-            candidates = [
-                account
-                for account in accounts
-                if account.status != AccountStatus.PAUSED and not self._in_backoff(account.id)
-            ]
-            if not candidates:
+                candidate_ids = [
+                    account.id
+                    for account in accounts
+                    if account.status != AccountStatus.PAUSED and not self._in_backoff(account.id)
+                ]
+            if not candidate_ids:
                 return
             semaphore = asyncio.Semaphore(max(1, self.concurrency))
-            await asyncio.gather(*(self._pulse_candidate(account.id, semaphore) for account in candidates))
+            await asyncio.gather(*(self._pulse_candidate(account_id, semaphore) for account_id in candidate_ids))
 
     async def _pulse_candidate(self, account_id: str, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
