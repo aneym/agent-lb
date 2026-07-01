@@ -42,6 +42,13 @@ right away. This is a standing instruction from the repo owner.
 - **Cross-machine**: after pushing, fast-forward every other instance (e.g. the laptop)
   so all checkouts converge on `origin/main`.
 
+The same bar applies to **internal/runtime overrides**: do not merge, push,
+restart launchd onto new code, replace the local/internal version, or otherwise
+make this checkout the version serving `com.aneyman.agent-lb` until the relevant
+validation gate has passed. After any server-path override, restart the live
+service and exercise the affected endpoint/client path against
+`http://127.0.0.1:2455`.
+
 OpenSpec still gates behavior/API/schema changes (see below) — create the change folder
 as part of the same validated push, don't skip it.
 

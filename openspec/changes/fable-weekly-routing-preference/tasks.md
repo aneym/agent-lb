@@ -13,5 +13,7 @@
 - [x] Tests: eligibility filtering + fallback + burn-set computation, burn
       stamp tiering (incl. preserve untouched), mapper flag, fable model
       classification.
+- [x] Regression fix: snapshot weekly usage scalars before leaving the repository
+      context so live Anthropic selection does not touch detached ORM rows.
 - [x] Validate: pytest (load balancer, anthropic service/proxy, mappers), ruff,
       `openspec validate --specs`, service restart + live routing log check.

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import app.modules.proxy.anthropic_service as anthropic_service_module
 from app.core import usage as usage_core
 from app.core.balancer import (
     HEALTH_TIER_DRAINING,
@@ -21,6 +22,7 @@ from app.core.balancer import (
 )
 from app.core.usage.quota import apply_usage_quota
 from app.db.models import Account, AccountStatus, UsageHistory
+from app.modules.proxy.anthropic_service import AnthropicProxyService
 from app.modules.proxy.load_balancer import (
     RuntimeState,
     _additional_quota_applies_to_plan,
@@ -1472,6 +1474,65 @@ def _make_test_usage(
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
     )
+
+
+class _DetachedUsageSentinel:
+    def __init__(self, used_percent: float, is_closed) -> None:
+        self._used_percent = used_percent
+        self._is_closed = is_closed
+
+    @property
+    def used_percent(self) -> float:
+        if self._is_closed():
+            raise AssertionError("used_percent accessed after repository context exit")
+        return self._used_percent
+
+
+@pytest.mark.asyncio
+async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monkeypatch):
+    hot_account = _make_test_account(account_id="anthropic-hot")
+    hot_account.provider = "anthropic"
+    fresh_account = _make_test_account(account_id="anthropic-fresh")
+    fresh_account.provider = "anthropic"
+
+    class _RepoBundle:
+        closed = False
+
+        def __init__(self) -> None:
+            self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[hot_account, fresh_account]))
+            self.additional_usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
+            self.usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    return_value={
+                        hot_account.id: _DetachedUsageSentinel(60.0, lambda: self.closed),
+                        fresh_account.id: _DetachedUsageSentinel(10.0, lambda: self.closed),
+                    }
+                )
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(
+        anthropic_service_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            anthropic_fable_routing_enabled=True,
+            anthropic_fable_weekly_max_used_percent=50.0,
+        ),
+    )
+    service = AnthropicProxyService(lambda: _RepoBundle())
+
+    eligibility = await service._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+
+    assert eligibility.account_ids == [fresh_account.id]
 
 
 def _epoch_to_naive_utc(epoch: float) -> datetime:

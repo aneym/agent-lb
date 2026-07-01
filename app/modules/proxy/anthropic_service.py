@@ -25,7 +25,7 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME
 from app.core.utils.request_id import ensure_request_id
-from app.db.models import Account, StickySessionKind, UsageHistory
+from app.db.models import Account, StickySessionKind
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
@@ -478,9 +478,12 @@ class AnthropicProxyService:
             cooldowns = {
                 account_id: (float(entry.used_percent), entry.reset_at) for account_id, entry in latest.items()
             }
-            weekly_usage: dict[str, UsageHistory] = {}
+            weekly_usage_used_percent: dict[str, float] = {}
             if fable_routing:
                 weekly_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
+                weekly_usage_used_percent = {
+                    account_id: float(entry.used_percent) for account_id, entry in weekly_usage.items()
+                }
 
         eligible_account_ids: list[str] = []
         reset_candidates: list[int] = []
@@ -499,8 +502,7 @@ class AnthropicProxyService:
             threshold = settings.anthropic_fable_weekly_max_used_percent
 
             def _weekly_used(account_id: str) -> float:
-                entry = weekly_usage.get(account_id)
-                return float(entry.used_percent) if entry is not None else 0.0
+                return weekly_usage_used_percent.get(account_id, 0.0)
 
             over_threshold = frozenset(
                 account_id for account_id in eligible_account_ids if _weekly_used(account_id) >= threshold
