@@ -35,9 +35,12 @@ contract:
    credential env vars.
 5. **Show before you touch dotfiles.** Print the exact block you want to add
    to `~/.zshrc` or `~/.codex/config.toml` and get a yes first.
-6. Finish with the step-7 verification (accounts list + one real request
-   through the relevant proxy surface; for `/v1` clients, discover a model from
-   `/v1/models` first) and a short status summary.
+6. Finish with the step-7 verification (accounts list + per-account probe +
+   one real request through the relevant proxy surface; for `/v1` clients,
+   discover a model from `/v1/models` first) and a short status summary. A
+   probe 403 "OAuth authentication is currently not allowed" means the
+   account's subscription lapsed — billing, not auth; see the "Account health
+   model" section of GETTING-STARTED.md before recommending a fix.
 7. For SDK/app wiring, keep guidance server-side: Anthropic-compatible SDKs use
    the root Messages API base URL, OpenAI-compatible SDKs and Vercel AI SDK use
    `/v1`, and deployed apps can use the LB through a reachable backend base URL,

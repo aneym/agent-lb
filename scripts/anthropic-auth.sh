@@ -40,7 +40,11 @@ d = json.load(sys.stdin)
 rows = d if isinstance(d, list) else d.get("accounts", d.get("data", []))
 for a in rows:
     if a.get("provider") == "anthropic":
-        print(a.get("status", "?"), "|", a.get("email") or a.get("account_id"), "|", a.get("id"))
+        sub = (a.get("subscription") or {}).get("status") or "-"
+        state = a.get("status", "?")
+        if state == "active" and sub == "canceled":
+            state = "unsubscribed"
+        print(state, "|", "sub:" + sub, "|", a.get("email") or a.get("accountId"), "|", a.get("accountId"))
 '
     ;;
   *)

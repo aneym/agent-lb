@@ -104,6 +104,39 @@ curl -s "$LB/api/accounts" |
   done
 ```
 
+## Account State Model (and which fix to recommend)
+
+Every stored account is in exactly one of three states. Diagnose with a probe;
+never infer the fix from `status` alone:
+
+- **Usable** — `status=active`, subscription ledger not `canceled`, probe 2xx.
+- **Auth'd but unsubscribed** — `status=active` + `subscription.status=canceled`,
+  probe 403 with the org-OAuth-refused message. Credentials are fine; the org's
+  subscription lapsed. Fix = the human resubscribes at the provider billing page
+  (open their dedicated browser profile). Reauth does nothing here.
+- **Disconnected** — `status=reauth_required`/`deactivated` with a deactivation
+  reason, probe 401 or token refresh fails. Fix = reauth via the repo's auth
+  scripts (`scripts/anthropic-auth.sh start` / `scripts/openai-auth.sh start`,
+  same flow as adding an account — no dashboard needed).
+
+A background **account pulse** (default on, 6h interval, `ACCOUNT_PULSE_*` env
+settings) probes every non-paused account and reconciles these states
+automatically — including restoring accounts to the routing pool within one
+cycle after the human resubscribes or reauths, and correcting stale
+misdiagnoses (e.g. a deactivated "auth failed" account that is actually just
+unsubscribed). Pulse transitions appear as `account_pulse_*` audit actions.
+After a human billing/reauth action, you can shortcut the wait with
+`POST /api/accounts/{id}/subscription/check` (canceled ledgers only) or a
+probe. Unsubscribed and disconnected accounts stay visible in `/api/accounts`
+but are excluded from routing, warmup, and headline counts.
+
+When someone asks why a projections surface says elevated risk:
+`GET /api/dashboard/projections` risk is pool-level (mean across accounts);
+`worstAccountEmail`/`worstRiskLevel` name the account driving it and
+`depletionPrimaryByProvider`/`depletionSecondaryByProvider` scope it per
+provider. A single hot account (e.g. one long interactive session pinned by
+sticky routing) elevates its own attribution, not the pool.
+
 ## Browser Profiles
 
 Prefer dedicated Chrome user-data directories under:

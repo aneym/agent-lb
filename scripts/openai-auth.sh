@@ -43,7 +43,11 @@ for a in rows:
     provider = a.get("provider")
     # Legacy OpenAI accounts may omit provider (default) or carry null/"".
     if provider in (None, "", "openai"):
-        print(a.get("status", "?"), "|", a.get("email") or a.get("accountId") or a.get("account_id"), "|", a.get("accountId") or a.get("account_id"))
+        sub = (a.get("subscription") or {}).get("status") or "-"
+        state = a.get("status", "?")
+        if state == "active" and sub == "canceled":
+            state = "unsubscribed"
+        print(state, "|", "sub:" + sub, "|", a.get("email") or a.get("accountId") or a.get("account_id"), "|", a.get("accountId") or a.get("account_id"))
 '
     ;;
   *)
