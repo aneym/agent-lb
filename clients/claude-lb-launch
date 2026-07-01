@@ -3,9 +3,12 @@
 # routing and a quota banner. Vendored, dependency-free (stdlib only).
 #
 # It claims a sticky account route from the load balancer, prints a one-line
-# remaining-quota banner, then re-points Claude Code at a local HTTP shim that
-# injects `x-claude-session-id` on every request and forwards to the LB. The
-# shim streams SSE responses and dies with its parent.
+# remaining-quota banner, then routes Claude Code through a local HTTPS proxy
+# (HTTPS_PROXY): it MITMs api.anthropic.com -> the LB (injecting
+# `x-claude-session-id`) and blind-tunnels every other host. Keeping Claude on
+# the real api.anthropic.com with its keychain login is what lets Remote Control
+# (/rc) stay enabled while still pooling accounts. The proxy streams SSE
+# responses and dies with its parent.
 #
 # Usage:
 #   clients/claude-lb-launch [claude args...]
@@ -29,7 +32,11 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import select
+import shutil
 import socket
+import socketserver
+import ssl
 import subprocess
 import sys
 import threading
@@ -53,163 +60,454 @@ HOP_BY_HOP_HEADERS = {
 }
 
 
-def run_lb_shim(port: int, session_id: str, parent_pid: int, upstream_base_url: str) -> None:
-    upstream_base_url = upstream_base_url.rstrip("/")
+# ---------------------------------------------------------------------------
+# Local intercepting proxy (keeps Remote Control *and* LB routing at once).
+# ---------------------------------------------------------------------------
+# Claude Code only keeps Remote Control (/rc) enabled when (a) its API endpoint
+# is the real api.anthropic.com (its `sCn` first-party check) and (b) the
+# *active* login is a full-scope interactive `claude auth login` token carrying
+# `user:profile` (its `vx` check). A custom ANTHROPIC_BASE_URL fails (a); the
+# unix-socket / CLAUDE_CODE_OAUTH_TOKEN path forces an inference-only token and
+# fails (b). So neither of those can route through the LB without killing /rc.
+#
+# Instead we leave Claude pointed at api.anthropic.com with its keychain login,
+# and interpose a local HTTPS proxy. Claude's undici global dispatcher
+# (EnvHttpProxyAgent, installed whenever HTTPS_PROXY is set) CONNECT-tunnels
+# every request through us. We MITM api.anthropic.com — terminating TLS with a
+# locally-minted leaf cert Claude trusts via NODE_EXTRA_CA_CERTS — and forward
+# those requests to the LB (which injects the pooled account's auth). Every
+# other host (the RC bridge wss://bridge.claudeusercontent.com, telemetry, OAuth
+# refresh) is blind-tunnelled untouched, keeping its real end-to-end TLS. Claude
+# merges the extra CA with the bundled + system roots (its `H9`/getCACertificates
+# path), so trusting our CA never weakens validation of any other host.
+#
+# The MITM CA is scoped to this process tree only (NODE_EXTRA_CA_CERTS in the
+# child env) and is never added to the system trust store.
 
-    class Handler(http.server.BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
+TLS_DIR = Path.home() / ".agent-lb" / "tls"
+CA_CERT = TLS_DIR / "ca.pem"
+CA_KEY = TLS_DIR / "ca-key.pem"
+LEAF_CERT = TLS_DIR / "leaf.pem"
+LEAF_KEY = TLS_DIR / "leaf-key.pem"
+CERT_MARKER = TLS_DIR / ".v1"
+INTERCEPT_HOSTS = {"api.anthropic.com"}
 
-        def log_message(self, format: str, *args: object) -> None:
+
+def _run_openssl(args: list[str]) -> None:
+    proc = subprocess.run(
+        ["openssl", *args],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "openssl " + " ".join(args) + " failed:\n" + proc.stdout.decode("utf-8", "replace")
+        )
+
+
+def ensure_mitm_certs() -> None:
+    """Mint (once) a local CA + api.anthropic.com leaf cert under ~/.agent-lb/tls.
+
+    Idempotent: reuses cached certs when present. Shells out to the system
+    `openssl` (stdlib can't create x509 certs). Keys are 0600; the dir is 0700.
+    """
+    if (
+        CERT_MARKER.exists()
+        and CA_CERT.exists()
+        and CA_KEY.exists()
+        and LEAF_CERT.exists()
+        and LEAF_KEY.exists()
+    ):
+        return
+    if shutil.which("openssl") is None:
+        raise RuntimeError("openssl not found on PATH (needed to mint the local MITM cert)")
+
+    TLS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        TLS_DIR.chmod(0o700)
+    except OSError:
+        pass
+
+    ca_conf = TLS_DIR / "ca.cnf"
+    leaf_req_conf = TLS_DIR / "leaf-req.cnf"
+    leaf_ext_conf = TLS_DIR / "leaf-ext.cnf"
+    leaf_csr = TLS_DIR / "leaf.csr"
+    ca_conf.write_text(
+        "[req]\n"
+        "distinguished_name = dn\n"
+        "x509_extensions = v3_ca\n"
+        "prompt = no\n"
+        "[dn]\n"
+        "CN = agent-lb local MITM CA (claude cc)\n"
+        "[v3_ca]\n"
+        "basicConstraints = critical,CA:TRUE,pathlen:0\n"
+        "keyUsage = critical,keyCertSign,cRLSign\n"
+        "subjectKeyIdentifier = hash\n"
+    )
+    leaf_req_conf.write_text(
+        "[req]\n"
+        "distinguished_name = dn\n"
+        "prompt = no\n"
+        "[dn]\n"
+        "CN = api.anthropic.com\n"
+    )
+    leaf_ext_conf.write_text(
+        "[v3_leaf]\n"
+        "basicConstraints = critical,CA:FALSE\n"
+        "keyUsage = critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage = serverAuth\n"
+        "subjectAltName = DNS:api.anthropic.com\n"
+    )
+
+    _run_openssl([
+        "req", "-x509", "-new", "-nodes", "-newkey", "rsa:2048", "-sha256",
+        "-days", "3650", "-keyout", str(CA_KEY), "-out", str(CA_CERT),
+        "-config", str(ca_conf),
+    ])
+    _run_openssl([
+        "req", "-new", "-nodes", "-newkey", "rsa:2048",
+        "-keyout", str(LEAF_KEY), "-out", str(leaf_csr),
+        "-config", str(leaf_req_conf),
+    ])
+    _run_openssl([
+        "x509", "-req", "-in", str(leaf_csr),
+        "-CA", str(CA_CERT), "-CAkey", str(CA_KEY), "-CAcreateserial",
+        "-out", str(LEAF_CERT), "-days", "3650", "-sha256",
+        "-extfile", str(leaf_ext_conf), "-extensions", "v3_leaf",
+    ])
+    for key_file in (CA_KEY, LEAF_KEY):
+        try:
+            key_file.chmod(0o600)
+        except OSError:
+            pass
+    for scratch in (leaf_csr, ca_conf, leaf_req_conf, leaf_ext_conf):
+        try:
+            scratch.unlink()
+        except OSError:
+            pass
+    CERT_MARKER.write_text("1\n")
+
+
+class _LbApiHandler(http.server.BaseHTTPRequestHandler):
+    """Serves the MITM'd api.anthropic.com stream, forwarding to the LB.
+
+    Instantiated by hand over an already-TLS-wrapped socket; its config
+    (upstream_base_url / session_id / parent_pid) comes from the `server` object.
+    Mirrors the old shim's forward/stream behaviour: strips hop-by-hop + host
+    headers, stamps `x-claude-session-id`, delimits every response by connection
+    close, and streams SSE line-by-line.
+    """
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        self._forward()
+
+    def do_POST(self) -> None:
+        self._forward()
+
+    def do_PUT(self) -> None:
+        self._forward()
+
+    def do_PATCH(self) -> None:
+        self._forward()
+
+    def do_DELETE(self) -> None:
+        self._forward()
+
+    def do_HEAD(self) -> None:
+        self._forward()
+
+    def _forward(self) -> None:
+        parent_pid = self.server.parent_pid
+        session_id = self.server.session_id
+        upstream_base_url = self.server.upstream_base_url
+
+        try:
+            os.kill(parent_pid, 0)
+        except OSError:
+            self.send_error(503, "parent process exited")
             return
 
-        def do_GET(self) -> None:
-            self._forward()
-
-        def do_POST(self) -> None:
-            self._forward()
-
-        def do_PUT(self) -> None:
-            self._forward()
-
-        def do_PATCH(self) -> None:
-            self._forward()
-
-        def do_DELETE(self) -> None:
-            self._forward()
-
-        def _forward(self) -> None:
-            # Local-only readiness probe: answered in-process so `start_lb_shim`
-            # tests "is the shim socket up" (~ms) instead of round-tripping a
-            # GET /health all the way to the remote LB over Tailscale (seconds).
-            # Claude only ever calls real Anthropic API paths, never this one.
-            if self.path == "/__cc_shim_ready":
-                self.send_response(200)
-                self.send_header("content-type", "application/json")
-                self.send_header("content-length", "4")
-                self.send_header("connection", "close")
-                self.end_headers()
-                self.wfile.write(b'"ok"')
-                self.close_connection = True
-                return
-
+        body = None
+        if self.command not in {"GET", "HEAD"}:
             try:
-                os.kill(parent_pid, 0)
-            except OSError:
-                self.send_error(503, "parent process exited")
+                length = int(self.headers.get("content-length", "0"))
+            except ValueError:
+                length = 0
+            body = self.rfile.read(length) if length > 0 else b""
+
+        headers = {
+            key: value
+            for key, value in self.headers.items()
+            if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
+        }
+        headers["x-claude-session-id"] = session_id
+
+        request = urllib.request.Request(
+            f"{upstream_base_url}{self.path}",
+            data=body,
+            headers=headers,
+            method=self.command,
+        )
+        # Absorb a brief LB restart: a refused/reset connect never reached the LB,
+        # so retry with bounded backoff before surfacing an error. Real HTTP
+        # responses (429/503 with Retry-After) pass straight through.
+        connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", 6))
+        backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", 0.5))
+        backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", 4.0))
+        attempt = 0
+        while True:
+            try:
+                response = urllib.request.urlopen(request, timeout=600)
+                self._copy_response(response)
                 return
-
-            body = None
-            if self.command not in {"GET", "HEAD"}:
-                try:
-                    length = int(self.headers.get("content-length", "0"))
-                except ValueError:
-                    length = 0
-                body = self.rfile.read(length) if length > 0 else b""
-
-            headers = {
-                key: value
-                for key, value in self.headers.items()
-                if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
-            }
-            headers["x-claude-session-id"] = session_id
-
-            request = urllib.request.Request(
-                f"{upstream_base_url}{self.path}",
-                data=body,
-                headers=headers,
-                method=self.command,
-            )
-            # Absorb a brief LB restart: if the connection is refused/reset
-            # (service bouncing) the request never reached the LB, so retry a
-            # few times with bounded backoff before surfacing an error. This
-            # keeps the agent alive across a service restart instead of failing
-            # the in-flight request. Real HTTP responses (including 429/503 with
-            # Retry-After) pass straight through for the agent to handle.
-            connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", 6))
-            backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", 0.5))
-            backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", 4.0))
-            attempt = 0
-            while True:
-                try:
-                    response = urllib.request.urlopen(request, timeout=600)
-                    self._copy_response(response)
-                    return
-                except urllib.error.HTTPError as error:
-                    self._copy_response(error)
-                    return
-                except Exception as error:
-                    parent_alive = True
-                    try:
-                        os.kill(parent_pid, 0)
-                    except OSError:
-                        parent_alive = False
-                    if attempt < connect_retries and parent_alive and _is_retryable_shim_connect_error(error):
-                        time.sleep(min(backoff * (2**attempt), backoff_cap))
-                        attempt += 1
-                        continue
-                    message = json.dumps(
-                        {"error": {"message": str(error), "code": "claude_lb_shim_error"}}
-                    ).encode()
-                    self.send_response(502)
-                    self.send_header("content-type", "application/json")
-                    self.send_header("content-length", str(len(message)))
-                    self.end_headers()
-                    self.wfile.write(message)
-                    return
-
-        def _copy_response(self, response: object) -> None:
-            status = getattr(response, "status", None) or getattr(response, "code", 502)
-            content_type = response.headers.get("content-type", "")
-            self.send_response(int(status))
-            for key, value in response.headers.items():
-                header = key.lower()
-                if header not in HOP_BY_HOP_HEADERS and header != "content-length":
-                    self.send_header(key, value)
-            self.send_header("connection", "close")
-            self.end_headers()
-            if "text/event-stream" in content_type:
-                while True:
-                    line = response.readline()
-                    if not line:
-                        break
-                    self.wfile.write(line)
-                    self.wfile.flush()
-            else:
-                while True:
-                    chunk = response.read(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-            self.close_connection = True
-
-    with http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
-        def stop_when_parent_exits() -> None:
-            while True:
+            except urllib.error.HTTPError as error:
+                self._copy_response(error)
+                return
+            except Exception as error:
+                parent_alive = True
                 try:
                     os.kill(parent_pid, 0)
                 except OSError:
-                    server.shutdown()
+                    parent_alive = False
+                if attempt < connect_retries and parent_alive and _is_retryable_shim_connect_error(error):
+                    time.sleep(min(backoff * (2**attempt), backoff_cap))
+                    attempt += 1
+                    continue
+                message = json.dumps(
+                    {"error": {"message": str(error), "code": "claude_lb_shim_error"}}
+                ).encode()
+                self.send_response(502)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(message)))
+                self.send_header("connection", "close")
+                self.end_headers()
+                self.wfile.write(message)
+                self.close_connection = True
+                return
+
+    def _copy_response(self, response: object) -> None:
+        status = getattr(response, "status", None) or getattr(response, "code", 502)
+        content_type = response.headers.get("content-type", "")
+        self.send_response(int(status))
+        for key, value in response.headers.items():
+            header = key.lower()
+            if header not in HOP_BY_HOP_HEADERS and header != "content-length":
+                self.send_header(key, value)
+        self.send_header("connection", "close")
+        self.end_headers()
+        if "text/event-stream" in content_type:
+            while True:
+                line = response.readline()
+                if not line:
+                    break
+                self.wfile.write(line)
+                self.wfile.flush()
+        else:
+            while True:
+                chunk = response.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        self.close_connection = True
+
+
+def _splice(a: socket.socket, b: socket.socket) -> None:
+    """Bidirectionally pump bytes between two sockets until either side closes.
+
+    Used for blind CONNECT tunnels (non-intercepted hosts, incl. the long-lived
+    Remote Control websocket). The select timeout is only an idle tick — idle
+    connections are kept open, never torn down.
+    """
+    ends = (a, b)
+    try:
+        while True:
+            readable, _, errored = select.select(ends, [], ends, 300)
+            if errored:
+                break
+            if not readable:
+                continue
+            for src in readable:
+                dst = b if src is a else a
+                try:
+                    data = src.recv(65536)
+                except OSError:
                     return
-                time.sleep(2.0)
+                if not data:
+                    return
+                try:
+                    dst.sendall(data)
+                except OSError:
+                    return
+    finally:
+        for sock in ends:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
-        threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+
+class _ProxyHandler(http.server.BaseHTTPRequestHandler):
+    """Front HTTPS proxy: MITMs INTERCEPT_HOSTS, blind-tunnels everything else."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_CONNECT(self) -> None:
+        host, _, port_text = self.path.partition(":")
+        try:
+            port = int(port_text) if port_text else 443
+        except ValueError:
+            port = 443
+        # Everything is handled inline; never let the base handler reuse the
+        # raw socket after we hijack it for TLS or a tunnel.
+        self.close_connection = True
+        if host in INTERCEPT_HOSTS:
+            self._mitm()
+        else:
+            self._tunnel(host, port)
+
+    def _mitm(self) -> None:
+        # The client (undici) waits for this 200 before sending its ClientHello,
+        # so nothing is buffered on self.rfile yet.
+        try:
+            self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        except OSError:
+            return
+        # Dup the fd so the TLS socket owns an independent handle; the base
+        # handler's finish() can then close self.connection without racing us.
+        try:
+            raw = socket.socket(
+                self.connection.family, self.connection.type,
+                fileno=os.dup(self.connection.fileno()),
+            )
+        except OSError:
+            return
+        try:
+            tls = self.server.tls_context.wrap_socket(raw, server_side=True)
+        except (OSError, ValueError):
+            try:
+                raw.close()
+            except OSError:
+                pass
+            return
+        try:
+            # Drives setup()->handle()->finish() synchronously over the TLS
+            # socket, forwarding to the LB. Config is read from self.server.
+            _LbApiHandler(tls, ("127.0.0.1", 0), self.server)
+        except OSError:
+            pass
+        finally:
+            try:
+                tls.close()
+            except OSError:
+                pass
+
+    def _tunnel(self, host: str, port: int) -> None:
+        try:
+            upstream = socket.create_connection((host, port), timeout=20)
+        except OSError:
+            try:
+                self.connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+            except OSError:
+                pass
+            return
+        try:
+            self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        except OSError:
+            try:
+                upstream.close()
+            except OSError:
+                pass
+            return
+        _splice(self.connection, upstream)
+
+
+class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """Threaded HTTPS proxy on an ephemeral loopback port."""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        # Proxy teardown races (a client hanging up mid-tunnel) raise benign
+        # socket errors; suppress the default traceback dump to stderr.
+        return
+
+
+def proxy_ready_path(session_id: str) -> Path:
+    shim_dir = Path.home() / ".agent-lb" / "shims"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        shim_dir.chmod(0o700)
+    except OSError:
+        pass
+    return shim_dir / f"{session_id}.proxy"
+
+
+def run_lb_proxy(ready_path: str, session_id: str, parent_pid: int, upstream_base_url: str) -> None:
+    ensure_mitm_certs()
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls_context.load_cert_chain(certfile=str(LEAF_CERT), keyfile=str(LEAF_KEY))
+
+    server = _ThreadingProxyServer(("127.0.0.1", 0), _ProxyHandler)
+    server.tls_context = tls_context
+    server.session_id = session_id
+    server.parent_pid = parent_pid
+    server.upstream_base_url = upstream_base_url.rstrip("/")
+    port = server.server_address[1]
+
+    ready = Path(ready_path)
+    tmp = ready.with_name(ready.name + ".tmp")
+    tmp.write_text(f"{port}\n")
+    os.replace(tmp, ready)
+
+    def stop_when_parent_exits() -> None:
+        while True:
+            try:
+                os.kill(parent_pid, 0)
+            except OSError:
+                server.shutdown()
+                return
+            time.sleep(2.0)
+
+    threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+    try:
         server.serve_forever()
+    finally:
+        try:
+            ready.unlink()
+        except OSError:
+            pass
 
 
-def free_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def _proxy_port_ready(port: int, timeout: float = 0.4) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
-def start_lb_shim(session_id: str) -> str:
-    port = free_local_port()
+def start_lb_proxy(session_id: str) -> str:
+    ready = proxy_ready_path(session_id)
+    try:
+        ready.unlink()
+    except OSError:
+        pass
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
-        "--lb-shim",
-        str(port),
+        "--lb-proxy",
+        str(ready),
         session_id,
         str(os.getpid()),
         AGENT_LB_BASE_URL,
@@ -221,16 +519,21 @@ def start_lb_shim(session_id: str) -> str:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    shim_base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", 8.0)
+    deadline = time.time() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", 12.0)
     while time.time() < deadline:
         try:
-            request = urllib.request.Request(f"{shim_base_url}/__cc_shim_ready", headers={"accept": "application/json"})
-            with urllib.request.urlopen(request, timeout=0.4):
-                return shim_base_url
-        except Exception:
-            time.sleep(0.05)
-    raise RuntimeError("Claude LB session shim did not start")
+            text = ready.read_text().strip()
+        except OSError:
+            text = ""
+        if text:
+            try:
+                port = int(text)
+            except ValueError:
+                port = 0
+            if port and _proxy_port_ready(port):
+                return f"http://127.0.0.1:{port}"
+        time.sleep(0.05)
+    raise RuntimeError("Claude LB intercepting proxy did not start")
 
 
 def lb_enabled() -> bool:
@@ -722,8 +1025,8 @@ def run_headless_with_resume(
 
 
 def main() -> None:
-    if len(sys.argv) >= 6 and sys.argv[1] == "--lb-shim":
-        run_lb_shim(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), sys.argv[5])
+    if len(sys.argv) >= 6 and sys.argv[1] == "--lb-proxy":
+        run_lb_proxy(sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])
         return
 
     argv = sys.argv[1:]
@@ -733,9 +1036,31 @@ def main() -> None:
         session_id = os.environ.get("CLAUDE_LB_SESSION_ID") or f"cc-{os.getpid()}-{int(time.time())}"
         if print_lb_banner(argv, session_id):
             try:
-                os.environ["ANTHROPIC_BASE_URL"] = start_lb_shim(session_id)
-                # Routing through the LB means OAuth/Max billing; an auth token
-                # here would flip Claude Code to API billing instead.
+                proxy_url = start_lb_proxy(session_id)
+                # Keep Claude pointed at the real api.anthropic.com with its
+                # keychain login (both are required for Remote Control), and route
+                # its traffic through a local intercepting proxy instead. Claude's
+                # undici global dispatcher CONNECT-tunnels every request through
+                # HTTPS_PROXY; our proxy MITMs api.anthropic.com -> the LB (which
+                # injects the pooled account's auth) and blind-tunnels everything
+                # else (the RC bridge, telemetry, OAuth refresh) untouched.
+                os.environ["HTTPS_PROXY"] = proxy_url
+                os.environ["https_proxy"] = proxy_url
+                # Trust the MITM leaf — scoped to this process only, never added to
+                # the system trust store. Claude merges this with the bundled +
+                # system roots, so every other host keeps validating normally.
+                os.environ["NODE_EXTRA_CA_CERTS"] = str(CA_CERT)
+                # Must NOT be set: a custom base URL fails RC's first-party check
+                # (sCn); a unix socket or CLAUDE_CODE_OAUTH_TOKEN forces an
+                # inference-only token and fails RC's full-scope check (vx). Clear
+                # any leftovers from an earlier launcher version.
+                os.environ.pop("ANTHROPIC_BASE_URL", None)
+                os.environ.pop("ANTHROPIC_UNIX_SOCKET", None)
+                os.environ.pop("_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL", None)
+                os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+                # The LB injects the pooled account's auth; Claude's keychain OAuth
+                # stays the active login (what RC needs). A local auth/api token
+                # would flip Claude Code to API billing, so clear them.
                 os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
                 os.environ.pop("ANTHROPIC_API_KEY", None)
                 routed = True
