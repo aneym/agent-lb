@@ -248,6 +248,24 @@ class AccountPulseScheduler:
             return
         if verdict is probes.ProbeVerdict.UNSUBSCRIBED:
             self._failures.pop(account.id, None)
+            if account.status in (AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED):
+                # The probe authenticated, so a stored auth-failure status is
+                # stale — the account is unsubscribed, not disconnected. The
+                # canceled ledger keeps it out of the routable pool.
+                await repo.update_status(account.id, AccountStatus.ACTIVE, None)
+                get_account_selection_cache().invalidate()
+                AuditService.log_async(
+                    "account_pulse_reactivated",
+                    details={
+                        "account_id": account.id,
+                        "previous_status": account.status.value,
+                        "probe_status_code": status,
+                    },
+                )
+                logger.info(
+                    "Account pulse cleared stale auth-failure status for unsubscribed account_id=%s",
+                    account.id,
+                )
             if not subscription_canceled:
                 await repo.update_subscription_ledger(
                     account.id,

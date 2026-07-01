@@ -202,6 +202,21 @@ async def test_pulse_marks_reauth_required_on_credential_rejection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pulse_corrects_stale_auth_failure_to_unsubscribed() -> None:
+    account = _account(status=AccountStatus.DEACTIVATED, subscription_status="active")
+    repo = _Repo([account])
+    scheduler = _build_scheduler(repo, probe_results={account.id: (403, _OAUTH_REFUSED_MESSAGE)})
+
+    await scheduler.pulse_once()
+
+    # Probe authenticated → the deactivated status is stale; ledger goes
+    # canceled so the account stays out of the routable pool.
+    assert repo.status_updates == [(account.id, AccountStatus.ACTIVE, None)]
+    assert len(repo.ledger_updates) == 1
+    assert repo.ledger_updates[0]["status"] == "canceled"
+
+
+@pytest.mark.asyncio
 async def test_pulse_reactivates_recovered_account() -> None:
     account = _account(status=AccountStatus.DEACTIVATED)
     repo = _Repo([account])

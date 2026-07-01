@@ -20,6 +20,14 @@ state untouched and back off.
 - **AND** the account `status` remains unchanged (credentials are intact)
 - **AND** the account selection cache is invalidated
 
+#### Scenario: A stale auth-failure status is corrected to unsubscribed
+
+- **GIVEN** an account in `deactivated` or `reauth_required` status
+- **WHEN** a pulse probe authenticates but returns a subscription-refusal 403
+- **THEN** the account `status` becomes `active` (the stored auth-failure diagnosis was wrong)
+- **AND** the subscription ledger is `canceled`, keeping the account out of the routable pool
+- **AND** dashboards show it as authenticated-but-unsubscribed rather than needing re-auth
+
 #### Scenario: Subscription recovery is detected automatically
 
 - **GIVEN** an account whose subscription ledger is `canceled`
