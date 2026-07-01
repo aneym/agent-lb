@@ -692,7 +692,11 @@ async def v1_messages(
 
     return StreamingResponse(
         inject_sse_keepalives(
-            _anthropic_stream_error_guard(stream.body, streaming=bool(payload.stream)),
+            _anthropic_stream_error_guard(
+                stream.body,
+                streaming=bool(payload.stream),
+                api_key_reservation=reservation,
+            ),
             get_settings().sse_keepalive_interval_seconds,
         ),
         media_type=stream.media_type,
@@ -3326,12 +3330,14 @@ async def _anthropic_stream_error_guard(
     body: AsyncIterator[bytes],
     *,
     streaming: bool,
+    api_key_reservation: ApiKeyUsageReservationData | None = None,
 ) -> AsyncIterator[bytes]:
     """Surface mid-stream proxy failures as structured errors instead of truncation."""
     try:
         async for chunk in body:
             yield chunk
     except AnthropicProxyError as exc:
+        await _release_reservation(api_key_reservation)
         error_type = "rate_limit_error" if (exc.retry_at is not None or exc.status_code == 429) else exc.code
         envelope = json.dumps(
             {"type": "error", "error": {"type": error_type, "message": exc.message}},

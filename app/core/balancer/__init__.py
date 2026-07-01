@@ -19,11 +19,13 @@ from app.core.balancer.logic import (
     TrafficClass,
     UsageWeightedOrder,
     account_status_for_permanent_failure,
+    canonical_permanent_failure_code,
     evaluate_health_tier,
     failover_decision,
     handle_permanent_failure,
     handle_quota_exceeded,
     handle_rate_limit,
+    permanent_failure_reason,
     select_account,
 )
 
@@ -48,10 +50,12 @@ __all__ = [
     "SelectionResult",
     "UsageWeightedOrder",
     "account_status_for_permanent_failure",
+    "canonical_permanent_failure_code",
     "evaluate_health_tier",
     "failover_decision",
     "handle_permanent_failure",
     "handle_quota_exceeded",
     "handle_rate_limit",
+    "permanent_failure_reason",
     "select_account",
 ]

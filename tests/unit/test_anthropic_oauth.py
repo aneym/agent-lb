@@ -11,6 +11,7 @@ from app.core.anthropic.oauth import (
     exchange_anthropic_authorization_code,
     refresh_anthropic_access_token,
 )
+from app.core.auth.refresh import RefreshError
 
 pytestmark = pytest.mark.unit
 
@@ -148,3 +149,37 @@ async def test_refresh_anthropic_access_token_returns_optional_id_token() -> Non
     assert body["grant_type"] == "refresh_token"
     assert body["refresh_token"] == "old-refresh"
     assert "scope" not in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "error": "invalid_grant",
+            "error_description": "Refresh token not found or invalid",
+        },
+        {
+            "error": {
+                "code": "invalid_grant",
+                "message": "Refresh token not found or invalid",
+            },
+        },
+    ],
+)
+async def test_refresh_anthropic_access_token_marks_invalid_grant_permanent(
+    payload: dict[str, Any],
+) -> None:
+    session = _FakeSession(_FakeResponse(status=400, payload=payload))
+
+    with pytest.raises(RefreshError) as exc_info:
+        await refresh_anthropic_access_token(
+            "old-refresh",
+            token_url="https://platform.claude.com/v1/oauth/token",
+            client_id="client-id",
+            session=cast(aiohttp.ClientSession, session),
+        )
+
+    assert exc_info.value.code == "invalid_grant"
+    assert exc_info.value.message == "Refresh token not found or invalid"
+    assert exc_info.value.is_permanent is True

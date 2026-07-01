@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 import aiohttp
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
-from app.core.auth.refresh import RefreshError, TokenRefreshResult
+from app.core.auth.refresh import RefreshError, TokenRefreshResult, classify_refresh_error
 from app.core.clients.http import lease_http_session
 from app.core.clients.oauth import OAuthError, OAuthTokens
 from app.core.config.settings import get_settings
@@ -142,7 +142,12 @@ async def refresh_anthropic_access_token(
             error_prefix="Token refresh",
         )
     except OAuthError as exc:
-        raise RefreshError(exc.code, exc.message, False, transport_error=exc.code == "transport_error") from exc
+        raise RefreshError(
+            exc.code,
+            exc.message,
+            classify_refresh_error(exc.code),
+            transport_error=exc.code == "transport_error",
+        ) from exc
 
     if not payload_data.access_token or not payload_data.refresh_token:
         raise RefreshError("invalid_response", "Refresh response missing tokens", False)

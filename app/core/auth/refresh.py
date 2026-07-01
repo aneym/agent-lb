@@ -16,7 +16,7 @@ from app.core.auth import (
     normalize_seat_type,
 )
 from app.core.auth.models import OAuthTokenPayload
-from app.core.balancer import PERMANENT_FAILURE_CODES
+from app.core.balancer import PERMANENT_FAILURE_CODES, canonical_permanent_failure_code
 from app.core.clients.codex import (
     CodexClient,
     CodexTransportError,
@@ -65,7 +65,7 @@ class RefreshError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
-        self.is_permanent = is_permanent
+        self.is_permanent = bool(is_permanent or _is_permanent_refresh_error_code(code))
         self.transport_error = transport_error
         self.upstream_proxy_fail_closed_reason = upstream_proxy_fail_closed_reason
 
@@ -78,9 +78,13 @@ def should_refresh(last_refresh: datetime, now: datetime | None = None) -> bool:
 
 
 def classify_refresh_error(code: str | None) -> bool:
+    return _is_permanent_refresh_error_code(code)
+
+
+def _is_permanent_refresh_error_code(code: str | None) -> bool:
     if not code:
         return False
-    return code in PERMANENT_FAILURE_CODES
+    return canonical_permanent_failure_code(code) in PERMANENT_FAILURE_CODES
 
 
 async def refresh_access_token(

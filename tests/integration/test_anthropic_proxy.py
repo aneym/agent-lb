@@ -1032,6 +1032,110 @@ async def test_anthropic_messages_keep_same_session_on_sticky_account(async_clie
 
 
 @pytest.mark.asyncio
+async def test_anthropic_messages_fails_over_when_refresh_invalid_grant_before_upstream(
+    async_client,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-stale",
+        provider="anthropic",
+        access_token="anthropic-access-stale",
+        email="stale-claude@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-healthy",
+        provider="anthropic",
+        access_token="anthropic-access-healthy",
+        email="healthy-claude@example.com",
+    )
+
+    payload = {
+        "model": "claude-fable-5",
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "fail over stale auth"}],
+        "thinking": {"type": "adaptive"},
+    }
+    request = AnthropicMessageRequest.model_validate(payload)
+    sticky_key = anthropic_proxy_module._anthropic_sticky_key(
+        request,
+        {"x-claude-session-id": "claude-refresh-failover"},
+        quota_key=anthropic_proxy_module._anthropic_quota_key(request),
+    )
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id="anthropic-stale",
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+    async def fake_ensure_fresh(self, account, *, force=False):
+        del self, force
+        if account.id == "anthropic-stale":
+            raise anthropic_proxy_module.RefreshError(
+                "auth_refresh_invalid_grant",
+                "Refresh token not found or invalid",
+                False,
+            )
+        return account
+
+    seen_authorizations: list[str] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        seen_authorizations.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(anthropic_proxy_module.AuthManager, "ensure_fresh", fake_ensure_fresh)
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=payload,
+        headers={
+            "anthropic-beta": "oauth-2025-04-20",
+            "x-claude-session-id": "claude-refresh-failover",
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen_authorizations == ["Bearer anthropic-access-healthy"]
+
+    async with SessionLocal() as session:
+        accounts = {
+            account.id: account
+            for account in (
+                await session.execute(select(Account).where(Account.id.in_(["anthropic-stale", "anthropic-healthy"])))
+            )
+            .scalars()
+            .all()
+        }
+        logs = list((await session.execute(select(RequestLog).order_by(RequestLog.id))).scalars())
+        sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+
+    assert accounts["anthropic-stale"].status == AccountStatus.REAUTH_REQUIRED
+    assert accounts["anthropic-stale"].deactivation_reason == "Refresh token grant invalid - re-login required"
+    assert accounts["anthropic-healthy"].status == AccountStatus.ACTIVE
+    assert [log.status for log in logs] == ["error", "success"]
+    assert [log.account_id for log in logs] == ["anthropic-stale", "anthropic-healthy"]
+    assert logs[0].error_code == "auth_refresh_invalid_grant"
+    assert sticky.account_id == "anthropic-healthy"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_429_records_quota_cooldown_and_fails_over_without_global_rate_limit(
     async_client,
     monkeypatch,

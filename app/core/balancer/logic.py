@@ -44,6 +44,8 @@ REAUTH_REQUIRED_FAILURE_CODES = frozenset(
     }
 )
 
+_AUTH_REFRESH_ERROR_PREFIX = "auth_refresh_"
+
 SECONDS_PER_DAY = 60 * 60 * 24
 SECONDS_PER_HOUR = 60 * 60
 SECONDS_PER_WEEK = 7 * SECONDS_PER_DAY
@@ -1046,17 +1048,31 @@ def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
         state.reset_at = int(time.time() + 3600)
 
 
-def handle_permanent_failure(state: AccountState, error_code: str) -> None:
-    state.status = account_status_for_permanent_failure(error_code)
-    state.deactivation_reason = PERMANENT_FAILURE_CODES.get(
-        error_code,
+def canonical_permanent_failure_code(error_code: str) -> str:
+    if error_code.startswith(_AUTH_REFRESH_ERROR_PREFIX):
+        candidate = error_code.removeprefix(_AUTH_REFRESH_ERROR_PREFIX)
+        if candidate in PERMANENT_FAILURE_CODES:
+            return candidate
+    return error_code
+
+
+def permanent_failure_reason(error_code: str) -> str:
+    canonical_code = canonical_permanent_failure_code(error_code)
+    return PERMANENT_FAILURE_CODES.get(
+        canonical_code,
         f"Authentication failed: {error_code}",
     )
+
+
+def handle_permanent_failure(state: AccountState, error_code: str) -> None:
+    state.status = account_status_for_permanent_failure(error_code)
+    state.deactivation_reason = permanent_failure_reason(error_code)
     state.blocked_at = None
 
 
 def account_status_for_permanent_failure(error_code: str) -> AccountStatus:
-    if error_code in REAUTH_REQUIRED_FAILURE_CODES:
+    canonical_code = canonical_permanent_failure_code(error_code)
+    if canonical_code in REAUTH_REQUIRED_FAILURE_CODES:
         return AccountStatus.REAUTH_REQUIRED
     return AccountStatus.DEACTIVATED
 

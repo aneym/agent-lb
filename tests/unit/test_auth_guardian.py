@@ -289,6 +289,53 @@ async def test_auth_guardian_permanent_refresh_failure_invalidates_account_selec
 
 
 @pytest.mark.asyncio
+async def test_auth_guardian_canonical_permanent_refresh_failure_invalidates_account_selection_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 1, 2, 12, 0, 0)
+    account = _account(
+        "canonical-permanent-failure",
+        status=AccountStatus.ACTIVE,
+        last_refresh=now - timedelta(hours=13),
+    )
+    repo = _Repo([account])
+    calls: list[str] = []
+    cache = _AccountSelectionCache()
+    failure = RefreshError(
+        "invalid_grant",
+        "Refresh token not found or invalid",
+        False,
+    )
+    failures = {account.id: failure}
+
+    @asynccontextmanager
+    async def repo_factory() -> AsyncIterator[_Repo]:
+        yield repo
+
+    monkeypatch.setattr(guardian_module, "get_account_selection_cache", lambda: cache)
+
+    scheduler = AuthGuardianScheduler(
+        interval_seconds=21600,
+        enabled=True,
+        max_age_seconds=12 * 3600,
+        batch_size=10,
+        concurrency=1,
+        jitter_seconds=0.0,
+        leader_election_factory=lambda: _Leader(),
+        repo_factory=repo_factory,
+        auth_manager_factory=lambda _repo: _AuthManager(calls, failures),
+        sleep=lambda _delay: _noop_sleep(),
+        now=lambda: now,
+    )
+
+    await scheduler._refresh_once()
+
+    assert calls == [account.id]
+    assert failure.is_permanent is True
+    assert cache.invalidate_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_auth_guardian_run_loop_survives_transient_pass_failure(caplog: pytest.LogCaptureFixture) -> None:
     now = datetime(2026, 1, 2, 12, 0, 0)
     calls = 0

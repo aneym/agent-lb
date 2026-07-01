@@ -11,8 +11,14 @@ from hashlib import sha256
 from typing import Any, Protocol, TypeAlias
 
 from app.core.auth import DEFAULT_PLAN, token_expiry_epoch_ms
-from app.core.auth.refresh import RefreshError, TokenRefreshResult, refresh_access_token, should_refresh
-from app.core.balancer import PERMANENT_FAILURE_CODES, account_status_for_permanent_failure
+from app.core.auth.refresh import (
+    RefreshError,
+    TokenRefreshResult,
+    classify_refresh_error,
+    refresh_access_token,
+    should_refresh,
+)
+from app.core.balancer import account_status_for_permanent_failure, permanent_failure_reason
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
@@ -210,7 +216,9 @@ class AuthManager:
         try:
             result = await self._refresh_tokens(refresh_token, account=account, provider=provider)
         except RefreshError as exc:
-            if exc.is_permanent:
+            is_permanent = exc.is_permanent or classify_refresh_error(exc.code)
+            if is_permanent:
+                exc.is_permanent = True
                 latest = await self._repo.get_by_id(account.id)
                 if latest is not None and _refresh_token_material_changed(
                     self._encryptor,
@@ -218,7 +226,7 @@ class AuthManager:
                     account.refresh_token_encrypted,
                 ):
                     return latest
-                reason = PERMANENT_FAILURE_CODES.get(exc.code, exc.message)
+                reason = permanent_failure_reason(exc.code)
                 status = account_status_for_permanent_failure(exc.code)
                 await self._repo.update_status(account.id, status, reason)
                 account.status = status

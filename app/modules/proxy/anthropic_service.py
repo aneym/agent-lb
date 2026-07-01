@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from app.core.anthropic.models import AnthropicMessageRequest, AnthropicUsage, merge_usage_values
 from app.core.anthropic.parsing import parse_sse_event
-from app.core.auth.refresh import RefreshError
+from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.types import UpstreamError
 from app.core.clients.http import lease_http_session
 from app.core.clients.proxy import filter_inbound_headers
@@ -132,7 +132,25 @@ class AnthropicProxyService:
                     )
                     selected_account_ids.add(account.id)
                 last_account = account
-                access_token = await self._fresh_access_token(account)
+                try:
+                    access_token = await self._fresh_access_token(account)
+                except AnthropicProxyError as exc:
+                    if exc.status_code != 401 or not classify_refresh_error(exc.code):
+                        raise
+                    await self._persist_request_log(
+                        account=account,
+                        provider_name=provider_name,
+                        request_id=request_id,
+                        model=payload.model,
+                        started_at=started_at,
+                        status="error",
+                        error_code=exc.code,
+                        error_message=exc.message,
+                        api_key=api_key,
+                    )
+                    last_error_status = exc.status_code
+                    last_error_message = exc.message
+                    continue
                 headers = _build_anthropic_headers(
                     inbound_headers,
                     access_token,
@@ -521,7 +539,8 @@ class AnthropicProxyService:
                 fresh = await manager.ensure_fresh(latest)
                 return self._encryptor.decrypt(fresh.access_token_encrypted)
         except RefreshError as exc:
-            if exc.is_permanent:
+            if exc.is_permanent or classify_refresh_error(exc.code):
+                exc.is_permanent = True
                 await self._load_balancer.mark_permanent_failure(account, exc.code)
             raise AnthropicProxyError(401, exc.message, code=exc.code) from exc
 

@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from app.core.auth.refresh import classify_refresh_error, should_refresh
+from app.core.auth.refresh import RefreshError, classify_refresh_error, should_refresh
 from app.core.utils.time import utcnow
 
 pytestmark = pytest.mark.unit
@@ -24,6 +24,12 @@ def test_classify_refresh_error_permanent():
     assert classify_refresh_error("refresh_token_expired") is True
     assert classify_refresh_error("account_deactivated") is True
     assert classify_refresh_error("invalid_grant") is True
+    assert classify_refresh_error("auth_refresh_invalid_grant") is True
+
+
+def test_refresh_error_canonicalizes_permanent_codes():
+    assert RefreshError("invalid_grant", "refresh failed", False).is_permanent is True
+    assert RefreshError("auth_refresh_invalid_grant", "refresh failed", False).is_permanent is True
 
 
 def test_classify_refresh_error_token_expired_is_permanent():
@@ -37,3 +43,4 @@ def test_classify_refresh_error_token_expired_is_permanent():
 
 def test_classify_refresh_error_temporary():
     assert classify_refresh_error("temporary_error") is False
+    assert classify_refresh_error("auth_refresh_temporary_error") is False

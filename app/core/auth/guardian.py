@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol, cast
 
-from app.core.auth.refresh import RefreshError
+from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
@@ -148,14 +148,16 @@ class AuthGuardianScheduler:
                         raise
                 except RefreshError as exc:
                     self._record_failure(account_id)
-                    if exc.is_permanent:
+                    is_permanent = exc.is_permanent or classify_refresh_error(exc.code)
+                    if is_permanent:
+                        exc.is_permanent = True
                         get_account_selection_cache().invalidate()
                     logger.warning(
                         "Auth Guardian refresh failed account_id=%s account_alias=%s code=%s permanent=%s transport=%s",
                         account.id,
                         _safe_account_alias(account),
                         exc.code,
-                        exc.is_permanent,
+                        is_permanent,
                         exc.transport_error,
                     )
                     return
