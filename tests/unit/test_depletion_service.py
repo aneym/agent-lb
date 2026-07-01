@@ -125,7 +125,7 @@ def test_compute_depletion_empty_history() -> None:
     assert result is None
 
 
-def test_aggregate_depletion_max_risk() -> None:
+def test_aggregate_depletion_pool_mean_with_worst_attribution() -> None:
     metrics = [
         DepletionMetrics(
             risk=0.3,
@@ -135,6 +135,7 @@ def test_aggregate_depletion_max_risk() -> None:
             safe_usage_percent=50.0,
             projected_exhaustion_at=None,
             seconds_until_exhaustion=None,
+            account_id="acc_calm",
         ),
         DepletionMetrics(
             risk=0.8,
@@ -144,6 +145,7 @@ def test_aggregate_depletion_max_risk() -> None:
             safe_usage_percent=50.0,
             projected_exhaustion_at=None,
             seconds_until_exhaustion=None,
+            account_id="acc_hot",
         ),
         DepletionMetrics(
             risk=0.5,
@@ -153,12 +155,53 @@ def test_aggregate_depletion_max_risk() -> None:
             safe_usage_percent=50.0,
             projected_exhaustion_at=None,
             seconds_until_exhaustion=None,
+            account_id="acc_mid",
         ),
     ]
     result = compute_aggregate_depletion(metrics)
     assert result is not None
-    assert result.risk == pytest.approx(0.8)
-    assert result.risk_level == "danger"
+    # Pool risk is the mean across accounts, not the worst account.
+    assert result.risk == pytest.approx((0.3 + 0.8 + 0.5) / 3)
+    assert result.risk_level == "safe"
+    assert result.burn_rate == pytest.approx((0.5 + 2.0 + 1.0) / 3)
+    assert result.worst_account_id == "acc_hot"
+    assert result.worst_risk == pytest.approx(0.8)
+    assert result.worst_risk_level == "danger"
+    assert result.account_count == 3
+
+
+def test_aggregate_depletion_one_hot_account_does_not_label_pool_critical() -> None:
+    calm = [
+        DepletionMetrics(
+            risk=0.05,
+            risk_level="safe",
+            rate_per_second=0.0001,
+            burn_rate=0.1,
+            safe_usage_percent=50.0,
+            projected_exhaustion_at=None,
+            seconds_until_exhaustion=None,
+            account_id=f"acc_{index}",
+        )
+        for index in range(4)
+    ]
+    hot = DepletionMetrics(
+        risk=1.0,
+        risk_level="critical",
+        rate_per_second=0.02,
+        burn_rate=5.8,
+        safe_usage_percent=40.0,
+        projected_exhaustion_at=BASE_TIME,
+        seconds_until_exhaustion=59000.0,
+        account_id="acc_hot",
+    )
+    result = compute_aggregate_depletion([*calm, hot])
+    assert result is not None
+    assert result.risk_level == "safe"
+    assert result.worst_account_id == "acc_hot"
+    assert result.worst_risk_level == "critical"
+    # A calm pool must not render the hot account's exhaustion ETA.
+    assert result.projected_exhaustion_at is None
+    assert result.seconds_until_exhaustion is None
 
 
 def test_aggregate_depletion_empty_returns_none() -> None:

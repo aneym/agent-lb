@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from app.core import usage as usage_core
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
+from app.core.providers import normalize_provider_name
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import UsageHistory
@@ -177,7 +178,13 @@ class DashboardService:
             secondary_usage,
             now,
         )
-        pri_depletion, sec_depletion = _build_depletion_by_window(primary_history, secondary_history, now)
+        pri_depletion, sec_depletion, pri_by_provider, sec_by_provider = _build_depletion_by_window(
+            primary_history,
+            secondary_history,
+            now,
+            providers_by_account={account.id: normalize_provider_name(account.provider) for account in accounts},
+            emails_by_account={account.id: account.email for account in accounts},
+        )
         settings = get_settings()
         dashboard_settings = await self._repo.get_settings()
         weekly_credit_pace = build_weekly_credit_pace(
@@ -191,6 +198,8 @@ class DashboardService:
         return DashboardProjectionsResponse(
             depletion_primary=pri_depletion,
             depletion_secondary=sec_depletion,
+            depletion_primary_by_provider=pri_by_provider,
+            depletion_secondary_by_provider=sec_by_provider,
             weekly_credit_pace=weekly_credit_pace,
         )
 
@@ -308,12 +317,39 @@ def _build_depletion_by_window(
     primary_history: dict[str, list[UsageHistory]],
     secondary_history: dict[str, list[UsageHistory]],
     now,
-) -> tuple[DepletionResponse | None, DepletionResponse | None]:
-    """Compute depletion independently per window."""
+    *,
+    providers_by_account: dict[str, str] | None = None,
+    emails_by_account: dict[str, str] | None = None,
+) -> tuple[
+    DepletionResponse | None,
+    DepletionResponse | None,
+    dict[str, DepletionResponse] | None,
+    dict[str, DepletionResponse] | None,
+]:
+    """Compute depletion per window: pool-level plus per-provider breakdowns."""
     active_cache_keys = {(account_id, "standard", "primary") for account_id in primary_history}
     active_cache_keys.update((account_id, "standard", "secondary") for account_id in secondary_history)
+    providers = providers_by_account or {}
+    emails = emails_by_account or {}
 
-    def _aggregate(history: dict[str, list[UsageHistory]], window: str) -> DepletionResponse | None:
+    def _response(agg) -> DepletionResponse:
+        return DepletionResponse(
+            risk=agg.risk,
+            risk_level=agg.risk_level,
+            burn_rate=agg.burn_rate,
+            safe_usage_percent=agg.safe_usage_percent,
+            projected_exhaustion_at=agg.projected_exhaustion_at,
+            seconds_until_exhaustion=agg.seconds_until_exhaustion,
+            worst_account_id=agg.worst_account_id,
+            worst_account_email=emails.get(agg.worst_account_id) if agg.worst_account_id else None,
+            worst_risk=agg.worst_risk,
+            worst_risk_level=agg.worst_risk_level,
+            account_count=agg.account_count,
+        )
+
+    def _aggregate(
+        history: dict[str, list[UsageHistory]], window: str
+    ) -> tuple[DepletionResponse | None, dict[str, DepletionResponse] | None]:
         metrics = []
         for account_id, rows in history.items():
             m = compute_depletion_for_account(
@@ -326,20 +362,21 @@ def _build_depletion_by_window(
             metrics.append(m)
         agg = compute_aggregate_depletion(metrics)
         if agg is None:
-            return None
-        return DepletionResponse(
-            risk=agg.risk,
-            risk_level=agg.risk_level,
-            burn_rate=agg.burn_rate,
-            safe_usage_percent=agg.safe_usage_percent,
-            projected_exhaustion_at=agg.projected_exhaustion_at,
-            seconds_until_exhaustion=agg.seconds_until_exhaustion,
-        )
+            return None, None
+        by_provider: dict[str, DepletionResponse] = {}
+        seen_providers = {providers[m.account_id] for m in metrics if m is not None and m.account_id in providers}
+        for provider in sorted(seen_providers):
+            provider_agg = compute_aggregate_depletion(
+                [m for m in metrics if m is not None and providers.get(m.account_id) == provider]
+            )
+            if provider_agg is not None:
+                by_provider[provider] = _response(provider_agg)
+        return _response(agg), (by_provider or None)
 
-    primary_depletion = _aggregate(primary_history, "primary")
-    secondary_depletion = _aggregate(secondary_history, "secondary")
+    primary_depletion, primary_by_provider = _aggregate(primary_history, "primary")
+    secondary_depletion, secondary_by_provider = _aggregate(secondary_history, "secondary")
     prune_depletion_cache(active_cache_keys)
-    return primary_depletion, secondary_depletion
+    return primary_depletion, secondary_depletion, primary_by_provider, secondary_by_provider
 
 
 def _rows_from_latest(latest: dict[str, UsageHistory]) -> list[UsageWindowRow]:

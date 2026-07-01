@@ -53,6 +53,7 @@ class DepletionMetrics:
     safe_usage_percent: float  # budget line position
     projected_exhaustion_at: datetime | None
     seconds_until_exhaustion: float | None
+    account_id: str | None = None
 
 
 @dataclass
@@ -63,6 +64,13 @@ class AggregateDepletionMetrics:
     safe_usage_percent: float
     projected_exhaustion_at: datetime | None
     seconds_until_exhaustion: float | None
+    # Attribution: the single account whose projected depletion is worst.
+    # ``risk``/``risk_level`` above are pool-level (mean across accounts) —
+    # one account burning fast must not label a mostly-idle pool critical.
+    worst_account_id: str | None = None
+    worst_risk: float | None = None
+    worst_risk_level: str | None = None
+    account_count: int = 0
 
 
 def compute_depletion_for_account(
@@ -159,31 +167,43 @@ def compute_depletion_for_account(
         safe_usage_percent=safe_pct,
         projected_exhaustion_at=projected_exhaustion_at,
         seconds_until_exhaustion=seconds_until_exhaustion,
+        account_id=account_id,
     )
 
 
 def compute_aggregate_depletion(
     per_account_metrics: Sequence[DepletionMetrics | None],
 ) -> AggregateDepletionMetrics | None:
-    """
-    Aggregate depletion metrics across accounts using max(risk).
+    """Aggregate depletion metrics across a pool of accounts.
+
+    Pool risk is the mean of per-account risks: the balancer fails over, so a
+    single account exhausting does not exhaust the pool. The worst account is
+    still surfaced via the ``worst_*`` attribution fields so operators can see
+    who drives an elevated pool risk. Exhaustion ETA fields carry the worst
+    account's projection only while the pool itself is danger/critical, so a
+    calm pool never renders an alarming exhaustion date.
     Returns None if no valid metrics.
     """
     valid = [m for m in per_account_metrics if m is not None]
     if not valid:
         return None
 
-    # Use all fields from the worst-case account so that risk, safe-line,
-    # burn rate, and exhaustion ETA are internally consistent.
     worst = max(valid, key=lambda m: m.risk)
+    pool_risk = sum(m.risk for m in valid) / len(valid)
+    pool_level = classify_risk(pool_risk)
+    pool_elevated = pool_level in ("danger", "critical")
 
     return AggregateDepletionMetrics(
-        risk=worst.risk,
-        risk_level=worst.risk_level,
-        burn_rate=worst.burn_rate,
-        safe_usage_percent=worst.safe_usage_percent,
-        projected_exhaustion_at=worst.projected_exhaustion_at,
-        seconds_until_exhaustion=worst.seconds_until_exhaustion,
+        risk=pool_risk,
+        risk_level=pool_level,
+        burn_rate=sum(m.burn_rate for m in valid) / len(valid),
+        safe_usage_percent=sum(m.safe_usage_percent for m in valid) / len(valid),
+        projected_exhaustion_at=worst.projected_exhaustion_at if pool_elevated else None,
+        seconds_until_exhaustion=worst.seconds_until_exhaustion if pool_elevated else None,
+        worst_account_id=worst.account_id,
+        worst_risk=worst.risk,
+        worst_risk_level=worst.risk_level,
+        account_count=len(valid),
     )
 
 

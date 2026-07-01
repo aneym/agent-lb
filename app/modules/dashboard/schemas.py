@@ -46,12 +46,19 @@ class DashboardUsageWindows(DashboardModel):
 
 
 class DepletionResponse(DashboardModel):
+    # Pool-level risk (mean across accounts); the worst single account is
+    # attributed separately so one hot account cannot label the pool critical.
     risk: float
     risk_level: str  # "safe" | "warning" | "danger" | "critical"
     burn_rate: float
     safe_usage_percent: float
     projected_exhaustion_at: datetime | None = None
     seconds_until_exhaustion: float | None = None
+    worst_account_id: str | None = None
+    worst_account_email: str | None = None
+    worst_risk: float | None = None
+    worst_risk_level: str | None = None
+    account_count: int | None = None
 
 
 WeeklyCreditPaceStatus = Literal["behind", "on_track", "ahead", "danger"]
@@ -101,4 +108,8 @@ class DashboardOverviewResponse(DashboardModel):
 class DashboardProjectionsResponse(DashboardModel):
     depletion_primary: DepletionResponse | None = None
     depletion_secondary: DepletionResponse | None = None
+    # Provider-scoped breakdowns (e.g. "openai", "anthropic") so scoped UIs
+    # never inherit another provider's risk.
+    depletion_primary_by_provider: dict[str, DepletionResponse] | None = None
+    depletion_secondary_by_provider: dict[str, DepletionResponse] | None = None
     weekly_credit_pace: WeeklyCreditPaceResponse | None = None

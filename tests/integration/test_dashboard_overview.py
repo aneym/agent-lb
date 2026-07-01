@@ -596,6 +596,61 @@ async def test_dashboard_projections_compute_depletion_from_recent_db_history(as
 
 
 @pytest.mark.asyncio
+async def test_dashboard_projections_pool_risk_is_not_worst_account_and_splits_by_provider(async_client, db_setup):
+    now = utcnow().replace(microsecond=0)
+    reset_at = int(naive_utc_to_epoch(now + timedelta(minutes=45)))
+
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+
+        hot = _make_account("acc_hot", "hot@example.com")
+        hot.provider = "anthropic"
+        await accounts_repo.upsert(hot)
+        for used, minutes_ago in ((10.0, 20), (80.0, 5)):
+            await usage_repo.add_entry(
+                "acc_hot",
+                used,
+                window="primary",
+                window_minutes=60,
+                reset_at=reset_at,
+                recorded_at=now - timedelta(minutes=minutes_ago),
+            )
+        for index in range(4):
+            calm = _make_account(f"acc_calm_{index}", f"calm{index}@example.com")
+            calm.provider = "openai"
+            await accounts_repo.upsert(calm)
+            for used, minutes_ago in ((1.0, 20), (2.0, 5)):
+                await usage_repo.add_entry(
+                    f"acc_calm_{index}",
+                    used,
+                    window="primary",
+                    window_minutes=60,
+                    reset_at=reset_at,
+                    recorded_at=now - timedelta(minutes=minutes_ago),
+                )
+
+    response = await async_client.get("/api/dashboard/projections")
+    assert response.status_code == 200
+
+    payload = response.json()
+    depletion = payload["depletionPrimary"]
+    assert depletion is not None
+    # One hot account among five must not label the pool with its own risk.
+    assert depletion["riskLevel"] in {"safe", "warning"}
+    assert depletion["worstAccountId"] == "acc_hot"
+    assert depletion["worstAccountEmail"] == "hot@example.com"
+    assert depletion["worstRiskLevel"] in {"danger", "critical"}
+    assert depletion["accountCount"] == 5
+
+    by_provider = payload["depletionPrimaryByProvider"]
+    assert set(by_provider) == {"anthropic", "openai"}
+    assert by_provider["anthropic"]["riskLevel"] in {"danger", "critical"}
+    assert by_provider["anthropic"]["worstAccountId"] == "acc_hot"
+    assert by_provider["openai"]["riskLevel"] == "safe"
+
+
+@pytest.mark.asyncio
 async def test_dashboard_projections_weekly_only_depletion_uses_current_stream(async_client, db_setup):
     now = utcnow().replace(microsecond=0)
     reset_at = int(naive_utc_to_epoch(now + timedelta(minutes=30)))
