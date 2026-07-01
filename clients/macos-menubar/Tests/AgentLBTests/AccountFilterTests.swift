@@ -39,6 +39,15 @@ final class AccountFilterTests: XCTestCase {
     )
   }
 
+  private func canceledSubscription() -> AccountSubscriptionLedger {
+    AccountSubscriptionLedger(
+      status: "canceled",
+      nextChargeAt: nil,
+      currentPeriodEndAt: nil,
+      lastVerifiedAt: nil
+    )
+  }
+
   // MARK: - Provider filter
 
   func testProviderFilterAll() {
@@ -64,17 +73,12 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(filter.apply(to: [upper], now: now).count, 1)
   }
 
-  func testCanceledSubscriptionsAreHiddenFromMenubarAccounts() {
+  func testCanceledAccountVisibleInList() {
     let active = makeAccount(id: "active", displayName: "active@example.com")
     let canceled = makeAccount(
       id: "canceled",
       displayName: "canceled@example.com",
-      subscription: AccountSubscriptionLedger(
-        status: "canceled",
-        nextChargeAt: nil,
-        currentPeriodEndAt: nil,
-        lastVerifiedAt: nil
-      )
+      subscription: canceledSubscription()
     )
     let subscriptionPaused = makeAccount(
       id: "subscription-paused",
@@ -89,7 +93,8 @@ final class AccountFilterTests: XCTestCase {
 
     let result = AccountFilter().apply(to: [canceled, active, subscriptionPaused], now: now)
 
-    XCTAssertEqual(result.map(\.accountId), ["active", "subscription-paused"])
+    XCTAssertEqual(Set(result.map(\.accountId)), ["active", "canceled", "subscription-paused"])
+    XCTAssertEqual(AccountFilter.classify(canceled, now: now), .unsubscribed)
   }
 
   // MARK: - Status filter
@@ -142,6 +147,19 @@ final class AccountFilterTests: XCTestCase {
     )
   }
 
+  func testReauthRequiredWithoutReasonClassifiedDisconnected() {
+    let reauthRequired = makeAccount(
+      id: "reauth",
+      status: "reauth_required",
+      deactivationReason: nil
+    )
+
+    XCTAssertTrue(reauthRequired.isDisconnected)
+    XCTAssertFalse(reauthRequired.isHeadlineCountable)
+    XCTAssertEqual(AccountFilter.classify(reauthRequired, now: now), .inactive)
+    XCTAssertTrue(AccountFilter(status: .active).apply(to: [reauthRequired], now: now).isEmpty)
+  }
+
   func testPausedBeatsFutureResetMetadata() {
     let both = makeAccount(
       id: "both",
@@ -149,6 +167,16 @@ final class AccountFilterTests: XCTestCase {
       rateLimitResetAt: now.addingTimeInterval(600)
     )
     XCTAssertEqual(AccountFilter.classify(both, now: now), .paused)
+  }
+
+  func testUnknownStatusWithNilSubscriptionStaysActiveAndRoutable() {
+    let account = makeAccount(id: "unknown", status: "mystery")
+
+    XCTAssertFalse(account.isSubscriptionCanceled)
+    XCTAssertFalse(account.isDisconnected)
+    XCTAssertTrue(account.isHeadlineCountable)
+    XCTAssertTrue(account.isRoutable)
+    XCTAssertEqual(AccountFilter.classify(account, now: now), .active)
   }
 
   // MARK: - Query filter
@@ -262,23 +290,18 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(counts[.openai], 0)
   }
 
-  func testProviderCountsExcludeCanceledSubscriptions() {
+  func testProviderCountsIncludeCanceledSubscriptionsByDefault() {
     let canceled = makeAccount(
       id: "canceled",
       provider: "anthropic",
-      subscription: AccountSubscriptionLedger(
-        status: "canceled",
-        nextChargeAt: nil,
-        currentPeriodEndAt: nil,
-        lastVerifiedAt: nil
-      )
+      subscription: canceledSubscription()
     )
     let active = makeAccount(id: "active", provider: "openai")
 
     let counts = AccountFilter().providerCounts(in: [canceled, active], now: now)
 
-    XCTAssertEqual(counts[.all], 1)
-    XCTAssertEqual(counts[.anthropic], 0)
+    XCTAssertEqual(counts[.all], 2)
+    XCTAssertEqual(counts[.anthropic], 1)
     XCTAssertEqual(counts[.openai], 1)
   }
 

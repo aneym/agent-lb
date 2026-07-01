@@ -34,6 +34,24 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   var id: String { accountId }
 }
 
+extension Account {
+  var isSubscriptionCanceled: Bool {
+    subscription?.status == "canceled"
+  }
+
+  var isDisconnected: Bool {
+    status == "deactivated" || status == "reauth_required" || deactivationReason != nil
+  }
+
+  var isHeadlineCountable: Bool {
+    !isSubscriptionCanceled && !isDisconnected
+  }
+
+  var isRoutable: Bool {
+    isHeadlineCountable && status != "paused"
+  }
+}
+
 struct AccountSubscriptionLedger: Decodable, Sendable, Equatable {
   let status: String?
   let nextChargeAt: Date?

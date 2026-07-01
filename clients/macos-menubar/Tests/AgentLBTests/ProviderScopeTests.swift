@@ -14,6 +14,15 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(accounts.count, 8)
   }
 
+  private func canceledSubscription() -> AccountSubscriptionLedger {
+    AccountSubscriptionLedger(
+      status: "canceled",
+      nextChargeAt: nil,
+      currentPeriodEndAt: nil,
+      lastVerifiedAt: nil
+    )
+  }
+
   // MARK: - Labels (dashboard providerLabel)
 
   func testSegmentLabels() {
@@ -41,6 +50,37 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(counts[.all], 8)
     XCTAssertEqual(counts[.anthropic], 3)
     XCTAssertEqual(counts[.openai], 5)
+  }
+
+  func testScopeCountsExcludeCanceledSubscription() {
+    let activeOne = makeTestAccount(id: "active-1", provider: "anthropic")
+    let activeTwo = makeTestAccount(id: "active-2", provider: "anthropic")
+    let canceled = makeTestAccount(
+      id: "canceled",
+      provider: "anthropic",
+      subscription: canceledSubscription()
+    )
+
+    let counts = ProviderScope.counts(in: [activeOne, canceled, activeTwo])
+
+    XCTAssertEqual(counts[.all], 2)
+    XCTAssertEqual(counts[.anthropic], 2)
+    XCTAssertEqual(counts[.openai], 0)
+  }
+
+  func testScopeCountsExcludeDisconnected() {
+    let active = makeTestAccount(id: "active", provider: "anthropic")
+    let disconnected = makeTestAccount(
+      id: "reauth",
+      provider: "anthropic",
+      status: "reauth_required",
+      deactivationReason: nil
+    )
+
+    let counts = ProviderScope.counts(in: [active, disconnected])
+
+    XCTAssertEqual(counts[.all], 1)
+    XCTAssertEqual(counts[.anthropic], 1)
   }
 
   // MARK: - Scoped window math (§9.2: Σ remaining / Σ capacity × 100)
@@ -91,6 +131,52 @@ final class ProviderScopeTests: XCTestCase {
     // §10: earliest is abreezyish (23:00:10, 1500 − 1470 = 30); the three
     // 02:15:2x resets share a minute but are NOT the earliest bucket.
     XCTAssertEqual(try XCTUnwrap(scopedWindow.recoveredCredits), 30.0, accuracy: 1e-9)
+  }
+
+  func testPoolPercentExcludesCanceledCredits() throws {
+    let active = makeTestAccount(
+      id: "active",
+      remainingCreditsPrimary: 50,
+      capacityCreditsPrimary: 100,
+      resetAtPrimary: now.addingTimeInterval(600)
+    )
+    let canceled = makeTestAccount(
+      id: "canceled",
+      remainingCreditsPrimary: 100,
+      capacityCreditsPrimary: 100,
+      resetAtPrimary: now.addingTimeInterval(300),
+      subscription: canceledSubscription()
+    )
+
+    let window = ProviderScope.summarizeWindow([active, canceled], window: .primary, now: now)
+
+    XCTAssertEqual(try XCTUnwrap(window.usage.remainingCredits), 50.0, accuracy: 1e-9)
+    XCTAssertEqual(try XCTUnwrap(window.usage.capacityCredits), 100.0, accuracy: 1e-9)
+    XCTAssertEqual(try XCTUnwrap(window.usage.remainingPercent), 50.0, accuracy: 1e-9)
+    XCTAssertEqual(window.usage.resetAt, now.addingTimeInterval(600))
+  }
+
+  func testPoolPercentExcludesPausedCredits() throws {
+    let active = makeTestAccount(
+      id: "active",
+      remainingCreditsPrimary: 50,
+      capacityCreditsPrimary: 100,
+      resetAtPrimary: now.addingTimeInterval(600)
+    )
+    let paused = makeTestAccount(
+      id: "paused",
+      status: "paused",
+      remainingCreditsPrimary: 100,
+      capacityCreditsPrimary: 100,
+      resetAtPrimary: now.addingTimeInterval(300)
+    )
+
+    let window = ProviderScope.summarizeWindow([active, paused], window: .primary, now: now)
+
+    XCTAssertEqual(try XCTUnwrap(window.usage.remainingCredits), 50.0, accuracy: 1e-9)
+    XCTAssertEqual(try XCTUnwrap(window.usage.capacityCredits), 100.0, accuracy: 1e-9)
+    XCTAssertEqual(try XCTUnwrap(window.usage.remainingPercent), 50.0, accuracy: 1e-9)
+    XCTAssertEqual(window.usage.resetAt, now.addingTimeInterval(600))
   }
 
   // MARK: - §10 recovery edge cases

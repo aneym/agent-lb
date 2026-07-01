@@ -245,14 +245,17 @@ struct AccountRow: View {
     case rateLimited(Date?)
     case paused
     case deactivated(reauth: Bool)
+    case unsubscribed
   }
 
   // §1.2 override priority: operator-disabled routing state, then blocked
   // routing state. Reset metadata only adds detail to a blocked state.
   private var presentation: Presentation {
+    if account.isSubscriptionCanceled { return .unsubscribed }
     if account.status == "paused" { return .paused }
-    if account.status == "deactivated" || account.deactivationReason != nil {
-      let reauth = (account.deactivationReason ?? "").localizedCaseInsensitiveContains("auth")
+    if account.isDisconnected {
+      let reauth = account.status == "reauth_required"
+        || (account.deactivationReason ?? "").localizedCaseInsensitiveContains("auth")
       return .deactivated(reauth: reauth)
     }
     if account.status == "rate_limited" || account.status == "quota_exceeded" {
@@ -279,14 +282,15 @@ struct AccountRow: View {
     }
     .frame(height: 52)
     .padding(.horizontal, 10)
-    .opacity(isPaused ? 0.55 : 1)
+    .opacity(isDimmed ? 0.55 : 1)
     .contentShape(.rect)
     .contextMenu { menuItems }
     .help(account.deactivationReason ?? "")
   }
 
-  private var isPaused: Bool {
+  private var isDimmed: Bool {
     if case .paused = presentation { return true }
+    if case .unsubscribed = presentation { return true }
     return false
   }
 
@@ -310,7 +314,7 @@ struct AccountRow: View {
   @ViewBuilder
   private var centerGlyph: some View {
     switch presentation {
-    case .active, .rateLimited:
+    case .active, .rateLimited, .unsubscribed:
       EmptyView()
     case .paused:
       StatusGlyph(kind: .paused, size: 8)
@@ -382,6 +386,10 @@ struct AccountRow: View {
       Text(reauth ? "re-auth needed" : "inactive")
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
+    case .unsubscribed:
+      Text("unsubscribed")
+        .font(.system(size: 12))
+        .foregroundStyle(.secondary)
     }
   }
 
@@ -398,7 +406,7 @@ struct AccountRow: View {
     case "paused":
       return "sub paused"
     case "canceled":
-      return "canceled"
+      return "unsubscribed"
     default:
       return nil
     }
@@ -433,6 +441,8 @@ struct AccountRow: View {
       Button("Reactivate") {
         run { await appState.reactivate(accountId: account.accountId) }
       }
+    case .unsubscribed:
+      EmptyView()
     }
     Button("Copy Account ID") {
       NSPasteboard.general.clearContents()

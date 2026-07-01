@@ -33,10 +33,11 @@ struct PoolSection: View {
 
   private var cards: some View {
     let now = Date.now
+    let headlineAccountCount = scopedAccounts.filter { $0.isHeadlineCountable }.count
     return HStack(alignment: .top, spacing: 10) {
       WindowCard(
         title: "5-HOUR LIMIT",
-        accountCount: scopedAccounts.count,
+        accountCount: headlineAccountCount,
         window: primaryWindow(now: now),
         recoveredCredits: recovered(.primary, now: now),
         schedule: scheduleTooltip(.primary, now: now),
@@ -45,7 +46,7 @@ struct PoolSection: View {
       )
       WindowCard(
         title: secondaryTitle,
-        accountCount: scopedAccounts.count,
+        accountCount: headlineAccountCount,
         window: secondaryWindow(now: now),
         recoveredCredits: recovered(.secondary, now: now),
         schedule: scheduleTooltip(.secondary, now: now),

@@ -28,7 +28,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
   /// Live segment counts over the full (unfiltered) accounts list.
   static func counts(in accounts: [Account]) -> [ProviderScope: Int] {
     var counts: [ProviderScope: Int] = [.all: 0, .openai: 0, .anthropic: 0]
-    for account in accounts {
+    for account in accounts where account.isHeadlineCountable {
       counts[.all, default: 0] += 1
       if let scope = ProviderScope(rawValue: account.provider.lowercased()) {
         counts[scope, default: 0] += 1
@@ -75,12 +75,13 @@ enum ProviderScope: String, CaseIterable, Sendable {
   static func summarizeWindow(
     _ accounts: [Account], window: Window, now: Date
   ) -> ScopedPoolWindow {
+    let routableAccounts = accounts.filter { $0.isRoutable }
     var remaining = 0.0
     var capacity = 0.0
     var contributed = false
     var earliestReset: Date?
 
-    for account in accounts {
+    for account in routableAccounts {
       if let credits = windowCredits(of: account, window: window) {
         remaining += credits.remaining
         capacity += credits.capacity
@@ -97,7 +98,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     var recovered: Double?
     if let earliest = earliestReset {
       let bucketEnd = earliest.addingTimeInterval(60)
-      for account in accounts {
+      for account in routableAccounts {
         guard let reset = windowReset(of: account, window: window),
               reset > now, reset < bucketEnd,
               let credits = windowCredits(of: account, window: window)
@@ -125,6 +126,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     _ accounts: [Account], window: Window, now: Date
   ) -> [AccountReset] {
     accounts
+      .filter { $0.isRoutable }
       .compactMap { account -> AccountReset? in
         guard let reset = windowReset(of: account, window: window), reset > now else {
           return nil
