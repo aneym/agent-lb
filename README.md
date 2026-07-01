@@ -18,6 +18,41 @@ Security https://github.com/aneym/agent-lb/security/advisories/new
 
 Load balancer for ChatGPT and Claude accounts. Pool multiple accounts, track usage, manage API keys, view everything in a dashboard.
 
+## 🤖 Agents look here
+
+**Humans:** don't read further — paste this into your coding agent (Claude Code, Codex
+CLI, Cursor, …) and let it drive. **Agents:** your entrypoints are
+[GETTING-STARTED.md](GETTING-STARTED.md) (setup runbook) and [AGENTS.md](AGENTS.md)
+(working on the codebase); setup and operations never require the dashboard.
+
+```text
+Clone https://github.com/aneym/agent-lb into ~/repos/agent-lb, cd into it, and read
+GETTING-STARTED.md. Follow it top to bottom to set me up:
+
+1. Install dependencies and start the local agent-lb service.
+2. Walk me through connecting my Claude/ChatGPT accounts ONE AT A TIME — for each
+   account give me the browser URL, wait for me to approve (and paste back the code
+   where required), confirm it connected, then move to the next.
+3. When wiring Claude Code, never set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY;
+   use the agent-lb base URL or launcher only so subscription billing stays intact.
+4. Wire up my CLI clients (show exact dotfile edits and ask before applying them).
+5. Finish by probing every account with a real request and telling me each account's
+   state per the "Account health model" (usable / unsubscribed / disconnected),
+   plus a short status summary of service, accounts, and wired clients.
+
+If anything is already installed or running, detect it and skip ahead.
+```
+
+The full walkthrough lives in [GETTING-STARTED.md](GETTING-STARTED.md). If your agent is
+Claude Code or Codex launched inside the repo, saying **"get started"** triggers the
+`get-started` skill, which follows the same runbook.
+
+For post-setup account-specific work — quota reset checks, stuck or rate-limited
+account triage, billing/subscription changes, pause/reactivate routing,
+verification, or browser-profile work — say **"account operator"**. Repo-aware
+agents should use the `agent-lb-account-operator` skill and local
+`.agent-lb/account-profiles.json` registry for that work.
+
 | ![dashboard](docs/screenshots/dashboard.jpg) | ![accounts](docs/screenshots/accounts.jpg) |
 | :------------------------------------------: | :----------------------------------------: |
 
@@ -33,37 +68,6 @@ Load balancer for ChatGPT and Claude accounts. Pool multiple accounts, track usa
 | ![dashboard-dark](docs/screenshots/dashboard-dark.jpg) | ![accounts-dark](docs/screenshots/accounts-dark.jpg) | ![settings-dark](docs/screenshots/settings-dark.jpg) |
 
 </details>
-
-## For AI Agents
-
-Setting up a new machine? Don't read further — paste this into your coding agent (Claude
-Code, Codex CLI, …) and let it drive:
-
-```text
-Clone https://github.com/aneym/agent-lb, cd into it, and read GETTING-STARTED.md.
-Follow it top to bottom to set me up:
-
-1. Install dependencies and start the local agent-lb service.
-2. Walk me through connecting my Claude/ChatGPT accounts ONE AT A TIME — for each
-   account give me the browser URL, wait for me to approve (and paste back the code
-   where required), confirm it connected, then move to the next.
-3. When wiring Claude Code, never set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY;
-   use the agent-lb base URL or launcher only so subscription billing stays intact.
-4. Wire up my CLI clients (show exact dotfile edits and ask before applying them), run the final
-   verification, and give me a status summary.
-
-If anything is already installed or running, detect it and skip ahead.
-```
-
-The full walkthrough lives in [GETTING-STARTED.md](GETTING-STARTED.md). If your agent is
-Claude Code or Codex launched inside the repo, saying **"get started"** triggers the
-`get-started` skill, which follows the same runbook.
-
-For post-setup account-specific work — quota reset checks, stuck or rate-limited
-account triage, billing/subscription changes, pause/reactivate routing,
-verification, or browser-profile work — say **"account operator"**. Repo-aware
-agents should use the `agent-lb-account-operator` skill and local
-`.agent-lb/account-profiles.json` registry for that work.
 
 ## Features
 
@@ -169,15 +173,15 @@ loopback URLs cannot reach or spend a user's local subscription accounts.
 
 Model availability is discovered from the upstream Codex model catalog and can vary by account plan, workspace, rollout, and upstream deprecation state. Prefer the live `GET /v1/models` or `GET /backend-api/codex/models` response over a copied static table when configuring clients or API-key model allowlists.
 
-| Logo                                                                                                              | Client                | Endpoint                                  | Config                             |
-| ----------------------------------------------------------------------------------------------------------------- | --------------------- | ----------------------------------------- | ---------------------------------- |
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="32" alt="OpenAI">                        | **Codex CLI**         | `http://127.0.0.1:2455/backend-api/codex` | `~/.codex/config.toml`             |
-| <img src="https://avatars.githubusercontent.com/u/76263028?s=200" width="32" alt="Anthropic">                     | **Claude Code**       | `http://127.0.0.1:2455`                   | `ANTHROPIC_BASE_URL` / launcher    |
-| <img src="https://avatars.githubusercontent.com/u/76263028?s=200" width="32" alt="Anthropic">                     | **Anthropic Python SDK** | `http://127.0.0.1:2455`                | Code                               |
-| <img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="32" alt="OpenCode">                     | **OpenCode**          | `http://127.0.0.1:2455/v1`                | `~/.config/opencode/opencode.json` |
-| <img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="32" alt="OpenClaw">                     | **OpenClaw**          | `http://127.0.0.1:2455/v1`                | `~/.openclaw/openclaw.json`        |
-| <img src="https://assets.vercel.com/image/upload/front/favicon/vercel/180x180.png" width="32" alt="Vercel">       | **Vercel AI SDK**     | `http://127.0.0.1:2455/v1`                | Server route / action              |
-| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="32" alt="Python"> | **OpenAI Python SDK** | `http://127.0.0.1:2455/v1`                | Code                               |
+| Logo                                                                                                              | Client                   | Endpoint                                  | Config                             |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------- | ---------------------------------- |
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="32" alt="OpenAI">                        | **Codex CLI**            | `http://127.0.0.1:2455/backend-api/codex` | `~/.codex/config.toml`             |
+| <img src="https://avatars.githubusercontent.com/u/76263028?s=200" width="32" alt="Anthropic">                     | **Claude Code**          | `http://127.0.0.1:2455`                   | `ANTHROPIC_BASE_URL` / launcher    |
+| <img src="https://avatars.githubusercontent.com/u/76263028?s=200" width="32" alt="Anthropic">                     | **Anthropic Python SDK** | `http://127.0.0.1:2455`                   | Code                               |
+| <img src="https://avatars.githubusercontent.com/u/208539476?s=200" width="32" alt="OpenCode">                     | **OpenCode**             | `http://127.0.0.1:2455/v1`                | `~/.config/opencode/opencode.json` |
+| <img src="https://avatars.githubusercontent.com/u/252820863?s=200" width="32" alt="OpenClaw">                     | **OpenClaw**             | `http://127.0.0.1:2455/v1`                | `~/.openclaw/openclaw.json`        |
+| <img src="https://assets.vercel.com/image/upload/front/favicon/vercel/180x180.png" width="32" alt="Vercel">       | **Vercel AI SDK**        | `http://127.0.0.1:2455/v1`                | Server route / action              |
+| <img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/python/python-original.svg" width="32" alt="Python"> | **OpenAI Python SDK**    | `http://127.0.0.1:2455/v1`                | Code                               |
 
 <details>
 <summary><img src="https://avatars.githubusercontent.com/u/14957082?s=200" width="20" align="center" alt="OpenAI">&ensp;<b>Codex CLI / IDE Extension</b></summary>
@@ -437,16 +441,16 @@ opencode
       "models": {
         "agent-lb/gpt-5.4": { "params": { "cacheRetention": "short" } },
         "agent-lb/gpt-5.4-mini": { "params": { "cacheRetention": "short" } },
-        "agent-lb/gpt-5.3-codex": { "params": { "cacheRetention": "short" } }
-      }
-    }
+        "agent-lb/gpt-5.3-codex": { "params": { "cacheRetention": "short" } },
+      },
+    },
   },
   "models": {
     "mode": "merge",
     "providers": {
       "agent-lb": {
         "baseUrl": "http://127.0.0.1:2455/v1",
-        "apiKey": "${AGENT_LB_API_KEY}",   // or "dummy" if API key auth is disabled
+        "apiKey": "${AGENT_LB_API_KEY}", // or "dummy" if API key auth is disabled
         "api": "openai-responses",
         "models": [
           {
@@ -456,7 +460,7 @@ opencode
             "contextTokens": 272000,
             "maxTokens": 4096,
             "input": ["text"],
-            "reasoning": false
+            "reasoning": false,
           },
           {
             "id": "gpt-5.4-mini",
@@ -465,7 +469,7 @@ opencode
             "contextTokens": 272000,
             "maxTokens": 4096,
             "input": ["text"],
-            "reasoning": false
+            "reasoning": false,
           },
           {
             "id": "gpt-5.3-codex",
@@ -474,12 +478,12 @@ opencode
             "contextTokens": 272000,
             "maxTokens": 4096,
             "input": ["text"],
-            "reasoning": false
-          }
-        ]
-      }
-    }
-  }
+            "reasoning": false,
+          },
+        ],
+      },
+    },
+  },
 }
 ```
 
