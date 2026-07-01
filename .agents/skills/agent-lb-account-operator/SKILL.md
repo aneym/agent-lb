@@ -59,6 +59,51 @@ and subscription ledger fields.
    routing imbalance reports, inspect the matching dashboard/API account row and
    local profile notes before recommending billing, routing, or browser actions.
 
+## Auth Verification (real upstream probes)
+
+To verify that an account's auth actually works — not just that tokens are
+stored — use the dashboard API's per-account probe endpoints on the local
+service (`http://127.0.0.1:2455`, or the tailnet serve URL). Both send a real
+minimal `/v1/messages` request pinned to that one account, refreshing tokens
+first and bypassing load-balancer scoring:
+
+- `POST /api/accounts/{accountId}/probe` — returns `probeStatusCode` plus
+  before/after usage percents and account status. Also wakes the upstream
+  rate limiter for stuck accounts and forces a usage refresh.
+- `POST /api/accounts/{accountId}/subscription/check` — same probe, but also
+  returns the upstream error `message` and updates the subscription ledger
+  (`working`, `subscription.status`, `subscription.notes`). Run this second,
+  when a probe fails, to see why.
+
+Interpretation and gotchas:
+
+- Responses are camelCase (`probeStatusCode`, `accountStatusAfter`), not
+  snake_case.
+- `200` = auth and subscription both usable.
+- `403` with "OAuth authentication is currently not allowed for this
+  organization" = tokens are fine but the org has no active Claude
+  subscription (canceled/lapsed). Billing problem, not an auth problem —
+  reauth will not fix it; resubscribe or remove instead.
+- `401` = auth actually broken; reauth via the account's dedicated browser
+  profile.
+- Accounts in `paused` / `reauth_required` / `deactivated` state are refused
+  with HTTP 409 `account_not_probable`; reactivate first if a probe is needed.
+- Anthropic probes default to `claude-haiku-4-5` with `max_tokens: 4`
+  (negligible quota). Override with `{"model": "..."}` in the request body.
+
+Verify-all loop (swap the provider filter as needed):
+
+```bash
+LB=http://127.0.0.1:2455
+curl -s "$LB/api/accounts" |
+  jq -r '.accounts[] | select(.provider=="anthropic") | "\(.accountId)|\(.email)|\(.status)"' |
+  while IFS='|' read -r id email st; do
+    [ "$st" = active ] || { echo "$email: skipped ($st)"; continue; }
+    curl -s -X POST "$LB/api/accounts/$id/probe" -H 'content-type: application/json' -d '{}' |
+      jq -c --arg e "$email" '{email: $e, probeStatusCode, accountStatusAfter}'
+  done
+```
+
 ## Browser Profiles
 
 Prefer dedicated Chrome user-data directories under:
