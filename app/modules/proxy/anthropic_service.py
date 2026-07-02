@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -43,6 +44,35 @@ _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
+
+# Unified rate-limit status headers observed on live OAuth responses
+# (2026-07-01). A healthy subscription-covered response carries
+# ``anthropic-ratelimit-unified-status: allowed``; a response served by
+# billing extra-usage credits carries ``rejected`` plus
+# ``anthropic-ratelimit-unified-overage-in-use: true``.
+_ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER = "anthropic-ratelimit-unified-overage-in-use"
+_ANTHROPIC_UNIFIED_STATUS_HEADERS = (
+    "anthropic-ratelimit-unified-status",
+    "anthropic-ratelimit-unified-5h-status",
+    "anthropic-ratelimit-unified-7d-status",
+)
+_ANTHROPIC_UNIFIED_ALLOWED_STATUSES = frozenset({"allowed", "allowed_warning"})
+
+# Pool-exhausted wait: how streams hold for the next window instead of dying.
+# Sleeps are sliced so an account freed early (cooldown cleared, account
+# added) is picked up within one poll interval; jitter avoids a thundering
+# herd of held streams re-attempting selection in the same instant.
+_POOL_WAIT_MIN_POLL_SECONDS = 5.0
+_POOL_WAIT_MAX_POLL_SECONDS = 300.0
+_POOL_WAIT_MAX_JITTER_SECONDS = 5.0
+def _default_pool_wait_jitter() -> float:
+    return random.uniform(0.0, _POOL_WAIT_MAX_JITTER_SECONDS)
+
+
+# Injection points so tests drive the hold with a fake clock — never real sleeps.
+_POOL_WAIT_CLOCK: Callable[[], float] = time.time
+_POOL_WAIT_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
+_POOL_WAIT_JITTER: Callable[[], float] = _default_pool_wait_jitter
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,91 +147,74 @@ class AnthropicProxyService:
             provider_name=provider_name,
             quota_key=affinity_quota_key,
         )
-        first_account = await self._select_account(
-            payload.model,
-            provider_name=provider_name,
-            exclude_account_ids=selected_account_ids,
-            sticky_key=sticky_key,
-            quota_key=quota_key,
+        wait_enabled = (
+            bool(payload.stream)
+            and provider_name == ANTHROPIC_PROVIDER_NAME
+            and get_settings().anthropic_pool_exhausted_wait_enabled
         )
-        selected_account_ids.add(first_account.id)
+        first_account: Account | None
+        initial_wait_error: AnthropicProxyError | None = None
+        try:
+            first_account = await self._select_account(
+                payload.model,
+                provider_name=provider_name,
+                exclude_account_ids=selected_account_ids,
+                sticky_key=sticky_key,
+                quota_key=quota_key,
+            )
+        except AnthropicProxyError as exc:
+            if not wait_enabled or exc.retry_at is None:
+                raise
+            # Pool-wide exhaustion with a known reset: hold the stream open in
+            # body() (keepalives flow at the route) instead of killing the
+            # agent session with a 429.
+            first_account = None
+            initial_wait_error = exc
+        if first_account is not None:
+            selected_account_ids.add(first_account.id)
 
         async def body() -> AsyncIterator[bytes]:
             usage: AnthropicUsage | None = None
             last_account: Account | None = None
             last_error_status: int | None = None
             last_error_message: str | None = None
-            for attempt in range(_MAX_SELECTION_ATTEMPTS):
-                if attempt == 0:
-                    account = first_account
-                else:
-                    account = await self._select_account(
-                        payload.model,
-                        provider_name=provider_name,
-                        exclude_account_ids=selected_account_ids,
-                        sticky_key=sticky_key,
-                        quota_key=quota_key,
-                    )
-                    selected_account_ids.add(account.id)
-                last_account = account
+            streamed_bytes = False
+            wait_deadline = (
+                _POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds
+                if wait_enabled
+                else None
+            )
+            account_override = first_account
+            pending_wait_error = initial_wait_error
+            while True:
+                if pending_wait_error is not None:
+                    await _hold_for_pool_reset(pending_wait_error, deadline=wait_deadline)
+                    pending_wait_error = None
+                    selected_account_ids.clear()
+                    last_error_status = None
+                    last_error_message = None
                 try:
-                    access_token = await self._fresh_access_token(account)
-                except AnthropicProxyError as exc:
-                    if exc.status_code != 401 or not classify_refresh_error(exc.code):
-                        raise
-                    await self._persist_request_log(
-                        account=account,
-                        provider_name=provider_name,
-                        request_id=request_id,
-                        model=payload.model,
-                        started_at=started_at,
-                        status="error",
-                        error_code=exc.code,
-                        error_message=exc.message,
-                        api_key=api_key,
-                    )
-                    last_error_status = exc.status_code
-                    last_error_message = exc.message
-                    continue
-                headers = _build_anthropic_headers(
-                    inbound_headers,
-                    access_token,
-                    provider_name=provider_name,
-                    fast_mode=_anthropic_fast_mode_requested(payload),
-                )
-                body_payload = payload.model_dump(mode="json", exclude_none=True)
-
-                async with lease_http_session() as session:
-                    async with self._open_upstream_response(
-                        session,
-                        provider_name=provider_name,
-                        headers=headers,
-                        json_body=body_payload,
-                    ) as resp:
-                        if resp.status in {401, 403}:
-                            error_message = await _read_error_message(resp)
-                            await self._load_balancer.mark_permanent_failure(account, "invalid_api_key")
-                            await self._persist_request_log(
-                                account=account,
+                    # _MAX_SELECTION_ATTEMPTS bounds one wake; every hold
+                    # re-arms the full budget once the pool may have reset.
+                    for attempt in range(_MAX_SELECTION_ATTEMPTS):
+                        if attempt == 0 and account_override is not None:
+                            account = account_override
+                            account_override = None
+                        else:
+                            account = await self._select_account(
+                                payload.model,
                                 provider_name=provider_name,
-                                request_id=request_id,
-                                model=payload.model,
-                                started_at=started_at,
-                                status="error",
-                                error_code="invalid_api_key",
-                                error_message=error_message,
-                                api_key=api_key,
-                            )
-                            last_error_status = resp.status
-                            last_error_message = error_message
-                            continue
-                        if resp.status == 429:
-                            error_message = await _read_error_message(resp)
-                            await self._record_quota_cooldown(
-                                account,
+                                exclude_account_ids=selected_account_ids,
+                                sticky_key=sticky_key,
                                 quota_key=quota_key,
-                                error=_rate_limit_error_from_response(resp, error_message),
                             )
+                            selected_account_ids.add(account.id)
+                        last_account = account
+                        try:
+                            access_token = await self._fresh_access_token(account)
+                        except AnthropicProxyError as exc:
+                            if exc.status_code != 401 or not classify_refresh_error(exc.code):
+                                raise
                             await self._persist_request_log(
                                 account=account,
                                 provider_name=provider_name,
@@ -209,90 +222,182 @@ class AnthropicProxyService:
                                 model=payload.model,
                                 started_at=started_at,
                                 status="error",
-                                error_code="rate_limit_exceeded",
-                                error_message=error_message,
+                                error_code=exc.code,
+                                error_message=exc.message,
                                 api_key=api_key,
                             )
-                            last_error_status = resp.status
-                            last_error_message = error_message
+                            last_error_status = exc.status_code
+                            last_error_message = exc.message
                             continue
-                        if resp.status >= 400:
-                            error_details = await _read_error_details(resp)
-                            await self._load_balancer.record_error(account)
-                            await self._persist_request_log(
-                                account=account,
-                                provider_name=provider_name,
-                                request_id=request_id,
-                                model=payload.model,
-                                started_at=started_at,
-                                status="error",
-                                error_code=f"upstream_{resp.status}",
-                                error_message=error_details.message,
-                                api_key=api_key,
-                            )
-                            raise AnthropicProxyError(
-                                resp.status,
-                                error_details.message,
-                                code=error_details.error_type or _anthropic_error_type_for_status(resp.status),
-                            )
-
-                        text_buffer = ""
-                        # Non-streaming responses are a single JSON document, not SSE, so the
-                        # SSE collector never sees usage. Buffer the raw body and parse it at the end.
-                        raw_body = bytearray() if not payload.stream else None
-                        async for chunk in resp.content.iter_chunked(_STREAM_CHUNK_SIZE):
-                            if not chunk:
-                                continue
-                            chunk_bytes = bytes(chunk)
-                            if raw_body is not None:
-                                raw_body.extend(chunk_bytes)
-                            else:
-                                text_buffer, usage = _collect_usage_from_chunk(text_buffer, chunk_bytes, usage)
-                            yield chunk_bytes
-                        if raw_body is not None:
-                            usage = _usage_from_json_body(bytes(raw_body)) or usage
-
-                        await self._load_balancer.record_success(account)
-                        await self._clear_quota_cooldown(account, quota_key=quota_key)
-                        await self._persist_request_log(
-                            account=account,
+                        headers = _build_anthropic_headers(
+                            inbound_headers,
+                            access_token,
                             provider_name=provider_name,
-                            request_id=request_id,
-                            model=payload.model,
-                            started_at=started_at,
-                            status="success",
-                            api_key=api_key,
-                            usage=usage,
+                            fast_mode=_anthropic_fast_mode_requested(payload),
                         )
-                        await self._finalize_api_key_reservation(
-                            api_key_reservation,
-                            model=payload.model,
-                            usage=usage,
-                        )
-                        return
+                        body_payload = payload.model_dump(mode="json", exclude_none=True)
 
-            await self._release_api_key_reservation(api_key_reservation)
-            message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
-            await self._persist_request_log(
-                account=last_account,
-                provider_name=provider_name,
-                request_id=request_id,
-                model=payload.model,
-                started_at=started_at,
-                status="error",
-                error_code=_no_available_accounts_code(provider_name),
-                error_message=message,
-                api_key=api_key,
-            )
-            # Upstream 429s above recorded cooldowns, so eligibility now knows the
-            # earliest reset; surface it so clients can schedule a retry.
-            eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
-            raise AnthropicProxyError(
-                last_error_status or 503,
-                message,
-                code=_no_available_accounts_code(provider_name),
-                retry_at=eligibility.next_reset_at,
-            )
+                        async with lease_http_session() as session:
+                            async with self._open_upstream_response(
+                                session,
+                                provider_name=provider_name,
+                                headers=headers,
+                                json_body=body_payload,
+                            ) as resp:
+                                if resp.status in {401, 403}:
+                                    error_message = await _read_error_message(resp)
+                                    await self._load_balancer.mark_permanent_failure(account, "invalid_api_key")
+                                    await self._persist_request_log(
+                                        account=account,
+                                        provider_name=provider_name,
+                                        request_id=request_id,
+                                        model=payload.model,
+                                        started_at=started_at,
+                                        status="error",
+                                        error_code="invalid_api_key",
+                                        error_message=error_message,
+                                        api_key=api_key,
+                                    )
+                                    last_error_status = resp.status
+                                    last_error_message = error_message
+                                    continue
+                                if resp.status == 429:
+                                    error_message = await _read_error_message(resp)
+                                    await self._record_quota_cooldown(
+                                        account,
+                                        quota_key=quota_key,
+                                        error=_rate_limit_error_from_response(resp, error_message),
+                                    )
+                                    await self._persist_request_log(
+                                        account=account,
+                                        provider_name=provider_name,
+                                        request_id=request_id,
+                                        model=payload.model,
+                                        started_at=started_at,
+                                        status="error",
+                                        error_code="rate_limit_exceeded",
+                                        error_message=error_message,
+                                        api_key=api_key,
+                                    )
+                                    last_error_status = resp.status
+                                    last_error_message = error_message
+                                    continue
+                                if resp.status >= 400:
+                                    error_details = await _read_error_details(resp)
+                                    await self._load_balancer.record_error(account)
+                                    await self._persist_request_log(
+                                        account=account,
+                                        provider_name=provider_name,
+                                        request_id=request_id,
+                                        model=payload.model,
+                                        started_at=started_at,
+                                        status="error",
+                                        error_code=f"upstream_{resp.status}",
+                                        error_message=error_details.message,
+                                        api_key=api_key,
+                                    )
+                                    raise AnthropicProxyError(
+                                        resp.status,
+                                        error_details.message,
+                                        code=error_details.error_type or _anthropic_error_type_for_status(resp.status),
+                                    )
+
+                                # A 200 whose unified rate-limit headers report
+                                # the subscription window exhausted was served by
+                                # billing extra-usage credits; cool the account
+                                # down now instead of waiting ~60s for the next
+                                # usage refresh to notice.
+                                tripwire_error: UpstreamError | None = None
+                                if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                    tripwire_error = _extra_usage_tripwire_error(resp.headers)
+                                if tripwire_error is not None:
+                                    logger.warning(
+                                        "Anthropic response reports extra-usage billing; recording quota "
+                                        "cooldown account_id=%s quota_key=%s request_id=%s",
+                                        account.id,
+                                        quota_key,
+                                        request_id,
+                                    )
+                                    await self._record_quota_cooldown(
+                                        account,
+                                        quota_key=quota_key,
+                                        error=tripwire_error,
+                                    )
+
+                                text_buffer = ""
+                                # Non-streaming responses are a single JSON document, not SSE, so the
+                                # SSE collector never sees usage. Buffer the raw body and parse it at the end.
+                                raw_body = bytearray() if not payload.stream else None
+                                async for chunk in resp.content.iter_chunked(_STREAM_CHUNK_SIZE):
+                                    if not chunk:
+                                        continue
+                                    chunk_bytes = bytes(chunk)
+                                    if raw_body is not None:
+                                        raw_body.extend(chunk_bytes)
+                                    else:
+                                        text_buffer, usage = _collect_usage_from_chunk(text_buffer, chunk_bytes, usage)
+                                    streamed_bytes = True
+                                    yield chunk_bytes
+                                if raw_body is not None:
+                                    usage = _usage_from_json_body(bytes(raw_body)) or usage
+
+                                await self._load_balancer.record_success(account)
+                                if tripwire_error is None:
+                                    await self._clear_quota_cooldown(account, quota_key=quota_key)
+                                await self._persist_request_log(
+                                    account=account,
+                                    provider_name=provider_name,
+                                    request_id=request_id,
+                                    model=payload.model,
+                                    started_at=started_at,
+                                    status="success",
+                                    api_key=api_key,
+                                    usage=usage,
+                                )
+                                await self._finalize_api_key_reservation(
+                                    api_key_reservation,
+                                    model=payload.model,
+                                    usage=usage,
+                                )
+                                return
+                except AnthropicProxyError as exc:
+                    # Never hold once response bytes have gone out: appending a
+                    # second upstream stream to a partial one would corrupt it.
+                    if not streamed_bytes and _pool_wait_should_hold(
+                        exc, wait_enabled=wait_enabled, deadline=wait_deadline
+                    ):
+                        pending_wait_error = exc
+                        account_override = None
+                        continue
+                    raise
+
+                message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
+                # Upstream 429s above recorded cooldowns, so eligibility now knows the
+                # earliest reset; surface it so clients can schedule a retry.
+                eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
+                exhausted_error = AnthropicProxyError(
+                    last_error_status or 503,
+                    message,
+                    code=_no_available_accounts_code(provider_name),
+                    retry_at=eligibility.next_reset_at,
+                )
+                if _pool_wait_should_hold(exhausted_error, wait_enabled=wait_enabled, deadline=wait_deadline):
+                    pending_wait_error = exhausted_error
+                    account_override = None
+                    continue
+                await self._release_api_key_reservation(api_key_reservation)
+                await self._persist_request_log(
+                    account=last_account,
+                    provider_name=provider_name,
+                    request_id=request_id,
+                    model=payload.model,
+                    started_at=started_at,
+                    status="error",
+                    error_code=_no_available_accounts_code(provider_name),
+                    error_message=message,
+                    api_key=api_key,
+                )
+                raise exhausted_error
 
         return AnthropicProxyStream(body=body(), media_type=media_type)
 
@@ -524,6 +629,13 @@ class AnthropicProxyService:
         now = int(time.time())
         settings = get_settings()
         fable_routing = provider_name == ANTHROPIC_PROVIDER_NAME and settings.anthropic_fable_routing_enabled
+        # Accounts with vendor-side extra usage keep answering 200 after the
+        # primary window exhausts and silently bill metered credits, so the
+        # window itself is a hard gate. Token counting is quota-free upstream
+        # and never bills, so its dedicated quota key stays exempt.
+        extra_usage_gate = (
+            provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != _count_tokens_quota_key(provider_name)
+        )
         async with self._repo_factory() as repos:
             provider_accounts = [
                 account
@@ -544,6 +656,16 @@ class AnthropicProxyService:
             cooldowns = {
                 account_id: (float(entry.used_percent), entry.reset_at) for account_id, entry in latest.items()
             }
+            primary_exhaustion: dict[str, int | None] = {}
+            if extra_usage_gate:
+                primary_usage = await repos.usage.latest_by_account(window="primary", account_ids=account_ids)
+                primary_exhaustion = {
+                    account_id: (int(entry.reset_at) if entry.reset_at is not None else None)
+                    for account_id, entry in primary_usage.items()
+                    if entry.used_percent is not None
+                    and float(entry.used_percent) >= 100.0
+                    and (entry.reset_at is None or int(entry.reset_at) > now)
+                }
             weekly_usage_used_percent: dict[str, float] = {}
             if fable_routing:
                 weekly_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
@@ -552,6 +674,7 @@ class AnthropicProxyService:
                 }
 
         eligible_account_ids: list[str] = []
+        exhausted_window_account_ids: list[str] = []
         reset_candidates: list[int] = []
         blocked_count = 0
         for account_id in account_ids:
@@ -561,7 +684,20 @@ class AnthropicProxyService:
                 if cooldown[1] is not None:
                     reset_candidates.append(int(cooldown[1]))
                 continue
+            if account_id in primary_exhaustion:
+                blocked_count += 1
+                window_reset = primary_exhaustion[account_id]
+                if window_reset is not None:
+                    reset_candidates.append(window_reset)
+                exhausted_window_account_ids.append(account_id)
+                continue
             eligible_account_ids.append(account_id)
+
+        if not eligible_account_ids and exhausted_window_account_ids and settings.anthropic_route_to_extra_usage:
+            # Opt-in last resort: only when every subscription-covered
+            # candidate is gone may a credit-billing account serve traffic.
+            eligible_account_ids = exhausted_window_account_ids
+            blocked_count -= len(exhausted_window_account_ids)
 
         burn_first_account_ids: frozenset[str] = frozenset()
         if fable_routing and eligible_account_ids:
@@ -1084,6 +1220,74 @@ def _anthropic_error_type_for_status(status_code: int) -> str:
     if status_code == 404:
         return "not_found_error"
     return "invalid_request_error"
+
+
+def _pool_wait_should_hold(
+    exc: AnthropicProxyError,
+    *,
+    wait_enabled: bool,
+    deadline: float | None,
+) -> bool:
+    if not wait_enabled or deadline is None:
+        return False
+    # Only pool-wide exhaustion with a known earliest reset is worth holding
+    # for; selection failures without reset timing are not reset-recoverable.
+    if exc.retry_at is None:
+        return False
+    return _POOL_WAIT_CLOCK() < deadline
+
+
+async def _hold_for_pool_reset(error: AnthropicProxyError, *, deadline: float | None) -> None:
+    if deadline is None:
+        raise error
+    now = _POOL_WAIT_CLOCK()
+    remaining = deadline - now
+    if remaining <= 0:
+        raise error
+    delay = _pool_wait_delay_seconds(error.retry_at, now=now, remaining=remaining)
+    logger.info(
+        "Anthropic pool exhausted; holding stream open for reset retry_at=%s delay_seconds=%.1f",
+        error.retry_at,
+        delay,
+    )
+    if delay > 0:
+        await _POOL_WAIT_SLEEP(delay)
+
+
+def _pool_wait_delay_seconds(retry_at: int | None, *, now: float, remaining: float) -> float:
+    base = float(retry_at) - now if retry_at is not None else _POOL_WAIT_MIN_POLL_SECONDS
+    base = min(max(base, _POOL_WAIT_MIN_POLL_SECONDS), _POOL_WAIT_MAX_POLL_SECONDS)
+    return max(0.0, min(base + _POOL_WAIT_JITTER(), remaining))
+
+
+def _extra_usage_tripwire_error(headers: Mapping[str, str]) -> UpstreamError | None:
+    if not _unified_limit_exhausted(headers):
+        return None
+    error = UpstreamError(message="Anthropic unified limit exhausted; upstream is billing extra-usage credits")
+    reset_at = _parse_reset_epoch(_get_header(headers, "anthropic-ratelimit-unified-reset"))
+    if reset_at is None:
+        reset_at = _parse_reset_epoch(_get_header(headers, "anthropic-ratelimit-unified-5h-reset"))
+    if reset_at is not None:
+        error["resets_at"] = reset_at
+    return error
+
+
+def _unified_limit_exhausted(headers: Mapping[str, str]) -> bool:
+    overage_in_use = _get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
+    if isinstance(overage_in_use, str) and overage_in_use.strip().lower() == "true":
+        return True
+    for name in _ANTHROPIC_UNIFIED_STATUS_HEADERS:
+        value = _get_header(headers, name)
+        if value is None:
+            continue
+        normalized = value.strip().lower()
+        # On a 2xx, any non-allowed unified status means the subscription
+        # window rejected the request yet upstream served it anyway — i.e.
+        # it billed credits. Unknown statuses fail closed: a spurious
+        # cooldown is bounded, silent credit burn is not.
+        if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
+            return True
+    return False
 
 
 def _rate_limit_error_from_response(resp: aiohttp.ClientResponse, message: str) -> UpstreamError:

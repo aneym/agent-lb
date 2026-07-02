@@ -234,6 +234,8 @@ def _account_to_summary(
         credits_balance=credits_balance,
         allow_missing_runtime_reset_recovery=allow_missing_runtime_reset_recovery,
     )
+    # AccountSummary still carries the raw credit fields below so extra-usage
+    # burn stays dashboard-visible even though it never rescues the status.
     return AccountSummary(
         account_id=account.id,
         provider=account.provider,
@@ -356,7 +358,13 @@ def _effective_status_from_usage(
 ) -> AccountStatus:
     long_window_usage = monthly_usage or secondary_usage
     long_window_used_percent = monthly_used_percent if monthly_usage is not None else secondary_used_percent
-    if credits_has is None and credits_unlimited is None and credits_balance is None:
+    # Anthropic extra-usage credits never rescue an exhausted status: upstream
+    # serves those windows by billing metered dollars, so the OpenAI-style
+    # credit override would mask exhaustion the routing gate relies on.
+    credit_override_enabled = account.provider != ANTHROPIC_PROVIDER_NAME
+    if not credit_override_enabled:
+        credits_has, credits_unlimited, credits_balance = None, None, None
+    elif credits_has is None and credits_unlimited is None and credits_balance is None:
         credits_has, credits_unlimited, credits_balance = _extract_credit_status(
             primary_usage,
             long_window_usage,

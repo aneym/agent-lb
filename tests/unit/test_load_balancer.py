@@ -4394,3 +4394,81 @@ def test_select_account_fill_first_primary_dominates_over_secondary():
     assert result.account is not None
     # Primary still wins -- only ties break on secondary.
     assert result.account.account_id == "high-secondary"
+
+
+def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(monkeypatch):
+    """Anthropic extra-usage credits are dashboard-visible only by default:
+    a weekly-exhausted account must stay QUOTA_EXCEEDED even though the
+    usage row carries a positive credit balance (upstream would happily keep
+    serving it by billing dollars)."""
+    now = 1_700_000_000.0
+    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.utcnow", lambda: _epoch_to_naive_utc(now))
+
+    account = _make_test_account(status=AccountStatus.ACTIVE, plan_type="max")
+    account.provider = "anthropic"
+    primary = _make_test_usage(
+        window="primary",
+        used_percent=50.0,
+        reset_at=int(now + 3600),
+        recorded_at=_epoch_to_naive_utc(now - 30),
+        credits_has=True,
+        credits_unlimited=False,
+        credits_balance=186.6,
+    )
+    weekly_exhausted = _make_test_usage(
+        window="secondary",
+        used_percent=100.0,
+        reset_at=int(now + 4 * 24 * 3600),
+        recorded_at=_epoch_to_naive_utc(now - 30),
+        credits_has=True,
+        credits_unlimited=False,
+        credits_balance=186.6,
+    )
+
+    state = _state_from_account(
+        account=account,
+        primary_entry=primary,
+        secondary_entry=weekly_exhausted,
+        runtime=RuntimeState(),
+    )
+
+    assert state.status == AccountStatus.QUOTA_EXCEEDED
+
+
+def test_state_from_account_anthropic_opt_in_keeps_credit_billing_account_routable(monkeypatch):
+    """With ANTHROPIC_ROUTE_TO_EXTRA_USAGE enabled, exhausted windows stop
+    marking a credit-billing account unroutable so the eligibility prefilter
+    can admit it as a last resort."""
+    now = 1_700_000_000.0
+    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.utcnow", lambda: _epoch_to_naive_utc(now))
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+    try:
+        account = _make_test_account(status=AccountStatus.ACTIVE, plan_type="max")
+        account.provider = "anthropic"
+        exhausted_primary = _make_test_usage(
+            window="primary",
+            used_percent=100.0,
+            reset_at=int(now + 3600),
+            recorded_at=_epoch_to_naive_utc(now - 30),
+            credits_has=True,
+            credits_unlimited=False,
+            credits_balance=186.6,
+        )
+
+        state = _state_from_account(
+            account=account,
+            primary_entry=exhausted_primary,
+            secondary_entry=None,
+            runtime=RuntimeState(),
+        )
+
+        assert state.status == AccountStatus.ACTIVE
+    finally:
+        get_settings.cache_clear()

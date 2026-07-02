@@ -214,3 +214,91 @@ async def test_v1_messages_count_tokens_requires_model(async_client) -> None:
             "message": "model is required",
         },
     }
+
+
+# Header values below were captured from live Anthropic OAuth responses on
+# 2026-07-01: a healthy subscription-covered 200 and a 200 served by billing
+# extra-usage credits on an account whose 5h window sat at 100% utilization.
+_HEALTHY_UNIFIED_HEADERS = {
+    "anthropic-ratelimit-unified-status": "allowed",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-reset": "1782959400",
+    "anthropic-ratelimit-unified-overage-status": "rejected",
+    "anthropic-ratelimit-unified-overage-disabled-reason": "org_level_disabled",
+}
+_OVERAGE_BILLING_UNIFIED_HEADERS = {
+    "anthropic-ratelimit-unified-status": "rejected",
+    "anthropic-ratelimit-unified-5h-status": "rejected",
+    "anthropic-ratelimit-unified-5h-utilization": "1.0",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-overage-status": "allowed",
+    "anthropic-ratelimit-unified-overage-in-use": "true",
+    "anthropic-ratelimit-unified-reset": "1782958200",
+    "anthropic-ratelimit-unified-overage-reset": "1785542400",
+}
+
+
+def test_unified_tripwire_ignores_healthy_subscription_response() -> None:
+    assert anthropic_service_module._extra_usage_tripwire_error(_HEALTHY_UNIFIED_HEADERS) is None
+
+
+def test_unified_tripwire_detects_overage_billing_response() -> None:
+    error = anthropic_service_module._extra_usage_tripwire_error(_OVERAGE_BILLING_UNIFIED_HEADERS)
+
+    assert error is not None
+    assert error["resets_at"] == 1782958200
+
+
+def test_unified_tripwire_detects_allowed_warning_as_healthy() -> None:
+    headers = dict(_HEALTHY_UNIFIED_HEADERS)
+    headers["anthropic-ratelimit-unified-status"] = "allowed_warning"
+
+    assert anthropic_service_module._extra_usage_tripwire_error(headers) is None
+
+
+def test_unified_tripwire_fails_closed_on_unknown_status() -> None:
+    headers = dict(_HEALTHY_UNIFIED_HEADERS)
+    headers["anthropic-ratelimit-unified-status"] = "exhausted"
+
+    assert anthropic_service_module._extra_usage_tripwire_error(headers) is not None
+
+
+def test_unified_tripwire_ignores_responses_without_unified_headers() -> None:
+    assert anthropic_service_module._extra_usage_tripwire_error({}) is None
+    assert anthropic_service_module._extra_usage_tripwire_error({"content-type": "text/event-stream"}) is None
+
+
+def test_pool_wait_delay_clamps_to_poll_bounds_and_remaining(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(anthropic_service_module, "_POOL_WAIT_JITTER", lambda: 0.0)
+
+    # Reset far away: bounded by the max poll interval so early frees are seen.
+    assert (
+        anthropic_service_module._pool_wait_delay_seconds(10_000, now=0.0, remaining=100_000.0)
+        == anthropic_service_module._POOL_WAIT_MAX_POLL_SECONDS
+    )
+    # Reset already passed: re-poll on the min cadence instead of spinning.
+    assert (
+        anthropic_service_module._pool_wait_delay_seconds(10, now=50.0, remaining=100_000.0)
+        == anthropic_service_module._POOL_WAIT_MIN_POLL_SECONDS
+    )
+    # Never sleeps past the wait cap.
+    assert anthropic_service_module._pool_wait_delay_seconds(10_000, now=0.0, remaining=42.0) == 42.0
+
+
+def test_pool_wait_should_hold_requires_reset_and_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(anthropic_service_module, "_POOL_WAIT_CLOCK", lambda: 100.0)
+    error_with_reset = AnthropicProxyError(429, "cooling", retry_at=1_000)
+    error_without_reset = AnthropicProxyError(503, "no accounts")
+
+    assert (
+        anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=True, deadline=200.0) is True
+    )
+    assert (
+        anthropic_service_module._pool_wait_should_hold(error_without_reset, wait_enabled=True, deadline=200.0)
+        is False
+    )
+    assert (
+        anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=False, deadline=200.0) is False
+    )
+    assert anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=True, deadline=50.0) is False

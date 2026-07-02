@@ -185,3 +185,31 @@ def test_fable_eligible_flag_by_provider_and_threshold() -> None:
     assert mappers._fable_eligible(anthropic, None) is True
     # Other providers: null.
     assert mappers._fable_eligible(openai, 10.0) is None
+
+
+def test_effective_status_ignores_extra_usage_credits_for_anthropic_accounts() -> None:
+    """Anthropic extra-usage credits stay dashboard-visible but must not
+    rescue an exhausted account's effective status."""
+    account = _account()
+    account.provider = "anthropic"
+    primary = _primary_usage()
+    secondary = _secondary_usage(
+        credits_has=True,
+        credits_unlimited=False,
+        credits_balance=186.6,
+    )
+
+    assert (
+        _effective_status_from_usage(
+            account,
+            status_seed=account.status,
+            primary_usage=primary,
+            primary_used_percent=primary.used_percent,
+            secondary_usage=secondary,
+            secondary_used_percent=secondary.used_percent,
+            monthly_usage=None,
+            monthly_used_percent=None,
+            runtime_reset=float(account.reset_at) if account.reset_at else None,
+        )
+        == AccountStatus.QUOTA_EXCEEDED
+    )

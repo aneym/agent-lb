@@ -37,3 +37,78 @@ def test_anthropic_usage_maps_top_model_session_and_week_windows_only() -> None:
     assert usage.rate_limit.secondary_window.used_percent == 21.0
     assert usage.rate_limit.secondary_window.limit_window_seconds == 7 * 24 * 60 * 60
     assert usage.rate_limit.secondary_window.reset_at == 1781470800
+    assert usage.credits is None
+
+
+def test_anthropic_usage_maps_enabled_extra_usage_to_credits() -> None:
+    # Shape observed live on /api/oauth/usage (2026-07-01): monthly_limit and
+    # used_credits arrive in currency minor units scaled by decimal_places.
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "five_hour": {"utilization": 100.0, "resets_at": "2026-07-02T02:10:00+00:00"},
+            "seven_day": {"utilization": 20.0, "resets_at": "2026-07-05T21:00:00+00:00"},
+            "extra_usage": {
+                "is_enabled": True,
+                "monthly_limit": 25000,
+                "used_credits": 6340.0,
+                "utilization": 25.36,
+                "currency": "USD",
+                "decimal_places": 2,
+                "disabled_reason": None,
+            },
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.credits is not None
+    assert usage.credits.has_credits is True
+    assert usage.credits.unlimited is False
+    assert usage.credits.balance is not None
+    assert float(usage.credits.balance) == pytest.approx(186.60)
+
+
+def test_anthropic_usage_maps_disabled_extra_usage_without_fabricated_balance() -> None:
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "five_hour": {"utilization": 10.0, "resets_at": "2026-07-02T02:10:00+00:00"},
+            "extra_usage": {
+                "is_enabled": False,
+                "monthly_limit": None,
+                "used_credits": None,
+                "utilization": None,
+                "currency": None,
+                "decimal_places": None,
+            },
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.credits is not None
+    assert usage.credits.has_credits is False
+    assert usage.credits.unlimited is False
+    assert usage.credits.balance is None
+
+
+def test_anthropic_usage_extra_usage_balance_never_goes_negative() -> None:
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "five_hour": {"utilization": 100.0, "resets_at": "2026-07-02T02:10:00+00:00"},
+            "extra_usage": {
+                "is_enabled": True,
+                "monthly_limit": 1000,
+                "used_credits": 1500.0,
+                "utilization": 150.0,
+                "currency": "USD",
+                "decimal_places": 2,
+            },
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.credits is not None
+    assert usage.credits.has_credits is True
+    assert usage.credits.balance is not None
+    assert float(usage.credits.balance) == 0.0

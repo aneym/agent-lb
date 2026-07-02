@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from app.core.clients.http import lease_retry_client
 from app.core.clients.usage import UsageFetchError, _extract_error_code, _extract_error_message, _retry_options
 from app.core.config.settings import get_settings
-from app.core.usage.models import RateLimitPayload, UsagePayload, UsageWindow
+from app.core.usage.models import CreditsPayload, RateLimitPayload, UsagePayload, UsageWindow
 from app.core.utils.request_id import get_request_id
 
 logger = logging.getLogger(__name__)
@@ -28,11 +28,25 @@ class AnthropicUsageWindow(BaseModel):
     resets_at: str | None = None
 
 
+class AnthropicExtraUsage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    is_enabled: bool | None = None
+    # ``monthly_limit`` and ``used_credits`` arrive in currency minor units
+    # (e.g. cents for USD); ``decimal_places`` says how to scale them.
+    monthly_limit: float | None = None
+    used_credits: float | None = None
+    utilization: float | None = None
+    currency: str | None = None
+    decimal_places: int | None = None
+
+
 class AnthropicOAuthUsagePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     five_hour: AnthropicUsageWindow | None = None
     seven_day: AnthropicUsageWindow | None = None
+    extra_usage: AnthropicExtraUsage | None = None
 
 
 async def fetch_anthropic_usage(
@@ -76,7 +90,27 @@ def _usage_payload_from_anthropic(payload: AnthropicOAuthUsagePayload) -> UsageP
             primary_window=_usage_window(payload.five_hour, limit_window_seconds=_FIVE_HOUR_SECONDS),
             secondary_window=_usage_window(payload.seven_day, limit_window_seconds=_SEVEN_DAY_SECONDS),
         ),
+        credits=_credits_from_extra_usage(payload.extra_usage),
     )
+
+
+def _credits_from_extra_usage(extra: AnthropicExtraUsage | None) -> CreditsPayload | None:
+    if extra is None:
+        return None
+    if extra.is_enabled is not True:
+        return CreditsPayload(has_credits=False, unlimited=False, balance=None)
+    return CreditsPayload(
+        has_credits=True,
+        unlimited=False,
+        balance=_extra_usage_balance(extra),
+    )
+
+
+def _extra_usage_balance(extra: AnthropicExtraUsage) -> str | None:
+    if extra.monthly_limit is None or extra.decimal_places is None or extra.decimal_places < 0:
+        return None
+    remaining_minor = float(extra.monthly_limit) - float(extra.used_credits or 0.0)
+    return str(max(remaining_minor, 0.0) / 10**extra.decimal_places)
 
 
 def _usage_window(

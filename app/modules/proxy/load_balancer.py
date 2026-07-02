@@ -47,7 +47,7 @@ from app.core.metrics.prometheus import (
 )
 from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
-from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
@@ -1877,11 +1877,37 @@ def _state_from_account(
 
     secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
     secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
-    credits_has, credits_unlimited, credits_balance = _extract_credit_status(
-        primary_entry,
-        effective_secondary_entry,
-        secondary_entry,
-    )
+    # Anthropic extra-usage credits never act as an OpenAI-style quota
+    # override: upstream keeps serving an exhausted window by billing metered
+    # dollars, so usable credits must not silently make the account look
+    # healthy. With the opt-in ANTHROPIC_ROUTE_TO_EXTRA_USAGE flag, exhausted
+    # windows stop marking a credit-billing account unroutable — the
+    # eligibility prefilter alone decides when it may serve (last resort).
+    if account.provider == ANTHROPIC_PROVIDER_NAME:
+        credits_has, credits_unlimited, credits_balance = _extract_credit_status(
+            primary_entry,
+            effective_secondary_entry,
+            secondary_entry,
+        )
+        has_billable_credits = (
+            credits_unlimited is True
+            or credits_has is True
+            or (credits_balance is not None and float(credits_balance) > 0.0)
+        )
+        if has_billable_credits and get_settings().anthropic_route_to_extra_usage:
+            if primary_used is not None and float(primary_used) >= 100.0:
+                primary_used = None
+                primary_reset = None
+            if secondary_used is not None and float(secondary_used) >= 100.0:
+                secondary_used = None
+                secondary_reset = None
+        credits_has, credits_unlimited, credits_balance = None, None, None
+    else:
+        credits_has, credits_unlimited, credits_balance = _extract_credit_status(
+            primary_entry,
+            effective_secondary_entry,
+            secondary_entry,
+        )
 
     # If the usage window has reset (reset_at is in the past) but the last
     # recorded sample still shows 100 % usage, the data is stale.  Zero it
