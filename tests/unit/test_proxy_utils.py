@@ -5756,14 +5756,24 @@ def test_logged_error_json_response_emits_proxy_error_log(caplog):
             502,
             {"error": {"code": "upstream_error", "message": "provider failed"}},
         )
+        secret_response = proxy_api._logged_error_json_response(
+            request,
+            502,
+            {"error": {"code": "upstream_error", "message": "auth failed: Bearer sk-live-supersecret"}},
+        )
     finally:
         reset_request_id(token)
 
     assert response.status_code == 502
+    assert secret_response.status_code == 502
     assert "proxy_error_response request_id=req_proxy_error_1" in caplog.text
     assert "method=POST path=/v1/responses status=502" in caplog.text
-    assert "code=upstream_error" not in caplog.text
-    assert "message=provider failed" not in caplog.text
+    # Error code and message are diagnostics-grade log fields, but the message
+    # must pass through secret redaction before it lands in the log line.
+    assert "code=upstream_error" in caplog.text
+    assert "message=provider failed" in caplog.text
+    assert "sk-live-supersecret" not in caplog.text
+    assert "[REDACTED]" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -14434,7 +14444,10 @@ async def test_pop_replayable_created_without_visible_output_request_state():
         request_text='{"type":"response.create","model":"gpt-5.1","input":"retry"}',
         response_id="resp_created_then_closed",
         awaiting_response_created=False,
-        response_event_count=1,
+        # response.created is protocol-only and no longer counted (see
+        # _PROTOCOL_ONLY_RESPONSE_EVENT_TYPES): "created received, nothing
+        # visible" is response_event_count == 0.
+        response_event_count=0,
         downstream_visible=False,
         error_code_override="upstream_unavailable",
         error_message_override="previous replay failed",
@@ -14504,7 +14517,9 @@ async def test_process_upstream_websocket_text_rewrites_replayed_created_only_re
         request_text='{"type":"response.create","model":"gpt-5.1","input":"retry"}',
         response_id="resp_downstream_original",
         awaiting_response_created=False,
-        response_event_count=1,
+        # Protocol-only events (response.created) are not counted; zero means
+        # "created received, nothing visible yet".
+        response_event_count=0,
         downstream_visible=False,
     )
     pending_requests = deque([pending_request])
@@ -20767,7 +20782,9 @@ async def test_retry_http_bridge_precreated_request_replays_created_without_visi
         request_text='{"type":"response.create","model":"gpt-5.1","input":"retry"}',
         response_id="resp_bridge_created_then_closed",
         awaiting_response_created=False,
-        response_event_count=1,
+        # Protocol-only events (response.created) are not counted; zero means
+        # "created received, nothing visible yet".
+        response_event_count=0,
         downstream_visible=False,
     )
     session = proxy_service._HTTPBridgeSession(

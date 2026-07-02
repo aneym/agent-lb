@@ -698,8 +698,9 @@ async def test_http_bridge_first_event_timeout_retries_fresh_account_before_fail
 
     event_queue = request_state.event_queue
     assert event_queue is not None
-    request_state.response_id = "resp_first_event_failover"
-    request_state.response_event_count = 1
+    # Queue the created event BEFORE marking response_id: once response_id is
+    # set with an empty queue, the 1ms keepalive tick may yield a synthetic
+    # response.in_progress frame first and win the race against this event.
     await event_queue.put(
         proxy_service.format_sse_event(
             cast(
@@ -711,6 +712,8 @@ async def test_http_bridge_first_event_timeout_retries_fresh_account_before_fail
             )
         )
     )
+    request_state.response_id = "resp_first_event_failover"
+    request_state.response_event_count = 1
     first = await asyncio.wait_for(first_event_task, timeout=1.0)
     assert "response.created" in first
 
@@ -12004,8 +12007,9 @@ async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
     # Upstream answers after the retry; the stream completes normally.
     event_queue = request_state.event_queue
     assert event_queue is not None
-    request_state.response_id = "resp_degraded_ok"
-    request_state.response_event_count = 1
+    # Queue the created event BEFORE marking response_id: once response_id is
+    # set with an empty queue, the 1ms keepalive tick may yield a synthetic
+    # response.in_progress frame first and win the race against this event.
     await event_queue.put(
         proxy_service.format_sse_event(
             cast(
@@ -12017,6 +12021,8 @@ async def test_http_bridge_first_event_timeout_degraded_retry_strips_reasoning(
             )
         )
     )
+    request_state.response_id = "resp_degraded_ok"
+    request_state.response_event_count = 1
     first = await asyncio.wait_for(first_event_task, timeout=1.0)
     assert "response.created" in first
     await event_queue.put(None)

@@ -1457,7 +1457,8 @@ def test_agent_onboarding_docs_keep_claude_subscription_billing_guardrail() -> N
 
 def test_readme_agent_prompt_keeps_onboarding_guardrails() -> None:
     readme = (ROOT / "README.md").read_text()
-    prompt = _fenced_blocks(readme, "text")[0]
+    # Collapse hard wraps: the pins protect phrases, not line-break positions.
+    prompt = " ".join(_fenced_blocks(readme, "text")[0].split())
 
     assert "read GETTING-STARTED.md" in prompt
     assert "Claude/ChatGPT accounts ONE AT A TIME" in prompt
@@ -1570,11 +1571,13 @@ def test_agent_skills_pin_public_onboarding_and_account_operator_contracts() -> 
         (ROOT / ".agents/skills/agent-lb-account-operator/account-profiles.example.json").read_text()
     )
 
-    assert "Follow `GETTING-STARTED.md` at the repo root, top to bottom" in skill
-    assert "single\nsource of truth" in skill
-    assert "Claude Code, Codex, OpenCode, OpenClaw, Vercel AI SDK,\n  Anthropic-compatible SDK, or SDK" in skill
-    assert "discover a model from\n   `/v1/models` first" in skill
-    assert "Anthropic-compatible SDKs use\n   the root Messages API base URL" in skill
+    # Collapse hard wraps: the pins protect phrases, not line-break positions.
+    skill_text = " ".join(skill.split())
+    assert "Follow `GETTING-STARTED.md` at the repo root, top to bottom" in skill_text
+    assert "single source of truth" in skill_text
+    assert "Claude Code, Codex, OpenCode, OpenClaw, Vercel AI SDK, Anthropic-compatible SDK, or SDK" in skill_text
+    assert "discover a model from `/v1/models` first" in skill_text
+    assert "Anthropic-compatible SDKs use the root Messages API base URL" in skill_text
 
     assert "`agent-lb-account-operator` skill" in getting_started
     assert ".agent-lb/account-profiles.json" in getting_started
