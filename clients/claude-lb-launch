@@ -859,7 +859,7 @@ def claim_session_route(session_id: str, model: str, quota_key: str) -> tuple[di
         claim = lb_post_json(
             "/api/anthropic/session-route",
             {"sessionId": session_id, "model": model, "quotaKey": quota_key},
-            timeout=5.0,
+            timeout=_env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0),
         )
         return claim, "", None
     except urllib.error.HTTPError as error:
