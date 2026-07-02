@@ -7,6 +7,7 @@ func makeTestAccount(
   provider: String = "anthropic",
   displayName: String = "synthetic@example.com",
   alias: String? = nil,
+  planType: String? = nil,
   status: String = "active",
   remainingCreditsPrimary: Double? = nil,
   capacityCreditsPrimary: Double? = nil,
@@ -25,7 +26,7 @@ func makeTestAccount(
     alias: alias,
     displayName: displayName,
     workspaceLabel: nil,
-    planType: nil,
+    planType: planType,
     routingPolicy: nil,
     status: status,
     usage: AccountUsage(

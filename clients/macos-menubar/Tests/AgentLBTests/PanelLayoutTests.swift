@@ -6,7 +6,7 @@ import XCTest
 /// PanelMetrics (never derived by re-running the production formula):
 ///
 ///   header 72 · scope bar 36 · divider 1 · footer 52
-///   pool   = 12 + 14 + 8 + 128 + 8 + metrics(14 | 31)        → 184 | 201
+///   pool   = 12 + 14 + 8 + 128 + 8 + metrics(14 | 31 | 48)   → 184 | 201 | 218
 ///   accounts fixed = 12 + 22 + 6 (+30 search)                → 40 | 70
 ///   recent = 12 + 16 (+6 + rows×18 + 8 when expanded)        → 28 | 132@5
 ///   list   = rows × 52 + 8
@@ -109,6 +109,44 @@ final class PanelLayoutTests: XCTestCase {
     XCTAssertEqual(layout.panelHeight, 528)
   }
 
+  // MARK: - Content: three metrics lines (cost + tokens + value)
+  // pool(3 lines) = 12+14+8+128+8 + (3×14 + 2×3) = 218
+  // base(3 lines, scope bar, recent expanded 5 rows)
+  //   = 72+36+1 + 218+1+40+1+132+1+52 = 554
+
+  func testThreeMetricsLines() {
+    // budget = 720-554-8 = 158 → 3 rows fit → list 164 → 554+164 = 718
+    let layout = PanelLayout.compute(inputs(metricsLines: 3, scoped: 3, filtered: 3))
+    XCTAssertEqual(layout.listRows, 3)
+    XCTAssertEqual(layout.listHeight, 164)
+    XCTAssertEqual(layout.panelHeight, 718)
+  }
+
+  func testThreeMetricsLinesCompressEight() {
+    // 8 filtered, but only 3 fit under the 720 cap with the third metrics line
+    let layout = PanelLayout.compute(inputs(metricsLines: 3, scoped: 8, filtered: 8))
+    XCTAssertEqual(layout.listRows, 3)
+    XCTAssertEqual(layout.panelHeight, 718)
+  }
+
+  func testThreeMetricsLinesWithSearch() {
+    // base 554+30 = 584 → budget 128 → 2 rows → list 112 → 696
+    let layout = PanelLayout.compute(
+      inputs(metricsLines: 3, scoped: 8, filtered: 8, searchVisible: true))
+    XCTAssertEqual(layout.listRows, 2)
+    XCTAssertEqual(layout.listHeight, 112)
+    XCTAssertEqual(layout.panelHeight, 696)
+  }
+
+  func testThreeMetricsLinesRecentCollapsed() {
+    // base = 72+36+1 + 218+1+40+1+28+1+52 = 450 → 3 rows → list 164 → 614
+    let layout = PanelLayout.compute(
+      inputs(metricsLines: 3, filtered: 3, recentExpanded: false))
+    XCTAssertEqual(layout.listRows, 3)
+    XCTAssertEqual(layout.listHeight, 164)
+    XCTAssertEqual(layout.panelHeight, 614)
+  }
+
   // MARK: - Content: empty blocks
 
   func testZeroAccountsShowsEmptyState() {
@@ -127,14 +165,16 @@ final class PanelLayoutTests: XCTestCase {
   // MARK: - Invariants
 
   func testNeverExceedsMaxHeight() {
-    for filtered in [0, 1, 3, 8, 20] {
-      for expanded in [true, false] {
-        for search in [true, false] {
-          let layout = PanelLayout.compute(
-            inputs(scoped: filtered, filtered: filtered,
-                   searchVisible: search, recentExpanded: expanded))
-          XCTAssertLessThanOrEqual(layout.panelHeight, PanelMetrics.maxHeight)
-          XCTAssertGreaterThan(layout.panelHeight, 300)
+    for metricsLines in [1, 2, 3] {
+      for filtered in [0, 1, 3, 8, 20] {
+        for expanded in [true, false] {
+          for search in [true, false] {
+            let layout = PanelLayout.compute(
+              inputs(metricsLines: metricsLines, scoped: filtered, filtered: filtered,
+                     searchVisible: search, recentExpanded: expanded))
+            XCTAssertLessThanOrEqual(layout.panelHeight, PanelMetrics.maxHeight)
+            XCTAssertGreaterThan(layout.panelHeight, 300)
+          }
         }
       }
     }

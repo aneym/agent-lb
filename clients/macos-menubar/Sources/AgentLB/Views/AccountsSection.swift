@@ -74,6 +74,7 @@ struct AccountsSection: View {
         searchToggleLabel
       }
       .buttonStyle(.plain)
+      .accessibilityLabel(searchVisible ? "Hide search" : "Search accounts")
       filterMenu
     }
     // PanelMetrics.accountsHeader — enforced so PanelLayout stays exact.
@@ -122,6 +123,7 @@ struct AccountsSection: View {
     .menuIndicator(.hidden)
     .buttonStyle(.plain)
     .fixedSize()
+    .accessibilityLabel(filter.hasActiveFilters ? "Filter accounts (active)" : "Filter accounts")
   }
 
   // MARK: - Search
@@ -235,6 +237,7 @@ struct AccountsSection: View {
 //   5H  [meter] 62% · 0:15   |   WK  [meter] 51% · 23h
 struct AccountRow: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.privacyMask) private var privacyMask
   let account: Account
   var now: Date = .now
   @State private var pendingAction = false
@@ -334,8 +337,14 @@ struct AccountRow: View {
   }
 
   // §1.2: duplicates keep their displayName and gain a disambiguation suffix
-  // (alias/workspaceLabel when present, "·2" otherwise).
+  // (alias/workspaceLabel when present, "·2" otherwise). §12: privacy mode
+  // replaces the whole thing with a stable pseudonym (already unique per
+  // account, so no disambiguation suffix is needed).
   private var displayName: String {
+    privacyMask.name(for: account, real: realDisplayName)
+  }
+
+  private var realDisplayName: String {
     guard account.isEmailDuplicate == true else { return account.displayName }
     if let tag = account.alias ?? account.workspaceLabel {
       return account.displayName + " · " + tag
@@ -389,6 +398,7 @@ struct AccountRow: View {
       .opacity(refreshControlVisible ? 1 : 0)
       .animation(.easeOut(duration: 0.15), value: refreshPhase)
       .help(action == .checkSubscription ? "Re-check subscription" : "Probe account now")
+      .accessibilityLabel(action == .checkSubscription ? "Re-check subscription" : "Probe account now")
     }
   }
 

@@ -136,4 +136,21 @@ enum Format {
     guard total > 0 else { return nil }
     return percent(Double(cached) / Double(total) * 100) + " cached"
   }
+
+  // "27×" / "8.5×" — the value multiple on the §11 arbitrage line. Whole
+  // number at or above 10× (the flex is already coarse there); one decimal
+  // below so small pools still read a real ratio ("3.4×", not "3×").
+  static func multiple(_ value: Double) -> String {
+    if value >= 10 { return String(format: "%.0f×", value) }
+    return String(format: "%.1f×", value)
+  }
+
+  // "$6.2k" / "$1.4M" / "$308" / "$71" — compact USD for the arbitrage line,
+  // floor to 1 decimal like compact() so the flex never rounds up.
+  static func usdCompact(_ value: Double) -> String {
+    func one(_ scaled: Double) -> String { String(format: "%.1f", floor(scaled * 10) / 10) }
+    if value >= 1_000_000 { return "$" + one(value / 1_000_000) + "M" }
+    if value >= 1_000 { return "$" + one(value / 1_000) + "k" }
+    return "$" + String(format: "%.0f", value)
+  }
 }

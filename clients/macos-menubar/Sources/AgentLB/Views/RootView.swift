@@ -6,6 +6,8 @@ struct RootView: View {
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   // §9.2: top-level provider scope, persisted; scopes pool, accounts, recent.
   @AppStorage("providerScope") private var providerScopeRaw = ProviderScope.all.rawValue
+  // §12: privacy mode, persisted; redacts identity text for shareable screenshots.
+  @AppStorage("privacyMode") private var privacyMode = false
   // Sizing-relevant accounts state lives HERE (not in AccountsSection): the
   // panel height is a pure function of state (PanelLayout), so RootView must
   // own every input that changes it.
@@ -16,6 +18,18 @@ struct RootView: View {
 
   private var scope: ProviderScope {
     ProviderScope(rawValue: providerScopeRaw) ?? .all
+  }
+
+  // §12: built from the FULL account list so pseudonyms stay stable under any
+  // scope/sort; injected into the environment for every section to read.
+  private var privacyMask: PrivacyMask {
+    PrivacyMask.build(enabled: privacyMode, accounts: appState.accounts)
+  }
+
+  // §11: pool-global value multiple, computed once and reused for both the
+  // panel-height input (metrics line count) and the PoolSection render.
+  private var arbitrage: ArbitrageStats? {
+    ArbitrageStats.compute(summary: appState.summary, accounts: appState.accounts)
   }
 
   var body: some View {
@@ -45,6 +59,7 @@ struct RootView: View {
     // Deterministic §9.1 sizing: content is pinned to the computed height
     // and PanelResizer applies the same number to the NSWindow (macOS 26
     // panels never re-measure on their own). No geometry feedback.
+    .environment(\.privacyMask, privacyMask)
     .frame(height: layout.panelHeight)
     .onChange(of: layout.panelHeight) { _, height in
       PanelResizer.apply(height)
@@ -90,7 +105,10 @@ struct RootView: View {
       inputs.degraded = appState.serviceStatus == .degraded
     }
     inputs.showsScopeBar = showsScopeBar
-    inputs.metricsLines = appState.summary?.metrics?.tokensSecondaryWindow != nil ? 2 : 1
+    // §8.2 base cost line, + a token line when totals exist, + the §11
+    // arbitrage line when a value multiple is computable.
+    let hasTokenLine = appState.summary?.metrics?.tokensSecondaryWindow != nil
+    inputs.metricsLines = 1 + (hasTokenLine ? 1 : 0) + (arbitrage != nil ? 1 : 0)
     inputs.poolHasError = appState.sectionErrors.contains(.pool)
     inputs.poolHasData = appState.summary != nil || scope != .all
     inputs.scopedAccountCount = scopedAccounts.count
@@ -163,6 +181,7 @@ struct RootView: View {
         projections: appState.projections,
         scope: scope,
         scopedAccounts: scopedAccounts,
+        arbitrage: arbitrage,
         hasError: appState.sectionErrors.contains(.pool),
         retry: retrySection
       )
@@ -195,6 +214,7 @@ struct RootView: View {
     .animation(.easeOut(duration: 0.15), value: appState.accounts)
     .animation(.easeOut(duration: 0.15), value: appState.recent)
     .animation(.easeOut(duration: 0.15), value: providerScopeRaw)
+    .animation(.easeOut(duration: 0.15), value: privacyMode)
   }
 
   private func retrySection() {
@@ -250,6 +270,8 @@ private struct ProviderScopeBar: View {
 //   L2: host chip · synced age · spacer · version (11 pt tertiary)
 private struct HeaderView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.privacyMask) private var privacyMask
+  @AppStorage("privacyMode") private var privacyMode = false
   @State private var showStopConfirm = false
 
   var body: some View {
@@ -264,6 +286,7 @@ private struct HeaderView: View {
         Spacer(minLength: 8)
         GlassEffectContainer {
           HStack(spacing: 6) {
+            privacyButton
             refreshButton
             overflowMenu
           }
@@ -328,8 +351,26 @@ private struct HeaderView: View {
 
   private var hostLabel: String {
     guard appState.isRemote else { return "local" }
+    // §12: the remote hostname identifies the machine — redact it too.
     let host = appState.remoteHost
-    return host.split(separator: ".").first.map(String.init) ?? host
+    let short = host.split(separator: ".").first.map(String.init) ?? host
+    return privacyMask.host(short)
+  }
+
+  // §12: eye toggle for privacy mode — the quick "hide/show sensitive info"
+  // affordance for shareable screenshots. Glass, consistent with refresh.
+  private var privacyButton: some View {
+    Button {
+      privacyMode.toggle()
+    } label: {
+      Image(systemName: privacyMode ? "eye.slash" : "eye")
+        .font(.system(size: 12, weight: .medium))
+        .frame(width: 16, height: 16)
+    }
+    .buttonStyle(.glass)
+    .buttonBorderShape(.circle)
+    .help(privacyMode ? "Show account identities" : "Hide account identities for sharing")
+    .accessibilityLabel(privacyMode ? "Show account identities" : "Hide account identities")
   }
 
   private var syncLabel: some View {
@@ -407,10 +448,12 @@ private struct HeaderView: View {
     .buttonStyle(.glass)
     .buttonBorderShape(.circle)
     .disabled(appState.isRefreshing)
+    .accessibilityLabel("Refresh")
   }
 
   private var overflowMenu: some View {
     Menu {
+      Toggle("Hide Sensitive Info", isOn: $privacyMode)
       launchAtLoginItem
       if !appState.isRemote {
         Divider()
@@ -434,6 +477,7 @@ private struct HeaderView: View {
     .menuIndicator(.hidden)
     .buttonStyle(.glass)
     .buttonBorderShape(.circle)
+    .accessibilityLabel("More options")
   }
 
   @ViewBuilder

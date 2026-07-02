@@ -17,6 +17,8 @@ final class ProviderScopeTests: XCTestCase {
   private func canceledSubscription() -> AccountSubscriptionLedger {
     AccountSubscriptionLedger(
       status: "canceled",
+      amount: nil,
+      currency: nil,
       nextChargeAt: nil,
       currentPeriodEndAt: nil,
       lastVerifiedAt: nil

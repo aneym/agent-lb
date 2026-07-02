@@ -84,6 +84,7 @@ struct FooterBar: View {
     }
     .menuStyle(.button)
     .buttonStyle(.glass)
+    .accessibilityLabel("Service power options")
   }
 }
 

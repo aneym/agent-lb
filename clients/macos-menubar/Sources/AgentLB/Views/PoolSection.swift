@@ -4,10 +4,14 @@ import SwiftUI
 // /api/usage/summary verbatim; a provider scope recomputes each window from
 // the scoped accounts' credit sums (ProviderScope.summarizeWindow).
 struct PoolSection: View {
+  @Environment(\.privacyMask) private var privacyMask
   let summary: UsageSummary?
   let projections: ProjectionsResponse?
   let scope: ProviderScope
   let scopedAccounts: [Account]
+  // §11: pool-global value multiple (nil when no value/priced accounts). Given
+  // whole, not scoped: the numerator is an all-providers server figure.
+  let arbitrage: ArbitrageStats?
   let hasError: Bool
   let retry: () -> Void
 
@@ -83,10 +87,14 @@ struct PoolSection: View {
   }
 
   // §10: hover schedule — `<displayName> · <HH:mm> · +<n> cr`, soonest first.
+  // §12: names are swapped for pseudonyms in privacy mode.
   private func scheduleTooltip(_ window: ProviderScope.Window, now: Date) -> String {
-    ProviderScope.resetSchedule(scopedAccounts, window: window, now: now)
+    let byId = Dictionary(scopedAccounts.map { ($0.accountId, $0) }, uniquingKeysWith: { first, _ in first })
+    return ProviderScope.resetSchedule(scopedAccounts, window: window, now: now)
       .map { entry in
-        var line = "\(entry.displayName) · \(Format.hhmm(entry.resetAt))"
+        let name = byId[entry.accountId]
+          .map { privacyMask.name(for: $0, real: entry.displayName) } ?? entry.displayName
+        var line = "\(name) · \(Format.hhmm(entry.resetAt))"
         if let recovery = entry.recoveredCredits {
           line += " · +\(Format.compactCredits(recovery)) cr"
         }
@@ -140,11 +148,40 @@ struct PoolSection: View {
         }
         .frame(height: PanelMetrics.metricsLine)
       }
+      if let arbitrage {
+        arbitrageLine(arbitrage)
+      }
     }
     .font(.system(size: 11, design: .monospaced))
     .monospacedDigit()
     .foregroundStyle(.secondary)
     .lineLimit(1)
+  }
+
+  // §11: the vanity headline — API-equivalent token value this week over what
+  // the subscriptions cost for the same 7 days. The multiple is emphasized by
+  // weight (never hue, per §2.3); the breakdown stays secondary/mono.
+  private func arbitrageLine(_ stats: ArbitrageStats) -> some View {
+    HStack(spacing: 6) {
+      Text(stats.multipleLabel)
+        .fontWeight(.semibold)
+        .foregroundStyle(.primary)
+      Text("value · \(Format.usdCompact(stats.valueUSD)) vs \(Format.usdCompact(stats.weeklyPlanUSD))/wk")
+    }
+    .frame(height: PanelMetrics.metricsLine)
+    .help(arbitrageTooltip(stats))
+  }
+
+  private func arbitrageTooltip(_ stats: ArbitrageStats) -> String {
+    let base = """
+    \(Format.usd(stats.valueUSD)) of API-equivalent token value in the weekly window \
+    vs \(Format.usd(stats.weeklyPlanUSD)) of subscriptions for the same 7 days \
+    (\(stats.planCount) plans, ~\(Format.usd(stats.monthlyPlanUSD))/mo). \
+    Ratio \(Format.multiple(stats.multiple)).
+    """
+    return stats.estimated
+      ? base + " Plan prices estimated from plan type."
+      : base
   }
 }
 

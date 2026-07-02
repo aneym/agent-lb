@@ -85,7 +85,7 @@ final class ModelDecodingTests: XCTestCase {
           "nextChargeAt": null,
           "currentPeriodEndAt": "2026-06-22T00:00:00Z",
           "lastVerifiedAt": "2026-06-13T15:30:00Z",
-          "amount": "20.00",
+          "amount": 20.00,
           "currency": "USD",
           "notes": "operator reported cancellation"
         }
@@ -98,6 +98,9 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertEqual(account.subscription?.status, "active")
     XCTAssertNotNil(account.subscription?.currentPeriodEndAt)
     XCTAssertNotNil(account.subscription?.lastVerifiedAt)
+    // §11: the operator-entered monthly price feeds the arbitrage denominator.
+    XCTAssertEqual(account.subscription?.amount, 20.00)
+    XCTAssertEqual(account.subscription?.currency, "USD")
   }
 
   // MARK: - summary.json

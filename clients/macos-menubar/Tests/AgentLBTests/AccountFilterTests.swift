@@ -42,6 +42,8 @@ final class AccountFilterTests: XCTestCase {
   private func canceledSubscription() -> AccountSubscriptionLedger {
     AccountSubscriptionLedger(
       status: "canceled",
+      amount: nil,
+      currency: nil,
       nextChargeAt: nil,
       currentPeriodEndAt: nil,
       lastVerifiedAt: nil
@@ -85,6 +87,8 @@ final class AccountFilterTests: XCTestCase {
       displayName: "subscription-paused@example.com",
       subscription: AccountSubscriptionLedger(
         status: "paused",
+        amount: nil,
+        currency: nil,
         nextChargeAt: nil,
         currentPeriodEndAt: nil,
         lastVerifiedAt: nil

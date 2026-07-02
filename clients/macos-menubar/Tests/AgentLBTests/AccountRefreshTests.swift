@@ -8,6 +8,8 @@ final class AccountRefreshTests: XCTestCase {
   private func canceledSubscription() -> AccountSubscriptionLedger {
     AccountSubscriptionLedger(
       status: "canceled",
+      amount: nil,
+      currency: nil,
       nextChargeAt: nil,
       currentPeriodEndAt: nil,
       lastVerifiedAt: nil
@@ -35,6 +37,8 @@ final class AccountRefreshTests: XCTestCase {
   func testActiveSubscriptionLedgerStillProbes() {
     let active = AccountSubscriptionLedger(
       status: "active",
+      amount: nil,
+      currency: nil,
       nextChargeAt: nil,
       currentPeriodEndAt: nil,
       lastVerifiedAt: nil

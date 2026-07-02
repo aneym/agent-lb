@@ -54,6 +54,11 @@ extension Account {
 
 struct AccountSubscriptionLedger: Decodable, Sendable, Equatable {
   let status: String?
+  // §11: operator-entered monthly subscription price. Nil unless a human has
+  // recorded it on the account; the arbitrage view falls back to PlanPricing's
+  // list-price table (and marks the figure estimated) when it is absent.
+  let amount: Double?
+  let currency: String?
   let nextChargeAt: Date?
   let currentPeriodEndAt: Date?
   let lastVerifiedAt: Date?

@@ -57,6 +57,8 @@ enum ProviderScope: String, CaseIterable, Sendable {
   /// One account's contribution to the per-window reset schedule (§10
   /// tooltip), soonest first.
   struct AccountReset: Equatable, Sendable {
+    /// §12: carried so the tooltip can swap in a privacy-mode pseudonym.
+    let accountId: String
     let displayName: String
     let resetAt: Date
     /// capacity − remaining for this account's window; nil when unknown.
@@ -134,6 +136,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
         let recovery = windowCredits(of: account, window: window)
           .map { $0.capacity - $0.remaining }
         return AccountReset(
+          accountId: account.accountId,
           displayName: account.displayName,
           resetAt: reset,
           recoveredCredits: recovery

@@ -730,3 +730,59 @@ Required change (both pool cards, all scopes):
 - Card hover (`.help`) lists the per-account schedule, soonest first:
   `<displayName> · <HH:mm> · +<n> cr` one per line.
 - Account rows unchanged (their per-window countdowns are unambiguous).
+
+---
+
+## 11. Value multiple (pool metrics strip)
+
+Problem: the metrics strip shows raw cost/token numbers with no sense of
+what the pool is *worth* — the API-equivalent value of a week's usage versus
+what the underlying flat-rate subscriptions cost for the same week.
+
+- New line in the metrics strip (`PoolSection.swift`), rendered only when
+  computable: bold `N×` (weight only, `.primary`; monochrome per §2.3) +
+  secondary mono `value · $X vs $Y/wk`. `N = totalUsd7d ÷ weeklyPlanCost`.
+- `weeklyPlanCost = (Σ monthly price over isHeadlineCountable accounts) × 7 ÷
+  30.4375`. Monthly price per account: operator-entered `subscription.amount`
+  when USD and > 0, else a client-side list-price table (`PlanPricing.swift`)
+  keyed on (provider, planType); per-seat/unknown plans are excluded from the
+  sum rather than guessed at. Any account that used the table prefixes the
+  whole multiple `≈` (estimated).
+- Pool-global by construction, regardless of the §9.2 provider scope: the
+  numerator (`totalUsd7d`) is an all-providers server figure, so scoping the
+  denominator alone would misrepresent the ratio.
+- Nil (line absent) when `totalUsd7d` is ≤ 0 or no account resolves a price —
+  never a `0×`/`NaN×` render.
+- Full breakdown (raw dollars, plan count, monthly total, estimate note) in a
+  `.help()` tooltip; the strip itself stays compact.
+- Layout-deterministic like everything else in this doc: `PanelLayout`'s
+  `metricsLines` input becomes `1 (cost) + tokenLine? + valueLine?`, a fixed
+  line count driving `PanelMetrics.metricsLine` height — never measured.
+- Copy guardrail: on-screen strings say "value", never "arbitrage" /
+  "pooling" / "reselling" / "circumvent" (see change `context.md`); the
+  internal type name `ArbitrageStats` is fine, the UI text is not.
+
+## 12. Privacy mode
+
+Problem: the panel is worth sharing (§11 makes it more so), but every
+account row shows a real email and the header shows the operator's real
+remote hostname.
+
+- `@AppStorage("privacyMode")`, toggled by a header eye/eye.slash glass
+  button (next to refresh) and mirrored in the overflow menu as "Hide
+  Sensitive Info" — same key, either affordance flips both.
+- Redacts ONLY identity text: account display names + duplicate-tag suffixes
+  → stable pseudonyms (`"Claude 1"`, `"Codex 2"`); remote host chip →
+  `"remote"`; account names inside the §10 pool-card tooltip → pseudonyms.
+  Never redacts aggregate numbers (percentages, cost, tokens, the §11
+  multiple) — those are the point of sharing.
+- Pseudonyms are built once in `RootView` from the FULL account list
+  (`PrivacyMask.build`), numbered per-provider in `accountId`-sorted order,
+  and exposed via `EnvironmentValues.privacyMask`. Keying on a fixed sort of
+  the full list — not row position or the scoped/visible subset — keeps a
+  given account's label stable across refresh, re-sort, and provider-scope
+  changes.
+- Layout-neutral: redacted strings render inside the same fixed-height
+  row/line frames as real text (truncate, don't reflow); privacy mode is not
+  a `PanelLayout.Inputs` field, so toggling it never changes panel height —
+  same determinism invariant as §11.

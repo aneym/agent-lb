@@ -195,4 +195,26 @@ final class FormatTests: XCTestCase {
   func testCachedPercentZeroTotalIsNil() {
     XCTAssertNil(Format.cachedPercent(cached: 100, total: 0))
   }
+
+  // MARK: - multiple (§11 arbitrage line)
+
+  func testMultiple() {
+    XCTAssertEqual(Format.multiple(27.0), "27×")
+    XCTAssertEqual(Format.multiple(10.0), "10×")
+    XCTAssertEqual(Format.multiple(44.93), "45×")
+    XCTAssertEqual(Format.multiple(3.44), "3.4×")
+    XCTAssertEqual(Format.multiple(9.94), "9.9×")
+  }
+
+  // MARK: - usdCompact (§11 arbitrage line)
+
+  func testUsdCompact() {
+    XCTAssertEqual(Format.usdCompact(6234.9), "$6.2k")
+    XCTAssertEqual(Format.usdCompact(6299), "$6.2k")
+    XCTAssertEqual(Format.usdCompact(71.4), "$71")
+    XCTAssertEqual(Format.usdCompact(1_460_000), "$1.4M")
+    XCTAssertEqual(Format.usdCompact(1000), "$1.0k")
+    XCTAssertEqual(Format.usdCompact(999.4), "$999")
+    XCTAssertEqual(Format.usdCompact(0), "$0")
+  }
 }
