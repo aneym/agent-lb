@@ -20,10 +20,15 @@ final class AppState {
   var version: RuntimeVersion?
   var lastSyncAt: Date?
   var sectionErrors: Set<Section> = []
-  var statusIcon = StatusIconRenderer.icon(for: .healthy, percent: nil)
+  var statusIcon = StatusIconRenderer.icon(for: .healthy, primaryPercent: nil, longWindowPercent: nil)
   var isRefreshing = false
   var isRestarting = false
   var startupError: String?
+  // §9.2/§13: mirrors RootView's @AppStorage("providerScope") so every fetch
+  // scopes to whatever the header segmented control has selected.
+  var providerScope: ProviderScope = {
+    ProviderScope(rawValue: UserDefaults.standard.string(forKey: "providerScope") ?? "") ?? .all
+  }()
 
   private let client = APIClient()
   private let controller = ServiceController()
@@ -94,6 +99,17 @@ final class AppState {
     isRefreshing = false
   }
 
+  /// §9.2/§13: RootView calls this when its @AppStorage-backed segmented
+  /// control changes — AppState owns the fetch/recompute side effects,
+  /// RootView's @AppStorage still owns persistence (this never writes it).
+  func scopeChanged(_ scope: ProviderScope) {
+    providerScope = scope
+    Task {
+      await fetchSummary()
+      recomputeStatusIcon()
+    }
+  }
+
   private func openTick(_ tick: Int) async {
     await checkHealth()
     guard serviceStatus != .stopped, serviceStatus != .unreachable else {
@@ -138,11 +154,17 @@ final class AppState {
   // MARK: - Fetches
 
   private func fetchSummary() async {
+    let scope = providerScope
     do {
-      summary = try await client.usageSummary()
+      let fetched = try await client.usageSummary(provider: scope.providerParam)
+      // Stale-response guard: a fetch started for the previous scope must
+      // never overwrite the newer scope's data if it lands after the switch.
+      guard scope == providerScope else { return }
+      summary = fetched
       lastSyncAt = .now
       sectionErrors.remove(.pool)
     } catch {
+      guard scope == providerScope else { return }
       sectionErrors.insert(.pool)
     }
   }
@@ -168,7 +190,9 @@ final class AppState {
   /// Closed-state summary fetch: drives the status-bar ring arc only —
   /// never touches sectionErrors (closed-state failures must not alert).
   private func fetchSummarySilently() async {
-    guard let fetched = try? await client.usageSummary() else { return }
+    let scope = providerScope
+    guard let fetched = try? await client.usageSummary(provider: scope.providerParam) else { return }
+    guard scope == providerScope else { return }
     summary = fetched
     lastSyncAt = .now
   }
@@ -323,18 +347,23 @@ final class AppState {
         state = .healthy
       }
     }
-    // §8.1: the arc is the pool's weekly/monthly remaining percent. This is
-    // the right glanceable signal for the menu bar: 5-hour credits are noisy,
-    // weekly/monthly capacity is the strategic constraint.
+    // §8.1: the icon shows BOTH windows at once — outer arc the primary 5-hour
+    // window, inner arc the weekly/monthly window — and follows the selected
+    // provider scope, since `summary` is already fetched scoped.
+    let percents = Self.statusIconPercents(from: summary)
     statusIcon = StatusIconRenderer.icon(
       for: state,
-      percent: Self.statusIconPercent(from: summary)
+      primaryPercent: percents.primary,
+      longWindowPercent: percents.longWindow
     )
   }
 
-  nonisolated static func statusIconPercent(from summary: UsageSummary?) -> Double? {
-    summary?.secondaryWindow?.remainingPercent
+  nonisolated static func statusIconPercents(
+    from summary: UsageSummary?
+  ) -> (primary: Double?, longWindow: Double?) {
+    let primary = summary?.primaryWindow?.remainingPercent
+    let longWindow = summary?.secondaryWindow?.remainingPercent
       ?? summary?.monthlyWindow?.remainingPercent
-      ?? summary?.primaryWindow?.remainingPercent
+    return (primary, longWindow)
   }
 }

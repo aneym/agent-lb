@@ -26,10 +26,15 @@ struct RootView: View {
     PrivacyMask.build(enabled: privacyMode, accounts: appState.accounts)
   }
 
-  // §11: pool-global value multiple, computed once and reused for both the
-  // panel-height input (metrics line count) and the PoolSection render.
+  // §11: value multiple scoped to the provider filter — the numerator comes
+  // from the provider-scoped summary fetch, the denominator from the scoped
+  // accounts. Computed once and reused for both the panel-height input
+  // (metrics line count) and the PoolSection render.
   private var arbitrage: ArbitrageStats? {
-    ArbitrageStats.compute(summary: appState.summary, accounts: appState.accounts)
+    ArbitrageStats.compute(
+      summary: appState.summary,
+      accounts: scope == .all ? appState.accounts : scope.filter(appState.accounts)
+    )
   }
 
   var body: some View {
@@ -64,7 +69,11 @@ struct RootView: View {
     .onChange(of: layout.panelHeight) { _, height in
       PanelResizer.apply(height)
     }
+    .onChange(of: providerScopeRaw) { _, _ in
+      appState.scopeChanged(scope)
+    }
     .onAppear {
+      appState.scopeChanged(scope)
       appState.popoverOpened()
       PanelResizer.apply(layout.panelHeight)
     }
@@ -284,12 +293,10 @@ private struct HeaderView: View {
           .lineLimit(1)
           .fixedSize()
         Spacer(minLength: 8)
-        GlassEffectContainer {
-          HStack(spacing: 6) {
-            privacyButton
-            refreshButton
-            overflowMenu
-          }
+        HStack(spacing: 6) {
+          privacyButton
+          refreshButton
+          overflowMenu
         }
         .controlSize(.small)
       }
@@ -365,10 +372,10 @@ private struct HeaderView: View {
     } label: {
       Image(systemName: privacyMode ? "eye.slash" : "eye")
         .font(.system(size: 12, weight: .medium))
-        .frame(width: 16, height: 16)
+        .frame(width: 22, height: 22)
+        .contentShape(Rectangle())
     }
-    .buttonStyle(.glass)
-    .buttonBorderShape(.circle)
+    .buttonStyle(.plain)
     .help(privacyMode ? "Show account identities" : "Hide account identities for sharing")
     .accessibilityLabel(privacyMode ? "Show account identities" : "Hide account identities")
   }
@@ -443,10 +450,10 @@ private struct HeaderView: View {
             .font(.system(size: 12, weight: .medium))
         }
       }
-      .frame(width: 16, height: 16)
+      .frame(width: 22, height: 22)
+      .contentShape(Rectangle())
     }
-    .buttonStyle(.glass)
-    .buttonBorderShape(.circle)
+    .buttonStyle(.plain)
     .disabled(appState.isRefreshing)
     .accessibilityLabel("Refresh")
   }
@@ -471,12 +478,12 @@ private struct HeaderView: View {
     } label: {
       Image(systemName: "ellipsis")
         .font(.system(size: 12, weight: .medium))
-        .frame(width: 16, height: 16)
+        .frame(width: 22, height: 22)
+        .contentShape(Rectangle())
     }
     .menuStyle(.button)
     .menuIndicator(.hidden)
-    .buttonStyle(.glass)
-    .buttonBorderShape(.circle)
+    .buttonStyle(.plain)
     .accessibilityLabel("More options")
   }
 

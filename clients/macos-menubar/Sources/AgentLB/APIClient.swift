@@ -91,8 +91,9 @@ struct APIClient: @unchecked Sendable {
     try await get("/api/accounts")
   }
 
-  func usageSummary() async throws -> UsageSummary {
-    try await get("/api/usage/summary")
+  func usageSummary(provider: String? = nil) async throws -> UsageSummary {
+    guard let provider else { return try await get("/api/usage/summary") }
+    return try await get("/api/usage/summary?provider=\(provider)")
   }
 
   func projections() async throws -> ProjectionsResponse {

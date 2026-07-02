@@ -21,6 +21,12 @@ enum ProviderScope: String, CaseIterable, Sendable {
     self == .all || account.provider.lowercased() == rawValue
   }
 
+  /// §13: `/api/usage/summary?provider=` query value for this scope — nil for
+  /// `.all` (server default, unscoped), else the provider rawValue.
+  var providerParam: String? {
+    self == .all ? nil : rawValue
+  }
+
   func filter(_ accounts: [Account]) -> [Account] {
     accounts.filter { includes($0) }
   }

@@ -748,9 +748,13 @@ what the underlying flat-rate subscriptions cost for the same week.
   keyed on (provider, planType); per-seat/unknown plans are excluded from the
   sum rather than guessed at. Any account that used the table prefixes the
   whole multiple `≈` (estimated).
-- Pool-global by construction, regardless of the §9.2 provider scope: the
+- ~~Pool-global by construction, regardless of the §9.2 provider scope: the
   numerator (`totalUsd7d`) is an all-providers server figure, so scoping the
-  denominator alone would misrepresent the ratio.
+  denominator alone would misrepresent the ratio.~~ **Superseded by §13**:
+  the owner's direction is that provider-scope selection now scopes the
+  value multiple too — both numerator and denominator are computed from a
+  provider-scoped `/api/usage/summary` fetch. This entry is kept as a record
+  of the original decision and its now-outdated rationale.
 - Nil (line absent) when `totalUsd7d` is ≤ 0 or no account resolves a price —
   never a `0×`/`NaN×` render.
 - Full breakdown (raw dollars, plan count, monthly total, estimate note) in a
@@ -786,3 +790,45 @@ remote hostname.
   row/line frames as real text (truncate, don't reflow); privacy mode is not
   a `PanelLayout.Inputs` field, so toggling it never changes panel height —
   same determinism invariant as §11.
+
+## 13. Scoped stats + two-ring status icon
+
+Problem: §9.2 scoped pool windows/accounts/Recent to the provider filter but
+deliberately left §11's value multiple and the status icon pool-global. The
+owner's direction reverses that call — scope selection should scope
+*everything*. Separately, the icon has only ever shown the 5-hour window,
+and icon-only chrome buttons carry a chip that's inconsistent with the rest
+of the flat SF-Symbol design language.
+
+- `GET /api/usage/summary` gains an optional `?provider=<name>` param
+  (server-side, since the client cannot attribute `totalUsd7d`/errors/tokens
+  to a provider on its own). Scoped responses filter to that provider's
+  subscription-usable accounts and drop unattributed (`account_id IS NULL`)
+  logs; an unknown provider yields a valid empty summary; no-param behavior
+  is unchanged.
+- Selecting a §9.2 scope now re-fetches the summary with that param and
+  re-derives the metrics strip, the §11 value multiple (**both** numerator
+  and denominator scoped — supersedes §11's "pool-global by construction"
+  bullet), and the status-icon percents from the scoped response. The `· all
+  providers` disclosure tag no longer applies when scope is a single
+  provider. A stale-fetch guard drops any summary response resolved after
+  the scope has since changed, so an in-flight All-scope fetch can never
+  clobber a since-selected Claude/Codex scope.
+- §12 privacy pseudonyms are explicitly unaffected — still keyed on the full
+  account list, independent of scope, as already specified.
+- Status-bar icon becomes two concentric monochrome rings: outer = primary
+  (5-hour) remaining %, inner = secondary (weekly, monthly fallback)
+  remaining %. `StatusIconRenderer.icon(for:primaryPercent:
+  longWindowPercent:)` replaces the old single-percent signature. Unknown
+  state draws both rings track-only. Risk state draws the outer ring plus
+  the exclamation glyph and omits the inner ring — two thin rings plus the
+  glyph was illegible at menu-bar size, so the tradeoff favors the
+  higher-priority risk signal over the extra data point. Down/update
+  treatments are unchanged. The icon follows the active provider scope like
+  the rest of the panel.
+- Icon-only chrome buttons (header eye/refresh/overflow, footer power) lose
+  their circular glass chip — plain template glyph, matching the flat
+  SF-Symbol language used elsewhere (§2.3, §8) — while keeping a 22×22 pt
+  hit target and their existing accessibility label. Text-carrying buttons
+  (e.g. the scope segmented control) are unaffected; this is an icon-only
+  affordance change.

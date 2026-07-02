@@ -9,8 +9,9 @@ struct PoolSection: View {
   let projections: ProjectionsResponse?
   let scope: ProviderScope
   let scopedAccounts: [Account]
-  // §11: pool-global value multiple (nil when no value/priced accounts). Given
-  // whole, not scoped: the numerator is an all-providers server figure.
+  // §11: value multiple (nil when no value/priced accounts), scoped to the
+  // provider filter: the numerator comes from the provider-scoped summary
+  // fetch, the denominator from the scoped accounts.
   let arbitrage: ArbitrageStats?
   let hasError: Bool
   let retry: () -> Void

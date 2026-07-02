@@ -15,9 +15,10 @@ router = APIRouter(
 
 @router.get("/summary", response_model=UsageSummaryResponse)
 async def get_usage_summary(
+    provider: str | None = Query(None, min_length=1, max_length=64),
     context: UsageContext = Depends(get_usage_context),
 ) -> UsageSummaryResponse:
-    return await context.service.get_usage_summary()
+    return await context.service.get_usage_summary(provider)
 
 
 @router.get("/history", response_model=UsageHistoryResponse)

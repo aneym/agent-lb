@@ -34,9 +34,11 @@ class UsageService:
         self._logs_repo = logs_repo
         self._accounts_repo = accounts_repo
 
-    async def get_usage_summary(self) -> UsageSummaryResponse:
+    async def get_usage_summary(self, provider: str | None = None) -> UsageSummaryResponse:
         now = utcnow()
         accounts = subscription_usable_accounts(await self._accounts_repo.list_accounts())
+        if provider:
+            accounts = [account for account in accounts if account.provider.lower() == provider.lower()]
         account_ids = {account.id for account in accounts}
 
         primary_rows_raw = _usage_rows_for_accounts(await self._latest_usage_rows("primary"), account_ids)
@@ -51,7 +53,7 @@ class UsageService:
         logs_secondary = []
         if secondary_minutes:
             logs_secondary = await self._logs_repo.list_since(now - timedelta(minutes=secondary_minutes))
-            logs_secondary = _logs_for_accounts(logs_secondary, account_ids)
+            logs_secondary = _logs_for_accounts(logs_secondary, account_ids, drop_unattributed=bool(provider))
         return build_usage_summary_response(
             accounts=accounts,
             primary_rows=primary_rows,
@@ -107,5 +109,12 @@ def _usage_rows_for_accounts(rows: list[UsageWindowRow], account_ids: set[str]) 
     return [row for row in rows if row.account_id in account_ids]
 
 
-def _logs_for_accounts(logs: list[RequestLog], account_ids: set[str]) -> list[RequestLog]:
+def _logs_for_accounts(
+    logs: list[RequestLog],
+    account_ids: set[str],
+    *,
+    drop_unattributed: bool = False,
+) -> list[RequestLog]:
+    if drop_unattributed:
+        return [log for log in logs if log.account_id in account_ids]
     return [log for log in logs if log.account_id is None or log.account_id in account_ids]

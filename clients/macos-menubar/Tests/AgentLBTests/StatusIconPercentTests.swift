@@ -2,7 +2,7 @@ import XCTest
 @testable import AgentLB
 
 final class StatusIconPercentTests: XCTestCase {
-  func testStatusIconUsesWeeklyWindowBeforePrimaryWindow() {
+  func testStatusIconPassesPrimaryThroughAndUsesWeeklyWindowForLongWindow() {
     let summary = UsageSummary(
       primaryWindow: UsageWindow(
         remainingPercent: 91,
@@ -23,7 +23,9 @@ final class StatusIconPercentTests: XCTestCase {
       metrics: nil
     )
 
-    XCTAssertEqual(AppState.statusIconPercent(from: summary), 47)
+    let percents = AppState.statusIconPercents(from: summary)
+    XCTAssertEqual(percents.primary, 91)
+    XCTAssertEqual(percents.longWindow, 47)
   }
 
   func testStatusIconUsesMonthlyWindowWhenWeeklyWindowIsMissing() {
@@ -47,10 +49,12 @@ final class StatusIconPercentTests: XCTestCase {
       metrics: nil
     )
 
-    XCTAssertEqual(AppState.statusIconPercent(from: summary), 63)
+    let percents = AppState.statusIconPercents(from: summary)
+    XCTAssertEqual(percents.primary, 91)
+    XCTAssertEqual(percents.longWindow, 63)
   }
 
-  func testStatusIconFallsBackToPrimaryWhenLongWindowIsMissing() {
+  func testStatusIconLongWindowNilWhenBothWeeklyAndMonthlyAreMissing() {
     let summary = UsageSummary(
       primaryWindow: UsageWindow(
         remainingPercent: 91,
@@ -65,6 +69,48 @@ final class StatusIconPercentTests: XCTestCase {
       metrics: nil
     )
 
-    XCTAssertEqual(AppState.statusIconPercent(from: summary), 91)
+    let percents = AppState.statusIconPercents(from: summary)
+    XCTAssertEqual(percents.primary, 91)
+    XCTAssertNil(percents.longWindow)
+  }
+
+  func testStatusIconPercentsNilWhenAllWindowsAreMissing() {
+    let summary = UsageSummary(
+      primaryWindow: nil,
+      secondaryWindow: nil,
+      monthlyWindow: nil,
+      cost: nil,
+      metrics: nil
+    )
+
+    let percents = AppState.statusIconPercents(from: summary)
+    XCTAssertNil(percents.primary)
+    XCTAssertNil(percents.longWindow)
+  }
+
+  func testStatusIconPercentsBothPresentOnPlainSummary() {
+    let summary = UsageSummary(
+      primaryWindow: UsageWindow(
+        remainingPercent: 80,
+        capacityCredits: nil,
+        remainingCredits: nil,
+        resetAt: nil,
+        windowMinutes: 300
+      ),
+      secondaryWindow: UsageWindow(
+        remainingPercent: 55,
+        capacityCredits: nil,
+        remainingCredits: nil,
+        resetAt: nil,
+        windowMinutes: 10_080
+      ),
+      monthlyWindow: nil,
+      cost: nil,
+      metrics: nil
+    )
+
+    let percents = AppState.statusIconPercents(from: summary)
+    XCTAssertEqual(percents.primary, 80)
+    XCTAssertEqual(percents.longWindow, 55)
   }
 }

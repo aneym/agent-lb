@@ -81,9 +81,11 @@ struct FooterBar: View {
       }
     } label: {
       Image(systemName: "power")
+        .frame(width: 22, height: 22)
+        .contentShape(Rectangle())
     }
     .menuStyle(.button)
-    .buttonStyle(.glass)
+    .buttonStyle(.plain)
     .accessibilityLabel("Service power options")
   }
 }
@@ -268,56 +270,50 @@ enum StatusIconRenderer {
     case healthy, risk, down, update
   }
 
-  /// Cache key: state + percent bucketed to 4 % steps (§8.1) so closed-state
-  /// 120 s polling can only ever materialize 26 arcs per state.
+  /// Cache key: state + both percents bucketed to 4 % steps (§8.1) so
+  /// closed-state 120 s polling can only ever materialize a bounded set of
+  /// two-ring composites per state.
   private struct Key: Hashable {
     let state: IconState
-    let bucket: Int?
+    let outerBucket: Int?
+    let innerBucket: Int?
   }
 
   @MainActor private static var cache: [Key: NSImage] = [:]
 
+  /// Outer ring = tactical 5-hour (primary) remaining %; inner ring =
+  /// strategic weekly/monthly (long-window) remaining %. Both follow the
+  /// current provider scope — AppState feeds the already-scoped percents in.
   @MainActor
-  static func icon(for state: IconState, percent: Double? = nil) -> NSImage {
-    let bucket = percent.map { Int(min(max($0, 0), 100) / 4) }
-    let key = Key(state: state, bucket: bucket)
+  static func icon(
+    for state: IconState,
+    primaryPercent: Double? = nil,
+    longWindowPercent: Double? = nil
+  ) -> NSImage {
+    let outerBucket = primaryPercent.map { Int(min(max($0, 0), 100) / 4) }
+    let innerBucket = longWindowPercent.map { Int(min(max($0, 0), 100) / 4) }
+    let key = Key(state: state, outerBucket: outerBucket, innerBucket: innerBucket)
     if let cached = cache[key] { return cached }
-    let image = render(state: state, bucket: bucket)
+    let image = render(state: state, outerBucket: outerBucket, innerBucket: innerBucket)
     cache[key] = image
     return image
   }
 
-  private static func render(state: IconState, bucket: Int?) -> NSImage {
+  private static func render(state: IconState, outerBucket: Int?, innerBucket: Int?) -> NSImage {
     let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
-      let stroke: CGFloat = 2.5
+      let stroke: CGFloat = 2.0
       let ringAlpha: CGFloat = state == .down ? 0.35 : 1
       let center = NSPoint(x: rect.midX, y: rect.midY)
       // Stroke straddles the path: radius leaves stroke/2 + a hair of margin.
-      let radius = rect.width / 2 - stroke / 2 - 0.5
+      let outerRadius = rect.width / 2 - 1.0 - 0.5
+      let innerRadius = outerRadius - 3.0
 
-      // Track: full circle at 22 % alpha (further dimmed when down).
-      let track = NSBezierPath()
-      track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
-      track.lineWidth = stroke
-      NSColor.black.withAlphaComponent(0.22 * ringAlpha).setStroke()
-      track.stroke()
-
-      // Fill arc: remaining percent, 12 o'clock (90°) going clockwise,
-      // rounded caps, full alpha. Unknown percent → track only.
-      if let bucket, bucket > 0 {
-        let fraction = min(Double(bucket) * 4 / 100, 1)
-        let arc = NSBezierPath()
-        arc.appendArc(
-          withCenter: center,
-          radius: radius,
-          startAngle: 90,
-          endAngle: 90 - 360 * fraction,
-          clockwise: true
-        )
-        arc.lineWidth = stroke
-        arc.lineCapStyle = .round
-        NSColor.black.withAlphaComponent(ringAlpha).setStroke()
-        arc.stroke()
+      drawRing(center: center, radius: outerRadius, stroke: stroke, bucket: outerBucket, ringAlpha: ringAlpha)
+      // .risk punches the exclamation glyph through the icon center, which
+      // the inner ring would otherwise occupy — draw only the outer ring so
+      // the glyph reads clearly (trades away the long-window ring for legibility).
+      if state != .risk {
+        drawRing(center: center, radius: innerRadius, stroke: stroke, bucket: innerBucket, ringAlpha: ringAlpha)
       }
 
       switch state {
@@ -327,7 +323,7 @@ enum StatusIconRenderer {
         // Bold exclamation centered in the ring.
         drawSymbol("exclamationmark", pointSize: 7, weight: .bold, centeredIn: rect)
       case .down:
-        // Diagonal slash through the dimmed ring, full alpha.
+        // Diagonal slash through the dimmed rings, full alpha.
         let slash = NSBezierPath()
         slash.move(to: NSPoint(x: rect.minX + 3.5, y: rect.minY + 3.5))
         slash.line(to: NSPoint(x: rect.maxX - 3.5, y: rect.maxY - 3.5))
@@ -347,6 +343,38 @@ enum StatusIconRenderer {
     // Template rendering: the menu bar tints the composite; we only draw alpha.
     image.isTemplate = true
     return image
+  }
+
+  /// One ring: full-circle track at 22 % alpha (further dimmed when down) +
+  /// a remaining-percent arc from 12 o'clock (90°) clockwise, rounded caps,
+  /// full alpha. Unknown percent (nil bucket) → track only.
+  private static func drawRing(
+    center: NSPoint,
+    radius: CGFloat,
+    stroke: CGFloat,
+    bucket: Int?,
+    ringAlpha: CGFloat
+  ) {
+    let track = NSBezierPath()
+    track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+    track.lineWidth = stroke
+    NSColor.black.withAlphaComponent(0.22 * ringAlpha).setStroke()
+    track.stroke()
+
+    guard let bucket, bucket > 0 else { return }
+    let fraction = min(Double(bucket) * 4 / 100, 1)
+    let arc = NSBezierPath()
+    arc.appendArc(
+      withCenter: center,
+      radius: radius,
+      startAngle: 90,
+      endAngle: 90 - 360 * fraction,
+      clockwise: true
+    )
+    arc.lineWidth = stroke
+    arc.lineCapStyle = .round
+    NSColor.black.withAlphaComponent(ringAlpha).setStroke()
+    arc.stroke()
   }
 
   private static func drawSymbol(

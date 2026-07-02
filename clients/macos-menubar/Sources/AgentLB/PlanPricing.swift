@@ -60,10 +60,10 @@ enum PlanPricing {
   }
 }
 
-/// §11 computed arbitrage figures for the pool. Pool-global by construction:
-/// the value numerator (`totalUsd7d`) is an all-providers server figure, so
-/// the denominator sums every headline-countable account regardless of the
-/// menu bar's provider scope.
+/// §11 computed arbitrage figures for the pool, scoped to the menu bar's
+/// provider filter: the value numerator (`totalUsd7d`) comes from the
+/// provider-scoped `/api/usage/summary` fetch, and the denominator sums only
+/// the headline-countable accounts within that same scope.
 struct ArbitrageStats: Equatable, Sendable {
   /// API-equivalent retail value of tokens burned in the weekly window (USD).
   let valueUSD: Double

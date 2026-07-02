@@ -47,6 +47,14 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertFalse(ProviderScope.anthropic.includes(upper))
   }
 
+  // MARK: - §13 providerParam
+
+  func testProviderParam() {
+    XCTAssertNil(ProviderScope.all.providerParam)
+    XCTAssertEqual(ProviderScope.openai.providerParam, "openai")
+    XCTAssertEqual(ProviderScope.anthropic.providerParam, "anthropic")
+  }
+
   func testCounts() {
     let counts = ProviderScope.counts(in: accounts)
     XCTAssertEqual(counts[.all], 8)
