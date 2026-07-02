@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -110,6 +112,9 @@ def _build_scheduler(
     probe_results: dict[str, tuple[int, str | None]],
     auth_failures: dict[str, RefreshError] | None = None,
     probe_calls: list[str] | None = None,
+    interval_seconds: int = 3600,
+    recovery_interval_seconds: int = 900,
+    failure_backoff_base_seconds: float = 600.0,
 ) -> AccountPulseScheduler:
     @asynccontextmanager
     async def repo_factory() -> AsyncIterator[_Repo]:
@@ -122,10 +127,12 @@ def _build_scheduler(
         return probe_results[account.id]
 
     return AccountPulseScheduler(
-        interval_seconds=3600,
+        interval_seconds=interval_seconds,
         enabled=True,
         concurrency=2,
         jitter_seconds=0.0,
+        recovery_interval_seconds=recovery_interval_seconds,
+        failure_backoff_base_seconds=failure_backoff_base_seconds,
         leader_election_factory=lambda: _Leader(),
         repo_factory=repo_factory,  # type: ignore[arg-type]
         auth_manager_factory=lambda _repo: _AuthManager(auth_failures),
@@ -259,6 +266,123 @@ async def test_pulse_inconclusive_probe_makes_no_writes_and_backs_off() -> None:
     assert repo.ledger_updates == []
     # Second pass is skipped by the failure backoff.
     assert probe_calls == [account.id]
+
+
+@pytest.mark.asyncio
+async def test_recovery_pass_restores_canceled_ledger_on_healthy_probe() -> None:
+    account = _account(subscription_status="canceled")
+    repo = _Repo([account])
+    scheduler = _build_scheduler(repo, probe_results={account.id: (200, None)})
+
+    await scheduler.recovery_pulse_once()
+
+    assert len(repo.ledger_updates) == 1
+    assert repo.ledger_updates[0]["status"] == "active"
+    assert repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_pass_reactivates_reauth_required_account() -> None:
+    account = _account(status=AccountStatus.REAUTH_REQUIRED)
+    repo = _Repo([account])
+    scheduler = _build_scheduler(repo, probe_results={account.id: (200, None)})
+
+    await scheduler.recovery_pulse_once()
+
+    assert repo.status_updates == [(account.id, AccountStatus.ACTIVE, None)]
+
+
+@pytest.mark.asyncio
+async def test_recovery_pass_skips_healthy_accounts() -> None:
+    healthy = _account("acc_ok", subscription_status="active")
+    pending = _account("acc_pending", subscription_status="canceled")
+    repo = _Repo([healthy, pending])
+    probe_calls: list[str] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={pending.id: (200, None)},
+        probe_calls=probe_calls,
+    )
+
+    await scheduler.recovery_pulse_once()
+
+    assert probe_calls == [pending.id]
+
+
+@pytest.mark.asyncio
+async def test_recovery_pass_skips_paused_accounts() -> None:
+    account = _account(status=AccountStatus.PAUSED, subscription_status="canceled")
+    repo = _Repo([account])
+    probe_calls: list[str] = []
+    scheduler = _build_scheduler(repo, probe_results={}, probe_calls=probe_calls)
+
+    await scheduler.recovery_pulse_once()
+
+    assert probe_calls == []
+    assert repo.status_updates == []
+    assert repo.ledger_updates == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_pass_backoff_is_capped_at_recovery_interval() -> None:
+    account = _account(subscription_status="canceled")
+    repo = _Repo([account])
+    probe_calls: list[str] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (500, None)},
+        probe_calls=probe_calls,
+        failure_backoff_base_seconds=7200.0,
+    )
+
+    await scheduler.recovery_pulse_once()
+    # An immediate re-pass is skipped: a still-failing account is probed at
+    # most once per recovery interval.
+    await scheduler.recovery_pulse_once()
+    assert probe_calls == [account.id]
+
+    # Simulate the recovery interval elapsing. The raw backoff (7200s base)
+    # would block for hours; the recovery lane caps it at its own cadence.
+    failure = scheduler._failures[account.id]
+    failure.recorded_monotonic -= scheduler.recovery_interval_seconds + 1
+    assert failure.retry_after_monotonic > time.monotonic()
+
+    await scheduler.recovery_pulse_once()
+    assert probe_calls == [account.id, account.id]
+
+
+@pytest.mark.asyncio
+async def test_run_loop_probes_recovery_pending_accounts_on_fast_cadence() -> None:
+    healthy = _account("acc_ok", subscription_status="active")
+    pending = _account("acc_pending", subscription_status="canceled")
+    repo = _Repo([healthy, pending])
+    probe_calls: list[str] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={
+            healthy.id: (200, None),
+            # Still refused upstream: the account stays recovery-pending.
+            pending.id: (403, _OAUTH_REFUSED_MESSAGE),
+        },
+        probe_calls=probe_calls,
+        interval_seconds=3600,
+        recovery_interval_seconds=1,
+    )
+
+    await scheduler.start()
+    try:
+        # Poll instead of a fixed sleep so a loaded runner cannot flake the
+        # cadence assertion; the loop normally satisfies this within ~2s.
+        deadline = time.monotonic() + 10.0
+        while probe_calls.count(pending.id) < 2 and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+    finally:
+        await scheduler.stop()
+
+    # The first wake is a full pass; every later wake within the full
+    # interval is a recovery pass that only re-probes the canceled account.
+    assert probe_calls.count(healthy.id) == 1
+    assert probe_calls.count(pending.id) >= 2
 
 
 @pytest.mark.asyncio

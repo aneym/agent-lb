@@ -703,6 +703,28 @@ async def v1_messages(
     )
 
 
+@v1_router.post("/messages/count_tokens", response_model=None)
+async def v1_messages_count_tokens(
+    request: Request,
+    payload: dict[str, JsonValue] = Body(...),
+    context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    model = payload.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return _anthropic_error_response(400, "invalid_request_error", "model is required")
+    validate_model_access(api_key, model)
+    # Token counting is quota-free upstream, so this route never creates an
+    # api-key reservation, settles usage, or writes response-driven account
+    # error-health; the raw body is forwarded and the envelope returned
+    # verbatim. Credential refresh may still mark the account, as everywhere.
+    try:
+        result = await context.service.count_tokens(payload, request.headers, model=model)
+    except AnthropicProxyError as exc:
+        return _anthropic_proxy_error_response(exc)
+    return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
+
+
 @v1_router.post(
     "/responses",
     response_model=OpenAIResponseResult,

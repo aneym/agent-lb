@@ -720,6 +720,107 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
 
 
 @pytest.mark.asyncio
+async def test_anthropic_count_tokens_forwards_verbatim_without_usage_writes(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_open_count_tokens_response(self, session, *, provider_name, headers, json_body):
+        del self, session
+        assert provider_name == "anthropic"
+        captured["headers"] = dict(headers)
+        captured["json_body"] = dict(json_body)
+        return _FakeResponseContext(
+            _FakeResponse(200, b'{"input_tokens": 2095}', headers={"content-type": "application/json"})
+        )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_count_tokens_response",
+        fake_open_count_tokens_response,
+    )
+
+    payload = {
+        "model": "claude-fable-5",
+        "system": "Claude Code system prompt prefix must pass through untouched.",
+        "messages": [{"role": "user", "content": "hello"}],
+        "thinking": {"type": "adaptive"},
+    }
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json=payload,
+        headers={
+            "anthropic-beta": "oauth-2025-04-20",
+            "authorization": "Bearer client-token",
+            "x-api-key": "client-placeholder",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"input_tokens": 2095}
+    assert captured["json_body"] == payload
+    assert captured["headers"]["Authorization"] == "Bearer anthropic-access"
+    assert captured["headers"]["anthropic-beta"] == "oauth-2025-04-20"
+    assert "x-api-key" not in {key.lower() for key in captured["headers"]}
+
+    # Counting is quota-free: no request log, usage settlement, or cooldown
+    # rows may be written for it.
+    async with SessionLocal() as session:
+        logs = list((await session.execute(select(RequestLog))).scalars())
+        cooldowns = list((await session.execute(select(AdditionalUsageHistory))).scalars())
+
+    assert logs == []
+    assert cooldowns == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_count_tokens_passes_through_upstream_error_envelope(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    upstream_error = b'{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}'
+
+    def fake_open_count_tokens_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers, json_body
+        return _FakeResponseContext(
+            _FakeResponse(429, upstream_error, headers={"content-type": "application/json"})
+        )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_count_tokens_response",
+        fake_open_count_tokens_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "claude-fable-5", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    assert response.content == upstream_error
+
+    # An upstream error on the free counting endpoint must not perturb
+    # account health or quota cooldowns.
+    async with SessionLocal() as session:
+        account = (await session.execute(select(Account))).scalar_one()
+        cooldowns = list((await session.execute(select(AdditionalUsageHistory))).scalars())
+
+    assert account.status == AccountStatus.ACTIVE
+    assert cooldowns == []
+
+
+@pytest.mark.asyncio
 async def test_anthropic_fast_mode_adds_required_oauth_and_fast_betas(async_client, monkeypatch):
     await _insert_account(
         account_id="anthropic-account",
@@ -1263,6 +1364,105 @@ async def test_anthropic_429_records_quota_cooldown_and_fails_over_without_globa
     cooldown = next(quota for quota in anthropic_a["additionalQuotas"] if quota["quotaKey"] == quota_key)
     assert cooldown["displayLabel"] == "Claude top models with thinking"
     assert cooldown["primaryWindow"]["usedPercent"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_429_failover_repins_durable_mapping_to_serving_account(
+    async_client,
+    monkeypatch,
+):
+    """Reactive contract: after an in-request 429 fails over from the pinned
+    account A to account B, the durable mapping must point at B so the next
+    request reuses the cache B just rebuilt — and must not bounce back to the
+    cooled-down A."""
+    await _insert_account(
+        account_id="anthropic-a",
+        provider="anthropic",
+        access_token="anthropic-access-a",
+        email="claude-a@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-b",
+        provider="anthropic",
+        access_token="anthropic-access-b",
+        email="claude-b@example.com",
+    )
+
+    payload = {
+        "model": "claude-fable-5",
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "repin to serving account"}],
+        "thinking": {"type": "adaptive"},
+    }
+    request = AnthropicMessageRequest.model_validate(payload)
+    quota_key = anthropic_proxy_module._anthropic_quota_key(request)
+    sticky_key = anthropic_proxy_module._anthropic_sticky_key(
+        request,
+        {"x-claude-session-id": "claude-session-repin"},
+        quota_key=quota_key,
+    )
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id="anthropic-a",
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+    seen_authorizations: list[str] = []
+    cooldown_reset_at = int((utcnow() + timedelta(minutes=10)).replace(tzinfo=timezone.utc).timestamp())
+    cooldown_reset_header = datetime.fromtimestamp(cooldown_reset_at, tz=timezone.utc).isoformat()
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        seen_authorizations.append(headers["Authorization"])
+        if headers["Authorization"] == "Bearer anthropic-access-a":
+            return _FakeResponseContext(
+                _FakeResponse(
+                    429,
+                    b'{"error":{"message":"top model cooldown"}}',
+                    headers={"anthropic-ratelimit-unified-reset": cooldown_reset_header},
+                )
+            )
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    headers = {"anthropic-beta": "oauth-2025-04-20", "x-claude-session-id": "claude-session-repin"}
+    first = await async_client.post("/v1/messages", json=payload, headers=headers)
+    assert first.status_code == 200
+    assert seen_authorizations == ["Bearer anthropic-access-a", "Bearer anthropic-access-b"]
+
+    async def _durable_mapping() -> str:
+        async with SessionLocal() as session:
+            row = (
+                await session.execute(
+                    select(StickySession).where(
+                        StickySession.key == sticky_key,
+                        StickySession.kind == StickySessionKind.CODEX_SESSION,
+                    )
+                )
+            ).scalar_one()
+            return row.account_id
+
+    assert await _durable_mapping() == "anthropic-b"
+
+    # Next request: A is still cooling down and the mapping is B, so the session
+    # serves from B directly — no re-selection churn back to A.
+    second = await async_client.post("/v1/messages", json=payload, headers=headers)
+    assert second.status_code == 200
+    assert seen_authorizations == [
+        "Bearer anthropic-access-a",
+        "Bearer anthropic-access-b",
+        "Bearer anthropic-access-b",
+    ]
+    assert await _durable_mapping() == "anthropic-b"
 
 
 @pytest.mark.asyncio

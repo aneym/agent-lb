@@ -76,6 +76,7 @@ _ProbeSender = Callable[[Account, str], Awaitable[tuple[int, str | None]]]
 @dataclass(slots=True)
 class _FailureBackoff:
     attempts: int
+    recorded_monotonic: float
     retry_after_monotonic: float
 
 
@@ -94,12 +95,19 @@ class AccountPulseScheduler:
     - disconnected (``reauth_required`` — credentials rejected upstream).
 
     Paused accounts are operator intent and are never probed.
+
+    Between full passes a fast recovery lane re-probes only recovery-pending
+    accounts (subscription ledger ``canceled`` or status
+    ``reauth_required``/``deactivated``) every ``recovery_interval_seconds``,
+    so an account fixed upstream re-enters the routable pool within minutes
+    instead of waiting for the next full pass.
     """
 
     interval_seconds: int
     enabled: bool
     concurrency: int
     jitter_seconds: float
+    recovery_interval_seconds: int = 900
     failure_backoff_base_seconds: float = 600.0
     failure_backoff_max_seconds: float = 21600.0
     leader_election_factory: _LeaderElectionFactory = field(default_factory=lambda: _get_leader_election)
@@ -131,6 +139,12 @@ class AccountPulseScheduler:
             self._task = None
 
     async def _run_loop(self) -> None:
+        # Wakes happen at the recovery cadence; each wake runs the fast
+        # recovery lane unless a full interval has elapsed since the last
+        # full pass. With recovery_interval_seconds >= interval_seconds the
+        # loop degrades to the original single-cadence behavior.
+        wake_seconds = min(self.interval_seconds, self.recovery_interval_seconds)
+        next_full_pass_monotonic = time.monotonic()
         while not self._stop.is_set():
             jitter = _jitter_delay(self.jitter_seconds)
             if jitter > 0:
@@ -139,16 +153,28 @@ class AccountPulseScheduler:
                     break
                 except asyncio.TimeoutError:
                     pass
+            full_pass = time.monotonic() >= next_full_pass_monotonic
             try:
-                await self.pulse_once()
+                if full_pass:
+                    await self.pulse_once()
+                else:
+                    await self.recovery_pulse_once()
             except Exception:
                 logger.exception("Account pulse pass failed")
+            if full_pass:
+                next_full_pass_monotonic = time.monotonic() + self.interval_seconds
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
+                await asyncio.wait_for(self._stop.wait(), timeout=wake_seconds)
             except asyncio.TimeoutError:
                 continue
 
     async def pulse_once(self) -> None:
+        await self._pulse_pass(recovery_only=False)
+
+    async def recovery_pulse_once(self) -> None:
+        await self._pulse_pass(recovery_only=True)
+
+    async def _pulse_pass(self, *, recovery_only: bool) -> None:
         if not await self.leader_election_factory().try_acquire():
             return
         async with self._lock:
@@ -160,12 +186,37 @@ class AccountPulseScheduler:
                 candidate_ids = [
                     account.id
                     for account in accounts
-                    if account.status != AccountStatus.PAUSED and not self._in_backoff(account.id)
+                    if self._is_pulse_candidate(account, recovery_only=recovery_only)
                 ]
             if not candidate_ids:
                 return
             semaphore = asyncio.Semaphore(max(1, self.concurrency))
-            await asyncio.gather(*(self._pulse_candidate(account_id, semaphore) for account_id in candidate_ids))
+            # return_exceptions keeps sibling probes awaited (never orphaned
+            # past the lock) when one candidate raises unexpectedly.
+            results = await asyncio.gather(
+                *(self._pulse_candidate(account_id, semaphore) for account_id in candidate_ids),
+                return_exceptions=True,
+            )
+            for account_id, result in zip(candidate_ids, results):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "Account pulse candidate crashed account_id=%s",
+                        account_id,
+                        exc_info=result,
+                    )
+
+    def _is_pulse_candidate(self, account: Account, *, recovery_only: bool) -> bool:
+        if account.status == AccountStatus.PAUSED:
+            return False
+        if not recovery_only:
+            return not self._in_backoff(account.id)
+        if not _is_recovery_pending(account):
+            return False
+        # The recovery lane caps the effective failure backoff at its own
+        # cadence: a transient failure on a recovery-pending account must
+        # never push recovery detection past the full interval, while the
+        # wake cadence still bounds probes to one per recovery interval.
+        return not self._in_backoff(account.id, max_delay_seconds=float(self.recovery_interval_seconds))
 
     async def _pulse_candidate(self, account_id: str, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
@@ -326,11 +377,14 @@ class AccountPulseScheduler:
         )
         logger.warning("Account pulse marked reauth required account_id=%s reason=%s", account.id, reason)
 
-    def _in_backoff(self, account_id: str) -> bool:
+    def _in_backoff(self, account_id: str, *, max_delay_seconds: float | None = None) -> bool:
         failure = self._failures.get(account_id)
         if failure is None:
             return False
-        return failure.retry_after_monotonic > time.monotonic()
+        retry_after = failure.retry_after_monotonic
+        if max_delay_seconds is not None:
+            retry_after = min(retry_after, failure.recorded_monotonic + max_delay_seconds)
+        return retry_after > time.monotonic()
 
     def _record_failure(self, account_id: str) -> None:
         previous = self._failures.get(account_id)
@@ -339,9 +393,11 @@ class AccountPulseScheduler:
         cap = max(base, float(self.failure_backoff_max_seconds))
         delay = min(cap, base * (2 ** min(attempts - 1, 6)))
         delay += _jitter_delay(self.jitter_seconds)
+        recorded = time.monotonic()
         self._failures[account_id] = _FailureBackoff(
             attempts=attempts,
-            retry_after_monotonic=time.monotonic() + delay,
+            recorded_monotonic=recorded,
+            retry_after_monotonic=recorded + delay,
         )
 
 
@@ -352,6 +408,7 @@ def build_account_pulse_scheduler() -> AccountPulseScheduler:
     multi_replica = len(settings.http_responses_session_bridge_instance_ring) > 1
     return AccountPulseScheduler(
         interval_seconds=settings.account_pulse_interval_seconds,
+        recovery_interval_seconds=settings.account_pulse_recovery_interval_seconds,
         enabled=settings.account_pulse_enabled and (settings.leader_election_enabled or not multi_replica),
         concurrency=settings.account_pulse_concurrency,
         jitter_seconds=settings.account_pulse_jitter_seconds,
@@ -398,6 +455,12 @@ async def _default_accounts_repo_factory() -> AsyncIterator[AccountsRepository]:
 
 def _default_auth_manager_factory(repo: _AccountsRepositoryLike) -> _AuthManagerLike:
     return AuthManager(cast(AccountsRepository, repo), refresh_repo_factory=_default_accounts_repo_factory)
+
+
+def _is_recovery_pending(account: Account) -> bool:
+    if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+        return True
+    return normalize_subscription_status(account.subscription_status) == CANCELED_SUBSCRIPTION_STATUS
 
 
 def _jitter_delay(max_seconds: float) -> float:

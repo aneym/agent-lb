@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -41,11 +42,19 @@ _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
+_COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
 class AnthropicProxyStream:
     body: AsyncIterator[bytes]
+    media_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnthropicCountTokensResult:
+    status_code: int
+    body: bytes
     media_type: str
 
 
@@ -287,6 +296,47 @@ class AnthropicProxyService:
 
         return AnthropicProxyStream(body=body(), media_type=media_type)
 
+    async def count_tokens(
+        self,
+        body: Mapping[str, Any],
+        inbound_headers: Mapping[str, str],
+        *,
+        model: str,
+    ) -> AnthropicCountTokensResult:
+        provider_name = _provider_name_for_model(model)
+        # Token counting is quota-free upstream and account-agnostic, so any
+        # active account may serve it: selection skips sticky affinity and uses
+        # a dedicated quota key that never records cooldowns, keeping message
+        # cooldowns from blocking free counting. No usage, reservation, or
+        # response-driven error-health state is written for this path; only
+        # the shared token-refresh step may mark an account, as on every route.
+        account = await self._select_account(
+            model,
+            provider_name=provider_name,
+            exclude_account_ids=set(),
+            sticky_key=None,
+            quota_key=_count_tokens_quota_key(provider_name),
+        )
+        access_token = await self._fresh_access_token(account)
+        headers = _build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
+        try:
+            async with lease_http_session() as session:
+                async with self._open_count_tokens_response(
+                    session,
+                    provider_name=provider_name,
+                    headers=headers,
+                    json_body=body,
+                ) as resp:
+                    raw = await resp.read()
+                    media_type = resp.headers.get("content-type") or "application/json"
+                    return AnthropicCountTokensResult(status_code=resp.status, body=raw, media_type=media_type)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise AnthropicProxyError(
+                502,
+                f"{_provider_label(provider_name)} count_tokens upstream request failed: {exc}",
+                code="upstream_error",
+            ) from exc
+
     def _open_upstream_response(
         self,
         session: aiohttp.ClientSession,
@@ -296,14 +346,25 @@ class AnthropicProxyService:
         json_body: Mapping[str, Any],
     ) -> AsyncContextManager[aiohttp.ClientResponse]:
         settings = get_settings()
-        base_url = (
-            settings.glm_anthropic_upstream_base_url
-            if provider_name == GLM_PROVIDER_NAME
-            else settings.anthropic_upstream_base_url
-        )
-        url = urljoin(base_url.rstrip("/") + "/", "v1/messages")
+        url = urljoin(_upstream_base_url(provider_name).rstrip("/") + "/", "v1/messages")
         timeout = aiohttp.ClientTimeout(
             total=settings.proxy_request_budget_seconds,
+            connect=settings.upstream_connect_timeout_seconds,
+        )
+        return session.post(url, json=json_body, headers=headers, timeout=timeout)
+
+    def _open_count_tokens_response(
+        self,
+        session: aiohttp.ClientSession,
+        *,
+        provider_name: str,
+        headers: Mapping[str, str],
+        json_body: Mapping[str, Any],
+    ) -> AsyncContextManager[aiohttp.ClientResponse]:
+        settings = get_settings()
+        url = urljoin(_upstream_base_url(provider_name).rstrip("/") + "/", "v1/messages/count_tokens")
+        timeout = aiohttp.ClientTimeout(
+            total=_COUNT_TOKENS_TIMEOUT_SECONDS,
             connect=settings.upstream_connect_timeout_seconds,
         )
         return session.post(url, json=json_body, headers=headers, timeout=timeout)
@@ -334,6 +395,10 @@ class AnthropicProxyService:
                 retry_at=eligibility.next_reset_at,
             )
         settings = await get_settings_cache().get()
+        # The headroom flag lives on the app config (get_settings), the same
+        # source as its sibling anthropic_fable_routing_enabled, not the
+        # dashboard-editable settings above.
+        headroom_reallocate = get_settings().anthropic_sticky_headroom_reallocation_enabled
         selection = await self._load_balancer.select_account(
             model=model,
             provider=provider_name,
@@ -345,6 +410,7 @@ class AnthropicProxyService:
             prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,
             prefer_earlier_reset_window="primary",
             routing_strategy="usage_weighted",
+            headroom_reallocate=headroom_reallocate,
         )
         if selection.account is None:
             message, retry_at = await self._selection_failure_details(
@@ -700,8 +766,26 @@ def _is_fable_model(model: str | None) -> bool:
 
 
 def _messages_provider_name(payload: AnthropicMessageRequest) -> str:
-    model = payload.model.strip().lower()
-    return GLM_PROVIDER_NAME if model.startswith("glm-") else ANTHROPIC_PROVIDER_NAME
+    return _provider_name_for_model(payload.model)
+
+
+def _provider_name_for_model(model: str) -> str:
+    return GLM_PROVIDER_NAME if model.strip().lower().startswith("glm-") else ANTHROPIC_PROVIDER_NAME
+
+
+def _count_tokens_quota_key(provider_name: str) -> str:
+    # Dedicated key with no recorded cooldowns: count_tokens is quota-free
+    # upstream, so message-quota cooldowns must not exclude accounts from it.
+    return "glm_count_tokens" if provider_name == GLM_PROVIDER_NAME else "anthropic_count_tokens"
+
+
+def _upstream_base_url(provider_name: str) -> str:
+    settings = get_settings()
+    return (
+        settings.glm_anthropic_upstream_base_url
+        if provider_name == GLM_PROVIDER_NAME
+        else settings.anthropic_upstream_base_url
+    )
 
 
 def _messages_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:

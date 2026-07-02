@@ -16,6 +16,7 @@ struct APIClient: @unchecked Sendable {
   let base: URL
   let isRemote: Bool
   private let session: URLSession
+  private let probeSession: URLSession
 
   init() {
     let raw = UserDefaults.standard.string(forKey: "baseURL") ?? "http://127.0.0.1:2455"
@@ -29,6 +30,15 @@ struct APIClient: @unchecked Sendable {
     config.timeoutIntervalForResource = 5
     config.waitsForConnectivity = false
     self.session = URLSession(configuration: config)
+
+    // Probe/subscription-check POSTs round-trip the upstream vendor (token
+    // refresh + completion probe + usage refresh) — far slower than the 3 s
+    // dashboard reads, so they get their own timeout envelope.
+    let probeConfig = URLSessionConfiguration.ephemeral
+    probeConfig.timeoutIntervalForRequest = 30
+    probeConfig.timeoutIntervalForResource = 45
+    probeConfig.waitsForConnectivity = false
+    self.probeSession = URLSession(configuration: probeConfig)
   }
 
   // MARK: - Decoder (also used in tests)
@@ -105,6 +115,14 @@ struct APIClient: @unchecked Sendable {
     try await post("/api/accounts/\(id)/reactivate")
   }
 
+  func probeAccount(_ id: String) async throws -> AccountProbeResponse {
+    try await postDecoding("/api/accounts/\(id)/probe")
+  }
+
+  func checkSubscription(_ id: String) async throws -> AccountSubscriptionCheckResponse {
+    try await postDecoding("/api/accounts/\(id)/subscription/check")
+  }
+
   // MARK: - Generic helpers
 
   private func get<T: Decodable>(_ path: String) async throws -> T {
@@ -121,17 +139,35 @@ struct APIClient: @unchecked Sendable {
     let url = URL(string: path, relativeTo: base) ?? base.appendingPathComponent(path)
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
-    let (_, response) = try await executeRequest(request)
+    let (_, response) = try await executeRequest(request, on: session)
     try assertOK(response, endpoint: path)
+  }
+
+  /// POST that decodes its response body — on the probe session, because
+  /// both callers block on an upstream vendor round-trip.
+  private func postDecoding<T: Decodable>(_ path: String) async throws -> T {
+    let url = URL(string: path, relativeTo: base) ?? base.appendingPathComponent(path)
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    let (data, response) = try await executeRequest(request, on: probeSession)
+    try assertOK(response, endpoint: path)
+    do {
+      return try Self.makeDecoder().decode(T.self, from: data)
+    } catch let e as DecodingError {
+      throw APIError.decoding(e, endpoint: path)
+    }
   }
 
   private func fetch(path: String) async throws -> (Data, URLResponse) {
     let url = URL(string: path, relativeTo: base) ?? base.appendingPathComponent(path)
     let request = URLRequest(url: url)
-    return try await executeRequest(request)
+    return try await executeRequest(request, on: session)
   }
 
-  private func executeRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
+  private func executeRequest(
+    _ request: URLRequest,
+    on session: URLSession
+  ) async throws -> (Data, URLResponse) {
     do {
       return try await session.data(for: request)
     } catch let urlError as URLError {

@@ -73,6 +73,7 @@ async def _invoke_stickiness(
     sticky_max_age_seconds: int | None = 600,
     budget_threshold_pct: float = 95.0,
     secondary_budget_threshold_pct: float = 100.0,
+    headroom_reallocate: bool = False,
     routing_strategy: RoutingStrategy = "usage_weighted",
     relative_availability_power: float = 2.0,
     relative_availability_top_k: int = 5,
@@ -100,6 +101,7 @@ async def _invoke_stickiness(
         sticky_max_age_seconds=sticky_max_age_seconds,
         budget_threshold_pct=budget_threshold_pct,
         secondary_budget_threshold_pct=secondary_budget_threshold_pct,
+        headroom_reallocate=headroom_reallocate,
         prefer_earlier_reset_accounts=False,
         prefer_earlier_reset_window="secondary",
         routing_strategy=routing_strategy,
@@ -1048,3 +1050,140 @@ async def test_burn_first_reallocation_only_when_burn_first_is_selectable():
     assert result.account.account_id == "a"
     repo.delete.assert_not_called()
     repo.upsert.assert_called_once_with("key1", "a", kind=StickySessionKind.PROMPT_CACHE)
+
+
+# ---------------------------------------------------------------------------
+# Headroom reallocation (ANTHROPIC_STICKY_HEADROOM_REALLOCATION_ENABLED)
+#
+# The flag only changes behavior when the pinned account is budget-pressured
+# AND the burn-first path yields no target. With zero burn-first accounts the
+# pin already reallocates (burn_first_reallocate is never narrowed), so the
+# flag's distinguishing case is a burn-first candidate that exists but is
+# currently unselectable.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_headroom_reallocation_rebinds_without_burn_first_target():
+    """Pinned above the primary threshold with no burn-first account and a
+    budget-safe candidate rebinds and persists the new mapping (flag on)."""
+    pinned = _active("a", used_percent=96.0)
+    safe = _active("b", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    result = await _invoke_stickiness(
+        [pinned, safe],
+        "session_123",
+        repo,
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_max_age_seconds=None,
+        headroom_reallocate=True,
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    repo.delete.assert_called_once_with("session_123", kind=StickySessionKind.CODEX_SESSION)
+    repo.upsert.assert_called_once_with("session_123", "b", kind=StickySessionKind.CODEX_SESSION)
+
+
+@pytest.mark.asyncio
+async def test_headroom_reallocation_rebinds_when_burn_first_unselectable():
+    """When burn-first candidates exist but none are selectable, the flag lets a
+    budget-pressured pin rebind to the best budget-safe account."""
+    now = time.time()
+    pinned = _active("a", used_percent=96.0)
+    blocked_burn_first = _rate_limited("b", reset_at=now + 1200, routing_policy="burn_first")
+    safe = _active("c", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    result = await _invoke_stickiness(
+        [pinned, blocked_burn_first, safe],
+        "session_123",
+        repo,
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_max_age_seconds=None,
+        headroom_reallocate=True,
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "c"
+    repo.delete.assert_called_once_with("session_123", kind=StickySessionKind.CODEX_SESSION)
+    repo.upsert.assert_called_once_with("session_123", "c", kind=StickySessionKind.CODEX_SESSION)
+
+
+@pytest.mark.asyncio
+async def test_headroom_reallocation_disabled_keeps_pin_when_burn_first_unselectable():
+    """Old behavior: with the flag off, a budget-pressured pin whose only
+    burn-first candidate is unselectable stays pinned."""
+    now = time.time()
+    pinned = _active("a", used_percent=96.0)
+    blocked_burn_first = _rate_limited("b", reset_at=now + 1200, routing_policy="burn_first")
+    safe = _active("c", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    result = await _invoke_stickiness(
+        [pinned, blocked_burn_first, safe],
+        "session_123",
+        repo,
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_max_age_seconds=None,
+        headroom_reallocate=False,
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "a"
+    repo.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_headroom_reallocation_keeps_pin_when_pool_exhausted():
+    """Anti-thrash: when every candidate is also above the threshold the pin is
+    kept even with the flag on and no burn-first target."""
+    pinned = _active("a", used_percent=96.0)
+    also_exhausted = _active("b", used_percent=97.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    result = await _invoke_stickiness(
+        [pinned, also_exhausted],
+        "session_123",
+        repo,
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_max_age_seconds=None,
+        headroom_reallocate=True,
+    )
+
+    assert result.account is not None
+    assert result.account.account_id == "a"
+    repo.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_headroom_reallocation_no_flap_back_after_window_reset():
+    """After rebinding A→B, a later request whose pin (B) is budget-safe stays on
+    B even once A's window resets below the threshold (one-time re-pin)."""
+    # Request 1: pinned A exhausted, B safe → rebind to B.
+    repo = _make_sticky_repo(existing_account_id="a")
+    r1 = await _invoke_stickiness(
+        [_active("a", used_percent=96.0), _active("b", used_percent=50.0)],
+        "session_123",
+        repo,
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_max_age_seconds=None,
+        headroom_reallocate=True,
+    )
+    assert r1.account is not None and r1.account.account_id == "b"
+
+    # Request 2: mapping is now B; A has recovered to the lowest usage. B is
+    # below the threshold, so the session must stay on B (no flap-back to A).
+    repo2 = _make_sticky_repo(existing_account_id="b")
+    r2 = await _invoke_stickiness(
+        [_active("a", used_percent=5.0), _active("b", used_percent=55.0)],
+        "session_123",
+        repo2,
+        sticky_kind=StickySessionKind.CODEX_SESSION,
+        sticky_max_age_seconds=None,
+        headroom_reallocate=True,
+    )
+    assert r2.account is not None
+    assert r2.account.account_id == "b"
+    repo2.delete.assert_not_called()

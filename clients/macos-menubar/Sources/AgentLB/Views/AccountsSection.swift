@@ -239,6 +239,12 @@ struct AccountRow: View {
   var now: Date = .now
   @State private var pendingAction = false
   @State private var actionFailed = false
+  @State private var isHovered = false
+  @State private var refreshPhase = RefreshPhase.idle
+
+  private enum RefreshPhase: Equatable {
+    case idle, inFlight, success, failure
+  }
 
   private enum Presentation {
     case active
@@ -275,6 +281,7 @@ struct AccountRow: View {
             .truncationMode(.middle)
           planChip
           Spacer(minLength: 6)
+          refreshControl
           trailing
         }
         windowGrid
@@ -284,6 +291,9 @@ struct AccountRow: View {
     .padding(.horizontal, 10)
     .opacity(isDimmed ? 0.55 : 1)
     .contentShape(.rect)
+    .onHover { hovering in
+      withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+    }
     .contextMenu { menuItems }
     .help(account.deactivationReason ?? "")
   }
@@ -355,6 +365,68 @@ struct AccountRow: View {
         .font(.system(size: 12, weight: .bold, design: .monospaced))
     } else {
       trailingStatus
+    }
+  }
+
+  // MARK: - Refresh control (on-demand re-verification)
+
+  // The slot only enters the layout when the row is refreshable and reveals
+  // via opacity, so hovering never shifts the title row. Unsubscribed rows
+  // keep it visible — resubscribing at the vendor is the primary reason to
+  // reach for it; other rows reveal it on hover.
+  @ViewBuilder
+  private var refreshControl: some View {
+    if let action = AccountRefreshAction.action(for: account) {
+      Button {
+        runRefresh(action)
+      } label: {
+        refreshGlyph
+          .frame(width: 16, height: 16)
+          .contentShape(.rect)
+      }
+      .buttonStyle(.plain)
+      .disabled(refreshPhase != .idle)
+      .opacity(refreshControlVisible ? 1 : 0)
+      .animation(.easeOut(duration: 0.15), value: refreshPhase)
+      .help(action == .checkSubscription ? "Re-check subscription" : "Probe account now")
+    }
+  }
+
+  private var refreshControlVisible: Bool {
+    if refreshPhase != .idle { return true }
+    if case .unsubscribed = presentation { return true }
+    return isHovered
+  }
+
+  @ViewBuilder
+  private var refreshGlyph: some View {
+    switch refreshPhase {
+    case .idle:
+      Image(systemName: "arrow.clockwise")
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(.secondary)
+    case .inFlight:
+      ProgressView()
+        .controlSize(.mini)
+    case .success:
+      Image(systemName: "checkmark")
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(.secondary)
+    case .failure:
+      Image(systemName: "exclamationmark.circle")
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private func runRefresh(_ action: AccountRefreshAction) {
+    guard refreshPhase == .idle else { return }
+    refreshPhase = .inFlight
+    Task {
+      let succeeded = await appState.refresh(accountId: account.accountId, via: action)
+      refreshPhase = succeeded ? .success : .failure
+      try? await Task.sleep(for: .seconds(2))
+      refreshPhase = .idle
     }
   }
 

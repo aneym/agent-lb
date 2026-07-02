@@ -308,6 +308,7 @@ class LoadBalancer:
         require_security_work_authorized: bool = False,
         budget_threshold_pct: float = 95.0,
         secondary_budget_threshold_pct: float = 100.0,
+        headroom_reallocate: bool = False,
         routing_costs_by_account_id: RoutingCostsByAccount | None = None,
         lease_kind: AccountLeaseKind | None = None,
         estimated_lease_tokens: float = 0.0,
@@ -647,6 +648,7 @@ class LoadBalancer:
                             sticky_max_age_seconds=sticky_max_age_seconds,
                             budget_threshold_pct=budget_threshold_pct,
                             secondary_budget_threshold_pct=secondary_budget_threshold_pct,
+                            headroom_reallocate=headroom_reallocate,
                             prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
                             prefer_earlier_reset_window=prefer_earlier_reset_window,
                             routing_strategy=routing_strategy,
@@ -1226,6 +1228,7 @@ class LoadBalancer:
         sticky_max_age_seconds: int | None,
         budget_threshold_pct: float = 95.0,
         secondary_budget_threshold_pct: float = 100.0,
+        headroom_reallocate: bool = False,
         prefer_earlier_reset_accounts: bool,
         prefer_earlier_reset_window: ResetPreferenceWindow,
         routing_strategy: RoutingStrategy,
@@ -1320,7 +1323,16 @@ class LoadBalancer:
                         )
                         burn_first_reallocate = burn_first.account is not None
 
-                if not ((budget_pressured or rate_limit_far_away) and burn_first_reallocate):
+                proactive_reallocate = (budget_pressured or rate_limit_far_away) and burn_first_reallocate
+                # Fable-class traffic never stamps burn_first, so a
+                # budget-pressured pin with no burn-first target would otherwise
+                # ride to the 429 wall. When headroom reallocation is enabled,
+                # budget pressure alone opens the reallocation branch; the
+                # anti-thrash guard below still keeps the pin when the whole
+                # pool is exhausted.
+                headroom_pressure_reallocate = headroom_reallocate and budget_pressured
+
+                if not (proactive_reallocate or headroom_pressure_reallocate):
                     pinned_result = select_account(
                         [pinned],
                         prefer_earlier_reset=prefer_earlier_reset_accounts,
@@ -1338,9 +1350,8 @@ class LoadBalancer:
                             await sticky_repo.upsert(sticky_key, pinned.account_id, kind=sticky_kind)
                         return pinned_result
                 else:
-                    # Reallocate only when a burn-first target exists and can
-                    # currently be selected, avoiding sticky churn to
-                    # ineligible targets.
+                    # Entered via a selectable burn-first target or (Anthropic
+                    # only) headroom pressure with no burn-first candidate.
                     # Before reallocating, check whether the pool has a
                     # meaningfully better candidate.  When every account
                     # is above the budget threshold, reallocating just

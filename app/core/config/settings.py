@@ -200,8 +200,14 @@ class Settings(BaseSettings):
     auth_guardian_failure_backoff_max_seconds: float = Field(default=3600.0, ge=0)
     anthropic_fable_routing_enabled: bool = True
     anthropic_fable_weekly_max_used_percent: float = Field(default=50.0, ge=0, le=100)
+    # Fable-class traffic never stamps burn_first, so a budget-pressured pin with
+    # no burn-first target would otherwise ride to the 429 wall; this lets it
+    # rebind to a budget-safe account one window early (anti-thrash guard still
+    # keeps the pin when the whole pool is exhausted).
+    anthropic_sticky_headroom_reallocation_enabled: bool = True
     account_pulse_enabled: bool = True
     account_pulse_interval_seconds: int = Field(default=21600, gt=0)
+    account_pulse_recovery_interval_seconds: int = Field(default=900, gt=0)
     account_pulse_concurrency: int = Field(default=2, gt=0)
     account_pulse_jitter_seconds: float = Field(default=300.0, ge=0)
     account_pulse_failure_backoff_base_seconds: float = Field(default=600.0, ge=0)

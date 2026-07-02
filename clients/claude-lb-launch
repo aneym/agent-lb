@@ -16,7 +16,8 @@
 # Env:
 #   CLAUDE_LB_BASE_URL   LB base URL (default http://127.0.0.1:2455)
 #   CLAUDE_LB_DISABLE=1  bypass the LB entirely; exec plain `claude`
-#   CLAUDE_LB_SESSION_ID stable session id (default cc-<pid>-<epoch>)
+#   CLAUDE_LB_SESSION_ID stable session id (default cc-<pid>-<epoch>; headless
+#                        -p/--print runs default to a stable cwd-derived id)
 #   CLAUDE_LB_DRY_RUN=1  print the final command instead of exec'ing it
 #   CC_EFFORT_LEVEL      passed through as --effort
 #   CC_PERMISSION_MODE   passed through as --permission-mode
@@ -29,6 +30,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import http.server
 import json
 import os
@@ -960,6 +962,24 @@ def headless_invocation(argv: list[str]) -> bool:
     return "-p" in argv or "--print" in argv
 
 
+def derive_session_id(argv: list[str]) -> str:
+    """Session id for LB sticky routing.
+
+    An explicit CLAUDE_LB_SESSION_ID always wins. Headless (`-p`/`--print`) runs
+    without one derive a stable id from the working directory so a loop of
+    `claude -p` turns keeps one sticky account and its warm prompt cache instead
+    of scattering a fresh `cc-<pid>-<epoch>` route each turn. Interactive runs
+    keep the per-process id.
+    """
+    explicit = os.environ.get("CLAUDE_LB_SESSION_ID")
+    if explicit:
+        return explicit
+    if headless_invocation(argv):
+        digest = hashlib.sha256(os.getcwd().encode()).hexdigest()[:12]
+        return f"cc-headless-{digest}"
+    return f"cc-{os.getpid()}-{int(time.time())}"
+
+
 def auto_resume_enabled() -> bool:
     value = (os.environ.get("CLAUDE_LB_AUTO_RESUME") or "1").strip().lower()
     return value not in {"0", "never", "off", "false"}
@@ -1033,7 +1053,7 @@ def main() -> None:
     routed = False
     session_id = ""
     if lb_enabled():
-        session_id = os.environ.get("CLAUDE_LB_SESSION_ID") or f"cc-{os.getpid()}-{int(time.time())}"
+        session_id = derive_session_id(argv)
         if print_lb_banner(argv, session_id):
             try:
                 proxy_url = start_lb_proxy(session_id)

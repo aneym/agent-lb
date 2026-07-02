@@ -65,6 +65,38 @@ struct AccountUsage: Decodable, Sendable, Equatable {
   let monthlyRemainingPercent: Double?
 }
 
+// MARK: - Account Refresh
+
+/// Endpoint choice for the per-row refresh control. Unsubscribed rows must
+/// re-verify the subscription ledger (a probe never updates it); routable
+/// rows probe, which wakes the upstream rate limiter and refreshes usage.
+/// Paused/disconnected rows get no action — the server rejects their probes
+/// with 409 `account_not_probable`, and reactivation is the real fix.
+enum AccountRefreshAction: Sendable, Equatable {
+  case checkSubscription
+  case probe
+
+  static func action(for account: Account) -> AccountRefreshAction? {
+    if account.isSubscriptionCanceled { return .checkSubscription }
+    if account.status == "paused" || account.isDisconnected { return nil }
+    return .probe
+  }
+}
+
+struct AccountProbeResponse: Decodable, Sendable, Equatable {
+  let status: String
+  let accountId: String
+  let probeStatusCode: Int
+}
+
+struct AccountSubscriptionCheckResponse: Decodable, Sendable, Equatable {
+  let status: String
+  let accountId: String
+  let working: Bool
+  let probeStatusCode: Int
+  let subscription: AccountSubscriptionLedger?
+}
+
 // MARK: - Usage Summary
 
 struct UsageSummary: Decodable, Sendable, Equatable {

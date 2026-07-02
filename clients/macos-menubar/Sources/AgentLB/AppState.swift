@@ -217,6 +217,30 @@ final class AppState {
     return true
   }
 
+  /// On-demand re-verification for one row (e.g. after resubscribing at the
+  /// vendor). Same contract as pause/reactivate: false on failure — including
+  /// the server's 409 `account_not_probable` — so the row hints inline.
+  @discardableResult
+  func refresh(accountId: String, via action: AccountRefreshAction) async -> Bool {
+    // The server answers 200 even when the upstream re-check confirms the
+    // account is still broken (working=false / non-2xx probe) — the success
+    // hint must reflect the upstream verdict, not the HTTP action.
+    let verdict: Bool
+    do {
+      switch action {
+      case .checkSubscription:
+        verdict = try await client.checkSubscription(accountId).working
+      case .probe:
+        let probe = try await client.probeAccount(accountId)
+        verdict = (200..<300).contains(probe.probeStatusCode)
+      }
+    } catch {
+      return false
+    }
+    await fetchAccounts()
+    return verdict
+  }
+
   // MARK: - Service actions
 
   func startService() async {
