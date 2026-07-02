@@ -631,7 +631,7 @@ def requested_model(argv: list[str]) -> str:
 
 
 def requested_effort(argv: list[str]) -> str:
-    return arg_value(argv, "--effort") or os.environ.get("CC_EFFORT_LEVEL") or "xhigh"
+    return arg_value(argv, "--effort") or os.environ.get("CC_EFFORT_LEVEL") or "high"
 
 
 def anthropic_quota_key(model: str, effort: str) -> tuple[str, str]:
