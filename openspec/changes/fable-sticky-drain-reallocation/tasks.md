@@ -1,0 +1,15 @@
+# Tasks
+
+- [x] Setting: `anthropic_fable_sticky_drain_enabled` (`app/core/config/settings.py`).
+- [x] `burn_first_sticky_drain` param on `LoadBalancer.select_account` →
+      `_select_with_stickiness`; drain-pressure trigger ORed into
+      `proactive_reallocate` with guards mirroring `budget_pressured`
+      (`app/modules/proxy/load_balancer.py`).
+- [x] Pass the flag from `AnthropicProxyService._select_account`
+      (`app/modules/proxy/anthropic_service.py`).
+- [x] Tests: sticky non-Fable session on an under-threshold account reallocates
+      to the over-threshold account and re-pins; disabled flag keeps the pin;
+      pinned over-threshold (burn_first) account keeps the pin; Fable-class
+      sticky sessions unaffected (`tests/integration/test_anthropic_proxy.py`).
+- [x] Validate: pytest (anthropic proxy, load balancer), ruff,
+      `openspec validate --specs`, service restart + live selection-log check.

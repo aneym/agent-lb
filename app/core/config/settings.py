@@ -200,6 +200,10 @@ class Settings(BaseSettings):
     auth_guardian_failure_backoff_max_seconds: float = Field(default=3600.0, ge=0)
     anthropic_fable_routing_enabled: bool = True
     anthropic_fable_weekly_max_used_percent: float = Field(default=50.0, ge=0, le=100)
+    # Drains non-Fable sticky pins off under-threshold accounts onto a
+    # selectable burn_first account proactively, instead of waiting for
+    # budget pressure to force the reallocation.
+    anthropic_fable_sticky_drain_enabled: bool = True
     # Fable-class traffic never stamps burn_first, so a budget-pressured pin with
     # no burn-first target would otherwise ride to the 429 wall; this lets it
     # rebind to a budget-safe account one window early (anti-thrash guard still

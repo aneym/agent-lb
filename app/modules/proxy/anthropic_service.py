@@ -572,6 +572,8 @@ class AnthropicProxyService:
             account_ids=eligibility.account_ids,
             exclude_account_ids=exclude_account_ids,
             burn_first_account_ids=eligibility.burn_first_account_ids,
+            burn_first_sticky_drain=bool(eligibility.burn_first_account_ids)
+            and get_settings().anthropic_fable_sticky_drain_enabled,
             sticky_key=sticky_key,
             sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
             prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,

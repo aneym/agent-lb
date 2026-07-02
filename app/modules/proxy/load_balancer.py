@@ -305,6 +305,7 @@ class LoadBalancer:
         account_ids: Collection[str] | None = None,
         exclude_account_ids: Collection[str] | None = None,
         burn_first_account_ids: Collection[str] | None = None,
+        burn_first_sticky_drain: bool = False,
         require_security_work_authorized: bool = False,
         budget_threshold_pct: float = 95.0,
         secondary_budget_threshold_pct: float = 100.0,
@@ -649,6 +650,7 @@ class LoadBalancer:
                             budget_threshold_pct=budget_threshold_pct,
                             secondary_budget_threshold_pct=secondary_budget_threshold_pct,
                             headroom_reallocate=headroom_reallocate,
+                            burn_first_sticky_drain=burn_first_sticky_drain,
                             prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
                             prefer_earlier_reset_window=prefer_earlier_reset_window,
                             routing_strategy=routing_strategy,
@@ -1229,6 +1231,7 @@ class LoadBalancer:
         budget_threshold_pct: float = 95.0,
         secondary_budget_threshold_pct: float = 100.0,
         headroom_reallocate: bool = False,
+        burn_first_sticky_drain: bool = False,
         prefer_earlier_reset_accounts: bool,
         prefer_earlier_reset_window: ResetPreferenceWindow,
         routing_strategy: RoutingStrategy,
@@ -1305,6 +1308,7 @@ class LoadBalancer:
                 )
 
                 burn_first_reallocate = pinned.routing_policy != ROUTING_POLICY_BURN_FIRST
+                burn_first_target_selectable = False
                 if burn_first_reallocate:
                     burn_first_candidates = [
                         state for state in states if state.routing_policy == ROUTING_POLICY_BURN_FIRST
@@ -1321,9 +1325,30 @@ class LoadBalancer:
                             traffic_class=traffic_class,
                             ignore_standard_quota=ignore_standard_quota,
                         )
-                        burn_first_reallocate = burn_first.account is not None
+                        burn_first_target_selectable = burn_first.account is not None
+                        burn_first_reallocate = burn_first_target_selectable
 
-                proactive_reallocate = (budget_pressured or rate_limit_far_away) and burn_first_reallocate
+                # Non-Fable Anthropic traffic with a live request-scoped burn
+                # set moves pins off under-threshold accounts onto a
+                # selectable burn_first account without waiting for budget
+                # pressure; the guards mirror budget_pressured so rate-limit
+                # grace/fallback semantics below are untouched.
+                sticky_drain_reallocate = (
+                    burn_first_sticky_drain
+                    and burn_first_target_selectable
+                    and sticky_kind
+                    in (
+                        StickySessionKind.PROMPT_CACHE,
+                        StickySessionKind.STICKY_THREAD,
+                        StickySessionKind.CODEX_SESSION,
+                    )
+                    and routing_strategy not in ("sequential_drain", "reset_drain", "single_account")
+                    and pinned.status != AccountStatus.RATE_LIMITED
+                )
+
+                proactive_reallocate = (
+                    budget_pressured or rate_limit_far_away or sticky_drain_reallocate
+                ) and burn_first_reallocate
                 # Fable-class traffic never stamps burn_first, so a
                 # budget-pressured pin with no burn-first target would otherwise
                 # ride to the 429 wall. When headroom reallocation is enabled,

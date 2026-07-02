@@ -1767,6 +1767,173 @@ async def test_non_fable_burn_preference_respects_preserve_policy(async_client):
     assert response.json()["accountId"] == "anthropic-preserve-fresh"
 
 
+@pytest.mark.asyncio
+async def test_non_fable_sticky_session_drains_to_over_threshold_account(async_client):
+    await _insert_account(
+        account_id="anthropic-drain-hot",
+        provider="anthropic",
+        access_token="anthropic-access-drain-hot",
+        email="drain-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-drain-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-drain-fresh",
+        email="drain-fresh@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-drain-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-drain-fresh", used_percent=10.0)
+
+    session_id = "session-haiku-sticky-drain"
+    sticky_key = "claude:anthropic_standard:session:" + anthropic_proxy_module._hash_for_key(session_id)
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id="anthropic-drain-fresh",
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": session_id,
+            "model": "claude-haiku-4-5",
+            "quotaKey": "anthropic_standard",
+        },
+    )
+
+    # burn_first_sticky_drain must proactively move the pin off the fresh
+    # account onto the over-threshold account without waiting for budget
+    # pressure on the pinned account itself.
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-drain-hot"
+
+    async with SessionLocal() as session:
+        sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+    assert sticky.account_id == "anthropic-drain-hot"
+
+
+@pytest.mark.asyncio
+async def test_non_fable_sticky_drain_disabled_keeps_pin(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_FABLE_STICKY_DRAIN_ENABLED", "false")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-drain-disabled-hot",
+        provider="anthropic",
+        access_token="anthropic-access-drain-disabled-hot",
+        email="drain-disabled-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-drain-disabled-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-drain-disabled-fresh",
+        email="drain-disabled-fresh@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-drain-disabled-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-drain-disabled-fresh", used_percent=10.0)
+
+    session_id = "session-haiku-sticky-drain-disabled"
+    sticky_key = "claude:anthropic_standard:session:" + anthropic_proxy_module._hash_for_key(session_id)
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id="anthropic-drain-disabled-fresh",
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": session_id,
+            "model": "claude-haiku-4-5",
+            "quotaKey": "anthropic_standard",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-drain-disabled-fresh"
+
+    async with SessionLocal() as session:
+        sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+    assert sticky.account_id == "anthropic-drain-disabled-fresh"
+
+
+@pytest.mark.asyncio
+async def test_non_fable_sticky_session_already_on_drain_account_keeps_pin(async_client):
+    await _insert_account(
+        account_id="anthropic-drain-already-hot",
+        provider="anthropic",
+        access_token="anthropic-access-drain-already-hot",
+        email="drain-already-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-drain-already-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-drain-already-fresh",
+        email="drain-already-fresh@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-drain-already-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-drain-already-fresh", used_percent=10.0)
+
+    session_id = "session-haiku-sticky-drain-already"
+    sticky_key = "claude:anthropic_standard:session:" + anthropic_proxy_module._hash_for_key(session_id)
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id="anthropic-drain-already-hot",
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": session_id,
+            "model": "claude-haiku-4-5",
+            "quotaKey": "anthropic_standard",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-drain-already-hot"
+
+    async with SessionLocal() as session:
+        sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+    assert sticky.account_id == "anthropic-drain-already-hot"
+
+
 async def _insert_primary_usage(
     *,
     account_id: str,
