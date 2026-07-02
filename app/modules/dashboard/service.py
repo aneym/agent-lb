@@ -8,7 +8,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import normalize_provider_name
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.time import utcnow
-from app.db.models import UsageHistory
+from app.db.models import AdditionalUsageHistory, UsageHistory
 from app.modules.accounts.mappers import build_account_summaries
 from app.modules.accounts.subscription_status import subscription_usable_accounts
 from app.modules.dashboard.builders import (
@@ -38,6 +38,12 @@ from app.modules.usage.depletion_service import (
     prune_depletion_cache,
 )
 from app.modules.usage.mappers import usage_history_to_window_row
+
+# Mirrored in app/modules/accounts/service.py, app/modules/proxy/anthropic_service.py,
+# and app/modules/usage/updater.py — all must agree on the quota_key/window
+# identifying Anthropic's dedicated Fable-scoped weekly limit marker.
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 
 def _parse_weekly_pace_working_days(value: str) -> set[int]:
@@ -70,6 +76,12 @@ class DashboardService:
         secondary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("secondary"), account_id_set)
         monthly_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("monthly"), account_id_set)
         limit_warmups_by_account = await self._repo.latest_limit_warmups_by_account(account_ids)
+        fable_scoped_weekly_by_account = _additional_usage_for_accounts(
+            await self._repo.latest_additional_usage_by_account(
+                _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY, _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW
+            ),
+            account_id_set,
+        )
 
         account_summaries = sorted(
             build_account_summaries(
@@ -78,6 +90,7 @@ class DashboardService:
                 secondary_usage=secondary_usage,
                 monthly_usage=monthly_usage,
                 limit_warmups_by_account=limit_warmups_by_account,
+                fable_scoped_weekly_by_account=fable_scoped_weekly_by_account,
                 encryptor=self._encryptor,
                 include_auth=False,
             ),
@@ -164,11 +177,18 @@ class DashboardService:
         primary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("primary"), account_id_set)
         secondary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("secondary"), account_id_set)
         monthly_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("monthly"), account_id_set)
+        fable_scoped_weekly_by_account = _additional_usage_for_accounts(
+            await self._repo.latest_additional_usage_by_account(
+                _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY, _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW
+            ),
+            account_id_set,
+        )
         account_summaries = build_account_summaries(
             accounts=accounts,
             primary_usage=primary_usage,
             secondary_usage=secondary_usage,
             monthly_usage=monthly_usage,
+            fable_scoped_weekly_by_account=fable_scoped_weekly_by_account,
             encryptor=self._encryptor,
             include_auth=False,
         )
@@ -388,6 +408,13 @@ def _usage_for_accounts(
     account_ids: set[str],
 ) -> dict[str, UsageHistory]:
     return {account_id: row for account_id, row in usage.items() if account_id in account_ids}
+
+
+def _additional_usage_for_accounts(
+    entries: dict[str, AdditionalUsageHistory],
+    account_ids: set[str],
+) -> dict[str, AdditionalUsageHistory]:
+    return {account_id: entry for account_id, entry in entries.items() if account_id in account_ids}
 
 
 def _should_use_weekly_primary_history(

@@ -11,7 +11,7 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.usage.quota import apply_usage_quota
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.time import from_epoch_seconds, utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, UsageHistory
+from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAuthStatus,
@@ -29,6 +29,9 @@ from app.modules.usage.mappers import usage_history_to_window_row
 
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
 _DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS = 60
+# Mirrored in app/modules/proxy/anthropic_service.py — both must treat a
+# Fable-scoped weekly marker older than this as stale.
+_FABLE_SCOPED_FRESH_SECONDS = 21600  # 6 hours
 
 
 def build_account_summaries(
@@ -40,6 +43,7 @@ def build_account_summaries(
     request_usage_by_account: dict[str, AccountRequestUsage] | None = None,
     additional_quotas_by_account: dict[str, list[AccountAdditionalQuota]] | None = None,
     limit_warmups_by_account: dict[str, AccountLimitWarmup] | None = None,
+    fable_scoped_weekly_by_account: dict[str, AdditionalUsageHistory] | None = None,
     encryptor: TokenEncryptor,
     include_auth: bool = True,
 ) -> list[AccountSummary]:
@@ -56,6 +60,9 @@ def build_account_summaries(
             encryptor,
             include_auth=include_auth,
             is_email_duplicate=_duplicate_detection_key(account) in duplicate_keys,
+            fable_scoped_weekly=(
+                fable_scoped_weekly_by_account.get(account.id) if fable_scoped_weekly_by_account else None
+            ),
         )
         for account in accounts
     ]
@@ -102,6 +109,7 @@ def _account_to_summary(
     encryptor: TokenEncryptor,
     include_auth: bool = True,
     is_email_duplicate: bool = False,
+    fable_scoped_weekly: AdditionalUsageHistory | None = None,
 ) -> AccountSummary:
     plan_type = coerce_account_plan_type(account.plan_type, DEFAULT_PLAN)
     auth_status = _build_auth_status(account, encryptor) if include_auth else None
@@ -249,7 +257,7 @@ def _account_to_summary(
         status=effective_status.value,
         routing_policy=_normalize_account_routing_policy(account.routing_policy),
         security_work_authorized=bool(account.security_work_authorized),
-        fable_eligible=_fable_eligible(account, secondary_used_percent),
+        fable_eligible=_fable_eligible(account, secondary_used_percent, fable_scoped_weekly),
         usage=AccountUsage(
             primary_remaining_percent=primary_remaining_percent,
             secondary_remaining_percent=secondary_remaining_percent,
@@ -311,18 +319,36 @@ def _normalize_account_routing_policy(value: str | None) -> str:
     return "normal"
 
 
-def _fable_eligible(account: Account, secondary_used_percent: float | None) -> bool | None:
+def _fable_eligible(
+    account: Account,
+    secondary_used_percent: float | None,
+    fable_scoped_weekly: AdditionalUsageHistory | None = None,
+) -> bool | None:
     """Whether the balancer will consider this account for Fable-class requests.
 
-    Anthropic accounts only; an account with no weekly usage sample yet counts
-    as eligible (fresh window).
+    Anthropic accounts only. Prefers Anthropic's dedicated Fable-scoped
+    weekly percent when a fresh (<=6h) marker exists — mirrors the
+    eligibility logic in app/modules/proxy/anthropic_service.py — else falls
+    back to the overall-weekly heuristic; an account with no weekly usage
+    sample yet counts as eligible (fresh window).
     """
     if account.provider != ANTHROPIC_PROVIDER_NAME:
         return None
-    threshold = config_settings.get_settings().anthropic_fable_weekly_max_used_percent
+    settings = config_settings.get_settings()
+    if fable_scoped_weekly is not None and _fable_scoped_weekly_is_fresh(fable_scoped_weekly.recorded_at):
+        return float(fable_scoped_weekly.used_percent) < settings.anthropic_fable_scoped_max_used_percent
+    threshold = settings.anthropic_fable_weekly_max_used_percent
     if secondary_used_percent is None:
         return True
     return float(secondary_used_percent) < threshold
+
+
+def _fable_scoped_weekly_is_fresh(recorded_at: datetime | None) -> bool:
+    if recorded_at is None:
+        return False
+    current_time = datetime.now(timezone.utc)
+    recorded_time = recorded_at if recorded_at.tzinfo is not None else recorded_at.replace(tzinfo=timezone.utc)
+    return recorded_time >= current_time - timedelta(seconds=_FABLE_SCOPED_FRESH_SECONDS)
 
 
 def _limit_warmup_to_status(entry: AccountLimitWarmup | None) -> AccountLimitWarmupStatus | None:

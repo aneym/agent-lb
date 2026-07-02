@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.modules.accounts import mappers
 from app.modules.accounts.mappers import _effective_status_from_usage, _normalize_account_routing_policy
 
@@ -185,6 +185,41 @@ def test_fable_eligible_flag_by_provider_and_threshold() -> None:
     assert mappers._fable_eligible(anthropic, None) is True
     # Other providers: null.
     assert mappers._fable_eligible(openai, 10.0) is None
+
+
+def _fable_scoped_weekly(*, used_percent: float, recorded_at: datetime) -> AdditionalUsageHistory:
+    return AdditionalUsageHistory(
+        account_id="account-1",
+        quota_key="anthropic_fable_scoped_weekly",
+        limit_name="anthropic_fable_scoped_weekly",
+        metered_feature="anthropic_fable_scoped_weekly",
+        window="primary",
+        used_percent=used_percent,
+        recorded_at=recorded_at,
+    )
+
+
+def test_fable_eligible_prefers_fresh_scoped_signal_over_heuristic() -> None:
+    anthropic = _account(AccountStatus.ACTIVE)
+    anthropic.provider = "anthropic"
+    now = datetime.now(timezone.utc)
+
+    # Overall weekly (62%) is over the heuristic threshold, but a fresh
+    # scoped entry with headroom (45%) overrides it.
+    fresh_headroom = _fable_scoped_weekly(used_percent=45.0, recorded_at=now)
+    assert mappers._fable_eligible(anthropic, 62.0, fresh_headroom) is True
+
+    # Overall weekly (30%) is well under the heuristic, but a fresh scoped
+    # entry at the scoped threshold (100%) overrides it the other way.
+    fresh_exhausted = _fable_scoped_weekly(used_percent=100.0, recorded_at=now)
+    assert mappers._fable_eligible(anthropic, 30.0, fresh_exhausted) is False
+
+    # A stale (>6h) scoped entry is ignored; the heuristic applies.
+    stale_exhausted = _fable_scoped_weekly(used_percent=100.0, recorded_at=now - timedelta(hours=7))
+    assert mappers._fable_eligible(anthropic, 30.0, stale_exhausted) is True
+
+    # No scoped entry at all: unchanged heuristic behavior.
+    assert mappers._fable_eligible(anthropic, 62.0, None) is False
 
 
 def test_effective_status_ignores_extra_usage_credits_for_anthropic_accounts() -> None:

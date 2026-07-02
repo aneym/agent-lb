@@ -149,6 +149,10 @@ class _MergedAdditionalWindow:
 _last_successful_refresh: dict[str, datetime] = {}
 _usage_refresh_auth_cooldowns: dict[str, float] = {}
 _USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
+# Mirrored in app/modules/proxy/anthropic_service.py (read side) — both must
+# agree on the quota_key/window identifying the Fable-scoped weekly marker.
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 
 
 class _UsageRefreshSingleflight:
@@ -510,9 +514,32 @@ class UsageUpdater:
             elif payload.additional_rate_limits is not None:
                 await self._additional_usage_repo.delete_for_account(account.id)
 
+        scoped = payload.fable_scoped_weekly
+        fable_scoped_written = False
+        if (
+            self._additional_usage_repo is not None
+            and account.provider == ANTHROPIC_PROVIDER_NAME
+            and scoped is not None
+            and scoped.used_percent is not None
+        ):
+            await _add_additional_usage_entry(
+                self._additional_usage_repo,
+                account_id=account.id,
+                limit_name=_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                metered_feature=_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                quota_key=_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                window=_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
+                used_percent=float(scoped.used_percent),
+                reset_at=_reset_at(scoped.reset_at, scoped.reset_after_seconds, now_epoch),
+                window_minutes=_window_minutes(scoped.limit_window_seconds),
+            )
+            fable_scoped_written = True
+
         rate_limit = payload.rate_limit
         if rate_limit is None:
-            additional_synced = self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+            additional_synced = (
+                self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+            ) or fable_scoped_written
             return AccountRefreshResult(usage_written=additional_synced)
         # Treat both None and empty rate_limit (both windows absent) as
         # additional-only to avoid falling through to window processing.
@@ -527,13 +554,15 @@ class UsageUpdater:
             if monthly is None:
                 additional_synced = (
                     self._additional_usage_repo is not None and payload.additional_rate_limits is not None
-                )
+                ) or fable_scoped_written
                 return AccountRefreshResult(usage_written=additional_synced)
         if primary is None and secondary is None and monthly is None:
-            additional_synced = self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+            additional_synced = (
+                self._additional_usage_repo is not None and payload.additional_rate_limits is not None
+            ) or fable_scoped_written
             return AccountRefreshResult(usage_written=additional_synced)
         credits_has, credits_unlimited, credits_balance = _credits_snapshot(payload)
-        usage_written = False
+        usage_written = fable_scoped_written
 
         if primary and primary.used_percent is not None:
             entry = await self._usage_repo.add_entry(

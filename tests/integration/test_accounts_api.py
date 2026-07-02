@@ -599,3 +599,84 @@ async def test_list_accounts_flags_email_duplicates(async_client):
     assert accounts_by_id["placeholder-b"]["isEmailDuplicate"] is False
     assert accounts_by_id["blank-a"]["isEmailDuplicate"] is False
     assert accounts_by_id["blank-b"]["isEmailDuplicate"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_client):
+    """GET /api/accounts renders fableEligible from Anthropic's dedicated
+    Fable-scoped weekly limit (fresh <=6h) in preference to the overall-weekly
+    heuristic, in both directions, and falls back to the heuristic once the
+    scoped row goes stale (see openspec/changes/fable-scoped-weekly-limit)."""
+    from datetime import timedelta
+
+    from app.core.utils.time import utcnow
+    from app.db.models import AdditionalUsageHistory, UsageHistory
+
+    encryptor = TokenEncryptor()
+
+    def _anthropic_account(account_id: str, email: str) -> Account:
+        return Account(
+            id=account_id,
+            provider="anthropic",
+            chatgpt_account_id=account_id,
+            email=email,
+            plan_type="max",
+            access_token_encrypted=encryptor.encrypt(f"access-{account_id}"),
+            refresh_token_encrypted=encryptor.encrypt(f"refresh-{account_id}"),
+            id_token_encrypted=encryptor.encrypt(f"id-{account_id}"),
+            last_refresh=utcnow(),
+            status=AccountStatus.ACTIVE,
+            deactivation_reason=None,
+        )
+
+    def _weekly_usage(account_id: str, used_percent: float) -> UsageHistory:
+        return UsageHistory(
+            account_id=account_id,
+            provider="anthropic",
+            window="secondary",
+            used_percent=used_percent,
+            window_minutes=10080,
+            recorded_at=utcnow(),
+        )
+
+    def _fable_scoped_weekly(account_id: str, used_percent: float, recorded_at) -> AdditionalUsageHistory:
+        return AdditionalUsageHistory(
+            account_id=account_id,
+            quota_key="anthropic_fable_scoped_weekly",
+            limit_name="anthropic_fable_scoped_weekly",
+            metered_feature="anthropic_fable_scoped_weekly",
+            window="primary",
+            used_percent=used_percent,
+            window_minutes=10080,
+            recorded_at=recorded_at,
+        )
+
+    now = utcnow()
+    async with SessionLocal() as session:
+        # Overall weekly headroom (30%, under the 50% heuristic) but a fresh
+        # scoped entry AT the scoped threshold (100%) — scoped must exclude.
+        session.add(_anthropic_account("acc-scoped-hot", "scoped-hot@example.com"))
+        session.add(_weekly_usage("acc-scoped-hot", 30.0))
+        session.add(_fable_scoped_weekly("acc-scoped-hot", 100.0, now))
+
+        # Overall weekly over the 50% heuristic (62%) but a fresh scoped
+        # entry with headroom (45%) — scoped must admit.
+        session.add(_anthropic_account("acc-scoped-cool", "scoped-cool@example.com"))
+        session.add(_weekly_usage("acc-scoped-cool", 62.0))
+        session.add(_fable_scoped_weekly("acc-scoped-cool", 45.0, now))
+
+        # Overall weekly headroom (30%) with a scoped-exhausted (100%) row
+        # recorded over 6h ago — stale, so the heuristic (eligible) applies.
+        session.add(_anthropic_account("acc-scoped-stale", "scoped-stale@example.com"))
+        session.add(_weekly_usage("acc-scoped-stale", 30.0))
+        session.add(_fable_scoped_weekly("acc-scoped-stale", 100.0, now - timedelta(hours=7)))
+
+        await session.commit()
+
+    response = await async_client.get("/api/accounts")
+    assert response.status_code == 200
+    accounts_by_id = {a["accountId"]: a for a in response.json()["accounts"]}
+
+    assert accounts_by_id["acc-scoped-hot"]["fableEligible"] is False
+    assert accounts_by_id["acc-scoped-cool"]["fableEligible"] is True
+    assert accounts_by_id["acc-scoped-stale"]["fableEligible"] is True

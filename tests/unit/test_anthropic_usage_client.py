@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from app.core.clients.anthropic_usage import AnthropicOAuthUsagePayload, _usage_payload_from_anthropic
@@ -89,6 +91,114 @@ def test_anthropic_usage_maps_disabled_extra_usage_without_fabricated_balance() 
     assert usage.credits.has_credits is False
     assert usage.credits.unlimited is False
     assert usage.credits.balance is None
+
+
+def test_anthropic_usage_extracts_fable_scoped_weekly_limit() -> None:
+    # Real captured api/oauth/usage payload shape (2026-07-02).
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "five_hour": {"utilization": 10.0, "resets_at": "2026-07-02T02:10:00+00:00"},
+            "seven_day": {"utilization": 62.0, "resets_at": "2026-07-05T21:00:00.091084+00:00"},
+            "limits": [
+                {
+                    "kind": "session",
+                    "group": "session",
+                    "percent": 52,
+                    "severity": "normal",
+                    "resets_at": "2026-07-02T18:09:59.091065+00:00",
+                    "scope": None,
+                    "is_active": False,
+                },
+                {
+                    "kind": "weekly_all",
+                    "group": "weekly",
+                    "percent": 62,
+                    "severity": "normal",
+                    "resets_at": "2026-07-05T21:00:00.091084+00:00",
+                    "scope": None,
+                    "is_active": False,
+                },
+                {
+                    "kind": "weekly_scoped",
+                    "group": "weekly",
+                    "percent": 81,
+                    "severity": "warning",
+                    "resets_at": "2026-07-05T21:00:00.091366+00:00",
+                    "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None},
+                    "is_active": True,
+                },
+            ],
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.fable_scoped_weekly is not None
+    assert usage.fable_scoped_weekly.used_percent == 81.0
+    assert usage.fable_scoped_weekly.limit_window_seconds == 7 * 24 * 60 * 60
+    assert usage.fable_scoped_weekly.reset_at == int(
+        datetime.fromisoformat("2026-07-05T21:00:00.091366+00:00").timestamp()
+    )
+
+
+def test_anthropic_usage_absent_limits_yields_no_fable_scoped_weekly() -> None:
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "five_hour": {"utilization": 10.0, "resets_at": "2026-07-02T02:10:00+00:00"},
+            "seven_day": {"utilization": 20.0, "resets_at": "2026-07-05T21:00:00+00:00"},
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.fable_scoped_weekly is None
+
+
+def test_anthropic_usage_ignores_weekly_scoped_entry_for_non_fable_model() -> None:
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "seven_day": {"utilization": 20.0, "resets_at": "2026-07-05T21:00:00+00:00"},
+            "limits": [
+                {
+                    "kind": "weekly_scoped",
+                    "group": "weekly",
+                    "percent": 90,
+                    "severity": "warning",
+                    "resets_at": "2026-07-05T21:00:00+00:00",
+                    "scope": {"model": {"id": None, "display_name": "Sonnet"}, "surface": None},
+                    "is_active": True,
+                },
+            ],
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.fable_scoped_weekly is None
+
+
+def test_anthropic_usage_matches_fable_scope_case_insensitively() -> None:
+    payload = AnthropicOAuthUsagePayload.model_validate(
+        {
+            "seven_day": {"utilization": 20.0, "resets_at": "2026-07-05T21:00:00+00:00"},
+            "limits": [
+                {
+                    "kind": "weekly_scoped",
+                    "group": "weekly",
+                    "percent": 45,
+                    "severity": "normal",
+                    "resets_at": "2026-07-05T21:00:00+00:00",
+                    "scope": {"model": {"id": None, "display_name": "fABLE"}, "surface": None},
+                    "is_active": True,
+                },
+            ],
+        }
+    )
+
+    usage = _usage_payload_from_anthropic(payload)
+
+    assert usage.fable_scoped_weekly is not None
+    assert usage.fable_scoped_weekly.used_percent == 45.0
 
 
 def test_anthropic_usage_extra_usage_balance_never_goes_negative() -> None:

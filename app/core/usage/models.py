@@ -45,3 +45,7 @@ class UsagePayload(BaseModel):
     rate_limit: RateLimitPayload | None = None
     credits: CreditsPayload | None = None
     additional_rate_limits: list[AdditionalRateLimitPayload] | None = None
+    # Anthropic's dedicated Fable-scoped weekly limit (api/oauth/usage
+    # limits[] kind="weekly_scoped" for the Fable model), when present.
+    # Unset for OpenAI/GLM payloads.
+    fable_scoped_weekly: UsageWindow | None = None

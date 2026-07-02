@@ -1522,6 +1522,7 @@ async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monk
         lambda: SimpleNamespace(
             anthropic_fable_routing_enabled=True,
             anthropic_fable_weekly_max_used_percent=50.0,
+            anthropic_fable_scoped_max_used_percent=100.0,
         ),
     )
     service = AnthropicProxyService(lambda: _RepoBundle())

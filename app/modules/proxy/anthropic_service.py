@@ -27,6 +27,7 @@ from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME
 from app.core.utils.request_id import ensure_request_id
+from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, StickySessionKind
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
@@ -46,6 +47,15 @@ _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 # probe marker written by the account pulse.
 _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
 _ANTHROPIC_FABLE_ACCESS_WINDOW = "primary"
+# Mirrored in app/modules/usage/updater.py (write side) — both must agree on
+# the quota_key/window identifying Anthropic's dedicated Fable-scoped weekly
+# limit marker.
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
+# A scoped entry older than this is stale; the overall-weekly heuristic and
+# probe-marker fallback apply instead (usage refreshes far more often than
+# this, so staleness signals a refresh gap, not just normal cadence).
+_FABLE_SCOPED_FRESH_SECONDS = 21600  # 6 hours
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
@@ -737,6 +747,7 @@ class AnthropicProxyService:
                 }
             weekly_usage_used_percent: dict[str, float] = {}
             fable_access_markers: dict[str, tuple[float, int | None]] = {}
+            fable_scoped_markers: dict[str, tuple[float, int | None, int]] = {}
             if fable_routing:
                 weekly_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
                 # Snapshot scalars inside the repo session — the ORM rows
@@ -752,6 +763,22 @@ class AnthropicProxyService:
                 fable_access_markers = {
                     account_id: (float(entry.used_percent), entry.reset_at)
                     for account_id, entry in fable_access.items()
+                }
+                fable_scoped = await repos.additional_usage.latest_by_account(
+                    _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                    _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
+                    account_ids=account_ids,
+                )
+                # recorded_at is a naive-UTC datetime column; snapshot it as
+                # an epoch int here too, alongside the other scalars, since
+                # the ORM row detaches once this session context closes.
+                fable_scoped_markers = {
+                    account_id: (
+                        float(entry.used_percent),
+                        entry.reset_at,
+                        naive_utc_to_epoch(entry.recorded_at),
+                    )
+                    for account_id, entry in fable_scoped.items()
                 }
 
         eligible_account_ids: list[str] = []
@@ -783,12 +810,33 @@ class AnthropicProxyService:
         burn_first_account_ids: frozenset[str] = frozenset()
         if fable_routing and eligible_account_ids:
             threshold = settings.anthropic_fable_weekly_max_used_percent
+            scoped_threshold = settings.anthropic_fable_scoped_max_used_percent
 
             def _weekly_used(account_id: str) -> float:
                 return weekly_usage_used_percent.get(account_id, 0.0)
 
+            def _fresh_scoped_percent(account_id: str) -> float | None:
+                # Anthropic's dedicated Fable-scoped weekly percent is
+                # authoritative when fresh — it supersedes the overall-weekly
+                # heuristic entirely for this account (see
+                # _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY), not just when it
+                # grants more headroom than the heuristic would.
+                marker = fable_scoped_markers.get(account_id)
+                if marker is None:
+                    return None
+                scoped_used_percent, _scoped_reset_at, recorded_epoch = marker
+                if now - recorded_epoch >= _FABLE_SCOPED_FRESH_SECONDS:
+                    return None
+                return scoped_used_percent
+
+            def _is_over_threshold(account_id: str) -> bool:
+                scoped_percent = _fresh_scoped_percent(account_id)
+                if scoped_percent is not None:
+                    return scoped_percent >= scoped_threshold
+                return _weekly_used(account_id) >= threshold
+
             over_threshold = frozenset(
-                account_id for account_id in eligible_account_ids if _weekly_used(account_id) >= threshold
+                account_id for account_id in eligible_account_ids if _is_over_threshold(account_id)
             )
             if _is_fable_model(model):
                 def _has_fresh_capable_fable_marker(account_id: str) -> bool:
@@ -804,13 +852,19 @@ class AnthropicProxyService:
                         return False
                     return marker_reset_at is None or marker_reset_at > now
 
-                under_threshold = [
-                    account_id for account_id in eligible_account_ids if account_id not in over_threshold
+                def _fable_admitted(account_id: str) -> bool:
+                    scoped_percent = _fresh_scoped_percent(account_id)
+                    if scoped_percent is not None:
+                        # Scoped signal is authoritative in both directions —
+                        # it overrides the probe-marker fallback too.
+                        return scoped_percent < scoped_threshold
+                    if account_id not in over_threshold:
+                        return True
+                    return _has_fresh_capable_fable_marker(account_id)
+
+                fable_candidates = [
+                    account_id for account_id in eligible_account_ids if _fable_admitted(account_id)
                 ]
-                probed_capable = [
-                    account_id for account_id in over_threshold if _has_fresh_capable_fable_marker(account_id)
-                ]
-                fable_candidates = under_threshold + probed_capable
                 if fable_candidates:
                     eligible_account_ids = fable_candidates
                 elif over_threshold:

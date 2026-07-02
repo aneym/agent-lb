@@ -766,6 +766,101 @@ async def test_usage_updater_refreshes_openai_and_anthropic_accounts(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_fable_scoped_weekly_written_to_additional_repo_on_refresh(monkeypatch) -> None:
+    """The dedicated Fable-scoped weekly limit is persisted as additional
+    usage under quota_key=anthropic_fable_scoped_weekly on every refresh,
+    for Anthropic accounts only."""
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    async def stub_fetch_anthropic_usage(**_: Any) -> UsagePayload:
+        return UsagePayload.model_validate(
+            {
+                "plan_type": "claude",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 10.0,
+                        "reset_at": 1735689600,
+                        "limit_window_seconds": 5 * 60 * 60,
+                    },
+                    "secondary_window": {
+                        "used_percent": 62.0,
+                        "reset_at": 1736294400,
+                        "limit_window_seconds": 7 * 24 * 60 * 60,
+                    },
+                },
+                "fable_scoped_weekly": {
+                    "used_percent": 81.0,
+                    "reset_at": 1736294401,
+                    "limit_window_seconds": 7 * 24 * 60 * 60,
+                },
+            }
+        )
+
+    async def stub_fetch_usage(**_: Any) -> UsagePayload:
+        return UsagePayload.model_validate(
+            {"rate_limit": {"primary_window": {"used_percent": 5.0, "reset_at": 1735689600}}}
+        )
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_anthropic_usage", stub_fetch_anthropic_usage)
+    monkeypatch.setattr("app.modules.usage.updater.fetch_usage", stub_fetch_usage)
+
+    usage_repo = StubUsageRepository()
+    additional_repo = StubAdditionalUsageRepository()
+    updater = UsageUpdater(usage_repo, accounts_repo=None, additional_usage_repo=additional_repo)
+    anthropic_account = _make_account("acc_scoped", "workspace_scoped", provider="anthropic")
+    anthropic_account.plan_type = "max"
+    openai_account = _make_account("acc_scoped_openai", "workspace_scoped_openai")
+
+    await updater.refresh_accounts([anthropic_account, openai_account], latest_usage={})
+
+    scoped_entries = [e for e in additional_repo.entries if e.quota_key == "anthropic_fable_scoped_weekly"]
+    assert len(scoped_entries) == 1
+    entry = scoped_entries[0]
+    assert entry.account_id == "acc_scoped"
+    assert entry.limit_name == "anthropic_fable_scoped_weekly"
+    assert entry.window == "primary"
+    assert entry.used_percent == 81.0
+    assert entry.reset_at == 1736294401
+
+
+@pytest.mark.asyncio
+async def test_fable_scoped_weekly_absent_writes_no_row(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    async def stub_fetch_anthropic_usage(**_: Any) -> UsagePayload:
+        return UsagePayload.model_validate(
+            {
+                "plan_type": "claude",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 10.0,
+                        "reset_at": 1735689600,
+                        "limit_window_seconds": 5 * 60 * 60,
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_anthropic_usage", stub_fetch_anthropic_usage)
+
+    usage_repo = StubUsageRepository()
+    additional_repo = StubAdditionalUsageRepository()
+    updater = UsageUpdater(usage_repo, accounts_repo=None, additional_usage_repo=additional_repo)
+    anthropic_account = _make_account("acc_no_scoped", "workspace_no_scoped", provider="anthropic")
+    anthropic_account.plan_type = "max"
+
+    await updater.refresh_accounts([anthropic_account], latest_usage={})
+
+    assert [e for e in additional_repo.entries if e.quota_key == "anthropic_fable_scoped_weekly"] == []
+
+
+@pytest.mark.asyncio
 async def test_usage_refresh_recovers_quota_exceeded_account_when_usage_is_available(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings

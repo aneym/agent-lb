@@ -41,12 +41,39 @@ class AnthropicExtraUsage(BaseModel):
     decimal_places: int | None = None
 
 
+class AnthropicLimitScopeModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    display_name: str | None = None
+
+
+class AnthropicLimitScope(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    model: AnthropicLimitScopeModel | None = None
+    surface: str | None = None
+
+
+class AnthropicLimitEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    kind: str | None = None
+    group: str | None = None
+    percent: float | None = None
+    severity: str | None = None
+    resets_at: str | None = None
+    scope: AnthropicLimitScope | None = None
+    is_active: bool | None = None
+
+
 class AnthropicOAuthUsagePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     five_hour: AnthropicUsageWindow | None = None
     seven_day: AnthropicUsageWindow | None = None
     extra_usage: AnthropicExtraUsage | None = None
+    limits: list[AnthropicLimitEntry] | None = None
 
 
 async def fetch_anthropic_usage(
@@ -91,6 +118,29 @@ def _usage_payload_from_anthropic(payload: AnthropicOAuthUsagePayload) -> UsageP
             secondary_window=_usage_window(payload.seven_day, limit_window_seconds=_SEVEN_DAY_SECONDS),
         ),
         credits=_credits_from_extra_usage(payload.extra_usage),
+        fable_scoped_weekly=_fable_scoped_weekly_window(_fable_scoped_weekly_entry(payload.limits)),
+    )
+
+
+def _fable_scoped_weekly_entry(limits: list[AnthropicLimitEntry] | None) -> AnthropicLimitEntry | None:
+    if not limits:
+        return None
+    for entry in limits:
+        if entry.kind != "weekly_scoped":
+            continue
+        display_name = entry.scope.model.display_name if entry.scope and entry.scope.model else None
+        if display_name is not None and display_name.strip().lower() == "fable":
+            return entry
+    return None
+
+
+def _fable_scoped_weekly_window(entry: AnthropicLimitEntry | None) -> UsageWindow | None:
+    if entry is None or entry.percent is None:
+        return None
+    return UsageWindow(
+        used_percent=float(entry.percent),
+        reset_at=_parse_rfc3339_epoch(entry.resets_at),
+        limit_window_seconds=_SEVEN_DAY_SECONDS,
     )
 
 

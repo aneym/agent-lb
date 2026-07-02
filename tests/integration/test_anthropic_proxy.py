@@ -2217,6 +2217,163 @@ async def test_non_fable_burn_preference_unchanged_by_capable_fable_marker(async
     assert response.json()["accountId"] == "anthropic-burn-marker-hot"
 
 
+async def _insert_fable_scoped_weekly(
+    *,
+    account_id: str,
+    used_percent: float,
+    reset_at: int | None = None,
+    recorded_at: datetime | None = None,
+) -> None:
+    async with SessionLocal() as session:
+        session.add(
+            AdditionalUsageHistory(
+                account_id=account_id,
+                quota_key="anthropic_fable_scoped_weekly",
+                limit_name="anthropic_fable_scoped_weekly",
+                metered_feature="anthropic_fable_scoped_weekly",
+                window="primary",
+                used_percent=used_percent,
+                reset_at=reset_at,
+                window_minutes=10080,
+                recorded_at=recorded_at or utcnow(),
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_client):
+    # OpenSpec scenario: 30% overall weekly (well under the 50% heuristic)
+    # but the Fable-scoped signal is at the scoped threshold (default 100%)
+    # — the scoped signal must exclude the account even though the overall
+    # heuristic alone would have admitted it. A second, genuinely-eligible
+    # control account rules out the "all over threshold" full-pool fallback
+    # masking the exclusion.
+    await _insert_account(
+        account_id="anthropic-scoped-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-scoped-exhausted",
+        email="scoped-exhausted@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-scoped-control",
+        provider="anthropic",
+        access_token="anthropic-access-scoped-control",
+        email="scoped-control@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-scoped-exhausted", used_percent=30.0)
+    await _insert_weekly_usage(account_id="anthropic-scoped-control", used_percent=10.0)
+    await _insert_fable_scoped_weekly(account_id="anthropic-scoped-exhausted", used_percent=100.0)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-scoped-exhausted",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-scoped-control"
+
+
+@pytest.mark.asyncio
+async def test_fable_scoped_headroom_admits_despite_overall_heuristic(async_client):
+    # OpenSpec scenario: 62% overall weekly (over the 50% heuristic, which
+    # alone would require a probe marker to admit) but only 45%
+    # Fable-scoped — the scoped signal alone admits the account, with no
+    # probe marker present.
+    await _insert_account(
+        account_id="anthropic-scoped-headroom",
+        provider="anthropic",
+        access_token="anthropic-access-scoped-headroom",
+        email="scoped-headroom@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-scoped-headroom", used_percent=62.0)
+    await _insert_fable_scoped_weekly(account_id="anthropic-scoped-headroom", used_percent=45.0)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-scoped-headroom",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-scoped-headroom"
+
+
+@pytest.mark.asyncio
+async def test_non_fable_burn_set_derived_from_scoped_percents_when_fresh(async_client):
+    # Inverted relative to the overall-weekly heuristic: the scoped-hot
+    # account has LOW overall weekly usage (heuristic would spare it) but a
+    # scoped-exhausted marker; the scoped-cool account has HIGH overall
+    # weekly usage (heuristic would burn it) but scoped headroom. The burn
+    # set must follow the scoped percents, not the heuristic.
+    await _insert_account(
+        account_id="anthropic-burn-scoped-hot",
+        provider="anthropic",
+        access_token="anthropic-access-burn-scoped-hot",
+        email="burn-scoped-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-burn-scoped-cool",
+        provider="anthropic",
+        access_token="anthropic-access-burn-scoped-cool",
+        email="burn-scoped-cool@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-burn-scoped-hot", used_percent=30.0)
+    await _insert_weekly_usage(account_id="anthropic-burn-scoped-cool", used_percent=62.0)
+    await _insert_fable_scoped_weekly(account_id="anthropic-burn-scoped-hot", used_percent=100.0)
+    await _insert_fable_scoped_weekly(account_id="anthropic-burn-scoped-cool", used_percent=10.0)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-haiku-burn-scoped",
+            "model": "claude-haiku-4-5",
+            "quotaKey": "anthropic_standard",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-burn-scoped-hot"
+
+
+@pytest.mark.asyncio
+async def test_stale_fable_scoped_row_falls_back_to_overall_heuristic(async_client):
+    await _insert_account(
+        account_id="anthropic-scoped-stale",
+        provider="anthropic",
+        access_token="anthropic-access-scoped-stale",
+        email="scoped-stale@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-scoped-stale", used_percent=10.0)
+    stale_recorded_at = utcnow() - timedelta(hours=7)
+    # Scoped-exhausted, but recorded over 6h ago — must be ignored in favor
+    # of the (well under threshold) overall-weekly heuristic.
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-scoped-stale",
+        used_percent=100.0,
+        recorded_at=stale_recorded_at,
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-scoped-stale",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-scoped-stale"
+
+
 async def _insert_primary_usage(
     *,
     account_id: str,

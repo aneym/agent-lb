@@ -95,6 +95,12 @@ _request_usage_cache: dict[frozenset[str], tuple[float, dict[str, AccountRequest
 _ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS = 12.0
 _additional_quotas_cache: dict[frozenset[str], tuple[float, dict[str, list[AccountAdditionalQuota]]]] = {}
 
+# Mirrored in app/modules/proxy/anthropic_service.py and app/modules/usage/updater.py
+# — all three must agree on the quota_key/window identifying Anthropic's
+# dedicated Fable-scoped weekly limit marker.
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+_ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
+
 
 def clear_account_caches() -> None:
     """Clear the in-process accounts read caches (used by tests for isolation)."""
@@ -171,6 +177,7 @@ class AccountsService:
         if include_request_usage:
             request_usage_by_account = await self._request_usage_by_account(account_ids)
         additional_quotas_by_account = await self._additional_quotas_by_account(account_ids, account_id_set)
+        fable_scoped_weekly_by_account = await self._fable_scoped_weekly_by_account(account_ids)
 
         return build_account_summaries(
             accounts=accounts,
@@ -180,7 +187,20 @@ class AccountsService:
             request_usage_by_account=request_usage_by_account,
             additional_quotas_by_account=additional_quotas_by_account,
             limit_warmups_by_account=limit_warmups_by_account,
+            fable_scoped_weekly_by_account=fable_scoped_weekly_by_account,
             encryptor=self._encryptor,
+        )
+
+    async def _fable_scoped_weekly_by_account(self, account_ids: list[str]) -> dict[str, AdditionalUsageHistory]:
+        """Single batched lookup mirroring the routing path's eligibility read
+        (app/modules/proxy/anthropic_service.py) — one query, no N+1."""
+        if not self._additional_usage_repo:
+            return {}
+        additional_usage_repo = cast(AdditionalUsageRepository, self._additional_usage_repo)
+        return await additional_usage_repo.latest_by_account(
+            _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+            _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
+            account_ids=account_ids,
         )
 
     async def _request_usage_by_account(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
