@@ -302,3 +302,11 @@ def test_pool_wait_should_hold_requires_reset_and_budget(monkeypatch: pytest.Mon
         anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=False, deadline=200.0) is False
     )
     assert anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=True, deadline=50.0) is False
+
+
+def test_overloaded_backoff_progression_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(anthropic_service_module, "_OVERLOADED_RETRY_JITTER", lambda: 0.0)
+
+    delays = [anthropic_service_module._overloaded_backoff_seconds(attempt) for attempt in range(5)]
+
+    assert delays == [0.25, 0.5, 1.0, 2.0, 2.0]

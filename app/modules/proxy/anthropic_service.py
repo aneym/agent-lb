@@ -58,6 +58,29 @@ _ANTHROPIC_UNIFIED_STATUS_HEADERS = (
 )
 _ANTHROPIC_UNIFIED_ALLOWED_STATUSES = frozenset({"allowed", "allowed_warning"})
 
+# Upstream 529 "Overloaded" is a transient capacity signal, not quota or
+# account health: during partial brownouts another account frequently serves
+# the same request immediately. Failover retries back off briefly so a herd
+# of concurrent requests does not hammer the next account in lockstep.
+_OVERLOADED_BACKOFF_BASE_SECONDS = 0.25
+_OVERLOADED_BACKOFF_MAX_SECONDS = 2.0
+_OVERLOADED_BACKOFF_MAX_JITTER_SECONDS = 0.25
+
+
+def _default_overloaded_backoff_jitter() -> float:
+    return random.uniform(0.0, _OVERLOADED_BACKOFF_MAX_JITTER_SECONDS)
+
+
+# Injection points so tests drive 529 failover without real sleeps.
+_OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
+_OVERLOADED_RETRY_JITTER: Callable[[], float] = _default_overloaded_backoff_jitter
+
+
+def _overloaded_backoff_seconds(attempt: int) -> float:
+    base = min(_OVERLOADED_BACKOFF_BASE_SECONDS * (2**attempt), _OVERLOADED_BACKOFF_MAX_SECONDS)
+    return base + _OVERLOADED_RETRY_JITTER()
+
+
 # Pool-exhausted wait: how streams hold for the next window instead of dying.
 # Sleeps are sliced so an account freed early (cooldown cleared, account
 # added) is picked up within one poll interval; jitter avoids a thundering
@@ -282,6 +305,30 @@ class AnthropicProxyService:
                                     last_error_status = resp.status
                                     last_error_message = error_message
                                     continue
+                                if resp.status == 529:
+                                    # Transient upstream overload: another
+                                    # account frequently serves the same
+                                    # request immediately, so fail over inside
+                                    # the attempt budget instead of raising.
+                                    # No quota cooldown — 529 is not quota.
+                                    error_message = await _read_error_message(resp)
+                                    await self._load_balancer.record_error(account)
+                                    await self._persist_request_log(
+                                        account=account,
+                                        provider_name=provider_name,
+                                        request_id=request_id,
+                                        model=payload.model,
+                                        started_at=started_at,
+                                        status="error",
+                                        error_code="upstream_529",
+                                        error_message=error_message,
+                                        api_key=api_key,
+                                    )
+                                    last_error_status = resp.status
+                                    last_error_message = error_message
+                                    if attempt + 1 < _MAX_SELECTION_ATTEMPTS:
+                                        await _OVERLOADED_RETRY_SLEEP(_overloaded_backoff_seconds(attempt))
+                                    continue
                                 if resp.status >= 400:
                                     error_details = await _read_error_details(resp)
                                     await self._load_balancer.record_error(account)
@@ -369,16 +416,31 @@ class AnthropicProxyService:
                         pending_wait_error = exc
                         account_override = None
                         continue
+                    if last_error_status == 529 and exc.retry_at is None:
+                        # Candidates ran out mid-wake after 529s: the pool is
+                        # not the problem, upstream is overloaded — surface the
+                        # vendor-native error so clients retry appropriately.
+                        raise AnthropicProxyError(
+                            529,
+                            last_error_message or "Upstream overloaded",
+                            code="overloaded_error",
+                        ) from exc
                     raise
 
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
                 # Upstream 429s above recorded cooldowns, so eligibility now knows the
                 # earliest reset; surface it so clients can schedule a retry.
                 eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
+                # A budget exhausted on 529s is an upstream overload, not a
+                # local pool problem: surface the vendor-native type so
+                # clients apply their own overload retry policy.
+                exhausted_code = (
+                    "overloaded_error" if last_error_status == 529 else _no_available_accounts_code(provider_name)
+                )
                 exhausted_error = AnthropicProxyError(
                     last_error_status or 503,
                     message,
-                    code=_no_available_accounts_code(provider_name),
+                    code=exhausted_code,
                     retry_at=eligibility.next_reset_at,
                 )
                 if _pool_wait_should_hold(exhausted_error, wait_enabled=wait_enabled, deadline=wait_deadline):
