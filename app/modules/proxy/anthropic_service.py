@@ -999,7 +999,12 @@ def _messages_quota_key(payload: AnthropicMessageRequest, *, provider_name: str)
 def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
     if provider_name == GLM_PROVIDER_NAME:
         return "glm_coding_thinking" if payload.thinking else "glm_coding"
-    return _anthropic_quota_key(payload)
+    base = _anthropic_quota_key(payload)
+    # Fable-class traffic gets its own affinity family so a session that
+    # interleaves Fable and non-Fable requests holds two independent sticky
+    # pins instead of ping-ponging one pin between an under-threshold (Fable)
+    # and an over-threshold (burn_first) account on every model switch.
+    return f"{base}_fable" if _is_fable_model(payload.model) else base
 
 
 def _anthropic_fast_mode_requested(payload: AnthropicMessageRequest) -> bool:

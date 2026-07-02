@@ -13,3 +13,10 @@
       sticky sessions unaffected (`tests/integration/test_anthropic_proxy.py`).
 - [x] Validate: pytest (anthropic proxy, load balancer), ruff,
       `openspec validate --specs`, service restart + live selection-log check.
+- [x] Fable-scoped session affinity: `_fable` affinity suffix in
+      `_messages_affinity_quota_key` and the session-route default/validation
+      (`app/modules/proxy/anthropic_service.py`, `app/modules/proxy/api.py`)
+      so mixed-model sessions hold two stable pins instead of ping-ponging.
+- [x] Tests: mixed-model session keeps both pins across alternation; fast-mode
+      Fable affinity; session-route accepts `_fable` affinity keys.
+- [x] Validate: pytest, ruff, restart + live re-measure of cache hit rate.

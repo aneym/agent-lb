@@ -45,3 +45,28 @@ account is rate-limited.
 - **GIVEN** `ANTHROPIC_FABLE_STICKY_DRAIN_ENABLED=false`
 - **WHEN** any sticky selection runs
 - **THEN** reallocation behaves exactly as before this change
+
+### Requirement: Session affinity is scoped by Fable class
+
+Anthropic sticky-session affinity SHALL keep Fable-class and non-Fable traffic on separate sticky keys within one session:
+Fable-class requests suffix the affinity quota key with `_fable`, so the Fable
+hard filter and the non-Fable drain preference each rewrite only their own
+class's pin and a mixed-model session cannot ping-pong one shared mapping
+between an under-threshold and an over-threshold account. Non-Fable affinity
+keys are unchanged. Fast-mode Fable-class requests resolve to the Fable-scoped
+affinity of their parent class.
+
+#### Scenario: Mixed-model session holds two stable pins
+
+- **GIVEN** a session that alternates Fable-class and non-Fable requests on the
+  same underlying quota
+- **WHEN** the requests are routed repeatedly
+- **THEN** the Fable pin stays on an under-threshold account and the non-Fable
+  pin stays on the over-threshold account
+- **AND** neither mapping is rewritten by the other class's requests
+
+#### Scenario: Session-route accepts Fable-scoped affinity keys
+
+- **WHEN** a session-route request resolves or supplies a `_fable`-suffixed
+  affinity quota key for a Fable-class model
+- **THEN** validation accepts it and the sticky mapping uses the scoped key

@@ -171,9 +171,9 @@ def test_anthropic_fast_mode_uses_fast_quota_and_model_affinity():
     )
 
     assert quota_key == "anthropic_fast"
-    assert affinity_quota_key == "anthropic_top_thinking"
+    assert affinity_quota_key == "anthropic_top_thinking_fable"
     assert key is not None
-    assert key.startswith("claude:anthropic_top_thinking:session:")
+    assert key.startswith("claude:anthropic_top_thinking_fable:session:")
 
 
 def test_anthropic_fast_beta_header_without_fast_speed_uses_model_quota():
@@ -197,7 +197,48 @@ def test_anthropic_fast_beta_header_without_fast_speed_uses_model_quota():
 
     assert quota_key == "anthropic_top_thinking"
     assert key is not None
-    assert key.startswith("claude:anthropic_top_thinking:session:")
+    assert key.startswith("claude:anthropic_top_thinking_fable:session:")
+
+
+def test_messages_affinity_quota_key_scopes_fable_class_separately():
+    fable_payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        }
+    )
+    opus_payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        }
+    )
+    haiku_payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-haiku-4-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+    # Fable-class traffic gets a distinct affinity family; non-Fable models
+    # (opus, haiku) keep the unchanged, unsuffixed quota key.
+    assert (
+        anthropic_proxy_module._messages_affinity_quota_key(fable_payload, provider_name="anthropic")
+        == "anthropic_top_thinking_fable"
+    )
+    assert (
+        anthropic_proxy_module._messages_affinity_quota_key(opus_payload, provider_name="anthropic")
+        == "anthropic_top_thinking"
+    )
+    assert (
+        anthropic_proxy_module._messages_affinity_quota_key(haiku_payload, provider_name="anthropic")
+        == "anthropic_standard"
+    )
 
 
 def test_glm_messages_derive_glm_provider_quota_and_sticky_key():
@@ -424,6 +465,30 @@ async def test_anthropic_session_route_accepts_fast_quota_with_model_affinity(as
         ).scalar_one()
 
     assert sticky.account_id == "anthropic-fast-preflight"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_session_route_accepts_explicit_fable_affinity_quota_key(async_client):
+    await _insert_account(
+        account_id="anthropic-fable-affinity-preflight",
+        provider="anthropic",
+        access_token="anthropic-access-fable-affinity",
+        email="fable-affinity@example.com",
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-route-fable-affinity",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+            "affinityQuotaKey": "anthropic_top_thinking_fable",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["quotaKey"] == "anthropic_top_thinking"
+    assert response.json()["affinityQuotaKey"] == "anthropic_top_thinking_fable"
 
 
 @pytest.mark.asyncio
@@ -1127,7 +1192,7 @@ async def test_anthropic_messages_keep_same_session_on_sticky_account(async_clie
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
         request,
         {"x-claude-session-id": "claude-session-sticky"},
-        quota_key=anthropic_proxy_module._anthropic_quota_key(request),
+        quota_key=anthropic_proxy_module._messages_affinity_quota_key(request, provider_name="anthropic"),
     )
     async with SessionLocal() as session:
         result = await session.execute(
@@ -1170,7 +1235,7 @@ async def test_anthropic_messages_fails_over_when_refresh_invalid_grant_before_u
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
         request,
         {"x-claude-session-id": "claude-refresh-failover"},
-        quota_key=anthropic_proxy_module._anthropic_quota_key(request),
+        quota_key=anthropic_proxy_module._messages_affinity_quota_key(request, provider_name="anthropic"),
     )
     async with SessionLocal() as session:
         session.add(
@@ -1272,10 +1337,11 @@ async def test_anthropic_429_records_quota_cooldown_and_fails_over_without_globa
     }
     request = AnthropicMessageRequest.model_validate(payload)
     quota_key = anthropic_proxy_module._anthropic_quota_key(request)
+    affinity_quota_key = anthropic_proxy_module._messages_affinity_quota_key(request, provider_name="anthropic")
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
         request,
         {"x-claude-session-id": "claude-session-failover"},
-        quota_key=quota_key,
+        quota_key=affinity_quota_key,
     )
     async with SessionLocal() as session:
         session.add(
@@ -1405,7 +1471,7 @@ async def test_anthropic_429_failover_repins_durable_mapping_to_serving_account(
         "thinking": {"type": "adaptive"},
     }
     request = AnthropicMessageRequest.model_validate(payload)
-    quota_key = anthropic_proxy_module._anthropic_quota_key(request)
+    quota_key = anthropic_proxy_module._messages_affinity_quota_key(request, provider_name="anthropic")
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
         request,
         {"x-claude-session-id": "claude-session-repin"},
@@ -1765,6 +1831,73 @@ async def test_non_fable_burn_preference_respects_preserve_policy(async_client):
     # The stored preserve policy must not be overridden by the burn stamp.
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-preserve-fresh"
+
+
+@pytest.mark.asyncio
+async def test_mixed_model_session_holds_separate_pins(async_client):
+    """A session that interleaves Fable and non-Fable requests on the same
+    quotaKey family must hold two independent sticky pins (one per Fable-
+    class affinity family) instead of ping-ponging a single shared pin
+    between the under-threshold and over-threshold accounts."""
+    await _insert_account(
+        account_id="anthropic-mixed-hot",
+        provider="anthropic",
+        access_token="anthropic-access-mixed-hot",
+        email="mixed-hot@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-mixed-fresh",
+        provider="anthropic",
+        access_token="anthropic-access-mixed-fresh",
+        email="mixed-fresh@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-mixed-hot", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-mixed-fresh", used_percent=10.0)
+
+    session_id = "session-mixed-model-alternation"
+
+    async def _route(model: str) -> str:
+        response = await async_client.post(
+            "/api/anthropic/session-route",
+            json={
+                "sessionId": session_id,
+                "model": model,
+                "quotaKey": "anthropic_top_thinking",
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["accountId"]
+
+    assert await _route("claude-fable-5") == "anthropic-mixed-fresh"
+    assert await _route("claude-sonnet-5") == "anthropic-mixed-hot"
+    assert await _route("claude-fable-5") == "anthropic-mixed-fresh"
+    assert await _route("claude-sonnet-5") == "anthropic-mixed-hot"
+
+    session_hash = anthropic_proxy_module._hash_for_key(session_id)
+    fable_sticky_key = f"claude:anthropic_top_thinking_fable:session:{session_hash}"
+    non_fable_sticky_key = f"claude:anthropic_top_thinking:session:{session_hash}"
+    assert fable_sticky_key != non_fable_sticky_key
+
+    async with SessionLocal() as session:
+        fable_sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == fable_sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+        non_fable_sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == non_fable_sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+
+    assert fable_sticky.account_id == "anthropic-mixed-fresh"
+    assert non_fable_sticky.account_id == "anthropic-mixed-hot"
 
 
 @pytest.mark.asyncio
@@ -2225,7 +2358,7 @@ async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(a
     sticky_key = anthropic_proxy_module._anthropic_sticky_key(
         request,
         headers,
-        quota_key=anthropic_proxy_module._anthropic_quota_key(request),
+        quota_key=anthropic_proxy_module._messages_affinity_quota_key(request, provider_name="anthropic"),
     )
     assert sticky_key is not None
     async with SessionLocal() as session:

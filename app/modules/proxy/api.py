@@ -112,7 +112,7 @@ from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.proxy import affinity as proxy_affinity_module
 from app.modules.proxy import images_service as images_service_module
 from app.modules.proxy import service as proxy_service_module
-from app.modules.proxy.anthropic_service import AnthropicProxyError
+from app.modules.proxy.anthropic_service import AnthropicProxyError, _is_fable_model
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.helpers import _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
@@ -166,6 +166,10 @@ _ANTHROPIC_SESSION_ROUTE_AFFINITY_QUOTA_KEYS: Final[frozenset[str]] = frozenset(
         "anthropic_standard",
         "anthropic_top",
         "anthropic_top_thinking",
+        # Fable-class variants: see _default_anthropic_affinity_quota_key.
+        "anthropic_standard_fable",
+        "anthropic_top_fable",
+        "anthropic_top_thinking_fable",
     }
 )
 
@@ -288,10 +292,16 @@ async def claim_anthropic_session_route(
 
 def _default_anthropic_affinity_quota_key(model: str, quota_key: str) -> str:
     if quota_key != "anthropic_fast":
-        return quota_key
-    if "haiku" in model.lower():
-        return "anthropic_standard"
-    return "anthropic_top_thinking"
+        resolved = quota_key
+    elif "haiku" in model.lower():
+        resolved = "anthropic_standard"
+    else:
+        resolved = "anthropic_top_thinking"
+    # Fable-class traffic gets its own affinity family (see
+    # anthropic_service._messages_affinity_quota_key) so a mixed-model
+    # session doesn't ping-pong one sticky pin between accounts on every
+    # model switch.
+    return f"{resolved}_fable" if _is_fable_model(model) else resolved
 
 
 def _openai_error_type_for_status(status_code: int) -> str:
