@@ -41,6 +41,11 @@ _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
+# Mirrored in app/modules/accounts/pulse.py (ANTHROPIC_FABLE_ACCESS_QUOTA_KEY)
+# — both must agree on the quota_key/window identifying the Fable-access
+# probe marker written by the account pulse.
+_ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
+_ANTHROPIC_FABLE_ACCESS_WINDOW = "primary"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
@@ -731,10 +736,22 @@ class AnthropicProxyService:
                     and (entry.reset_at is None or int(entry.reset_at) > now)
                 }
             weekly_usage_used_percent: dict[str, float] = {}
+            fable_access_markers: dict[str, tuple[float, int | None]] = {}
             if fable_routing:
                 weekly_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
+                # Snapshot scalars inside the repo session — the ORM rows
+                # detach once the context closes (regression 1f47e633).
                 weekly_usage_used_percent = {
                     account_id: float(entry.used_percent) for account_id, entry in weekly_usage.items()
+                }
+                fable_access = await repos.additional_usage.latest_by_account(
+                    _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY,
+                    _ANTHROPIC_FABLE_ACCESS_WINDOW,
+                    account_ids=account_ids,
+                )
+                fable_access_markers = {
+                    account_id: (float(entry.used_percent), entry.reset_at)
+                    for account_id, entry in fable_access.items()
                 }
 
         eligible_account_ids: list[str] = []
@@ -774,11 +791,28 @@ class AnthropicProxyService:
                 account_id for account_id in eligible_account_ids if _weekly_used(account_id) >= threshold
             )
             if _is_fable_model(model):
+                def _has_fresh_capable_fable_marker(account_id: str) -> bool:
+                    # Empirically verified access: the weekly threshold is an
+                    # unverified assumption, so a fresh probe that actually
+                    # succeeded admits the account alongside under-threshold
+                    # ones instead of permanently stranding its capacity.
+                    marker = fable_access_markers.get(account_id)
+                    if marker is None:
+                        return False
+                    marker_used_percent, marker_reset_at = marker
+                    if marker_used_percent >= 100.0:
+                        return False
+                    return marker_reset_at is None or marker_reset_at > now
+
                 under_threshold = [
                     account_id for account_id in eligible_account_ids if account_id not in over_threshold
                 ]
-                if under_threshold:
-                    eligible_account_ids = under_threshold
+                probed_capable = [
+                    account_id for account_id in over_threshold if _has_fresh_capable_fable_marker(account_id)
+                ]
+                fable_candidates = under_threshold + probed_capable
+                if fable_candidates:
+                    eligible_account_ids = fable_candidates
                 elif over_threshold:
                     # The local threshold is a preference, not an oracle —
                     # upstream decides whether Fable is actually refused.

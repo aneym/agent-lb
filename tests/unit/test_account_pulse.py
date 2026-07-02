@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, cast
@@ -11,11 +11,12 @@ import pytest
 
 from app.core.auth.refresh import RefreshError
 from app.core.crypto import TokenEncryptor
+from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus
 from app.modules.accounts import probes
 from app.modules.accounts import pulse as pulse_module
 from app.modules.accounts.probes import ProbeVerdict, classify_probe_result
-from app.modules.accounts.pulse import AccountPulseScheduler
+from app.modules.accounts.pulse import AccountPulseScheduler, FableProbeVerdict, _classify_fable_probe
 
 pytestmark = pytest.mark.unit
 
@@ -115,6 +116,11 @@ def _build_scheduler(
     interval_seconds: int = 3600,
     recovery_interval_seconds: int = 900,
     failure_backoff_base_seconds: float = 600.0,
+    weekly_usage: dict[str, tuple[float, int | None]] | None = None,
+    fable_probe_results: dict[str, tuple[int, str | None]] | None = None,
+    fable_probe_calls: list[str] | None = None,
+    fable_marker_writes: list[tuple[str, float, int | None]] | None = None,
+    now: Callable[[], datetime] | None = None,
 ) -> AccountPulseScheduler:
     @asynccontextmanager
     async def repo_factory() -> AsyncIterator[_Repo]:
@@ -126,7 +132,26 @@ def _build_scheduler(
             probe_calls.append(account.id)
         return probe_results[account.id]
 
-    return AccountPulseScheduler(
+    # Fable-probe fakes never touch the DB: weekly_usage defaults to "no
+    # weekly data" so existing tests that don't opt in stay isolated and
+    # never reach fable_probe_sender/fable_marker_writer.
+    async def weekly_usage_lookup(account_id: str) -> tuple[float, int | None] | None:
+        if weekly_usage is None:
+            return None
+        return weekly_usage.get(account_id)
+
+    async def fable_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
+        del access_token
+        if fable_probe_calls is not None:
+            fable_probe_calls.append(account.id)
+        assert fable_probe_results is not None
+        return fable_probe_results[account.id]
+
+    async def fable_marker_writer(account_id: str, used_percent: float, reset_at: int | None) -> None:
+        if fable_marker_writes is not None:
+            fable_marker_writes.append((account_id, used_percent, reset_at))
+
+    kwargs: dict[str, Any] = dict(
         interval_seconds=interval_seconds,
         enabled=True,
         concurrency=2,
@@ -137,8 +162,14 @@ def _build_scheduler(
         repo_factory=repo_factory,  # type: ignore[arg-type]
         auth_manager_factory=lambda _repo: _AuthManager(auth_failures),
         probe_sender=probe_sender,
+        weekly_usage_lookup=weekly_usage_lookup,
+        fable_probe_sender=fable_probe_sender,
+        fable_marker_writer=fable_marker_writer,
         _encryptor=cast(TokenEncryptor, _Encryptor()),
     )
+    if now is not None:
+        kwargs["now"] = now
+    return AccountPulseScheduler(**kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -417,4 +448,150 @@ async def test_pulse_transient_refresh_failure_makes_no_writes() -> None:
     await scheduler.pulse_once()
 
     assert repo.status_updates == []
+    assert repo.ledger_updates == []
+
+
+def _fixed_now() -> datetime:
+    return datetime(2026, 1, 1, 0, 0, 0)
+
+
+def test_classify_fable_probe_covers_all_verdicts() -> None:
+    assert _classify_fable_probe(200, None) is FableProbeVerdict.CAPABLE
+    assert _classify_fable_probe(204, None) is FableProbeVerdict.CAPABLE
+    assert _classify_fable_probe(400, "model not available") is FableProbeVerdict.REFUSED
+    assert _classify_fable_probe(403, "permission denied") is FableProbeVerdict.REFUSED
+    assert _classify_fable_probe(404, "model not found") is FableProbeVerdict.REFUSED
+    assert _classify_fable_probe(429, None) is FableProbeVerdict.INCONCLUSIVE
+    assert _classify_fable_probe(500, None) is FableProbeVerdict.INCONCLUSIVE
+    assert _classify_fable_probe(probes.PROBE_NETWORK_FAILURE_STATUS, "timeout") is FableProbeVerdict.INCONCLUSIVE
+
+
+@pytest.mark.asyncio
+async def test_pulse_probes_fable_access_for_over_threshold_account_and_writes_capable_marker() -> None:
+    account = _account()
+    repo = _Repo([account])
+    fable_calls: list[str] = []
+    marker_writes: list[tuple[str, float, int | None]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (60.0, None)},
+        fable_probe_results={account.id: (200, None)},
+        fable_probe_calls=fable_calls,
+        fable_marker_writes=marker_writes,
+        now=_fixed_now,
+    )
+
+    await scheduler.pulse_once()
+
+    assert fable_calls == [account.id]
+    expected_reset_at = naive_utc_to_epoch(_fixed_now()) + 43200
+    assert marker_writes == [(account.id, 0.0, expected_reset_at)]
+
+
+@pytest.mark.asyncio
+async def test_pulse_fable_probe_refusal_writes_marker_with_weekly_reset_and_leaves_status_untouched() -> None:
+    account = _account()
+    repo = _Repo([account])
+    marker_writes: list[tuple[str, float, int | None]] = []
+    weekly_reset_at = naive_utc_to_epoch(_fixed_now()) + 400_000
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (60.0, weekly_reset_at)},
+        fable_probe_results={account.id: (403, "model access refused")},
+        fable_marker_writes=marker_writes,
+        now=_fixed_now,
+    )
+
+    await scheduler.pulse_once()
+
+    assert marker_writes == [(account.id, 100.0, weekly_reset_at)]
+    # A refused Fable probe must never change account status or the
+    # subscription ledger.
+    assert repo.status_updates == []
+    assert repo.ledger_updates == []
+
+
+@pytest.mark.asyncio
+async def test_pulse_fable_probe_refusal_falls_back_to_24h_when_weekly_reset_unknown() -> None:
+    account = _account()
+    repo = _Repo([account])
+    marker_writes: list[tuple[str, float, int | None]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (60.0, None)},
+        fable_probe_results={account.id: (404, "model not found")},
+        fable_marker_writes=marker_writes,
+        now=_fixed_now,
+    )
+
+    await scheduler.pulse_once()
+
+    expected_reset_at = naive_utc_to_epoch(_fixed_now()) + 86400
+    assert marker_writes == [(account.id, 100.0, expected_reset_at)]
+
+
+@pytest.mark.asyncio
+async def test_pulse_inconclusive_fable_probe_writes_no_marker() -> None:
+    account = _account()
+    repo = _Repo([account])
+    marker_writes: list[tuple[str, float, int | None]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (60.0, None)},
+        fable_probe_results={account.id: (429, None)},
+        fable_marker_writes=marker_writes,
+        now=_fixed_now,
+    )
+
+    await scheduler.pulse_once()
+
+    assert marker_writes == []
+
+
+@pytest.mark.asyncio
+async def test_pulse_under_threshold_account_is_not_fable_probed() -> None:
+    account = _account()
+    repo = _Repo([account])
+    fable_calls: list[str] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (10.0, None)},
+        fable_probe_results={account.id: (200, None)},
+        fable_probe_calls=fable_calls,
+    )
+
+    await scheduler.pulse_once()
+
+    assert fable_calls == []
+
+
+@pytest.mark.asyncio
+async def test_pulse_fable_probe_disabled_setting_skips_probing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_FABLE_OVER_THRESHOLD_PROBE_ENABLED", "false")
+    get_settings.cache_clear()
+
+    account = _account()
+    repo = _Repo([account])
+    fable_calls: list[str] = []
+    marker_writes: list[tuple[str, float, int | None]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (60.0, None)},
+        fable_probe_results={account.id: (200, None)},
+        fable_probe_calls=fable_calls,
+        fable_marker_writes=marker_writes,
+    )
+
+    await scheduler.pulse_once()
+
+    assert fable_calls == []
+    assert marker_writes == []
     assert repo.ledger_updates == []

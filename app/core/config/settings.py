@@ -204,6 +204,13 @@ class Settings(BaseSettings):
     # selectable burn_first account proactively, instead of waiting for
     # budget pressure to force the reallocation.
     anthropic_fable_sticky_drain_enabled: bool = True
+    # The weekly threshold is an unverified belief about Anthropic's Fable
+    # policy — keep empirically probing over-threshold accounts instead of
+    # permanently stranding them in case upstream doesn't actually block.
+    anthropic_fable_over_threshold_probe_enabled: bool = True
+    # How long a "capable" Fable-probe marker stays fresh before the account
+    # must be re-verified (default: two pulse cycles at the default interval).
+    anthropic_fable_probe_ttl_seconds: int = 43200
     # Fable-class traffic never stamps burn_first, so a budget-pressured pin with
     # no burn-first target would otherwise ride to the 429 wall; this lets it
     # rebind to a budget-safe account one window early (anti-thrash guard still

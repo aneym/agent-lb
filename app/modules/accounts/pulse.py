@@ -10,13 +10,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Protocol, cast
 
 from app.core.audit.service import AuditService
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.crypto import TokenEncryptor
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME, normalize_provider_name
-from app.core.utils.time import to_utc_naive, utcnow
+from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts import probes
@@ -25,11 +26,57 @@ from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import (
     ACTIVE_SUBSCRIPTION_STATUS,
     CANCELED_SUBSCRIPTION_STATUS,
+    is_subscription_usable,
     normalize_subscription_status,
 )
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
 logger = logging.getLogger(__name__)
+
+_FABLE_PROBE_MODEL = "claude-fable-5"
+# Mirrored in anthropic_service.py's _provider_quota_eligibility read side —
+# both must agree on the quota_key/window identifying this marker.
+ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
+_ANTHROPIC_FABLE_PROBE_FEATURE = "anthropic_fable_probe"
+_ANTHROPIC_FABLE_PROBE_WINDOW = "primary"
+
+
+class FableProbeVerdict(str, Enum):
+    CAPABLE = "capable"
+    REFUSED = "refused"
+    INCONCLUSIVE = "inconclusive"
+
+
+def _classify_fable_probe(status: int, message: str | None) -> FableProbeVerdict:
+    """Map a claude-fable-5 probe HTTP status to a Fable-capability verdict.
+
+    Unlike the general account-health probe, a 4xx here is a real signal:
+    the probe body is fixed and known-good, so a model/permission refusal
+    (400/403/404) means Anthropic rejected Fable specifically for this
+    account. 429/5xx/network failures stay inconclusive and must not write
+    a marker — the account keeps its prior state until a decisive probe.
+    """
+    del message  # reserved for future refinement of refusal detection
+    if 200 <= status < 300:
+        return FableProbeVerdict.CAPABLE
+    if status in (400, 403, 404):
+        return FableProbeVerdict.REFUSED
+    return FableProbeVerdict.INCONCLUSIVE
+
+
+def _is_fable_probe_routable(account: Account) -> bool:
+    """Same routable notion selection uses (see load_balancer.selectable_accounts):
+
+    excludes reauth-required, deactivated, and paused rows, and canceled
+    subscriptions — those can never serve Fable traffic regardless of a
+    probe outcome, so probing them is pointless until the main pulse probe
+    (not this one) restores them.
+    """
+    return (
+        account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
+        and is_subscription_usable(account)
+    )
 
 
 class _LeaderElectionLike(Protocol):
@@ -71,6 +118,10 @@ _RepoFactory = Callable[[], AbstractAsyncContextManager[_AccountsRepositoryLike]
 _AuthManagerFactory = Callable[[_AccountsRepositoryLike], _AuthManagerLike]
 _LeaderElectionFactory = Callable[[], _LeaderElectionLike]
 _ProbeSender = Callable[[Account, str], Awaitable[tuple[int, str | None]]]
+# (used_percent, reset_at) of the account's latest weekly (secondary) usage
+# entry, or None when no such entry exists.
+_WeeklyUsageLookup = Callable[[str], Awaitable[tuple[float, int | None] | None]]
+_FableMarkerWriter = Callable[[str, float, int | None], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -114,6 +165,9 @@ class AccountPulseScheduler:
     repo_factory: _RepoFactory = field(default_factory=lambda: _default_accounts_repo_factory)
     auth_manager_factory: _AuthManagerFactory = field(default_factory=lambda: _default_auth_manager_factory)
     probe_sender: _ProbeSender = field(default_factory=lambda: _default_probe_sender)
+    fable_probe_sender: _ProbeSender = field(default_factory=lambda: _default_fable_probe_sender)
+    weekly_usage_lookup: _WeeklyUsageLookup = field(default_factory=lambda: _default_weekly_usage_lookup)
+    fable_marker_writer: _FableMarkerWriter = field(default_factory=lambda: _default_fable_marker_writer)
     sleep: Callable[[float], Awaitable[None]] = field(default_factory=lambda: asyncio.sleep)
     now: Callable[[], datetime] = field(default_factory=lambda: utcnow)
     _task: asyncio.Task[None] | None = None
@@ -251,6 +305,53 @@ class AccountPulseScheduler:
                 status, message = await self.probe_sender(fresh_account, access_token)
                 verdict = probes.classify_probe_result(status, message)
                 await self._apply_verdict(repo, fresh_account, verdict, status, message)
+                # Runs after the normal verdict is fully applied, and is
+                # internally exception-safe, so a Fable-probe failure can
+                # never suppress or alter the handling above.
+                await self._maybe_probe_fable_access(fresh_account, access_token)
+
+    async def _maybe_probe_fable_access(self, account: Account, access_token: str) -> None:
+        """Send an additional tiny claude-fable-5 probe to routable Anthropic
+        accounts at/over the Fable weekly threshold and record the outcome as
+        a Fable-access marker (see ANTHROPIC_FABLE_ACCESS_QUOTA_KEY).
+
+        This never changes account status, the subscription ledger, or any
+        other routing state — it only feeds the marker that
+        ``_provider_quota_eligibility`` reads to decide Fable eligibility.
+        """
+        from app.core.config.settings import get_settings
+
+        try:
+            settings = get_settings()
+            if not settings.anthropic_fable_over_threshold_probe_enabled:
+                return
+            if normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
+                return
+            if not _is_fable_probe_routable(account):
+                return
+            weekly = await self.weekly_usage_lookup(account.id)
+            if weekly is None:
+                return
+            used_percent, weekly_reset_at = weekly
+            if used_percent < settings.anthropic_fable_weekly_max_used_percent:
+                return
+            status, message = await self.fable_probe_sender(account, access_token)
+            verdict = _classify_fable_probe(status, message)
+            if verdict is FableProbeVerdict.INCONCLUSIVE:
+                return
+            now_epoch = naive_utc_to_epoch(to_utc_naive(self.now()))
+            if verdict is FableProbeVerdict.CAPABLE:
+                ttl = max(1, int(settings.anthropic_fable_probe_ttl_seconds))
+                await self.fable_marker_writer(account.id, 0.0, now_epoch + ttl)
+            else:
+                reset_at = weekly_reset_at if weekly_reset_at is not None else now_epoch + 86400
+                await self.fable_marker_writer(account.id, 100.0, reset_at)
+        except Exception:
+            logger.warning(
+                "Account pulse Fable probe failed account_id=%s",
+                account.id,
+                exc_info=True,
+            )
 
     async def _apply_verdict(
         self,
@@ -440,6 +541,47 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
         model=probes.DEFAULT_PROBE_MODEL,
     )
     return status, None
+
+
+async def _default_fable_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
+    # Reuses the exact probe machinery POST /api/accounts/{id}/probe and the
+    # main pulse probe use (probes.send_messages_probe, max_tokens=4), just
+    # pinned to the Fable model instead of the subscription-check model.
+    del account
+    from app.core.config.settings import get_settings
+
+    settings = get_settings()
+    return await probes.send_messages_probe(
+        access_token=access_token,
+        base_url=settings.anthropic_upstream_base_url,
+        model=_FABLE_PROBE_MODEL,
+    )
+
+
+async def _default_weekly_usage_lookup(account_id: str) -> tuple[float, int | None] | None:
+    async with get_background_session() as session:
+        repo = UsageRepository(session)
+        entry = await repo.latest_entry_for_account(account_id, window="secondary")
+        if entry is None:
+            return None
+        return float(entry.used_percent), (int(entry.reset_at) if entry.reset_at is not None else None)
+
+
+async def _default_fable_marker_writer(account_id: str, used_percent: float, reset_at: int | None) -> None:
+    now_epoch = naive_utc_to_epoch(utcnow())
+    window_minutes = max(1, int((reset_at - now_epoch + 59) / 60)) if reset_at is not None else None
+    async with get_background_session() as session:
+        repo = AdditionalUsageRepository(session)
+        await repo.add_entry(
+            account_id,
+            limit_name=ANTHROPIC_FABLE_ACCESS_QUOTA_KEY,
+            metered_feature=_ANTHROPIC_FABLE_PROBE_FEATURE,
+            quota_key=ANTHROPIC_FABLE_ACCESS_QUOTA_KEY,
+            window=_ANTHROPIC_FABLE_PROBE_WINDOW,
+            used_percent=used_percent,
+            reset_at=reset_at,
+            window_minutes=window_minutes,
+        )
 
 
 def _get_leader_election() -> _LeaderElectionLike:
