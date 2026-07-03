@@ -12,6 +12,7 @@ from app.core.usage.quota import apply_usage_quota
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAuthStatus,
@@ -244,6 +245,7 @@ def _account_to_summary(
     )
     # AccountSummary still carries the raw credit fields below so extra-usage
     # burn stays dashboard-visible even though it never rescues the status.
+    account_is_locally_owned = is_locally_owned(account, config_settings.get_settings())
     return AccountSummary(
         account_id=account.id,
         provider=account.provider,
@@ -288,6 +290,8 @@ def _account_to_summary(
         limit_warmup_enabled=bool(account.limit_warmup_enabled),
         limit_warmup=_limit_warmup_to_status(limit_warmup),
         is_email_duplicate=is_email_duplicate,
+        owner_instance=account.owner_instance,
+        is_locally_owned=account_is_locally_owned,
     )
 
 

@@ -122,6 +122,8 @@ export const AccountSummarySchema = z.object({
   limitWarmupEnabled: z.boolean().default(false),
   limitWarmup: AccountLimitWarmupStatusSchema.nullable().optional(),
   isEmailDuplicate: z.boolean().optional(),
+  ownerInstance: z.string().nullable().optional(),
+  isLocallyOwned: z.boolean().optional(),
 });
 
 export const AccountTrendsResponseSchema = z.object({

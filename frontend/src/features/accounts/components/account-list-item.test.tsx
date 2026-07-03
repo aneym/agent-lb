@@ -251,6 +251,32 @@ describe("AccountListItem", () => {
     expect(screen.getByText("preserve")).toBeInTheDocument();
   });
 
+  it("shows a mirror badge for non-locally-owned accounts", () => {
+    const account = createAccountSummary({
+      ownerInstance: "studio",
+      isLocallyOwned: false,
+    });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByText("mirror: studio")).toBeInTheDocument();
+  });
+
+  it("does not show a mirror badge for locally-owned accounts", () => {
+    const account = createAccountSummary({
+      ownerInstance: null,
+      isLocallyOwned: true,
+    });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.queryByText(/^mirror/)).not.toBeInTheDocument();
+  });
+
   it("does not annotate normal routing policy", () => {
     const account = createAccountSummary({ routingPolicy: "normal" });
 

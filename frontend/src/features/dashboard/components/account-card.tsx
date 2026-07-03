@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { MonoMeter } from "@/components/ui/mono-meter";
 import { StatusGlyph } from "@/components/ui/status-glyph";
 import { cn } from "@/lib/utils";
+import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
 import type { AccountSummary } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { normalizeStatus } from "@/utils/account-status";
@@ -134,7 +135,13 @@ export function AccountCard({
             </p>
           ) : null}
         </div>
-        <StatusGlyph status={account.status} className="shrink-0" />
+        <div className="flex shrink-0 items-center gap-2">
+          <OwnerInstanceBadge
+            ownerInstance={account.ownerInstance}
+            isLocallyOwned={account.isLocallyOwned}
+          />
+          <StatusGlyph status={account.status} />
+        </div>
       </div>
 
       {/* Quota bars */}

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+from app.core.config.settings import Settings
+from app.core.crypto import TokenEncryptor
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.modules.accounts import mappers
 from app.modules.accounts.mappers import _effective_status_from_usage, _normalize_account_routing_policy
@@ -162,6 +166,30 @@ def test_effective_status_keeps_paused_account_paused_with_usable_credits() -> N
         )
         == AccountStatus.PAUSED
     )
+
+
+def test_account_to_summary_surfaces_owner_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mappers.config_settings, "get_settings", lambda: Settings(local_instance_id="studio"))
+    encryptor = TokenEncryptor()
+
+    owned = _account()
+    owned.provider = "openai"
+    owned.owner_instance = None
+    mirrored = _account()
+    mirrored.provider = "openai"
+    mirrored.owner_instance = "other-instance"
+
+    owned_summary = mappers._account_to_summary(
+        owned, None, None, None, None, None, None, encryptor, include_auth=False
+    )
+    mirrored_summary = mappers._account_to_summary(
+        mirrored, None, None, None, None, None, None, encryptor, include_auth=False
+    )
+
+    assert owned_summary.owner_instance is None
+    assert owned_summary.is_locally_owned is True
+    assert mirrored_summary.owner_instance == "other-instance"
+    assert mirrored_summary.is_locally_owned is False
 
 
 def test_normalize_account_routing_policy() -> None:

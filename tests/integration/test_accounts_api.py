@@ -602,6 +602,49 @@ async def test_list_accounts_flags_email_duplicates(async_client):
 
 
 @pytest.mark.asyncio
+async def test_list_accounts_surfaces_owner_instance(async_client):
+    """GET /api/accounts exposes federation ownership: ownerInstance null +
+    isLocallyOwned true for the classic (non-federated) default, and the
+    owning instance's id + isLocallyOwned false for a mirrored account."""
+    from app.core.utils.time import utcnow
+    from app.modules.accounts.repository import AccountsRepository
+
+    encryptor = TokenEncryptor()
+
+    def _account(account_id: str, owner_instance: str | None) -> Account:
+        account = Account(
+            id=account_id,
+            chatgpt_account_id=f"chatgpt-{account_id}",
+            email=f"{account_id}@example.com",
+            plan_type="plus",
+            access_token_encrypted=encryptor.encrypt("access"),
+            refresh_token_encrypted=encryptor.encrypt("refresh"),
+            id_token_encrypted=encryptor.encrypt("id"),
+            last_refresh=utcnow(),
+            status=AccountStatus.ACTIVE,
+            deactivation_reason=None,
+        )
+        account.owner_instance = owner_instance
+        return account
+
+    async with SessionLocal() as session:
+        repo = AccountsRepository(session)
+        await repo.upsert(_account("owner-null", None), merge_by_email=False)
+        # Not a real hostname, so it can never equal the test process's
+        # local_instance_id (which defaults to the machine hostname).
+        await repo.upsert(_account("owner-remote", "federation-other-instance"), merge_by_email=False)
+
+    response = await async_client.get("/api/accounts")
+    assert response.status_code == 200
+    accounts_by_id = {a["accountId"]: a for a in response.json()["accounts"]}
+
+    assert accounts_by_id["owner-null"]["ownerInstance"] is None
+    assert accounts_by_id["owner-null"]["isLocallyOwned"] is True
+    assert accounts_by_id["owner-remote"]["ownerInstance"] == "federation-other-instance"
+    assert accounts_by_id["owner-remote"]["isLocallyOwned"] is False
+
+
+@pytest.mark.asyncio
 async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_client):
     """GET /api/accounts renders fableEligible from Anthropic's dedicated
     Fable-scoped weekly limit (fresh <=6h) in preference to the overall-weekly

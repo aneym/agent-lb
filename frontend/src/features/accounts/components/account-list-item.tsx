@@ -5,6 +5,7 @@ import { StatusGlyph } from "@/components/ui/status-glyph";
 import { cn } from "@/lib/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
+import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { formatQuotaResetLabel, formatSlug } from "@/utils/formatters";
@@ -112,11 +113,16 @@ export function AccountListItem({
             title
           )}
         </p>
-        <StatusGlyph
-          status={account.status}
-          showLabel={account.status !== "active"}
-          className="shrink-0"
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          <OwnerInstanceBadge
+            ownerInstance={account.ownerInstance}
+            isLocallyOwned={account.isLocallyOwned}
+          />
+          <StatusGlyph
+            status={account.status}
+            showLabel={account.status !== "active"}
+          />
+        </div>
       </div>
 
       <p

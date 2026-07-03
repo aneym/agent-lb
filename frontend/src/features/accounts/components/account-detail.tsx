@@ -11,6 +11,7 @@ import { AccountSubscriptionLedgerPanel } from "@/features/accounts/components/a
 import { AccountTokenInfo } from "@/features/accounts/components/account-token-info";
 import { AccountTrendSection } from "@/features/accounts/components/account-trend-section";
 import { AccountUsagePanel } from "@/features/accounts/components/account-usage-panel";
+import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
 import { providerLabel } from "@/features/accounts/components/provider-label";
 import type {
   AccountRoutingPolicy,
@@ -129,7 +130,13 @@ export function AccountDetail({
               title
             )}
           </h2>
-          <StatusGlyph status={account.status} className="shrink-0" />
+          <div className="flex shrink-0 items-center gap-2">
+            <OwnerInstanceBadge
+              ownerInstance={account.ownerInstance}
+              isLocallyOwned={account.isLocallyOwned}
+            />
+            <StatusGlyph status={account.status} />
+          </div>
         </div>
         {emailSubtitle ? (
           <p className="text-xs text-muted-foreground">

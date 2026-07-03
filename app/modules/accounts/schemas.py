@@ -133,6 +133,12 @@ class AccountSummary(DashboardModel):
     # surface a "delete older" action without requiring the operator to
     # group rows by email themselves. See agent-lb #787 (B).
     is_email_duplicate: bool = False
+    # Instance federation: which agent-lb instance currently owns OAuth refresh
+    # for this account. Null means this instance (the classic, non-federated
+    # case). is_locally_owned is the derived convenience flag the dashboard
+    # badges off of.
+    owner_instance: str | None = None
+    is_locally_owned: bool = True
 
 
 class AccountsResponse(DashboardModel):
