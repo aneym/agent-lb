@@ -14,7 +14,10 @@
 #   clients/claude-lb-launch [claude args...]
 #
 # Env:
-#   CLAUDE_LB_BASE_URL   LB base URL (default http://127.0.0.1:2455)
+#   CLAUDE_LB_LOCAL_URL   local LB base URL, probed first (default http://127.0.0.1:2455)
+#   CLAUDE_LB_LOCAL_PREFER=0  skip the local candidate; probe only CLAUDE_LB_BASE_URL
+#                             (restores pre-federation single-URL behavior)
+#   CLAUDE_LB_BASE_URL   remote/fallback LB base URL (default http://127.0.0.1:2455)
 #   CLAUDE_LB_DISABLE=1  bypass the LB entirely; exec plain `claude`
 #   CLAUDE_LB_SESSION_ID stable session id (default cc-<pid>-<epoch>; headless
 #                        -p/--print runs default to a stable cwd-derived id)
@@ -44,6 +47,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime
@@ -542,17 +546,19 @@ def lb_enabled() -> bool:
     return os.environ.get("CLAUDE_LB_DISABLE") != "1"
 
 
-def lb_json(path: str, *, timeout: float = 2.5) -> dict:
-    request = urllib.request.Request(f"{AGENT_LB_BASE_URL}{path}", headers={"accept": "application/json"})
+def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> dict:
+    request = urllib.request.Request(
+        f"{base_url or AGENT_LB_BASE_URL}{path}", headers={"accept": "application/json"}
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body else {}
 
 
-def lb_post_json(path: str, payload: dict[str, str], *, timeout: float = 4.0) -> dict:
+def lb_post_json(path: str, payload: dict[str, str], *, timeout: float = 4.0, base_url: str | None = None) -> dict:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        f"{AGENT_LB_BASE_URL}{path}",
+        f"{base_url or AGENT_LB_BASE_URL}{path}",
         data=body,
         headers={"accept": "application/json", "content-type": "application/json"},
         method="POST",
@@ -592,27 +598,70 @@ def _is_retryable_shim_connect_error(error: BaseException) -> bool:
     return isinstance(error, ConnectionError) or isinstance(reason, ConnectionError)
 
 
-def lb_health_probe() -> tuple[bool, str]:
-    """Probe /health, retrying briefly so a transient LB restart or tailscale
-    blip does not force the whole session onto plain-claude fallback.
+def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float) -> tuple[bool, str]:
+    """Probe /health at base_url, retrying briefly so a transient LB restart or
+    tailscale blip does not force the whole session onto plain-claude fallback.
 
-    The healthy path returns on the first probe (tens of ms); only failures
-    pay the retry/backoff cost. Tunable via CLAUDE_LB_HEALTH_RETRIES /
-    CLAUDE_LB_HEALTH_TIMEOUT / CLAUDE_LB_HEALTH_RETRY_GAP.
+    The healthy path returns on the first probe (tens of ms); only failures pay
+    the retry/backoff cost.
     """
-    retries = max(1, _env_int("CLAUDE_LB_HEALTH_RETRIES", 4))
-    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
-    gap = _env_float("CLAUDE_LB_HEALTH_RETRY_GAP", 0.75)
     last_error = "no response"
     for attempt in range(retries):
         try:
-            lb_json("/health", timeout=timeout)
+            lb_json("/health", timeout=timeout, base_url=base_url)
             return True, ""
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             last_error = str(error) or error.__class__.__name__
             if attempt + 1 < retries:
                 time.sleep(gap)
     return False, last_error
+
+
+def _lb_candidates() -> list[tuple[str, str]]:
+    """Ordered (label, url) candidates: local first, then remote, deduplicated.
+
+    CLAUDE_LB_LOCAL_PREFER=0 drops the local candidate entirely, restoring the
+    pre-federation single-URL behavior driven solely by CLAUDE_LB_BASE_URL.
+    """
+    # Empty-string env values count as unset (an empty base URL crashes urllib).
+    local_url = (os.environ.get("CLAUDE_LB_LOCAL_URL") or "http://127.0.0.1:2455").rstrip("/")
+    remote_url = (os.environ.get("CLAUDE_LB_BASE_URL") or "http://127.0.0.1:2455").rstrip("/")
+    prefer_local = os.environ.get("CLAUDE_LB_LOCAL_PREFER") != "0"
+
+    candidates: list[tuple[str, str]] = []
+    if prefer_local:
+        candidates.append(("local", local_url))
+    if not prefer_local or remote_url != local_url:
+        candidates.append(("remote", remote_url))
+    return candidates
+
+
+def select_lb_endpoint() -> tuple[str, str, list[str]]:
+    """Probe candidates in local-first order; return (url, label, tried) for the
+    first one that passes /health. url is "" when every candidate failed, and
+    tried holds a "label (url): error" entry per failed candidate for the
+    fallback message.
+
+    The local candidate gets a short, single-attempt probe capped at 2s — a
+    missing local instance refuses the connection instantly and must not burn
+    the longer CLAUDE_LB_HEALTH_TIMEOUT x CLAUDE_LB_HEALTH_RETRIES budget meant
+    for the remote. The remote keeps its existing timeout/retry env semantics.
+    """
+    retries = max(1, _env_int("CLAUDE_LB_HEALTH_RETRIES", 4))
+    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
+    gap = _env_float("CLAUDE_LB_HEALTH_RETRY_GAP", 0.75)
+    local_timeout = min(2.0, timeout)
+
+    tried: list[str] = []
+    for label, url in _lb_candidates():
+        if label == "local":
+            healthy, error = _probe_health_at(url, retries=1, timeout=local_timeout, gap=0.0)
+        else:
+            healthy, error = _probe_health_at(url, retries=retries, timeout=timeout, gap=gap)
+        if healthy:
+            return url, label, tried
+        tried.append(f"{label} ({url}): {error}")
+    return "", "", tried
 
 
 def arg_value(argv: list[str], *names: str) -> str | None:
@@ -870,10 +919,16 @@ def claim_session_route(session_id: str, model: str, quota_key: str) -> tuple[di
 
 
 def print_lb_banner(argv: list[str], session_id: str) -> bool:
-    healthy, health_error = lb_health_probe()
-    if not healthy:
-        print(f"cc: Claude LB unavailable at {AGENT_LB_BASE_URL}: {health_error}", file=sys.stderr)
+    global AGENT_LB_BASE_URL
+    selected_url, selected_label, tried = select_lb_endpoint()
+    if not selected_url:
+        tried_summary = "; ".join(tried) if tried else "no candidates configured"
+        print(f"cc: Claude LB unavailable ({tried_summary})", file=sys.stderr)
         return False
+    AGENT_LB_BASE_URL = selected_url
+    endpoint_note = f"via {urllib.parse.urlsplit(selected_url).netloc or selected_url}"
+    if selected_label == "local":
+        endpoint_note += " (local)"
 
     model = requested_model(argv)
     effort = requested_effort(argv)
@@ -907,7 +962,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(
             f"cc: {_c('Claude LB', '1;36')} → {_c(account_label, '1')} · {model_label}/{quota_label} · "
-            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')}",
+            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')}",
             file=sys.stderr,
         )
         return True
@@ -922,7 +977,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(
             f"cc: {_c('Claude LB', '1;36')} → {_c(account_label, '1')} · {model_label}/{quota_label} · "
-            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')}",
+            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')}",
             file=sys.stderr,
         )
         return True
@@ -940,7 +995,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     _, _, _, _, _, reason = account_pressure(selected, quota_key)
     print(
         f"cc: {_c('Claude LB', '1;36')} → {_c(short_account_name(selected), '1')} · {model_label} · "
-        f"{reason} {_c('· OAuth/Max · sticky+failover', '2')}",
+        f"{reason} {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')}",
         file=sys.stderr,
     )
     return True
