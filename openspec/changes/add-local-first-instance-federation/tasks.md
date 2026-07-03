@@ -60,8 +60,14 @@ gates per repo governance, so not-yet-landed work is tracked as plain bullets.
 - [x] 5.3 Single-instance regression: default deployment behavior unchanged
       (ownership-gate unit tests + full unit suite + scratch-DB service boot
       with migration + `/health`, 2026-07-02).
-- 5.1 (pending) Unit tests: mirror freshness, handshake interruption matrix
-  (ownership gating covered by `tests/unit/test_account_ownership_gate.py`).
+- [x] 5.1 Unit tests: handshake partial-failure matrix incl. concurrent
+      checkout race and settled-nonce double-round-trip regression
+      (tests/unit/test_federation_*.py, tests/integration/test_federation_api.py);
+      mirror freshness/exclusion in tests/unit/test_load_balancer_selection_exclusion.py.
+- [x] 5.1b Localhost two-instance live exercise: scripts/two-instance-exercise.sh
+      — two real instances (alpha/beta, real aiohttp peer client), mirror pull,
+      double checkout→rotate→checkin round trip, 403s; 21/21 assertions,
+      re-run clean by the orchestrator 2026-07-03.
 - 5.2 (pending) Live two-instance exercise: checkout to laptop, refresh
   offline from owner, checkin, verify studio refreshes cleanly afterward (no
   `refresh_token_reused`). Deferred to stable ground network — do not restart
