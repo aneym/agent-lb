@@ -15,15 +15,29 @@ gates per repo governance, so not-yet-landed work is tracked as plain bullets.
       `AuthManager.ensure_fresh` choke point (`AccountNotOwnedError`,
       `is_locally_owned`); pulse scheduler skips non-owned accounts.
 
-## 2. Instance API (pending)
+## 2. Instance API
 
-- 2.1 Authenticated endpoint: export current tokens + expiry for mirrored
-  accounts (owner side).
-- 2.2 Mirror pull loop on non-owner instances with freshness window and
-  failure backoff.
-- 2.3 Checkout/checkin handshake endpoints (release → confirm → assume),
-  interruption-safe (no-double-owner invariant), with tests for the
-  partial-failure paths, not only all-success.
+- [x] 2.1 Authenticated endpoint: export current tokens + expiry for mirrored
+      accounts (owner side) — `GET /api/federation/mirror`, gated by
+      `AGENT_LB_FEDERATION_TOKEN` bearer auth (403 unset/mismatch); never
+      includes refresh tokens (`app/modules/federation/api.py`,
+      `service.py`).
+- [x] 2.2 Mirror pull loop on non-owner instances with freshness window and
+      failure backoff — `FederationMirrorScheduler`
+      (`app/modules/federation/scheduler.py`), interval
+      `AGENT_LB_FEDERATION_MIRROR_INTERVAL_SECONDS` (default 300s),
+      exponential backoff capped at ~30 min; never overwrites locally-owned
+      rows.
+- [x] 2.3 Checkout/checkin handshake endpoints (release → confirm → assume),
+      interruption-safe (no-double-owner invariant) — durable
+      `account_transfers` table (`20260703_000000_add_account_transfers`),
+      nonce-keyed idempotency on both owner and taker sides. Tests cover
+      checkout retry, 409 conflict, confirm idempotency, checkin retry (no
+      re-import), and execute-checkout confirm-failure leaving the account
+      locally owned with an unconfirmed transfer
+      (`tests/unit/test_federation_service.py`,
+      `tests/unit/test_federation_mirror.py`,
+      `tests/integration/test_federation_api.py`).
 
 ## 3. Routing
 

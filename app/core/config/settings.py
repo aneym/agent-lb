@@ -287,6 +287,12 @@ class Settings(BaseSettings):
     # opposite deployment model (one DB per instance here, vs. many pods on
     # one shared DB there). Do not reuse or wire the two together.
     local_instance_id: str = Field(default_factory=_default_local_instance_id)
+    # Instance-federation peer surface (/api/federation/*): off by default.
+    # federation_token gates every peer endpoint (403 when unset) and is a
+    # distinct trust domain from proxy API keys / dashboard sessions.
+    federation_token: str | None = None
+    federation_peer_url: str | None = None
+    federation_mirror_interval_seconds: int = Field(default=300, gt=0)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
     http_responses_session_bridge_advertise_base_url: str | None = None
     sticky_session_cleanup_enabled: bool = True
@@ -512,6 +518,26 @@ class Settings(BaseSettings):
             stripped = value.strip().rstrip("/")
             return stripped or None
         raise TypeError("http_responses_session_bridge_advertise_base_url must be a string")
+
+    @field_validator("federation_peer_url", mode="before")
+    @classmethod
+    def _normalize_federation_peer_url(cls, value: OptionalStringInput) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip().rstrip("/")
+            return stripped or None
+        raise TypeError("federation_peer_url must be a string")
+
+    @field_validator("federation_token", mode="before")
+    @classmethod
+    def _normalize_federation_token(cls, value: OptionalStringInput) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        raise TypeError("federation_token must be a string")
 
     @field_validator("model_context_window_overrides", mode="before")
     @classmethod

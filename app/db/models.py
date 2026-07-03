@@ -60,6 +60,16 @@ class RequestKind(str, Enum):
     WARMUP = "warmup"
 
 
+class AccountTransferDirection(str, Enum):
+    CHECKOUT = "checkout"
+    CHECKIN = "checkin"
+
+
+class AccountTransferState(str, Enum):
+    PENDING = "pending"
+    SETTLED = "settled"
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
@@ -367,6 +377,56 @@ class AccountLimitWarmup(Base):
             "window",
             "reset_at",
             name="uq_account_limit_warmups_account_window_reset",
+        ),
+    )
+
+
+class AccountTransfer(Base):
+    """Durable instance-federation checkout/checkin handshake record.
+
+    Nonce-keyed idempotency: a checkout retry is looked up by
+    (account_id, counterparty_instance_id, state=pending); a checkin retry is
+    looked up by nonce. See openspec instance-federation design.md for the
+    full state machine.
+    """
+
+    __tablename__ = "account_transfers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    nonce: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    direction: Mapped[AccountTransferDirection] = mapped_column(
+        SqlEnum(
+            AccountTransferDirection,
+            name="account_transfer_direction",
+            validate_strings=True,
+            values_callable=_enum_values,
+        ),
+        nullable=False,
+    )
+    # The other instance in the handshake: the taker for a checkout, the
+    # returning owner for a checkin.
+    counterparty_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[AccountTransferState] = mapped_column(
+        SqlEnum(
+            AccountTransferState,
+            name="account_transfer_state",
+            validate_strings=True,
+            values_callable=_enum_values,
+        ),
+        default=AccountTransferState.PENDING,
+        server_default=text("'pending'"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "idx_account_transfers_account_direction_state",
+            "account_id",
+            "direction",
+            "state",
         ),
     )
 

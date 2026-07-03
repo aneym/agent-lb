@@ -50,6 +50,8 @@ from app.modules.audit import api as audit_api
 from app.modules.conversation_archive import api as conversation_archive_api
 from app.modules.dashboard import api as dashboard_api
 from app.modules.dashboard_auth import api as dashboard_auth_api
+from app.modules.federation import api as federation_api
+from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.firewall import api as firewall_api
 from app.modules.health import api as health_api
 from app.modules.oauth import api as oauth_api
@@ -155,6 +157,7 @@ async def lifespan(app: FastAPI):
     quota_planner_scheduler = build_quota_planner_scheduler()
     auth_guardian_scheduler = build_auth_guardian_scheduler()
     account_pulse_scheduler = build_account_pulse_scheduler()
+    federation_mirror_scheduler = build_federation_mirror_scheduler()
     await usage_scheduler.start()
     await api_key_limit_reset_scheduler.start()
     await model_scheduler.start()
@@ -162,6 +165,7 @@ async def lifespan(app: FastAPI):
     await quota_planner_scheduler.start()
     await auth_guardian_scheduler.start()
     await account_pulse_scheduler.start()
+    await federation_mirror_scheduler.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
         import uvicorn
 
@@ -321,6 +325,7 @@ async def lifespan(app: FastAPI):
             metrics_server.should_exit = True
 
         await cache_poller.stop()
+        await federation_mirror_scheduler.stop()
         await account_pulse_scheduler.stop()
         await quota_planner_scheduler.stop()
         await auth_guardian_scheduler.stop()
@@ -413,6 +418,7 @@ def create_app() -> FastAPI:
     app.include_router(sticky_sessions_api.router)
     app.include_router(api_keys_api.router)
     app.include_router(health_api.router)
+    app.include_router(federation_api.router)
 
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"

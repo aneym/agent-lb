@@ -24,6 +24,8 @@ from app.modules.dashboard_auth.service import (
     DashboardAuthService,
     get_dashboard_session_store,
 )
+from app.modules.federation.repository import FederationRepository
+from app.modules.federation.service import FederationService
 from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.limit_warmup.repository import LimitWarmupRepository
@@ -75,6 +77,13 @@ class DashboardAuthContext:
     session: AsyncSession
     repository: DashboardAuthRepository
     service: DashboardAuthService
+
+
+@dataclass(slots=True)
+class FederationContext:
+    session: AsyncSession
+    repository: FederationRepository
+    service: FederationService
 
 
 @dataclass(slots=True)
@@ -170,6 +179,14 @@ def get_audit_context(
     repository = AuditRepository(session)
     service = AuditLogsService(repository)
     return AuditContext(session=session, repository=repository, service=service)
+
+
+def get_federation_context(
+    session: AsyncSession = Depends(get_session),
+) -> FederationContext:
+    repository = FederationRepository(session)
+    service = FederationService(repository)
+    return FederationContext(session=session, repository=repository, service=service)
 
 
 def get_usage_context(
