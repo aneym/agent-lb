@@ -15,6 +15,14 @@ claimed endpoint and route; preference changes apply only to new sessions.
 - **THEN** the launcher routes the session through the local instance without
   probing the remote LB
 
+#### Scenario: Local instance healthy but cannot claim
+
+- **GIVEN** a local agent-lb passes the health probe but fails the
+  session-route claim (e.g. no usable accounts yet)
+- **WHEN** a new session launches
+- **THEN** the launcher falls through to the next candidate endpoint and
+  attempts its probe and claim before falling back to plain claude
+
 #### Scenario: Local instance absent or unhealthy
 
 - **GIVEN** no local instance is configured, or its health probe fails

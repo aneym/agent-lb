@@ -636,34 +636,6 @@ def _lb_candidates() -> list[tuple[str, str]]:
     return candidates
 
 
-def select_lb_endpoint() -> tuple[str, str, list[str]]:
-    """Probe candidates in local-first order; return (url, label, tried) for the
-    first one that passes /health. url is "" when every candidate failed, and
-    tried holds a "label (url): error" entry per failed candidate for the
-    fallback message.
-
-    The local candidate gets a short, single-attempt probe capped at 2s — a
-    missing local instance refuses the connection instantly and must not burn
-    the longer CLAUDE_LB_HEALTH_TIMEOUT x CLAUDE_LB_HEALTH_RETRIES budget meant
-    for the remote. The remote keeps its existing timeout/retry env semantics.
-    """
-    retries = max(1, _env_int("CLAUDE_LB_HEALTH_RETRIES", 4))
-    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
-    gap = _env_float("CLAUDE_LB_HEALTH_RETRY_GAP", 0.75)
-    local_timeout = min(2.0, timeout)
-
-    tried: list[str] = []
-    for label, url in _lb_candidates():
-        if label == "local":
-            healthy, error = _probe_health_at(url, retries=1, timeout=local_timeout, gap=0.0)
-        else:
-            healthy, error = _probe_health_at(url, retries=retries, timeout=timeout, gap=gap)
-        if healthy:
-            return url, label, tried
-        tried.append(f"{label} ({url}): {error}")
-    return "", "", tried
-
-
 def arg_value(argv: list[str], *names: str) -> str | None:
     for index, value in enumerate(argv):
         for name in names:
@@ -902,13 +874,16 @@ def wait_until_reset(retry_at: int, reason: str) -> None:
         time.sleep(min(remaining, 30.0))
 
 
-def claim_session_route(session_id: str, model: str, quota_key: str) -> tuple[dict | None, str, int | None]:
-    """Claim a sticky route. Returns (claim, error_message, retry_at_epoch)."""
+def claim_session_route(
+    session_id: str, model: str, quota_key: str, base_url: str
+) -> tuple[dict | None, str, int | None]:
+    """Claim a sticky route at base_url. Returns (claim, error_message, retry_at_epoch)."""
     try:
         claim = lb_post_json(
             "/api/anthropic/session-route",
             {"sessionId": session_id, "model": model, "quotaKey": quota_key},
             timeout=_env_float("CLAUDE_LB_CLAIM_TIMEOUT", 5.0),
+            base_url=base_url,
         )
         return claim, "", None
     except urllib.error.HTTPError as error:
@@ -918,39 +893,80 @@ def claim_session_route(session_id: str, model: str, quota_key: str) -> tuple[di
         return None, str(error), None
 
 
-def print_lb_banner(argv: list[str], session_id: str) -> bool:
-    global AGENT_LB_BASE_URL
-    selected_url, selected_label, tried = select_lb_endpoint()
-    if not selected_url:
-        tried_summary = "; ".join(tried) if tried else "no candidates configured"
-        print(f"cc: Claude LB unavailable ({tried_summary})", file=sys.stderr)
-        return False
-    AGENT_LB_BASE_URL = selected_url
-    endpoint_note = f"via {urllib.parse.urlsplit(selected_url).netloc or selected_url}"
-    if selected_label == "local":
-        endpoint_note += " (local)"
-
-    model = requested_model(argv)
-    effort = requested_effort(argv)
-    quota_key, quota_label = anthropic_quota_key(model, effort)
-    model_label = model.replace("claude-", "")
-
-    deadline = time.time() + wait_max_seconds()
+def _claim_at_endpoint(
+    base_url: str, session_id: str, model: str, quota_key: str, deadline: float
+) -> tuple[dict | None, str]:
+    """Claim a route at base_url, waiting out advertised limit resets in place
+    (same account pool) up to deadline. Returns (claim, "") on success, or
+    (None, error_message) once retryable waiting is exhausted or the failure
+    isn't retryable — the caller decides whether to fall through to the next
+    candidate endpoint.
+    """
     while True:
-        claim, error_message, retry_at = claim_session_route(session_id, model, quota_key)
+        claim, error_message, retry_at = claim_session_route(session_id, model, quota_key, base_url)
         if claim is not None:
-            break
+            return claim, ""
         if not should_wait_for_reset(retry_at, deadline):
-            print(
-                f"cc: Claude LB could not pick an account for {model_label}/{quota_label}: {error_message}",
-                file=sys.stderr,
-            )
-            return False
+            return None, error_message
         try:
             wait_until_reset(retry_at, error_message)
         except KeyboardInterrupt:
             print("cc: aborted while waiting for limits to reset", file=sys.stderr)
             sys.exit(130)
+
+
+def print_lb_banner(argv: list[str], session_id: str) -> bool:
+    global AGENT_LB_BASE_URL
+    model = requested_model(argv)
+    effort = requested_effort(argv)
+    quota_key, quota_label = anthropic_quota_key(model, effort)
+    model_label = model.replace("claude-", "")
+
+    # A candidate can be healthy yet unable to claim a route (e.g. a fresh local
+    # instance with no accounts mirrored yet) — probe and claim per candidate,
+    # falling through to the next one rather than giving up after the first
+    # healthy-but-account-less endpoint.
+    retries = max(1, _env_int("CLAUDE_LB_HEALTH_RETRIES", 4))
+    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
+    gap = _env_float("CLAUDE_LB_HEALTH_RETRY_GAP", 0.75)
+    local_timeout = min(2.0, timeout)
+    deadline = time.time() + wait_max_seconds()
+
+    health_failures: list[str] = []
+    claim_failures: list[str] = []
+    selected_url = ""
+    selected_label = ""
+    claim: dict | None = None
+    for label, url in _lb_candidates():
+        if label == "local":
+            healthy, error = _probe_health_at(url, retries=1, timeout=local_timeout, gap=0.0)
+        else:
+            healthy, error = _probe_health_at(url, retries=retries, timeout=timeout, gap=gap)
+        if not healthy:
+            health_failures.append(f"{label} ({url}): {error}")
+            continue
+        claim, claim_error = _claim_at_endpoint(url, session_id, model, quota_key, deadline)
+        if claim is not None:
+            selected_url, selected_label = url, label
+            break
+        claim_failures.append(claim_error)
+
+    if claim is None:
+        if claim_failures:
+            print(
+                f"cc: Claude LB could not pick an account for {model_label}/{quota_label}: "
+                + "; ".join(claim_failures),
+                file=sys.stderr,
+            )
+        else:
+            tried_summary = "; ".join(health_failures) if health_failures else "no candidates configured"
+            print(f"cc: Claude LB unavailable ({tried_summary})", file=sys.stderr)
+        return False
+
+    AGENT_LB_BASE_URL = selected_url
+    endpoint_note = f"via {urllib.parse.urlsplit(selected_url).netloc or selected_url}"
+    if selected_label == "local":
+        endpoint_note += " (local)"
 
     selected_account_id = str(claim.get("accountId") or "")
 
@@ -1084,7 +1100,7 @@ def run_headless_with_resume(
             return 0
         # Only retry when the LB confirms the failure is account exhaustion
         # with a known reset; any other failure propagates immediately.
-        claim, _, retry_at = claim_session_route(session_id, model, quota_key)
+        claim, _, retry_at = claim_session_route(session_id, model, quota_key, AGENT_LB_BASE_URL)
         if claim is not None or not should_wait_for_reset(retry_at, deadline):
             return result.returncode
         if attempt == RESUME_MAX_ATTEMPTS:
