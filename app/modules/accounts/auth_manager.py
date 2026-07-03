@@ -72,6 +72,9 @@ class RefreshAdmissionLeasePort(Protocol):
 
 logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
+# Non-owners cannot refresh, so they use a much smaller bar: still-clock-skew-tolerant,
+# but not the proactive optimization margin above (which only the owner can act on).
+_ACCESS_TOKEN_HARD_EXPIRY_SKEW_SECONDS = 30
 
 
 class AccountNotOwnedError(Exception):
@@ -199,11 +202,18 @@ class AuthManager:
         self._refresh_repo_factory = refresh_repo_factory
 
     async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account:
-        needs_refresh = force or _account_needs_refresh(self._encryptor, account)
-        if needs_refresh:
-            settings = get_settings()
-            if not is_locally_owned(account, settings):
+        settings = get_settings()
+        if not is_locally_owned(account, settings):
+            # Non-owners never call the provider's refresh endpoint (ownership gate).
+            # A mirrored token within the proactive margin but not yet actually
+            # expired is still usable — only serve AccountNotOwnedError when the
+            # token is genuinely unusable, or the caller demands a guaranteed-fresh
+            # one via force=True.
+            if force or access_token_hard_expired(self._encryptor, account):
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
+            return await self._ensure_chatgpt_account_id(account)
+
+        if force or _account_needs_refresh(self._encryptor, account):
             account = await _REFRESH_SINGLEFLIGHT.run(
                 _refresh_singleflight_key(self._encryptor, account),
                 lambda: self._run_refresh(account),
@@ -413,6 +423,13 @@ def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _R
     return (account.id, _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted))
 
 
+def _expires_within(expires_ms: int, *, margin_seconds: float, now: datetime | None = None) -> bool:
+    """True when expires_ms is within margin_seconds of `now` (or already past)."""
+    current = to_utc_naive(now) if now is not None else utcnow()
+    threshold_ms = naive_utc_to_epoch(current) * 1000 + (margin_seconds * 1000)
+    return expires_ms <= threshold_ms
+
+
 def _access_token_needs_refresh(
     encryptor: TokenEncryptor,
     account: Account,
@@ -426,9 +443,34 @@ def _access_token_needs_refresh(
     expires_ms = token_expiry_epoch_ms(access_token)
     if expires_ms is None:
         return False
-    current = to_utc_naive(now) if now is not None else utcnow()
-    refresh_at_ms = naive_utc_to_epoch(current) * 1000 + (_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS * 1000)
-    return expires_ms <= refresh_at_ms
+    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS, now=now)
+
+
+def access_token_hard_expired(
+    encryptor: TokenEncryptor,
+    account: Account,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """True when the access token is missing, undecryptable, or has actually passed
+    its expiry (small clock-skew grace only — see _ACCESS_TOKEN_HARD_EXPIRY_SKEW_SECONDS).
+
+    Unlike _access_token_needs_refresh, this ignores the larger proactive-refresh
+    margin, which is an owner-only optimization: a mirrored token within that margin
+    but not yet expired is still perfectly usable by a non-owner that cannot refresh
+    it. This is the bar non-owned accounts (ensure_fresh gate, selection filtering)
+    must clear to stay usable.
+    """
+    if not account.access_token_encrypted:
+        return True
+    try:
+        access_token = encryptor.decrypt(account.access_token_encrypted)
+    except Exception:
+        return True
+    expires_ms = token_expiry_epoch_ms(access_token)
+    if expires_ms is None:
+        return False
+    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_HARD_EXPIRY_SKEW_SECONDS, now=now)
 
 
 def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:

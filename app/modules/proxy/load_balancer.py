@@ -37,6 +37,7 @@ from app.core.balancer.types import UpstreamError
 from app.core.config import settings as config_settings
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
+from app.core.crypto import TokenEncryptor
 from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
     account_cap_rejections_total,
@@ -54,6 +55,7 @@ from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.usage.quota import apply_usage_quota
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
+from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
@@ -823,6 +825,26 @@ class LoadBalancer:
             all_accounts = [
                 account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
+            # Non-owned mirrors are unroutable once their access token is actually
+            # expired (federation degraded mode): nobody local can refresh them.
+            # Owned accounts and fresh/within-margin mirrors stay eligible.
+            selection_settings = get_settings()
+            encryptor = TokenEncryptor()
+            excluded_mirror_count = 0
+            eligible_accounts = []
+            for account in all_accounts:
+                if not is_locally_owned(account, selection_settings) and access_token_hard_expired(
+                    encryptor, account
+                ):
+                    excluded_mirror_count += 1
+                    continue
+                eligible_accounts.append(account)
+            all_accounts = eligible_accounts
+            if excluded_mirror_count:
+                logger.debug(
+                    "Excluded %d non-owned, expired mirrored account(s) from selection",
+                    excluded_mirror_count,
+                )
             quota_planner_repo = getattr(repos, "quota_planner", None)
             get_quota_planner_settings = getattr(quota_planner_repo, "get_settings", None)
             if callable(get_quota_planner_settings):
