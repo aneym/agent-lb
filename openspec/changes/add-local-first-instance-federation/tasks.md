@@ -49,9 +49,11 @@ gates per repo governance, so not-yet-landed work is tracked as plain bullets.
 
 ## 4. Operator surface (pending)
 
-- 4.1 CLI/skill: `checkout <accounts> --to <instance>` / `checkin`,
-  with clear preflight (connectivity both ways) and status display.
-- 4.2 Dashboard/menubar: show owner instance per account.
+- [x] 4.1 CLI: `clients/agent-lb-federation` status/checkout/checkin against the
+      local instance's execute endpoints, preflighting local+peer health
+      (built and stub-validated 2026-07-03).
+- [x] 4.2 Dashboard: owner-instance mirror badge per account (41ba03b5);
+      menubar deferred (separate app, out of repo scope).
 
 ## 5. Validation
 

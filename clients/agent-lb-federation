@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+# agent-lb-federation — operator CLI for the instance-federation account
+# checkout/checkin flows. Vendored, dependency-free (stdlib only), same style
+# family as clients/claude-lb-launch.
+#
+# It drives the taker-side, operator-triggered endpoints of the local
+# agent-lb instance:
+#   POST /api/federation/checkout/execute {account_id}
+#   POST /api/federation/checkin/execute  {account_id}
+# and reports per-account results. `status` shows local /health plus the
+# configured peer, and flags which federation state this CLI cannot read.
+#
+# Usage:
+#   clients/agent-lb-federation status
+#   clients/agent-lb-federation checkout <account-id> [<account-id>...]
+#   clients/agent-lb-federation checkin  <account-id> [<account-id>...]
+#
+# Env:
+#   CLAUDE_LB_LOCAL_URL          local instance base URL (default http://127.0.0.1:2455)
+#   AGENT_LB_FEDERATION_TOKEN    REQUIRED for checkout/checkin — bearer secret gating
+#                                every /api/federation/* endpoint (never printed)
+#   AGENT_LB_FEDERATION_PEER_URL peer instance base URL, used for the peer /health
+#                                preflight (no local endpoint advertises it)
+#   CLAUDE_LB_FEDERATION_TIMEOUT per-request timeout seconds (default 10)
+#
+# Exit codes:
+#   0  success
+#   1  operational failure (preflight abort, per-account failure, local unhealthy)
+#   2  configuration/usage error (missing token or peer URL)
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+DEFAULT_LOCAL_URL = "http://127.0.0.1:2455"
+
+EXIT_OK = 0
+EXIT_FAILURE = 1
+EXIT_CONFIG = 2
+
+
+def local_url() -> str:
+    return (os.environ.get("CLAUDE_LB_LOCAL_URL") or DEFAULT_LOCAL_URL).rstrip("/")
+
+
+def peer_url() -> str | None:
+    value = (os.environ.get("AGENT_LB_FEDERATION_PEER_URL") or "").strip().rstrip("/")
+    return value or None
+
+
+def federation_token() -> str | None:
+    value = (os.environ.get("AGENT_LB_FEDERATION_TOKEN") or "").strip()
+    return value or None
+
+
+def request_timeout() -> float:
+    raw = os.environ.get("CLAUDE_LB_FEDERATION_TIMEOUT")
+    if raw is None or not raw.strip():
+        return 10.0
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return 10.0
+    return parsed if parsed > 0 else 10.0
+
+
+class HttpResult:
+    """Outcome of one HTTP call: transport-level success plus the parsed body."""
+
+    def __init__(self, *, ok: bool, status: int | None, body: object, error: str | None) -> None:
+        self.ok = ok
+        self.status = status
+        self.body = body
+        self.error = error
+
+
+def _http(method: str, url: str, *, token: str | None, payload: dict | None) -> HttpResult:
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"accept": "application/json"}
+    if payload is not None:
+        headers["content-type"] = "application/json"
+    if token is not None:
+        headers["authorization"] = f"Bearer {token}"
+
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=request_timeout()) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            parsed = json.loads(raw) if raw.strip() else {}
+            return HttpResult(ok=True, status=response.status, body=parsed, error=None)
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            parsed = raw
+        return HttpResult(ok=False, status=error.code, body=parsed, error=_detail(parsed) or f"HTTP {error.code}")
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+        reason = getattr(error, "reason", None)
+        return HttpResult(ok=False, status=None, body=None, error=str(reason or error) or error.__class__.__name__)
+
+
+def _detail(body: object) -> str | None:
+    if isinstance(body, dict):
+        detail = body.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+        error = body.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+    if isinstance(body, str) and body.strip():
+        return body.strip()
+    return None
+
+
+def health_ok(base_url: str) -> tuple[bool, str]:
+    """Probe GET /health at base_url. Returns (ok, detail)."""
+    result = _http("GET", f"{base_url}/health", token=None, payload=None)
+    if result.ok:
+        status = result.body.get("status") if isinstance(result.body, dict) else None
+        return True, str(status or "ok")
+    return False, result.error or "unreachable"
+
+
+def preflight(local: str, peer: str) -> tuple[bool, list[str]]:
+    """Both local and peer /health must be reachable before any mutation."""
+    notes: list[str] = []
+    local_ok, local_detail = health_ok(local)
+    notes.append(f"local  {local}  {'ok' if local_ok else 'FAIL: ' + local_detail}")
+    peer_ok, peer_detail = health_ok(peer)
+    notes.append(f"peer   {peer}  {'ok' if peer_ok else 'FAIL: ' + peer_detail}")
+    return (local_ok and peer_ok), notes
+
+
+def _require_token() -> str | None:
+    token = federation_token()
+    if token is None:
+        print(
+            "error: AGENT_LB_FEDERATION_TOKEN is not set; it is required to call "
+            "the federation endpoints. Aborting without contacting any endpoint.",
+            file=sys.stderr,
+        )
+    return token
+
+
+def _require_peer() -> str | None:
+    peer = peer_url()
+    if peer is None:
+        print(
+            "error: AGENT_LB_FEDERATION_PEER_URL is not set; the peer /health "
+            "preflight cannot run. Aborting before any mutation.",
+            file=sys.stderr,
+        )
+    return peer
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    local = local_url()
+    local_ok, local_detail = health_ok(local)
+    print(f"local instance : {local}")
+    print(f"  /health      : {'ok' if local_ok else 'unreachable — ' + local_detail}")
+
+    peer = peer_url()
+    if peer is None:
+        print("peer instance  : (not configured — set AGENT_LB_FEDERATION_PEER_URL)")
+    else:
+        peer_ok, peer_detail = health_ok(peer)
+        print(f"peer instance  : {peer}  [source: AGENT_LB_FEDERATION_PEER_URL env]")
+        print(f"  /health      : {'ok' if peer_ok else 'unreachable — ' + peer_detail}")
+
+    token_set = federation_token() is not None
+    print(f"federation token: {'set' if token_set else 'NOT set (checkout/checkin will fail)'}")
+
+    # No /api/federation/* route exposes the local instance id or a per-account
+    # ownership map; /api/accounts carries owner_instance but requires a
+    # dashboard session this CLI does not hold. Report the gap, never invent an
+    # endpoint to fill it.
+    print("unavailable    : local instance id and per-account ownership are not")
+    print("                 exposed by any federation status endpoint (and")
+    print("                 /api/accounts needs a dashboard session this CLI lacks).")
+    return EXIT_OK if local_ok else EXIT_FAILURE
+
+
+def _run_transfer(command: str, account_ids: list[str]) -> int:
+    token = _require_token()
+    if token is None:
+        return EXIT_CONFIG
+    peer = _require_peer()
+    if peer is None:
+        return EXIT_CONFIG
+
+    local = local_url()
+    ok, notes = preflight(local, peer)
+    print("preflight:")
+    for note in notes:
+        print(f"  {note}")
+    if not ok:
+        print("preflight FAILED — no checkout/checkin call was sent.", file=sys.stderr)
+        return EXIT_FAILURE
+
+    path = f"/api/federation/{command}/execute"
+    failures = 0
+    print(f"{command}:")
+    for account_id in account_ids:
+        result = _http("POST", f"{local}{path}", token=token, payload={"account_id": account_id})
+        if not result.ok:
+            failures += 1
+            status = f" (HTTP {result.status})" if result.status is not None else ""
+            print(f"  {account_id}: FAILED{status} — {result.error}")
+            continue
+        body = result.body if isinstance(result.body, dict) else {}
+        if command == "checkout":
+            confirmed = bool(body.get("confirmed"))
+            nonce = str(body.get("nonce", ""))
+            owner = str(body.get("owner_instance", ""))
+            state = "owned+confirmed" if confirmed else "owned, UNCONFIRMED (peer confirm pending — safe to retry)"
+            if not confirmed:
+                failures += 1
+            print(f"  {account_id}: {state}  owner={owner} nonce={nonce}")
+        else:
+            settled = bool(body.get("settled"))
+            nonce = str(body.get("nonce", ""))
+            state = "checked in (settled)" if settled else "UNSETTLED (peer did not settle — retry)"
+            if not settled:
+                failures += 1
+            print(f"  {account_id}: {state}  nonce={nonce}")
+
+    total = len(account_ids)
+    succeeded = total - failures
+    print(f"summary: {succeeded}/{total} succeeded, {failures} failed")
+    return EXIT_OK if failures == 0 else EXIT_FAILURE
+
+
+def cmd_checkout(args: argparse.Namespace) -> int:
+    return _run_transfer("checkout", args.account_ids)
+
+
+def cmd_checkin(args: argparse.Namespace) -> int:
+    return _run_transfer("checkin", args.account_ids)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agent-lb-federation",
+        description="Operator CLI for agent-lb instance-federation account checkout/checkin.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    status = sub.add_parser("status", help="Show local /health, the configured peer, and unavailable state.")
+    status.set_defaults(func=cmd_status)
+
+    checkout = sub.add_parser(
+        "checkout",
+        help="Take ownership of one or more accounts from the peer (POST /checkout/execute).",
+    )
+    checkout.add_argument("account_ids", metavar="account-id", nargs="+", help="Account id(s) to check out.")
+    checkout.set_defaults(func=cmd_checkout)
+
+    checkin = sub.add_parser(
+        "checkin",
+        help="Return ownership of one or more accounts to the peer (POST /checkin/execute).",
+    )
+    checkin.add_argument("account_ids", metavar="account-id", nargs="+", help="Account id(s) to check in.")
+    checkin.set_defaults(func=cmd_checkin)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
