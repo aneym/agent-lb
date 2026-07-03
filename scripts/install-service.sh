@@ -168,12 +168,44 @@ mkdir -p "$(dirname "$PLIST")"
 if label_loaded; then
   echo "Booting out existing $LABEL..."
   launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
-  # Immediate re-bootstrap after bootout fails with error 5 on macOS.
-  sleep 5
+  bootout_time=$(date +%s)
+  # Wait for the old process to release localhost:PORT before rebinding.
+  port_free_deadline=$((bootout_time + 30))
+  while (($(date +%s) < port_free_deadline)) && localhost_port_busy; do
+    sleep 1
+  done
+  if localhost_port_busy; then
+    echo "error: localhost port $PORT is still in use after bootout" >&2
+    exit 1
+  fi
+  # macOS needs a short cooldown after bootout before bootstrap accepts the job.
+  cooldown_remaining=$((bootout_time + 5 - $(date +%s)))
+  if ((cooldown_remaining > 0)); then
+    sleep "$cooldown_remaining"
+  fi
 fi
 
 write_plist
-launchctl bootstrap "gui/$UID" "$PLIST"
+
+# Bootstrap may fail with error 5 if launchd is still tearing down the old job;
+# retry a few times before giving up.
+bootstrap_ok=false
+for attempt in 1 2 3; do
+  if launchctl bootstrap "gui/$UID" "$PLIST" 2>/dev/null; then
+    bootstrap_ok=true
+    break
+  fi
+  echo "Bootstrap attempt $attempt failed, waiting for launchd cooldown..." >&2
+  sleep 5
+done
+if [[ "$bootstrap_ok" != true ]]; then
+  echo "error: launchctl bootstrap failed after 3 attempts" >&2
+  exit 1
+fi
+
+# Bootstrap alone frequently leaves the job loaded-but-not-running on macOS;
+# kickstart guarantees the process actually spawns with the new plist.
+launchctl kickstart -k "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 
 deadline=$(($(date +%s) + 30))
 while (($(date +%s) < deadline)); do
