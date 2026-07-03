@@ -21,7 +21,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts import probes
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import (
     ACTIVE_SUBSCRIPTION_STATUS,
@@ -277,6 +277,15 @@ class AccountPulseScheduler:
             async with self.repo_factory() as repo:
                 account = await repo.get_by_id(account_id)
                 if account is None or account.status == AccountStatus.PAUSED:
+                    return
+                from app.core.config.settings import get_settings
+
+                if not is_locally_owned(account, get_settings()):
+                    logger.debug(
+                        "Account pulse skipping non-locally-owned account_id=%s owner_instance=%s",
+                        account_id,
+                        account.owner_instance,
+                    )
                     return
                 manager = self.auth_manager_factory(repo)
                 try:

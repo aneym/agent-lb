@@ -19,7 +19,7 @@ from app.core.auth.refresh import (
     should_refresh,
 )
 from app.core.balancer import account_status_for_permanent_failure, permanent_failure_reason
-from app.core.config.settings import get_settings
+from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import OPENAI_PROVIDER_NAME, Provider, ProviderLookupError, get_provider
@@ -72,6 +72,29 @@ class RefreshAdmissionLeasePort(Protocol):
 
 logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
+
+
+class AccountNotOwnedError(Exception):
+    """Raised when a refresh is required for an account this instance does not own.
+
+    Instance federation restricts OAuth refresh execution to a single owner
+    instance per account (openspec instance-federation): non-owners must
+    never call the provider's refresh endpoint, regardless of token age.
+    """
+
+    def __init__(self, account_id: str, owner_instance: str | None, local_instance_id: str) -> None:
+        message = (
+            f"Account {account_id} is owned by instance {owner_instance!r}, not the "
+            f"local instance {local_instance_id!r}; refusing to refresh"
+        )
+        super().__init__(message)
+        self.account_id = account_id
+        self.owner_instance = owner_instance
+        self.local_instance_id = local_instance_id
+
+
+def is_locally_owned(account: Account, settings: Settings) -> bool:
+    return account.owner_instance is None or account.owner_instance == settings.local_instance_id
 
 
 _RefreshSingleflightKey: TypeAlias = tuple[str, str]
@@ -176,7 +199,11 @@ class AuthManager:
         self._refresh_repo_factory = refresh_repo_factory
 
     async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account:
-        if force or _account_needs_refresh(self._encryptor, account):
+        needs_refresh = force or _account_needs_refresh(self._encryptor, account)
+        if needs_refresh:
+            settings = get_settings()
+            if not is_locally_owned(account, settings):
+                raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
             account = await _REFRESH_SINGLEFLIGHT.run(
                 _refresh_singleflight_key(self._encryptor, account),
                 lambda: self._run_refresh(account),

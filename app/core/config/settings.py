@@ -51,6 +51,11 @@ def _default_http_bridge_instance_id() -> str:
     return hostname or "agent-lb"
 
 
+def _default_local_instance_id() -> str:
+    hostname = socket.gethostname().strip().lower()
+    return hostname or "agent-lb"
+
+
 def _default_upstream_websocket_trust_env() -> bool:
     return outbound_proxy_env_configured(_configured_outbound_proxy_env())
 
@@ -274,6 +279,14 @@ class Settings(BaseSettings):
     http_responses_session_bridge_response_create_concurrency: int = Field(default=64, gt=0)
     http_responses_session_bridge_gateway_safe_mode: bool = False
     http_responses_session_bridge_instance_id: str = Field(default_factory=_default_http_bridge_instance_id)
+    # Identity for the local-first instance-federation ownership model: the
+    # single instance name that owns an account's OAuth refresh authority by
+    # default (see openspec instance-federation). This is a distinct concept
+    # from the bridge instance id/ring above, which identifies a pod within a
+    # *shared-database* replica set for HTTP-bridge session affinity — the
+    # opposite deployment model (one DB per instance here, vs. many pods on
+    # one shared DB there). Do not reuse or wire the two together.
+    local_instance_id: str = Field(default_factory=_default_local_instance_id)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
     http_responses_session_bridge_advertise_base_url: str | None = None
     sticky_session_cleanup_enabled: bool = True

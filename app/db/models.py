@@ -118,6 +118,10 @@ class Account(Base):
         server_default=false(),
         nullable=False,
     )
+    # NULL means this account is owned by the local instance (single-instance
+    # legacy default); a non-NULL value names the sole instance permitted to
+    # refresh this account's OAuth tokens (instance-federation ownership model).
+    owner_instance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     api_key_assignments: Mapped[list["ApiKeyAccountAssignment"]] = relationship(
         "ApiKeyAccountAssignment",
