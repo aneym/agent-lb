@@ -27,7 +27,8 @@ gates per repo governance, so not-yet-landed work is tracked as plain bullets.
 
 ## 3. Routing
 
-- 3.1 (pending) Exclude expired-mirror accounts from selection on non-owners.
+- [x] 3.1 Exclude expired-mirror accounts from selection on non-owners
+      (hard-expiry predicate shared with the ensure_fresh gate; b128ffbd).
 - [x] 3.2 Launcher: local endpoint preference ahead of `CLAUDE_LB_BASE_URL`
       (`CLAUDE_LB_LOCAL_URL` / `CLAUDE_LB_LOCAL_PREFER`), with claim-failure
       fallthrough to the next candidate; existing fallback chain preserved.
