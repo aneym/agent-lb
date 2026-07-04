@@ -215,6 +215,25 @@ def test_fable_eligible_flag_by_provider_and_threshold() -> None:
     assert mappers._fable_eligible(openai, 10.0) is None
 
 
+@pytest.mark.parametrize(
+    "status",
+    [AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED],
+)
+def test_fable_eligible_false_for_non_routable_statuses(status: AccountStatus) -> None:
+    anthropic = _account(status)
+    anthropic.provider = "anthropic"
+
+    assert mappers._fable_eligible(anthropic, 10.0) is False
+
+
+def test_fable_eligible_false_for_canceled_subscription() -> None:
+    anthropic = _account(AccountStatus.ACTIVE)
+    anthropic.provider = "anthropic"
+    anthropic.subscription_status = "canceled"
+
+    assert mappers._fable_eligible(anthropic, 10.0) is False
+
+
 def _fable_scoped_weekly(*, used_percent: float, recorded_at: datetime) -> AdditionalUsageHistory:
     return AdditionalUsageHistory(
         account_id="account-1",

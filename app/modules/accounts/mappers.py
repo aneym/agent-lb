@@ -25,7 +25,7 @@ from app.modules.accounts.schemas import (
     AccountUsageTrend,
     UsageTrendPoint,
 )
-from app.modules.accounts.subscription_status import normalize_subscription_status
+from app.modules.accounts.subscription_status import is_subscription_usable, normalize_subscription_status
 from app.modules.usage.mappers import usage_history_to_window_row
 
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
@@ -338,6 +338,10 @@ def _fable_eligible(
     """
     if account.provider != ANTHROPIC_PROVIDER_NAME:
         return None
+    if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED):
+        return False
+    if not is_subscription_usable(account):
+        return False
     settings = config_settings.get_settings()
     if fable_scoped_weekly is not None and _fable_scoped_weekly_is_fresh(fable_scoped_weekly.recorded_at):
         return float(fable_scoped_weekly.used_percent) < settings.anthropic_fable_scoped_max_used_percent

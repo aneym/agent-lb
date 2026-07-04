@@ -657,7 +657,13 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
 
     encryptor = TokenEncryptor()
 
-    def _anthropic_account(account_id: str, email: str) -> Account:
+    def _anthropic_account(
+        account_id: str,
+        email: str,
+        *,
+        status: AccountStatus = AccountStatus.ACTIVE,
+        subscription_status: str | None = None,
+    ) -> Account:
         return Account(
             id=account_id,
             provider="anthropic",
@@ -668,8 +674,13 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
             refresh_token_encrypted=encryptor.encrypt(f"refresh-{account_id}"),
             id_token_encrypted=encryptor.encrypt(f"id-{account_id}"),
             last_refresh=utcnow(),
-            status=AccountStatus.ACTIVE,
-            deactivation_reason=None,
+            status=status,
+            deactivation_reason=(
+                "Refresh token grant invalid - re-login required"
+                if status == AccountStatus.REAUTH_REQUIRED
+                else None
+            ),
+            subscription_status=subscription_status,
         )
 
     def _weekly_usage(account_id: str, used_percent: float) -> UsageHistory:
@@ -708,6 +719,28 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
         session.add(_weekly_usage("acc-scoped-cool", 62.0))
         session.add(_fable_scoped_weekly("acc-scoped-cool", 45.0, now))
 
+        # Non-routable rows must not advertise Fable eligibility even when
+        # old/fresh usage data says the Fable-scoped budget has headroom.
+        session.add(
+            _anthropic_account(
+                "acc-scoped-reauth",
+                "scoped-reauth@example.com",
+                status=AccountStatus.REAUTH_REQUIRED,
+            )
+        )
+        session.add(_weekly_usage("acc-scoped-reauth", 10.0))
+        session.add(_fable_scoped_weekly("acc-scoped-reauth", 45.0, now))
+
+        session.add(
+            _anthropic_account(
+                "acc-scoped-canceled",
+                "scoped-canceled@example.com",
+                subscription_status="canceled",
+            )
+        )
+        session.add(_weekly_usage("acc-scoped-canceled", 10.0))
+        session.add(_fable_scoped_weekly("acc-scoped-canceled", 45.0, now))
+
         # Overall weekly headroom (30%) with a scoped-exhausted (100%) row
         # recorded over 6h ago — stale, so the heuristic (eligible) applies.
         session.add(_anthropic_account("acc-scoped-stale", "scoped-stale@example.com"))
@@ -722,4 +755,6 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
 
     assert accounts_by_id["acc-scoped-hot"]["fableEligible"] is False
     assert accounts_by_id["acc-scoped-cool"]["fableEligible"] is True
+    assert accounts_by_id["acc-scoped-reauth"]["fableEligible"] is False
+    assert accounts_by_id["acc-scoped-canceled"]["fableEligible"] is False
     assert accounts_by_id["acc-scoped-stale"]["fableEligible"] is True

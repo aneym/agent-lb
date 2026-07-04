@@ -12,10 +12,13 @@
       overall-weekly heuristic (`app/modules/proxy/anthropic_service.py`).
 - [x] `fableEligible` mapper reflects fresh scoped data when present
       (`app/modules/accounts/mappers.py`).
+- [x] `fableEligible` returns false for Anthropic rows outside the routable
+      pool (reauth-required, deactivated, paused, or subscription-canceled),
+      even if stale/fresh usage data has Fable headroom.
 - [x] Tests: payload parsing (scoped entry, absent limits, non-Fable scopes
       ignored); persistence on refresh; eligibility via scoped signal both
       directions (scoped-hot/overall-cool excluded, scoped-cool/overall-hot
       admitted); burn set via scoped signal; heuristic fallback when scoped
-      data absent/stale; mapper flag.
+      data absent/stale; mapper flag; non-routable rows suppressed.
 - [x] Validate: pytest, ruff, `openspec validate`, service restart + live
       check that scoped rows appear and eligibility matches upstream percents.

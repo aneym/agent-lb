@@ -46,3 +46,11 @@ overall-weekly heuristic and probe-marker behavior.
 - **WHEN** `/api/accounts` renders an Anthropic account with fresh scoped data
 - **THEN** `fableEligible` reflects the scoped percent against the scoped
   threshold
+
+#### Scenario: Dashboard suppresses eligibility for non-routable accounts
+
+- **GIVEN** an Anthropic account is paused, deactivated, reauth-required, or has
+  a canceled subscription ledger
+- **AND** its latest Fable-scoped usage row has headroom
+- **WHEN** `/api/accounts` renders the account
+- **THEN** `fableEligible` is false
