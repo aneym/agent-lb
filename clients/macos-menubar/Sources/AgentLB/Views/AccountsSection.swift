@@ -283,6 +283,7 @@ struct AccountRow: View {
             .lineLimit(1)
             .truncationMode(.middle)
           planChip
+          fableChip
           Spacer(minLength: 6)
           refreshControl
           trailing
@@ -364,6 +365,22 @@ struct AccountRow: View {
         .background(Capsule().fill(.quaternary.opacity(0.5)))
         .lineLimit(1)
         .fixedSize()
+    }
+  }
+
+  @ViewBuilder
+  private var fableChip: some View {
+    if let availability = account.fableAvailability {
+      Text(availability.label)
+        .font(.system(size: 9, weight: availability == .out ? .bold : .medium))
+        .foregroundStyle(availability == .out ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(.quaternary.opacity(availability == .out ? 0.7 : 0.35)))
+        .lineLimit(1)
+        .fixedSize()
+        .help(availability.help)
+        .accessibilityLabel(availability.help)
     }
   }
 

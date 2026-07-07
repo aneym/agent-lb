@@ -16,6 +16,7 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let planType: String?
   let routingPolicy: String?
   let status: String
+  let fableEligible: Bool?
   let usage: AccountUsage
   // §9.2: per-account credit sums drive the scoped pool windows.
   let remainingCreditsPrimary: Double?
@@ -35,6 +36,11 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
 }
 
 extension Account {
+  var fableAvailability: FableAvailability? {
+    guard provider.lowercased() == "anthropic", let fableEligible else { return nil }
+    return fableEligible ? .available : .out
+  }
+
   var isSubscriptionCanceled: Bool {
     subscription?.status == "canceled"
   }
@@ -49,6 +55,25 @@ extension Account {
 
   var isRoutable: Bool {
     isHeadlineCountable && status != "paused"
+  }
+}
+
+enum FableAvailability: Sendable, Equatable {
+  case available
+  case out
+
+  var label: String {
+    switch self {
+    case .available: return "FABLE"
+    case .out: return "FABLE OUT"
+    }
+  }
+
+  var help: String {
+    switch self {
+    case .available: return "Fable usage available"
+    case .out: return "Out of Fable usage"
+    }
   }
 }
 

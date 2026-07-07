@@ -9,6 +9,7 @@ func makeTestAccount(
   alias: String? = nil,
   planType: String? = nil,
   status: String = "active",
+  fableEligible: Bool? = nil,
   remainingCreditsPrimary: Double? = nil,
   capacityCreditsPrimary: Double? = nil,
   remainingCreditsSecondary: Double? = nil,
@@ -29,6 +30,7 @@ func makeTestAccount(
     planType: planType,
     routingPolicy: nil,
     status: status,
+    fableEligible: fableEligible,
     usage: AccountUsage(
       primaryRemainingPercent: nil,
       secondaryRemainingPercent: nil,

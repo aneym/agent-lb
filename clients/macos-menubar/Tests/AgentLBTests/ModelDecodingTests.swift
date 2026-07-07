@@ -44,6 +44,8 @@ final class ModelDecodingTests: XCTestCase {
 
     // isEmailDuplicate decodes as false (not nil, not true)
     XCTAssertEqual(first.isEmailDuplicate, false)
+    XCTAssertEqual(first.fableEligible, true)
+    XCTAssertEqual(first.fableAvailability, .available)
 
     // §9.2: per-account credit fields drive the scoped pool windows
     XCTAssertEqual(first.remainingCreditsPrimary, 7.0)
@@ -53,6 +55,34 @@ final class ModelDecodingTests: XCTestCase {
 
     // Unknown keys (additionalQuotas, requestUsage) are ignored without error
     XCTAssertEqual(response.accounts.count, 8)
+    XCTAssertNil(response.accounts[1].fableEligible)
+    XCTAssertNil(response.accounts[1].fableAvailability)
+    XCTAssertEqual(
+      response.accounts.first { $0.accountId == "ddb5ff1a-4aea-4810-9f10-196fb49b5d80" }?.fableAvailability,
+      .out
+    )
+  }
+
+  func testFableAvailabilityOnlyAppliesToAnthropicAccounts() throws {
+    let anthropicOut = makeTestAccount(
+      id: "claude-out",
+      provider: "anthropic",
+      fableEligible: false
+    )
+    let anthropicAvailable = makeTestAccount(
+      id: "claude-ok",
+      provider: "Anthropic",
+      fableEligible: true
+    )
+    let openAIWithUnexpectedFlag = makeTestAccount(
+      id: "codex",
+      provider: "openai",
+      fableEligible: false
+    )
+
+    XCTAssertEqual(anthropicOut.fableAvailability, .out)
+    XCTAssertEqual(anthropicAvailable.fableAvailability, .available)
+    XCTAssertNil(openAIWithUnexpectedFlag.fableAvailability)
   }
 
   func testAccountSubscriptionLedgerDecoding() throws {
