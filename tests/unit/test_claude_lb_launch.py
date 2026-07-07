@@ -97,6 +97,65 @@ def test_retry_at_from_error_body_returns_none_without_metadata() -> None:
     assert launcher.retry_at_from_error_body("not json") is None
 
 
+def test_account_pressure_includes_fable_available_state() -> None:
+    launcher = load_launcher_module()
+
+    account = {
+        "alias": "Claude A",
+        "fableEligible": True,
+        "usage": {"primaryRemainingPercent": 100, "secondaryRemainingPercent": 35},
+        "additionalQuotas": [
+            {
+                "quotaKey": "anthropic_top_thinking",
+                "primaryWindow": {"usedPercent": 0, "resetAt": 0},
+            }
+        ],
+    }
+
+    *_, reason = launcher.account_pressure(account, "anthropic_top_thinking")
+
+    assert reason == "left: top-thinking 100% · 5h 100% · weekly 35% · fable available"
+
+
+def test_account_pressure_includes_fable_out_state() -> None:
+    launcher = load_launcher_module()
+
+    account = {
+        "alias": "Claude B",
+        "fableEligible": False,
+        "usage": {"primaryRemainingPercent": 100, "secondaryRemainingPercent": 18},
+        "additionalQuotas": [
+            {
+                "quotaKey": "anthropic_top_thinking",
+                "primaryWindow": {"usedPercent": 0, "resetAt": 0},
+            }
+        ],
+    }
+
+    *_, reason = launcher.account_pressure(account, "anthropic_top_thinking")
+
+    assert reason == "left: top-thinking 100% · 5h 100% · weekly 18% · fable out"
+
+
+def test_account_pressure_omits_unknown_fable_state() -> None:
+    launcher = load_launcher_module()
+
+    account = {
+        "alias": "Claude C",
+        "usage": {"primaryRemainingPercent": 100, "secondaryRemainingPercent": 41},
+        "additionalQuotas": [
+            {
+                "quotaKey": "anthropic_top_thinking",
+                "primaryWindow": {"usedPercent": 0, "resetAt": 0},
+            }
+        ],
+    }
+
+    *_, reason = launcher.account_pressure(account, "anthropic_top_thinking")
+
+    assert reason == "left: top-thinking 100% · 5h 100% · weekly 41%"
+
+
 def test_should_wait_for_reset_honors_mode_and_deadline(monkeypatch) -> None:
     launcher = load_launcher_module()
     now = time.time()

@@ -712,6 +712,15 @@ def _pct_left(remaining: float) -> str:
     return _c(label, "31")
 
 
+def fable_availability_label(account: dict) -> str:
+    eligible = account.get("fableEligible")
+    if eligible is True:
+        return f"fable {_c('available', '32')}"
+    if eligible is False:
+        return f"fable {_c('out', '31')}"
+    return ""
+
+
 def quota_window(account: dict, quota_key: str) -> dict:
     for quota in account.get("additionalQuotas") or []:
         if quota.get("quotaKey") == quota_key:
@@ -738,10 +747,15 @@ def account_pressure(account: dict, quota_key: str) -> tuple[bool, float, float,
     weekly_used = max(0.0, min(100.0, 100.0 - weekly_remaining))
     quota_name = quota_key.replace("anthropic_", "").replace("_", "-")
     quota_left = max(0.0, min(100.0, 100.0 - quota_used_percent))
-    reason = (
-        f"left: {quota_name} {_pct_left(quota_left)} · "
-        f"5h {_pct_left(100.0 - primary_used)} · weekly {_pct_left(100.0 - weekly_used)}"
-    )
+    parts = [
+        f"left: {quota_name} {_pct_left(quota_left)}",
+        f"5h {_pct_left(100.0 - primary_used)}",
+        f"weekly {_pct_left(100.0 - weekly_used)}",
+    ]
+    fable_label = fable_availability_label(account)
+    if fable_label:
+        parts.append(fable_label)
+    reason = " · ".join(parts)
     if blocked:
         reason = f"{reason} · {_c(reset_label(reset_at), '31')}"
     return blocked, primary_used, weekly_used, quota_used_percent, short_account_name(account), reason
