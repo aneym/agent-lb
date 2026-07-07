@@ -106,6 +106,10 @@ def test_account_pressure_includes_fable_available_state() -> None:
         "usage": {"primaryRemainingPercent": 100, "secondaryRemainingPercent": 35},
         "additionalQuotas": [
             {
+                "quotaKey": "anthropic_fable_scoped_weekly",
+                "primaryWindow": {"usedPercent": 84, "resetAt": None, "windowMinutes": 10080},
+            },
+            {
                 "quotaKey": "anthropic_top_thinking",
                 "primaryWindow": {"usedPercent": 0, "resetAt": 0},
             }
@@ -114,10 +118,34 @@ def test_account_pressure_includes_fable_available_state() -> None:
 
     *_, reason = launcher.account_pressure(account, "anthropic_top_thinking")
 
-    assert reason == "left: top-thinking 100% · 5h 100% · weekly 35% · fable available"
+    assert reason == "left: top-thinking 100% · 5h 100% · weekly 35% · fable 16% left"
 
 
 def test_account_pressure_includes_fable_out_state() -> None:
+    launcher = load_launcher_module()
+
+    account = {
+        "alias": "Claude B",
+        "fableEligible": False,
+        "usage": {"primaryRemainingPercent": 100, "secondaryRemainingPercent": 18},
+        "additionalQuotas": [
+            {
+                "quotaKey": "anthropic_fable_scoped_weekly",
+                "primaryWindow": {"usedPercent": 100, "resetAt": None, "windowMinutes": 10080},
+            },
+            {
+                "quotaKey": "anthropic_top_thinking",
+                "primaryWindow": {"usedPercent": 0, "resetAt": 0},
+            }
+        ],
+    }
+
+    *_, reason = launcher.account_pressure(account, "anthropic_top_thinking")
+
+    assert reason == "left: top-thinking 100% · 5h 100% · weekly 18% · fable out (0% left)"
+
+
+def test_account_pressure_falls_back_to_fable_availability_without_scoped_usage() -> None:
     launcher = load_launcher_module()
 
     account = {

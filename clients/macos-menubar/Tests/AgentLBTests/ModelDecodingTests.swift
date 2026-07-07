@@ -53,7 +53,10 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertEqual(first.remainingCreditsSecondary, 41.0)
     XCTAssertEqual(first.capacityCreditsSecondary, 100.0)
 
-    // Unknown keys (additionalQuotas, requestUsage) are ignored without error
+    // Unknown requestUsage payload still decodes without error; additionalQuotas
+    // is intentionally decoded for scoped Fable usage.
+    XCTAssertNotNil(first.additionalQuotas)
+    XCTAssertNil(first.fableRemainingPercent)
     XCTAssertEqual(response.accounts.count, 8)
     XCTAssertNil(response.accounts[1].fableEligible)
     XCTAssertNil(response.accounts[1].fableAvailability)
@@ -85,6 +88,43 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertNil(openAIWithUnexpectedFlag.fableAvailability)
   }
 
+  func testFableAvailabilityLabelIncludesScopedRemainingPercent() throws {
+    let anthropicAvailable = makeTestAccount(
+      id: "claude-ok",
+      provider: "anthropic",
+      fableEligible: true,
+      additionalQuotas: [makeFableScopedQuota(usedPercent: 84)]
+    )
+    let anthropicOut = makeTestAccount(
+      id: "claude-out",
+      provider: "anthropic",
+      fableEligible: false,
+      additionalQuotas: [makeFableScopedQuota(usedPercent: 100)]
+    )
+    let anthropicFallback = makeTestAccount(
+      id: "claude-unknown",
+      provider: "anthropic",
+      fableEligible: true
+    )
+    let openAIWithScopedQuota = makeTestAccount(
+      id: "codex",
+      provider: "openai",
+      fableEligible: true,
+      additionalQuotas: [makeFableScopedQuota(usedPercent: 84)]
+    )
+
+    XCTAssertEqual(anthropicAvailable.fableRemainingPercent, 16.0)
+    XCTAssertEqual(anthropicAvailable.fableAvailabilityLabel, "FABLE 16%")
+    XCTAssertEqual(anthropicAvailable.fableAvailabilityHelp, "Fable usage available (16% remaining)")
+    XCTAssertEqual(anthropicOut.fableRemainingPercent, 0.0)
+    XCTAssertEqual(anthropicOut.fableAvailabilityLabel, "FABLE OUT 0%")
+    XCTAssertEqual(anthropicOut.fableAvailabilityHelp, "Out of Fable usage (0% remaining)")
+    XCTAssertNil(anthropicFallback.fableRemainingPercent)
+    XCTAssertEqual(anthropicFallback.fableAvailabilityLabel, "FABLE")
+    XCTAssertNil(openAIWithScopedQuota.fableRemainingPercent)
+    XCTAssertNil(openAIWithScopedQuota.fableAvailabilityLabel)
+  }
+
   func testAccountSubscriptionLedgerDecoding() throws {
     let json = """
     {
@@ -99,6 +139,7 @@ final class ModelDecodingTests: XCTestCase {
           "secondaryRemainingPercent": 99,
           "monthlyRemainingPercent": null
         },
+        "additionalQuotas": [],
         "remainingCreditsPrimary": null,
         "capacityCreditsPrimary": null,
         "remainingCreditsSecondary": null,

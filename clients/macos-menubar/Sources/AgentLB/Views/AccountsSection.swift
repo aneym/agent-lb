@@ -370,8 +370,8 @@ struct AccountRow: View {
 
   @ViewBuilder
   private var fableChip: some View {
-    if let availability = account.fableAvailability {
-      Text(availability.label)
+    if let availability = account.fableAvailability, let label = account.fableAvailabilityLabel {
+      Text(label)
         .font(.system(size: 9, weight: availability == .out ? .bold : .medium))
         .foregroundStyle(availability == .out ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .padding(.horizontal, 5)
@@ -379,8 +379,8 @@ struct AccountRow: View {
         .background(Capsule().fill(.quaternary.opacity(availability == .out ? 0.7 : 0.35)))
         .lineLimit(1)
         .fixedSize()
-        .help(availability.help)
-        .accessibilityLabel(availability.help)
+        .help(account.fableAvailabilityHelp ?? availability.help)
+        .accessibilityLabel(account.fableAvailabilityHelp ?? availability.help)
     }
   }
 

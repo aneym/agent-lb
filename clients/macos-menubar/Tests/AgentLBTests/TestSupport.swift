@@ -10,6 +10,7 @@ func makeTestAccount(
   planType: String? = nil,
   status: String = "active",
   fableEligible: Bool? = nil,
+  additionalQuotas: [AccountAdditionalQuota]? = nil,
   remainingCreditsPrimary: Double? = nil,
   capacityCreditsPrimary: Double? = nil,
   remainingCreditsSecondary: Double? = nil,
@@ -31,6 +32,7 @@ func makeTestAccount(
     routingPolicy: nil,
     status: status,
     fableEligible: fableEligible,
+    additionalQuotas: additionalQuotas,
     usage: AccountUsage(
       primaryRemainingPercent: nil,
       secondaryRemainingPercent: nil,
@@ -48,6 +50,17 @@ func makeTestAccount(
     deactivationReason: deactivationReason,
     isEmailDuplicate: nil,
     subscription: subscription
+  )
+}
+
+func makeFableScopedQuota(usedPercent: Double) -> AccountAdditionalQuota {
+  AccountAdditionalQuota(
+    quotaKey: "anthropic_fable_scoped_weekly",
+    primaryWindow: AccountAdditionalWindow(
+      usedPercent: usedPercent,
+      resetAt: nil,
+      windowMinutes: 10080
+    )
   )
 }
 

@@ -2,6 +2,8 @@ import Foundation
 
 // MARK: - Accounts
 
+private let fableScopedWeeklyQuotaKey = "anthropic_fable_scoped_weekly"
+
 struct AccountsResponse: Decodable {
   let accounts: [Account]
 }
@@ -17,6 +19,7 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let routingPolicy: String?
   let status: String
   let fableEligible: Bool?
+  let additionalQuotas: [AccountAdditionalQuota]?
   let usage: AccountUsage
   // §9.2: per-account credit sums drive the scoped pool windows.
   let remainingCreditsPrimary: Double?
@@ -39,6 +42,40 @@ extension Account {
   var fableAvailability: FableAvailability? {
     guard provider.lowercased() == "anthropic", let fableEligible else { return nil }
     return fableEligible ? .available : .out
+  }
+
+  var fableRemainingPercent: Double? {
+    guard provider.lowercased() == "anthropic" else { return nil }
+    guard let usedPercent = additionalQuotas?
+      .first(where: { $0.quotaKey == fableScopedWeeklyQuotaKey })?
+      .primaryWindow?
+      .usedPercent
+    else {
+      return nil
+    }
+    return min(100, max(0, 100 - usedPercent))
+  }
+
+  var fableAvailabilityLabel: String? {
+    guard let availability = fableAvailability else { return nil }
+    guard let remaining = fableRemainingPercent else { return availability.label }
+    switch availability {
+    case .available:
+      return "FABLE \(Format.percent(remaining))"
+    case .out:
+      return "FABLE OUT \(Format.percent(remaining))"
+    }
+  }
+
+  var fableAvailabilityHelp: String? {
+    guard let availability = fableAvailability else { return nil }
+    guard let remaining = fableRemainingPercent else { return availability.help }
+    switch availability {
+    case .available:
+      return "Fable usage available (\(Format.percent(remaining)) remaining)"
+    case .out:
+      return "Out of Fable usage (\(Format.percent(remaining)) remaining)"
+    }
   }
 
   var isSubscriptionCanceled: Bool {
@@ -93,6 +130,17 @@ struct AccountUsage: Decodable, Sendable, Equatable {
   let primaryRemainingPercent: Double?
   let secondaryRemainingPercent: Double?
   let monthlyRemainingPercent: Double?
+}
+
+struct AccountAdditionalQuota: Decodable, Sendable, Equatable {
+  let quotaKey: String?
+  let primaryWindow: AccountAdditionalWindow?
+}
+
+struct AccountAdditionalWindow: Decodable, Sendable, Equatable {
+  let usedPercent: Double
+  let resetAt: Int?
+  let windowMinutes: Int?
 }
 
 // MARK: - Account Refresh

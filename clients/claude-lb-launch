@@ -64,6 +64,7 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 
 
 # ---------------------------------------------------------------------------
@@ -712,8 +713,28 @@ def _pct_left(remaining: float) -> str:
     return _c(label, "31")
 
 
+def fable_remaining_percent(account: dict) -> float | None:
+    for quota in account.get("additionalQuotas") or []:
+        if quota.get("quotaKey") != FABLE_SCOPED_WEEKLY_QUOTA_KEY:
+            continue
+        window = quota.get("primaryWindow")
+        if not isinstance(window, dict) or window.get("usedPercent") is None:
+            return None
+        used_percent = number(window.get("usedPercent"), -1.0)
+        if used_percent < 0:
+            return None
+        return max(0.0, min(100.0, 100.0 - used_percent))
+    return None
+
+
 def fable_availability_label(account: dict) -> str:
     eligible = account.get("fableEligible")
+    remaining = fable_remaining_percent(account)
+    if remaining is not None:
+        remaining_label = _pct_left(remaining)
+        if eligible is False:
+            return f"fable out ({remaining_label} left)"
+        return f"fable {remaining_label} left"
     if eligible is True:
         return f"fable {_c('available', '32')}"
     if eligible is False:
