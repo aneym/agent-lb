@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Iterable, Literal
 from uuid import uuid4
 
 from app.core import usage as usage_core
+from app.core.audit.service import AuditService
 from app.core.balancer import (
     HEALTH_TIER_DRAINING,
     HEALTH_TIER_HEALTHY,
@@ -53,6 +55,7 @@ from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.usage.quota import apply_usage_quota
+from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
 from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
@@ -1297,6 +1300,11 @@ class LoadBalancer:
         # reassignment.
         persist_fallback = True
         apply_sticky_secondary_budget_threshold = False
+        # Threaded from the branch that actually forces a rebind so the audit
+        # event records the true cause rather than an after-the-fact guess. Only
+        # consulted when the fallback upsert lands on a different account than
+        # the one previously pinned (see the persist_fallback block below).
+        rebind_reason = "other"
 
         if existing:
             pinned = next((state for state in states if state.account_id == existing), None)
@@ -1450,6 +1458,16 @@ class LoadBalancer:
                                         kind=sticky_kind,
                                     )
                                 return pinned_result
+                    # rate_limit_far_away is mutually exclusive with the other
+                    # two (it requires a RATE_LIMITED pin); when budget pressure
+                    # and burn-first drain both hold, attribute to budget
+                    # pressure as the higher-severity trigger.
+                    if rate_limit_far_away:
+                        rebind_reason = "rate_limited_failover"
+                    elif budget_pressured:
+                        rebind_reason = "budget_pressure"
+                    elif sticky_drain_reallocate:
+                        rebind_reason = "burn_first_drain"
                     reallocate_sticky = True
                 # Grace period: if the pinned account is rate-limited with a
                 # known reset time within a short window, retry selection
@@ -1481,18 +1499,27 @@ class LoadBalancer:
                 elif pinned.status not in _RECOVERABLE_STATUSES:
                     # Permanently down (PAUSED/DEACTIVATED) — let the
                     # fallback be persisted to rebind the mapping.
-                    pass
+                    rebind_reason = "account_unavailable"
                 elif sticky_max_age_seconds is not None:
                     # TTL-based kind (PROMPT_CACHE): preserve the original
                     # mapping so the next request returns to the warm-cache
                     # account once it recovers.  The TTL will naturally
                     # expire the mapping if recovery takes too long.
                     persist_fallback = False
-                # else: durable kind without TTL (CODEX_SESSION) — persist
-                # fallback so the session sticks to one account during
-                # the outage instead of bouncing across random fallbacks.
+                else:
+                    # Durable kind without TTL (CODEX_SESSION): persist the
+                    # fallback so the session sticks to one account during the
+                    # outage instead of bouncing across random fallbacks. The
+                    # pin is recoverable but currently unselectable — a
+                    # rate-limited pin whose grace retry failed is a failover.
+                    rebind_reason = (
+                        "rate_limited_failover"
+                        if pinned.status == AccountStatus.RATE_LIMITED
+                        else "other"
+                    )
             else:
                 await sticky_repo.delete(sticky_key, kind=sticky_kind)
+                rebind_reason = "account_unavailable"
 
         chosen = _select_account_preferring_budget_safe(
             states,
@@ -1509,8 +1536,51 @@ class LoadBalancer:
             routing_costs_by_account_id=routing_costs_by_account_id,
         )
         if persist_fallback and chosen.account is not None and chosen.account.account_id in account_map:
-            await sticky_repo.upsert(sticky_key, chosen.account.account_id, kind=sticky_kind)
+            new_account_id = chosen.account.account_id
+            if isinstance(existing, str) and existing and new_account_id != existing:
+                self._record_sticky_rebind(
+                    sticky_key=sticky_key,
+                    sticky_kind=sticky_kind,
+                    old_account_id=existing,
+                    new_account_id=new_account_id,
+                    reason=rebind_reason,
+                )
+            await sticky_repo.upsert(sticky_key, new_account_id, kind=sticky_kind)
         return chosen
+
+    def _record_sticky_rebind(
+        self,
+        *,
+        sticky_key: str,
+        sticky_kind: StickySessionKind,
+        old_account_id: str,
+        new_account_id: str,
+        reason: str,
+    ) -> None:
+        """Record a durable-pin rebind as an audit event, fire-and-forget.
+
+        A rebind busts the conversation's org-scoped Anthropic prompt cache and
+        re-bills its input tokens uncached, so the frequency and cause need to be
+        measurable. Dispatched via AuditService.log_async — the repo-wide audit
+        convention — so the write never blocks selection; any error building or
+        dispatching it is swallowed after a log line. The raw sticky key is hashed
+        so affinity keys never land in the audit table.
+        """
+        try:
+            key_hash = hashlib.sha256(sticky_key.encode("utf-8")).hexdigest()
+            AuditService.log_async(
+                "sticky_session_rebound",
+                details={
+                    "sticky_key_hash": key_hash,
+                    "sticky_kind": sticky_kind.value,
+                    "old_account_id": old_account_id,
+                    "new_account_id": new_account_id,
+                    "reason": reason,
+                },
+                request_id=get_request_id(),
+            )
+        except Exception:
+            logger.warning("Failed to record sticky-session rebind", exc_info=True)
 
     async def mark_rate_limit(self, account: Account, error: UpstreamError) -> None:
         lock = await self._get_account_lock(account.id)

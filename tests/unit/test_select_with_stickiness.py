@@ -10,12 +10,13 @@ from __future__ import annotations
 import time
 from contextlib import asynccontextmanager
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from app.core.balancer import AccountState, RoutingCost, RoutingCostsByAccount, RoutingStrategy
 from app.db.models import Account, AccountStatus, StickySessionKind
+from app.modules.proxy import load_balancer as load_balancer_module
 from app.modules.proxy.load_balancer import LoadBalancer
 
 pytestmark = pytest.mark.unit
@@ -74,6 +75,7 @@ async def _invoke_stickiness(
     budget_threshold_pct: float = 95.0,
     secondary_budget_threshold_pct: float = 100.0,
     headroom_reallocate: bool = False,
+    burn_first_sticky_drain: bool = False,
     routing_strategy: RoutingStrategy = "usage_weighted",
     relative_availability_power: float = 2.0,
     relative_availability_top_k: int = 5,
@@ -102,6 +104,7 @@ async def _invoke_stickiness(
         budget_threshold_pct=budget_threshold_pct,
         secondary_budget_threshold_pct=secondary_budget_threshold_pct,
         headroom_reallocate=headroom_reallocate,
+        burn_first_sticky_drain=burn_first_sticky_drain,
         prefer_earlier_reset_accounts=False,
         prefer_earlier_reset_window="secondary",
         routing_strategy=routing_strategy,
@@ -1187,3 +1190,217 @@ async def test_headroom_reallocation_no_flap_back_after_window_reset():
     assert r2.account is not None
     assert r2.account.account_id == "b"
     repo2.delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Sticky-session rebind instrumentation: every rebind of an existing pin to a
+# DIFFERENT account is recorded as a `sticky_session_rebound` audit event with
+# the true triggering reason. A same-account touch records nothing, and a
+# recording failure never breaks selection.
+# ---------------------------------------------------------------------------
+
+
+def _patch_audit_log():
+    """Patch the fire-and-forget audit sink used by _record_sticky_rebind.
+
+    `log_async` is a synchronous dispatch (it schedules the write on a background
+    task), so it is patched with a plain Mock rather than an AsyncMock.
+    """
+    return patch.object(load_balancer_module.AuditService, "log_async", new_callable=Mock)
+
+
+def _rebind_event(audit_log: Mock) -> dict:
+    audit_log.assert_called_once()
+    args, kwargs = audit_log.call_args
+    assert args[0] == "sticky_session_rebound"
+    return kwargs["details"]
+
+
+@pytest.mark.asyncio
+async def test_rebind_via_failover_records_rate_limited_failover():
+    """A durable CODEX_SESSION pin whose rate-limited account cannot be served
+    (grace retry fails) rebinds to the fallback and records the failover."""
+    now = time.time()
+    acc_a = _rate_limited("a", cooldown_until=now + 60)
+    acc_b = _active("b")
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "session_123",
+            repo,
+            sticky_kind=StickySessionKind.CODEX_SESSION,
+            reallocate_sticky=False,
+            sticky_max_age_seconds=None,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    details = _rebind_event(audit_log)
+    assert details["reason"] == "rate_limited_failover"
+    assert details["sticky_kind"] == StickySessionKind.CODEX_SESSION.value
+    assert details["old_account_id"] == "a"
+    assert details["new_account_id"] == "b"
+    # Raw affinity key must never be persisted.
+    assert details["sticky_key_hash"] != "session_123"
+    assert len(details["sticky_key_hash"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_rebind_via_budget_pressure_records_budget_pressure():
+    """A pin above the budget threshold that reallocates to a healthier account
+    records the rebind with reason budget_pressure."""
+    acc_a = _active("a", used_percent=96.0)
+    acc_b = _active("b", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    details = _rebind_event(audit_log)
+    assert details["reason"] == "budget_pressure"
+    assert details["old_account_id"] == "a"
+    assert details["new_account_id"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_rebind_via_burn_first_drain_records_burn_first_drain():
+    """An under-threshold pin drained onto a selectable burn-first account by the
+    fable burn-first sticky drain records reason burn_first_drain."""
+    acc_a = _active("a", used_percent=50.0)
+    acc_b = _active("b", used_percent=10.0, routing_policy="burn_first")
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+            burn_first_sticky_drain=True,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    details = _rebind_event(audit_log)
+    assert details["reason"] == "burn_first_drain"
+    assert details["old_account_id"] == "a"
+    assert details["new_account_id"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_rebind_via_paused_account_records_account_unavailable():
+    """A pin on a permanently-down (PAUSED) account rebinds to the fallback and
+    records reason account_unavailable."""
+    acc_a = AccountState("a", AccountStatus.PAUSED)
+    acc_b = _active("b")
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    details = _rebind_event(audit_log)
+    assert details["reason"] == "account_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_rebind_when_pinned_account_left_pool_records_account_unavailable():
+    """A pin whose account is gone from the pool rebinds and records
+    account_unavailable."""
+    acc_b = _active("b")
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    details = _rebind_event(audit_log)
+    assert details["reason"] == "account_unavailable"
+    assert details["old_account_id"] == "a"
+    assert details["new_account_id"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_same_account_repeat_selection_records_no_rebind():
+    """When the existing pin is re-selected onto the same account, nothing is
+    recorded — a same-account touch is not a rebind."""
+    acc_a = _active("a", used_percent=10.0)
+    acc_b = _active("b", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "a"
+    audit_log.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_first_pin_creation_records_no_rebind():
+    """Creating a brand-new pin (no prior mapping) is not a rebind."""
+    acc_a = _active("a", used_percent=10.0)
+    acc_b = _active("b", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id=None)
+
+    with _patch_audit_log() as audit_log:
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "a"
+    audit_log.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rebind_recording_failure_does_not_break_selection():
+    """A failure while persisting the rebind event must be swallowed — selection
+    still returns the fallback account."""
+    acc_a = _active("a", used_percent=96.0)
+    acc_b = _active("b", used_percent=50.0)
+    repo = _make_sticky_repo(existing_account_id="a")
+
+    with _patch_audit_log() as audit_log:
+        audit_log.side_effect = RuntimeError("simulated audit DB failure")
+        result = await _invoke_stickiness(
+            [acc_a, acc_b],
+            "key1",
+            repo,
+            reallocate_sticky=False,
+        )
+
+    assert result.account is not None
+    assert result.account.account_id == "b"
+    audit_log.assert_called_once()
+    # The rebind still persisted even though the audit write failed.
+    repo.upsert.assert_called_once_with("key1", "b", kind=StickySessionKind.PROMPT_CACHE)
