@@ -1536,6 +1536,111 @@ async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monk
     assert eligibility.account_ids == [fresh_account.id]
 
 
+def _anthropic_eligibility_settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        anthropic_fable_routing_enabled=False,
+        anthropic_route_to_extra_usage=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_eligibility_readmits_additional_quota_row_with_none_reset(monkeypatch):
+    """An additional-quota cooldown row at 100% with reset_at=None must not
+    permanently exclude the account from routing (regression: stale-exhausted
+    permanent block)."""
+    account = _make_test_account(account_id="anthropic-stale")
+    account.provider = "anthropic"
+
+    class _RepoBundle:
+        def __init__(self) -> None:
+            self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
+            self.additional_usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    return_value={account.id: SimpleNamespace(used_percent=100.0, reset_at=None)}
+                )
+            )
+            self.usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(anthropic_service_module, "get_settings", _anthropic_eligibility_settings)
+    service = AnthropicProxyService(lambda: _RepoBundle())
+
+    eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
+
+    assert eligibility.account_ids == [account.id]
+    assert eligibility.blocked_count == 0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_eligibility_readmits_primary_window_with_none_reset(monkeypatch):
+    """A persisted primary usage window at 100% with reset_at=None must not gate
+    the account out of routing indefinitely."""
+    account = _make_test_account(account_id="anthropic-primary-stale")
+    account.provider = "anthropic"
+
+    class _RepoBundle:
+        def __init__(self) -> None:
+            self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
+            self.additional_usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
+            self.usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    return_value={account.id: SimpleNamespace(used_percent=100.0, reset_at=None)}
+                )
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(anthropic_service_module, "get_settings", _anthropic_eligibility_settings)
+    service = AnthropicProxyService(lambda: _RepoBundle())
+
+    eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
+
+    assert eligibility.account_ids == [account.id]
+    assert eligibility.blocked_count == 0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_eligibility_still_blocks_bounded_future_reset(monkeypatch):
+    """A bounded, still-future exhaustion reset continues to gate the account —
+    only unbounded (None) resets are re-admitted."""
+    account = _make_test_account(account_id="anthropic-cooling")
+    account.provider = "anthropic"
+    future = int(time.time()) + 3600
+
+    class _RepoBundle:
+        def __init__(self) -> None:
+            self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
+            self.additional_usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    return_value={account.id: SimpleNamespace(used_percent=100.0, reset_at=future)}
+                )
+            )
+            self.usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(anthropic_service_module, "get_settings", _anthropic_eligibility_settings)
+    service = AnthropicProxyService(lambda: _RepoBundle())
+
+    eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
+
+    assert eligibility.account_ids == []
+    assert eligibility.blocked_count == 1
+
+
 def _epoch_to_naive_utc(epoch: float) -> datetime:
     from datetime import timezone
 

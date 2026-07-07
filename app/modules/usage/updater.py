@@ -572,7 +572,13 @@ class UsageUpdater:
                 input_tokens=None,
                 output_tokens=None,
                 window="primary",
-                reset_at=_reset_at(primary.reset_at, primary.reset_after_seconds, now_epoch),
+                reset_at=_bounded_exhaustion_reset_at(
+                    primary.used_percent,
+                    primary.reset_at,
+                    primary.reset_after_seconds,
+                    primary.limit_window_seconds,
+                    now_epoch,
+                ),
                 window_minutes=_window_minutes(primary.limit_window_seconds),
                 credits_has=credits_has,
                 credits_unlimited=credits_unlimited,
@@ -918,7 +924,13 @@ def _merge_additional_rate_limits(
                 limit_name=str(limit_name),
                 metered_feature=str(metered_feature),
                 used_percent=float(usage_window.used_percent),
-                reset_at=_reset_at(usage_window.reset_at, usage_window.reset_after_seconds, now_epoch),
+                reset_at=_bounded_exhaustion_reset_at(
+                    usage_window.used_percent,
+                    usage_window.reset_at,
+                    usage_window.reset_after_seconds,
+                    usage_window.limit_window_seconds,
+                    now_epoch,
+                ),
                 window_minutes=_window_minutes(usage_window.limit_window_seconds),
             )
             windows = merged.setdefault(quota_key, {})
@@ -1064,6 +1076,41 @@ def _reset_at(reset_at: int | None, reset_after_seconds: int | None, now_epoch: 
     if reset_after_seconds is None:
         return None
     return now_epoch + max(0, int(reset_after_seconds))
+
+
+# Fallback horizon for an exhausted window whose upstream payload omitted both
+# reset_at and reset_after_seconds and carried no usable limit_window_seconds.
+_DEFAULT_EXHAUSTION_HORIZON_SECONDS = 3600
+
+
+def _bounded_exhaustion_reset_at(
+    used_percent: float | None,
+    reset_at: int | None,
+    reset_after_seconds: int | None,
+    limit_window_seconds: int | None,
+    now_epoch: int,
+) -> int | None:
+    """Resolve a reset horizon, synthesizing a bounded one for exhausted windows.
+
+    Upstream sometimes reports a fully-consumed window (used_percent >= 100) while
+    omitting both reset_at and reset_after_seconds. Persisting reset_at=None for
+    such a row makes the exhaustion self-perpetuating: routing gates read a None
+    reset on a 100% window as "cooling down forever" and permanently exclude the
+    account. Synthesize a bounded, self-expiring horizon instead so the account
+    re-admits; if it is still exhausted upstream, the next 429 tripwire writes a
+    fresh bounded cooldown.
+    """
+    resolved = _reset_at(reset_at, reset_after_seconds, now_epoch)
+    if resolved is not None:
+        return resolved
+    if used_percent is None or float(used_percent) < 100.0:
+        return None
+    horizon = (
+        int(limit_window_seconds)
+        if limit_window_seconds is not None and int(limit_window_seconds) > 0
+        else _DEFAULT_EXHAUSTION_HORIZON_SECONDS
+    )
+    return now_epoch + horizon
 
 
 # The usage endpoint can return 403 for accounts that are still otherwise usable

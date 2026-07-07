@@ -3232,3 +3232,80 @@ async def test_refresh_accounts_does_not_repeat_post_reset_quota_probe(monkeypat
 
     updater = UsageUpdater(StubUsageRepository(), accounts_repo=None)
     await updater.refresh_accounts([acc], latest_usage={acc.id: latest})
+
+
+def test_merge_additional_rate_limits_synthesizes_bounded_reset_when_upstream_omits_reset() -> None:
+    """An exhausted additional-quota window with no upstream reset info must be
+    persisted with a bounded, self-expiring reset_at so it cannot exclude an
+    account from routing indefinitely (regression: stale-exhausted permanent block)."""
+    from types import SimpleNamespace
+
+    from app.modules.usage.updater import _merge_additional_rate_limits
+
+    now_epoch = 1_700_000_000
+    exhausted_window = SimpleNamespace(
+        used_percent=100.0,
+        reset_at=None,
+        reset_after_seconds=None,
+        limit_window_seconds=18000,
+    )
+    additional = SimpleNamespace(
+        limit_name="claude_top_thinking",
+        metered_feature="thinking",
+        rate_limit=SimpleNamespace(primary_window=exhausted_window, secondary_window=None),
+    )
+
+    merged = _merge_additional_rate_limits([additional], account_id="acc", now_epoch=now_epoch)
+
+    quota_key = next(iter(merged))
+    window = merged[quota_key]["primary"]
+    assert window.used_percent == 100.0
+    assert window.reset_at == now_epoch + 18000
+
+
+def test_merge_additional_rate_limits_defaults_reset_horizon_without_window_seconds() -> None:
+    from types import SimpleNamespace
+
+    from app.modules.usage.updater import _DEFAULT_EXHAUSTION_HORIZON_SECONDS, _merge_additional_rate_limits
+
+    now_epoch = 1_700_000_000
+    exhausted_window = SimpleNamespace(
+        used_percent=100.0,
+        reset_at=None,
+        reset_after_seconds=None,
+        limit_window_seconds=None,
+    )
+    additional = SimpleNamespace(
+        limit_name="claude_top_thinking",
+        metered_feature="thinking",
+        rate_limit=SimpleNamespace(primary_window=exhausted_window, secondary_window=None),
+    )
+
+    merged = _merge_additional_rate_limits([additional], account_id="acc", now_epoch=now_epoch)
+
+    window = merged[next(iter(merged))]["primary"]
+    assert window.reset_at == now_epoch + _DEFAULT_EXHAUSTION_HORIZON_SECONDS
+
+
+def test_merge_additional_rate_limits_leaves_unexhausted_window_reset_none() -> None:
+    from types import SimpleNamespace
+
+    from app.modules.usage.updater import _merge_additional_rate_limits
+
+    now_epoch = 1_700_000_000
+    partial_window = SimpleNamespace(
+        used_percent=40.0,
+        reset_at=None,
+        reset_after_seconds=None,
+        limit_window_seconds=18000,
+    )
+    additional = SimpleNamespace(
+        limit_name="claude_top_thinking",
+        metered_feature="thinking",
+        rate_limit=SimpleNamespace(primary_window=partial_window, secondary_window=None),
+    )
+
+    merged = _merge_additional_rate_limits([additional], account_id="acc", now_epoch=now_epoch)
+
+    window = merged[next(iter(merged))]["primary"]
+    assert window.reset_at is None

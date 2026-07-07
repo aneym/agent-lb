@@ -291,3 +291,43 @@ def test_build_additional_usage_summary_none_reset_at():
     assert pw.used_percent == pytest.approx(50.0)  # (40+60)/2
     assert pw.reset_at == 1000
     assert pw.window_minutes == 60
+
+
+def test_additional_quota_window_readmits_exhausted_none_reset_row():
+    """A dashboard additional-quota window at 100% with reset_at=None must render
+    as re-admitted (0%), not as permanently exhausted (regression: stale-exhausted
+    permanent block)."""
+    from app.modules.accounts.service import _additional_quota_window
+
+    entry = _make_entry(
+        account_id="acc",
+        limit_name="claude_top_thinking",
+        used_percent=100.0,
+        reset_at=None,
+        window_minutes=300,
+    )
+
+    window = _additional_quota_window(entry, now_epoch=1_700_000_000)
+
+    assert window is not None
+    assert window.used_percent == 0.0
+    assert window.reset_at is None
+
+
+def test_additional_quota_window_preserves_bounded_future_exhaustion():
+    from app.modules.accounts.service import _additional_quota_window
+
+    now_epoch = 1_700_000_000
+    entry = _make_entry(
+        account_id="acc",
+        limit_name="claude_top_thinking",
+        used_percent=100.0,
+        reset_at=now_epoch + 3600,
+        window_minutes=300,
+    )
+
+    window = _additional_quota_window(entry, now_epoch=now_epoch)
+
+    assert window is not None
+    assert window.used_percent == 100.0
+    assert window.reset_at == now_epoch + 3600

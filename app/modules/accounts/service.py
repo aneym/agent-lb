@@ -127,7 +127,10 @@ def _additional_quota_window(
 ) -> AccountAdditionalWindow | None:
     if entry is None:
         return None
-    if entry.reset_at is not None and entry.reset_at <= now_epoch and float(entry.used_percent) >= 100.0:
+    # An exhausted window (used_percent >= 100) with no bounded reset horizon —
+    # either already elapsed or persisted as None — is a stale block that must
+    # not display as permanently 100% consumed. Present it as re-admitted.
+    if float(entry.used_percent) >= 100.0 and (entry.reset_at is None or entry.reset_at <= now_epoch):
         return AccountAdditionalWindow(
             used_percent=0.0,
             reset_at=None,

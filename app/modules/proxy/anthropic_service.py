@@ -735,15 +735,20 @@ class AnthropicProxyService:
             cooldowns = {
                 account_id: (float(entry.used_percent), entry.reset_at) for account_id, entry in latest.items()
             }
-            primary_exhaustion: dict[str, int | None] = {}
+            # A persisted primary window with reset_at=None must not gate an
+            # account out of routing indefinitely. Only a bounded, still-future
+            # reset counts as an active exhaustion here; a None reset re-admits
+            # the account (a genuine 429 re-writes a bounded cooldown).
+            primary_exhaustion: dict[str, int] = {}
             if extra_usage_gate:
                 primary_usage = await repos.usage.latest_by_account(window="primary", account_ids=account_ids)
                 primary_exhaustion = {
-                    account_id: (int(entry.reset_at) if entry.reset_at is not None else None)
+                    account_id: int(entry.reset_at)
                     for account_id, entry in primary_usage.items()
                     if entry.used_percent is not None
                     and float(entry.used_percent) >= 100.0
-                    and (entry.reset_at is None or int(entry.reset_at) > now)
+                    and entry.reset_at is not None
+                    and int(entry.reset_at) > now
                 }
             weekly_usage_used_percent: dict[str, float] = {}
             fable_access_markers: dict[str, tuple[float, int | None]] = {}
@@ -794,9 +799,7 @@ class AnthropicProxyService:
                 continue
             if account_id in primary_exhaustion:
                 blocked_count += 1
-                window_reset = primary_exhaustion[account_id]
-                if window_reset is not None:
-                    reset_candidates.append(window_reset)
+                reset_candidates.append(primary_exhaustion[account_id])
                 exhausted_window_account_ids.append(account_id)
                 continue
             eligible_account_ids.append(account_id)
@@ -1245,7 +1248,13 @@ def _hash_for_key(value: str) -> str:
 def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, now: int) -> bool:
     if float(used_percent) < 100.0:
         return False
-    return reset_at is None or int(reset_at) > now
+    # A persisted exhaustion with no reset horizon must not block routing
+    # forever. Without a bounded reset we cannot know the window is still
+    # exhausted, so re-admit the account; if it is genuinely exhausted the
+    # next upstream 429 trips a fresh bounded cooldown.
+    if reset_at is None:
+        return False
+    return int(reset_at) > now
 
 
 def _build_anthropic_headers(
