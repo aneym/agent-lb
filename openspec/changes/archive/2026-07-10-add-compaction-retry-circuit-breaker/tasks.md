@@ -10,5 +10,5 @@
       distinct inputs unaffected; window expiry closes the breaker;
       non-compaction requests never fingerprinted.
 - [x] Validation gates (pytest suites, ruff format/check, OpenSpec strict).
-- [ ] Live verification on the deployed proxy: replay an identical compaction
+- [x] Live verification on the deployed proxy: replay an identical compaction
       probe 6× and observe the 429 + audit event.
