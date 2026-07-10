@@ -112,7 +112,7 @@ def test_account_pressure_includes_fable_available_state() -> None:
             {
                 "quotaKey": "anthropic_top_thinking",
                 "primaryWindow": {"usedPercent": 0, "resetAt": 0},
-            }
+            },
         ],
     }
 
@@ -136,7 +136,7 @@ def test_account_pressure_includes_fable_out_state() -> None:
             {
                 "quotaKey": "anthropic_top_thinking",
                 "primaryWindow": {"usedPercent": 0, "resetAt": 0},
-            }
+            },
         ],
     }
 

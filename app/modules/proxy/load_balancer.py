@@ -854,9 +854,7 @@ class LoadBalancer:
             excluded_mirror_count = 0
             eligible_accounts = []
             for account in all_accounts:
-                if not is_locally_owned(account, selection_settings) and access_token_hard_expired(
-                    encryptor, account
-                ):
+                if not is_locally_owned(account, selection_settings) and access_token_hard_expired(encryptor, account):
                     excluded_mirror_count += 1
                     continue
                 eligible_accounts.append(account)
@@ -1530,11 +1528,7 @@ class LoadBalancer:
                     # outage instead of bouncing across random fallbacks. The
                     # pin is recoverable but currently unselectable — a
                     # rate-limited pin whose grace retry failed is a failover.
-                    rebind_reason = (
-                        "rate_limited_failover"
-                        if pinned.status == AccountStatus.RATE_LIMITED
-                        else "other"
-                    )
+                    rebind_reason = "rate_limited_failover" if pinned.status == AccountStatus.RATE_LIMITED else "other"
             else:
                 await sticky_repo.delete(sticky_key, kind=sticky_kind)
                 rebind_reason = "account_unavailable"

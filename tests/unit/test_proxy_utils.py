@@ -16940,9 +16940,7 @@ async def test_compact_responses_fails_over_across_more_than_two_accounts(monkey
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
     accts = [_make_account(f"acc_compact_failover_{i}") for i in range(4)]
-    select_account = AsyncMock(
-        side_effect=[AccountSelection(account=a, error_message=None) for a in accts]
-    )
+    select_account = AsyncMock(side_effect=[AccountSelection(account=a, error_message=None) for a in accts])
 
     monkeypatch.setattr(proxy_service, "get_settings_cache", lambda: _SettingsCache(settings))
     monkeypatch.setattr(proxy_service, "get_settings", lambda: settings)
@@ -16961,9 +16959,7 @@ async def test_compact_responses_fails_over_across_more_than_two_accounts(monkey
         del payload, headers, access_token
         if account_id == healthy_id:
             return OpenAIResponsePayload.model_validate({"output": []})
-        raise proxy_module.ProxyResponseError(
-            500, openai_error("server_error", "boom", error_type="server_error")
-        )
+        raise proxy_module.ProxyResponseError(500, openai_error("server_error", "boom", error_type="server_error"))
 
     monkeypatch.setattr(proxy_service, "core_compact_responses", fake_compact)
 

@@ -103,6 +103,8 @@ def _overloaded_backoff_seconds(attempt: int) -> float:
 _POOL_WAIT_MIN_POLL_SECONDS = 5.0
 _POOL_WAIT_MAX_POLL_SECONDS = 300.0
 _POOL_WAIT_MAX_JITTER_SECONDS = 5.0
+
+
 def _default_pool_wait_jitter() -> float:
     return random.uniform(0.0, _POOL_WAIT_MAX_JITTER_SECONDS)
 
@@ -218,9 +220,7 @@ class AnthropicProxyService:
             last_error_message: str | None = None
             streamed_bytes = False
             wait_deadline = (
-                _POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds
-                if wait_enabled
-                else None
+                _POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds if wait_enabled else None
             )
             account_override = first_account
             pending_wait_error = initial_wait_error
@@ -633,9 +633,7 @@ class AnthropicProxyService:
         reset_candidates: list[int] = [quota_reset_at] if quota_reset_at is not None else []
         async with self._repo_factory() as repos:
             provider_accounts = [
-                account
-                for account in await repos.accounts.list_accounts()
-                if account.provider.lower() == provider_name
+                account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
             ]
             # Headline counts and status summary reflect only the routable
             # pool — counting canceled/deactivated rows would inflate the
@@ -712,14 +710,12 @@ class AnthropicProxyService:
         # primary window exhausts and silently bill metered credits, so the
         # window itself is a hard gate. Token counting is quota-free upstream
         # and never bills, so its dedicated quota key stays exempt.
-        extra_usage_gate = (
-            provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != _count_tokens_quota_key(provider_name)
+        extra_usage_gate = provider_name == ANTHROPIC_PROVIDER_NAME and quota_key != _count_tokens_quota_key(
+            provider_name
         )
         async with self._repo_factory() as repos:
             provider_accounts = [
-                account
-                for account in await repos.accounts.list_accounts()
-                if account.provider.lower() == provider_name
+                account for account in await repos.accounts.list_accounts() if account.provider.lower() == provider_name
             ]
             # Scope eligibility to the same routable pool the load balancer
             # uses. Canceled-subscription, deactivated, paused, and
@@ -842,6 +838,7 @@ class AnthropicProxyService:
                 account_id for account_id in eligible_account_ids if _is_over_threshold(account_id)
             )
             if _is_fable_model(model):
+
                 def _has_fresh_capable_fable_marker(account_id: str) -> bool:
                     # Empirically verified access: the weekly threshold is an
                     # unverified assumption, so a fresh probe that actually
@@ -865,9 +862,7 @@ class AnthropicProxyService:
                         return True
                     return _has_fresh_capable_fable_marker(account_id)
 
-                fable_candidates = [
-                    account_id for account_id in eligible_account_ids if _fable_admitted(account_id)
-                ]
+                fable_candidates = [account_id for account_id in eligible_account_ids if _fable_admitted(account_id)]
                 if fable_candidates:
                     eligible_account_ids = fable_candidates
                 elif over_threshold:

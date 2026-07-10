@@ -595,9 +595,7 @@ async def test_first_event_timeout_is_account_neutral_no_health_penalty(
     record_error.assert_not_awaited()
 
     # Contrast: a genuine transient stream fault is still recorded as account health.
-    await service._handle_stream_error(
-        account, cast(Any, {"message": "idle"}), "stream_idle_timeout"
-    )
+    await service._handle_stream_error(account, cast(Any, {"message": "idle"}), "stream_idle_timeout")
     record_error.assert_awaited_once_with(account)
 
 

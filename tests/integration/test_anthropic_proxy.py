@@ -451,9 +451,7 @@ async def test_anthropic_session_route_accepts_fast_quota_with_model_affinity(as
     assert response.json()["quotaKey"] == "anthropic_fast"
     assert response.json()["affinityQuotaKey"] == "anthropic_top_thinking"
 
-    sticky_key = "claude:anthropic_top_thinking:session:" + anthropic_proxy_module._hash_for_key(
-        "session-route-fast"
-    )
+    sticky_key = "claude:anthropic_top_thinking:session:" + anthropic_proxy_module._hash_for_key("session-route-fast")
     async with SessionLocal() as session:
         sticky = (
             await session.execute(
@@ -866,9 +864,7 @@ async def test_anthropic_count_tokens_passes_through_upstream_error_envelope(asy
 
     def fake_open_count_tokens_response(self, session, *, provider_name, headers, json_body):
         del self, session, provider_name, headers, json_body
-        return _FakeResponseContext(
-            _FakeResponse(429, upstream_error, headers={"content-type": "application/json"})
-        )
+        return _FakeResponseContext(_FakeResponse(429, upstream_error, headers={"content-type": "application/json"}))
 
     monkeypatch.setattr(
         anthropic_proxy_module.AnthropicProxyService,
@@ -1681,13 +1677,9 @@ async def test_anthropic_fast_429_records_fast_cooldown_and_allows_standard_fall
     accounts_response = await async_client.get("/api/accounts")
     assert accounts_response.status_code == 200
     anthropic_a = next(
-        account
-        for account in accounts_response.json()["accounts"]
-        if account["accountId"] == "anthropic-fast-a"
+        account for account in accounts_response.json()["accounts"] if account["accountId"] == "anthropic-fast-a"
     )
-    fast_quota = next(
-        quota for quota in anthropic_a["additionalQuotas"] if quota["quotaKey"] == "anthropic_fast"
-    )
+    fast_quota = next(quota for quota in anthropic_a["additionalQuotas"] if quota["quotaKey"] == "anthropic_fast")
     assert fast_quota["displayLabel"] == "Claude fast mode"
     assert fast_quota["primaryWindow"]["usedPercent"] == 100.0
 

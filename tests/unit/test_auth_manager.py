@@ -508,9 +508,7 @@ async def test_refresh_account_anthropic_provider_invalid_grant_requires_reauth(
         deactivation_reason=None,
     )
     repo = _DummyRepo()
-    latest_account = Account(
-        **{column.name: getattr(account, column.name) for column in Account.__table__.columns}
-    )
+    latest_account = Account(**{column.name: getattr(account, column.name) for column in Account.__table__.columns})
     repo.accounts_by_id[account.id] = latest_account
     manager = AuthManager(cast(AccountsRepositoryPort, repo))
 

@@ -793,8 +793,6 @@ def _opencode_auth_export_filename(account: Account) -> str:
     return f"opencode-auth-{safe or account.id}.json"
 
 
-
-
 def _subscription_check_notes(
     *,
     working: bool,

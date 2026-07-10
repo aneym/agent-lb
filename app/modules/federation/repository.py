@@ -31,9 +31,7 @@ class FederationRepository:
         return await self._session.get(Account, account_id)
 
     async def list_locally_owned_accounts(self, local_instance_id: str) -> list[Account]:
-        stmt = select(Account).where(
-            or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id)
-        )
+        stmt = select(Account).where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

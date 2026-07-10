@@ -4,6 +4,7 @@
 Subcommands operate directly on a per-instance sqlite file with that
 instance's own encryption key. Never touches real credentials.
 """
+
 from __future__ import annotations
 
 import base64
@@ -34,9 +35,9 @@ def _connect(db_path: str) -> sqlite3.Connection:
 def mkjwt(exp_offset_seconds: int) -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode()).rstrip(b"=")
     exp = int(time.time()) + exp_offset_seconds
-    payload = base64.urlsafe_b64encode(
-        json.dumps({"exp": exp, "email": "fed-test@example.invalid"}).encode()
-    ).rstrip(b"=")
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp, "email": "fed-test@example.invalid"}).encode()).rstrip(
+        b"="
+    )
     return f"{header.decode()}.{payload.decode()}.sig"
 
 

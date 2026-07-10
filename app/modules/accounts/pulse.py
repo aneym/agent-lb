@@ -73,10 +73,11 @@ def _is_fable_probe_routable(account: Account) -> bool:
     probe outcome, so probing them is pointless until the main pulse probe
     (not this one) restores them.
     """
-    return (
-        account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
-        and is_subscription_usable(account)
-    )
+    return account.status not in (
+        AccountStatus.REAUTH_REQUIRED,
+        AccountStatus.DEACTIVATED,
+        AccountStatus.PAUSED,
+    ) and is_subscription_usable(account)
 
 
 class _LeaderElectionLike(Protocol):
@@ -238,9 +239,7 @@ class AccountPulseScheduler:
             async with self.repo_factory() as repo:
                 accounts = await repo.list_accounts(refresh_existing=True)
                 candidate_ids = [
-                    account.id
-                    for account in accounts
-                    if self._is_pulse_candidate(account, recovery_only=recovery_only)
+                    account.id for account in accounts if self._is_pulse_candidate(account, recovery_only=recovery_only)
                 ]
             if not candidate_ids:
                 return

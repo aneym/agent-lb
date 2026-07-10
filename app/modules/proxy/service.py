@@ -1927,11 +1927,7 @@ def _is_account_neutral_error_code(code: str | None) -> bool:
     # steer the retry to a different account, so treat the first-event timeout as
     # account-neutral — honoring the documented invariant that idle/no-event
     # disconnects must not mark an otherwise-healthy account unhealthy.
-    return (
-        is_local_overload_error_code(code)
-        or code == "proxy_unavailable"
-        or code == "bridge_first_event_timeout"
-    )
+    return is_local_overload_error_code(code) or code == "proxy_unavailable" or code == "bridge_first_event_timeout"
 
 
 def _is_local_account_cap_code(code: str | None) -> bool:

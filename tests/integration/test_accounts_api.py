@@ -676,9 +676,7 @@ async def test_list_accounts_fable_eligible_reflects_fresh_scoped_signal(async_c
             last_refresh=utcnow(),
             status=status,
             deactivation_reason=(
-                "Refresh token grant invalid - re-login required"
-                if status == AccountStatus.REAUTH_REQUIRED
-                else None
+                "Refresh token grant invalid - re-login required" if status == AccountStatus.REAUTH_REQUIRED else None
             ),
             subscription_status=subscription_status,
         )

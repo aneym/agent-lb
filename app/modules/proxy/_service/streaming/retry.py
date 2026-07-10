@@ -461,11 +461,7 @@ class _StreamingRetryMixin:
                         no_accounts_msg,
                         response_id=request_id,
                     )
-                    event["response"]["error"].update(
-                        selection_error_extras(
-                            selection, requested_model=payload.model
-                        )
-                    )
+                    event["response"]["error"].update(selection_error_extras(selection, requested_model=payload.model))
                     yield format_sse_event(event)
                     await proxy._write_request_log(
                         account_id=None,

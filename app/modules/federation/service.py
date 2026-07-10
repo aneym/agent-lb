@@ -123,9 +123,7 @@ class FederationService:
         transfer = await self._repo.mark_transfer_settled(nonce)
         if transfer is None:
             raise FederationNotFoundError(nonce)
-        return FederationTransferStatusResponse(
-            account_id=transfer.account_id, nonce=nonce, state=transfer.state.value
-        )
+        return FederationTransferStatusResponse(account_id=transfer.account_id, nonce=nonce, state=transfer.state.value)
 
     async def checkin(
         self, account_id: str, nonce: str, auth: FederationAuthPayload

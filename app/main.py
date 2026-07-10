@@ -499,9 +499,7 @@ def _runtime_diagnostic_fingerprint(settings, *, bridge_durable_schema_ready: bo
         "firewall_trust_proxy_headers": settings.firewall_trust_proxy_headers,
         "firewall_trusted_proxy_cidrs_count": len(settings.firewall_trusted_proxy_cidrs),
         "proxy_unauthenticated_client_cidrs_count": len(settings.proxy_unauthenticated_client_cidrs),
-        "proxy_unauthenticated_tailnet_allowed": _cidrs_include_tailnet(
-            settings.proxy_unauthenticated_client_cidrs
-        ),
+        "proxy_unauthenticated_tailnet_allowed": _cidrs_include_tailnet(settings.proxy_unauthenticated_client_cidrs),
         "metrics_enabled": settings.metrics_enabled,
         "metrics_available": PROMETHEUS_AVAILABLE,
         "metrics_host": settings.metrics_host,

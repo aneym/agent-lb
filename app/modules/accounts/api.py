@@ -57,11 +57,7 @@ _AVAILABLE_ACCOUNT_STATUSES = {"active"}
 
 
 def _account_recovery_at(account: AccountSummary):
-    candidates = [
-        moment
-        for moment in (account.rate_limit_reset_at, account.reset_at_primary)
-        if moment is not None
-    ]
+    candidates = [moment for moment in (account.rate_limit_reset_at, account.reset_at_primary) if moment is not None]
     return min(candidates) if candidates else None
 
 

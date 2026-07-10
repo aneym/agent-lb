@@ -291,12 +291,9 @@ def test_pool_wait_should_hold_requires_reset_and_budget(monkeypatch: pytest.Mon
     error_with_reset = AnthropicProxyError(429, "cooling", retry_at=1_000)
     error_without_reset = AnthropicProxyError(503, "no accounts")
 
+    assert anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=True, deadline=200.0) is True
     assert (
-        anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=True, deadline=200.0) is True
-    )
-    assert (
-        anthropic_service_module._pool_wait_should_hold(error_without_reset, wait_enabled=True, deadline=200.0)
-        is False
+        anthropic_service_module._pool_wait_should_hold(error_without_reset, wait_enabled=True, deadline=200.0) is False
     )
     assert (
         anthropic_service_module._pool_wait_should_hold(error_with_reset, wait_enabled=False, deadline=200.0) is False
