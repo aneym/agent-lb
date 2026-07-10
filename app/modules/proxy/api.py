@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import usage as usage_core
 from app.core.anthropic.models import AnthropicMessageRequest
+from app.core.audit.service import AuditService
 from app.core.auth.dependencies import (
     set_openai_error_format,
     validate_codex_usage_identity,
@@ -112,6 +113,12 @@ from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.proxy import affinity as proxy_affinity_module
 from app.modules.proxy import images_service as images_service_module
 from app.modules.proxy import service as proxy_service_module
+from app.modules.proxy._service.compaction_breaker import (
+    COMPACTION_RETRY_THRESHOLD,
+    COMPACTION_RETRY_WINDOW_SECONDS,
+    compaction_fingerprint,
+    get_compaction_retry_breaker,
+)
 from app.modules.proxy._service.support import request_input_contains_compaction_trigger
 from app.modules.proxy.anthropic_service import AnthropicProxyError, _is_fable_model
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
@@ -407,6 +414,45 @@ def _is_openai_sdk_request(
     return _accepts_event_stream(request) or payload.messages is not None
 
 
+def _compaction_retry_breaker_response(
+    request: Request,
+    payload: Mapping[str, JsonValue],
+) -> JSONResponse | None:
+    """Reject a compaction turn whose fingerprint has repeated past the
+    breaker's threshold within its window, before any account is selected.
+
+    A healthy client never resends the identical compaction turn many times
+    - a successful compact changes the conversation input - so this catches
+    a stuck client retrying a turn that never lands before it drains the
+    account pool. Returns ``None`` (admit) unless the breaker opens.
+    """
+    fingerprint = compaction_fingerprint(payload.get("model"), payload.get("input"))
+    admission = get_compaction_retry_breaker().admit(fingerprint)
+    if admission.should_audit:
+        AuditService.log_async(
+            "compaction_retry_loop_opened",
+            details={
+                "fingerprint_prefix": fingerprint[:16],
+                "count": admission.count,
+                "window_seconds": COMPACTION_RETRY_WINDOW_SECONDS,
+            },
+            request_id=get_request_id(),
+        )
+    if admission.admitted:
+        return None
+    message = (
+        f"The identical compaction turn repeated more than {COMPACTION_RETRY_THRESHOLD} times "
+        f"within {int(COMPACTION_RETRY_WINDOW_SECONDS)} seconds; the client is stuck retrying a "
+        "turn that never lands. Wait for Retry-After before resending."
+    )
+    return _logged_error_json_response(
+        request,
+        429,
+        openai_error("compaction_retry_loop", message, error_type="rate_limit_error"),
+        headers={"Retry-After": str(int(COMPACTION_RETRY_WINDOW_SECONDS))},
+    )
+
+
 async def _thread_goal_payload_from_request(request: Request) -> dict[str, JsonValue]:
     if request.method.upper() == "GET":
         return {key: value for key, value in request.query_params.multi_items()}
@@ -584,13 +630,18 @@ async def responses(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
+    is_compaction_turn = request_input_contains_compaction_trigger(payload.get("input"))
+    if is_compaction_turn:
+        breaker_response = _compaction_retry_breaker_response(request, payload)
+        if breaker_response is not None:
+            return breaker_response
     openai_sdk_request = _is_openai_sdk_request(request, payload)
     # No OpenAI SDK caller sends a compaction_trigger input item, and the
     # public-contract normalizer strips the "compaction" output item the
     # Codex CLI requires, so compaction turns must never be treated as
     # OpenAI-SDK requests even when they otherwise look like one (e.g.
     # remote-compaction v2 turns that omit top-level "instructions").
-    if openai_sdk_request and request_input_contains_compaction_trigger(payload.get("input")):
+    if openai_sdk_request and is_compaction_turn:
         openai_sdk_request = False
     openai_compat_payload = _has_openai_responses_shape(payload)
     try:

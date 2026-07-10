@@ -150,6 +150,15 @@ def _disable_http_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(proxy_module, "get_settings", lambda: app_settings)
 
 
+@pytest.fixture(autouse=True)
+def _reset_compaction_retry_breaker():
+    from app.modules.proxy._service.compaction_breaker import get_compaction_retry_breaker
+
+    get_compaction_retry_breaker().reset()
+    yield
+    get_compaction_retry_breaker().reset()
+
+
 @pytest.mark.asyncio
 async def test_proxy_responses_no_accounts(async_client):
     payload = {"model": "gpt-5.4", "instructions": "hi", "input": [], "stream": True}
@@ -1908,3 +1917,183 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough_without_inst
     assert len(completed_events) == 1
     assert completed_events[0]["response"]["output"] == [compaction_item]
     assert all(e.get("type") != "response.failed" for e in events)
+
+
+def _compaction_fake_stream(compaction_item: dict, call_log: list[int]):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **_kw):
+        call_log.append(1)
+        yield (
+            'data: {"type":"response.created","sequence_number":0,'
+            '"response":{"id":"resp_compact","object":"response","status":"in_progress","output":[]}}\n\n'
+        )
+        yield (
+            'data: {"type":"response.completed","sequence_number":1,'
+            '"response":{"id":"resp_compact","object":"response","status":"completed",'
+            f'"output":[{json.dumps(compaction_item)}]}}}}\n\n'
+        )
+
+    return fake_stream
+
+
+@pytest.mark.asyncio
+async def test_proxy_responses_compaction_retry_breaker_rejects_sixth_identical(async_client, monkeypatch):
+    """Six identical compaction turns: the breaker admits the first five and
+    rejects the sixth locally with 429 before any upstream account is
+    consumed (see add-compaction-retry-circuit-breaker)."""
+    email = "compaction-breaker-identical@example.com"
+    raw_account_id = "acc_compaction_breaker_identical"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    compaction_item = {
+        "type": "compaction",
+        "encrypted_content": "gAAAAABmENCRYPTED",
+        "metadata": {"trigger": "auto"},
+    }
+    call_log: list[int] = []
+    monkeypatch.setattr(proxy_module, "core_stream_responses", _compaction_fake_stream(compaction_item, call_log))
+
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "compact the conversation",
+        "input": [{"type": "compaction_trigger"}],
+        "stream": True,
+    }
+    headers = {"accept": "text/event-stream", "user-agent": "codex_cli_rs/0.135.0"}
+
+    for _ in range(5):
+        async with async_client.stream("POST", "/backend-api/codex/responses", json=payload, headers=headers) as resp:
+            assert resp.status_code == 200
+            [line async for line in resp.aiter_lines()]
+
+    denied = await async_client.post("/backend-api/codex/responses", json=payload, headers=headers)
+    assert denied.status_code == 429
+    assert denied.headers["retry-after"] == "600"
+    body = denied.json()
+    assert body["error"]["code"] == "compaction_retry_loop"
+
+    assert len(call_log) == 5
+
+
+@pytest.mark.asyncio
+async def test_proxy_responses_compaction_retry_breaker_allows_distinct_inputs(async_client, monkeypatch):
+    """Compaction turns whose inputs differ never trip the breaker, even past
+    the identical-fingerprint threshold."""
+    email = "compaction-breaker-distinct@example.com"
+    raw_account_id = "acc_compaction_breaker_distinct"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    compaction_item = {
+        "type": "compaction",
+        "encrypted_content": "gAAAAABmENCRYPTED",
+        "metadata": {"trigger": "auto"},
+    }
+    call_log: list[int] = []
+    monkeypatch.setattr(proxy_module, "core_stream_responses", _compaction_fake_stream(compaction_item, call_log))
+
+    headers = {"accept": "text/event-stream", "user-agent": "codex_cli_rs/0.135.0"}
+    for nonce in range(6):
+        payload = {
+            "model": "gpt-5.5",
+            "instructions": "compact the conversation",
+            "input": [{"type": "compaction_trigger", "nonce": nonce}],
+            "stream": True,
+        }
+        async with async_client.stream("POST", "/backend-api/codex/responses", json=payload, headers=headers) as resp:
+            assert resp.status_code == 200
+            [line async for line in resp.aiter_lines()]
+
+    assert len(call_log) == 6
+
+
+@pytest.mark.asyncio
+async def test_proxy_responses_compaction_retry_breaker_window_expiry_readmits(async_client, monkeypatch):
+    """Once the window elapses for a fingerprint that tripped the breaker, the
+    same fingerprint is admitted again."""
+    from app.modules.proxy._service.compaction_breaker import get_compaction_retry_breaker
+
+    email = "compaction-breaker-window@example.com"
+    raw_account_id = "acc_compaction_breaker_window"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    compaction_item = {
+        "type": "compaction",
+        "encrypted_content": "gAAAAABmENCRYPTED",
+        "metadata": {"trigger": "auto"},
+    }
+    call_log: list[int] = []
+    monkeypatch.setattr(proxy_module, "core_stream_responses", _compaction_fake_stream(compaction_item, call_log))
+
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "compact the conversation",
+        "input": [{"type": "compaction_trigger"}],
+        "stream": True,
+    }
+    headers = {"accept": "text/event-stream", "user-agent": "codex_cli_rs/0.135.0"}
+
+    breaker = get_compaction_retry_breaker()
+    fake_now = [1_000.0]
+    monkeypatch.setattr(breaker, "_clock", lambda: fake_now[0])
+
+    for _ in range(5):
+        async with async_client.stream("POST", "/backend-api/codex/responses", json=payload, headers=headers) as resp:
+            assert resp.status_code == 200
+            [line async for line in resp.aiter_lines()]
+
+    denied = await async_client.post("/backend-api/codex/responses", json=payload, headers=headers)
+    assert denied.status_code == 429
+
+    fake_now[0] += 601.0  # past COMPACTION_RETRY_WINDOW_SECONDS
+
+    async with async_client.stream("POST", "/backend-api/codex/responses", json=payload, headers=headers) as resp:
+        assert resp.status_code == 200
+        [line async for line in resp.aiter_lines()]
+
+    assert len(call_log) == 6
+
+
+@pytest.mark.asyncio
+async def test_proxy_responses_compaction_retry_breaker_never_fingerprints_non_compaction(async_client, monkeypatch):
+    """A repeated identical NON-compaction request is never rejected by the
+    breaker, no matter how many times it repeats."""
+    email = "compaction-breaker-non-compaction@example.com"
+    raw_account_id = "acc_compaction_breaker_non_compaction"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    call_log: list[int] = []
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **_kw):
+        call_log.append(1)
+        yield (
+            'data: {"type":"response.completed","sequence_number":0,'
+            '"response":{"id":"resp_normal","object":"response","status":"completed","output":[]}}\n\n'
+        )
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {
+        "model": "gpt-5.5",
+        "instructions": "answer the question",
+        "input": [{"role": "user", "content": "Weather in Seoul?"}],
+        "stream": True,
+    }
+    headers = {"accept": "text/event-stream", "user-agent": "codex_cli_rs/0.135.0"}
+
+    for _ in range(7):
+        async with async_client.stream("POST", "/backend-api/codex/responses", json=payload, headers=headers) as resp:
+            assert resp.status_code == 200
+            [line async for line in resp.aiter_lines()]
+
+    assert len(call_log) == 7
