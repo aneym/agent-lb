@@ -1840,3 +1840,71 @@ async def test_proxy_responses_codex_compaction_v2_item_passthrough(async_client
     assert len(completed_events) == 1
     assert completed_events[0]["response"]["output"] == [compaction_item]
     assert all(e.get("type") != "response.failed" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_proxy_responses_codex_compaction_v2_item_passthrough_without_instructions(async_client, monkeypatch):
+    """Regression: remote-compaction v2 turns that omit top-level ``instructions``
+    were misclassified as OpenAI-SDK requests by ``_is_openai_sdk_request``
+    (``_has_openai_responses_shape`` treats "has input, no instructions" as an
+    OpenAI-compat payload), which made ``enforce_openai_sdk_contract=True`` drop
+    the ``compaction`` output item and fail the stream with
+    ``response.failed``/``invalid_output_item`` even though the request carries a
+    ``compaction_trigger`` item that no OpenAI SDK caller sends.
+    """
+    email = "backend-codex-compaction-no-instructions@example.com"
+    raw_account_id = "acc_backend_codex_compaction_no_instructions"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    compaction_item = {
+        "type": "compaction",
+        "encrypted_content": "gAAAAABmENCRYPTED",
+        "metadata": {"trigger": "auto"},
+    }
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **_kw):
+        yield (
+            'data: {"type":"response.created","sequence_number":0,'
+            '"response":{"id":"resp_compact_ni","object":"response","status":"in_progress","output":[]}}\n\n'
+        )
+        yield (
+            'data: {"type":"response.output_item.done","sequence_number":1,"output_index":0,'
+            f'"item":{json.dumps(compaction_item)}}}\n\n'
+        )
+        yield (
+            'data: {"type":"response.completed","sequence_number":2,'
+            '"response":{"id":"resp_compact_ni","object":"response","status":"completed",'
+            f'"output":[{json.dumps(compaction_item)}]}}}}\n\n'
+        )
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    # Codex-native request without top-level ``instructions`` — without the fix
+    # this looks like an OpenAI-SDK payload per ``_has_openai_responses_shape``
+    # and gets misrouted onto the strict SDK contract.
+    payload = {
+        "model": "gpt-5.5",
+        "input": [{"type": "compaction_trigger"}],
+        "stream": True,
+    }
+    async with async_client.stream(
+        "POST",
+        "/backend-api/codex/responses",
+        json=payload,
+        headers={"accept": "text/event-stream", "user-agent": "codex_cli_rs/0.135.0"},
+    ) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    events = list(_iter_sse_events(lines))
+    done_events = [e for e in events if e.get("type") == "response.output_item.done"]
+    assert len(done_events) == 1
+    assert done_events[0]["item"] == compaction_item
+
+    completed_events = [e for e in events if e.get("type") == "response.completed"]
+    assert len(completed_events) == 1
+    assert completed_events[0]["response"]["output"] == [compaction_item]
+    assert all(e.get("type") != "response.failed" for e in events)

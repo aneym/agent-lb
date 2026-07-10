@@ -112,6 +112,7 @@ from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.proxy import affinity as proxy_affinity_module
 from app.modules.proxy import images_service as images_service_module
 from app.modules.proxy import service as proxy_service_module
+from app.modules.proxy._service.support import request_input_contains_compaction_trigger
 from app.modules.proxy.anthropic_service import AnthropicProxyError, _is_fable_model
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.helpers import _rate_limit_details
@@ -584,6 +585,13 @@ async def responses(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     openai_sdk_request = _is_openai_sdk_request(request, payload)
+    # No OpenAI SDK caller sends a compaction_trigger input item, and the
+    # public-contract normalizer strips the "compaction" output item the
+    # Codex CLI requires, so compaction turns must never be treated as
+    # OpenAI-SDK requests even when they otherwise look like one (e.g.
+    # remote-compaction v2 turns that omit top-level "instructions").
+    if openai_sdk_request and request_input_contains_compaction_trigger(payload.get("input")):
+        openai_sdk_request = False
     openai_compat_payload = _has_openai_responses_shape(payload)
     try:
         responses_payload = normalize_responses_request_payload(
