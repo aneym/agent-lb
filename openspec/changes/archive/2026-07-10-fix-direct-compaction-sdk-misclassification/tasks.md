@@ -10,6 +10,9 @@
 - [x] Run validation gates (contract unit suite, bridge integration suite,
       ruff format/check).
 - [x] Validate OpenSpec change strictly.
-- [ ] Live end-to-end verification on the deployed proxy: instructions-less
-      compaction probe returns a `compaction` item; previously wedged
-      `codex exec` lanes resume and compact successfully.
+- [x] Live end-to-end verification on the deployed proxy: instructions-less
+      compaction probe (exact failing shape, codex_exec user agent) reproduced
+      `invalid_output_item` pre-fix and returns a `compaction` item in
+      `response.completed` post-fix; the retry loop stopped (no loop-signature
+      requests after 16:19Z). The wedged lanes could not be resumed for a
+      literal re-run — their parent harness reaped them while paused.
