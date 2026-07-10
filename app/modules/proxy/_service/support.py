@@ -286,6 +286,22 @@ class _WebSocketRequestState:
     suppress_next_created_downstream: bool = False
     replay_downstream_response_id: str | None = None
     draining_until_terminal: bool = False
+    # Remote-compaction v2: the Codex CLI counts compaction output items from
+    # the terminal ``response.completed`` envelope, but the upstream websocket
+    # protocol streams items as ``response.output_item.done`` frames and sends
+    # a terminal envelope whose ``output`` array is empty. Track compaction
+    # turns so the bridge can re-inject the streamed compaction items into the
+    # terminal envelope before it reaches the client.
+    is_compaction_request: bool = False
+    compaction_output_items: list[JsonValue] = field(default_factory=list)
+
+
+def request_input_contains_compaction_trigger(input_items: JsonValue) -> bool:
+    """True when a ``response.create`` input carries a remote-compaction v2
+    ``compaction_trigger`` item."""
+    if not isinstance(input_items, list):
+        return False
+    return any(isinstance(item, dict) and item.get("type") == "compaction_trigger" for item in input_items)
 
 
 @dataclass(frozen=True, slots=True)

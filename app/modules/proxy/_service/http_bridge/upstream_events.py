@@ -165,6 +165,9 @@ _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
 )
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
+# Remote-compaction v2 expects exactly one compaction output item; a small cap
+# bounds accumulator memory if upstream ever misbehaves.
+_COMPACTION_OUTPUT_ITEM_CAP = 8
 
 
 class _HTTPBridgeUpstreamEventsMixin:
@@ -377,6 +380,31 @@ class _HTTPBridgeUpstreamEventsMixin:
                 if event_type == "response.created" and matched_request_state.suppress_next_created_downstream:
                     matched_request_state.suppress_next_created_downstream = False
                     suppress_downstream_event = True
+                if matched_request_state.is_compaction_request and payload is not None:
+                    # Remote-compaction v2: the upstream websocket protocol
+                    # streams the compaction item as ``response.output_item.done``
+                    # but sends ``response.completed`` with an empty ``output``
+                    # array. The Codex CLI counts compaction items from the
+                    # terminal envelope, so re-inject the streamed items there
+                    # ("expected exactly one compaction output item, got 0
+                    # from 0 output items" otherwise).
+                    if event_type == "response.output_item.done":
+                        done_item = payload.get("item")
+                        if (
+                            isinstance(done_item, dict)
+                            and done_item.get("type") == "compaction"
+                            and len(matched_request_state.compaction_output_items) < _COMPACTION_OUTPUT_ITEM_CAP
+                        ):
+                            matched_request_state.compaction_output_items.append(dict(done_item))
+                    elif event_type == "response.completed" and matched_request_state.compaction_output_items:
+                        completed_response = payload.get("response")
+                        if isinstance(completed_response, dict) and not completed_response.get("output"):
+                            payload = dict(payload)
+                            payload["response"] = {
+                                **completed_response,
+                                "output": [dict(item) for item in matched_request_state.compaction_output_items],
+                            }
+                            event_block = format_sse_event(payload)
                 if payload is not None:
                     payload = _rewrite_websocket_downstream_response_id(payload, matched_request_state)
                     event_block = format_sse_event(payload)

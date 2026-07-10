@@ -112,6 +112,7 @@ from app.modules.proxy._service.support import (
     _request_log_useragent_fields,
     _websocket_request_can_replay_before_visible_output,
     _WebSocketRequestState,
+    request_input_contains_compaction_trigger,
     strip_encrypted_reasoning_input_items,
 )
 from app.modules.proxy._service.support import (
@@ -286,6 +287,7 @@ class _HTTPBridgeRequestSubmitMixin:
             session_id=_normalize_session_id(session_id),
             input_item_count=input_item_count,
             input_full_fingerprint=input_full_fingerprint,
+            is_compaction_request=request_input_contains_compaction_trigger(payload.input),
         )
         if deduped_replayed_input_count is not None:
             request_state.input_item_count = deduped_replayed_input_count
