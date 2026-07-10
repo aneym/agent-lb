@@ -270,37 +270,63 @@ enum StatusIconRenderer {
     case healthy, risk, down, update
   }
 
-  /// Cache key: state + both percents bucketed to 4 % steps (§8.1) so
+  /// Cache key: state + all percents bucketed to 4 % steps (§8.1) so
   /// closed-state 120 s polling can only ever materialize a bounded set of
-  /// two-ring composites per state.
+  /// composites per state.
   private struct Key: Hashable {
     let state: IconState
     let outerBucket: Int?
     let innerBucket: Int?
+    let showFable: Bool
+    let fableBucket: Int?
   }
 
   @MainActor private static var cache: [Key: NSImage] = [:]
 
+  private static let cellSize: CGFloat = 18
+  private static let fableGap: CGFloat = 2
+
   /// Outer ring = tactical 5-hour (primary) remaining %; inner ring =
   /// strategic weekly/monthly (long-window) remaining %. Both follow the
   /// current provider scope — AppState feeds the already-scoped percents in.
+  /// `showFable` appends the Claude-focus cell: a third circle showing pool
+  /// Fable remaining % (track-only when the pool has no scoped data yet).
   @MainActor
   static func icon(
     for state: IconState,
     primaryPercent: Double? = nil,
-    longWindowPercent: Double? = nil
+    longWindowPercent: Double? = nil,
+    showFable: Bool = false,
+    fablePercent: Double? = nil
   ) -> NSImage {
     let outerBucket = primaryPercent.map { Int(min(max($0, 0), 100) / 4) }
     let innerBucket = longWindowPercent.map { Int(min(max($0, 0), 100) / 4) }
-    let key = Key(state: state, outerBucket: outerBucket, innerBucket: innerBucket)
+    let fableBucket = showFable ? fablePercent.map { Int(min(max($0, 0), 100) / 4) } : nil
+    let key = Key(
+      state: state, outerBucket: outerBucket, innerBucket: innerBucket,
+      showFable: showFable, fableBucket: fableBucket
+    )
     if let cached = cache[key] { return cached }
-    let image = render(state: state, outerBucket: outerBucket, innerBucket: innerBucket)
+    let image = render(
+      state: state, outerBucket: outerBucket, innerBucket: innerBucket,
+      showFable: showFable, fableBucket: fableBucket
+    )
     cache[key] = image
     return image
   }
 
-  private static func render(state: IconState, outerBucket: Int?, innerBucket: Int?) -> NSImage {
-    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+  private static func render(
+    state: IconState,
+    outerBucket: Int?,
+    innerBucket: Int?,
+    showFable: Bool,
+    fableBucket: Int?
+  ) -> NSImage {
+    let width = showFable ? cellSize * 2 + fableGap : cellSize
+    let image = NSImage(size: NSSize(width: width, height: cellSize), flipped: false) { _ in
+      // Existing two-ring composite always occupies the left 18 pt cell so
+      // the icon reads unchanged when the Fable cell toggles on/off.
+      let rect = NSRect(x: 0, y: 0, width: cellSize, height: cellSize)
       let stroke: CGFloat = 2.0
       let ringAlpha: CGFloat = state == .down ? 0.35 : 1
       let center = NSPoint(x: rect.midX, y: rect.midY)
@@ -337,6 +363,15 @@ enum StatusIconRenderer {
         punchHole(dot.insetBy(dx: -1, dy: -1))
         NSColor.black.setFill()
         NSBezierPath(ovalIn: dot).fill()
+      }
+
+      if showFable {
+        drawFableCell(
+          in: NSRect(x: cellSize + fableGap, y: 0, width: cellSize, height: cellSize),
+          stroke: stroke,
+          bucket: fableBucket,
+          ringAlpha: ringAlpha
+        )
       }
       return true
     }
@@ -375,6 +410,29 @@ enum StatusIconRenderer {
     arc.lineCapStyle = .round
     NSColor.black.withAlphaComponent(ringAlpha).setStroke()
     arc.stroke()
+  }
+
+  /// Claude-focus Fable cell: one ring at the outer radius showing pool Fable
+  /// remaining %, with a small F glyph centered so the extra circle reads as
+  /// the Fable gauge rather than a third usage window.
+  private static func drawFableCell(
+    in rect: NSRect,
+    stroke: CGFloat,
+    bucket: Int?,
+    ringAlpha: CGFloat
+  ) {
+    let center = NSPoint(x: rect.midX, y: rect.midY)
+    let radius = rect.width / 2 - 1.0 - 0.5
+    drawRing(center: center, radius: radius, stroke: stroke, bucket: bucket, ringAlpha: ringAlpha)
+    let glyph = NSAttributedString(
+      string: "F",
+      attributes: [
+        .font: NSFont.systemFont(ofSize: 8, weight: .bold),
+        .foregroundColor: NSColor.black.withAlphaComponent(ringAlpha),
+      ]
+    )
+    let size = glyph.size()
+    glyph.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
   }
 
   private static func drawSymbol(

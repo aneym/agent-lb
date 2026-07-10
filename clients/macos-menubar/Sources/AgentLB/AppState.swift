@@ -21,6 +21,9 @@ final class AppState {
   var lastSyncAt: Date?
   var sectionErrors: Set<Section> = []
   var statusIcon = StatusIconRenderer.icon(for: .healthy, primaryPercent: nil, longWindowPercent: nil)
+  // Fable focus ring: true while a Claude app (com.anthropic.*) is frontmost —
+  // the status icon gains a third circle showing pool Fable remaining %.
+  var isClaudeFrontmost = false
   var isRefreshing = false
   var isRestarting = false
   var startupError: String?
@@ -35,6 +38,7 @@ final class AppState {
   private var closedTask: Task<Void, Never>?
   private var openTask: Task<Void, Never>?
   private var popoverIsOpen = false
+  private var frontmostObserver: (any NSObjectProtocol)?
 
   var baseURL: URL { client.base }
   var isRemote: Bool { !["127.0.0.1", "localhost", "::1"].contains(baseURL.host() ?? "") }
@@ -44,6 +48,7 @@ final class AppState {
   // MARK: - Polling
 
   func startBackgroundPolling() {
+    startFrontmostObservation()
     closedTask?.cancel()
     closedTask = Task {
       var tick = 0
@@ -72,6 +77,38 @@ final class AppState {
         try? await Task.sleep(for: .seconds(30))
       }
     }
+  }
+
+  // MARK: - Claude focus (Fable ring)
+
+  /// Tracks the frontmost app so the status icon can show the Fable circle
+  /// only while a Claude app is focused. NSWorkspace activation notifications
+  /// need no TCC grant; the bundle id is extracted before hopping actors
+  /// because NSRunningApplication is not Sendable.
+  private func startFrontmostObservation() {
+    guard frontmostObserver == nil else { return }
+    setClaudeFrontmost(
+      Self.isClaudeApp(bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    )
+    frontmostObserver = NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didActivateApplicationNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] note in
+      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+      let isClaude = AppState.isClaudeApp(bundleIdentifier: app?.bundleIdentifier)
+      Task { @MainActor in self?.setClaudeFrontmost(isClaude) }
+    }
+  }
+
+  private func setClaudeFrontmost(_ value: Bool) {
+    guard value != isClaudeFrontmost else { return }
+    isClaudeFrontmost = value
+    recomputeStatusIcon()
+  }
+
+  nonisolated static func isClaudeApp(bundleIdentifier: String?) -> Bool {
+    bundleIdentifier?.lowercased().hasPrefix("com.anthropic.") == true
   }
 
   func popoverOpened() {
@@ -354,8 +391,22 @@ final class AppState {
     statusIcon = StatusIconRenderer.icon(
       for: state,
       primaryPercent: percents.primary,
-      longWindowPercent: percents.longWindow
+      longWindowPercent: percents.longWindow,
+      showFable: isClaudeFrontmost,
+      fablePercent: isClaudeFrontmost ? Self.fablePoolPercent(accounts: accounts) : nil
     )
+  }
+
+  /// Pool-level Fable runway for the focus ring: mean scoped-weekly remaining
+  /// % across routable Anthropic accounts reporting the Fable-scoped window.
+  /// Exhausted-but-routable accounts stay in the denominator — their capacity
+  /// is gone until reset, so dropping them would overstate what's left.
+  nonisolated static func fablePoolPercent(accounts: [Account]) -> Double? {
+    let remaining = accounts
+      .filter(\.isRoutable)
+      .compactMap(\.fableRemainingPercent)
+    guard !remaining.isEmpty else { return nil }
+    return remaining.reduce(0, +) / Double(remaining.count)
   }
 
   nonisolated static func statusIconPercents(
