@@ -16,6 +16,7 @@ from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
     AccountAuthStatus,
+    AccountIdentityMismatch,
     AccountLimitWarmupStatus,
     AccountRequestUsage,
     AccountSubscriptionLedger,
@@ -26,6 +27,7 @@ from app.modules.accounts.schemas import (
     UsageTrendPoint,
 )
 from app.modules.accounts.subscription_status import is_subscription_usable, normalize_subscription_status
+from app.modules.usage.identity_mismatch import get_identity_mismatch
 from app.modules.usage.mappers import usage_history_to_window_row
 
 _ACCOUNT_ROUTING_POLICIES = frozenset({"burn_first", "normal", "preserve"})
@@ -290,8 +292,22 @@ def _account_to_summary(
         limit_warmup_enabled=bool(account.limit_warmup_enabled),
         limit_warmup=_limit_warmup_to_status(limit_warmup),
         is_email_duplicate=is_email_duplicate,
+        identity_mismatch=_identity_mismatch_status(account.id),
         owner_instance=account.owner_instance,
         is_locally_owned=account_is_locally_owned,
+    )
+
+
+def _identity_mismatch_status(account_id: str) -> AccountIdentityMismatch | None:
+    entry = get_identity_mismatch(account_id)
+    if entry is None:
+        return None
+    return AccountIdentityMismatch(
+        count=entry["count"],
+        first_at=entry["first_at"],
+        last_at=entry["last_at"],
+        stored_plan_type=entry.get("stored_plan_type"),
+        payload_plan_type=entry.get("payload_plan_type"),
     )
 
 

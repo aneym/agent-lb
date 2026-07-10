@@ -83,6 +83,21 @@ class AccountSubscriptionLedger(DashboardModel):
     notes: str | None = Field(default=None, max_length=2000)
 
 
+class AccountIdentityMismatch(DashboardModel):
+    """Chronic usage-refresh identity mismatch (e.g. a lapsed plan).
+
+    Present only after the escalation threshold of consecutive refresh cycles
+    whose payload identity contradicted the stored slot — every one of those
+    refreshes was discarded, so the account's usage data is stale.
+    """
+
+    count: int
+    first_at: datetime
+    last_at: datetime
+    stored_plan_type: str | None = None
+    payload_plan_type: str | None = None
+
+
 class AccountSummary(DashboardModel):
     account_id: str
     provider: str = "openai"
@@ -133,6 +148,9 @@ class AccountSummary(DashboardModel):
     # surface a "delete older" action without requiring the operator to
     # group rows by email themselves. See agent-lb #787 (B).
     is_email_duplicate: bool = False
+    # Escalated usage-refresh identity mismatch (see AccountIdentityMismatch);
+    # null while refreshes are healthy or below the escalation threshold.
+    identity_mismatch: AccountIdentityMismatch | None = None
     # Instance federation: which agent-lb instance currently owns OAuth refresh
     # for this account. Null means this instance (the classic, non-federated
     # case). is_locally_owned is the derived convenience flag the dashboard
@@ -143,6 +161,31 @@ class AccountSummary(DashboardModel):
 
 class AccountsResponse(DashboardModel):
     accounts: List[AccountSummary] = Field(default_factory=list)
+
+
+class AvailabilityUnavailableAccount(DashboardModel):
+    id: str
+    status: str
+    reset_at: datetime | None = None
+
+
+class ProviderAvailability(DashboardModel):
+    total: int
+    available: int
+    unavailable: List[AvailabilityUnavailableAccount] = Field(default_factory=list)
+    earliest_recovery_at: datetime | None = None
+
+
+class DegradationStatus(DashboardModel):
+    level: str
+    reason: str | None = None
+
+
+class AvailabilityResponse(DashboardModel):
+    """Fleet-wide account availability, aggregated per provider."""
+
+    degradation: DegradationStatus
+    providers: dict[str, ProviderAvailability] = Field(default_factory=dict)
 
 
 class AccountImportResponse(DashboardModel):

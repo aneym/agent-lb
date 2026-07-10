@@ -48,6 +48,7 @@ from app.modules.proxy.helpers import (
     _upstream_error_from_openai,
 )
 from app.modules.proxy.load_balancer import AccountLease
+from app.modules.proxy.selection_diagnostics import selection_error_extras
 
 _REQUEST_TRANSPORT_HTTP = "http"
 _PROTOCOL_ONLY_STREAM_EVENT_TYPES = frozenset({"response.created", "response.in_progress", "response.queued"})
@@ -459,6 +460,11 @@ class _StreamingRetryMixin:
                         error_code,
                         no_accounts_msg,
                         response_id=request_id,
+                    )
+                    event["response"]["error"].update(
+                        selection_error_extras(
+                            selection, requested_model=payload.model
+                        )
                     )
                     yield format_sse_event(event)
                     await proxy._write_request_log(

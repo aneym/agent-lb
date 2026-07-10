@@ -143,6 +143,7 @@ from app.modules.proxy.schemas import (
     WarmupSkippedAccount,
     WarmupSubmittedAccount,
 )
+from app.modules.proxy.selection_diagnostics import retry_after_seconds_from_error_detail
 from app.modules.proxy.types import (
     CreditStatusDetailsData,
     RateLimitStatusPayloadData,
@@ -3135,6 +3136,14 @@ def _logged_error_json_response(
     effective_headers = dict(headers or {})
     if status_code == 429 and is_local_overload_error_code(code):
         effective_headers = merge_retry_after_headers(effective_headers)
+    # Selection failures carry the pool's earliest recovery as
+    # error.resets_in_seconds; surface it as a standard Retry-After so
+    # clients can defer instead of blind-retrying (see selection_diagnostics).
+    if status_code in (429, 503) and "Retry-After" not in effective_headers:
+        error_detail = public_content.get("error") if isinstance(public_content, Mapping) else None
+        retry_after = retry_after_seconds_from_error_detail(error_detail)
+        if retry_after is not None:
+            effective_headers["Retry-After"] = str(retry_after)
     log_error_response(
         logger,
         request,

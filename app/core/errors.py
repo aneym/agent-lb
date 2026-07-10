@@ -13,6 +13,10 @@ class OpenAIErrorDetail(TypedDict, total=False):
     plan_type: str
     resets_at: int | float
     resets_in_seconds: int | float
+    # Selection-failure detail: {degraded, accounts: [{id, status, reset_at,
+    # reason}], earliest_recovery_at, requested_model}. Additive — OpenAI SDK
+    # clients tolerate extra keys inside "error".
+    diagnostics: dict
 
 
 class OpenAIErrorEnvelope(TypedDict):

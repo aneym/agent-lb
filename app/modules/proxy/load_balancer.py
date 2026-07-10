@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Iterable, Literal
 from uuid import uuid4
@@ -24,6 +24,7 @@ from app.core.balancer import (
     TRAFFIC_CLASS_FOREGROUND,
     TRAFFIC_CLASS_OPPORTUNISTIC,
     AccountState,
+    ExcludedAccount,
     ResetPreferenceWindow,
     RoutingCostsByAccount,
     RoutingStrategy,
@@ -140,6 +141,10 @@ class AccountSelection:
     error_message: str | None
     error_code: str | None = None
     lease: AccountLease | None = None
+    # Populated on selection failure so API surfaces can explain WHY every
+    # account was excluded and when the earliest one recovers.
+    excluded_accounts: list[ExcludedAccount] = field(default_factory=list)
+    retry_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,6 +328,10 @@ class LoadBalancer:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
         request_burn_first_ids = frozenset(burn_first_account_ids or ())
+        # Last failed core-selection result; its per-account exclusion detail
+        # and earliest-recovery hint ride the terminal AccountSelection so API
+        # surfaces can explain the failure.
+        failed_result: SelectionResult | None = None
         provider_name = normalize_provider_name(provider)
 
         async def load_selection_inputs() -> _SelectionInputs:
@@ -442,6 +451,7 @@ class LoadBalancer:
                     if not selection_states and states:
                         result = SelectionResult(None, "No available accounts")
                         error_message = result.error_message
+                        failed_result = result
                         selection_error_code = _account_cap_error_code(lease_kind)
                         logger.warning(
                             "Account cap exhausted during selection lease_kind=%s reason=%s candidates=%s",
@@ -503,6 +513,7 @@ class LoadBalancer:
                             selected_snapshot.reset_at = selected_reset_at
                     else:
                         error_message = result.error_message
+                        failed_result = result
 
                 pre_persist_runtime_state = {
                     aid: (
@@ -709,6 +720,7 @@ class LoadBalancer:
                                     )
                     else:
                         error_message = result.error_message
+                        failed_result = result
 
                 try:
                     async with self._repo_factory() as repos:
@@ -779,7 +791,13 @@ class LoadBalancer:
             if error_message == "No available accounts":
                 set_degraded("all upstream accounts are unavailable")
                 error_message = _format_degraded_error_message(error_message)
-            return AccountSelection(account=None, error_message=error_message, error_code=selection_error_code)
+            return AccountSelection(
+                account=None,
+                error_message=error_message,
+                error_code=selection_error_code,
+                excluded_accounts=list(failed_result.excluded_accounts) if failed_result else [],
+                retry_at=failed_result.retry_at if failed_result else None,
+            )
         logger.info(
             "Selected account_id=%s strategy=%s sticky=%s model=%s",
             selected_snapshot.id,

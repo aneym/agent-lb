@@ -4,7 +4,8 @@ import hashlib
 import logging
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Collection, Iterable, Literal
 
 from app.core.balancer.types import FailureClass, UpstreamError
@@ -140,6 +141,18 @@ class AccountState:
 class SelectionResult:
     account: AccountState | None
     error_message: str | None
+    excluded_accounts: list[ExcludedAccount] = field(default_factory=list)
+    retry_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExcludedAccount:
+    account_id: str
+    status: str
+    reset_at: datetime | None
+    cooldown_until: datetime | None
+    deactivation_reason: str | None
+    plan_type: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,6 +367,43 @@ def _fallback_secondary_capacity_credits(plan_type: str | None) -> float:
     )
 
 
+def _timestamp_as_utc(value: int | float | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone.utc)
+
+
+def _selection_failure(
+    message: str,
+    states: Iterable[AccountState],
+    *,
+    current: float,
+) -> SelectionResult:
+    excluded_accounts = [
+        ExcludedAccount(
+            account_id=state.account_id,
+            status=state.status.value,
+            reset_at=_timestamp_as_utc(state.reset_at if state.reset_at is not None else state.primary_reset_at),
+            cooldown_until=_timestamp_as_utc(state.cooldown_until),
+            deactivation_reason=state.deactivation_reason,
+            plan_type=state.plan_type,
+        )
+        for state in states
+    ]
+    future_recoveries = [
+        recovery_at
+        for excluded in excluded_accounts
+        for recovery_at in (excluded.reset_at, excluded.cooldown_until)
+        if recovery_at is not None and recovery_at.timestamp() > current
+    ]
+    return SelectionResult(
+        account=None,
+        error_message=message,
+        excluded_accounts=excluded_accounts,
+        retry_at=min(future_recoveries, default=None),
+    )
+
+
 def select_account(
     states: Iterable[AccountState],
     now: float | None = None,
@@ -521,29 +571,45 @@ def select_account(
 
             if not rate_limited and not quota_exceeded:
                 if paused and reauth_required and deactivated:
-                    return SelectionResult(None, "All accounts are paused, deactivated, or require re-authentication")
+                    return _selection_failure(
+                        "All accounts are paused, deactivated, or require re-authentication",
+                        all_states,
+                        current=current,
+                    )
                 if paused and reauth_required:
-                    return SelectionResult(None, "All accounts are paused or require re-authentication")
+                    return _selection_failure(
+                        "All accounts are paused or require re-authentication",
+                        all_states,
+                        current=current,
+                    )
                 if paused and deactivated:
-                    return SelectionResult(None, "All accounts are paused or deactivated")
+                    return _selection_failure(
+                        "All accounts are paused or deactivated",
+                        all_states,
+                        current=current,
+                    )
                 if reauth_required and deactivated:
-                    return SelectionResult(None, "All accounts are deactivated or require re-authentication")
+                    return _selection_failure(
+                        "All accounts are deactivated or require re-authentication",
+                        all_states,
+                        current=current,
+                    )
                 if paused:
-                    return SelectionResult(None, "All accounts are paused")
+                    return _selection_failure("All accounts are paused", all_states, current=current)
                 if reauth_required:
-                    return SelectionResult(None, "All accounts require re-authentication")
+                    return _selection_failure("All accounts require re-authentication", all_states, current=current)
                 if deactivated:
-                    return SelectionResult(None, "All accounts are deactivated")
+                    return _selection_failure("All accounts are deactivated", all_states, current=current)
             if quota_exceeded:
                 reset_candidates = [s.reset_at for s in quota_exceeded if s.reset_at]
                 if reset_candidates:
                     wait_seconds = max(0, min(reset_candidates) - int(current))
-                    return SelectionResult(None, _format_retry_hint(wait_seconds))
+                    return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)
             cooldowns = [s.cooldown_until for s in all_states if s.cooldown_until and s.cooldown_until > current]
             if cooldowns:
                 wait_seconds = max(0.0, min(cooldowns) - current)
-                return SelectionResult(None, _format_retry_hint(wait_seconds))
-            return SelectionResult(None, "No available accounts")
+                return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)
+            return _selection_failure("No available accounts", all_states, current=current)
 
     def _reset_first_sort_key(state: AccountState) -> tuple[int, float, float, float, float, str]:
         reset_bucket_days = _reset_preference_bucket(state, current, prefer_earlier_reset_window)
@@ -601,14 +667,14 @@ def select_account(
     if routing_strategy == "sequential_drain":
         candidate_pool = [state for state in available if not _usage_exhausted(state)]
         if not candidate_pool:
-            return SelectionResult(None, "No available accounts")
+            return _selection_failure("No available accounts", all_states, current=current)
         selected = min(candidate_pool, key=_sequential_drain_sort_key)
         return SelectionResult(selected, None)
 
     if routing_strategy == "reset_drain":
         candidate_pool = [state for state in available if not _usage_exhausted(state)]
         if not candidate_pool:
-            return SelectionResult(None, "No available accounts")
+            return _selection_failure("No available accounts", all_states, current=current)
         selected = min(candidate_pool, key=lambda state: _reset_drain_sort_key(state, current))
         return SelectionResult(selected, None)
 

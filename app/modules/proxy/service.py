@@ -693,6 +693,7 @@ from app.modules.proxy.repo_bundle import ProxyRepoFactory
 from app.modules.proxy.ring_membership import (
     RingMembershipService,
 )
+from app.modules.proxy.selection_diagnostics import enrich_selection_error
 from app.modules.proxy.work_admission import WorkAdmissionController
 
 logger = logging.getLogger(__name__)
@@ -1010,7 +1011,11 @@ class ProxyService(
                     log_error_message = selection.error_message or "No active accounts available"
                     raise ProxyResponseError(
                         503,
-                        openai_error(log_error_code, log_error_message),
+                        enrich_selection_error(
+                            openai_error(log_error_code, log_error_message),
+                            selection,
+                            requested_model=selection_model,
+                        ),
                     )
             account_id_value = account.id
 

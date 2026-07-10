@@ -31,6 +31,10 @@ from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
+from app.modules.usage.identity_mismatch import (
+    clear_identity_mismatch,
+    record_identity_mismatch,
+)
 from app.modules.usage.repository import AdditionalUsageRepository
 
 logger = logging.getLogger(__name__)
@@ -454,7 +458,15 @@ class UsageUpdater:
                 payload.seat_type,
                 get_request_id(),
             )
+            record_identity_mismatch(
+                account.id,
+                stored_plan_type=account.plan_type,
+                payload_plan_type=payload.plan_type,
+                stored_workspace_id=account.workspace_id,
+                payload_workspace_id=payload.workspace_id,
+            )
             return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
+        clear_identity_mismatch(account.id)
 
         identity_matches_slot = await self._sync_identity_metadata(account, payload)
         if not identity_matches_slot:

@@ -195,6 +195,7 @@ from app.modules.proxy.durable_bridge_coordinator import (
     DurableBridgeLookup,
 )
 from app.modules.proxy.load_balancer import AccountLease
+from app.modules.proxy.selection_diagnostics import enrich_selection_error
 
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
@@ -1923,10 +1924,14 @@ class _HTTPBridgeMixin(
                 error_type = "rate_limit_error" if status_code == 429 else "server_error"
                 raise ProxyResponseError(
                     status_code,
-                    openai_error(
-                        selection.error_code or "no_accounts",
-                        selection.error_message or "No active accounts available",
-                        error_type=error_type,
+                    enrich_selection_error(
+                        openai_error(
+                            selection.error_code or "no_accounts",
+                            selection.error_message or "No active accounts available",
+                            error_type=error_type,
+                        ),
+                        selection,
+                        requested_model=request_model,
                     ),
                 )
             if require_preferred_account and preferred_account_id is not None and account.id != preferred_account_id:
@@ -2207,10 +2212,13 @@ class _HTTPBridgeMixin(
                 status_code = 429 if _is_local_account_cap_code(selection.error_code) else 503
                 raise ProxyResponseError(
                     status_code,
-                    openai_error(
-                        selection.error_code or "no_accounts",
-                        selection.error_message or "No active accounts available",
-                        error_type="rate_limit_error" if status_code == 429 else "server_error",
+                    enrich_selection_error(
+                        openai_error(
+                            selection.error_code or "no_accounts",
+                            selection.error_message or "No active accounts available",
+                            error_type="rate_limit_error" if status_code == 429 else "server_error",
+                        ),
+                        selection,
                     ),
                 )
             selected_account_lease = (
