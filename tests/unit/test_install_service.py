@@ -34,6 +34,32 @@ def test_install_service_plist_uses_menubar_service_label(tmp_path: Path) -> Non
     assert generated["Label"] == LABEL
 
 
+def test_install_service_plist_defaults_file_limits_above_launchd_256(tmp_path: Path) -> None:
+    generated = _print_generated_plist(tmp_path)
+
+    assert generated["SoftResourceLimits"] == {"NumberOfFiles": 4096}
+    assert generated["HardResourceLimits"] == {"NumberOfFiles": 8192}
+
+
+def test_install_service_plist_preserves_custom_file_limits(tmp_path: Path) -> None:
+    existing_path = _launch_agent_path(tmp_path)
+    existing_path.parent.mkdir(parents=True)
+    existing_path.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": LABEL,
+                "SoftResourceLimits": {"NumberOfFiles": 2048},
+                "HardResourceLimits": {"NumberOfFiles": 16384, "Stack": 67104768},
+            }
+        )
+    )
+
+    generated = _print_generated_plist(tmp_path)
+
+    assert generated["SoftResourceLimits"] == {"NumberOfFiles": 2048}
+    assert generated["HardResourceLimits"] == {"NumberOfFiles": 16384, "Stack": 67104768}
+
+
 def test_install_service_plist_preserves_existing_runtime_configuration(tmp_path: Path) -> None:
     existing_path = _launch_agent_path(tmp_path)
     existing_path.parent.mkdir(parents=True)

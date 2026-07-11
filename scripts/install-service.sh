@@ -124,9 +124,16 @@ plist: dict[str, Any] = {
     "EnvironmentVariables": env,
 }
 
-for key in ("SoftResourceLimits", "HardResourceLimits"):
-    if key in existing:
-        plist[key] = existing[key]
+# launchd defaults to 256 open files; the proxy holds hundreds of keep-alive
+# upstream sockets, so the default exhausts fds and turns into 500s on
+# /v1/messages ("Too many open files" / "unable to open database file").
+DEFAULT_FILE_LIMITS = {"SoftResourceLimits": 4096, "HardResourceLimits": 8192}
+
+for key, default_files in DEFAULT_FILE_LIMITS.items():
+    limits = existing.get(key)
+    limits = dict(limits) if isinstance(limits, dict) else {}
+    limits.setdefault("NumberOfFiles", default_files)
+    plist[key] = limits
 
 plistlib.dump(plist, sys.stdout.buffer, sort_keys=True)
 PY
