@@ -26,6 +26,21 @@ def _request(**overrides: object) -> AnthropicMessageRequest:
     return AnthropicMessageRequest.model_validate(payload)
 
 
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh"])
+def test_request_translation_propagates_supported_effort(effort: str) -> None:
+    translated = claude_to_responses(_request(output_config={"effort": effort}))
+
+    assert translated.reasoning is not None and translated.reasoning.effort == effort
+    assert translated.service_tier == "priority"
+    assert translated.to_payload()["service_tier"] == "priority"
+
+
+def test_request_translation_defaults_invalid_effort_to_high() -> None:
+    translated = claude_to_responses(_request(output_config={"effort": "max"}))
+
+    assert translated.reasoning is not None and translated.reasoning.effort == "high"
+
+
 def test_request_translation_locks_sol_high_priority_and_maps_tools() -> None:
     translated = claude_to_responses(
         _request(
@@ -45,6 +60,7 @@ def test_request_translation_locks_sol_high_priority_and_maps_tools() -> None:
     assert translated.model == CCDEX_MODEL
     assert translated.reasoning is not None and translated.reasoning.effort == "high"
     assert translated.service_tier == "priority"
+    assert translated.to_payload()["service_tier"] == "priority"
     assert translated.store is False
     assert translated.include == ["reasoning.encrypted_content"]
     assert translated.input == [

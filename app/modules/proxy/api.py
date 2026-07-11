@@ -831,7 +831,11 @@ async def v1_ccdex_messages(
             prefer_http_bridge=True,
             forwarded_headers=forwarded_headers,
             locked_model=CCDEX_MODEL,
-            locked_reasoning_effort=CCDEX_REASONING_EFFORT,
+            locked_reasoning_effort=(
+                responses_payload.reasoning.effort
+                if responses_payload.reasoning
+                else CCDEX_REASONING_EFFORT
+            ),
             locked_service_tier=CCDEX_SERVICE_TIER,
         )
     except ProxyRateLimitError as exc:

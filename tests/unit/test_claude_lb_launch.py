@@ -25,12 +25,45 @@ def test_ccdex_build_command_locks_model_and_effort() -> None:
     assert command == ["claude", "--model", "gpt-5.6-sol", "--effort", "high", "-p", "hello"]
 
 
-def test_ccdex_proxy_rewrite_is_scoped_to_messages_paths() -> None:
+def test_ccdex_proxy_rewrites_only_gpt_messages_and_token_count() -> None:
     launcher = load_launcher_module()
+    launcher.CCDEX_MODE = True
 
-    assert launcher._ccdex_upstream_path("/v1/messages") == "/v1/ccdex/messages"
-    assert launcher._ccdex_upstream_path("/v1/messages/count_tokens") == "/v1/ccdex/messages/count_tokens"
-    assert launcher._ccdex_upstream_path("/api/organizations") == "/api/organizations"
+    gpt_body = b'{"model":"gpt-5.6-sol"}'
+    claude_body = b'{"model":"claude-opus-4-8"}'
+    assert launcher._ccdex_upstream_path("/v1/messages", gpt_body) == "/v1/ccdex/messages"
+    assert launcher._ccdex_upstream_path("/v1/messages", claude_body) == "/v1/messages"
+    assert launcher._ccdex_upstream_path("/v1/messages/count_tokens", claude_body) == "/v1/ccdex/messages/count_tokens"
+    assert launcher._ccdex_upstream_path("/api/organizations", gpt_body) == "/api/organizations"
+
+
+def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = False
+
+    assert launcher._ccdex_upstream_path("/v1/messages", b'{"model":"gpt-5.6-sol"}') == "/v1/messages"
+    assert launcher._ccdex_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}') == "/v1/messages/count_tokens"
+
+
+def test_regular_cc_build_command_is_unchanged(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = False
+    monkeypatch.setenv("CC_EFFORT_LEVEL", "xhigh")
+    monkeypatch.setenv("CC_PERMISSION_MODE", "plan")
+
+    command = launcher.build_command(["--model", "claude-opus-4-8", "-p", "hello"])
+
+    assert command == [
+        "claude",
+        "--effort",
+        "xhigh",
+        "--permission-mode",
+        "plan",
+        "--model",
+        "claude-opus-4-8",
+        "-p",
+        "hello",
+    ]
 
 
 def test_ccdex_capability_probe_requires_native_token_count(monkeypatch) -> None:

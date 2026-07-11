@@ -15,6 +15,7 @@ from app.core.utils.sse import format_sse_event, parse_sse_data_json
 
 CCDEX_MODEL = "gpt-5.6-sol"
 CCDEX_REASONING_EFFORT = "high"
+CCDEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 CCDEX_SERVICE_TIER = "priority"
 _SIGNATURE_PREFIX = "codex:"
 
@@ -108,12 +109,22 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
         tools=tools,
         tool_choice=_tool_choice(raw.get("tool_choice")),
         parallel_tool_calls=_parallel_tool_calls(raw.get("tool_choice")),
-        reasoning={"effort": CCDEX_REASONING_EFFORT, "summary": "auto"},
+        reasoning={"effort": _reasoning_effort(raw), "summary": "auto"},
         store=False,
         stream=True,
         include=["reasoning.encrypted_content"],
         service_tier=CCDEX_SERVICE_TIER,
     )
+
+
+def _reasoning_effort(payload: Mapping[str, JsonValue]) -> str:
+    output_config = payload.get("output_config")
+    if not isinstance(output_config, dict):
+        return CCDEX_REASONING_EFFORT
+    effort = output_config.get("effort")
+    if isinstance(effort, str) and effort.lower() in CCDEX_REASONING_EFFORTS:
+        return effort.lower()
+    return CCDEX_REASONING_EFFORT
 
 
 def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:

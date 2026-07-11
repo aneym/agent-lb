@@ -50,6 +50,7 @@ async def test_ccdex_messages_uses_openai_responses_path_and_returns_anthropic_s
     assert translated.model == CCDEX_MODEL
     assert translated.reasoning.effort == "high"
     assert translated.service_tier == "priority"
+    assert translated.to_payload()["service_tier"] == "priority"
     kwargs = captured["kwargs"]
     assert kwargs["forwarded_headers"].get("authorization") is None
     assert kwargs["forwarded_headers"].get("anthropic-beta") is None
@@ -62,6 +63,37 @@ async def test_ccdex_messages_uses_openai_responses_path_and_returns_anthropic_s
         "locked_reasoning_effort": "high",
         "locked_service_tier": "priority",
     }
+
+
+@pytest.mark.asyncio
+async def test_ccdex_messages_propagates_per_task_effort(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        captured["payload"] = payload
+        captured["kwargs"] = kwargs
+
+        async def source():
+            yield 'data: {"type":"response.completed","response":{"usage":{}}}\n\n'
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    response = await async_client.post(
+        "/v1/ccdex/messages",
+        json={
+            "model": "gpt-5.6-sol",
+            "max_tokens": 1024,
+            "stream": True,
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["payload"].reasoning.effort == "xhigh"
+    assert captured["kwargs"]["locked_reasoning_effort"] == "xhigh"
+    assert captured["kwargs"]["locked_service_tier"] == "priority"
 
 
 @pytest.mark.asyncio

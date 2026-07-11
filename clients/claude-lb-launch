@@ -291,7 +291,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         }
         headers["x-claude-session-id"] = session_id
 
-        upstream_path = _ccdex_upstream_path(self.path) if CCDEX_MODE else self.path
+        upstream_path = _ccdex_upstream_path(self.path, body)
         request = urllib.request.Request(
             f"{upstream_base_url}{upstream_path}",
             data=body,
@@ -1194,10 +1194,25 @@ def _probe_ccdex_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
     return True, ""
 
 
-def _ccdex_upstream_path(path: str) -> str:
-    if path.startswith("/v1/messages"):
+def _ccdex_upstream_path(path: str, body: bytes | None = None) -> str:
+    if not CCDEX_MODE:
+        return path
+    if not path.startswith("/v1/messages"):
+        return path
+    if path == "/v1/messages/count_tokens" or _ccdex_request_model(body) == CCDEX_MODEL:
         return "/v1/ccdex/messages" + path.removeprefix("/v1/messages")
     return path
+
+
+def _ccdex_request_model(body: bytes | None) -> str | None:
+    if not body:
+        return None
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    model = payload.get("model") if isinstance(payload, dict) else None
+    return model if isinstance(model, str) else None
 
 
 def _without_option(argv: list[str], option: str) -> list[str]:
