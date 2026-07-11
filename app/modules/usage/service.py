@@ -29,6 +29,10 @@ from app.modules.usage.schemas import (
 # keyed by (provider, window minutes, account-id set). Values are
 # (monotonic timestamp, metrics, cost).
 _LOG_METRICS_CACHE_TTL_SECONDS = 60.0
+# Provider-scoped summaries still hydrate the full log window (no
+# account-filtered SQL aggregate yet) at ~30-60s of blocked event loop per
+# recomputation on the live dataset — recompute rarely until that lands.
+_PROVIDER_LOG_METRICS_CACHE_TTL_SECONDS = 900.0
 # One bucket spanning any realistic window so aggregate_by_bucket returns
 # per-model totals for the whole window.
 _WHOLE_WINDOW_BUCKET_SECONDS = 60 * 60 * 24 * 365
@@ -97,9 +101,10 @@ class UsageService:
         # menubar polls this endpoint continuously — cache the derived
         # aggregates briefly so the cost is paid at most once per TTL.
         cache_key = (provider or "", secondary_minutes, tuple(sorted(account_ids)))
+        ttl = _PROVIDER_LOG_METRICS_CACHE_TTL_SECONDS if provider else _LOG_METRICS_CACHE_TTL_SECONDS
         mono_now = time.monotonic()
         cached = _LOG_METRICS_CACHE.get(cache_key)
-        if cached is not None and mono_now - cached[0] < _LOG_METRICS_CACHE_TTL_SECONDS:
+        if cached is not None and mono_now - cached[0] < ttl:
             return cached[1], cached[2]
 
         since = now - timedelta(minutes=secondary_minutes)
@@ -113,7 +118,9 @@ class UsageService:
             cost = _cost_summary_from_logs(logs)
         else:
             metrics, cost = await self._aggregate_log_window_metrics(since)
-        for key in [k for k, v in _LOG_METRICS_CACHE.items() if mono_now - v[0] >= _LOG_METRICS_CACHE_TTL_SECONDS]:
+        for key in [
+            k for k, v in _LOG_METRICS_CACHE.items() if mono_now - v[0] >= _PROVIDER_LOG_METRICS_CACHE_TTL_SECONDS
+        ]:
             _LOG_METRICS_CACHE.pop(key, None)
         _LOG_METRICS_CACHE[cache_key] = (mono_now, metrics, cost)
         return metrics, cost
