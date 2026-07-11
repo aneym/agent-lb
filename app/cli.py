@@ -104,6 +104,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         # cutting those sessions mid-turn with 1011 "keepalive ping timeout".
         ws_ping_interval=20.0,
         ws_ping_timeout=None,
+        # permessage-deflate runs zlib synchronously on the event loop for
+        # every outbound frame; with multi-MB streaming deltas it starves the
+        # whole proxy (sampled mid-stall 2026-07-11). Clients are on
+        # localhost/tailnet, so the bandwidth saving is worthless here.
+        ws_per_message_deflate=False,
         log_config=_build_log_config(),
     )
 
