@@ -26,9 +26,15 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/.agent-lb"
 PYTHON_BIN="${PYTHON_BIN:-$REPO_DIR/.venv/bin/python}"
 READY_TIMEOUT_SECONDS="${AGENT_LB_INSTALL_READY_TIMEOUT_SECONDS:-120}"
+PORT_FREE_TIMEOUT_SECONDS="${AGENT_LB_INSTALL_PORT_FREE_TIMEOUT_SECONDS:-30}"
 
 if [[ ! "$READY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: AGENT_LB_INSTALL_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 2
+fi
+
+if [[ ! "$PORT_FREE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: AGENT_LB_INSTALL_PORT_FREE_TIMEOUT_SECONDS must be a positive integer" >&2
   exit 2
 fi
 
@@ -183,13 +189,15 @@ if label_loaded; then
   bootout_started_ms="$(now_ms)"
   launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
   # Wait for the old process to release localhost:PORT before rebinding.
-  port_free_deadline=$(($(date +%s) + 30))
+  port_free_deadline=$(($(date +%s) + PORT_FREE_TIMEOUT_SECONDS))
   while (($(date +%s) < port_free_deadline)) && localhost_port_busy; do
     sleep 0.1
   done
   if localhost_port_busy; then
-    echo "error: localhost port $PORT is still in use after bootout" >&2
-    exit 1
+    # Never abort here: the job is already booted out, and exiting now leaves
+    # nothing bootstrapped (caused the 2026-07-11 outage). A draining old
+    # process just delays the rebind — KeepAlive retries until the port frees.
+    echo "warning: localhost port $PORT still in use ${PORT_FREE_TIMEOUT_SECONDS}s after bootout — bootstrapping anyway; launchd will retry the bind" >&2
   fi
   bootout_elapsed_ms=$(($(now_ms) - bootout_started_ms))
 fi

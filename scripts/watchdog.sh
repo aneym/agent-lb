@@ -6,12 +6,18 @@ set -uo pipefail
 #
 # Recovery contract:
 # - Healthy (/health -> 200): reset counters, exit.
-# - Unhealthy but bootstrapped: kickstart after THRESHOLD consecutive failures.
+# - Unhealthy but bootstrapped: kickstart after THRESHOLD consecutive failures,
+#   unless the service process is younger than BOOT_GRACE_SECONDS — cold boot
+#   takes 60-80+s under host load, and kicking a booting instance restarts the
+#   clock and doubles the outage (observed 2026-07-11T20:24:50Z).
 # - Not bootstrapped at all: re-bootstrap from the plist after
 #   MISSING_THRESHOLD consecutive ticks. Intentional downtime must be signaled
 #   by touching the pause file — an unloaded job alone is treated as a failed
 #   deploy, not an operator decision (a bootout-without-bootstrap took the
 #   service down for 10 minutes on 2026-07-11).
+# - Service logs over SERVICE_LOG_MAX_MB rotate copy-then-truncate: launchd
+#   holds an append-mode fd, so a rename would leave it writing to the old
+#   inode until the next restart.
 
 URL="${AGENT_LB_HEALTH_URL:-http://127.0.0.1:2455/health}"
 LABEL="${AGENT_LB_LABEL:-com.aneyman.agent-lb}"
@@ -22,7 +28,10 @@ LOG_FILE="${AGENT_LB_WATCHDOG_LOG:-$HOME/.agent-lb/watchdog.log}"
 THRESHOLD="${AGENT_LB_WATCHDOG_THRESHOLD:-3}"
 MISSING_THRESHOLD="${AGENT_LB_WATCHDOG_MISSING_THRESHOLD:-2}"
 TIMEOUT="${AGENT_LB_WATCHDOG_TIMEOUT:-5}"
-KICK_GRACE_SECONDS="${AGENT_LB_WATCHDOG_KICK_GRACE:-60}"
+KICK_GRACE_SECONDS="${AGENT_LB_WATCHDOG_KICK_GRACE:-240}"
+BOOT_GRACE_SECONDS="${AGENT_LB_WATCHDOG_BOOT_GRACE:-240}"
+SERVICE_LOG_MAX_MB="${AGENT_LB_WATCHDOG_SERVICE_LOG_MAX_MB:-256}"
+SERVICE_LOG_FILES="${AGENT_LB_WATCHDOG_SERVICE_LOG_FILES:-$HOME/.agent-lb/agent-lb.err.log $HOME/.agent-lb/agent-lb.out.log}"
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
@@ -32,6 +41,25 @@ log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
 if [[ -f "$PAUSE_FILE" ]]; then
   exit 0
 fi
+
+rotate_service_logs() {
+  local f size max_bytes
+  max_bytes=$((SERVICE_LOG_MAX_MB * 1024 * 1024))
+  for f in $SERVICE_LOG_FILES; do
+    [[ -f "$f" ]] || continue
+    size=$(stat -f %z "$f" 2>/dev/null || stat -c %s "$f" 2>/dev/null || echo 0)
+    ((size > max_bytes)) || continue
+    if cp -f "$f" "$f.1" 2>/dev/null; then
+      : > "$f"
+      rm -f "$f.1.gz"
+      gzip -f "$f.1" 2>/dev/null || true
+      log "rotated $f ($((size / 1024 / 1024))MB > ${SERVICE_LOG_MAX_MB}MB)"
+    else
+      log "rotation copy failed for $f — leaving in place"
+    fi
+  done
+}
+rotate_service_logs
 
 count=0
 last_kick=0
@@ -92,7 +120,33 @@ if (( now - last_kick < KICK_GRACE_SECONDS )); then
   exit 0
 fi
 
+service_pid() {
+  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | \
+    awk '/^[[:space:]]*pid = /{print $3; exit}'
+}
+
+# [[dd-]hh:]mm:ss from `ps -o etime=` -> seconds; empty on parse failure.
+process_age_seconds() {
+  local etime
+  etime=$(ps -p "$1" -o etime= 2>/dev/null | tr -d ' ')
+  [[ -n "$etime" ]] || return 0
+  awk -F'[-:]' '{
+    if (NF == 4) print $1*86400 + $2*3600 + $3*60 + $4;
+    else if (NF == 3) print $1*3600 + $2*60 + $3;
+    else if (NF == 2) print $1*60 + $2;
+  }' <<<"$etime"
+}
+
 if (( count >= THRESHOLD )); then
+  pid=$(service_pid)
+  if [[ -n "$pid" ]]; then
+    age=$(process_age_seconds "$pid")
+    if [[ -n "$age" ]] && (( age < BOOT_GRACE_SECONDS )); then
+      log "unhealthy (http=$http_code) count=$count but pid=$pid age=${age}s < boot grace ${BOOT_GRACE_SECONDS}s — waiting for boot"
+      save_state
+      exit 0
+    fi
+  fi
   log "unhealthy (http=$http_code) count=$count >= threshold=$THRESHOLD — kickstarting $LABEL"
   launchctl kickstart -k "gui/$(id -u)/$LABEL" >> "$LOG_FILE" 2>&1 || \
     log "kickstart failed with exit $?"

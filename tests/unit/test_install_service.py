@@ -95,6 +95,58 @@ def test_install_service_metrics_default_has_runtime_dependency() -> None:
     assert "prometheus-client>=0.20" in default_dependencies
 
 
+LAUNCHCTL_SHIM = """#!/usr/bin/env bash
+echo "$@" >> "$SHIM_CALL_LOG"
+exit 0
+"""
+
+# Always reports a listener on 127.0.0.1:2455 — the old process never drains.
+LSOF_SHIM = """#!/usr/bin/env bash
+echo "python  1234 user  23u  IPv4  TCP 127.0.0.1:2455 (LISTEN)"
+"""
+
+CURL_SHIM = """#!/usr/bin/env bash
+echo '{"status":"ok"}'
+"""
+
+
+def test_install_service_busy_port_after_bootout_still_bootstraps(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("launchctl", LAUNCHCTL_SHIM), ("lsof", LSOF_SHIM), ("curl", CURL_SHIM)):
+        shim = bin_dir / name
+        shim.write_text(body)
+        shim.chmod(0o755)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    call_log = tmp_path / "calls.log"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "SHIM_CALL_LOG": str(call_log),
+            "AGENT_LB_INSTALL_PORT_FREE_TIMEOUT_SECONDS": "1",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "scripts/install-service.sh"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "bootstrapping anyway" in result.stderr
+    calls = call_log.read_text()
+    assert "bootout " in calls
+    assert "bootstrap " in calls
+    assert _launch_agent_path(home).exists()
+
+
 def test_install_service_restart_is_readiness_driven_and_timed() -> None:
     script = (ROOT / "scripts" / "install-service.sh").read_text()
 
