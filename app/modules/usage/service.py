@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from datetime import timedelta
+import time
+from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
-from app.core.usage.types import UsageWindowRow
+from app.core.usage.types import UsageCostSummary, UsageMetricsSummary, UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import RequestLog
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import subscription_usable_accounts
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.builders import (
+    _cost_summary_from_logs,
+    _usage_metrics,
     build_usage_history_response,
     build_usage_summary_response,
     build_usage_window_response,
@@ -21,6 +24,15 @@ from app.modules.usage.schemas import (
     UsageSummaryResponse,
     UsageWindowResponse,
 )
+
+# Cached (metrics, cost) aggregates derived from the request-log window,
+# keyed by (provider, window minutes, account-id set). Values are
+# (monotonic timestamp, metrics, cost).
+_LOG_METRICS_CACHE_TTL_SECONDS = 60.0
+_LOG_METRICS_CACHE: dict[
+    tuple[str, int, tuple[str, ...]],
+    tuple[float, UsageMetricsSummary, UsageCostSummary],
+] = {}
 
 
 class UsageService:
@@ -50,17 +62,51 @@ class UsageService:
         )
 
         secondary_minutes = usage_core.resolve_window_minutes("secondary", secondary_rows)
-        logs_secondary = []
+        metrics_override: UsageMetricsSummary | None = None
+        cost_override: UsageCostSummary | None = None
         if secondary_minutes:
-            logs_secondary = await self._logs_repo.list_since(now - timedelta(minutes=secondary_minutes))
-            logs_secondary = _logs_for_accounts(logs_secondary, account_ids, drop_unattributed=bool(provider))
+            metrics_override, cost_override = await self._log_window_metrics(
+                now=now,
+                secondary_minutes=secondary_minutes,
+                account_ids=account_ids,
+                provider=provider,
+            )
         return build_usage_summary_response(
             accounts=accounts,
             primary_rows=primary_rows,
             secondary_rows=secondary_rows,
             monthly_rows=monthly_rows_raw,
-            logs_secondary=logs_secondary,
+            logs_secondary=[],
+            metrics_override=metrics_override,
+            cost_override=cost_override,
         )
+
+    async def _log_window_metrics(
+        self,
+        *,
+        now: datetime,
+        secondary_minutes: int,
+        account_ids: set[str],
+        provider: str | None,
+    ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
+        # Hydrating the full log window (observed >700k RequestLog rows for the
+        # 7-day secondary window) blocks the event loop for seconds, and the
+        # menubar polls this endpoint continuously — cache the derived
+        # aggregates briefly so the cost is paid at most once per TTL.
+        cache_key = (provider or "", secondary_minutes, tuple(sorted(account_ids)))
+        mono_now = time.monotonic()
+        cached = _LOG_METRICS_CACHE.get(cache_key)
+        if cached is not None and mono_now - cached[0] < _LOG_METRICS_CACHE_TTL_SECONDS:
+            return cached[1], cached[2]
+
+        logs = await self._logs_repo.list_since(now - timedelta(minutes=secondary_minutes))
+        logs = _logs_for_accounts(logs, account_ids, drop_unattributed=bool(provider))
+        metrics = _usage_metrics(logs)
+        cost = _cost_summary_from_logs(logs)
+        for key in [k for k, v in _LOG_METRICS_CACHE.items() if mono_now - v[0] >= _LOG_METRICS_CACHE_TTL_SECONDS]:
+            _LOG_METRICS_CACHE.pop(key, None)
+        _LOG_METRICS_CACHE[cache_key] = (mono_now, metrics, cost)
+        return metrics, cost
 
     async def get_usage_history(self, hours: int) -> UsageHistoryResponse:
         now = utcnow()
