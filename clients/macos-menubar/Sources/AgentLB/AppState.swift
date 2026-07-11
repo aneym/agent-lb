@@ -63,10 +63,10 @@ final class AppState {
             // lays out and macOS 26 never re-measures it spontaneously (see
             // RootView's panel-resize driver), so the first paint after an
             // open must already have rows to size against.
+            await fetchSummarySilently()
+            await fetchAccountsSilently()
+            await fetchRecentSilently()
             await withDiscardingTaskGroup { group in
-              group.addTask { await self.fetchSummarySilently() }
-              group.addTask { await self.fetchAccountsSilently() }
-              group.addTask { await self.fetchRecentSilently() }
               group.addTask { await self.fetchProjections() }
               group.addTask { await self.fetchVersion() }
             }
@@ -153,12 +153,14 @@ final class AppState {
       recomputeStatusIcon()
       return
     }
+    // These are the heaviest dashboard reads. Sequencing them avoids a
+    // self-induced timeout storm when a remote service is under query load.
+    await fetchSummary()
+    await fetchAccounts()
+    if tick.isMultiple(of: 2) {
+      await fetchRecent()
+    }
     await withDiscardingTaskGroup { group in
-      group.addTask { await self.fetchSummary() }
-      group.addTask { await self.fetchAccounts() }
-      if tick.isMultiple(of: 2) {
-        group.addTask { await self.fetchRecent() }
-      }
       if tick.isMultiple(of: 6) {
         group.addTask { await self.fetchProjections() }
         group.addTask { await self.fetchVersion() }

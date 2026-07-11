@@ -10,11 +10,25 @@ enum APIError: Error, @unchecked Sendable {
   case transport(URLError)
 }
 
+struct APIReadTimeoutPolicy: Equatable, Sendable {
+  let request: TimeInterval
+  let resource: TimeInterval
+
+  static let local = APIReadTimeoutPolicy(request: 3, resource: 5)
+  static let remote = APIReadTimeoutPolicy(request: 15, resource: 20)
+
+  static func forBaseURL(_ base: URL) -> APIReadTimeoutPolicy {
+    let host = base.host ?? "127.0.0.1"
+    return ["127.0.0.1", "localhost", "::1"].contains(host) ? .local : .remote
+  }
+}
+
 // MARK: - Client
 
 struct APIClient: @unchecked Sendable {
   let base: URL
   let isRemote: Bool
+  private let healthSession: URLSession
   private let session: URLSession
   private let probeSession: URLSession
 
@@ -25,9 +39,16 @@ struct APIClient: @unchecked Sendable {
     let host = resolved.host ?? "127.0.0.1"
     self.isRemote = !["127.0.0.1", "localhost", "::1"].contains(host)
 
+    let healthConfig = URLSessionConfiguration.ephemeral
+    healthConfig.timeoutIntervalForRequest = APIReadTimeoutPolicy.local.request
+    healthConfig.timeoutIntervalForResource = APIReadTimeoutPolicy.local.resource
+    healthConfig.waitsForConnectivity = false
+    self.healthSession = URLSession(configuration: healthConfig)
+
+    let readPolicy = APIReadTimeoutPolicy.forBaseURL(resolved)
     let config = URLSessionConfiguration.ephemeral
-    config.timeoutIntervalForRequest = 3
-    config.timeoutIntervalForResource = 5
+    config.timeoutIntervalForRequest = readPolicy.request
+    config.timeoutIntervalForResource = readPolicy.resource
     config.waitsForConnectivity = false
     self.session = URLSession(configuration: config)
 
@@ -61,13 +82,13 @@ struct APIClient: @unchecked Sendable {
   // MARK: - Health
 
   func health() async throws {
-    let (_, response) = try await fetch(path: "/health")
+    let (_, response) = try await fetch(path: "/health", on: healthSession)
     try assertOK(response, endpoint: "/health")
   }
 
   func ready() async throws -> Bool {
     do {
-      let (_, response) = try await fetch(path: "/health/ready")
+      let (_, response) = try await fetch(path: "/health/ready", on: healthSession)
       guard let http = response as? HTTPURLResponse else { return false }
       return http.statusCode == 200
     } catch APIError.httpStatus(503, _) {
@@ -77,7 +98,7 @@ struct APIClient: @unchecked Sendable {
 
   func startupComplete() async throws -> Bool {
     do {
-      let (_, response) = try await fetch(path: "/health/startup")
+      let (_, response) = try await fetch(path: "/health/startup", on: healthSession)
       guard let http = response as? HTTPURLResponse else { return false }
       return http.statusCode == 200
     } catch APIError.httpStatus(503, _) {
@@ -159,10 +180,10 @@ struct APIClient: @unchecked Sendable {
     }
   }
 
-  private func fetch(path: String) async throws -> (Data, URLResponse) {
+  private func fetch(path: String, on requestSession: URLSession? = nil) async throws -> (Data, URLResponse) {
     let url = URL(string: path, relativeTo: base) ?? base.appendingPathComponent(path)
     let request = URLRequest(url: url)
-    return try await executeRequest(request, on: session)
+    return try await executeRequest(request, on: requestSession ?? session)
   }
 
   private func executeRequest(
