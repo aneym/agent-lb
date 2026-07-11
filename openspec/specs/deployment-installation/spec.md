@@ -6,7 +6,7 @@ Define installation modes and smoke-test expectations so the Helm chart remains 
 ## Requirements
 ### Requirement: macOS service restart completion is readiness-driven and timed
 
-The macOS LaunchAgent installer MUST wait for the previous localhost listener to release, MUST retry bootstrap using bounded state-driven backoff, and MUST require `/health/ready` before reporting successful installation. It MUST report elapsed timing for the restart phases without exposing environment variable values or credentials.
+The macOS LaunchAgent installer MUST wait for the previous localhost listener to release, MUST retry bootstrap using bounded state-driven backoff, and MUST require `/health/ready` before reporting successful installation. Its readiness deadline MUST be bounded, operator-configurable, and long enough by default for an observed loaded-host cold start. It MUST report elapsed timing for the restart phases without exposing environment variable values or credentials.
 
 #### Scenario: Existing service restarts promptly
 

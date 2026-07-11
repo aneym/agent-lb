@@ -25,6 +25,12 @@ BIN="$REPO_DIR/.venv/bin/agent-lb"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/.agent-lb"
 PYTHON_BIN="${PYTHON_BIN:-$REPO_DIR/.venv/bin/python}"
+READY_TIMEOUT_SECONDS="${AGENT_LB_INSTALL_READY_TIMEOUT_SECONDS:-120}"
+
+if [[ ! "$READY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: AGENT_LB_INSTALL_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 2
+fi
 
 now_ms() {
   /usr/bin/perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'
@@ -228,7 +234,7 @@ launchctl kickstart -k "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 
 process_started_ms="$(now_ms)"
 startup_elapsed_ms=-1
-deadline=$(($(date +%s) + 30))
+deadline=$(($(date +%s) + READY_TIMEOUT_SECONDS))
 while (($(date +%s) < deadline)); do
   if ((startup_elapsed_ms < 0)) && curl -fsS "http://127.0.0.1:$PORT/health/startup" >/dev/null 2>&1; then
     startup_elapsed_ms=$(($(now_ms) - process_started_ms))
@@ -245,5 +251,5 @@ done
 
 total_elapsed_ms=$(($(now_ms) - install_started_ms))
 echo "startup_timing_ms bootout=$bootout_elapsed_ms bootstrap=$bootstrap_elapsed_ms startup=$startup_elapsed_ms ready=timeout total=$total_elapsed_ms" >&2
-echo "error: agent-lb did not become ready within 30s — check $LOG_DIR/agent-lb.err.log" >&2
+echo "error: agent-lb did not become ready within ${READY_TIMEOUT_SECONDS}s — check $LOG_DIR/agent-lb.err.log" >&2
 exit 1
