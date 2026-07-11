@@ -1155,7 +1155,8 @@ def prepare_ccdex_endpoint() -> bool:
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         print(
-            f"ccdex: {_c('Claude Code + Codex', '1;36')} · {CCDEX_MODEL}/high · bypass perms · "
+            f"ccdex: {_c('Claude Code + Codex', '1;36')} · {CCDEX_MODEL}/high · "
+            f"{'bypass perms' if not _has_permission_option(sys.argv[1:]) else 'custom perms'} · "
             f"requested priority {_c(f'via {endpoint}{suffix}', '2')}",
             file=sys.stderr,
         )
