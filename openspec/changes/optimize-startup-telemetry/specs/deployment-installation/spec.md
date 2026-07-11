@@ -15,3 +15,9 @@ The macOS LaunchAgent installer MUST wait for the previous localhost listener to
 - **WHEN** the replacement process responds to liveness but `/health/ready` remains unavailable
 - **THEN** the installer does not report success
 - **AND** it continues bounded readiness polling or exits with a diagnostic naming the service log
+
+#### Scenario: LaunchAgent disappears during readiness polling
+
+- **WHEN** launchd briefly reports the replacement job loaded and then removes it before the process becomes ready
+- **THEN** the installer performs bounded re-bootstrap attempts inside the readiness deadline
+- **AND** it does not spend the remaining deadline polling a nonexistent job

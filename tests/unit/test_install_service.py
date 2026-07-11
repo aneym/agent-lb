@@ -106,3 +106,4 @@ def test_install_service_restart_is_readiness_driven_and_timed() -> None:
     assert 'bootstrap_ok=true' in script
     assert 'READY_TIMEOUT_SECONDS="${AGENT_LB_INSTALL_READY_TIMEOUT_SECONDS:-120}"' in script
     assert 'deadline=$(($(date +%s) + READY_TIMEOUT_SECONDS))' in script
+    assert 'LaunchAgent disappeared during readiness; re-bootstrap attempt' in script

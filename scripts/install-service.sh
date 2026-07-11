@@ -235,7 +235,17 @@ launchctl kickstart -k "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 process_started_ms="$(now_ms)"
 startup_elapsed_ms=-1
 deadline=$(($(date +%s) + READY_TIMEOUT_SECONDS))
+readiness_rebootstrap_attempts=0
 while (($(date +%s) < deadline)); do
+  # A GUI-domain plist watcher can briefly report the label loaded after an
+  # EIO bootstrap, then drop it before the process spawns. Recover inside the
+  # bounded readiness window instead of polling a job that no longer exists.
+  if ! label_loaded && ((readiness_rebootstrap_attempts < 3)); then
+    readiness_rebootstrap_attempts=$((readiness_rebootstrap_attempts + 1))
+    echo "LaunchAgent disappeared during readiness; re-bootstrap attempt $readiness_rebootstrap_attempts..." >&2
+    launchctl bootstrap "gui/$UID" "$PLIST" >/dev/null 2>&1 || true
+    launchctl kickstart -k "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+  fi
   if ((startup_elapsed_ms < 0)) && curl -fsS "http://127.0.0.1:$PORT/health/startup" >/dev/null 2>&1; then
     startup_elapsed_ms=$(($(now_ms) - process_started_ms))
   fi

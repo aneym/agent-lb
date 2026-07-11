@@ -20,6 +20,12 @@ The macOS LaunchAgent installer MUST wait for the previous localhost listener to
 - **THEN** the installer does not report success
 - **AND** it continues bounded readiness polling or exits with a diagnostic naming the service log
 
+#### Scenario: LaunchAgent disappears during readiness polling
+
+- **WHEN** launchd briefly reports the replacement job loaded and then removes it before the process becomes ready
+- **THEN** the installer performs bounded re-bootstrap attempts inside the readiness deadline
+- **AND** it does not spend the remaining deadline polling a nonexistent job
+
 ### Requirement: Helm chart is organized around install modes
 
 The Helm chart MUST document and support three primary install modes: bundled PostgreSQL, direct external database, and external secrets. These install contracts MUST be portable across Kubernetes providers without requiring provider-specific chart forks.
