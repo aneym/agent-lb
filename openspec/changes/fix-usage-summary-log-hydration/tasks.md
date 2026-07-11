@@ -5,11 +5,15 @@
 - [x] 1.1 TTL-cache (60s) the log-derived metrics/cost aggregates in
       `UsageService.get_usage_summary`.
 
-## 2. Follow-up (open)
+## 2. Follow-up
 
-- [ ] 2.1 Replace the once-per-TTL full-window hydration with SQL aggregation
-      (extend existing request-log aggregate queries with account filtering),
-      with parity tests against the Python computation.
+- [x] 2.1 (no-provider path) Serve metrics/cost from the existing SQL
+      aggregates (`aggregate_activity_since`, `top_error_since`,
+      `aggregate_by_bucket`) — no row hydration. Loop-lag telemetry showed the
+      TTL cache alone still froze the loop up to 62s per recomputation.
+- [ ] 2.1b Provider-scoped path still hydrates once per TTL; replace with
+      account-filtered SQL aggregates with parity tests against the Python
+      computation (dispatched).
 - [ ] 2.2 Retention/pruning job for request_logs and usage/additional-usage
       history tables so row counts stay bounded.
 

@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
-from app.core.usage.types import UsageCostSummary, UsageMetricsSummary, UsageWindowRow
+from app.core.usage.types import UsageCostByModel, UsageCostSummary, UsageMetricsSummary, UsageWindowRow
 from app.core.utils.time import utcnow
 from app.db.models import RequestLog
 from app.modules.accounts.repository import AccountsRepository
@@ -29,6 +29,9 @@ from app.modules.usage.schemas import (
 # keyed by (provider, window minutes, account-id set). Values are
 # (monotonic timestamp, metrics, cost).
 _LOG_METRICS_CACHE_TTL_SECONDS = 60.0
+# One bucket spanning any realistic window so aggregate_by_bucket returns
+# per-model totals for the whole window.
+_WHOLE_WINDOW_BUCKET_SECONDS = 60 * 60 * 24 * 365
 _LOG_METRICS_CACHE: dict[
     tuple[str, int, tuple[str, ...]],
     tuple[float, UsageMetricsSummary, UsageCostSummary],
@@ -99,13 +102,63 @@ class UsageService:
         if cached is not None and mono_now - cached[0] < _LOG_METRICS_CACHE_TTL_SECONDS:
             return cached[1], cached[2]
 
-        logs = await self._logs_repo.list_since(now - timedelta(minutes=secondary_minutes))
-        logs = _logs_for_accounts(logs, account_ids, drop_unattributed=bool(provider))
-        metrics = _usage_metrics(logs)
-        cost = _cost_summary_from_logs(logs)
+        since = now - timedelta(minutes=secondary_minutes)
+        if provider:
+            # Provider-scoped requests need per-account filtering the SQL
+            # aggregates don't support yet; the window is provider-filtered
+            # and rare, and results are cached above.
+            logs = await self._logs_repo.list_since(since)
+            logs = _logs_for_accounts(logs, account_ids, drop_unattributed=True)
+            metrics = _usage_metrics(logs)
+            cost = _cost_summary_from_logs(logs)
+        else:
+            metrics, cost = await self._aggregate_log_window_metrics(since)
         for key in [k for k, v in _LOG_METRICS_CACHE.items() if mono_now - v[0] >= _LOG_METRICS_CACHE_TTL_SECONDS]:
             _LOG_METRICS_CACHE.pop(key, None)
         _LOG_METRICS_CACHE[cache_key] = (mono_now, metrics, cost)
+        return metrics, cost
+
+    async def _aggregate_log_window_metrics(
+        self,
+        since: datetime,
+    ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
+        # SQL aggregation instead of hydrating the full log window (>700k ORM
+        # rows on the live instance), which froze the event loop for up to a
+        # minute per recomputation.
+        activity = await self._logs_repo.aggregate_activity_since(
+            since, exclude_canceled_subscription_accounts=True
+        )
+        top_error = await self._logs_repo.top_error_since(
+            since, exclude_canceled_subscription_accounts=True
+        )
+        buckets = await self._logs_repo.aggregate_by_bucket(
+            since,
+            bucket_seconds=_WHOLE_WINDOW_BUCKET_SECONDS,
+            exclude_canceled_subscription_accounts=True,
+        )
+
+        error_rate: float | None = None
+        if activity.request_count > 0:
+            error_rate = activity.error_count / activity.request_count
+        metrics = UsageMetricsSummary(
+            requests_7d=activity.request_count,
+            tokens_secondary_window=activity.input_tokens + activity.output_tokens,
+            cached_tokens_secondary_window=activity.cached_input_tokens,
+            error_rate_7d=error_rate,
+            top_error=top_error,
+        )
+
+        by_model: dict[str, float] = {}
+        for bucket in buckets:
+            if bucket.cost_usd:
+                by_model[bucket.model] = by_model.get(bucket.model, 0.0) + bucket.cost_usd
+        cost = UsageCostSummary(
+            currency="USD",
+            total_usd_7d=round(sum(by_model.values()), 6),
+            by_model=[
+                UsageCostByModel(model=model, usd=round(usd, 6)) for model, usd in sorted(by_model.items())
+            ],
+        )
         return metrics, cost
 
     async def get_usage_history(self, hours: int) -> UsageHistoryResponse:
