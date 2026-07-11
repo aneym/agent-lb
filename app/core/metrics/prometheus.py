@@ -243,6 +243,17 @@ if PROMETHEUS_AVAILABLE:
         ["kind"],
         registry=REGISTRY,
     )
+    event_loop_lag_seconds = Gauge(
+        "agent_lb_event_loop_lag_seconds",
+        "Most recent asyncio event loop scheduling drift",
+        registry=REGISTRY,
+        **({"multiprocess_mode": "liveall"} if MULTIPROCESS_MODE else {}),
+    )
+    event_loop_lag_events_total = Counter(
+        "agent_lb_event_loop_lag_events_total",
+        "Total event loop lag samples exceeding the warning threshold",
+        registry=REGISTRY,
+    )
 
     def make_scrape_registry() -> CollectorRegistryLike:
         if MULTIPROCESS_MODE:
@@ -295,6 +306,8 @@ else:
     account_lease_active: GaugeLike | None = None
     account_lease_stale_reclaimed_total: CounterLike | None = None
     account_cap_rejections_total: CounterLike | None = None
+    event_loop_lag_seconds: GaugeLike | None = None
+    event_loop_lag_events_total: CounterLike | None = None
 
     def make_scrape_registry() -> None:
         return None
@@ -330,6 +343,8 @@ __all__ = [
     "circuit_breaker_state",
     "continuity_fail_closed_total",
     "continuity_owner_resolution_total",
+    "event_loop_lag_events_total",
+    "event_loop_lag_seconds",
     "make_scrape_registry",
     "mark_process_dead",
     "prometheus_client",

@@ -24,6 +24,7 @@ from app.core.bootstrap import ensure_auto_bootstrap_token, log_bootstrap_token
 from app.core.clients.http import close_http_client, init_http_client
 from app.core.config.settings import _bridge_advertise_hostname_is_replica_specific, get_settings
 from app.core.config.settings_cache import get_settings_cache
+from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
 from app.core.metrics.middleware import MetricsMiddleware
 from app.core.metrics.prometheus import MULTIPROCESS_MODE, PROMETHEUS_AVAILABLE, make_scrape_registry, mark_process_dead
@@ -39,6 +40,7 @@ from app.core.middleware.inflight import InFlightMiddleware
 from app.core.openai.model_refresh_scheduler import build_model_refresh_scheduler
 from app.core.resilience.backpressure import BackpressureMiddleware
 from app.core.resilience.bulkhead import BulkheadMiddleware, get_bulkhead
+from app.core.resilience.event_loop_lag_monitor import build_event_loop_lag_monitor
 from app.core.resilience.memory_monitor import configure as configure_memory_monitor
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
@@ -165,6 +167,9 @@ async def lifespan(app: FastAPI):
         auth_guardian_scheduler = build_auth_guardian_scheduler()
         account_pulse_scheduler = build_account_pulse_scheduler()
         federation_mirror_scheduler = build_federation_mirror_scheduler()
+        event_loop_lag_monitor = build_event_loop_lag_monitor(
+            warning_threshold_seconds=settings.event_loop_lag_warning_threshold_seconds
+        )
         await usage_scheduler.start()
         await api_key_limit_reset_scheduler.start()
         await model_scheduler.start()
@@ -173,6 +178,7 @@ async def lifespan(app: FastAPI):
         await auth_guardian_scheduler.start()
         await account_pulse_scheduler.start()
         await federation_mirror_scheduler.start()
+        await event_loop_lag_monitor.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
         import uvicorn
 
@@ -335,6 +341,7 @@ async def lifespan(app: FastAPI):
             metrics_server.should_exit = True
 
         await cache_poller.stop()
+        await event_loop_lag_monitor.stop()
         await federation_mirror_scheduler.stop()
         await account_pulse_scheduler.stop()
         await quota_planner_scheduler.stop()
@@ -361,6 +368,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    register_stack_dump_signal()
     configure_memory_monitor(
         warning_threshold_mb=settings.memory_warning_threshold_mb,
         reject_threshold_mb=settings.memory_reject_threshold_mb,

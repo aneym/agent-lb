@@ -350,6 +350,7 @@ class Settings(BaseSettings):
     metrics_enabled: bool = False
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9090
+    event_loop_lag_warning_threshold_seconds: float = 0.5
 
     # Logging
     log_format: str = "text"  # "text" or "json"

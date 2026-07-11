@@ -32,6 +32,9 @@ KICK_GRACE_SECONDS="${AGENT_LB_WATCHDOG_KICK_GRACE:-240}"
 BOOT_GRACE_SECONDS="${AGENT_LB_WATCHDOG_BOOT_GRACE:-240}"
 SERVICE_LOG_MAX_MB="${AGENT_LB_WATCHDOG_SERVICE_LOG_MAX_MB:-256}"
 SERVICE_LOG_FILES="${AGENT_LB_WATCHDOG_SERVICE_LOG_FILES:-$HOME/.agent-lb/agent-lb.err.log $HOME/.agent-lb/agent-lb.out.log}"
+FORENSICS_DIR="${AGENT_LB_FORENSICS_DIR:-$HOME/.agent-lb/forensics}"
+FORENSICS_MAX_FILES="${AGENT_LB_FORENSICS_MAX_FILES:-50}"
+FORENSICS_SAMPLE_SECONDS="${AGENT_LB_FORENSICS_SAMPLE_SECONDS:-2}"
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
@@ -60,6 +63,32 @@ rotate_service_logs() {
   done
 }
 rotate_service_logs
+
+# Pre-kick stall forensics: dump Python thread stacks (SIGUSR2) and an OS
+# sample of the app process before it gets killed and restarted, so the
+# evidence for what froze it survives the kick. Bounded to a few seconds
+# (sample duration is fixed) and every failure is swallowed — this must
+# never delay or block the kickstart.
+capture_forensics() {
+  local pid="$1" reason="$2"
+  mkdir -p "$FORENSICS_DIR" 2>/dev/null || return 0
+  printf '%s kick pid=%s reason=%s\n' "$(ts)" "${pid:-none}" "$reason" >> "$FORENSICS_DIR/events.log" 2>/dev/null
+
+  if [[ -n "$pid" ]]; then
+    kill -USR2 "$pid" 2>/dev/null
+    sample "$pid" "$FORENSICS_SAMPLE_SECONDS" \
+      -file "$FORENSICS_DIR/sample-$(date -u +%Y%m%dT%H%M%SZ).txt" >/dev/null 2>&1
+  fi
+
+  local total
+  total=$(ls -1 "$FORENSICS_DIR" 2>/dev/null | wc -l | tr -d ' ')
+  if [[ -n "$total" ]] && (( total > FORENSICS_MAX_FILES )); then
+    ls -1t "$FORENSICS_DIR" 2>/dev/null | tail -n +"$((FORENSICS_MAX_FILES + 1))" | while IFS= read -r f; do
+      rm -f "$FORENSICS_DIR/$f" 2>/dev/null
+    done
+  fi
+  return 0
+}
 
 count=0
 last_kick=0
@@ -147,6 +176,7 @@ if (( count >= THRESHOLD )); then
       exit 0
     fi
   fi
+  capture_forensics "$pid" "unhealthy http=$http_code count=$count" || true
   log "unhealthy (http=$http_code) count=$count >= threshold=$THRESHOLD — kickstarting $LABEL"
   launchctl kickstart -k "gui/$(id -u)/$LABEL" >> "$LOG_FILE" 2>&1 || \
     log "kickstart failed with exit $?"
