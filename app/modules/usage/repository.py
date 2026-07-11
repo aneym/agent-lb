@@ -26,6 +26,12 @@ from app.modules.usage.additional_quota_keys import (
 _PRIMARY_WINDOW_LITERAL = literal_column("'primary'")
 
 
+# Newest rows kept per account when bulk-loading depletion history. Recent
+# samples dominate the EWMA rate estimate; unbounded loads stall the event
+# loop at production row counts.
+BULK_HISTORY_MAX_ROWS_PER_ACCOUNT = 720
+
+
 @dataclass(frozen=True, slots=True)
 class UsageHistorySnapshot:
     id: int
@@ -612,7 +618,11 @@ class UsageRepository:
                 since,
             )
 
-        stmt = (
+        # Cap at the newest rows per account: the EWMA depletion estimate is
+        # dominated by recent samples, and hydrating every in-window row
+        # (observed >100k rows/poll in production) stalls the event loop with
+        # GC pressure for tens of seconds per dashboard poll.
+        ranked = (
             select(
                 UsageHistory.id,
                 UsageHistory.account_id,
@@ -620,13 +630,31 @@ class UsageRepository:
                 UsageHistory.recorded_at,
                 UsageHistory.reset_at,
                 UsageHistory.window_minutes,
+                func.row_number()
+                .over(
+                    partition_by=UsageHistory.account_id,
+                    order_by=(UsageHistory.recorded_at.desc(), UsageHistory.id.desc()),
+                )
+                .label("rn"),
             )
             .where(
                 UsageHistory.account_id.in_(account_ids),
                 _window_clause(window),
                 UsageHistory.recorded_at >= since,
             )
-            .order_by(UsageHistory.account_id, UsageHistory.recorded_at.asc())
+            .subquery("ranked_history")
+        )
+        stmt = (
+            select(
+                ranked.c.id,
+                ranked.c.account_id,
+                ranked.c.used_percent,
+                ranked.c.recorded_at,
+                ranked.c.reset_at,
+                ranked.c.window_minutes,
+            )
+            .where(ranked.c.rn <= BULK_HISTORY_MAX_ROWS_PER_ACCOUNT)
+            .order_by(ranked.c.account_id, ranked.c.recorded_at.asc())
         )
         result = await self._session.execute(stmt)
         grouped: dict[str, list[UsageHistorySnapshot]] = {}
