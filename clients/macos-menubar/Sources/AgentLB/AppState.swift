@@ -190,6 +190,34 @@ final class AppState {
 
   // MARK: - Fetches
 
+  /// Closing/reopening the popover cancels the open-poll task and its child
+  /// fetches; those cancellations are popover lifecycle, not fetch outcomes,
+  /// so they must neither set nor clear sectionErrors. Cancellation surfaces
+  /// as CancellationError, a cancelled URLError, or the APIClient transport
+  /// wrapper around one.
+  nonisolated static func isCancellation(_ error: any Error) -> Bool {
+    if error is CancellationError { return true }
+    if let urlError = error as? URLError { return urlError.code == .cancelled }
+    if case APIError.transport(let urlError) = error { return urlError.code == .cancelled }
+    return false
+  }
+
+  /// Applies the section-error contract in one testable place: successful
+  /// completed fetches repair stale errors, lifecycle cancellation is neutral,
+  /// and genuine completed failures become visible.
+  nonisolated static func updateSectionError(
+    _ section: Section,
+    error: (any Error)?,
+    in errors: inout Set<Section>
+  ) {
+    guard let error else {
+      errors.remove(section)
+      return
+    }
+    guard !isCancellation(error) else { return }
+    errors.insert(section)
+  }
+
   private func fetchSummary() async {
     let scope = providerScope
     do {
@@ -199,48 +227,55 @@ final class AppState {
       guard scope == providerScope else { return }
       summary = fetched
       lastSyncAt = .now
-      sectionErrors.remove(.pool)
+      Self.updateSectionError(.pool, error: nil, in: &sectionErrors)
     } catch {
       guard scope == providerScope else { return }
-      sectionErrors.insert(.pool)
+      Self.updateSectionError(.pool, error: error, in: &sectionErrors)
     }
   }
 
   private func fetchAccounts() async {
     do {
       accounts = try await client.accounts().accounts
-      sectionErrors.remove(.accounts)
+      Self.updateSectionError(.accounts, error: nil, in: &sectionErrors)
     } catch {
-      sectionErrors.insert(.accounts)
+      Self.updateSectionError(.accounts, error: error, in: &sectionErrors)
     }
   }
 
   private func fetchRecent() async {
     do {
       recent = try await client.requestLogs(limit: 5).requests
-      sectionErrors.remove(.recent)
+      Self.updateSectionError(.recent, error: nil, in: &sectionErrors)
     } catch {
-      sectionErrors.insert(.recent)
+      Self.updateSectionError(.recent, error: error, in: &sectionErrors)
     }
   }
 
-  /// Closed-state summary fetch: drives the status-bar ring arc only —
-  /// never touches sectionErrors (closed-state failures must not alert).
+  /// Closed-state summary fetch: drives the status-bar ring arc. Failures
+  /// stay silent (closed-state failures must not alert), but a success
+  /// clears any stale pool error — fresh data disproves the failure state.
   private func fetchSummarySilently() async {
     let scope = providerScope
     guard let fetched = try? await client.usageSummary(provider: scope.providerParam) else { return }
     guard scope == providerScope else { return }
     summary = fetched
     lastSyncAt = .now
+    Self.updateSectionError(.pool, error: nil, in: &sectionErrors)
   }
 
-  /// Closed-state warm fetches (panel pre-sizing) — silent like the above.
+  /// Closed-state warm fetches (panel pre-sizing) — silent like the above,
+  /// with the same success-repairs-stale-error rule.
   private func fetchAccountsSilently() async {
-    accounts = (try? await client.accounts())?.accounts ?? accounts
+    guard let fetched = try? await client.accounts() else { return }
+    accounts = fetched.accounts
+    Self.updateSectionError(.accounts, error: nil, in: &sectionErrors)
   }
 
   private func fetchRecentSilently() async {
-    recent = (try? await client.requestLogs(limit: 5))?.requests ?? recent
+    guard let fetched = try? await client.requestLogs(limit: 5) else { return }
+    recent = fetched.requests
+    Self.updateSectionError(.recent, error: nil, in: &sectionErrors)
   }
 
   private func fetchProjections() async {
