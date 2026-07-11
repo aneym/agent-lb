@@ -343,46 +343,34 @@ def test_repeated_call_with_unchanged_history_skips_rebuild(monkeypatch: pytest.
     now = BASE_TIME + timedelta(minutes=3)
 
     rebuild_calls = 0
-    digest_rebuild_calls = 0
     real_rebuild = depletion_service._rebuild_ewma_state
-    real_digest_rebuild = depletion_service._history_signature_from_rows
 
     def _counting_rebuild(history_arg):
         nonlocal rebuild_calls
         rebuild_calls += 1
         return real_rebuild(history_arg)
 
-    def _counting_digest_rebuild(history_arg):
-        nonlocal digest_rebuild_calls
-        digest_rebuild_calls += 1
-        return real_digest_rebuild(history_arg)
-
     monkeypatch.setattr(depletion_service, "_rebuild_ewma_state", _counting_rebuild)
-    monkeypatch.setattr(depletion_service, "_history_signature_from_rows", _counting_digest_rebuild)
 
     first = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert first is not None
     assert rebuild_calls == 1
-    assert digest_rebuild_calls == 0
 
     # Subsequent polls with the exact same in-window history must not re-walk
-    # the history or rebuild a full-row signature. The result must remain
-    # identical.
+    # the history. The result must remain identical.
     second = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert second is not None
     assert rebuild_calls == 1
-    assert digest_rebuild_calls == 0
     assert second.rate_per_second == pytest.approx(first.rate_per_second)
     assert second.risk == pytest.approx(first.risk)
 
     third = compute_depletion_for_account("acc1", "codex_other", "primary", history, now=now)
     assert third is not None
     assert rebuild_calls == 1
-    assert digest_rebuild_calls == 0
 
 
-def test_signature_cache_stores_compact_digest_not_per_row_tuple() -> None:
-    """The retained cache signature should stay bounded for large histories."""
+def test_signature_cache_stores_edges_not_per_row_content() -> None:
+    """The cache signature must stay O(1): edges only, no per-row digest walk."""
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -395,8 +383,26 @@ def test_signature_cache_stores_compact_digest_not_per_row_tuple() -> None:
     assert result is not None
     signature = depletion_service._history_signatures[("acc1", "codex_other", "primary")]
     assert signature.row_count == 100
-    assert isinstance(signature.content_digest, str)
-    assert len(signature.content_digest) == 32
+    assert signature.first == depletion_service._row_edge_signature(history[0])
+    assert signature.latest == depletion_service._row_edge_signature(history[-1])
+
+
+def test_changed_tail_row_invalidates_cache_and_rebuilds() -> None:
+    """Appending a row changes the edge signature and forces an EWMA rebuild."""
+    reset_ewma_state()
+    base_rows = [
+        _entry(10.0, BASE_TIME),
+        _entry(20.0, BASE_TIME + timedelta(minutes=1)),
+    ]
+    now = BASE_TIME + timedelta(minutes=3)
+
+    first = compute_depletion_for_account("acc1", "codex_other", "primary", _signed(list(base_rows)), now=now)
+    assert first is not None
+
+    grown = _signed([*base_rows, _entry(40.0, BASE_TIME + timedelta(minutes=2))])
+    second = compute_depletion_for_account("acc1", "codex_other", "primary", grown, now=now)
+    assert second is not None
+    assert second.rate_per_second != pytest.approx(first.rate_per_second)
 
 
 def test_prune_depletion_cache_drops_absent_account_window_entries() -> None:
@@ -518,12 +524,19 @@ def test_aged_out_row_invalidates_memoized_state(monkeypatch: pytest.MonkeyPatch
     assert truncated_result.rate_per_second != pytest.approx(full_result.rate_per_second)
 
 
-def test_inplace_value_correction_invalidates_memoized_state(
+def test_edge_visible_value_correction_invalidates_memoized_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex review on #588: when a row's `used_percent` is corrected in place
-    (same timestamps, same row count) the cache must rebuild — otherwise we
-    keep returning depletion metrics derived from the stale value."""
+    """Corrections that touch an edge row (here: the latest sample's
+    used_percent) must invalidate the cached EWMA state.
+
+    Contract change from #588: the signature is edges-only (row_count, first,
+    latest). A mutation confined to interior rows with identical edges is NOT
+    detected — accepted deliberately after the per-row content digest froze
+    the event loop for minutes per dashboard poll at production row counts
+    (2026-07-11 outage). No write path mutates interior usage-history rows;
+    the only UPDATE on these tables reassigns account_id during account
+    merges, which changes row membership and therefore the edge signature."""
     from app.modules.usage import depletion_service
 
     reset_ewma_state()
@@ -550,16 +563,11 @@ def test_inplace_value_correction_invalidates_memoized_state(
     assert first is not None
     assert rebuild_calls == 1
 
-    # Same window endpoints and row count, but the middle row's used_percent is
-    # corrected upward (e.g. backfill of a previously underreported sample) so
-    # the corrected series remains monotonically non-decreasing. Window-
-    # endpoint-only signatures would treat this as unchanged and reuse the
-    # stale EWMA state.
     corrected_history = _signed(
         [
             history[0],
-            _entry(25.0, BASE_TIME + timedelta(minutes=1)),
-            history[2],
+            history[1],
+            _entry(45.0, BASE_TIME + timedelta(minutes=2)),
         ]
     )
     second = compute_depletion_for_account("acc1", "codex_other", "primary", corrected_history, now=now)
