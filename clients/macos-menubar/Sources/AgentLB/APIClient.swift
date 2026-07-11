@@ -14,12 +14,30 @@ struct APIReadTimeoutPolicy: Equatable, Sendable {
   let request: TimeInterval
   let resource: TimeInterval
 
-  static let local = APIReadTimeoutPolicy(request: 3, resource: 5)
+  static let local = APIReadTimeoutPolicy(request: 15, resource: 20)
   static let remote = APIReadTimeoutPolicy(request: 15, resource: 20)
 
   static func forBaseURL(_ base: URL) -> APIReadTimeoutPolicy {
+    ServiceLocality.isLoopback(base) ? .local : .remote
+  }
+}
+
+struct APIHealthTimeoutPolicy: Equatable, Sendable {
+  let request: TimeInterval
+  let resource: TimeInterval
+
+  static let local = APIHealthTimeoutPolicy(request: 3, resource: 5)
+  static let remote = APIHealthTimeoutPolicy(request: 15, resource: 20)
+
+  static func forBaseURL(_ base: URL) -> APIHealthTimeoutPolicy {
+    ServiceLocality.isLoopback(base) ? .local : .remote
+  }
+}
+
+private enum ServiceLocality {
+  static func isLoopback(_ base: URL) -> Bool {
     let host = base.host ?? "127.0.0.1"
-    return ["127.0.0.1", "localhost", "::1"].contains(host) ? .local : .remote
+    return ["127.0.0.1", "localhost", "::1"].contains(host)
   }
 }
 
@@ -36,12 +54,12 @@ struct APIClient: @unchecked Sendable {
     let raw = UserDefaults.standard.string(forKey: "baseURL") ?? "http://127.0.0.1:2455"
     let resolved = URL(string: raw) ?? URL(string: "http://127.0.0.1:2455")!
     self.base = resolved
-    let host = resolved.host ?? "127.0.0.1"
-    self.isRemote = !["127.0.0.1", "localhost", "::1"].contains(host)
+    self.isRemote = !ServiceLocality.isLoopback(resolved)
 
+    let healthPolicy = APIHealthTimeoutPolicy.forBaseURL(resolved)
     let healthConfig = URLSessionConfiguration.ephemeral
-    healthConfig.timeoutIntervalForRequest = APIReadTimeoutPolicy.local.request
-    healthConfig.timeoutIntervalForResource = APIReadTimeoutPolicy.local.resource
+    healthConfig.timeoutIntervalForRequest = healthPolicy.request
+    healthConfig.timeoutIntervalForResource = healthPolicy.resource
     healthConfig.waitsForConnectivity = false
     self.healthSession = URLSession(configuration: healthConfig)
 
