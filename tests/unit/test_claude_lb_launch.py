@@ -16,13 +16,52 @@ def load_launcher_module():
     return module
 
 
-def test_ccdex_build_command_locks_model_and_effort() -> None:
+def test_ccdex_build_command_locks_model_effort_and_bypass_perms() -> None:
     launcher = load_launcher_module()
     launcher.CCDEX_MODE = True
 
     command = launcher.build_command(["--model", "claude-opus-4-6", "--effort=max", "-p", "hello"])
 
-    assert command == ["claude", "--model", "gpt-5.6-sol", "--effort", "high", "-p", "hello"]
+    assert command == [
+        "claude",
+        "--model",
+        "gpt-5.6-sol",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "bypassPermissions",
+        "-p",
+        "hello",
+    ]
+
+
+def test_ccdex_explicit_permission_mode_wins_over_bypass_default(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = True
+    monkeypatch.setenv("CC_PERMISSION_MODE", "acceptEdits")
+
+    command = launcher.build_command(["--permission-mode", "plan", "-p", "hello"])
+
+    assert command == [
+        "claude",
+        "--model",
+        "gpt-5.6-sol",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "plan",
+        "-p",
+        "hello",
+    ]
+
+
+def test_ccdex_skip_permissions_flag_suppresses_bypass_injection() -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = True
+
+    command = launcher.build_command(["--dangerously-skip-permissions", "-p", "hello"])
+
+    assert "--permission-mode" not in command
 
 
 def test_ccdex_proxy_rewrites_only_gpt_messages_and_token_count() -> None:

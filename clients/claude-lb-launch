@@ -1155,7 +1155,7 @@ def prepare_ccdex_endpoint() -> bool:
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         print(
-            f"ccdex: {_c('Claude Code + Codex', '1;36')} · {CCDEX_MODEL}/high · "
+            f"ccdex: {_c('Claude Code + Codex', '1;36')} · {CCDEX_MODEL}/high · bypass perms · "
             f"requested priority {_c(f'via {endpoint}{suffix}', '2')}",
             file=sys.stderr,
         )
@@ -1239,11 +1239,22 @@ def build_command(argv: list[str]) -> list[str]:
     effort = None if CCDEX_MODE else os.environ.get("CC_EFFORT_LEVEL")
     if effort:
         command.extend(["--effort", effort])
-    permission_mode = os.environ.get("CC_PERMISSION_MODE")
+    permission_mode = None if CCDEX_MODE else os.environ.get("CC_PERMISSION_MODE")
+    if CCDEX_MODE and not _has_permission_option(argv):
+        permission_mode = "bypassPermissions"
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
     command.extend(argv)
     return command
+
+
+def _has_permission_option(argv: list[str]) -> bool:
+    return any(
+        argument == "--permission-mode"
+        or argument.startswith("--permission-mode=")
+        or argument == "--dangerously-skip-permissions"
+        for argument in argv
+    )
 
 
 def headless_invocation(argv: list[str]) -> bool:
