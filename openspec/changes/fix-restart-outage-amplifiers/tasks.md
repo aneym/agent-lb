@@ -31,13 +31,13 @@
 
 ## 5. Deployment & validation (studio)
 
-- [ ] 5.1 Unit suites pass (`test_watchdog_script.py`, `test_install_service.py`)
-- [ ] 5.2 Deploy `scripts/watchdog.sh` to `~/.agent-lb/bin/watchdog.sh`, run a
+- [x] 5.1 Unit suites pass (`test_watchdog_script.py`, `test_install_service.py`)
+- [x] 5.2 Deploy `scripts/watchdog.sh` to `~/.agent-lb/bin/watchdog.sh`, run a
       manual tick: healthy, oversized err.log rotated
-- [ ] 5.3 Cutover: pause watchdog → move app plist to `--port 2457` →
+- [x] 5.3 Cutover: pause watchdog → move app plist to `--port 2457` →
       bootstrap front on 2455 → app healthy on 2457 → `/health` 200 via 2455 →
       unpause watchdog
-- [ ] 5.4 End-to-end: `/backend-api/codex/models` 200 via
+- [x] 5.4 End-to-end: `/backend-api/codex/models` 200 via
       `https://studio.tailf266ac.ts.net:2455` after cutover; restart drill
       shows held connection completing instead of 502
-- [ ] 5.5 Fast-forward the studio checkout to origin/main
+- [x] 5.5 Fast-forward the studio checkout to origin/main
