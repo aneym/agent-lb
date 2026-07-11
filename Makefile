@@ -22,6 +22,7 @@ help:
 	  '  make test-unit               unit pytest slice, same as CI' \
 	  '  make test-integration-core   integration-core pytest slice' \
 	  '  make package                 build and verify sdist/wheel' \
+	  '  make startup-benchmark       record 5 isolated startup/ready samples' \
 	  '  make ci-fast                 lint/type/frontend/unit/package' \
 	  '  make ci                      full local CI gate'
 
@@ -93,6 +94,10 @@ migration-check-postgres:
 	uv sync --dev --frozen
 	uv run agent-lb-db --db-url "$(POSTGRES_TEST_DATABASE_URL)" upgrade head
 	uv run agent-lb-db --db-url "$(POSTGRES_TEST_DATABASE_URL)" check
+
+.PHONY: startup-benchmark
+startup-benchmark:
+	$(PYTHON) scripts/benchmark-startup.py service --samples 5 --label agent-lb-isolated
 
 .PHONY: package
 package: frontend-build

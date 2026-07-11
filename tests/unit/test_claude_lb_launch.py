@@ -47,8 +47,123 @@ def test_ccdex_capability_probe_requires_native_token_count(monkeypatch) -> None
             return b'{"input_tokens":12}'
 
     monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda request, timeout: Response())
+    monkeypatch.setattr(
+        launcher,
+        "lb_json",
+        lambda path, **kwargs: {"accounts": [{"provider": "openai", "status": "active"}]},
+    )
 
     assert launcher._probe_ccdex_at("http://127.0.0.1:2455", timeout=1) == (True, "")
+
+
+def test_ccdex_capability_probe_rejects_endpoint_without_openai_pool(monkeypatch) -> None:
+    launcher = load_launcher_module()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"input_tokens":12}'
+
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda request, timeout: Response())
+    monkeypatch.setattr(launcher, "lb_json", lambda path, **kwargs: {"accounts": []})
+
+    assert launcher._probe_ccdex_at("http://127.0.0.1:2455", timeout=1) == (
+        False,
+        "no active OpenAI accounts",
+    )
+
+
+def test_ccdex_endpoint_uses_capability_probe_without_health_probe(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://127.0.0.1:2455")])
+    monkeypatch.setattr(
+        launcher,
+        "_probe_health_at",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("redundant health probe")),
+    )
+    monkeypatch.setattr(launcher, "_probe_ccdex_at", lambda url, timeout: (True, ""))
+
+    assert launcher.prepare_ccdex_endpoint() is True
+
+
+def test_remote_preference_retains_local_fallback(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setenv("CLAUDE_LB_LOCAL_URL", "http://127.0.0.1:2455")
+    monkeypatch.setenv("CLAUDE_LB_BASE_URL", "https://studio.example:2455")
+    monkeypatch.setenv("CLAUDE_LB_PREFER_REMOTE", "1")
+    monkeypatch.delenv("CLAUDE_LB_LOCAL_PREFER", raising=False)
+
+    assert launcher._lb_candidates() == [
+        ("remote", "https://studio.example:2455"),
+        ("local", "http://127.0.0.1:2455"),
+    ]
+
+
+def test_normal_launcher_claims_without_health_probe(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://127.0.0.1:2455")])
+    monkeypatch.setattr(
+        launcher,
+        "_probe_health_at",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("redundant health probe")),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_claim_at_endpoint",
+        lambda url, session_id, model, quota_key, deadline, request_timeout=None: (
+            {"accountId": "account-1", "alias": "Local"},
+            "",
+        ),
+    )
+    monkeypatch.setattr(launcher, "lb_json", lambda *args, **kwargs: {"accounts": []})
+
+    assert launcher.print_lb_banner([], "session-1") is True
+
+
+def test_interactive_launcher_uses_ready_probe_without_eager_claim(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://127.0.0.1:2455")])
+    monkeypatch.setattr(
+        launcher,
+        "_probe_health_at",
+        lambda url, retries, timeout, gap: (True, ""),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_claim_at_endpoint",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("interactive startup must not eagerly claim")),
+    )
+
+    assert launcher.prepare_interactive_endpoint() is True
+    assert launcher.AGENT_LB_BASE_URL == "http://127.0.0.1:2455"
+
+
+def test_ready_probe_targets_readiness_endpoint(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    requested_paths: list[str] = []
+    monkeypatch.setattr(
+        launcher,
+        "lb_json",
+        lambda path, **kwargs: requested_paths.append(path) or {"status": "ready"},
+    )
+
+    assert launcher._probe_health_at("http://127.0.0.1:2455", retries=1, timeout=1.0, gap=0.0) == (True, "")
+    assert requested_paths == ["/health/ready"]
+
+
+def test_proxy_spawn_uses_portable_subprocess(monkeypatch, tmp_path) -> None:
+    launcher = load_launcher_module()
+    calls: list[list[str]] = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda command, **kwargs: calls.append(command))
+
+    launcher._spawn_lb_proxy(tmp_path / "ready", "session", 456, "http://127.0.0.1:2455")
+
+    assert calls and calls[0][1].endswith("claude-lb-launch")
 
 
 def test_format_lb_pick_error_prettifies_anthropic_selection_failure() -> None:
@@ -276,3 +391,17 @@ def test_shim_connect_error_is_retryable_only_for_connection_failures() -> None:
     # Read timeout — request may be in flight, so do not re-send (no double-process).
     assert classify(urllib.error.URLError(socket.timeout())) is False
     assert classify(RuntimeError("boom")) is False
+
+
+def test_shim_connect_retry_budget_outlasts_watchdog_recovery() -> None:
+    launcher = load_launcher_module()
+
+    budget = sum(
+        min(launcher.SHIM_CONNECT_BACKOFF_DEFAULT * (2**attempt), launcher.SHIM_CONNECT_BACKOFF_CAP_DEFAULT)
+        for attempt in range(launcher.SHIM_CONNECT_RETRIES_DEFAULT)
+    )
+
+    # Watchdog revival of an unloaded LB takes up to ~65s (2 x 30s ticks +
+    # startup); the shim must keep retrying well past that instead of
+    # surfacing a 502 broken pipe to the agent.
+    assert budget >= 100

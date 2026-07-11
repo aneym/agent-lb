@@ -134,6 +134,7 @@ python-version = "3.13"
 [project.scripts]
 agent-lb = "app.cli:main"
 agent-lb-db = "app.db.migrate:main"
+agent-lb-startup = "app.startup_benchmark:main"
 
 [build-system]
 requires = ["hatchling==1.30.1"]

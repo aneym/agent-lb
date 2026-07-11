@@ -368,10 +368,13 @@ async def init_db() -> None:
             )
         if result.current_revision is not None:
             logger.info("Database migration complete revision=%s", result.current_revision)
-        drift = await to_thread.run_sync(lambda: check_schema_drift(_settings.database_url))
-        if drift:
-            drift_details = "; ".join(drift)
-            raise RuntimeError(f"Schema drift detected after startup migrations: {drift_details}")
+        if _settings.database_validate_schema_drift_on_startup:
+            drift = await to_thread.run_sync(lambda: check_schema_drift(_settings.database_url))
+            if drift:
+                drift_details = "; ".join(drift)
+                raise RuntimeError(f"Schema drift detected after startup migrations: {drift_details}")
+        else:
+            logger.info("Skipped full startup schema drift comparison; migration revision validation remains enabled")
     except Exception:
         logger.exception("Failed to apply database migrations")
         if _settings.database_migrations_fail_fast:

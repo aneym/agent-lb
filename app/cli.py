@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from app.codex_sessions_retag import RetagResult, default_codex_home, retag_codex_sessions
+_PROCESS_STARTED_NS = time.perf_counter_ns()
 
 if TYPE_CHECKING:
+    from app.codex_sessions_retag import RetagResult
     from app.core.runtime_logging import LogConfig
 
 
@@ -73,6 +74,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    os.environ.setdefault("AGENT_LB_PROCESS_STARTED_NS", str(_PROCESS_STARTED_NS))
     args = _parse_args(argv)
 
     if args.command == "codex-sessions":
@@ -95,6 +97,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         ssl_certfile=args.ssl_certfile,
         ssl_keyfile=args.ssl_keyfile,
         timeout_keep_alive=timeout_keep_alive,
+        # Mirror the upstream websocket leg (proxy_websocket): keep sending
+        # transport pings so intermediaries see liveness, but disable the pong
+        # deadline. Agent clients block their event loop for well over 20s
+        # during long local work; uvicorn's default 20s pong timeout was
+        # cutting those sessions mid-turn with 1011 "keepalive ping timeout".
+        ws_ping_interval=20.0,
+        ws_ping_timeout=None,
         log_config=_build_log_config(),
     )
 
@@ -127,6 +136,10 @@ def _parse_server_timeout_keep_alive(raw_timeout: str) -> int:
 
 
 def _run_codex_sessions_retag(args: argparse.Namespace) -> None:
+    import sqlite3
+
+    from app.codex_sessions_retag import default_codex_home
+
     codex_home = args.codex_home or default_codex_home()
     if not args.dry_run:
         _confirm_retag_write(args.yes)
@@ -155,6 +168,13 @@ def _run_codex_sessions_retag(args: argparse.Namespace) -> None:
     _print_retag_summary(result)
 
 
+def retag_codex_sessions(**kwargs) -> "RetagResult":
+    """Lazy compatibility seam for callers and tests that patch this helper."""
+    from app.codex_sessions_retag import retag_codex_sessions as implementation
+
+    return implementation(**kwargs)
+
+
 def _confirm_retag_write(yes: bool) -> None:
     warning = (
         "This command rewrites Codex session metadata, including state_*.sqlite when present.\n"
@@ -170,7 +190,7 @@ def _confirm_retag_write(yes: bool) -> None:
         raise SystemExit("Aborted.")
 
 
-def _print_retag_summary(result: RetagResult) -> None:
+def _print_retag_summary(result: "RetagResult") -> None:
     action = "Would update" if result.dry_run else "Updated"
     methods = ", ".join(result.methods_used) if result.methods_used else "none"
     print("")

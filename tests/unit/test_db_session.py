@@ -30,6 +30,7 @@ class _FakeSettings:
     database_sqlite_pre_migrate_backup_max_files: int = 5
     database_sqlite_startup_check_mode: str = "quick"
     database_migrations_fail_fast: bool = False
+    database_validate_schema_drift_on_startup: bool = False
 
 
 @dataclass(slots=True)
@@ -344,6 +345,7 @@ async def test_init_db_fails_fast_on_post_migration_schema_drift(monkeypatch) ->
         _FakeSettings(
             database_url="sqlite+aiosqlite:///:memory:",
             database_migrations_fail_fast=True,
+            database_validate_schema_drift_on_startup=True,
         ),
     )
     monkeypatch.setattr(session_module, "_load_migration_entrypoints", _load_entrypoints)
@@ -378,6 +380,7 @@ async def test_init_db_logs_post_migration_schema_drift_when_fail_fast_disabled(
         _FakeSettings(
             database_url="sqlite+aiosqlite:///:memory:",
             database_migrations_fail_fast=False,
+            database_validate_schema_drift_on_startup=True,
         ),
     )
     monkeypatch.setattr(session_module, "_load_migration_entrypoints", _load_entrypoints)
@@ -389,6 +392,28 @@ async def test_init_db_logs_post_migration_schema_drift_when_fail_fast_disabled(
     assert "Failed to apply database migrations" in caplog.text
     assert "Schema drift detected after startup migrations" in caplog.text
     assert "idx_logs_requested_at_id" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_init_db_skips_full_schema_drift_by_default(monkeypatch) -> None:
+    async def _run_startup_migrations(_: str) -> _FakeMigrationRunResult:
+        return _FakeMigrationRunResult()
+
+    def _check_schema_drift(_: str) -> tuple[str, ...]:
+        raise AssertionError("full schema drift comparison is not part of the default startup path")
+
+    monkeypatch.setattr(
+        session_module,
+        "_settings",
+        _FakeSettings(database_url="sqlite+aiosqlite:///:memory:"),
+    )
+    monkeypatch.setattr(
+        session_module,
+        "_load_migration_entrypoints",
+        lambda: (lambda _: None, _run_startup_migrations, _check_schema_drift),
+    )
+
+    await session_module.init_db()
 
 
 @pytest.mark.asyncio

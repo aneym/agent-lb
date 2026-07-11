@@ -26,6 +26,13 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/.agent-lb"
 PYTHON_BIN="${PYTHON_BIN:-$REPO_DIR/.venv/bin/python}"
 
+now_ms() {
+  /usr/bin/perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'
+}
+
+install_started_ms="$(now_ms)"
+bootout_elapsed_ms=0
+
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="$(command -v python3 || command -v python || true)"
 fi
@@ -167,37 +174,49 @@ mkdir -p "$(dirname "$PLIST")"
 
 if label_loaded; then
   echo "Booting out existing $LABEL..."
+  bootout_started_ms="$(now_ms)"
   launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
-  bootout_time=$(date +%s)
   # Wait for the old process to release localhost:PORT before rebinding.
-  port_free_deadline=$((bootout_time + 30))
+  port_free_deadline=$(($(date +%s) + 30))
   while (($(date +%s) < port_free_deadline)) && localhost_port_busy; do
-    sleep 1
+    sleep 0.1
   done
   if localhost_port_busy; then
     echo "error: localhost port $PORT is still in use after bootout" >&2
     exit 1
   fi
-  # macOS needs a short cooldown after bootout before bootstrap accepts the job.
-  cooldown_remaining=$((bootout_time + 5 - $(date +%s)))
-  if ((cooldown_remaining > 0)); then
-    sleep "$cooldown_remaining"
-  fi
+  bootout_elapsed_ms=$(($(now_ms) - bootout_started_ms))
 fi
 
 write_plist
 
 # Bootstrap may fail with error 5 if launchd is still tearing down the old job;
-# retry a few times before giving up.
+# retry with short bounded backoff instead of imposing a fixed cooldown on every restart.
+bootstrap_started_ms="$(now_ms)"
 bootstrap_ok=false
 for attempt in 1 2 3; do
   if launchctl bootstrap "gui/$UID" "$PLIST" 2>/dev/null; then
     bootstrap_ok=true
     break
   fi
-  echo "Bootstrap attempt $attempt failed, waiting for launchd cooldown..." >&2
-  sleep 5
+  case "$attempt" in
+    1) sleep 0.1 ;;
+    2) sleep 0.25 ;;
+    *) sleep 0.5 ;;
+  esac
+  # launchctl can return EIO while the GUI domain's plist watcher has already
+  # loaded the freshly written job. Treat the observable loaded state as the
+  # source of truth instead of reporting a false restart failure.
+  if label_loaded; then
+    echo "Bootstrap command returned nonzero, but $LABEL is loaded; continuing."
+    bootstrap_ok=true
+    break
+  fi
+  if [[ "$attempt" != 3 ]]; then
+    echo "Bootstrap attempt $attempt failed, retrying after bounded backoff..." >&2
+  fi
 done
+bootstrap_elapsed_ms=$(($(now_ms) - bootstrap_started_ms))
 if [[ "$bootstrap_ok" != true ]]; then
   echo "error: launchctl bootstrap failed after 3 attempts" >&2
   exit 1
@@ -207,14 +226,24 @@ fi
 # kickstart guarantees the process actually spawns with the new plist.
 launchctl kickstart -k "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 
+process_started_ms="$(now_ms)"
+startup_elapsed_ms=-1
 deadline=$(($(date +%s) + 30))
 while (($(date +%s) < deadline)); do
-  if health="$(curl -fsS "http://127.0.0.1:$PORT/health" 2>/dev/null)"; then
-    echo "agent-lb is up: $health"
+  if ((startup_elapsed_ms < 0)) && curl -fsS "http://127.0.0.1:$PORT/health/startup" >/dev/null 2>&1; then
+    startup_elapsed_ms=$(($(now_ms) - process_started_ms))
+  fi
+  if health="$(curl -fsS "http://127.0.0.1:$PORT/health/ready" 2>/dev/null)"; then
+    ready_elapsed_ms=$(($(now_ms) - process_started_ms))
+    total_elapsed_ms=$(($(now_ms) - install_started_ms))
+    echo "agent-lb is ready: $health"
+    echo "startup_timing_ms bootout=$bootout_elapsed_ms bootstrap=$bootstrap_elapsed_ms startup=$startup_elapsed_ms ready=$ready_elapsed_ms total=$total_elapsed_ms"
     exit 0
   fi
-  sleep 1
+  sleep 0.1
 done
 
-echo "error: agent-lb did not become healthy within 30s — check $LOG_DIR/agent-lb.err.log" >&2
+total_elapsed_ms=$(($(now_ms) - install_started_ms))
+echo "startup_timing_ms bootout=$bootout_elapsed_ms bootstrap=$bootstrap_elapsed_ms startup=$startup_elapsed_ms ready=timeout total=$total_elapsed_ms" >&2
+echo "error: agent-lb did not become ready within 30s — check $LOG_DIR/agent-lb.err.log" >&2
 exit 1

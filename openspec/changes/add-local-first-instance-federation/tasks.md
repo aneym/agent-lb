@@ -28,6 +28,9 @@ gates per repo governance, so not-yet-landed work is tracked as plain bullets.
       `AGENT_LB_FEDERATION_MIRROR_INTERVAL_SECONDS` (default 300s),
       exponential backoff capped at ~30 min; never overwrites locally-owned
       rows.
+- [x] 2.2b Successful mirror imports invalidate cached routing inputs so an
+      empty-pool 503 observed before the first pull cannot survive after fresh
+      mirrored accounts arrive (`tests/unit/test_federation_scheduler.py`).
 - [x] 2.3 Checkout/checkin handshake endpoints (release → confirm → assume),
       interruption-safe (no-double-owner invariant) — durable
       `account_transfers` table (`20260703_000000_add_account_transfers`),

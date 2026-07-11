@@ -154,6 +154,7 @@ class Settings(BaseSettings):
     database_pool_timeout_seconds: float = Field(default=30.0, gt=0)
     database_pool_recycle_seconds: int = Field(default=1800, gt=0)
     database_migrate_on_startup: bool = True
+    database_validate_schema_drift_on_startup: bool = False
     database_sqlite_pre_migrate_backup_enabled: bool = True
     database_sqlite_pre_migrate_backup_max_files: int = Field(default=5, ge=1)
     database_sqlite_startup_check_mode: Literal["quick", "full", "off"] = "quick"

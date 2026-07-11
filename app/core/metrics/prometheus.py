@@ -67,6 +67,23 @@ if PROMETHEUS_AVAILABLE:
         "Upstream request duration",
         registry=REGISTRY,
     )
+    startup_phase_duration_seconds = Histogram(
+        "agent_lb_startup_phase_duration_seconds",
+        "Service startup phase duration",
+        ["phase", "outcome"],
+        registry=REGISTRY,
+    )
+    startup_duration_seconds = Histogram(
+        "agent_lb_startup_duration_seconds",
+        "Service process start to startup-complete duration",
+        ["outcome"],
+        registry=REGISTRY,
+    )
+    startup_readiness_duration_seconds = Histogram(
+        "agent_lb_startup_readiness_duration_seconds",
+        "Service process start to readiness duration",
+        registry=REGISTRY,
+    )
 
     _gauge_kwargs: dict[str, str] = {}
     if MULTIPROCESS_MODE:
@@ -77,6 +94,18 @@ if PROMETHEUS_AVAILABLE:
         "Active HTTP connections",
         registry=REGISTRY,
         **_gauge_kwargs,
+    )
+    startup_complete_seconds = Gauge(
+        "agent_lb_startup_complete_seconds",
+        "Most recent service process start to startup-complete duration",
+        registry=REGISTRY,
+        **({"multiprocess_mode": "livemostrecent"} if MULTIPROCESS_MODE else {}),
+    )
+    startup_ready_seconds = Gauge(
+        "agent_lb_startup_ready_seconds",
+        "Most recent service process start to readiness duration",
+        registry=REGISTRY,
+        **({"multiprocess_mode": "livemostrecent"} if MULTIPROCESS_MODE else {}),
     )
     rate_limit_hits_total = Counter(
         "agent_lb_rate_limit_hits_total",
@@ -237,6 +266,11 @@ else:
     request_duration_seconds: HistogramLike | None = None
     upstream_requests_total: CounterLike | None = None
     upstream_request_duration_seconds: HistogramLike | None = None
+    startup_phase_duration_seconds: HistogramLike | None = None
+    startup_duration_seconds: HistogramLike | None = None
+    startup_readiness_duration_seconds: HistogramLike | None = None
+    startup_complete_seconds: GaugeLike | None = None
+    startup_ready_seconds: GaugeLike | None = None
     active_connections: GaugeLike | None = None
     rate_limit_hits_total: CounterLike | None = None
     circuit_breaker_state: GaugeLike | None = None
@@ -302,6 +336,11 @@ __all__ = [
     "rate_limit_hits_total",
     "request_duration_seconds",
     "requests_total",
+    "startup_duration_seconds",
+    "startup_complete_seconds",
+    "startup_phase_duration_seconds",
+    "startup_readiness_duration_seconds",
+    "startup_ready_seconds",
     "upstream_request_duration_seconds",
     "upstream_requests_total",
 ]

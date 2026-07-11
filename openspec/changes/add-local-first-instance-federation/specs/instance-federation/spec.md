@@ -32,6 +32,14 @@ the provider's OAuth endpoint while the instance is not the owner.
 - **AND** the account remains routable on B without B contacting the provider's
   OAuth endpoint
 
+#### Scenario: First mirror pull follows an empty routing attempt
+
+- **GIVEN** instance B cached an empty eligible-account selection before its
+  first mirror pull completed
+- **WHEN** B imports a usable mirrored account from owner instance A
+- **THEN** B MUST invalidate the stale selection cache
+- **AND** the mirrored account MUST be eligible on the next routing attempt
+
 ### Requirement: Checkout transfers refresh authority atomically
 
 An operator-initiated checkout MUST transfer refresh authority such that the

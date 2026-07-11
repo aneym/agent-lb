@@ -12,6 +12,7 @@ from app.core.crypto import TokenEncryptor
 from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository
+from app.modules.proxy.account_cache import get_account_selection_cache
 
 logger = logging.getLogger(__name__)
 
@@ -86,21 +87,31 @@ class FederationMirrorScheduler:
         if not self.peer_url or not self.federation_token:
             return
         response = await self.peer_client.fetch_mirror(peer_url=self.peer_url, token=self.federation_token)
+        applied = False
         async with self.repo_factory() as repo:
             for account in response.accounts:
-                await repo.upsert_mirror_account(
-                    account_id=account.account_id,
-                    provider=account.provider,
-                    email=account.email,
-                    alias=account.alias,
-                    status=account.status,
-                    plan_type=account.plan_type,
-                    chatgpt_account_id=account.chatgpt_account_id,
-                    access_token=account.access_token,
-                    owner_instance_id=response.instance_id,
-                    local_instance_id=self.local_instance_id,
-                    encryptor=self.encryptor,
+                applied = (
+                    await repo.upsert_mirror_account(
+                        account_id=account.account_id,
+                        provider=account.provider,
+                        email=account.email,
+                        alias=account.alias,
+                        status=account.status,
+                        plan_type=account.plan_type,
+                        chatgpt_account_id=account.chatgpt_account_id,
+                        access_token=account.access_token,
+                        owner_instance_id=response.instance_id,
+                        local_instance_id=self.local_instance_id,
+                        encryptor=self.encryptor,
+                    )
+                    or applied
                 )
+        if applied:
+            # A request can cache an empty selection before the first mirror
+            # pull completes. Make newly mirrored (or refreshed) accounts
+            # routable immediately instead of preserving that stale 503 until
+            # the selection cache expires or the process restarts.
+            get_account_selection_cache().invalidate()
 
 
 @asynccontextmanager

@@ -93,3 +93,14 @@ def test_install_service_metrics_default_has_runtime_dependency() -> None:
     default_dependencies = set(pyproject["project"]["dependencies"])
 
     assert "prometheus-client>=0.20" in default_dependencies
+
+
+def test_install_service_restart_is_readiness_driven_and_timed() -> None:
+    script = (ROOT / "scripts" / "install-service.sh").read_text()
+
+    assert 'curl -fsS "http://127.0.0.1:$PORT/health/ready"' in script
+    assert "startup_timing_ms" in script
+    assert "cooldown_remaining" not in script
+    assert 'sleep 0.1' in script
+    assert 'if label_loaded; then' in script
+    assert 'bootstrap_ok=true' in script

@@ -121,6 +121,7 @@ def _is_benign_metrics_bind_failure(exc: BaseException) -> bool:
 async def lifespan(app: FastAPI):
     import app.core.startup as startup_module
 
+    startup_recorder = startup_module.StartupRecorder()
     shutdown_state = import_module("app.core.shutdown")
     metrics_server = None
     metrics_server_task: asyncio.Task[None] | None = None
@@ -131,41 +132,47 @@ async def lifespan(app: FastAPI):
     startup_module._startup_complete = False
     startup_module.reset_bridge_registration()
     shutdown_state.reset()
-    await get_settings_cache().invalidate()
-    await get_rate_limit_headers_cache().invalidate()
-    reload_additional_quota_registry()
-    settings = get_settings()
+    async with startup_recorder.phase("settings_and_caches"):
+        await get_settings_cache().invalidate()
+        await get_rate_limit_headers_cache().invalidate()
+        reload_additional_quota_registry()
+        settings = get_settings()
     bridge_endpoint_base_url = settings.http_responses_session_bridge_advertise_base_url
     if settings.otel_enabled:
         from app.core.tracing.otel import init_tracing
 
         init_tracing(service_name="agent-lb", endpoint=settings.otel_exporter_endpoint, app=app)
-    await init_db()
-    init_background_db()
-    _auto_bootstrap_token = await ensure_auto_bootstrap_token()
+    async with startup_recorder.phase("database"):
+        await init_db()
+        init_background_db()
+    async with startup_recorder.phase("bootstrap_token"):
+        _auto_bootstrap_token = await ensure_auto_bootstrap_token()
     if _auto_bootstrap_token:
         log_bootstrap_token(logger, _auto_bootstrap_token)
-    await init_http_client()
-    bridge_durable_schema_ready = await _ensure_bridge_durable_schema_ready(settings)
+    async with startup_recorder.phase("http_client"):
+        await init_http_client()
+    async with startup_recorder.phase("bridge_schema"):
+        bridge_durable_schema_ready = await _ensure_bridge_durable_schema_ready(settings)
     _log_runtime_diagnostic_fingerprint(settings, bridge_durable_schema_ready=bridge_durable_schema_ready)
     if bridge_durable_schema_ready:
         startup_module.mark_bridge_durable_schema_ready()
-    usage_scheduler = build_usage_refresh_scheduler()
-    api_key_limit_reset_scheduler = build_api_key_limit_reset_scheduler()
-    model_scheduler = build_model_refresh_scheduler()
-    sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
-    quota_planner_scheduler = build_quota_planner_scheduler()
-    auth_guardian_scheduler = build_auth_guardian_scheduler()
-    account_pulse_scheduler = build_account_pulse_scheduler()
-    federation_mirror_scheduler = build_federation_mirror_scheduler()
-    await usage_scheduler.start()
-    await api_key_limit_reset_scheduler.start()
-    await model_scheduler.start()
-    await sticky_session_cleanup_scheduler.start()
-    await quota_planner_scheduler.start()
-    await auth_guardian_scheduler.start()
-    await account_pulse_scheduler.start()
-    await federation_mirror_scheduler.start()
+    async with startup_recorder.phase("schedulers"):
+        usage_scheduler = build_usage_refresh_scheduler()
+        api_key_limit_reset_scheduler = build_api_key_limit_reset_scheduler()
+        model_scheduler = build_model_refresh_scheduler()
+        sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
+        quota_planner_scheduler = build_quota_planner_scheduler()
+        auth_guardian_scheduler = build_auth_guardian_scheduler()
+        account_pulse_scheduler = build_account_pulse_scheduler()
+        federation_mirror_scheduler = build_federation_mirror_scheduler()
+        await usage_scheduler.start()
+        await api_key_limit_reset_scheduler.start()
+        await model_scheduler.start()
+        await sticky_session_cleanup_scheduler.start()
+        await quota_planner_scheduler.start()
+        await auth_guardian_scheduler.start()
+        await account_pulse_scheduler.start()
+        await federation_mirror_scheduler.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
         import uvicorn
 
@@ -238,6 +245,7 @@ async def lifespan(app: FastAPI):
             attempt += 1
             try:
                 await _complete_bridge_registration(svc, iid)
+                startup_recorder.ready()
                 logger.info("Registered in bridge ring", extra={"instance_id": iid, "attempt": attempt})
                 break
             except Exception:
@@ -261,11 +269,12 @@ async def lifespan(app: FastAPI):
     )
     from app.core.middleware.firewall_cache import get_firewall_ip_cache
 
-    cache_poller = CacheInvalidationPoller(SessionLocal)
-    cache_poller.on_invalidation(NAMESPACE_API_KEY, get_api_key_cache().clear)
-    cache_poller.on_invalidation(NAMESPACE_FIREWALL, get_firewall_ip_cache().invalidate_all)
-    set_cache_invalidation_poller(cache_poller)
-    await cache_poller.start()
+    async with startup_recorder.phase("cache_poller"):
+        cache_poller = CacheInvalidationPoller(SessionLocal)
+        cache_poller.on_invalidation(NAMESPACE_API_KEY, get_api_key_cache().clear)
+        cache_poller.on_invalidation(NAMESPACE_FIREWALL, get_firewall_ip_cache().invalidate_all)
+        set_cache_invalidation_poller(cache_poller)
+        await cache_poller.start()
 
     ring_service: RingMembershipService | None = None
     instance_id: str | None = None
@@ -274,6 +283,7 @@ async def lifespan(app: FastAPI):
     instance_id = settings.http_responses_session_bridge_instance_id
     heartbeat_task = asyncio.create_task(_register_and_heartbeat(ring_service, instance_id))
     startup_module._startup_complete = True
+    startup_recorder.complete("ok")
 
     try:
         yield
