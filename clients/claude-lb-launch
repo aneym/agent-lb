@@ -54,6 +54,8 @@ from datetime import datetime
 from pathlib import Path
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
+CCDEX_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
+CCDEX_MODEL = "gpt-5.6-sol"
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -108,9 +110,7 @@ def _run_openssl(args: list[str]) -> None:
         stderr=subprocess.STDOUT,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            "openssl " + " ".join(args) + " failed:\n" + proc.stdout.decode("utf-8", "replace")
-        )
+        raise RuntimeError("openssl " + " ".join(args) + " failed:\n" + proc.stdout.decode("utf-8", "replace"))
 
 
 def ensure_mitm_certs() -> None:
@@ -119,13 +119,7 @@ def ensure_mitm_certs() -> None:
     Idempotent: reuses cached certs when present. Shells out to the system
     `openssl` (stdlib can't create x509 certs). Keys are 0600; the dir is 0700.
     """
-    if (
-        CERT_MARKER.exists()
-        and CA_CERT.exists()
-        and CA_KEY.exists()
-        and LEAF_CERT.exists()
-        and LEAF_KEY.exists()
-    ):
+    if CERT_MARKER.exists() and CA_CERT.exists() and CA_KEY.exists() and LEAF_CERT.exists() and LEAF_KEY.exists():
         return
     if shutil.which("openssl") is None:
         raise RuntimeError("openssl not found on PATH (needed to mint the local MITM cert)")
@@ -152,13 +146,7 @@ def ensure_mitm_certs() -> None:
         "keyUsage = critical,keyCertSign,cRLSign\n"
         "subjectKeyIdentifier = hash\n"
     )
-    leaf_req_conf.write_text(
-        "[req]\n"
-        "distinguished_name = dn\n"
-        "prompt = no\n"
-        "[dn]\n"
-        "CN = api.anthropic.com\n"
-    )
+    leaf_req_conf.write_text("[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = api.anthropic.com\n")
     leaf_ext_conf.write_text(
         "[v3_leaf]\n"
         "basicConstraints = critical,CA:FALSE\n"
@@ -167,22 +155,62 @@ def ensure_mitm_certs() -> None:
         "subjectAltName = DNS:api.anthropic.com\n"
     )
 
-    _run_openssl([
-        "req", "-x509", "-new", "-nodes", "-newkey", "rsa:2048", "-sha256",
-        "-days", "3650", "-keyout", str(CA_KEY), "-out", str(CA_CERT),
-        "-config", str(ca_conf),
-    ])
-    _run_openssl([
-        "req", "-new", "-nodes", "-newkey", "rsa:2048",
-        "-keyout", str(LEAF_KEY), "-out", str(leaf_csr),
-        "-config", str(leaf_req_conf),
-    ])
-    _run_openssl([
-        "x509", "-req", "-in", str(leaf_csr),
-        "-CA", str(CA_CERT), "-CAkey", str(CA_KEY), "-CAcreateserial",
-        "-out", str(LEAF_CERT), "-days", "3650", "-sha256",
-        "-extfile", str(leaf_ext_conf), "-extensions", "v3_leaf",
-    ])
+    _run_openssl(
+        [
+            "req",
+            "-x509",
+            "-new",
+            "-nodes",
+            "-newkey",
+            "rsa:2048",
+            "-sha256",
+            "-days",
+            "3650",
+            "-keyout",
+            str(CA_KEY),
+            "-out",
+            str(CA_CERT),
+            "-config",
+            str(ca_conf),
+        ]
+    )
+    _run_openssl(
+        [
+            "req",
+            "-new",
+            "-nodes",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(LEAF_KEY),
+            "-out",
+            str(leaf_csr),
+            "-config",
+            str(leaf_req_conf),
+        ]
+    )
+    _run_openssl(
+        [
+            "x509",
+            "-req",
+            "-in",
+            str(leaf_csr),
+            "-CA",
+            str(CA_CERT),
+            "-CAkey",
+            str(CA_KEY),
+            "-CAcreateserial",
+            "-out",
+            str(LEAF_CERT),
+            "-days",
+            "3650",
+            "-sha256",
+            "-extfile",
+            str(leaf_ext_conf),
+            "-extensions",
+            "v3_leaf",
+        ]
+    )
     for key_file in (CA_KEY, LEAF_KEY):
         try:
             key_file.chmod(0o600)
@@ -255,8 +283,9 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         }
         headers["x-claude-session-id"] = session_id
 
+        upstream_path = _ccdex_upstream_path(self.path) if CCDEX_MODE else self.path
         request = urllib.request.Request(
-            f"{upstream_base_url}{self.path}",
+            f"{upstream_base_url}{upstream_path}",
             data=body,
             headers=headers,
             method=self.command,
@@ -286,9 +315,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     time.sleep(min(backoff * (2**attempt), backoff_cap))
                     attempt += 1
                     continue
-                message = json.dumps(
-                    {"error": {"message": str(error), "code": "claude_lb_shim_error"}}
-                ).encode()
+                message = json.dumps({"error": {"message": str(error), "code": "claude_lb_shim_error"}}).encode()
                 self.send_response(502)
                 self.send_header("content-type", "application/json")
                 self.send_header("content-length", str(len(message)))
@@ -393,7 +420,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         # handler's finish() can then close self.connection without racing us.
         try:
             raw = socket.socket(
-                self.connection.family, self.connection.type,
+                self.connection.family,
+                self.connection.type,
                 fileno=os.dup(self.connection.fileno()),
             )
         except OSError:
@@ -548,9 +576,7 @@ def lb_enabled() -> bool:
 
 
 def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> dict:
-    request = urllib.request.Request(
-        f"{base_url or AGENT_LB_BASE_URL}{path}", headers={"accept": "application/json"}
-    )
+    request = urllib.request.Request(f"{base_url or AGENT_LB_BASE_URL}{path}", headers={"accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body else {}
@@ -1052,9 +1078,86 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     return True
 
 
+def prepare_ccdex_endpoint() -> bool:
+    """Select a healthy LB endpoint without claiming an Anthropic account."""
+    global AGENT_LB_BASE_URL
+    failures: list[str] = []
+    retries = max(1, _env_int("CLAUDE_LB_HEALTH_RETRIES", 4))
+    timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
+    gap = _env_float("CLAUDE_LB_HEALTH_RETRY_GAP", 0.75)
+    for label, url in _lb_candidates():
+        healthy, error = _probe_health_at(
+            url,
+            retries=1 if label == "local" else retries,
+            timeout=min(2.0, timeout) if label == "local" else timeout,
+            gap=0.0 if label == "local" else gap,
+        )
+        if healthy:
+            compatible, capability_error = _probe_ccdex_at(url, timeout=timeout)
+            if not compatible:
+                failures.append(f"{label} ({url}): {capability_error}")
+                continue
+            AGENT_LB_BASE_URL = url
+            endpoint = urllib.parse.urlsplit(url).netloc or url
+            suffix = " (local)" if label == "local" else ""
+            print(
+                f"ccdex: {_c('Claude Code + Codex', '1;36')} · {CCDEX_MODEL}/high · "
+                f"requested priority {_c(f'via {endpoint}{suffix}', '2')}",
+                file=sys.stderr,
+            )
+            return True
+        failures.append(f"{label} ({url}): {error}")
+    print("ccdex: agent-lb unavailable (" + "; ".join(failures) + ")", file=sys.stderr)
+    return False
+
+
+def _probe_ccdex_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
+    payload = json.dumps({"model": CCDEX_MODEL, "messages": []}).encode()
+    request = urllib.request.Request(
+        f"{base_url}/v1/ccdex/messages/count_tokens",
+        data=payload,
+        headers={"content-type": "application/json", "accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8") or "{}")
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+        return False, f"ccdex compatibility probe failed: {error}"
+    count = body.get("input_tokens") if isinstance(body, dict) else None
+    if not isinstance(count, int):
+        return False, "ccdex compatibility probe returned an invalid response"
+    return True, ""
+
+
+def _ccdex_upstream_path(path: str) -> str:
+    if path.startswith("/v1/messages"):
+        return "/v1/ccdex/messages" + path.removeprefix("/v1/messages")
+    return path
+
+
+def _without_option(argv: list[str], option: str) -> list[str]:
+    cleaned: list[str] = []
+    skip_next = False
+    for argument in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if argument == option:
+            skip_next = True
+            continue
+        if argument.startswith(option + "="):
+            continue
+        cleaned.append(argument)
+    return cleaned
+
+
 def build_command(argv: list[str]) -> list[str]:
     command = ["claude"]
-    effort = os.environ.get("CC_EFFORT_LEVEL")
+    if CCDEX_MODE:
+        argv = _without_option(_without_option(argv, "--model"), "--effort")
+        command.extend(["--model", CCDEX_MODEL, "--effort", "high"])
+    effort = None if CCDEX_MODE else os.environ.get("CC_EFFORT_LEVEL")
     if effort:
         command.extend(["--effort", effort])
     permission_mode = os.environ.get("CC_PERMISSION_MODE")
@@ -1108,8 +1211,7 @@ def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
             "--resume",
             claude_session_id,
             "-p",
-            "You were interrupted by a usage limit that has now reset. "
-            "Continue the task exactly where you left off.",
+            "You were interrupted by a usage limit that has now reset. Continue the task exactly where you left off.",
         ]
     )
     return command
@@ -1160,7 +1262,8 @@ def main() -> None:
     session_id = ""
     if lb_enabled():
         session_id = derive_session_id(argv)
-        if print_lb_banner(argv, session_id):
+        endpoint_ready = prepare_ccdex_endpoint() if CCDEX_MODE else print_lb_banner(argv, session_id)
+        if endpoint_ready:
             try:
                 proxy_url = start_lb_proxy(session_id)
                 # Keep Claude pointed at the real api.anthropic.com with its
@@ -1193,16 +1296,23 @@ def main() -> None:
             except RuntimeError as error:
                 print(f"cc: {error}", file=sys.stderr)
         if not routed:
+            if CCDEX_MODE:
+                print("ccdex: refusing to bypass agent-lb or fall back to Claude", file=sys.stderr)
+                sys.exit(1)
             print(
                 "cc: falling back to plain claude (load balancer unavailable; using your normal Claude auth)",
                 file=sys.stderr,
             )
 
+    elif CCDEX_MODE:
+        print("ccdex: CLAUDE_LB_DISABLE is not allowed for this fail-closed command", file=sys.stderr)
+        sys.exit(1)
+
     command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         return
-    if routed and auto_resume_enabled() and headless_invocation(argv):
+    if routed and not CCDEX_MODE and auto_resume_enabled() and headless_invocation(argv):
         model = requested_model(argv)
         quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
         sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))

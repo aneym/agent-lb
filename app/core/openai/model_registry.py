@@ -48,7 +48,13 @@ class ModelRegistrySnapshot:
     fetched_at: float
 
 
-_BOOTSTRAP_WEBSOCKET_PREFERRED_MODEL_PATTERNS = ("gpt-5.5", "gpt-5.5-*", "gpt-5.4", "gpt-5.4-*")
+_BOOTSTRAP_WEBSOCKET_PREFERRED_MODEL_PATTERNS = (
+    "gpt-5.6-sol",
+    "gpt-5.5",
+    "gpt-5.5-*",
+    "gpt-5.4",
+    "gpt-5.4-*",
+)
 
 _REASONING_LEVELS_STANDARD = (
     ReasoningLevel(effort="low", description="Low reasoning effort"),
@@ -143,6 +149,14 @@ def _bootstrap_model(
 # explicit rather than inherited from helper defaults; every slug must exist
 # upstream, and live upstream data always takes precedence once available.
 _BOOTSTRAP_STATIC_MODELS: tuple[UpstreamModel, ...] = (
+    _bootstrap_model(
+        "gpt-5.6-sol",
+        "GPT-5.6 Sol",
+        prefer_websockets=True,
+        default_reasoning_level="high",
+        minimal_client_version="0.124.0",
+        available_in_plans=_BOOTSTRAP_CORE_AVAILABLE_IN_PLANS,
+    ),
     _bootstrap_model(
         "gpt-5.5",
         "GPT-5.5",

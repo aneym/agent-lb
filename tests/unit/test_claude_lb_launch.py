@@ -16,6 +16,41 @@ def load_launcher_module():
     return module
 
 
+def test_ccdex_build_command_locks_model_and_effort() -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = True
+
+    command = launcher.build_command(["--model", "claude-opus-4-6", "--effort=max", "-p", "hello"])
+
+    assert command == ["claude", "--model", "gpt-5.6-sol", "--effort", "high", "-p", "hello"]
+
+
+def test_ccdex_proxy_rewrite_is_scoped_to_messages_paths() -> None:
+    launcher = load_launcher_module()
+
+    assert launcher._ccdex_upstream_path("/v1/messages") == "/v1/ccdex/messages"
+    assert launcher._ccdex_upstream_path("/v1/messages/count_tokens") == "/v1/ccdex/messages/count_tokens"
+    assert launcher._ccdex_upstream_path("/api/organizations") == "/api/organizations"
+
+
+def test_ccdex_capability_probe_requires_native_token_count(monkeypatch) -> None:
+    launcher = load_launcher_module()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"input_tokens":12}'
+
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda request, timeout: Response())
+
+    assert launcher._probe_ccdex_at("http://127.0.0.1:2455", timeout=1) == (True, "")
+
+
 def test_format_lb_pick_error_prettifies_anthropic_selection_failure() -> None:
     launcher = load_launcher_module()
     body = (

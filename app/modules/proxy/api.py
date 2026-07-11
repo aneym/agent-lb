@@ -73,7 +73,7 @@ from app.core.openai.models import (
     OpenAIErrorEnvelope as OpenAIErrorEnvelopeModel,
 )
 from app.core.openai.parsing import parse_response_payload
-from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
+from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning, ResponsesRequest
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
@@ -122,6 +122,16 @@ from app.modules.proxy._service.compaction_breaker import (
 from app.modules.proxy._service.support import request_input_contains_compaction_trigger
 from app.modules.proxy.anthropic_service import AnthropicProxyError, _is_fable_model
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
+from app.modules.proxy.claude_codex_bridge import (
+    CCDEX_MODEL,
+    CCDEX_REASONING_EFFORT,
+    CCDEX_SERVICE_TIER,
+    anthropic_error_from_response,
+    claude_to_responses,
+    collect_claude_message,
+    estimate_claude_input_tokens,
+    responses_to_claude_sse,
+)
 from app.modules.proxy.helpers import _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
 from app.modules.proxy.request_policy import (
@@ -793,6 +803,66 @@ async def v1_messages_count_tokens(
     except AnthropicProxyError as exc:
         return _anthropic_proxy_error_response(exc)
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
+
+
+@v1_router.post("/ccdex/messages", response_model=None)
+async def v1_ccdex_messages(
+    request: Request,
+    payload: AnthropicMessageRequest = Body(...),
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    """Run Claude Code's Messages protocol through the locked Codex Sol profile."""
+    responses_payload = claude_to_responses(payload)
+    forwarded_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in {"authorization", "x-api-key", "proxy-authorization"}
+        and not key.lower().startswith("anthropic-")
+    }
+    try:
+        upstream = await _stream_responses(
+            request,
+            responses_payload,
+            context,
+            api_key,
+            codex_session_affinity=True,
+            openai_cache_affinity=True,
+            prefer_http_bridge=True,
+            forwarded_headers=forwarded_headers,
+            locked_model=CCDEX_MODEL,
+            locked_reasoning_effort=CCDEX_REASONING_EFFORT,
+            locked_service_tier=CCDEX_SERVICE_TIER,
+        )
+    except ProxyRateLimitError as exc:
+        return _anthropic_error_response(429, "rate_limit_error", str(exc))
+    except ProxyAuthError as exc:
+        return _anthropic_error_response(401, "authentication_error", str(exc))
+
+    if not isinstance(upstream, StreamingResponse):
+        body = getattr(upstream, "body", b"")
+        body_bytes = body if isinstance(body, bytes) else str(body).encode()
+        error = anthropic_error_from_response(upstream.status_code, body_bytes)
+        return JSONResponse(content=error, status_code=upstream.status_code)
+
+    claude_stream = responses_to_claude_sse(upstream.body_iterator)
+    if not payload.stream:
+        message = await collect_claude_message(claude_stream)
+        return JSONResponse(content=message)
+    return StreamingResponse(
+        inject_sse_keepalives(claude_stream, get_settings().sse_keepalive_interval_seconds),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
+
+@v1_router.post("/ccdex/messages/count_tokens", response_model=None)
+async def v1_ccdex_messages_count_tokens(
+    payload: dict[str, JsonValue] = Body(...),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    validate_model_access(api_key, CCDEX_MODEL)
+    return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
 
 
 @v1_router.post(
@@ -2339,8 +2409,17 @@ async def _stream_responses(
     forwarded_affinity_kind: str | None = None,
     forwarded_affinity_key: str | None = None,
     enforce_openai_sdk_contract: bool = True,
+    locked_model: str | None = None,
+    locked_reasoning_effort: str | None = None,
+    locked_service_tier: str | None = None,
 ) -> Response:
     apply_api_key_enforcement(payload, api_key)
+    if locked_model is not None:
+        payload.model = locked_model
+    if locked_reasoning_effort is not None:
+        payload.reasoning = ResponsesReasoning(effort=locked_reasoning_effort, summary="auto")
+    if locked_service_tier is not None:
+        payload.service_tier = locked_service_tier
     validate_model_access(api_key, payload.model)
     admission_denial = await _opportunistic_admission_denial(request, context, api_key, model=payload.model)
     if admission_denial is not None:
@@ -2392,7 +2471,7 @@ async def _stream_responses(
     else:
         stream = context.service.stream_responses(
             payload,
-            request.headers,
+            effective_headers,
             codex_session_affinity=codex_session_affinity,
             propagate_http_errors=True,
             openai_cache_affinity=openai_cache_affinity,

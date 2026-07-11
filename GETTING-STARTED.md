@@ -124,6 +124,7 @@ prompt cache on one account) and a quota banner:
 ```zsh
 # in ~/.zshrc — adjust the path to the clone location
 cc() { "$HOME/repos/agent-lb/clients/claude-lb-launch" "$@"; }
+ccdex() { "$HOME/repos/agent-lb/clients/ccdex" "$@"; }
 ```
 
 Minimal alternative (no launcher):

@@ -295,6 +295,7 @@ prompt cache on one account) and a colored remaining-quota banner:
 ```zsh
 # ~/.zshrc
 cc() { "$HOME/repos/agent-lb/clients/claude-lb-launch" "$@"; }
+ccdex() { "$HOME/repos/agent-lb/clients/ccdex" "$@"; }
 ```
 
 > **Important**: do **not** set `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` when pointing

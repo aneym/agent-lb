@@ -53,3 +53,13 @@ The `agent-lb` CLI SHALL provide a `codex-sessions retag` subcommand that rewrit
 - **THEN** the command uses that path as the Codex data directory
 - **AND** otherwise it falls back to `CODEX_HOME`, `/codex-home` in containers, a discoverable WSL Windows profile Codex directory, or `~/.codex`
 
+### Requirement: Portable ccdex command
+Supported local installations SHALL expose an executable `ccdex` command or documented shell function backed by the repository launcher, without hardcoding secrets.
+
+#### Scenario: Installed command
+- **WHEN** agent-lb is installed and Claude Code is present
+- **THEN** `ccdex --version` or a dry run resolves the real Claude binary and the local compatibility capability
+
+#### Scenario: Missing Claude Code
+- **WHEN** the Claude binary cannot be resolved
+- **THEN** `ccdex` fails with a clear nonzero diagnostic
