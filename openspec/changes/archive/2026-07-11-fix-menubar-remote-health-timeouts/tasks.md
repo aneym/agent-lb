@@ -14,5 +14,5 @@
 
 ## 4. Deployment Verification
 
-- [ ] 4.1 Rebuild and relaunch the menu-bar client on Studio and MacBook.
-- [ ] 4.2 Verify cold remote and local refreshes load accounts, summary, and recent data without retry rows.
+- [x] 4.1 Rebuild and relaunch the menu-bar client on Studio and MacBook.
+- [x] 4.2 Verify cold remote and local refreshes load accounts, summary, and recent data without retry rows.
