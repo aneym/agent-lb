@@ -12,5 +12,5 @@
 
 - [x] 3.1 Add focused Swift tests for loopback and tailnet timeout selection.
 - [x] 3.2 Run focused and full Swift tests plus strict OpenSpec validation.
-- [ ] 3.3 Rebuild/relaunch Studio and MacBook bundles and verify MacBook remote reads and visible section state.
-- [ ] 3.4 Record deployment evidence on issue #118 without closing the broader tracking issue.
+- [x] 3.3 Rebuild/relaunch Studio and MacBook bundles and verify MacBook remote reads and visible section state.
+- [x] 3.4 Record deployment evidence on issue #118 without closing the broader tracking issue.
