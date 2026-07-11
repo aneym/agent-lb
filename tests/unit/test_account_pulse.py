@@ -16,7 +16,13 @@ from app.db.models import Account, AccountStatus
 from app.modules.accounts import probes
 from app.modules.accounts import pulse as pulse_module
 from app.modules.accounts.probes import ProbeVerdict, classify_probe_result
-from app.modules.accounts.pulse import AccountPulseScheduler, FableProbeVerdict, _classify_fable_probe
+from app.modules.accounts.pulse import (
+    AccountPulseScheduler,
+    AnthropicQuotaCooldown,
+    FableProbeVerdict,
+    _classify_fable_probe,
+    _default_quota_cooldown_probe_sender,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -120,6 +126,11 @@ def _build_scheduler(
     fable_probe_results: dict[str, tuple[int, str | None]] | None = None,
     fable_probe_calls: list[str] | None = None,
     fable_marker_writes: list[tuple[str, float, int | None]] | None = None,
+    quota_cooldowns: dict[str, list[AnthropicQuotaCooldown]] | None = None,
+    quota_probe_results: dict[tuple[str, str], tuple[int, str | None]] | None = None,
+    quota_probe_calls: list[tuple[str, str]] | None = None,
+    quota_clear_results: dict[tuple[str, str, int], bool] | None = None,
+    quota_clear_calls: list[tuple[str, str, int]] | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> AccountPulseScheduler:
     @asynccontextmanager
@@ -151,6 +162,29 @@ def _build_scheduler(
         if fable_marker_writes is not None:
             fable_marker_writes.append((account_id, used_percent, reset_at))
 
+    async def active_quota_cooldown_lookup(account_id: str) -> list[AnthropicQuotaCooldown]:
+        if quota_cooldowns is None:
+            return []
+        return quota_cooldowns.get(account_id, [])
+
+    async def quota_cooldown_probe_sender(
+        account: Account,
+        access_token: str,
+        quota_key: str,
+    ) -> tuple[int, str | None]:
+        del access_token
+        if quota_probe_calls is not None:
+            quota_probe_calls.append((account.id, quota_key))
+        assert quota_probe_results is not None
+        return quota_probe_results[(account.id, quota_key)]
+
+    async def quota_cooldown_clearer(account_id: str, quota_key: str, expected_id: int) -> bool:
+        if quota_clear_calls is not None:
+            quota_clear_calls.append((account_id, quota_key, expected_id))
+        if quota_clear_results is None:
+            return True
+        return quota_clear_results.get((account_id, quota_key, expected_id), False)
+
     kwargs: dict[str, Any] = dict(
         interval_seconds=interval_seconds,
         enabled=True,
@@ -165,11 +199,109 @@ def _build_scheduler(
         weekly_usage_lookup=weekly_usage_lookup,
         fable_probe_sender=fable_probe_sender,
         fable_marker_writer=fable_marker_writer,
+        active_quota_cooldown_lookup=active_quota_cooldown_lookup,
+        quota_cooldown_probe_sender=quota_cooldown_probe_sender,
+        quota_cooldown_clearer=quota_cooldown_clearer,
         _encryptor=cast(TokenEncryptor, _Encryptor()),
     )
     if now is not None:
         kwargs["now"] = now
     return AccountPulseScheduler(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_quota_cooldown_probe_sender_uses_exact_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    account = _account()
+    calls: list[dict[str, Any]] = []
+
+    async def send_messages_probe(**kwargs: Any) -> tuple[int, str | None]:
+        calls.append(kwargs)
+        return 200, None
+
+    monkeypatch.setattr(probes, "send_messages_probe", send_messages_probe)
+
+    await _default_quota_cooldown_probe_sender(account, "token", "anthropic_top")
+    await _default_quota_cooldown_probe_sender(account, "token", "anthropic_top_thinking")
+
+    assert calls[0]["model"] == "claude-fable-5"
+    assert calls[0]["thinking"] is None
+    assert calls[0]["max_tokens"] == 4
+    assert calls[1]["model"] == "claude-fable-5"
+    assert calls[1]["thinking"] == {"type": "adaptive"}
+    assert calls[1]["max_tokens"] == 32
+
+
+@pytest.mark.asyncio
+async def test_pulse_clears_only_successful_active_quota_cooldowns() -> None:
+    account = _account()
+    repo = _Repo([account])
+    cooldowns = [
+        AnthropicQuotaCooldown("anthropic_top", 101),
+        AnthropicQuotaCooldown("anthropic_top_thinking", 102),
+    ]
+    probe_calls: list[tuple[str, str]] = []
+    clear_calls: list[tuple[str, str, int]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        weekly_usage={account.id: (0.0, None)},
+        quota_cooldowns={account.id: cooldowns},
+        quota_probe_results={
+            (account.id, "anthropic_top"): (200, None),
+            (account.id, "anthropic_top_thinking"): (200, None),
+        },
+        quota_probe_calls=probe_calls,
+        quota_clear_calls=clear_calls,
+    )
+
+    await scheduler.pulse_once()
+
+    assert probe_calls == [
+        (account.id, "anthropic_top"),
+        (account.id, "anthropic_top_thinking"),
+    ]
+    assert clear_calls == [
+        (account.id, "anthropic_top", 101),
+        (account.id, "anthropic_top_thinking", 102),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [probes.PROBE_NETWORK_FAILURE_STATUS, 403, 429, 500])
+async def test_pulse_preserves_quota_cooldown_on_non_success(status: int) -> None:
+    account = _account()
+    repo = _Repo([account])
+    clear_calls: list[tuple[str, str, int]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        quota_cooldowns={account.id: [AnthropicQuotaCooldown("anthropic_top_thinking", 201)]},
+        quota_probe_results={(account.id, "anthropic_top_thinking"): (status, "not healthy")},
+        quota_clear_calls=clear_calls,
+    )
+
+    await scheduler.pulse_once()
+
+    assert clear_calls == []
+
+
+@pytest.mark.asyncio
+async def test_pulse_compare_and_append_noop_keeps_newer_cooldown() -> None:
+    account = _account()
+    repo = _Repo([account])
+    clear_calls: list[tuple[str, str, int]] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (200, None)},
+        quota_cooldowns={account.id: [AnthropicQuotaCooldown("anthropic_top_thinking", 301)]},
+        quota_probe_results={(account.id, "anthropic_top_thinking"): (200, None)},
+        quota_clear_results={(account.id, "anthropic_top_thinking", 301): False},
+        quota_clear_calls=clear_calls,
+    )
+
+    await scheduler.pulse_once()
+
+    assert clear_calls == [(account.id, "anthropic_top_thinking", 301)]
 
 
 @pytest.fixture(autouse=True)

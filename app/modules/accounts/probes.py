@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from enum import Enum
+from typing import Literal, TypedDict
 from urllib.parse import urljoin
 
 import aiohttp
@@ -24,6 +25,11 @@ PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
 PROBE_NETWORK_FAILURE_STATUS = 0
 _CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 _PROBE_ERROR_MESSAGE_LIMIT = 500
+
+
+class AdaptiveThinking(TypedDict):
+    type: Literal["adaptive"]
+
 
 # Upstream error-message fragments that identify a subscription-level refusal:
 # the OAuth tokens are valid, but the organization has no active subscription.
@@ -113,6 +119,8 @@ async def send_messages_probe(
     access_token: str,
     base_url: str,
     model: str,
+    max_tokens: int = 4,
+    thinking: AdaptiveThinking | None = None,
 ) -> tuple[int, str | None]:
     settings = get_settings()
     url = urljoin(base_url.rstrip("/") + "/", "v1/messages")
@@ -125,11 +133,13 @@ async def send_messages_probe(
     }
     body = {
         "model": model,
-        "max_tokens": 4,
+        "max_tokens": max_tokens,
         "system": [{"type": "text", "text": _CLAUDE_CODE_IDENTITY}],
         "messages": [{"role": "user", "content": "Reply OK only."}],
         "stream": False,
     }
+    if thinking is not None:
+        body["thinking"] = thinking
     timeout = aiohttp.ClientTimeout(
         total=PROBE_REQUEST_TIMEOUT_SECONDS,
         connect=PROBE_CONNECT_TIMEOUT_SECONDS,

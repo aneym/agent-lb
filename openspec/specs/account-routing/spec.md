@@ -40,3 +40,33 @@ Relative-availability selection diagnostics SHALL identify accounts using stable
 - **WHEN** relative-availability routing logs candidate or winner diagnostics
 - **THEN** the log message includes the candidate account ID
 - **AND** the log message does not include the account email address
+
+### Requirement: Anthropic model cooldowns recover from stale quota signals
+The account pulse SHALL reconcile active `anthropic_top` and
+`anthropic_top_thinking` cooldowns using probes that reproduce the corresponding
+Fable request shape. A successful probe SHALL clear only the matching cooldown.
+Network failures and non-success HTTP responses SHALL preserve it. Clearing
+SHALL be conditional on the observed cooldown still being the latest state so a
+newer concurrent rate-limit signal cannot be hidden.
+
+#### Scenario: Standard top-model cooldown is disproved
+- **GIVEN** an Anthropic account has an active `anthropic_top` cooldown
+- **WHEN** its non-thinking Fable probe succeeds
+- **THEN** the pulse clears only `anthropic_top`
+
+#### Scenario: Thinking cooldown is disproved
+- **GIVEN** an Anthropic account has an active `anthropic_top_thinking` cooldown
+- **WHEN** its adaptive-thinking Fable probe succeeds
+- **THEN** the pulse clears only `anthropic_top_thinking`
+
+#### Scenario: Probe does not establish availability
+- **GIVEN** an active Fable model cooldown
+- **WHEN** its matching probe returns a network failure or non-success status
+- **THEN** the pulse preserves the cooldown
+
+#### Scenario: A newer cooldown wins the race
+- **GIVEN** the pulse observed an active cooldown and started its probe
+- **AND** a newer cooldown is stored before that probe succeeds
+- **WHEN** the older probe attempts to clear its observed state
+- **THEN** the compare-and-append operation makes no change
+- **AND** the newer cooldown remains active

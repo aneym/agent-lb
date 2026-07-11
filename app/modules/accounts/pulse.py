@@ -40,12 +40,21 @@ _FABLE_PROBE_MODEL = "claude-fable-5"
 ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
 _ANTHROPIC_FABLE_PROBE_FEATURE = "anthropic_fable_probe"
 _ANTHROPIC_FABLE_PROBE_WINDOW = "primary"
+_ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
+_ANTHROPIC_COOLDOWN_WINDOW = "primary"
+_ANTHROPIC_FABLE_QUOTA_KEYS = ("anthropic_top", "anthropic_top_thinking")
 
 
 class FableProbeVerdict(str, Enum):
     CAPABLE = "capable"
     REFUSED = "refused"
     INCONCLUSIVE = "inconclusive"
+
+
+@dataclass(frozen=True, slots=True)
+class AnthropicQuotaCooldown:
+    quota_key: str
+    row_id: int
 
 
 def _classify_fable_probe(status: int, message: str | None) -> FableProbeVerdict:
@@ -123,6 +132,9 @@ _ProbeSender = Callable[[Account, str], Awaitable[tuple[int, str | None]]]
 # entry, or None when no such entry exists.
 _WeeklyUsageLookup = Callable[[str], Awaitable[tuple[float, int | None] | None]]
 _FableMarkerWriter = Callable[[str, float, int | None], Awaitable[None]]
+_ActiveQuotaCooldownLookup = Callable[[str], Awaitable[list[AnthropicQuotaCooldown]]]
+_QuotaCooldownProbeSender = Callable[[Account, str, str], Awaitable[tuple[int, str | None]]]
+_QuotaCooldownClearer = Callable[[str, str, int], Awaitable[bool]]
 
 
 @dataclass(slots=True)
@@ -169,6 +181,13 @@ class AccountPulseScheduler:
     fable_probe_sender: _ProbeSender = field(default_factory=lambda: _default_fable_probe_sender)
     weekly_usage_lookup: _WeeklyUsageLookup = field(default_factory=lambda: _default_weekly_usage_lookup)
     fable_marker_writer: _FableMarkerWriter = field(default_factory=lambda: _default_fable_marker_writer)
+    active_quota_cooldown_lookup: _ActiveQuotaCooldownLookup = field(
+        default_factory=lambda: _default_active_quota_cooldown_lookup
+    )
+    quota_cooldown_probe_sender: _QuotaCooldownProbeSender = field(
+        default_factory=lambda: _default_quota_cooldown_probe_sender
+    )
+    quota_cooldown_clearer: _QuotaCooldownClearer = field(default_factory=lambda: _default_quota_cooldown_clearer)
     sleep: Callable[[float], Awaitable[None]] = field(default_factory=lambda: asyncio.sleep)
     now: Callable[[], datetime] = field(default_factory=lambda: utcnow)
     _task: asyncio.Task[None] | None = None
@@ -317,6 +336,41 @@ class AccountPulseScheduler:
                 # internally exception-safe, so a Fable-probe failure can
                 # never suppress or alter the handling above.
                 await self._maybe_probe_fable_access(fresh_account, access_token)
+                await self._reconcile_fable_quota_cooldowns(fresh_account, access_token)
+
+    async def _reconcile_fable_quota_cooldowns(self, account: Account, access_token: str) -> None:
+        """Clear only model cooldowns disproved by exact quota-shaped probes."""
+        try:
+            if normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
+                return
+            if not _is_fable_probe_routable(account):
+                return
+            cooldowns = await self.active_quota_cooldown_lookup(account.id)
+            for cooldown in cooldowns:
+                status, _message = await self.quota_cooldown_probe_sender(
+                    account,
+                    access_token,
+                    cooldown.quota_key,
+                )
+                if not 200 <= status < 300:
+                    continue
+                cleared = await self.quota_cooldown_clearer(
+                    account.id,
+                    cooldown.quota_key,
+                    cooldown.row_id,
+                )
+                if cleared:
+                    get_account_selection_cache().invalidate()
+                    AuditService.log_async(
+                        "account_pulse_anthropic_cooldown_cleared",
+                        details={"account_id": account.id, "quota_key": cooldown.quota_key},
+                    )
+        except Exception:
+            logger.warning(
+                "Account pulse Anthropic cooldown reconciliation failed account_id=%s",
+                account.id,
+                exc_info=True,
+            )
 
     async def _maybe_probe_fable_access(self, account: Account, access_token: str) -> None:
         """Send an additional tiny claude-fable-5 probe to routable Anthropic
@@ -564,6 +618,65 @@ async def _default_fable_probe_sender(account: Account, access_token: str) -> tu
         base_url=settings.anthropic_upstream_base_url,
         model=_FABLE_PROBE_MODEL,
     )
+
+
+async def _default_quota_cooldown_probe_sender(
+    account: Account,
+    access_token: str,
+    quota_key: str,
+) -> tuple[int, str | None]:
+    del account
+    from app.core.config.settings import get_settings
+
+    settings = get_settings()
+    thinking: probes.AdaptiveThinking | None = None
+    max_tokens = 4
+    if quota_key == "anthropic_top_thinking":
+        thinking = {"type": "adaptive"}
+        max_tokens = 32
+    elif quota_key != "anthropic_top":
+        raise ValueError(f"Unsupported Anthropic cooldown quota key: {quota_key}")
+    return await probes.send_messages_probe(
+        access_token=access_token,
+        base_url=settings.anthropic_upstream_base_url,
+        model=_FABLE_PROBE_MODEL,
+        max_tokens=max_tokens,
+        thinking=thinking,
+    )
+
+
+async def _default_active_quota_cooldown_lookup(account_id: str) -> list[AnthropicQuotaCooldown]:
+    now_epoch = naive_utc_to_epoch(utcnow())
+    active: list[AnthropicQuotaCooldown] = []
+    async with get_background_session() as session:
+        repo = AdditionalUsageRepository(session)
+        for quota_key in _ANTHROPIC_FABLE_QUOTA_KEYS:
+            latest = await repo.latest_by_quota_key(
+                quota_key,
+                _ANTHROPIC_COOLDOWN_WINDOW,
+                account_ids=[account_id],
+            )
+            entry = latest.get(account_id)
+            if (
+                entry is not None
+                and float(entry.used_percent) >= 100.0
+                and entry.reset_at is not None
+                and int(entry.reset_at) > now_epoch
+            ):
+                active.append(AnthropicQuotaCooldown(quota_key=quota_key, row_id=int(entry.id)))
+    return active
+
+
+async def _default_quota_cooldown_clearer(account_id: str, quota_key: str, expected_id: int) -> bool:
+    async with get_background_session() as session:
+        repo = AdditionalUsageRepository(session)
+        return await repo.clear_cooldown_if_latest(
+            account_id,
+            quota_key,
+            _ANTHROPIC_COOLDOWN_WINDOW,
+            expected_id,
+            metered_feature=_ANTHROPIC_COOLDOWN_FEATURE,
+        )
 
 
 async def _default_weekly_usage_lookup(account_id: str) -> tuple[float, int | None] | None:

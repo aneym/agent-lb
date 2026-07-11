@@ -82,6 +82,79 @@ async def test_add_entry(async_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_clear_cooldown_if_latest_appends_clear_state(async_session: AsyncSession) -> None:
+    repo = AdditionalUsageRepository(async_session)
+    recorded_at = datetime.now(tz=timezone.utc)
+    reset_at = int((recorded_at + timedelta(days=1)).timestamp())
+    await repo.add_entry(
+        account_id="acc_1",
+        quota_key="anthropic_top_thinking",
+        limit_name="anthropic_top_thinking",
+        metered_feature="anthropic_messages",
+        window="primary",
+        used_percent=100.0,
+        reset_at=reset_at,
+        recorded_at=recorded_at,
+    )
+    observed = (await repo.latest_by_quota_key("anthropic_top_thinking", "primary"))["acc_1"]
+
+    cleared = await repo.clear_cooldown_if_latest(
+        "acc_1",
+        "anthropic_top_thinking",
+        "primary",
+        int(observed.id),
+        metered_feature="anthropic_messages",
+    )
+
+    assert cleared is True
+    latest = (await repo.latest_by_quota_key("anthropic_top_thinking", "primary"))["acc_1"]
+    assert latest.used_percent == 0.0
+    assert latest.reset_at is None
+
+
+@pytest.mark.asyncio
+async def test_clear_cooldown_if_latest_preserves_newer_cooldown(async_session: AsyncSession) -> None:
+    repo = AdditionalUsageRepository(async_session)
+    recorded_at = datetime.now(tz=timezone.utc)
+    first_reset_at = int((recorded_at + timedelta(days=1)).timestamp())
+    await repo.add_entry(
+        account_id="acc_1",
+        quota_key="anthropic_top_thinking",
+        limit_name="anthropic_top_thinking",
+        metered_feature="anthropic_messages",
+        window="primary",
+        used_percent=100.0,
+        reset_at=first_reset_at,
+        recorded_at=recorded_at,
+    )
+    observed = (await repo.latest_by_quota_key("anthropic_top_thinking", "primary"))["acc_1"]
+    newer_reset_at = first_reset_at + 3600
+    await repo.add_entry(
+        account_id="acc_1",
+        quota_key="anthropic_top_thinking",
+        limit_name="anthropic_top_thinking",
+        metered_feature="anthropic_messages",
+        window="primary",
+        used_percent=100.0,
+        reset_at=newer_reset_at,
+        recorded_at=recorded_at + timedelta(seconds=1),
+    )
+
+    cleared = await repo.clear_cooldown_if_latest(
+        "acc_1",
+        "anthropic_top_thinking",
+        "primary",
+        int(observed.id),
+        metered_feature="anthropic_messages",
+    )
+
+    assert cleared is False
+    latest = (await repo.latest_by_quota_key("anthropic_top_thinking", "primary"))["acc_1"]
+    assert latest.used_percent == 100.0
+    assert latest.reset_at == newer_reset_at
+
+
+@pytest.mark.asyncio
 async def test_latest_by_account_returns_most_recent_per_account(async_session: AsyncSession) -> None:
     """Test that latest_by_account returns only the most recent entry per account."""
     repo = AdditionalUsageRepository(async_session)

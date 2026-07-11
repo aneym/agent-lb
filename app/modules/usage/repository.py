@@ -8,7 +8,7 @@ from hashlib import sha256
 from threading import RLock
 
 from anyio import to_thread
-from sqlalchemy import Integer, and_, cast, delete, func, literal_column, or_, select, true
+from sqlalchemy import Integer, and_, cast, delete, func, insert, literal, literal_column, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
@@ -871,6 +871,68 @@ class AdditionalUsageRepository:
         self._session.add(entry)
         async with sqlite_writer_section():
             await self._session.commit()
+
+    async def clear_cooldown_if_latest(
+        self,
+        account_id: str,
+        quota_key: str,
+        window: str,
+        expected_latest_id: int,
+        *,
+        metered_feature: str,
+    ) -> bool:
+        """Append cleared state only while the observed cooldown is still latest.
+
+        The comparison and insert are one SQL statement so a newer concurrent
+        cooldown cannot be hidden by an older successful recovery probe.
+        """
+        scope = _resolve_additional_quota_query_scope(quota_key=quota_key)
+        if scope is None:
+            raise ValueError("additional usage quota_key could not be determined")
+        latest_id = (
+            select(AdditionalUsageHistory.id)
+            .where(
+                AdditionalUsageHistory.account_id == account_id,
+                _additional_quota_match_clause(scope),
+                AdditionalUsageHistory.window == window,
+            )
+            .order_by(
+                AdditionalUsageHistory.recorded_at.desc(),
+                AdditionalUsageHistory.used_percent.desc(),
+                AdditionalUsageHistory.id.desc(),
+            )
+            .limit(1)
+            .scalar_subquery()
+        )
+        values = select(
+            literal(account_id),
+            literal(quota_key),
+            literal(quota_key),
+            literal(metered_feature),
+            literal(window),
+            literal(0.0),
+            literal(None, type_=Integer),
+            literal(None, type_=Integer),
+            literal(utcnow()),
+        ).where(latest_id == expected_latest_id)
+        statement = insert(AdditionalUsageHistory).from_select(
+            [
+                "account_id",
+                "quota_key",
+                "limit_name",
+                "metered_feature",
+                "window",
+                "used_percent",
+                "reset_at",
+                "window_minutes",
+                "recorded_at",
+            ],
+            values,
+        )
+        async with sqlite_writer_section():
+            result = await self._session.execute(statement)
+            await self._session.commit()
+        return result.rowcount == 1
 
     async def delete_for_account(self, account_id: str) -> None:
         stmt = delete(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == account_id)
