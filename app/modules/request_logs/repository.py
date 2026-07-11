@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import cast as typing_cast
 
 import anyio
-from sqlalchemy import Integer, String, and_, cast, func, literal_column, or_, select
+from sqlalchemy import Integer, String, and_, case, cast, false, func, literal_column, or_, select
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
-from app.core.usage.types import BucketModelAggregate, RequestActivityAggregate
+from app.core.usage.types import (
+    BucketModelAggregate,
+    RequestActivityAggregate,
+    UsageCostByModel,
+    UsageCostSummary,
+    UsageMetricsSummary,
+)
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, RequestKind, RequestLog
@@ -208,6 +215,89 @@ class RequestLogsRepository:
         result = await self._session.execute(stmt)
         row = result.first()
         return str(row[0]) if row and row[0] else None
+
+    async def aggregate_usage_window(
+        self,
+        since: datetime,
+        *,
+        account_ids: Collection[str],
+        include_unattributed: bool,
+    ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
+        """SQL-aggregated equivalent of hydrating ``list_since(since)`` and
+        deriving ``UsageMetricsSummary``/``UsageCostSummary`` from the rows in
+        Python (see ``app.modules.usage.builders._usage_metrics`` and
+        ``_cost_summary_from_logs``) — kept for exact parity without loading
+        every ``RequestLog`` row.
+
+        Account scoping matches the old ``_logs_for_accounts`` behavior: rows
+        with ``account_id`` outside ``account_ids`` are always excluded; rows
+        with ``account_id IS NULL`` are included only when
+        ``include_unattributed`` is true.
+        """
+        bind = self._session.get_bind()
+        dialect = bind.dialect.name if bind else "sqlite"
+
+        conditions = [
+            RequestLog.requested_at >= since,
+            self._exclude_warmup_clause(),
+            _account_scope_clause(account_ids, include_unattributed=include_unattributed),
+        ]
+
+        output_tokens_expr = func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)
+        tokens_expr = func.coalesce(RequestLog.input_tokens, 0) + output_tokens_expr
+        cached_clamped = _least(dialect, _greatest(dialect, RequestLog.cached_input_tokens, 0), RequestLog.input_tokens)
+        cached_expr = case(
+            (RequestLog.cached_input_tokens.is_(None), 0),
+            (RequestLog.input_tokens.is_not(None), cached_clamped),
+            else_=_greatest(dialect, RequestLog.cached_input_tokens, 0),
+        )
+
+        overall_stmt = select(
+            func.count().label("request_count"),
+            func.coalesce(
+                func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)), 0
+            ).label("error_count"),
+            func.coalesce(func.sum(tokens_expr), 0).label("tokens_sum"),
+            func.coalesce(func.sum(cached_expr), 0).label("cached_tokens_sum"),
+        ).where(and_(*conditions))
+        overall_row = (await self._session.execute(overall_stmt)).one()
+
+        model_stmt = (
+            select(RequestLog.model, func.sum(RequestLog.cost_usd).label("cost_usd"))
+            .where(and_(*conditions, RequestLog.cost_usd.is_not(None)))
+            .group_by(RequestLog.model)
+        )
+        model_rows = (await self._session.execute(model_stmt)).all()
+
+        top_error_stmt = (
+            select(RequestLog.error_code, func.count().label("error_count"))
+            .where(and_(*conditions, RequestLog.status != "success", RequestLog.error_code.is_not(None)))
+            .group_by(RequestLog.error_code)
+            .order_by(func.count().desc(), RequestLog.error_code.asc())
+            .limit(1)
+        )
+        top_error_row = (await self._session.execute(top_error_stmt)).first()
+        top_error = str(top_error_row[0]) if top_error_row and top_error_row[0] else None
+
+        request_count = int(overall_row.request_count)
+        error_rate = (int(overall_row.error_count) / request_count) if request_count > 0 else None
+        metrics = UsageMetricsSummary(
+            requests_7d=request_count,
+            tokens_secondary_window=int(overall_row.tokens_sum),
+            cached_tokens_secondary_window=int(overall_row.cached_tokens_sum),
+            error_rate_7d=error_rate,
+            top_error=top_error,
+        )
+
+        total_cost = 0.0
+        by_model: list[UsageCostByModel] = []
+        for row in sorted(model_rows, key=lambda r: r.model):
+            row_cost = float(row.cost_usd or 0.0)
+            total_cost += row_cost
+            by_model.append(UsageCostByModel(model=row.model, usd=round(row_cost, 6)))
+        cost = UsageCostSummary(currency="USD", total_usd_7d=round(total_cost, 6), by_model=by_model)
+
+        return metrics, cost
 
     async def add_log(
         self,
@@ -602,6 +692,28 @@ def _visible_account_log_clause() -> ColumnElement[bool]:
         Account.subscription_status.is_(None),
         func.lower(func.trim(Account.subscription_status)) != CANCELED_SUBSCRIPTION_STATUS,
     )
+
+
+def _account_scope_clause(account_ids: Collection[str], *, include_unattributed: bool) -> ColumnElement[bool]:
+    ids = list(account_ids)
+    membership = RequestLog.account_id.in_(ids) if ids else false()
+    if include_unattributed:
+        return or_(RequestLog.account_id.is_(None), membership)
+    return membership
+
+
+def _least(dialect: str, a: ColumnElement, b: ColumnElement) -> ColumnElement:
+    # SQLite has no LEAST()/GREATEST(); its scalar min()/max() take this role
+    # when called with 2+ arguments (distinct from the 1-arg aggregate form).
+    if dialect == "postgresql":
+        return func.least(a, b)
+    return func.min(a, b)
+
+
+def _greatest(dialect: str, a: ColumnElement, b: ColumnElement) -> ColumnElement:
+    if dialect == "postgresql":
+        return func.greatest(a, b)
+    return func.max(a, b)
 
 
 async def _safe_rollback(session: AsyncSession) -> None:

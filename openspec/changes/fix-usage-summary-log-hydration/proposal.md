@@ -15,10 +15,8 @@ froze the proxy for tens of seconds per poll.
   the usage summary are computed at most once per 60s per
   (provider, window, account-set) key and served from an in-process TTL
   cache between recomputations (`_log_window_metrics`).
-- Interim measure: the recomputation still hydrates the window once per TTL.
-  A follow-up moves these aggregates into SQL (the repository already has
-  `aggregate_by_bucket` / `aggregate_activity_since` / `top_error_since`
-  covering the same columns).
+- Recomputations use account-filtered SQL aggregates for both unscoped and
+  provider-scoped summaries; they do not hydrate request-log ORM rows.
 
 ## Impact
 

@@ -11,9 +11,8 @@
       aggregates (`aggregate_activity_since`, `top_error_since`,
       `aggregate_by_bucket`) — no row hydration. Loop-lag telemetry showed the
       TTL cache alone still froze the loop up to 62s per recomputation.
-- [ ] 2.1b Provider-scoped path still hydrates once per TTL; replace with
-      account-filtered SQL aggregates with parity tests against the Python
-      computation (dispatched).
+- [x] 2.1b Replace provider-scoped hydration with account-filtered SQL
+      aggregates, with parity tests against the Python computation.
 - [ ] 2.2 Retention/pruning job for request_logs and usage/additional-usage
       history tables so row counts stay bounded.
 

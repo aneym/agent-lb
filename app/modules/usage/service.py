@@ -4,15 +4,12 @@ import time
 from datetime import datetime, timedelta
 
 from app.core import usage as usage_core
-from app.core.usage.types import UsageCostByModel, UsageCostSummary, UsageMetricsSummary, UsageWindowRow
+from app.core.usage.types import UsageCostSummary, UsageMetricsSummary, UsageWindowRow
 from app.core.utils.time import utcnow
-from app.db.models import RequestLog
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import subscription_usable_accounts
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.builders import (
-    _cost_summary_from_logs,
-    _usage_metrics,
     build_usage_history_response,
     build_usage_summary_response,
     build_usage_window_response,
@@ -29,13 +26,6 @@ from app.modules.usage.schemas import (
 # keyed by (provider, window minutes, account-id set). Values are
 # (monotonic timestamp, metrics, cost).
 _LOG_METRICS_CACHE_TTL_SECONDS = 60.0
-# Provider-scoped summaries still hydrate the full log window (no
-# account-filtered SQL aggregate yet) at ~30-60s of blocked event loop per
-# recomputation on the live dataset — recompute rarely until that lands.
-_PROVIDER_LOG_METRICS_CACHE_TTL_SECONDS = 900.0
-# One bucket spanning any realistic window so aggregate_by_bucket returns
-# per-model totals for the whole window.
-_WHOLE_WINDOW_BUCKET_SECONDS = 60 * 60 * 24 * 365
 _LOG_METRICS_CACHE: dict[
     tuple[str, int, tuple[str, ...]],
     tuple[float, UsageMetricsSummary, UsageCostSummary],
@@ -96,76 +86,26 @@ class UsageService:
         account_ids: set[str],
         provider: str | None,
     ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
-        # Hydrating the full log window (observed >700k RequestLog rows for the
-        # 7-day secondary window) blocks the event loop for seconds, and the
-        # menubar polls this endpoint continuously — cache the derived
-        # aggregates briefly so the cost is paid at most once per TTL.
+        # SQL-aggregated over the request-log window instead of hydrating full
+        # ORM rows (observed >700k rows for the 7-day window, which blocked
+        # the event loop for seconds to a minute per recomputation). The
+        # menubar polls this endpoint continuously — cache briefly so the
+        # aggregation cost is paid at most once per TTL.
         cache_key = (provider or "", secondary_minutes, tuple(sorted(account_ids)))
-        ttl = _PROVIDER_LOG_METRICS_CACHE_TTL_SECONDS if provider else _LOG_METRICS_CACHE_TTL_SECONDS
         mono_now = time.monotonic()
         cached = _LOG_METRICS_CACHE.get(cache_key)
-        if cached is not None and mono_now - cached[0] < ttl:
+        if cached is not None and mono_now - cached[0] < _LOG_METRICS_CACHE_TTL_SECONDS:
             return cached[1], cached[2]
 
         since = now - timedelta(minutes=secondary_minutes)
-        if provider:
-            # Provider-scoped requests need per-account filtering the SQL
-            # aggregates don't support yet; the window is provider-filtered
-            # and rare, and results are cached above.
-            logs = await self._logs_repo.list_since(since)
-            logs = _logs_for_accounts(logs, account_ids, drop_unattributed=True)
-            metrics = _usage_metrics(logs)
-            cost = _cost_summary_from_logs(logs)
-        else:
-            metrics, cost = await self._aggregate_log_window_metrics(since)
-        for key in [
-            k for k, v in _LOG_METRICS_CACHE.items() if mono_now - v[0] >= _PROVIDER_LOG_METRICS_CACHE_TTL_SECONDS
-        ]:
+        metrics, cost = await self._logs_repo.aggregate_usage_window(
+            since,
+            account_ids=account_ids,
+            include_unattributed=not bool(provider),
+        )
+        for key in [k for k, v in _LOG_METRICS_CACHE.items() if mono_now - v[0] >= _LOG_METRICS_CACHE_TTL_SECONDS]:
             _LOG_METRICS_CACHE.pop(key, None)
         _LOG_METRICS_CACHE[cache_key] = (mono_now, metrics, cost)
-        return metrics, cost
-
-    async def _aggregate_log_window_metrics(
-        self,
-        since: datetime,
-    ) -> tuple[UsageMetricsSummary, UsageCostSummary]:
-        # SQL aggregation instead of hydrating the full log window (>700k ORM
-        # rows on the live instance), which froze the event loop for up to a
-        # minute per recomputation.
-        activity = await self._logs_repo.aggregate_activity_since(
-            since, exclude_canceled_subscription_accounts=True
-        )
-        top_error = await self._logs_repo.top_error_since(
-            since, exclude_canceled_subscription_accounts=True
-        )
-        buckets = await self._logs_repo.aggregate_by_bucket(
-            since,
-            bucket_seconds=_WHOLE_WINDOW_BUCKET_SECONDS,
-            exclude_canceled_subscription_accounts=True,
-        )
-
-        error_rate: float | None = None
-        if activity.request_count > 0:
-            error_rate = activity.error_count / activity.request_count
-        metrics = UsageMetricsSummary(
-            requests_7d=activity.request_count,
-            tokens_secondary_window=activity.input_tokens + activity.output_tokens,
-            cached_tokens_secondary_window=activity.cached_input_tokens,
-            error_rate_7d=error_rate,
-            top_error=top_error,
-        )
-
-        by_model: dict[str, float] = {}
-        for bucket in buckets:
-            if bucket.cost_usd:
-                by_model[bucket.model] = by_model.get(bucket.model, 0.0) + bucket.cost_usd
-        cost = UsageCostSummary(
-            currency="USD",
-            total_usd_7d=round(sum(by_model.values()), 6),
-            by_model=[
-                UsageCostByModel(model=model, usd=round(usd, 6)) for model, usd in sorted(by_model.items())
-            ],
-        )
         return metrics, cost
 
     async def get_usage_history(self, hours: int) -> UsageHistoryResponse:
@@ -213,14 +153,3 @@ class UsageService:
 
 def _usage_rows_for_accounts(rows: list[UsageWindowRow], account_ids: set[str]) -> list[UsageWindowRow]:
     return [row for row in rows if row.account_id in account_ids]
-
-
-def _logs_for_accounts(
-    logs: list[RequestLog],
-    account_ids: set[str],
-    *,
-    drop_unattributed: bool = False,
-) -> list[RequestLog]:
-    if drop_unattributed:
-        return [log for log in logs if log.account_id in account_ids]
-    return [log for log in logs if log.account_id is None or log.account_id in account_ids]
