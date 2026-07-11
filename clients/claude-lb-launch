@@ -67,6 +67,13 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+# The retry budget (~2 minutes with these defaults) must outlast a full
+# watchdog-driven LB recovery: an unloaded launchd job is re-bootstrapped
+# within ~65s (2 x 30s ticks + startup), so a session mid-request rides the
+# outage out instead of surfacing a 502 broken pipe to the agent.
+SHIM_CONNECT_RETRIES_DEFAULT = 32
+SHIM_CONNECT_BACKOFF_DEFAULT = 0.5
+SHIM_CONNECT_BACKOFF_CAP_DEFAULT = 4.0
 
 
 # ---------------------------------------------------------------------------
@@ -290,12 +297,13 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
             headers=headers,
             method=self.command,
         )
-        # Absorb a brief LB restart: a refused/reset connect never reached the LB,
-        # so retry with bounded backoff before surfacing an error. Real HTTP
-        # responses (429/503 with Retry-After) pass straight through.
-        connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", 6))
-        backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", 0.5))
-        backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", 4.0))
+        # Absorb an LB restart or watchdog-driven revival: a refused/reset/
+        # broken-pipe connect never produced a response, so retry with bounded
+        # backoff before surfacing an error. Real HTTP responses (429/503 with
+        # Retry-After) pass straight through.
+        connect_retries = max(0, _env_int("CLAUDE_LB_SHIM_CONNECT_RETRIES", SHIM_CONNECT_RETRIES_DEFAULT))
+        backoff = max(0.05, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF", SHIM_CONNECT_BACKOFF_DEFAULT))
+        backoff_cap = max(backoff, _env_float("CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP", SHIM_CONNECT_BACKOFF_CAP_DEFAULT))
         attempt = 0
         while True:
             try:

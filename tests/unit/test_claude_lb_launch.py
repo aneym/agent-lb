@@ -276,3 +276,17 @@ def test_shim_connect_error_is_retryable_only_for_connection_failures() -> None:
     # Read timeout — request may be in flight, so do not re-send (no double-process).
     assert classify(urllib.error.URLError(socket.timeout())) is False
     assert classify(RuntimeError("boom")) is False
+
+
+def test_shim_connect_retry_budget_outlasts_watchdog_recovery() -> None:
+    launcher = load_launcher_module()
+
+    budget = sum(
+        min(launcher.SHIM_CONNECT_BACKOFF_DEFAULT * (2**attempt), launcher.SHIM_CONNECT_BACKOFF_CAP_DEFAULT)
+        for attempt in range(launcher.SHIM_CONNECT_RETRIES_DEFAULT)
+    )
+
+    # Watchdog revival of an unloaded LB takes up to ~65s (2 x 30s ticks +
+    # startup); the shim must keep retrying well past that instead of
+    # surfacing a 502 broken pipe to the agent.
+    assert budget >= 100

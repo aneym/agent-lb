@@ -37,6 +37,21 @@ def test_main_passes_timestamped_log_config(monkeypatch):
     assert kwargs["timeout_keep_alive"] == 7200
 
 
+def test_main_disables_websocket_pong_deadline(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    def fake_run(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(sys, "argv", ["agent-lb"])
+    monkeypatch.setattr(cli, "_load_uvicorn", lambda: SimpleNamespace(run=fake_run))
+
+    cli.main()
+
+    assert captured["kwargs"]["ws_ping_interval"] == 20.0
+    assert captured["kwargs"]["ws_ping_timeout"] is None
+
+
 def test_main_passes_custom_keep_alive_timeout(monkeypatch):
     captured: dict[str, Any] = {}
 

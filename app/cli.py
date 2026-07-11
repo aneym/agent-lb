@@ -95,6 +95,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         ssl_certfile=args.ssl_certfile,
         ssl_keyfile=args.ssl_keyfile,
         timeout_keep_alive=timeout_keep_alive,
+        # Mirror the upstream websocket leg (proxy_websocket): keep sending
+        # transport pings so intermediaries see liveness, but disable the pong
+        # deadline. Agent clients block their event loop for well over 20s
+        # during long local work; uvicorn's default 20s pong timeout was
+        # cutting those sessions mid-turn with 1011 "keepalive ping timeout".
+        ws_ping_interval=20.0,
+        ws_ping_timeout=None,
         log_config=_build_log_config(),
     )
 
