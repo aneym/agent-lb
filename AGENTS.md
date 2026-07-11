@@ -39,6 +39,11 @@ right away. This is a standing instruction from the repo owner.
   returns the expected response. Restart the live `com.aneyman.agent-lb` service so the
   running process matches what was pushed (the resilient launcher absorbs the brief
   restart; avoid restarting while long streams are mid-flight when it can be helped).
+  Restart means `launchctl kickstart -k gui/501/com.aneyman.agent-lb` — never
+  `bootout`/`bootstrap`. If a plist change forces a bootout, `touch
+  ~/.agent-lb/watchdog.pause` first and remove it after; the watchdog re-bootstraps
+  an unloaded job after ~60s (a bootout left un-bootstrapped caused the 2026-07-11
+  outage).
 - **Cross-machine**: after pushing, fast-forward every other instance (e.g. the laptop)
   so all checkouts converge on `origin/main`.
 
