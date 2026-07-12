@@ -1043,6 +1043,7 @@ class AdditionalUsageRepository:
             latest = (
                 select(AdditionalUsageHistory.id.label("usage_id"))
                 .where(*conditions, AdditionalUsageHistory.account_id == accounts.c.account_id)
+                .correlate(accounts)
                 .order_by(
                     AdditionalUsageHistory.recorded_at.desc(),
                     AdditionalUsageHistory.used_percent.desc(),
