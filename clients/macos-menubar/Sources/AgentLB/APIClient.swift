@@ -140,7 +140,7 @@ struct APIClient: @unchecked Sendable {
   }
 
   func requestLogs(limit: Int) async throws -> RequestLogsResponse {
-    try await get("/api/request-logs?limit=\(limit)")
+    try await get("/api/request-logs?limit=\(limit)&includeTotal=false")
   }
 
   func runtimeVersion() async throws -> RuntimeVersion {

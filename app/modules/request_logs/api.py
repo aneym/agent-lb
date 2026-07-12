@@ -41,6 +41,7 @@ def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:
 async def list_request_logs(
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    include_total: bool = Query(default=True, alias="includeTotal"),
     search: str | None = Query(default=None),
     account_id: list[str] | None = Query(default=None, alias="accountId"),
     api_key_id: list[str] | None = Query(default=None, alias="apiKeyId"),
@@ -68,6 +69,7 @@ async def list_request_logs(
         models=model,
         reasoning_efforts=reasoning_effort,
         status=status,
+        include_total=include_total,
     )
     return RequestLogsResponse(
         requests=page.requests,

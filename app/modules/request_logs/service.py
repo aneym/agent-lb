@@ -66,6 +66,7 @@ class RequestLogsService:
         models: list[str] | None = None,
         reasoning_efforts: list[str] | None = None,
         status: list[str] | None = None,
+        include_total: bool = True,
     ) -> RequestLogsPage:
         status_filter = _map_status_filter(status)
         normalized_model_options = (
@@ -86,6 +87,7 @@ class RequestLogsService:
             include_error_other=status_filter.include_error_other,
             error_codes_in=status_filter.error_codes_in,
             error_codes_excluding=status_filter.error_codes_excluding,
+            include_total=include_total,
         )
         api_key_ids = [log.api_key_id for log in logs if log.api_key_id]
         api_key_name_by_id = await self._repo.get_api_key_names_by_ids(api_key_ids)

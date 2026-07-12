@@ -454,6 +454,7 @@ class RequestLogsRepository:
         include_error_other: bool = True,
         error_codes_in: list[str] | None = None,
         error_codes_excluding: list[str] | None = None,
+        include_total: bool = True,
     ) -> tuple[list[RequestLog], int]:
         filters = self._build_filters(
             search=search,
@@ -471,7 +472,7 @@ class RequestLogsRepository:
             exclude_soft_deleted=True,
         )
 
-        total_col = func.count().over().label("_total")
+        total_col = func.count().over().label("_total") if include_total else literal_column("0").label("_total")
         stmt = select(RequestLog, total_col).order_by(RequestLog.requested_at.desc(), RequestLog.id.desc())
         stmt = self._apply_related_search_joins(stmt, filters.needs_related_search_joins)
         if filters.conditions:
@@ -483,9 +484,9 @@ class RequestLogsRepository:
         result = await self._session.execute(stmt)
         rows = result.all()
         if not rows:
-            return [], await self._count_recent(filters)
+            return [], await self._count_recent(filters) if include_total else offset
         logs = [row[0] for row in rows]
-        total = rows[0][1]
+        total = rows[0][1] if include_total else offset + len(logs)
         return logs, total
 
     async def _count_recent(self, filters: _RequestLogFilters) -> int:
