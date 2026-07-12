@@ -205,13 +205,16 @@ class _RateLimitMixin:
         additional_limits = []
 
         for limit_name in limit_names:
+            account_ids = list(account_map)
             latest_entries = await repos.additional_usage.latest_by_account(
                 limit_name=limit_name,
                 window="primary",
+                account_ids=account_ids,
             )
             latest_secondary = await repos.additional_usage.latest_by_account(
                 limit_name=limit_name,
                 window="secondary",
+                account_ids=account_ids,
             )
 
             filtered_entries = {

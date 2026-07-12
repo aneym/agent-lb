@@ -78,7 +78,9 @@ class DashboardService:
         limit_warmups_by_account = await self._repo.latest_limit_warmups_by_account(account_ids)
         fable_scoped_weekly_by_account = _additional_usage_for_accounts(
             await self._repo.latest_additional_usage_by_account(
-                _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY, _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW
+                _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
+                account_ids=account_ids,
             ),
             account_id_set,
         )
@@ -173,13 +175,16 @@ class DashboardService:
     async def get_projections(self) -> DashboardProjectionsResponse:
         now = utcnow()
         accounts = subscription_usable_accounts(await self._repo.list_accounts())
-        account_id_set = {account.id for account in accounts}
+        account_ids = [account.id for account in accounts]
+        account_id_set = set(account_ids)
         primary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("primary"), account_id_set)
         secondary_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("secondary"), account_id_set)
         monthly_usage = _usage_for_accounts(await self._repo.latest_usage_by_account("monthly"), account_id_set)
         fable_scoped_weekly_by_account = _additional_usage_for_accounts(
             await self._repo.latest_additional_usage_by_account(
-                _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY, _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW
+                _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+                _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW,
+                account_ids=account_ids,
             ),
             account_id_set,
         )
