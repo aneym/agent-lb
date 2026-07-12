@@ -127,10 +127,13 @@ from app.modules.proxy.claude_codex_bridge import (
     CCDEX_REASONING_EFFORT,
     CCDEX_SERVICE_TIER,
     anthropic_error_from_response,
+    anthropic_status_for_error,
     claude_to_responses,
     collect_claude_message,
     estimate_claude_input_tokens,
-    responses_to_claude_sse,
+    format_claude_events,
+    responses_to_claude_events,
+    split_startup_error,
 )
 from app.modules.proxy.helpers import _rate_limit_details
 from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
@@ -849,7 +852,15 @@ async def v1_ccdex_messages(
         error = anthropic_error_from_response(upstream.status_code, body_bytes)
         return JSONResponse(content=error, status_code=upstream.status_code)
 
-    claude_stream = responses_to_claude_sse(upstream.body_iterator)
+    # A terminal overflow can slip past _stream_responses' pre-stream HTTP probe
+    # when it arrives after a fast response.created. Peek the translated stream: a
+    # terminal error before any assistant content must become a non-200 HTTP error
+    # (Claude Code only reactive-compacts on a failed HTTP request received before
+    # it creates the assistant turn), while a failure after content stays in-band.
+    startup_error, events = await split_startup_error(responses_to_claude_events(upstream.body_iterator))
+    if startup_error is not None:
+        return JSONResponse(content=startup_error, status_code=anthropic_status_for_error(startup_error))
+    claude_stream = format_claude_events(events)
     if not payload.stream:
         message = await collect_claude_message(claude_stream)
         return JSONResponse(content=message)

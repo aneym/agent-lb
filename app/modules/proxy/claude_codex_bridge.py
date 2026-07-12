@@ -199,7 +199,8 @@ def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
     return max(1, math.ceil(len(encoded) / 4))
 
 
-async def responses_to_claude_sse(source: AsyncIterator[bytes | str]) -> AsyncIterator[str]:
+async def responses_to_claude_events(source: AsyncIterator[bytes | str]) -> AsyncIterator[JsonObject]:
+    """Translate an upstream Responses SSE byte stream into Anthropic Messages events."""
     state = _ClaudeStreamState()
     buffer = ""
     async for chunk in source:
@@ -210,14 +211,100 @@ async def responses_to_claude_sse(source: AsyncIterator[bytes | str]) -> AsyncIt
             if event is None:
                 continue
             for translated in state.consume(event):
-                yield format_sse_event(translated)
+                yield translated
     if buffer.strip():
         event = parse_sse_data_json(buffer)
         if event is not None:
             for translated in state.consume(event):
-                yield format_sse_event(translated)
+                yield translated
     for translated in state.finish():
-        yield format_sse_event(translated)
+        yield translated
+
+
+async def responses_to_claude_sse(source: AsyncIterator[bytes | str]) -> AsyncIterator[str]:
+    async for event in responses_to_claude_events(source):
+        yield format_sse_event(event)
+
+
+async def format_claude_events(events: AsyncIterator[JsonObject]) -> AsyncIterator[str]:
+    async for event in events:
+        yield format_sse_event(event)
+
+
+# Anthropic Messages frames that mark the assistant turn as having real, visible
+# content. Once one of these has streamed, a later terminal error is a genuine
+# mid-stream failure and stays in-band; before then, a terminal error must be
+# surfaced as a non-200 HTTP response so Claude Code reactive-compacts instead of
+# creating an assistant turn it will silently drop.
+_CONTENT_FRAME_TYPES = frozenset({"content_block_start", "content_block_delta"})
+
+_ERROR_STATUS_BY_TYPE: Mapping[str, int] = {
+    "invalid_request_error": 400,
+    "authentication_error": 401,
+    "permission_error": 403,
+    "not_found_error": 404,
+    "rate_limit_error": 429,
+    "overloaded_error": 529,
+    "api_error": 502,
+}
+
+
+def anthropic_status_for_error(error_frame: JsonObject) -> int:
+    """Map a translated Anthropic ``error`` frame to an HTTP status code."""
+    error = error_frame.get("error")
+    error_type = error.get("type") if isinstance(error, dict) else None
+    if isinstance(error_type, str):
+        return _ERROR_STATUS_BY_TYPE.get(error_type, 502)
+    return 502
+
+
+async def _empty_events() -> AsyncIterator[JsonObject]:
+    return
+    yield  # pragma: no cover - makes this a (never-yielding) async generator
+
+
+async def split_startup_error(
+    events: AsyncIterator[JsonObject],
+) -> tuple[JsonObject | None, AsyncIterator[JsonObject]]:
+    """Peek the translated stream for a terminal error before any assistant content.
+
+    Claude Code only reactive-compacts on a non-200 HTTP response received before
+    it creates the assistant turn; an ``error`` frame delivered after
+    ``message_start`` under HTTP 200 is silently dropped, so the harness storms
+    identical over-limit retries. The pre-stream HTTP probe upstream of this bridge
+    can miss an overflow that arrives after a fast ``response.created`` (e.g. after
+    a reasoning phase), leaving it as an in-band ``error`` frame.
+
+    Buffer only until the first ``content_block_*`` frame or the first terminal
+    ``error`` frame, whichever comes first (bounded — one or two frames in
+    practice, and released the moment real content appears). If the error wins,
+    return it so the caller can surface an HTTP error and drop the stream. If
+    content wins, return a replay iterator that yields the buffered frames then the
+    rest of the stream unchanged, preserving genuine mid-stream failures.
+    """
+    buffered: list[JsonObject] = []
+    startup_error: JsonObject | None = None
+    async for event in events:
+        if event.get("type") == "error":
+            startup_error = event
+            break
+        buffered.append(event)
+        if event.get("type") in _CONTENT_FRAME_TYPES:
+            break
+
+    if startup_error is not None:
+        aclose = getattr(events, "aclose", None)
+        if callable(aclose):
+            await aclose()
+        return startup_error, _empty_events()
+
+    async def replay() -> AsyncIterator[JsonObject]:
+        for event in buffered:
+            yield event
+        async for event in events:
+            yield event
+
+    return None, replay()
 
 
 async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:

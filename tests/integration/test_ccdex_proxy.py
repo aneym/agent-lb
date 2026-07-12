@@ -147,15 +147,17 @@ async def test_ccdex_context_overflow_returns_prompt_too_long_not_api_error(
 async def test_ccdex_midstream_context_overflow_emits_prompt_too_long_without_success(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Upstream begins streaming, then fails mid-stream with a
-    # context_length_exceeded envelope on a `response.failed` SSE event. The
-    # bridge must translate that into an Anthropic invalid_request_error whose
-    # message contains "prompt is too long" (Claude Code's reactive-compaction
-    # trigger) and must NOT close the turn with a normal empty success
-    # (message_delta/message_stop) after the error.
+    # Upstream streams real assistant content, THEN fails mid-stream with a
+    # context_length_exceeded envelope on a `response.failed` SSE event. Because
+    # the assistant turn already has visible content, this is a genuine
+    # mid-stream failure: it MUST stay an HTTP 200 SSE stream carrying an
+    # Anthropic invalid_request_error `error` event whose message contains
+    # "prompt is too long", and it MUST NOT close the turn with a normal empty
+    # success (message_delta/message_stop) after the error.
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
             yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield 'data: {"type":"response.output_text.delta","delta":"partial answer"}\n\n'
             yield (
                 'data: {"type":"response.failed","response":{"error":{'
                 '"code":"context_length_exceeded",'
@@ -179,11 +181,92 @@ async def test_ccdex_midstream_context_overflow_emits_prompt_too_long_without_su
         body = (await response.aread()).decode()
 
     assert response.status_code == 200
+    assert '"type":"message_start"' in body
+    assert "partial answer" in body
     assert '"type":"error"' in body
     assert '"type":"invalid_request_error"' in body
     assert "prompt is too long" in body.lower()
     assert "message_stop" not in body
     assert "message_delta" not in body
+
+
+@pytest.mark.asyncio
+async def test_ccdex_precontent_stream_overflow_returns_http_400(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Upstream emits `response.created` fast (so the pre-stream HTTP probe sees a
+    # non-error first item and commits to a streaming response), then a terminal
+    # context overflow arrives BEFORE any assistant content. Claude Code only
+    # reactive-compacts on a non-200 HTTP response received before it creates the
+    # assistant turn; an `error` SSE frame after `message_start` under HTTP 200 is
+    # dropped and the harness storms identical over-limit retries. The endpoint
+    # MUST surface a pre-content terminal overflow as an HTTP 400 Anthropic
+    # `invalid_request_error` with no `message_start` in the body.
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        async def source():
+            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield (
+                'data: {"type":"response.failed","response":{"error":{'
+                '"code":"context_length_exceeded",'
+                '"message":"Your input exceeds the context window of this model."}}}\n\n'
+            )
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+
+    response = await async_client.post(
+        "/v1/ccdex/messages",
+        json={
+            "model": "claude-opus-4-6",
+            "max_tokens": 1024,
+            "stream": True,
+            "messages": [{"role": "user", "content": "way too much context"}],
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "invalid_request_error"
+    assert "prompt is too long" in body["error"]["message"].lower()
+    assert "message_start" not in json.dumps(body)
+
+
+@pytest.mark.asyncio
+async def test_ccdex_precontent_top_level_overflow_frame_returns_http_400(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same pre-content overflow, but delivered through the ChatGPT-backed Codex
+    # top-level `error` frame shape (detail fields on the event root). It slips
+    # past the pre-stream probe as a later frame and must still become HTTP 400.
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        async def source():
+            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield (
+                'data: {"type":"error","status_code":400,"error_type":"invalid_request_error",'
+                '"code":"context_length_exceeded",'
+                '"message":"Your input exceeds the context window of this model."}\n\n'
+            )
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+
+    response = await async_client.post(
+        "/v1/ccdex/messages",
+        json={
+            "model": "claude-opus-4-6",
+            "max_tokens": 1024,
+            "stream": True,
+            "messages": [{"role": "user", "content": "way too much context"}],
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert "prompt is too long" in body["error"]["message"].lower()
 
 
 @pytest.mark.asyncio

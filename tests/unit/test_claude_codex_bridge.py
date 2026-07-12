@@ -8,9 +8,12 @@ from app.core.anthropic.models import AnthropicMessageRequest
 from app.modules.proxy.claude_codex_bridge import (
     CCDEX_MODEL,
     anthropic_error_from_response,
+    anthropic_status_for_error,
     claude_to_responses,
     estimate_claude_input_tokens,
+    responses_to_claude_events,
     responses_to_claude_sse,
+    split_startup_error,
 )
 
 pytestmark = pytest.mark.unit
@@ -216,3 +219,70 @@ async def test_response_translation_keeps_top_level_generic_error_as_api_error()
     error = next(payload for payload in payloads if payload["type"] == "error")["error"]
     assert error["type"] == "api_error"
     assert error["message"] == "upstream boom"
+
+
+@pytest.mark.asyncio
+async def test_split_startup_error_catches_terminal_error_before_content() -> None:
+    # An overflow that arrives before any assistant content is returned as a
+    # startup error frame (for the caller to surface as a non-200 HTTP error) and
+    # NOT replayed into the stream.
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield (
+            'data: {"type":"response.failed","response":{"error":{'
+            '"code":"context_length_exceeded","message":"context window exceeded"}}}\n\n'
+        )
+
+    startup_error, replay = await split_startup_error(responses_to_claude_events(source()))
+
+    assert startup_error is not None
+    assert startup_error["type"] == "error"
+    assert startup_error["error"]["type"] == "invalid_request_error"
+    assert "prompt is too long" in startup_error["error"]["message"].lower()
+    assert anthropic_status_for_error(startup_error) == 400
+    replayed = [event async for event in replay]
+    assert replayed == []
+
+
+@pytest.mark.asyncio
+async def test_split_startup_error_replays_stream_when_content_precedes_error() -> None:
+    # Once real content has streamed, a later overflow is a genuine mid-stream
+    # failure: no startup error is reported and every frame (message_start,
+    # content, the error event) is replayed in order.
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+        yield (
+            'data: {"type":"response.failed","response":{"error":{'
+            '"code":"context_length_exceeded","message":"context window exceeded"}}}\n\n'
+        )
+
+    startup_error, replay = await split_startup_error(responses_to_claude_events(source()))
+
+    assert startup_error is None
+    types = [event["type"] async for event in replay]
+    assert types[0] == "message_start"
+    assert "content_block_delta" in types
+    assert types[-1] == "error"
+    assert "message_stop" not in types
+
+
+@pytest.mark.asyncio
+async def test_split_startup_error_replays_empty_success() -> None:
+    # A completed-but-empty turn (no content, no error) is not a startup error;
+    # its normal message_start/message_delta/message_stop frames are replayed.
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":0}}}\n\n'
+
+    startup_error, replay = await split_startup_error(responses_to_claude_events(source()))
+
+    assert startup_error is None
+    types = [event["type"] async for event in replay]
+    assert types == ["message_start", "message_delta", "message_stop"]
+
+
+def test_anthropic_status_for_error_maps_types() -> None:
+    assert anthropic_status_for_error({"type": "error", "error": {"type": "invalid_request_error"}}) == 400
+    assert anthropic_status_for_error({"type": "error", "error": {"type": "api_error"}}) == 502
+    assert anthropic_status_for_error({"type": "error", "error": {"type": "rate_limit_error"}}) == 429
