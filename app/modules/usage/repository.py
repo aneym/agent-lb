@@ -1112,6 +1112,16 @@ class AdditionalUsageRepository:
         account_ids: Collection[str] | None = None,
         since: datetime | None = None,
     ) -> list[str]:
+        bind = self._session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            stmt = select(AdditionalUsageHistory.quota_key).distinct()
+            if account_ids is not None:
+                stmt = stmt.where(AdditionalUsageHistory.account_id.in_(account_ids))
+            if since is not None:
+                stmt = stmt.where(AdditionalUsageHistory.recorded_at >= since)
+            result = await self._session.execute(stmt)
+            return sorted(key for key in result.scalars().all() if key)
+
         stmt = select(
             AdditionalUsageHistory.quota_key,
             AdditionalUsageHistory.limit_name,

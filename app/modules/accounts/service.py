@@ -62,6 +62,7 @@ from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.usage.additional_quota_keys import (
     get_additional_display_label_for_quota_key,
     get_additional_quota_routing_policy,
+    list_additional_quota_definitions,
 )
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 from app.modules.usage.updater import AdditionalUsageRepositoryPort, UsageUpdater
@@ -246,7 +247,7 @@ class AccountsService:
         additional_usage_repo = cast(AdditionalUsageRepository | None, self._additional_usage_repo)
         if additional_usage_repo:
             additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
-            quota_keys = await additional_usage_repo.list_quota_keys(account_ids=account_ids)
+            quota_keys = [definition.quota_key for definition in list_additional_quota_definitions()]
             now_epoch = int(time.time())
             for quota_key in quota_keys:
                 primary_entries = await additional_usage_repo.latest_by_account(
