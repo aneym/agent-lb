@@ -1,0 +1,117 @@
+# vector.yaml — ships agent-lb log files (this host + the paired instance) to
+# PostHog Logs over OTLP/HTTP. Installed as launchd label
+# com.aneyman.agent-lb-vector by install-log-shipper.sh.
+#
+# INSTANCE (macbook|studio) is injected via the plist's EnvironmentVariables and
+# substituted here by Vector's native environment-variable interpolation. The
+# PostHog project token below is a public ingest token (safe to embed; see
+# PostHog docs) — it is not a personal API key and cannot read data back.
+
+data_dir: /Users/aneyman/.agent-lb/vector-data
+
+sources:
+  agent_lb_logs:
+    type: file
+    read_from: beginning
+    include:
+      - /Users/aneyman/.agent-lb/agent-lb.err.log
+      - /Users/aneyman/.agent-lb/agent-lb.out.log
+      - /Users/aneyman/.agent-lb/agent-lb-front.out.log
+      - /Users/aneyman/.agent-lb/agent-lb-front.err.log
+      - /Users/aneyman/.agent-lb/watchdog.log
+      - /Users/aneyman/.agent-lb/watchdog.err.log
+      - /Users/aneyman/.agent-lb/llm-usage-publish.log
+      - /Users/aneyman/.agent-lb/forensics/events.log
+
+transforms:
+  # Vector's "opentelemetry" sink (codec: otlp) does not convert Vector-native
+  # log events for you — each event must already be one minimal OTLP
+  # ExportLogsServiceRequest (a resourceLogs array wrapping one log record).
+  # Vector's native batching then merges multiple such minimal requests into
+  # real batched OTLP requests before sending.
+  #
+  # NOTE: an earlier version of this transform parsed a leading ISO timestamp
+  # (2026-07-11T21:44:54Z style) out of the line and used it as timeUnixNano.
+  # That was removed after testing showed it causes silent, 100%-reproducible
+  # drops: every event whose timeUnixNano came from parse_timestamp vanished
+  # after ingestion (no error anywhere — sent cleanly, HTTP 200, but never
+  # queryable), while events using timeUnixNano == observedTimeUnixNano
+  # (ingest time) always arrived. Root cause not isolated (no visibility into
+  # PostHog's server-side handling from here); using ingest time for both
+  # fields trades away original-timestamp fidelity for guaranteed delivery,
+  # which is the higher priority ("capture every single log line").
+  shape_otlp:
+    type: remap
+    inputs:
+      - agent_lb_logs
+    source: |
+      raw = string!(.message)
+      file_path = to_string(.file) ?? ""
+      instance = "${INSTANCE}"
+      ingest_nanos = to_string(to_unix_timestamp(now(), unit: "nanoseconds"))
+
+      . = {
+        "resourceLogs": [
+          {
+            "resource": {
+              "attributes": [
+                {"key": "service.name", "value": {"stringValue": "agent-lb"}},
+                {"key": "host.name", "value": {"stringValue": instance}}
+              ]
+            },
+            "scopeLogs": [
+              {
+                "scope": {"name": "agent-lb-vector"},
+                "logRecords": [
+                  {
+                    "timeUnixNano": ingest_nanos,
+                    "observedTimeUnixNano": ingest_nanos,
+                    "severityText": "INFO",
+                    "body": {"stringValue": raw},
+                    "attributes": [
+                      {"key": "instance", "value": {"stringValue": instance}},
+                      {"key": "file", "value": {"stringValue": file_path}}
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+sinks:
+  # Plain http sink, not the native "opentelemetry" sink. That sink's
+  # codec: otlp native batching merges multiple minimal single-record
+  # requests into one before sending (see Vector's own docs warning and
+  # https://github.com/vectordotdev/vector/issues/22054); since every event
+  # here shares an identical resource/scope, that merge silently dropped all
+  # but one record per batch in testing (confirmed: a marker line ingested
+  # alongside other agent-lb.err.log traffic in the same ~5s batch window
+  # never reached PostHog, even though earlier/later lines in the same file
+  # did). batch.max_events: 1 sends one self-contained OTLP request per log
+  # line instead, avoiding that merge path entirely.
+  posthog_logs:
+    type: http
+    inputs:
+      - shape_otlp
+    uri: https://us.i.posthog.com/i/v1/logs
+    method: post
+    compression: gzip
+    encoding:
+      # PostHog's OTLP endpoint requires protobuf, not JSON (codec: json got
+      # HTTP 400 Bad Request in testing). codec: otlp is safe here because
+      # batch.max_events: 1 means there is never more than one event for the
+      # encoder to merge.
+      codec: otlp
+    request:
+      headers:
+        Authorization: "Bearer phc_w2pQMaYoZmIWTwtZCYxeCNBXLnfVvDCUjMtzpuEte0F"
+    batch:
+      max_events: 1
+    healthcheck:
+      enabled: false
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
