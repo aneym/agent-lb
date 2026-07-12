@@ -1035,6 +1035,13 @@ class AdditionalUsageRepository:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
         bind = self._session.get_bind()
         if bind is not None and bind.dialect.name == "postgresql" and account_ids:
+            # PostgreSQL rows are canonicalized on write/backfill. Avoid the
+            # legacy lower(limit_name/metered_feature) OR branches here: they
+            # prevent the composite quota/window/account index from serving
+            # this hot-path lookup.
+            conditions[0] = AdditionalUsageHistory.quota_key.in_(
+                tuple(scope.quota_key_match_values or {scope.quota_key})
+            )
             accounts = (
                 select(Account.id.label("account_id"))
                 .where(Account.id.in_(account_ids))
