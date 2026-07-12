@@ -42,6 +42,37 @@ The bridge MUST preserve ordered system and message text, supported images, tool
 - **WHEN** Responses emits streamed output text
 - **THEN** the bridge emits an ordered Messages sequence ending with exactly one `message_delta` and one `message_stop`
 
+### Requirement: Context overflow surfaces as a Claude Code compaction trigger
+
+When an upstream Responses inference fails because the request exceeds the model context window (an upstream `context_length_exceeded` code, or a context-window/token-limit failure message), the ccdex bridge MUST translate the failure into an Anthropic-native `invalid_request_error` whose message contains the phrase `prompt is too long`, preserving the upstream HTTP status. It MUST NOT surface the overflow as a generic `api_error`, as a normal (empty) assistant success, or as any code the Claude Code harness classifies as retryable (for example `overloaded_error`). This applies to the pre-stream non-streaming error response, nested mid-stream failures, and top-level Codex error frames. Non-overflow upstream errors MUST retain their existing translation.
+
+#### Scenario: Pre-stream context overflow
+
+- **GIVEN** a `/v1/ccdex/messages` turn whose input exceeds the model context window
+- **WHEN** the upstream returns a `context_length_exceeded` error before streaming begins
+- **THEN** the endpoint returns an Anthropic error envelope of type `invalid_request_error` whose message contains `prompt is too long`
+- **AND** the upstream HTTP status is preserved
+
+#### Scenario: Mid-stream context overflow
+
+- **GIVEN** a `/v1/ccdex/messages` turn that has started streaming
+- **WHEN** the upstream stream emits a nested `context_length_exceeded` failure
+- **THEN** the bridge emits an Anthropic `error` event of type `invalid_request_error` whose message contains `prompt is too long`
+- **AND** the bridge emits no trailing successful `message_delta` or `message_stop`
+
+#### Scenario: Top-level Codex context overflow frame
+
+- **GIVEN** a `/v1/ccdex/messages` turn that has started streaming
+- **WHEN** Codex emits a top-level `error` frame whose root `code` is `context_length_exceeded`
+- **THEN** the bridge emits an Anthropic `error` event of type `invalid_request_error` whose message contains `prompt is too long`
+- **AND** the bridge emits no trailing successful `message_delta` or `message_stop`
+
+#### Scenario: Non-overflow upstream error is unchanged
+
+- **GIVEN** a `/v1/ccdex/messages` turn
+- **WHEN** the upstream returns a non-overflow failure
+- **THEN** the bridge surfaces it as an `api_error` carrying the upstream message
+
 ### Requirement: No hidden reasoning disclosure
 The bridge MUST NOT expose private chain-of-thought and SHALL replay only validated opaque encrypted reasoning state needed for multi-turn continuity.
 

@@ -1,0 +1,9 @@
+# Tasks
+
+- [x] Shared overflow classifier in the ccdex bridge (upstream `context_length_exceeded` code, or context-window/token-limit message markers) + an Anthropic overflow message builder that guarantees the `prompt is too long` substring while preserving upstream detail
+- [x] `anthropic_error_from_response`: overflow → `invalid_request_error` with a `prompt is too long` message (status preserved by the caller); non-overflow unchanged (`api_error`)
+- [x] `_ClaudeStreamState.consume` `response.failed`/`error` branch: read the error detail (including `response.error` for `response.failed`), overflow → `invalid_request_error` `prompt is too long` event; non-overflow unchanged
+- [x] Failing regression at the real `/v1/ccdex/messages` boundary: upstream context_length_exceeded startup error must return an Anthropic `invalid_request_error` containing `prompt is too long`, not `api_error` — red on current code; plus a mid-stream `response.failed` `context_length_exceeded` SSE variant through the same route that emits the overflow error with no trailing `message_stop` success
+- [x] Unit tests: `anthropic_error_from_response` overflow vs non-overflow; `consume` mid-stream overflow event
+- [x] `_ClaudeStreamState.consume` error extraction: also read the ChatGPT-backed Codex top-level `error` frame (detail fields `code`/`message`/`error_type` on the event root, no nested `error`/`response.error`) so mid-stream overflow via that shape maps to `invalid_request_error` `prompt is too long` while generic top-level errors stay `api_error` (regression tests: `test_response_translation_maps_top_level_error_frame_overflow`, `test_response_translation_keeps_top_level_generic_error_as_api_error`)
+- [x] Gates: `uv run ruff check app clients tests`; targeted ccdex + bridge suites; app import; `openspec validate --specs`

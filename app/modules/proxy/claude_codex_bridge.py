@@ -19,6 +19,72 @@ CCDEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 CCDEX_SERVICE_TIER = "priority"
 _SIGNATURE_PREFIX = "codex:"
 
+# Claude Code's harness only reactive-compacts when the failed turn's error
+# message contains this phrase (case-insensitive); any other envelope is either
+# retried (server_overload) or non-compacting, which storms identical
+# over-limit requests. See openspec/changes/fix-ccdex-context-compaction.
+_PROMPT_TOO_LONG = "Prompt is too long"
+_CONTEXT_OVERFLOW_CODE = "context_length_exceeded"
+_CONTEXT_OVERFLOW_MESSAGE_MARKERS = (
+    "prompt is too long",
+    "context window",
+    "context length",
+    "input token limit",
+    "maximum context length",
+)
+
+
+def _is_context_overflow_error(code: str | None, message: str | None) -> bool:
+    if isinstance(code, str) and code.strip().lower() == _CONTEXT_OVERFLOW_CODE:
+        return True
+    if isinstance(message, str):
+        lowered = message.lower()
+        return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MESSAGE_MARKERS)
+    return False
+
+
+def _anthropic_overflow_message(detail: str | None) -> str:
+    text = detail.strip() if isinstance(detail, str) and detail.strip() else ""
+    if not text:
+        return _PROMPT_TOO_LONG
+    if "prompt is too long" in text.lower():
+        return text
+    return f"{_PROMPT_TOO_LONG}: {text}"
+
+
+def _anthropic_error_payload(code: str | None, message: str) -> JsonObject:
+    if _is_context_overflow_error(code, message):
+        return {"type": "invalid_request_error", "message": _anthropic_overflow_message(message)}
+    return {"type": "api_error", "message": message}
+
+
+def _error_fields_from_event(event: JsonObject) -> tuple[str | None, str]:
+    """Pull (code, message) from a Responses error frame.
+
+    Covers the three upstream nestings seen on this route: the standard
+    ``{"error": {...}}`` envelope, a ``response.failed`` event carrying
+    ``response.error``, and the ChatGPT-backed Codex ``error`` frame that puts
+    the detail fields (``code``/``message``) directly on the event root instead
+    of under an ``error`` object. Missing the last shape forwarded context
+    overflows as a generic ``api_error`` and broke reactive compaction.
+    """
+    error = event.get("error")
+    if not isinstance(error, dict):
+        response = event.get("response")
+        error = response.get("error") if isinstance(response, dict) else None
+    if not isinstance(error, dict) and event.get("type") == "error":
+        error = event
+    message = "OpenAI response failed"
+    code: str | None = None
+    if isinstance(error, dict):
+        message_value = error.get("message")
+        if isinstance(message_value, str) and message_value.strip():
+            message = message_value
+        code_value = error.get("code")
+        if isinstance(code_value, str) and code_value.strip():
+            code = code_value
+    return code, message
+
 
 def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
     """Translate the Claude Messages shapes emitted by Claude Code to Responses input."""
@@ -211,15 +277,19 @@ async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:
 
 def anthropic_error_from_response(status_code: int, body: bytes) -> JsonObject:
     message = body.decode("utf-8", "replace") or f"upstream request failed with status {status_code}"
+    code: str | None = None
     try:
         parsed = json.loads(message)
-        if isinstance(parsed, dict):
-            error = parsed.get("error")
-            if isinstance(error, dict) and isinstance(error.get("message"), str):
-                message = error["message"]
     except json.JSONDecodeError:
-        pass
-    return {"type": "error", "error": {"type": "api_error", "message": message}}
+        parsed = None
+    if isinstance(parsed, dict):
+        error = parsed.get("error")
+        if isinstance(error, dict):
+            if isinstance(error.get("message"), str):
+                message = error["message"]
+            if isinstance(error.get("code"), str):
+                code = error["code"]
+    return {"type": "error", "error": _anthropic_error_payload(code, message)}
 
 
 def _text_message(role: str, text: str) -> JsonObject:
@@ -416,11 +486,8 @@ class _ClaudeStreamState:
             output.extend(self._complete(response if isinstance(response, dict) else {}))
         elif event_type in {"response.failed", "error"}:
             output.extend(self._close_block())
-            error = event.get("error")
-            message = "OpenAI response failed"
-            if isinstance(error, dict) and isinstance(error.get("message"), str):
-                message = error["message"]
-            output.append({"type": "error", "error": {"type": "api_error", "message": message}})
+            code, message = _error_fields_from_event(event)
+            output.append({"type": "error", "error": _anthropic_error_payload(code, message)})
             self.saw_terminal = True
         return output
 

@@ -7,6 +7,7 @@ import pytest
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.modules.proxy.claude_codex_bridge import (
     CCDEX_MODEL,
+    anthropic_error_from_response,
     claude_to_responses,
     estimate_claude_input_tokens,
     responses_to_claude_sse,
@@ -130,3 +131,88 @@ async def test_response_translation_emits_tool_use_and_partial_json() -> None:
 
 def test_local_token_count_does_not_depend_on_anthropic() -> None:
     assert estimate_claude_input_tokens({"model": "anything", "messages": []}) > 0
+
+
+def test_error_response_maps_context_overflow_to_prompt_too_long() -> None:
+    body = json.dumps(
+        {
+            "error": {
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+                "message": "Your input exceeds the context window of this model.",
+            }
+        }
+    ).encode()
+
+    error = anthropic_error_from_response(400, body)["error"]
+
+    assert error["type"] == "invalid_request_error"
+    assert "prompt is too long" in error["message"].lower()
+    assert error["message"] != '"type":"overloaded_error"'
+
+
+def test_error_response_keeps_non_overflow_as_api_error() -> None:
+    body = json.dumps({"error": {"type": "server_error", "message": "boom"}}).encode()
+
+    error = anthropic_error_from_response(500, body)["error"]
+
+    assert error == {"type": "api_error", "message": "boom"}
+
+
+@pytest.mark.asyncio
+async def test_response_translation_maps_mid_stream_overflow_to_prompt_too_long() -> None:
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield (
+            'data: {"type":"error","error":{"type":"invalid_request_error",'
+            '"code":"context_length_exceeded","message":"Input token limit exceeded"}}\n\n'
+        )
+
+    frames = [frame async for frame in responses_to_claude_sse(source())]
+    payloads = [json.loads(frame.split("data: ", 1)[1]) for frame in frames]
+
+    error = next(payload for payload in payloads if payload["type"] == "error")["error"]
+    assert error["type"] == "invalid_request_error"
+    assert "prompt is too long" in error["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_response_translation_maps_top_level_error_frame_overflow() -> None:
+    # ChatGPT-backed Codex emits terminal errors as a top-level frame with the
+    # detail fields on the event root (``code``/``message``/``error_type``)
+    # instead of under an ``error`` envelope or ``response.error``. The
+    # converter must still classify these as context overflow.
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield (
+            'data: {"type":"error","status_code":400,"error_type":"invalid_request_error",'
+            '"code":"context_length_exceeded",'
+            '"message":"Your input exceeds the context window of this model. '
+            'Please adjust your input and try again."}\n\n'
+        )
+
+    frames = [frame async for frame in responses_to_claude_sse(source())]
+    payloads = [json.loads(frame.split("data: ", 1)[1]) for frame in frames]
+
+    error = next(payload for payload in payloads if payload["type"] == "error")["error"]
+    assert error["type"] == "invalid_request_error"
+    assert "prompt is too long" in error["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_response_translation_keeps_top_level_generic_error_as_api_error() -> None:
+    # A generic top-level error frame (no overflow signal) must stay api_error
+    # so Claude Code does not spuriously reactive-compact on unrelated failures.
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield (
+            'data: {"type":"error","status_code":500,"error_type":"server_error",'
+            '"code":"internal_error","message":"upstream boom"}\n\n'
+        )
+
+    frames = [frame async for frame in responses_to_claude_sse(source())]
+    payloads = [json.loads(frame.split("data: ", 1)[1]) for frame in frames]
+
+    error = next(payload for payload in payloads if payload["type"] == "error")["error"]
+    assert error["type"] == "api_error"
+    assert error["message"] == "upstream boom"
