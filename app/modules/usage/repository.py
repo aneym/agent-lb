@@ -1033,28 +1033,53 @@ class AdditionalUsageRepository:
             conditions.append(AdditionalUsageHistory.account_id.in_(account_ids))
         if since is not None:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
-        subq = (
-            select(
-                AdditionalUsageHistory.id.label("usage_id"),
-                func.row_number()
-                .over(
-                    partition_by=AdditionalUsageHistory.account_id,
-                    order_by=(
-                        AdditionalUsageHistory.recorded_at.desc(),
-                        AdditionalUsageHistory.used_percent.desc(),
-                        AdditionalUsageHistory.id.desc(),
-                    ),
-                )
-                .label("row_number"),
+        bind = self._session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql" and account_ids:
+            accounts = (
+                select(Account.id.label("account_id"))
+                .where(Account.id.in_(account_ids))
+                .subquery("quota_accounts")
             )
-            .where(*conditions)
-            .subquery()
-        )
-        stmt = (
-            select(AdditionalUsageHistory)
-            .join(subq, AdditionalUsageHistory.id == subq.c.usage_id)
-            .where(subq.c.row_number == 1)
-        )
+            latest = (
+                select(AdditionalUsageHistory.id.label("usage_id"))
+                .where(*conditions, AdditionalUsageHistory.account_id == accounts.c.account_id)
+                .order_by(
+                    AdditionalUsageHistory.recorded_at.desc(),
+                    AdditionalUsageHistory.used_percent.desc(),
+                    AdditionalUsageHistory.id.desc(),
+                )
+                .limit(1)
+                .lateral("latest_additional_usage")
+            )
+            stmt = (
+                select(AdditionalUsageHistory)
+                .select_from(accounts)
+                .join(latest, true())
+                .join(AdditionalUsageHistory, AdditionalUsageHistory.id == latest.c.usage_id)
+            )
+        else:
+            subq = (
+                select(
+                    AdditionalUsageHistory.id.label("usage_id"),
+                    func.row_number()
+                    .over(
+                        partition_by=AdditionalUsageHistory.account_id,
+                        order_by=(
+                            AdditionalUsageHistory.recorded_at.desc(),
+                            AdditionalUsageHistory.used_percent.desc(),
+                            AdditionalUsageHistory.id.desc(),
+                        ),
+                    )
+                    .label("row_number"),
+                )
+                .where(*conditions)
+                .subquery()
+            )
+            stmt = (
+                select(AdditionalUsageHistory)
+                .join(subq, AdditionalUsageHistory.id == subq.c.usage_id)
+                .where(subq.c.row_number == 1)
+            )
         result = await self._session.execute(stmt)
         return {entry.account_id: entry for entry in result.scalars().all()}
 

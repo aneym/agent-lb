@@ -18,8 +18,9 @@ needed to be, and the cost grows with request history.
 - The dashboard, which renders per-account token/cost columns, requests `?fresh=1`.
 - The request-usage aggregation is short-TTL cached so repeated `?fresh=1` polls do
   not re-run the scan.
-- The additional-usage per-quota-key queries are scoped to the live account ids so
-  they stop scanning history for accounts that no longer exist.
+- The additional-usage per-quota-key queries are scoped to the live account ids.
+  PostgreSQL resolves each account's latest row through the existing composite
+  index rather than ranking the full matching history.
 - The `cc` launcher caps the banner-enrichment `/api/accounts` call so it is never on
   the startup critical path even if the endpoint is slow.
 

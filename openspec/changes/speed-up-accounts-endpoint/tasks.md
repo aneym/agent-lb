@@ -8,6 +8,8 @@
 - [x] Short-TTL cache the per-account additional-quota windows (the ~14 serial
       round-trips that remain on the default path); clear caches between tests.
 - [x] Scope the additional-usage `latest_by_account` queries by `account_ids`.
+- [x] On PostgreSQL, resolve each account's latest additional-quota row with an
+      indexed lateral lookup instead of ranking the full matching history.
 - [x] Dashboard `listAccounts()` requests `?fresh=1`.
 - [x] Existing request-usage tests opt into `?fresh=1`; add a regression test
       asserting the default omits `requestUsage` and `?fresh=1` includes it.
