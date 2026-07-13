@@ -26,6 +26,8 @@ from app.db.session import get_background_session
 class AccountsRepositoryPort(Protocol):
     async def get_by_id(self, account_id: str) -> Account | None: ...
 
+    async def reload_by_id(self, account_id: str) -> Account | None: ...
+
     async def update_status(
         self,
         account_id: str,
@@ -48,6 +50,7 @@ class AccountsRepositoryPort(Protocol):
         workspace_id: str | None = None,
         workspace_label: str | None = None,
         seat_type: str | None = None,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool: ...
 
     async def workspace_slot_taken(
@@ -68,7 +71,7 @@ logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
 
 
-_RefreshSingleflightKey: TypeAlias = tuple[str, str]
+_RefreshSingleflightKey: TypeAlias = tuple[str]
 
 
 class _RefreshSingleflight:
@@ -82,9 +85,7 @@ class _RefreshSingleflight:
         key: _RefreshSingleflightKey,
         factory: Callable[[], Coroutine[object, object, Account]],
     ) -> Account:
-        account_id = key[0]
         async with self._lock:
-            self._purge_stale_versions(account_id, keep_key=key)
             cached_failure = self._recent_failures.get(key)
             if cached_failure is not None:
                 expires_at, failure = cached_failure
@@ -132,16 +133,6 @@ class _RefreshSingleflight:
         except BaseException:
             logger.exception("Refresh singleflight completion cleanup failed key=%s", key)
 
-    def _purge_stale_versions(self, account_id: str, *, keep_key: _RefreshSingleflightKey) -> None:
-        stale_failures = [key for key in self._recent_failures if key[0] == account_id and key != keep_key]
-        for key in stale_failures:
-            self._recent_failures.pop(key, None)
-        stale_inflight = [
-            key for key, task in self._inflight.items() if key[0] == account_id and key != keep_key and task.done()
-        ]
-        for key in stale_inflight:
-            self._inflight.pop(key, None)
-
     def clear(self) -> None:
         self._inflight.clear()
         self._recent_failures.clear()
@@ -169,10 +160,29 @@ class AuthManager:
         # connection. See _run_refresh.
         self._refresh_repo_factory = refresh_repo_factory
 
-    async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account:
-        if force or _account_needs_refresh(self._encryptor, account):
+    async def ensure_fresh(
+        self,
+        account: Account,
+        *,
+        force: bool = False,
+        force_min_remaining_seconds: int | None = None,
+    ) -> Account:
+        # ``force_min_remaining_seconds`` is the P0-3 freshness floor. A background
+        # caller (model-registry refresh, auth guardian, usage updater 401 retry)
+        # passes a floor so a *forced* refresh is downgraded to "only rotate when
+        # the access-token JWT has <= floor seconds left (or cannot be read)".
+        # This stops schedulers from churning still-valid JWTs — every needless
+        # rotation force-presents a single-use refresh token and risks tripping
+        # the reuse detector. Live request paths keep unconditional ``force`` and
+        # MUST NOT pass a floor.
+        should_force = force
+        if force and force_min_remaining_seconds is not None:
+            should_force = _access_token_within_floor(
+                self._encryptor, account, min_remaining_seconds=force_min_remaining_seconds
+            )
+        if should_force or _account_needs_refresh(self._encryptor, account):
             account = await _REFRESH_SINGLEFLIGHT.run(
-                _refresh_singleflight_key(self._encryptor, account),
+                _refresh_singleflight_key(account),
                 lambda: self._run_refresh(account),
             )
         return await self._ensure_chatgpt_account_id(account)
@@ -374,8 +384,14 @@ def _chatgpt_account_id_from_id_token(id_token: str) -> str | None:
     return get_provider(OPENAI_PROVIDER_NAME).account_metadata_from_id_token(id_token).account_id
 
 
-def _refresh_singleflight_key(encryptor: TokenEncryptor, account: Account) -> _RefreshSingleflightKey:
-    return (account.id, _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted))
+def _refresh_singleflight_key(account: Account) -> _RefreshSingleflightKey:
+    # Single-flight keyed on account id alone (P0-2). Coalescing every refresh of
+    # the same account collapses the prior race where two concurrent callers
+    # holding the SAME single-use refresh token both presented it to the IdP —
+    # the second presentation tripped OpenAI's family-scoped reuse detector and
+    # revoked the whole token family. The refresh body re-reads the latest row,
+    # so it never force-presents a rotated token.
+    return (account.id,)
 
 
 def _access_token_needs_refresh(
@@ -394,6 +410,31 @@ def _access_token_needs_refresh(
     current = to_utc_naive(now) if now is not None else utcnow()
     refresh_at_ms = naive_utc_to_epoch(current) * 1000 + (_ACCESS_TOKEN_REFRESH_MARGIN_SECONDS * 1000)
     return expires_ms <= refresh_at_ms
+
+
+def _access_token_within_floor(
+    encryptor: TokenEncryptor,
+    account: Account,
+    *,
+    min_remaining_seconds: int,
+    now: datetime | None = None,
+) -> bool:
+    """Return True when a forced refresh should still proceed under the P0-3
+    freshness floor: the access-token JWT has at most ``min_remaining_seconds``
+    of life left, or it cannot be decrypted/parsed (so we cannot prove it is
+    fresh). Return False when the JWT is comfortably valid, which lets a
+    background caller skip a needless rotation of a still-good token.
+    """
+    try:
+        access_token = encryptor.decrypt(account.access_token_encrypted)
+    except Exception:
+        return True
+    expires_ms = token_expiry_epoch_ms(access_token)
+    if expires_ms is None:
+        return True
+    current = to_utc_naive(now) if now is not None else utcnow()
+    floor_at_ms = naive_utc_to_epoch(current) * 1000 + (min_remaining_seconds * 1000)
+    return expires_ms <= floor_at_ms
 
 
 def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:

@@ -60,6 +60,16 @@ class AccountsRepository:
     async def get_by_id(self, account_id: str) -> Account | None:
         return await self._session.get(Account, account_id)
 
+    async def reload_by_id(self, account_id: str) -> Account | None:
+        # Force a real DB read, bypassing the session identity-map cache. Plain
+        # ``session.get`` returns the cached instance when the AuthManager shares
+        # the caller's session (the usage-updater path builds it with no
+        # refresh_repo_factory), which would compare a token to itself. The P0-2
+        # pre-refresh re-read MUST hit the row so it can pick up a concurrent
+        # rotation, so ``populate_existing=True`` overwrites the cached object's
+        # column values from the database.
+        return await self._session.get(Account, account_id, populate_existing=True)
+
     async def list_accounts(self, *, refresh_existing: bool = False) -> list[Account]:
         stmt = select(Account).order_by(Account.email)
         if refresh_existing:
@@ -585,6 +595,7 @@ class AccountsRepository:
         workspace_id: str | None = None,
         workspace_label: str | None = None,
         seat_type: str | None = None,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool:
         values: dict[str, bytes | datetime | str | None] = {
             "access_token_encrypted": access_token_encrypted,
@@ -604,9 +615,17 @@ class AccountsRepository:
             values["workspace_label"] = workspace_label
         if seat_type is not None:
             values["seat_type"] = seat_type
-        result = await self._session.execute(
-            update(Account).where(Account.id == account_id).values(**values).returning(Account.id)
-        )
+        stmt = update(Account).where(Account.id == account_id).values(**values)
+        if expected_refresh_token_encrypted is not None:
+            # Compare-and-swap guard: only persist when the row still holds the
+            # exact refresh-token ciphertext we read. A concurrent rotation that
+            # already replaced it makes the predicate fail (no row updated), so a
+            # ``None`` scalar means "CAS lost" — NOT "row missing". The caller must
+            # treat that as a live rotation and re-read, never as a hard error.
+            # The expected value MUST be the exact bytes read from the row; Fernet
+            # ciphertext is non-deterministic, so a re-encryption would never match.
+            stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
+        result = await self._session.execute(stmt.returning(Account.id))
         await self._session.commit()
         return result.scalar_one_or_none() is not None
 
