@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 import app.modules.oauth.service as oauth_module
 from app.core.auth import generate_unique_account_id
 from app.core.clients.oauth import DeviceCode, OAuthError, OAuthTokens
+from app.core.config.settings import Settings
 from app.core.crypto import TokenEncryptor
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.time import utcnow
@@ -819,6 +820,35 @@ async def test_oauth_start_falls_back_to_device_on_os_error(async_client, monkey
     payload = start.json()
     assert payload["method"] == "device"
     assert payload["deviceAuthId"] == "dev_fallback"
+
+
+@pytest.mark.asyncio
+async def test_oauth_endpoints_blocked_on_federation_follower(async_client, monkeypatch):
+    await oauth_module._OAUTH_STORE.reset()
+
+    owner_url = "https://studio.tailf266ac.ts.net:2455"
+    follower_settings = Settings(federation_peer_url=owner_url)
+    monkeypatch.setattr(oauth_api_module, "get_settings", lambda: follower_settings)
+
+    start = await async_client.post("/api/oauth/start", json={"forceMethod": "browser"})
+    assert start.status_code == 409
+    body = start.json()
+    assert body["error"]["code"] == "oauth_owner_required"
+    assert owner_url in body["error"]["message"]
+
+    complete = await async_client.post("/api/oauth/complete", json={})
+    assert complete.status_code == 409
+    assert complete.json()["error"]["code"] == "oauth_owner_required"
+
+    manual = await async_client.post(
+        "/api/oauth/manual-callback",
+        json={"callbackUrl": "http://localhost:1455/auth/callback?code=c&state=s"},
+    )
+    assert manual.status_code == 409
+    assert manual.json()["error"]["code"] == "oauth_owner_required"
+
+    async with oauth_module._OAUTH_STORE.lock:
+        assert oauth_module._OAUTH_STORE._flows == {}
 
 
 @pytest.mark.asyncio

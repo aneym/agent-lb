@@ -11,9 +11,24 @@
 #   scripts/anthropic-auth.sh status <flowId>                # check a flow's status
 #   scripts/anthropic-auth.sh accounts                       # list Anthropic accounts + status
 #
-# Env: BASE_URL (default http://127.0.0.1:2455)
+# Env: BASE_URL (default: the federation owner if this instance is a
+#      follower — see _default_base_url below — else http://127.0.0.1:2455)
 set -euo pipefail
-BASE_URL="${BASE_URL:-http://127.0.0.1:2455}"
+
+# A federation follower mirrors the owner's accounts but never receives
+# refresh tokens (app/modules/federation/schemas.py), so OAuth run against a
+# follower writes a local credential the owner can never pick up. Default to
+# the owner instance by reading the peer URL out of the launchd service env;
+# a standalone/owner instance has no peer URL configured and falls back to
+# localhost as before. Explicit BASE_URL always wins.
+_default_base_url() {
+  local peer_url
+  peer_url="$(launchctl print "gui/$(id -u)/com.aneyman.agent-lb" 2>/dev/null \
+    | awk -F' => ' '/AGENT_LB_FEDERATION_PEER_URL/ {print $2; exit}')"
+  echo "${peer_url:-http://127.0.0.1:2455}"
+}
+
+BASE_URL="${BASE_URL:-$(_default_base_url)}"
 cmd="${1:-}"
 pp() { python3 -m json.tool 2>/dev/null || cat; }
 

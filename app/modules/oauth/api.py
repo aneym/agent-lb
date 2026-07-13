@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.clients.oauth import OAuthError
+from app.core.config.settings import get_settings
 from app.core.errors import dashboard_error
+from app.core.exceptions import DashboardConflictError
 from app.dependencies import OauthContext, get_oauth_context
 from app.modules.oauth.schemas import (
     ManualCallbackRequest,
@@ -28,11 +30,29 @@ router = APIRouter(
 )
 
 
+def _require_oauth_owner() -> None:
+    """Block OAuth on a federation follower.
+
+    A follower mirrors the owner's accounts but never receives refresh
+    tokens for them (app/modules/federation/schemas.py), so completing OAuth
+    here would persist a local-only credential the owner can never pick up.
+    Fail visibly and point at the owner instead of silently accepting it.
+    """
+    peer_url = get_settings().federation_peer_url
+    if peer_url:
+        raise DashboardConflictError(
+            "This instance mirrors accounts from the federation owner and cannot "
+            f"complete OAuth locally. Run OAuth against the owner instance instead: {peer_url}",
+            code="oauth_owner_required",
+        )
+
+
 @router.post("/start", response_model=OauthStartResponse)
 async def start_oauth(
     request: OauthStartRequest,
     context: OauthContext = Depends(get_oauth_context),
 ) -> OauthStartResponse | JSONResponse:
+    _require_oauth_owner()
     try:
         return await context.service.start_oauth(request)
     except OAuthError as exc:
@@ -60,6 +80,7 @@ async def complete_oauth(
     request: OauthCompleteRequest | None = Body(default=None),
     context: OauthContext = Depends(get_oauth_context),
 ) -> OauthCompleteResponse | JSONResponse:
+    _require_oauth_owner()
     try:
         return await context.service.complete_oauth(request)
     except NotImplementedError:
@@ -74,6 +95,7 @@ async def manual_callback(
     request: ManualCallbackRequest,
     context: OauthContext = Depends(get_oauth_context),
 ) -> ManualCallbackResponse | JSONResponse:
+    _require_oauth_owner()
     try:
         return await context.service.manual_callback(request.callback_url, flow_id=request.flow_id)
     except OAuthError as exc:
