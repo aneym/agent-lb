@@ -248,6 +248,11 @@ class AccountsService:
         if additional_usage_repo:
             additional_quota_routing_overrides = await self._repo.additional_quota_routing_policy_overrides()
             quota_keys = [definition.quota_key for definition in list_additional_quota_definitions()]
+            # The Fable scoped-weekly marker is written outside the registry
+            # (see app/modules/usage/updater.py); clients read its percent from
+            # additionalQuotas, so enumerate it explicitly.
+            if _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY not in quota_keys:
+                quota_keys.append(_ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY)
             now_epoch = int(time.time())
             for quota_key in quota_keys:
                 primary_entries = await additional_usage_repo.latest_by_account(
