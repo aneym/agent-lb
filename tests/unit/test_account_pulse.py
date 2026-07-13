@@ -398,6 +398,21 @@ async def test_pulse_reactivates_recovered_account() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pulse_clears_stale_deactivation_reason_on_active_account() -> None:
+    """Regression: an active account can carry a leftover deactivation reason
+    (a recovery path restored status without clearing it); clients render a
+    non-null reason as disconnected, so a healthy probe must reconcile it."""
+    account = _account(status=AccountStatus.ACTIVE)
+    account.deactivation_reason = "Authentication failed: invalid_api_key"
+    repo = _Repo([account])
+    scheduler = _build_scheduler(repo, probe_results={account.id: (200, None)})
+
+    await scheduler.pulse_once()
+
+    assert repo.status_updates == [(account.id, AccountStatus.ACTIVE, None)]
+
+
+@pytest.mark.asyncio
 async def test_pulse_skips_paused_accounts() -> None:
     account = _account(status=AccountStatus.PAUSED)
     repo = _Repo([account])

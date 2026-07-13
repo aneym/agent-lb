@@ -459,6 +459,24 @@ class AccountPulseScheduler:
                     },
                 )
                 logger.info("Account pulse reactivated account_id=%s", account.id)
+            elif account.status == AccountStatus.ACTIVE and account.deactivation_reason is not None:
+                # A healthy probe proves any stored deactivation reason is stale
+                # (a recovery path restored status without clearing it); clients
+                # treat a non-null reason as disconnected, so reconcile it away.
+                await repo.update_status(account.id, AccountStatus.ACTIVE, None)
+                get_account_selection_cache().invalidate()
+                AuditService.log_async(
+                    "account_pulse_cleared_stale_deactivation_reason",
+                    details={
+                        "account_id": account.id,
+                        "stale_reason": account.deactivation_reason,
+                        "probe_status_code": status,
+                    },
+                )
+                logger.info(
+                    "Account pulse cleared stale deactivation reason account_id=%s",
+                    account.id,
+                )
             return
         if verdict is probes.ProbeVerdict.UNSUBSCRIBED:
             self._failures.pop(account.id, None)
