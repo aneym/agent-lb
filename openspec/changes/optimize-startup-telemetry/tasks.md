@@ -15,7 +15,7 @@
 
 - [x] 3.1 Add tests proving interactive readiness selection, headless session claiming, ccdex capability plus routable-pool validation, and remote-first/local-fallback ordering
 - [x] 3.2 Defer interactive account selection to the first proxied message, collapse redundant headless probes, reject empty ccdex candidates, retain the measured-faster portable proxy subprocess, and preserve connectable-before-exec proof
-- 3.3 (pending rollout) Exercise `cc`, `ccdex`, and `co` dry-run or real paths and record before/after useful-output/proxy-ready samples
+- [x] 3.3 Exercise `cc`, `ccdex`, and `co` dry-run or real paths and record before/after useful-output/proxy-ready samples
 
 ## 4. Installer Restart Optimization
 
@@ -27,5 +27,5 @@
 
 - [x] 5.1 Run focused tests, launcher byte-compilation, Ruff, strict OpenSpec validation, and the benchmark regression gate
 - 5.2 (pending rollout) Sync the delta specs and stable startup-performance operational context, verify the change, and archive it
-- 5.3 (pending rollout) Commit and push validated changes to `main`, fast-forward the MacBook checkout, and rerun remote health plus `co`
+- [x] 5.3 Commit and push validated changes to `main`, fast-forward the MacBook checkout, and rerun remote health plus `co`
 - 5.4 (pending closeout) Report exact baseline/improved timings, artifacts, unmeasured Docker/Helm scope, and any remaining remote Claude login requirement

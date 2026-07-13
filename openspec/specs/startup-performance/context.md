@@ -11,7 +11,7 @@ Startup is measured as separate boundaries: service startup, service readiness, 
 - Records keep a stable label and executable name, but omit raw arguments, prompts, credentials, and environment values.
 - Alembic-head validation remains fail closed. Full schema drift validation is explicit at startup and remains mandatory in `agent-lb-db check`.
 - Interactive `cc` defers account enrichment until first use; headless `cc` keeps eager deterministic selection.
-- `ccdex` proves both protocol capability and a routable OpenAI pool. On laptops, remote-first ordering keeps the local federated mirror as the disconnected fallback.
+- `ccdex` proves both protocol capability and a routable OpenAI pool. The launcher supports either endpoint order. The deployed laptop posture uses its federated access-token mirror first for startup speed and Studio second as fallback; Studio remains the sole refresh-token owner. `CLAUDE_LB_PREFER_REMOTE=1` remains available when owner-first routing is preferred.
 
 ## Operations and example
 
