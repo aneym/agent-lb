@@ -5,10 +5,11 @@ from typing import Any
 
 import pytest
 
+from app.core.anthropic.models import AnthropicMessageRequest
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy import anthropic_service as anthropic_service_module
 from app.modules.proxy import api as proxy_api
-from app.modules.proxy.anthropic_service import AnthropicCountTokensResult, AnthropicProxyError
+from app.modules.proxy.anthropic_service import AnthropicCountTokensResult, AnthropicProxyError, AnthropicProxyStream
 
 pytestmark = pytest.mark.unit
 
@@ -69,6 +70,105 @@ _COUNT_TOKENS_PAYLOAD = {
     "messages": [{"role": "user", "content": "hello"}],
     "thinking": {"type": "adaptive"},
 }
+
+
+@pytest.mark.asyncio
+async def test_v1_messages_forwards_server_tool_and_stream_unchanged(
+    async_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Search the web"}],
+        "stream": True,
+        "tools": [
+            {
+                "type": "web_search_20260209",
+                "name": "web_search",
+                "max_uses": 5,
+                "allowed_domains": ["example.com"],
+            }
+        ],
+    }
+    upstream_chunks = [
+        b"event: content_block_start\ndata: "
+        b'{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use",'
+        b'"id":"srvtoolu_01","name":"web_search","input":{"query":"example"}}}\n\n',
+        b"event: content_block_start\ndata: "
+        b'{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result",'
+        b'"tool_use_id":"srvtoolu_01","content":[]}}\n\n',
+    ]
+    forwarded: dict[str, object] = {}
+
+    async def fake_enforce_request_limits(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    async def fake_stream_messages(
+        self: object,
+        request: AnthropicMessageRequest,
+        inbound_headers: Mapping[str, str],
+        *,
+        api_key: object = None,
+        api_key_reservation: object = None,
+    ) -> AnthropicProxyStream:
+        del self, inbound_headers, api_key, api_key_reservation
+        forwarded["payload"] = request.model_dump(mode="json", exclude_none=True)
+
+        async def body() -> AsyncIterator[bytes]:
+            for chunk in upstream_chunks:
+                yield chunk
+
+        return AnthropicProxyStream(body=body(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_enforce_request_limits", fake_enforce_request_limits)
+    monkeypatch.setattr(
+        anthropic_service_module.AnthropicProxyService,
+        "stream_messages",
+        fake_stream_messages,
+    )
+
+    response = await async_client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 200
+    assert forwarded["payload"] == payload
+    assert response.content == b"".join(upstream_chunks)
+
+
+@pytest.mark.asyncio
+async def test_v1_ccdex_messages_rejects_anthropic_defined_tools(
+    async_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    was_called = False
+
+    async def fake_stream_responses(*args: object, **kwargs: object) -> None:
+        nonlocal was_called
+        del args, kwargs
+        was_called = True
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream_responses)
+
+    response = await async_client.post(
+        "/v1/ccdex/messages",
+        json={
+            "model": "caller-controlled-model",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "stream": True,
+            "tools": [{"type": "web_search_20260209", "name": "web_search"}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "Anthropic-defined tools are not supported by the ccdex compatibility route",
+        },
+    }
+    assert was_called is False
 
 
 def _guard_reservation_paths(monkeypatch: pytest.MonkeyPatch) -> tuple[list[object], list[object]]:

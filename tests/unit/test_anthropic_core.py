@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.anthropic.model_registry import AnthropicModelRegistry, parse_model_list_payload
 from app.core.anthropic.models import (
@@ -264,6 +265,70 @@ def test_message_request_model_accepts_tools_and_system_prompt():
     assert request.system == "You are Claude Code, Anthropic's official CLI for Claude."
     assert request.tools is not None
     assert request.tools[0].name == "Read"
+    assert request.model_dump(mode="json", exclude_none=True)["tools"] == [
+        {
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {
+                "type": "object",
+                "properties": {"file_path": {"type": "string"}},
+                "required": ["file_path"],
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool_type", "optional_fields"),
+    [
+        (
+            "web_search_20250305",
+            {"max_uses": 3, "allowed_domains": ["example.com"]},
+        ),
+        (
+            "web_search_20260209",
+            {
+                "max_uses": 7,
+                "blocked_domains": ["example.net"],
+                "user_location": {
+                    "type": "approximate",
+                    "city": "New York",
+                    "region": "New York",
+                    "country": "US",
+                    "timezone": "America/New_York",
+                },
+            },
+        ),
+    ],
+)
+def test_message_request_model_preserves_anthropic_defined_tools(
+    tool_type: str,
+    optional_fields: dict[str, object],
+) -> None:
+    tool = {"type": tool_type, "name": "web_search", **optional_fields}
+
+    request = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "search the web"}],
+            "tools": [tool],
+        }
+    )
+
+    assert request.model_dump(mode="json", exclude_none=True)["tools"] == [tool]
+
+
+def test_message_request_model_rejects_custom_tool_without_input_schema():
+    with pytest.raises(ValidationError):
+        AnthropicMessageRequest.model_validate(
+            {
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "inspect the repo"}],
+                "tools": [{"name": "Read", "description": "Read a file"}],
+            }
+        )
 
 
 def test_message_request_model_accepts_current_claude_code_fable_payload_shape():
