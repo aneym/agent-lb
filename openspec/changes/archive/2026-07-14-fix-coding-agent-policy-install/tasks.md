@@ -8,4 +8,4 @@
 
 - [x] 2.1 Add regression tests for legacy migration, unrelated configuration preservation, idempotency, preview, and verifier diagnostics.
 - [x] 2.2 Sync the deployment-installation specification and validate the OpenSpec change strictly.
-- [ ] 2.3 Run client validation, archive the verified change, publish `main`, and install and verify the policy on the MacBook.
+- [x] 2.3 Run client validation, archive the verified change, publish `main`, and install and verify the policy on the MacBook.
