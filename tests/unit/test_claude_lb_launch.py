@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
+import socket
 import time
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 def load_launcher_module():
@@ -64,16 +69,54 @@ def test_ccdex_skip_permissions_flag_suppresses_bypass_injection() -> None:
     assert "--permission-mode" not in command
 
 
-def test_ccdex_proxy_rewrites_only_gpt_messages_and_token_count() -> None:
+def test_ccdex_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() -> None:
     launcher = load_launcher_module()
     launcher.CCDEX_MODE = True
 
     gpt_body = b'{"model":"gpt-5.6-sol"}'
     claude_body = b'{"model":"claude-opus-4-8"}'
     assert launcher._ccdex_upstream_path("/v1/messages", gpt_body) == "/v1/ccdex/messages"
-    assert launcher._ccdex_upstream_path("/v1/messages", claude_body) == "/v1/messages"
+    with pytest.raises(launcher.CcdexModelViolation, match="rejected Messages request for claude-opus-4-8"):
+        launcher._ccdex_upstream_path("/v1/messages", claude_body)
     assert launcher._ccdex_upstream_path("/v1/messages/count_tokens", claude_body) == "/v1/ccdex/messages/count_tokens"
     assert launcher._ccdex_upstream_path("/api/organizations", gpt_body) == "/api/organizations"
+
+
+def test_ccdex_http_shim_rejects_claude_before_upstream(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = True
+    monkeypatch.setattr(
+        launcher.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not contact upstream")),
+    )
+    client, server_socket = socket.socketpair()
+    body = b'{"model":"claude-fable-5","messages":[]}'
+    request = (
+        b"POST /v1/messages HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode()
+        + b"Content-Type: application/json\r\nConnection: close\r\n\r\n"
+        + body
+    )
+    client.sendall(request)
+    client.shutdown(socket.SHUT_WR)
+    fake_server = SimpleNamespace(
+        parent_pid=os.getpid(),
+        session_id="test-session",
+        upstream_base_url="http://127.0.0.1:9",
+    )
+
+    launcher._LbApiHandler(server_socket, ("127.0.0.1", 0), fake_server)
+    server_socket.close()
+    response = b""
+    while chunk := client.recv(4096):
+        response += chunk
+    client.close()
+
+    assert response.startswith(b"HTTP/1.1 400")
+    assert b'"type": "invalid_request_error"' in response
+    assert b"rejected Messages request for claude-fable-5" in response
 
 
 def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
@@ -81,10 +124,13 @@ def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
     launcher.CCDEX_MODE = False
 
     assert launcher._ccdex_upstream_path("/v1/messages", b'{"model":"gpt-5.6-sol"}') == "/v1/messages"
-    assert launcher._ccdex_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}') == "/v1/messages/count_tokens"
+    assert (
+        launcher._ccdex_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}')
+        == "/v1/messages/count_tokens"
+    )
 
 
-def test_regular_cc_build_command_is_unchanged(monkeypatch) -> None:
+def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypatch) -> None:
     launcher = load_launcher_module()
     launcher.CCDEX_MODE = False
     monkeypatch.setenv("CC_EFFORT_LEVEL", "xhigh")
@@ -100,6 +146,25 @@ def test_regular_cc_build_command_is_unchanged(monkeypatch) -> None:
         "plan",
         "--model",
         "claude-opus-4-8",
+        "-p",
+        "hello",
+    ]
+
+
+def test_regular_cc_defaults_to_fable_high(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    launcher.CCDEX_MODE = False
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    monkeypatch.delenv("CC_EFFORT_LEVEL", raising=False)
+
+    command = launcher.build_command(["-p", "hello"])
+
+    assert command == [
+        "claude",
+        "--model",
+        "claude-fable-5",
+        "--effort",
+        "high",
         "-p",
         "hello",
     ]

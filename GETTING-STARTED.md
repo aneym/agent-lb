@@ -118,14 +118,18 @@ request as already satisfied — check `accounts` before assuming anything faile
 
 ### Claude Code
 
-Recommended: the vendored launcher, which adds sticky per-session account routing (keeps
-prompt cache on one account) and a quota banner:
+Recommended: install the vendored launch profiles and CCDEX worker transport. The
+installer is previewable, preserves a pre-existing regular `~/.local/bin/cc` as
+`cc.pre-agent-lb`, and registers the user-scoped worker MCP:
 
-```zsh
-# in ~/.zshrc — adjust the path to the clone location
-cc() { "$HOME/repos/agent-lb/clients/claude-lb-launch" "$@"; }
-ccdex() { "$HOME/repos/agent-lb/clients/ccdex" "$@"; }
+```bash
+scripts/install-claude-clients.sh --print
+scripts/install-claude-clients.sh
 ```
+
+`cc` defaults normal Claude Code to Fable/high. `ccdex` forces the canonical
+GPT/high compatibility profile. Normal Claude Code can dispatch GPT workers through
+the registered `ccdex-worker` MCP.
 
 Minimal alternative (no launcher):
 

@@ -61,6 +61,8 @@ from pathlib import Path
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
 CCDEX_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 CCDEX_MODEL = "gpt-5.6-sol"
+DEFAULT_CLAUDE_MODEL = "claude-fable-5"
+DEFAULT_CLAUDE_EFFORT = "high"
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -295,7 +297,26 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         }
         headers["x-claude-session-id"] = session_id
 
-        upstream_path = _ccdex_upstream_path(self.path, body)
+        try:
+            upstream_path = _ccdex_upstream_path(self.path, body)
+        except CcdexModelViolation as error:
+            message = json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": str(error),
+                    },
+                }
+            ).encode()
+            self.send_response(400)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(message)))
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.write(message)
+            self.close_connection = True
+            return
         request = urllib.request.Request(
             f"{upstream_base_url}{upstream_path}",
             data=body,
@@ -758,11 +779,11 @@ def arg_value(argv: list[str], *names: str) -> str | None:
 
 
 def requested_model(argv: list[str]) -> str:
-    return arg_value(argv, "--model", "-m") or os.environ.get("ANTHROPIC_MODEL") or "claude-fable-5"
+    return arg_value(argv, "--model", "-m") or os.environ.get("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL
 
 
 def requested_effort(argv: list[str]) -> str:
-    return arg_value(argv, "--effort") or os.environ.get("CC_EFFORT_LEVEL") or "high"
+    return arg_value(argv, "--effort") or os.environ.get("CC_EFFORT_LEVEL") or DEFAULT_CLAUDE_EFFORT
 
 
 def anthropic_quota_key(model: str, effort: str) -> tuple[str, str]:
@@ -1262,14 +1283,24 @@ def _probe_ccdex_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
     return True, ""
 
 
+class CcdexModelViolation(ValueError):
+    pass
+
+
 def _ccdex_upstream_path(path: str, body: bytes | None = None) -> str:
     if not CCDEX_MODE:
         return path
     if not path.startswith("/v1/messages"):
         return path
-    if path == "/v1/messages/count_tokens" or _ccdex_request_model(body) == CCDEX_MODEL:
+    if path == "/v1/messages/count_tokens":
         return "/v1/ccdex/messages" + path.removeprefix("/v1/messages")
-    return path
+    requested = _ccdex_request_model(body)
+    if requested != CCDEX_MODEL:
+        label = requested or "missing model"
+        raise CcdexModelViolation(
+            f"CCDEX only permits its canonical GPT model; rejected Messages request for {label}"
+        )
+    return "/v1/ccdex/messages" + path.removeprefix("/v1/messages")
 
 
 def _ccdex_request_model(body: bytes | None) -> str | None:
@@ -1304,9 +1335,11 @@ def build_command(argv: list[str]) -> list[str]:
     if CCDEX_MODE:
         argv = _without_option(_without_option(argv, "--model"), "--effort")
         command.extend(["--model", CCDEX_MODEL, "--effort", "high"])
-    effort = None if CCDEX_MODE else os.environ.get("CC_EFFORT_LEVEL")
-    if effort:
-        command.extend(["--effort", effort])
+    else:
+        if arg_value(argv, "--model", "-m") is None and not os.environ.get("ANTHROPIC_MODEL"):
+            command.extend(["--model", DEFAULT_CLAUDE_MODEL])
+        if arg_value(argv, "--effort") is None:
+            command.extend(["--effort", os.environ.get("CC_EFFORT_LEVEL") or DEFAULT_CLAUDE_EFFORT])
     permission_mode = None if CCDEX_MODE else os.environ.get("CC_PERMISSION_MODE")
     if CCDEX_MODE and not _has_permission_option(argv):
         permission_mode = "bypassPermissions"

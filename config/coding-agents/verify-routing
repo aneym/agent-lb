@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+HOME = Path.home()
+REPO = Path(__file__).resolve().parents[2]
+CANONICAL = HOME / ".agents" / "policy" / "coding-agents" / "ROUTING.md"
+failures: list[str] = []
+
+
+def check(condition: bool, message: str) -> None:
+    if condition:
+        print(f"PASS {message}")
+    else:
+        failures.append(message)
+        print(f"FAIL {message}")
+
+
+check(CANONICAL.is_file(), f"canonical policy exists at {CANONICAL}")
+
+for adapter in (HOME / ".claude" / "CLAUDE.md", HOME / ".codex" / "AGENTS.md"):
+    text = adapter.read_text()
+    check("~/.agents/policy/coding-agents/ROUTING.md" in text, f"{adapter} points to canonical policy")
+
+settings = json.loads((HOME / ".claude" / "settings.json").read_text())
+check(settings.get("model") == "claude-fable-5", "direct Claude Code default is Fable")
+
+launcher_test = subprocess.run(
+    [
+        str(REPO / ".venv" / "bin" / "pytest"),
+        "-q",
+        "tests/unit/test_claude_lb_launch.py",
+        "tests/unit/test_install_claude_clients.py",
+    ],
+    cwd=REPO,
+    text=True,
+    capture_output=True,
+    timeout=120,
+)
+check(launcher_test.returncode == 0, "launcher and installer routing tests pass")
+if launcher_test.returncode:
+    print(launcher_test.stdout[-2000:])
+    print(launcher_test.stderr[-2000:], file=sys.stderr)
+
+hook = HOME / ".claude" / "hooks" / "ccdex-gpt-only.sh"
+agent_input = json.dumps({"tool_name": "Agent", "tool_input": {"description": "probe"}})
+denied = subprocess.run(
+    [str(hook)],
+    input=agent_input,
+    text=True,
+    capture_output=True,
+    env={**os.environ, "CLAUDE_LB_CODEX_MODE": "1"},
+    timeout=10,
+)
+allowed = subprocess.run(
+    [str(hook)],
+    input=agent_input,
+    text=True,
+    capture_output=True,
+    env={**os.environ, "CLAUDE_LB_CODEX_MODE": "0"},
+    timeout=10,
+)
+check(denied.returncode == 0 and '"permissionDecision": "deny"' in denied.stdout, "CCDEX hook denies Claude Agent")
+check(allowed.returncode == 0 and not allowed.stdout, "normal Claude Code hook allows Agent")
+
+for name in ("cc", "ccdex", "ccdex-worker-mcp"):
+    target = HOME / ".local" / "bin" / name
+    expected = (REPO / "clients" / name).resolve()
+    check(target.is_symlink() and target.resolve() == expected, f"{name} resolves to the repository client")
+
+policy_link = HOME / ".agents" / "policy" / "coding-agents"
+check(policy_link.is_symlink() and policy_link.resolve() == (REPO / "config" / "coding-agents").resolve(), "policy link resolves to the repository policy")
+
+mcp = subprocess.run(
+    ["claude", "mcp", "get", "ccdex-worker"],
+    text=True,
+    capture_output=True,
+    timeout=30,
+)
+check(mcp.returncode == 0 and "Connected" in mcp.stdout, "ccdex-worker MCP is registered and connected")
+
+if failures:
+    print(f"\n{len(failures)} routing check(s) failed", file=sys.stderr)
+    raise SystemExit(1)
+print("\nAll deterministic coding-agent routing checks passed.")
