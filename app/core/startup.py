@@ -26,6 +26,7 @@ class StartupSummary:
     boot_id: str
     outcome: str
     total_seconds: float
+    untracked_seconds: float
     phases: dict[str, float]
 
 
@@ -97,18 +98,21 @@ class StartupRecorder:
 
     def complete(self, outcome: str) -> StartupSummary:
         total_seconds = (self._clock_ns() - self._started_ns) / 1_000_000_000
+        untracked_seconds = max(0.0, total_seconds - sum(self._phases.values()))
         summary = StartupSummary(
             boot_id=self.boot_id,
             outcome=outcome,
             total_seconds=total_seconds,
+            untracked_seconds=untracked_seconds,
             phases=dict(self._phases),
         )
         _observe_startup_total(outcome, total_seconds)
         logger.info(
-            "agent_lb_startup_summary boot_id=%s outcome=%s total_seconds=%.6f phases=%s",
+            "agent_lb_startup_summary boot_id=%s outcome=%s total_seconds=%.6f untracked_seconds=%.6f phases=%s",
             summary.boot_id,
             summary.outcome,
             summary.total_seconds,
+            summary.untracked_seconds,
             json.dumps(summary.phases, sort_keys=True, separators=(",", ":")),
         )
         return summary

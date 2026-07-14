@@ -203,7 +203,12 @@ def test_interactive_launcher_uses_ready_probe_without_eager_claim(monkeypatch) 
     monkeypatch.setattr(
         launcher,
         "_probe_health_at",
-        lambda url, retries, timeout, gap: (True, ""),
+        lambda url, retries, timeout, gap: (True, "", False),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_local_launchd_job_loaded",
+        lambda: (_ for _ in ()).throw(AssertionError("healthy path must not inspect launchd")),
     )
     monkeypatch.setattr(
         launcher,
@@ -224,8 +229,120 @@ def test_ready_probe_targets_readiness_endpoint(monkeypatch) -> None:
         lambda path, **kwargs: requested_paths.append(path) or {"status": "ready"},
     )
 
-    assert launcher._probe_health_at("http://127.0.0.1:2455", retries=1, timeout=1.0, gap=0.0) == (True, "")
+    assert launcher._probe_health_at("http://127.0.0.1:2455", retries=1, timeout=1.0, gap=0.0) == (
+        True,
+        "",
+        False,
+    )
     assert requested_paths == ["/health/ready"]
+
+
+def test_interactive_launcher_waits_for_loaded_local_lb(monkeypatch, capsys) -> None:
+    launcher = load_launcher_module()
+    probes = iter(
+        [
+            (False, "connection refused", True),
+            (False, "connection refused", True),
+            (True, "", False),
+        ]
+    )
+    now = [0.0]
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("CLAUDE_LB_STARTUP_GRACE_SECONDS", "3")
+    monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://127.0.0.1:2455")])
+    monkeypatch.setattr(launcher, "_probe_health_at", lambda *args, **kwargs: next(probes))
+    monkeypatch.setattr(launcher, "_local_launchd_job_loaded", lambda: True)
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(launcher.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+
+    assert launcher.prepare_interactive_endpoint() is True
+
+    lines = capsys.readouterr().err.splitlines()
+    assert lines.count("cc: agent-lb is starting — waiting up to 3s for /health/ready ...") == 1
+    assert lines.count("cc: agent-lb is ready — continuing with local LB") == 1
+    assert launcher.AGENT_LB_BASE_URL == "http://127.0.0.1:2455"
+
+
+def test_interactive_launcher_zero_grace_skips_launchd_check(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setenv("CLAUDE_LB_STARTUP_GRACE_SECONDS", "0")
+    monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://127.0.0.1:2455")])
+    monkeypatch.setattr(
+        launcher,
+        "_probe_health_at",
+        lambda *args, **kwargs: (False, "connection refused", True),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_local_launchd_job_loaded",
+        lambda: (_ for _ in ()).throw(AssertionError("zero grace must not inspect launchd")),
+    )
+
+    assert launcher.prepare_interactive_endpoint() is False
+
+
+def test_interactive_launcher_never_applies_startup_grace_to_remote(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("remote", "https://studio.example:2455")])
+    monkeypatch.setattr(
+        launcher,
+        "_probe_health_at",
+        lambda *args, **kwargs: (False, "network unreachable", True),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_wait_for_local_startup",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("remote must not receive local grace")),
+    )
+
+    assert launcher.prepare_interactive_endpoint() is False
+
+
+def test_local_launchd_check_uses_configured_label_and_timeout(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    launcher = load_launcher_module()
+    calls: list[tuple[list[str], dict]] = []
+    monkeypatch.setenv("CLAUDE_LB_LAUNCHD_LABEL", "com.example.agent-lb")
+    monkeypatch.setattr(launcher.os, "getuid", lambda: 501)
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(returncode=0),
+    )
+
+    assert launcher._local_launchd_job_loaded() is True
+    assert calls[0][0] == ["launchctl", "print", "gui/501/com.example.agent-lb"]
+    assert calls[0][1]["timeout"] == 1.0
+
+
+def test_local_launchd_check_treats_timeout_as_not_loaded(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            launcher.subprocess.TimeoutExpired(cmd="launchctl print", timeout=1.0)
+        ),
+    )
+
+    assert launcher._local_launchd_job_loaded() is False
+
+
+def test_health_unreachable_classifier_excludes_http_and_read_timeouts() -> None:
+    import socket
+    import urllib.error
+
+    launcher = load_launcher_module()
+
+    assert launcher._is_unreachable_health_error(urllib.error.URLError(ConnectionRefusedError())) is True
+    assert (
+        launcher._is_unreachable_health_error(
+            urllib.error.HTTPError("http://lb", 503, "Service Unavailable", {}, None)
+        )
+        is False
+    )
+    assert launcher._is_unreachable_health_error(urllib.error.URLError(socket.timeout())) is False
 
 
 def test_proxy_spawn_uses_portable_subprocess(monkeypatch, tmp_path) -> None:

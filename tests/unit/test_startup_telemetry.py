@@ -35,10 +35,23 @@ async def test_startup_recorder_uses_monotonic_phase_durations(monkeypatch, capl
     summary = recorder.complete("ok")
 
     assert summary.total_seconds == pytest.approx(0.5)
+    assert summary.untracked_seconds == pytest.approx(0.25)
     assert summary.phases == {"database": pytest.approx(0.25)}
     assert observed == [("database", "ok", pytest.approx(0.25)), ("total", "ok", pytest.approx(0.5))]
     assert "agent_lb_startup_summary" in caplog.text
-    assert "database" in caplog.text
+    assert "untracked_seconds=0.250000" in caplog.text
+    assert 'phases={"database":0.25}' in caplog.text
+
+
+def test_startup_recorder_clamps_untracked_seconds_to_zero(monkeypatch) -> None:
+    monkeypatch.setattr(startup, "_observe_startup_total", lambda outcome, seconds: None)
+    recorder = startup.StartupRecorder(started_ns=0, clock_ns=_Clock(500_000_000))
+    recorder._phases = {"overlapping": 0.7}
+
+    summary = recorder.complete("ok")
+
+    assert summary.total_seconds == pytest.approx(0.5)
+    assert summary.untracked_seconds == 0.0
 
 
 @pytest.mark.asyncio

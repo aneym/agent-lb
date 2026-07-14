@@ -23,6 +23,9 @@
 #   CLAUDE_LB_SESSION_ID stable session id (default cc-<pid>-<epoch>; headless
 #                        -p/--print runs default to a stable cwd-derived id)
 #   CLAUDE_LB_DRY_RUN=1  print the final command instead of exec'ing it
+#   CLAUDE_LB_LAUNCHD_LABEL  local launchd job label (default com.aneyman.agent-lb)
+#   CLAUDE_LB_STARTUP_GRACE_SECONDS  wait for a loaded local LB to become ready
+#                                    after connection refusal (default 90; 0 disables)
 #   CC_EFFORT_LEVEL      passed through as --effort
 #   CC_PERMISSION_MODE   passed through as --permission-mode
 #   NO_COLOR             disable the colored banner
@@ -34,6 +37,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.server
 import json
@@ -638,7 +642,21 @@ def _is_retryable_shim_connect_error(error: BaseException) -> bool:
     return isinstance(error, ConnectionError) or isinstance(reason, ConnectionError)
 
 
-def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float) -> tuple[bool, str]:
+def _is_unreachable_health_error(error: BaseException) -> bool:
+    if isinstance(error, urllib.error.HTTPError):
+        return False
+    reason = getattr(error, "reason", error)
+    if isinstance(reason, ConnectionError):
+        return True
+    return isinstance(reason, OSError) and reason.errno in {
+        errno.ECONNREFUSED,
+        errno.EHOSTUNREACH,
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+    }
+
+
+def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float) -> tuple[bool, str, bool]:
     """Probe /health/ready at base_url, retrying briefly so a transient LB restart or
     tailscale blip does not force the whole session onto plain-claude fallback.
 
@@ -646,15 +664,62 @@ def _probe_health_at(base_url: str, *, retries: int, timeout: float, gap: float)
     the retry/backoff cost.
     """
     last_error = "no response"
+    last_error_unreachable = False
     for attempt in range(retries):
         try:
             lb_json("/health/ready", timeout=timeout, base_url=base_url)
-            return True, ""
+            return True, "", False
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             last_error = str(error) or error.__class__.__name__
+            last_error_unreachable = _is_unreachable_health_error(error)
             if attempt + 1 < retries:
                 time.sleep(gap)
-    return False, last_error
+    return False, last_error, last_error_unreachable
+
+
+def _local_launchd_job_loaded() -> bool:
+    label = os.environ.get("CLAUDE_LB_LAUNCHD_LABEL") or "com.aneyman.agent-lb"
+    try:
+        result = subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=1.0,
+            check=False,
+        )
+    except (AttributeError, OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _wait_for_local_startup(base_url: str, *, probe_timeout: float) -> bool:
+    grace_seconds = max(0.0, _env_float("CLAUDE_LB_STARTUP_GRACE_SECONDS", 90.0))
+    if grace_seconds == 0 or not _local_launchd_job_loaded():
+        return False
+
+    print(
+        f"cc: agent-lb is starting — waiting up to {grace_seconds:g}s for /health/ready ...",
+        file=sys.stderr,
+    )
+    deadline = time.monotonic() + grace_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(1.0, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        ready, _, _ = _probe_health_at(
+            base_url,
+            retries=1,
+            timeout=min(probe_timeout, remaining),
+            gap=0.0,
+        )
+        if ready:
+            print("cc: agent-lb is ready — continuing with local LB", file=sys.stderr)
+            return True
 
 
 def _lb_candidates() -> list[tuple[str, str]]:
@@ -1116,12 +1181,14 @@ def prepare_interactive_endpoint() -> bool:
     local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 0.35)
     remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 1.5)
     for label, url in _lb_candidates():
-        ready, error = _probe_health_at(
+        ready, error, unreachable = _probe_health_at(
             url,
             retries=1,
             timeout=local_timeout if label == "local" else remote_timeout,
             gap=0.0,
         )
+        if label == "local" and not ready and unreachable:
+            ready = _wait_for_local_startup(url, probe_timeout=local_timeout)
         if not ready:
             failures.append(f"{label} ({url}): {error}")
             continue
