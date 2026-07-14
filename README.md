@@ -289,8 +289,9 @@ Connect Claude (Anthropic) accounts first — `scripts/anthropic-auth.sh` or ste
 ANTHROPIC_BASE_URL=http://127.0.0.1:2455 claude
 ```
 
-or install the vendored launch profiles and CCDEX worker transport. Preview the exact
-links first; installation preserves an existing regular `~/.local/bin/cc` wrapper:
+or install the vendored launch profiles, canonical routing adapters, and CCDEX worker
+transport. Preview the exact changes first; installation preserves existing regular
+client/hook files and checkpoints changed global configuration:
 
 ```bash
 scripts/install-claude-clients.sh --print
@@ -298,7 +299,9 @@ scripts/install-claude-clients.sh
 ```
 
 `cc` defaults to Fable/high, `ccdex` forces the canonical GPT/high compatibility
-profile, and the installer registers `ccdex-worker` for Fable-led GPT dispatch.
+profile, and the installer registers `ccdex-worker` for Fable-led GPT dispatch. It
+semantically updates only routing-owned Markdown blocks, the Claude model field, and
+CCDEX hook registrations; unrelated global configuration remains intact.
 
 > **Important**: do **not** set `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` when pointing
 > Claude Code at agent-lb. Setting either flips Claude Code from subscription ("Claude Max")

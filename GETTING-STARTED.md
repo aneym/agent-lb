@@ -118,9 +118,11 @@ request as already satisfied — check `accounts` before assuming anything faile
 
 ### Claude Code
 
-Recommended: install the vendored launch profiles and CCDEX worker transport. The
-installer is previewable, preserves a pre-existing regular `~/.local/bin/cc` as
-`cc.pre-agent-lb`, and registers the user-scoped worker MCP:
+Recommended: install the vendored launch profiles, canonical routing adapters, and
+CCDEX worker transport. The installer is previewable, preserves pre-existing regular
+client and hook files as `.pre-agent-lb`, checkpoints changed global configuration
+under `~/.agent-lb/config-checkpoints/coding-agents/`, and registers the user-scoped
+worker MCP:
 
 ```bash
 scripts/install-claude-clients.sh --print
@@ -129,7 +131,9 @@ scripts/install-claude-clients.sh
 
 `cc` defaults normal Claude Code to Fable/high. `ccdex` forces the canonical
 GPT/high compatibility profile. Normal Claude Code can dispatch GPT workers through
-the registered `ccdex-worker` MCP.
+the registered `ccdex-worker` MCP. The installer replaces only known legacy routing
+sections, the Claude model field, and equivalent CCDEX hook registrations; unrelated
+Claude/Codex instructions, settings, permissions, and hooks are preserved.
 
 Minimal alternative (no launcher):
 

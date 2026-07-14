@@ -7,8 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-HOME = Path.home()
+HOME = Path(os.environ.get("AGENT_LB_USER_HOME", Path.home()))
 REPO = Path(__file__).resolve().parents[2]
 CANONICAL = HOME / ".agents" / "policy" / "coding-agents" / "ROUTING.md"
 failures: list[str] = []
@@ -25,49 +24,72 @@ def check(condition: bool, message: str) -> None:
 check(CANONICAL.is_file(), f"canonical policy exists at {CANONICAL}")
 
 for adapter in (HOME / ".claude" / "CLAUDE.md", HOME / ".codex" / "AGENTS.md"):
-    text = adapter.read_text()
-    check("~/.agents/policy/coding-agents/ROUTING.md" in text, f"{adapter} points to canonical policy")
+    text = adapter.read_text() if adapter.is_file() else ""
+    check(text.count("<!-- agent-lb:coding-agent-routing:start -->") == 1, f"{adapter} has one managed routing block")
+    check(text.count("~/.agents/policy/coding-agents/ROUTING.md") == 1, f"{adapter} points once to canonical policy")
 
-settings = json.loads((HOME / ".claude" / "settings.json").read_text())
+settings_path = HOME / ".claude" / "settings.json"
+try:
+    settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+except json.JSONDecodeError:
+    settings = {}
+    check(False, f"{settings_path} contains valid JSON")
 check(settings.get("model") == "claude-fable-5", "direct Claude Code default is Fable")
 
-launcher_test = subprocess.run(
-    [
-        str(REPO / ".venv" / "bin" / "pytest"),
-        "-q",
-        "tests/unit/test_claude_lb_launch.py",
-        "tests/unit/test_install_claude_clients.py",
-    ],
-    cwd=REPO,
-    text=True,
-    capture_output=True,
-    timeout=120,
+owned_registrations: list[str] = []
+for group in settings.get("hooks", {}).get("PreToolUse", []):
+    for hook_config in group.get("hooks", []):
+        if "ccdex-gpt-only.sh" in hook_config.get("command", ""):
+            owned_registrations.append(group.get("matcher", ""))
+check(
+    sorted(owned_registrations) == ["Agent|Workflow", "Bash"],
+    "CCDEX hook is registered once for Agent/Workflow and Bash",
 )
-check(launcher_test.returncode == 0, "launcher and installer routing tests pass")
-if launcher_test.returncode:
-    print(launcher_test.stdout[-2000:])
-    print(launcher_test.stderr[-2000:], file=sys.stderr)
+
+pytest_bin = REPO / ".venv" / "bin" / "pytest"
+if pytest_bin.is_file():
+    launcher_test = subprocess.run(
+        [
+            str(pytest_bin),
+            "-q",
+            "tests/unit/test_claude_lb_launch.py",
+            "tests/unit/test_install_claude_clients.py",
+        ],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        timeout=120,
+    )
+    check(launcher_test.returncode == 0, "launcher and installer routing tests pass")
+    if launcher_test.returncode:
+        print(launcher_test.stdout[-2000:])
+        print(launcher_test.stderr[-2000:], file=sys.stderr)
+else:
+    check(False, f"routing test runner exists at {pytest_bin}")
 
 hook = HOME / ".claude" / "hooks" / "ccdex-gpt-only.sh"
 agent_input = json.dumps({"tool_name": "Agent", "tool_input": {"description": "probe"}})
-denied = subprocess.run(
-    [str(hook)],
-    input=agent_input,
-    text=True,
-    capture_output=True,
-    env={**os.environ, "CLAUDE_LB_CODEX_MODE": "1"},
-    timeout=10,
-)
-allowed = subprocess.run(
-    [str(hook)],
-    input=agent_input,
-    text=True,
-    capture_output=True,
-    env={**os.environ, "CLAUDE_LB_CODEX_MODE": "0"},
-    timeout=10,
-)
-check(denied.returncode == 0 and '"permissionDecision": "deny"' in denied.stdout, "CCDEX hook denies Claude Agent")
-check(allowed.returncode == 0 and not allowed.stdout, "normal Claude Code hook allows Agent")
+if hook.is_file() and os.access(hook, os.X_OK):
+    denied = subprocess.run(
+        [str(hook)],
+        input=agent_input,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "CLAUDE_LB_CODEX_MODE": "1"},
+        timeout=10,
+    )
+    allowed = subprocess.run(
+        [str(hook)],
+        input=agent_input,
+        text=True,
+        capture_output=True,
+        env={**os.environ, "CLAUDE_LB_CODEX_MODE": "0"},
+        timeout=10,
+    )
+    check(denied.returncode == 0 and '"permissionDecision": "deny"' in denied.stdout, "CCDEX hook denies Claude Agent")
+    check(allowed.returncode == 0 and not allowed.stdout, "normal Claude Code hook allows Agent")
+else:
+    check(False, f"CCDEX hook is executable at {hook}")
 
 for name in ("cc", "ccdex", "ccdex-worker-mcp"):
     target = HOME / ".local" / "bin" / name
@@ -75,15 +97,26 @@ for name in ("cc", "ccdex", "ccdex-worker-mcp"):
     check(target.is_symlink() and target.resolve() == expected, f"{name} resolves to the repository client")
 
 policy_link = HOME / ".agents" / "policy" / "coding-agents"
-check(policy_link.is_symlink() and policy_link.resolve() == (REPO / "config" / "coding-agents").resolve(), "policy link resolves to the repository policy")
-
-mcp = subprocess.run(
-    ["claude", "mcp", "get", "ccdex-worker"],
-    text=True,
-    capture_output=True,
-    timeout=30,
+check(
+    policy_link.is_symlink() and policy_link.resolve() == (REPO / "config" / "coding-agents").resolve(),
+    "policy link resolves to the repository policy",
 )
-check(mcp.returncode == 0 and "Connected" in mcp.stdout, "ccdex-worker MCP is registered and connected")
+
+claude_bin = os.environ.get("AGENT_LB_CLAUDE_BIN")
+if not claude_bin:
+    local_claude = HOME / ".local" / "bin" / "claude"
+    claude_bin = str(local_claude) if local_claude.is_file() else "claude"
+try:
+    mcp = subprocess.run(
+        [claude_bin, "mcp", "get", "ccdex-worker"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+except FileNotFoundError:
+    check(False, f"Claude Code executable exists at {claude_bin}")
+else:
+    check(mcp.returncode == 0 and "Connected" in mcp.stdout, "ccdex-worker MCP is registered and connected")
 
 if failures:
     print(f"\n{len(failures)} routing check(s) failed", file=sys.stderr)
