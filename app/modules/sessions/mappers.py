@@ -9,6 +9,7 @@ from app.modules.sessions.schemas import SessionAggregate, SessionModelBreakdown
 def to_session_aggregates(
     rows: list[SessionAggregateRow],
     model_rows: list[SessionModelRow],
+    sparklines: dict[str, list[int]] | None = None,
 ) -> list[SessionAggregate]:
     models_by_session: dict[str, list[SessionModelRequests]] = defaultdict(list)
     for model_row in model_rows:
@@ -21,6 +22,7 @@ def to_session_aggregates(
             provider=row.provider,
             useragent_group=row.useragent_group,
             models=models_by_session[row.session_id],
+            sparkline=(sparklines or {}).get(row.session_id, []),
             requests=row.requests,
             input_tokens=row.input_tokens,
             output_tokens=row.output_tokens,

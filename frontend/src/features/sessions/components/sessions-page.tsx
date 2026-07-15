@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { AlertMessage } from "@/components/alert-message";
 import { EmptyState } from "@/components/empty-state";
+import { SparklineChart } from "@/components/sparkline-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,7 +28,7 @@ import {
   formatTokensWithCached,
   truncateText,
 } from "@/utils/formatters";
-import { SessionDetail } from "./session-detail";
+import { SessionAnalyticsView } from "./session-analytics-view";
 
 const WINDOW_OPTIONS = [
   { label: "1h", minutes: 60 },
@@ -66,6 +67,16 @@ export function SessionsPage() {
       return next;
     });
   };
+
+  if (selectedSessionId) {
+    return (
+      <SessionAnalyticsView
+        sessionId={selectedSessionId}
+        windowMinutes={windowMinutes}
+        onClose={() => setSelectedSession(null)}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -125,7 +136,7 @@ export function SessionsPage() {
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border bg-card">
-            <Table className="min-w-[1120px] table-fixed">
+            <Table className="min-w-[1220px] table-fixed">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-44 pl-4">Session</TableHead>
@@ -135,6 +146,7 @@ export function SessionsPage() {
                   <TableHead className="w-36 text-right">Tokens</TableHead>
                   <TableHead className="w-24 text-right">Cost</TableHead>
                   <TableHead className="w-20 text-right">Errors</TableHead>
+                  <TableHead className="w-28">Trend</TableHead>
                   <TableHead className="w-40 pr-4">Activity</TableHead>
                 </TableRow>
               </TableHeader>
@@ -164,11 +176,6 @@ export function SessionsPage() {
           </div>
         </>
       )}
-
-      <SessionDetail
-        sessionId={selectedSessionId}
-        onClose={() => setSelectedSession(null)}
-      />
     </div>
   );
 }
@@ -233,6 +240,18 @@ function SessionRow({ session, onSelect }: SessionRowProps) {
         className={`text-right font-mono text-xs tabular-nums ${session.errors > 0 ? "font-semibold" : "text-muted-foreground"}`}
       >
         {formatCompactNumber(session.errors)}
+      </TableCell>
+      <TableCell data-testid={`session-sparkline-${session.sessionId}`}>
+        {session.sparkline ? (
+          <div className="h-8 w-full" aria-label="Request trend">
+            <SparklineChart
+              data={session.sparkline.map((value) => ({ value }))}
+              color="var(--chart-1)"
+              index={0}
+              height={32}
+            />
+          </div>
+        ) : null}
       </TableCell>
       <TableCell className="pr-4 text-xs whitespace-nowrap">
         <div>

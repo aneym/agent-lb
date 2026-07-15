@@ -218,6 +218,7 @@ class _HTTPBridgeStreamingMixin:
         forwarded_affinity_kind: str | None = None,
         forwarded_affinity_key: str | None = None,
         retry_protocol_only_failures: bool = False,
+        client_session_id: str | None = None,
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream_http", payload, headers)
         proxy_api_authorization = _header_value_case_insensitive(headers, "authorization")
@@ -237,6 +238,7 @@ class _HTTPBridgeStreamingMixin:
             forwarded_affinity_kind=forwarded_affinity_kind,
             forwarded_affinity_key=forwarded_affinity_key,
             retry_protocol_only_failures=retry_protocol_only_failures,
+            client_session_id=client_session_id,
         )
 
     async def _stream_http_bridge_or_retry(
@@ -256,6 +258,7 @@ class _HTTPBridgeStreamingMixin:
         forwarded_affinity_kind: str | None = None,
         forwarded_affinity_key: str | None = None,
         retry_protocol_only_failures: bool = False,
+        client_session_id: str | None = None,
     ) -> AsyncIterator[str]:
         dashboard_settings = await _service_get_settings_cache().get()
         runtime_config = _http_bridge_runtime_config(dashboard_settings, _service_get_settings())
@@ -326,6 +329,7 @@ class _HTTPBridgeStreamingMixin:
             forwarded_affinity_kind=forwarded_affinity_kind,
             forwarded_affinity_key=forwarded_affinity_key,
             rewritten_file_account_id=rewritten_file_account_id,
+            client_session_id=client_session_id,
         ):
             yield line
 
@@ -352,6 +356,7 @@ class _HTTPBridgeStreamingMixin:
         forwarded_affinity_kind: str | None = None,
         forwarded_affinity_key: str | None = None,
         rewritten_file_account_id: str | None = None,
+        client_session_id: str | None = None,
     ) -> AsyncIterator[str]:
         del suppress_text_done_events
         request_id = ensure_request_id()
@@ -492,6 +497,7 @@ class _HTTPBridgeStreamingMixin:
         )
         if downstream_turn_state is not None:
             request_state.session_id = _normalize_session_id(downstream_turn_state)
+        request_state.client_session_id = _normalize_session_id(client_session_id)
         if previous_response_trimmed_input_count is not None:
             request_state.input_item_count = previous_response_trimmed_input_count
             request_state.input_full_fingerprint = previous_response_trimmed_input_fingerprint
@@ -621,6 +627,7 @@ class _HTTPBridgeStreamingMixin:
             )
             if downstream_turn_state is not None:
                 request_state.session_id = _normalize_session_id(downstream_turn_state)
+            request_state.client_session_id = _normalize_session_id(client_session_id)
             request_state.transport = _REQUEST_TRANSPORT_HTTP
             request_state.request_stage = _http_bridge_request_stage(
                 headers=headers,
@@ -785,6 +792,7 @@ class _HTTPBridgeStreamingMixin:
                     )
                     if downstream_turn_state is not None:
                         retry_request_state.session_id = _normalize_session_id(downstream_turn_state)
+                    retry_request_state.client_session_id = _normalize_session_id(client_session_id)
                     retry_request_state.transport = _REQUEST_TRANSPORT_HTTP
                     retry_request_state.request_stage = "reattach"
                     retry_request_state.preferred_account_id = request_state.preferred_account_id
@@ -928,6 +936,7 @@ class _HTTPBridgeStreamingMixin:
                 )
                 if downstream_turn_state is not None:
                     request_state.session_id = _normalize_session_id(downstream_turn_state)
+                request_state.client_session_id = _normalize_session_id(client_session_id)
                 request_state.transport = _REQUEST_TRANSPORT_HTTP
                 request_state.request_stage = _http_bridge_request_stage(
                     headers=headers,
@@ -1201,6 +1210,7 @@ class _HTTPBridgeStreamingMixin:
                 )
                 if downstream_turn_state is not None:
                     retry_request_state.session_id = _normalize_session_id(downstream_turn_state)
+                retry_request_state.client_session_id = _normalize_session_id(client_session_id)
                 retry_request_state.transport = _REQUEST_TRANSPORT_HTTP
                 retry_request_state.request_stage = retry_request_stage
                 retry_request_state.preferred_account_id = retry_preferred_account_id

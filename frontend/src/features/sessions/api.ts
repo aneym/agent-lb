@@ -1,5 +1,9 @@
 import { get } from "@/lib/api-client";
-import { SessionDetailResponseSchema, SessionsResponseSchema } from "./schemas";
+import {
+  SessionAnalyticsResponseSchema,
+  SessionDetailResponseSchema,
+  SessionsResponseSchema,
+} from "./schemas";
 
 export type SessionsParams = {
   windowMinutes: number;
@@ -20,5 +24,13 @@ export function getSession(sessionId: string) {
   return get(
     `/api/sessions/${encodeURIComponent(sessionId)}`,
     SessionDetailResponseSchema,
+  );
+}
+
+export function getSessionAnalytics(sessionId: string, windowMinutes: number) {
+  const query = new URLSearchParams({ windowMinutes: String(windowMinutes) });
+  return get(
+    `/api/sessions/${encodeURIComponent(sessionId)}/analytics?${query.toString()}`,
+    SessionAnalyticsResponseSchema,
   );
 }

@@ -120,7 +120,11 @@ from app.modules.proxy._service.compaction_breaker import (
     get_compaction_retry_breaker,
 )
 from app.modules.proxy._service.support import request_input_contains_compaction_trigger
-from app.modules.proxy.anthropic_service import AnthropicProxyError, _is_fable_model
+from app.modules.proxy.anthropic_service import (
+    AnthropicProxyError,
+    _anthropic_request_session_id,
+    _is_fable_model,
+)
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.claude_codex_bridge import (
     CCGPT_MODEL,
@@ -855,6 +859,7 @@ async def _ccgpt_messages_response(
             "invalid_request_error",
             "Anthropic-defined tools are not supported by the ccgpt compatibility route",
         )
+    client_session_id = _anthropic_request_session_id(payload, request.headers)
     responses_payload = claude_to_responses(payload)
     forwarded_headers = {
         key: value
@@ -872,6 +877,7 @@ async def _ccgpt_messages_response(
             openai_cache_affinity=True,
             prefer_http_bridge=True,
             forwarded_headers=forwarded_headers,
+            client_session_id=client_session_id,
             locked_model=CCGPT_MODEL,
             locked_reasoning_effort=alias_effort
             or (responses_payload.reasoning.effort if responses_payload.reasoning else CCGPT_REASONING_EFFORT),
@@ -2460,6 +2466,7 @@ async def _stream_responses(
     forwarded_affinity_kind: str | None = None,
     forwarded_affinity_key: str | None = None,
     enforce_openai_sdk_contract: bool = True,
+    client_session_id: str | None = None,
     locked_model: str | None = None,
     locked_reasoning_effort: str | None = None,
     locked_service_tier: str | None = None,
@@ -2518,6 +2525,7 @@ async def _stream_responses(
             forwarded_affinity_kind=forwarded_affinity_kind,
             forwarded_affinity_key=forwarded_affinity_key,
             retry_protocol_only_failures=enforce_openai_sdk_contract,
+            client_session_id=client_session_id,
         )
     else:
         stream = context.service.stream_responses(

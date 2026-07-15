@@ -10717,6 +10717,8 @@ async def test_finalize_websocket_request_state_updates_balancer_state(monkeypat
         reasoning_effort=None,
         api_key_reservation=None,
         started_at=0.0,
+        session_id="http_turn_synthetic",
+        client_session_id="coordinator-session",
     )
     completed_upstream_control = proxy_service._WebSocketUpstreamControl()
 
@@ -10735,6 +10737,7 @@ async def test_finalize_websocket_request_state_updates_balancer_state(monkeypat
     record_success.assert_awaited_once_with(account)
     handle_stream_error.assert_not_awaited()
     assert completed_upstream_control.reconnect_requested is False
+    assert request_logs.calls[-1]["session_id"] == "coordinator-session"
 
     failed_payload: dict[str, JsonValue] = {
         "type": "response.failed",

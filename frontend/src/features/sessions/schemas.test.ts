@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SessionAnalyticsResponseSchema,
   SessionDetailResponseSchema,
   SessionsResponseSchema,
 } from "@/features/sessions/schemas";
@@ -32,6 +33,16 @@ describe("SessionsResponseSchema", () => {
       requests: 4,
     });
     expect(parsed.sessions[0]?.costUsd).toBe(0.42);
+    expect(parsed.sessions[0]?.sparkline).toBeUndefined();
+  });
+
+  it("parses an optional sparkline", () => {
+    const parsed = SessionsResponseSchema.parse({
+      sessions: [{ ...aggregate, sparkline: [0, 2, 1] }],
+      total: 1,
+    });
+
+    expect(parsed.sessions[0]?.sparkline).toEqual([0, 2, 1]);
   });
 
   it("rejects invalid aggregate counts", () => {
@@ -41,6 +52,48 @@ describe("SessionsResponseSchema", () => {
         total: 1,
       }),
     ).toThrow();
+  });
+});
+
+describe("SessionAnalyticsResponseSchema", () => {
+  it("parses analytics series, seats, and histograms", () => {
+    const parsed = SessionAnalyticsResponseSchema.parse({
+      session: aggregate,
+      bucketSeconds: 300,
+      series: [
+        {
+          bucketStart: "2026-07-15T10:00:00Z",
+          byModel: [
+            {
+              model: "claude-fable-5",
+              reasoningEffort: null,
+              requests: 2,
+              outputTokens: 200,
+              cachedInputTokens: 100,
+              costUsd: 0.2,
+            },
+          ],
+        },
+      ],
+      seats: [
+        {
+          model: "claude-fable-5",
+          reasoningEffort: null,
+          requests: 2,
+          inputTokens: 500,
+          outputTokens: 200,
+          cachedInputTokens: 100,
+          costUsd: 0.2,
+          errors: 0,
+        },
+      ],
+      latencyHistogram: [{ label: "0-1s", count: 2 }],
+      tokensPerRequestHistogram: [{ label: "100-500", count: 2 }],
+    });
+
+    expect(parsed.bucketSeconds).toBe(300);
+    expect(parsed.seats[0]?.model).toBe("claude-fable-5");
+    expect(parsed.latencyHistogram[0]).toEqual({ label: "0-1s", count: 2 });
   });
 });
 

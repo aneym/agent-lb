@@ -40,7 +40,11 @@ async def test_ccgpt_messages_uses_openai_responses_path_and_returns_anthropic_s
             "stream": True,
             "messages": [{"role": "user", "content": "hello"}],
         },
-        headers={"authorization": "Bearer claude-secret", "anthropic-beta": "secret-beta"},
+        headers={
+            "authorization": "Bearer claude-secret",
+            "anthropic-beta": "secret-beta",
+            "X-Claude-Code-Session-Id": "coordinator-session",
+        },
     ) as response:
         body = (await response.aread()).decode()
 
@@ -57,8 +61,10 @@ async def test_ccgpt_messages_uses_openai_responses_path_and_returns_anthropic_s
     kwargs = captured["kwargs"]
     assert kwargs["forwarded_headers"].get("authorization") is None
     assert kwargs["forwarded_headers"].get("anthropic-beta") is None
+    assert kwargs["forwarded_headers"]["x-claude-code-session-id"] == "coordinator-session"
     del kwargs["forwarded_headers"]
     assert kwargs == {
+        "client_session_id": "coordinator-session",
         "codex_session_affinity": True,
         "openai_cache_affinity": True,
         "prefer_http_bridge": True,
@@ -97,6 +103,7 @@ async def test_ccgpt_messages_propagates_per_task_effort(async_client, monkeypat
     assert captured["payload"].reasoning.effort == "xhigh"
     assert captured["kwargs"]["locked_reasoning_effort"] == "xhigh"
     assert captured["kwargs"]["locked_service_tier"] == "priority"
+    assert captured["kwargs"]["client_session_id"] is None
 
 
 @pytest.mark.asyncio

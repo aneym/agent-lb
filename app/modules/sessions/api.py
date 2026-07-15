@@ -5,7 +5,11 @@ from fastapi.responses import RedirectResponse
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.dependencies import SessionsContext, get_sessions_context
-from app.modules.sessions.schemas import SessionDetailResponse, SessionListResponse
+from app.modules.sessions.schemas import (
+    SessionAnalyticsResponse,
+    SessionDetailResponse,
+    SessionListResponse,
+)
 
 router = APIRouter(
     prefix="/api/sessions",
@@ -31,6 +35,21 @@ async def list_sessions(
         offset=offset,
     )
     return SessionListResponse(sessions=page.sessions, total=page.total)
+
+
+@router.get("/{session_id}/analytics", response_model=SessionAnalyticsResponse)
+async def get_session_analytics(
+    session_id: str,
+    window_minutes: int = Query(4320, ge=1, alias="windowMinutes"),
+    context: SessionsContext = Depends(get_sessions_context),
+) -> SessionAnalyticsResponse:
+    analytics = await context.service.get_analytics(
+        session_id,
+        window_minutes=window_minutes,
+    )
+    if analytics is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return analytics
 
 
 @router.get("/{session_id}", response_model=SessionDetailResponse)

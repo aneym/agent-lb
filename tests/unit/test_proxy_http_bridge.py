@@ -5367,6 +5367,8 @@ async def test_stream_via_http_bridge_reacquires_api_key_reservation_after_owner
     )
 
     submitted_reservations: list[proxy_service.ApiKeyUsageReservationData | None] = []
+    submitted_states: list[proxy_service._WebSocketRequestState] = []
+    write_request_log = AsyncMock()
 
     async def fake_forward_http_bridge_request_to_owner(**kwargs: object):
         del kwargs
@@ -5382,6 +5384,7 @@ async def test_stream_via_http_bridge_reacquires_api_key_reservation_after_owner
     ) -> None:
         del _session, text_data, queue_limit
         submitted_reservations.append(request_state.api_key_reservation)
+        submitted_states.append(request_state)
         event_queue = request_state.event_queue
         assert event_queue is not None
         await event_queue.put('data: {"type":"response.completed"}\n\n')
@@ -5416,6 +5419,7 @@ async def test_stream_via_http_bridge_reacquires_api_key_reservation_after_owner
     monkeypatch.setattr(service, "_submit_http_bridge_request", fake_submit_http_bridge_request)
     monkeypatch.setattr(service, "_detach_http_bridge_request", AsyncMock())
     monkeypatch.setattr(service, "_reserve_websocket_api_key_usage", reserve_retry)
+    monkeypatch.setattr(service, "_write_request_log", write_request_log)
 
     chunks = [
         chunk
@@ -5432,12 +5436,24 @@ async def test_stream_via_http_bridge_reacquires_api_key_reservation_after_owner
             codex_idle_ttl_seconds=900.0,
             max_sessions=8,
             queue_limit=4,
+            downstream_turn_state="http_turn_retry",
+            client_session_id="coordinator-session",
         )
     ]
 
     assert chunks == ['data: {"type":"response.completed"}\n\n']
     assert prepare_reservations == [initial_reservation, retried_reservation]
     assert submitted_reservations == [retried_reservation]
+    assert submitted_states[0].session_id == "http_turn_retry"
+    assert submitted_states[0].client_session_id == "coordinator-session"
+    await service._write_websocket_connect_failure(
+        account_id="acc-1",
+        api_key=api_key,
+        request_state=submitted_states[0],
+        error_code="retry_probe",
+        error_message="retry probe",
+    )
+    assert write_request_log.await_args.kwargs["session_id"] == "coordinator-session"
     reserve_retry.assert_awaited_once()
 
 

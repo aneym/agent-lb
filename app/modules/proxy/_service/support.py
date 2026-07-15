@@ -236,6 +236,7 @@ class _WebSocketRequestState:
     skip_request_log: bool = False
     previous_response_id: str | None = None
     session_id: str | None = None
+    client_session_id: str | None = None
     proxy_injected_previous_response_id: bool = False
     expose_stale_previous_response_classifier: bool = False
     fresh_upstream_request_text: str | None = None
