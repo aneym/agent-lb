@@ -749,6 +749,12 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
             {"role": "system", "content": "Runtime system context injected by Claude Code."},
         ],
         "thinking": {"type": "adaptive"},
+        "metadata": {
+            "user_id": (
+                '{"device_id":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
+                '"account_uuid":"","session_id":"a38d23ac-2d2f-4354-8861-5b686809b2b5"}'
+            )
+        },
         "context_management": {"edits": [{"type": "clear_tool_uses_20250919"}]},
         "output_config": {"container": {"type": "auto"}},
     }
@@ -760,6 +766,8 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
             "anthropic-beta": "oauth-2025-04-20",
             "authorization": "Bearer client-token",
             "x-api-key": "client-placeholder",
+            "user-agent": "claude-cli/2.1.210 (external, sdk-cli)",
+            "x-claude-code-session-id": "header-session",
         },
     ) as response:
         assert response.status_code == 200
@@ -789,6 +797,9 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert log.output_tokens == 5
     assert log.cache_creation_tokens == 3
     assert log.cache_read_tokens == 4
+    assert log.session_id == "a38d23ac-2d2f-4354-8861-5b686809b2b5"
+    assert log.useragent == "claude-cli/2.1.210 (external, sdk-cli)"
+    assert log.useragent_group == "claude-cli"
     assert log.cost_usd is not None
 
 

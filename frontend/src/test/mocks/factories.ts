@@ -309,6 +309,7 @@ export function createRequestLogEntry(
 		accountId: "acc_primary",
 		apiKeyId: "key_1",
 		apiKeyName: "Primary Key",
+		sessionId: null,
 		requestId: "req_1",
 		requestKind: "normal",
 		model: "gpt-5.1",

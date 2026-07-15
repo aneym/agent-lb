@@ -144,6 +144,7 @@ async def test_request_logs_api_returns_useragent_fields(async_client, db_setup)
             status="success",
             error_code=None,
             requested_at=now,
+            session_id="session-request-log-api",
             useragent="opencode/1.15.13 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14",
             useragent_group="opencode",
         )
@@ -168,6 +169,7 @@ async def test_request_logs_api_returns_useragent_fields(async_client, db_setup)
     ]
 
     latest = payload[0]
+    assert latest["sessionId"] == "session-request-log-api"
     assert latest["useragent"] == "opencode/1.15.13 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
     assert latest["useragentGroup"] == "opencode"
 

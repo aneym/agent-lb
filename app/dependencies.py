@@ -39,6 +39,8 @@ from app.modules.reports.repository import ReportsRepository
 from app.modules.reports.service import ReportsService
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.request_logs.service import RequestLogsService
+from app.modules.sessions.repository import SessionsRepository
+from app.modules.sessions.service import SessionsService
 from app.modules.settings.repository import SettingsRepository
 from app.modules.settings.service import SettingsService
 from app.modules.sticky_sessions.service import StickySessionsService
@@ -108,6 +110,13 @@ class RequestLogsContext:
     session: AsyncSession
     repository: RequestLogsRepository
     service: RequestLogsService
+
+
+@dataclass(slots=True)
+class SessionsContext:
+    session: AsyncSession
+    repository: SessionsRepository
+    service: SessionsService
 
 
 @dataclass(slots=True)
@@ -290,6 +299,14 @@ def get_request_logs_context(
     repository = RequestLogsRepository(session)
     service = RequestLogsService(repository)
     return RequestLogsContext(session=session, repository=repository, service=service)
+
+
+def get_sessions_context(
+    session: AsyncSession = Depends(get_session),
+) -> SessionsContext:
+    repository = SessionsRepository(session)
+    service = SessionsService(repository)
+    return SessionsContext(session=session, repository=repository, service=service)
 
 
 def get_quota_planner_context(

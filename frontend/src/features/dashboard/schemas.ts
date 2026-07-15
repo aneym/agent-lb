@@ -146,6 +146,7 @@ export const RequestLogSchema = z.object({
   planType: z.string().nullable().optional().default(null),
   apiKeyName: z.string().nullable().optional().default(null),
   apiKeyId: z.string().nullable().optional().default(null),
+  sessionId: z.string().nullable(),
   requestId: z.string(),
   requestKind: z.enum(["normal", "warmup", "limit_warmup"]).optional().default("normal"),
   model: z.string(),

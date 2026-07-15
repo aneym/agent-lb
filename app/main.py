@@ -72,6 +72,7 @@ from app.modules.quota_planner.scheduler import build_quota_planner_scheduler
 from app.modules.reports import api as reports_api
 from app.modules.request_logs import api as request_logs_api
 from app.modules.runtime import api as runtime_api
+from app.modules.sessions import api as sessions_api
 from app.modules.settings import api as settings_api
 from app.modules.sticky_sessions import api as sticky_sessions_api
 from app.modules.sticky_sessions.cleanup_scheduler import build_sticky_session_cleanup_scheduler
@@ -426,6 +427,8 @@ def create_app() -> FastAPI:
     app.include_router(usage_api.router)
     app.include_router(public_usage_api.router)
     app.include_router(request_logs_api.router)
+    app.include_router(sessions_api.router)
+    app.include_router(sessions_api.short_link_router)
     app.include_router(quota_planner_api.router)
     app.include_router(reports_api.router)
     app.include_router(conversation_archive_api.router)

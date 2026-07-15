@@ -10,6 +10,7 @@ import { AccountsPage } from "@/features/accounts/components/accounts-page";
 import { ApisPage } from "@/features/apis/components/apis-page";
 import { DashboardPage } from "@/features/dashboard/components/dashboard-page";
 import { ReportsPage } from "@/features/reports/components/reports-page";
+import { SessionsPage } from "@/features/sessions/components/sessions-page";
 import { SettingsPage } from "@/features/settings/components/settings-page";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 
@@ -19,7 +20,10 @@ function AppLayout() {
   const timeFormat = useTimeFormatStore((state) => state.timeFormat);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background pb-10" data-time-format={timeFormat}>
+    <div
+      className="flex min-h-screen flex-col bg-background pb-10"
+      data-time-format={timeFormat}
+    >
       <AppHeader
         onLogout={() => {
           void logout();
@@ -44,10 +48,14 @@ export default function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/apis" element={<ApisPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/firewall" element={<Navigate to="/settings" replace />} />
+            <Route
+              path="/firewall"
+              element={<Navigate to="/settings" replace />}
+            />
           </Route>
         </Routes>
       </AuthGate>

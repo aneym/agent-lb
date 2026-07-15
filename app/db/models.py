@@ -190,7 +190,10 @@ class AdditionalUsageHistory(Base):
 
 class RequestLog(Base):
     __tablename__ = "request_logs"
-    __table_args__ = (Index("idx_logs_useragent_group", "useragent_group"),)
+    __table_args__ = (
+        Index("idx_logs_useragent_group", "useragent_group"),
+        Index("idx_logs_session_time", "session_id", text("requested_at DESC")),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str | None] = mapped_column(

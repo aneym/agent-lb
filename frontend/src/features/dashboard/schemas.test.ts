@@ -138,6 +138,7 @@ describe("RequestLogsResponseSchema", () => {
           planType: "plus",
           apiKeyName: "Key A",
           apiKeyId: "key-1",
+          sessionId: null,
           requestId: "req-1",
           model: "gpt-5.1",
           transport: "websocket",
@@ -173,6 +174,7 @@ describe("RequestLogsResponseSchema", () => {
 
     expect(parsed.requests[0]?.apiKeyName).toBe("Key A");
     expect(parsed.requests[0]?.apiKeyId).toBe("key-1");
+    expect(parsed.requests[0]?.sessionId).toBeNull();
     expect(parsed.requests[0]?.requestKind).toBe("normal");
     expect(parsed.requests[0]?.planType).toBe("plus");
     expect(parsed.requests[0]?.transport).toBe("websocket");
@@ -198,6 +200,7 @@ describe("RequestLogsResponseSchema", () => {
           planType: "plus",
           apiKeyName: null,
           apiKeyId: null,
+          sessionId: null,
           requestId: "req-legacy-limit-warmup",
           requestKind: "limit_warmup",
           model: "gpt-5.1-codex-mini",
@@ -229,6 +232,7 @@ describe("RequestLogsResponseSchema", () => {
           accountId: "acc-1",
           planType: "plus",
           apiKeyId: "key-1",
+          sessionId: null,
           requestId: "req-legacy-cost-fields",
           model: "gpt-5.1",
           transport: "websocket",
@@ -265,6 +269,7 @@ describe("RequestLogsResponseSchema", () => {
           planType: "plus",
           apiKeyName: "Key A",
           apiKeyId: "key-1",
+          sessionId: null,
           requestId: "req-null-useragent",
           model: "gpt-5.1",
           transport: "websocket",
@@ -297,6 +302,7 @@ describe("RequestLogsResponseSchema", () => {
           planType: "plus",
           apiKeyName: "Key A",
           apiKeyId: "key-1",
+          sessionId: null,
           requestId: "req-partial-breakdown",
           model: "gpt-5.1",
           transport: "websocket",

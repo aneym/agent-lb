@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -31,6 +32,7 @@ from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, StickySessionKind
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
+from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.load_balancer import LoadBalancer, selectable_accounts
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
@@ -181,6 +183,8 @@ class AnthropicProxyService:
         provider_name = _messages_provider_name(payload)
         quota_key = _messages_quota_key(payload, provider_name=provider_name)
         affinity_quota_key = _messages_affinity_quota_key(payload, provider_name=provider_name)
+        session_id = _anthropic_request_session_id(payload, inbound_headers)
+        useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
         sticky_key = _messages_sticky_key(
             payload,
             inbound_headers,
@@ -263,6 +267,9 @@ class AnthropicProxyService:
                                 error_code=exc.code,
                                 error_message=exc.message,
                                 api_key=api_key,
+                                session_id=session_id,
+                                useragent=useragent,
+                                useragent_group=useragent_group,
                             )
                             last_error_status = exc.status_code
                             last_error_message = exc.message
@@ -295,6 +302,9 @@ class AnthropicProxyService:
                                         error_code="invalid_api_key",
                                         error_message=error_message,
                                         api_key=api_key,
+                                        session_id=session_id,
+                                        useragent=useragent,
+                                        useragent_group=useragent_group,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -316,6 +326,9 @@ class AnthropicProxyService:
                                         error_code="rate_limit_exceeded",
                                         error_message=error_message,
                                         api_key=api_key,
+                                        session_id=session_id,
+                                        useragent=useragent,
+                                        useragent_group=useragent_group,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -338,6 +351,9 @@ class AnthropicProxyService:
                                         error_code="upstream_529",
                                         error_message=error_message,
                                         api_key=api_key,
+                                        session_id=session_id,
+                                        useragent=useragent,
+                                        useragent_group=useragent_group,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -357,6 +373,9 @@ class AnthropicProxyService:
                                         error_code=f"upstream_{resp.status}",
                                         error_message=error_details.message,
                                         api_key=api_key,
+                                        session_id=session_id,
+                                        useragent=useragent,
+                                        useragent_group=useragent_group,
                                     )
                                     raise AnthropicProxyError(
                                         resp.status,
@@ -414,6 +433,9 @@ class AnthropicProxyService:
                                     started_at=started_at,
                                     status="success",
                                     api_key=api_key,
+                                    session_id=session_id,
+                                    useragent=useragent,
+                                    useragent_group=useragent_group,
                                     usage=usage,
                                 )
                                 await self._finalize_api_key_reservation(
@@ -473,6 +495,9 @@ class AnthropicProxyService:
                     error_code=_no_available_accounts_code(provider_name),
                     error_message=message,
                     api_key=api_key,
+                    session_id=session_id,
+                    useragent=useragent,
+                    useragent_group=useragent_group,
                 )
                 raise exhausted_error
 
@@ -954,6 +979,9 @@ class AnthropicProxyService:
         started_at: float,
         status: str,
         api_key: ApiKeyData | None,
+        session_id: str | None,
+        useragent: str | None,
+        useragent_group: str | None,
         error_code: str | None = None,
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
@@ -977,6 +1005,9 @@ class AnthropicProxyService:
                     plan_type=account.plan_type if account else None,
                     provider=provider_name,
                     transport="http",
+                    session_id=session_id,
+                    useragent=useragent,
+                    useragent_group=useragent_group,
                 )
         except Exception:
             logger.warning("Failed to persist Anthropic request log request_id=%s", request_id, exc_info=True)
@@ -1150,6 +1181,31 @@ def _other_provider_routing_message(provider_name: str) -> str:
     if provider_name == GLM_PROVIDER_NAME:
         return "OpenAI and Anthropic accounts are not eligible for GLM routing."
     return "OpenAI accounts are not eligible for Claude routing."
+
+
+def _anthropic_request_session_id(
+    payload: AnthropicMessageRequest,
+    headers: Mapping[str, str],
+) -> str | None:
+    user_id = payload.metadata.get("user_id") if payload.metadata is not None else None
+    if isinstance(user_id, str):
+        try:
+            decoded = json.loads(user_id)
+        except (json.JSONDecodeError, TypeError):
+            decoded = None
+        if isinstance(decoded, dict):
+            session_id = decoded.get("session_id")
+            if isinstance(session_id, str) and session_id.strip():
+                return session_id.strip()
+
+        legacy_match = re.search(
+            r"_session_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+            user_id.strip(),
+        )
+        if legacy_match is not None:
+            return legacy_match.group(1)
+
+    return _anthropic_session_header(headers)
 
 
 def _anthropic_session_header(headers: Mapping[str, str]) -> str | None:
