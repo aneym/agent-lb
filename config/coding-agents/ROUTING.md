@@ -44,6 +44,7 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
 | Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-fable-5`     | inherit           |
+| Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-fable-5`     | inherit           |
 
 The frontend-designer seat is the sanctioned expensive exception (rule 3):
 design taste is capability-bound, so it runs on Fable — but it has no
@@ -51,6 +52,18 @@ Edit/Write tools, produces only specs and ranked crits for the implementer
 seat, and stays low-volume/high-leverage (added 2026-07-15 after fleet audits
 showed UI sessions burning the most driver capacity on taste-then-pixels
 loops).
+
+The planner seat (2026-07-15) is the sanctioned Fable TEAMMATE: a lane
+coordinator that plans, dispatches its own canonical seats, and reconciles —
+the brain of a delegated workstream (loop lanes, multi-seat sub-projects).
+Teammate enforcement fact (verified): hooks and CLAUDE.md context do NOT
+reach spawned teammates — 0 hook executions across 7 teammate transcripts vs
+14 in their coordinator. Therefore: (a) economics are enforced at the SPAWN
+boundary (seat-guard runs in the spawning session); (b) rules for teammates
+ride in their agent definitions, and the planner's definition orders it to
+read ROUTING.md as its first action; (c) teammate models bind from
+agent-registry frontmatter at spawn, so the registry is the control point —
+never RUN.md prose. One planner per lane; planners never spawn planners.
 
 Ad-hoc model switching outside these seats stays forbidden — no Codex-host
 dispatch, Composer, Gemini, or other model products as coding lanes, and no
