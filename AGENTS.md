@@ -186,3 +186,18 @@ These rules encode recurring review blockers observed across agent-lb PRs.
   behavior, external error envelopes, env-var semantics, and response-schema
   contracts. Update OpenSpec/context and tests together so docs cannot promise
   behavior the code does not implement.
+
+<!-- routing:begin — synced pointer; canon lives in ~/.agents/policy/coding-agents/ROUTING.md -->
+
+## Coding-agent routing (global canon — read this)
+
+Hands vs brain: the driver (Fable) decides, architects, and writes
+full-context artifacts; ALL volume work (multi-file reads, mechanical edits,
+retries, builds) is dispatched to seats — Explore (read-only), implementer
+(build-run-report), verifier (adversarial), frontend-designer (UI direction).
+>~3 direct reads on one question or ANY retry of a failed step → dispatch a
+seat. Canon + enforcement: `~/.agents/policy/coding-agents/ROUTING.md`. Your
+session's live routing numbers are behind the status-line link
+(`http://127.0.0.1:2455/s/<session-prefix>`).
+
+<!-- routing:end -->
