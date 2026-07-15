@@ -7,13 +7,13 @@ from fastapi.responses import StreamingResponse
 
 from app.core.clients.proxy import ProxyResponseError
 from app.modules.proxy import api as proxy_api
-from app.modules.proxy.claude_codex_bridge import CCDEX_MODEL
+from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_ccdex_messages_uses_openai_responses_path_and_returns_anthropic_sse(
+async def test_ccgpt_messages_uses_openai_responses_path_and_returns_anthropic_sse(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict[str, object] = {}
@@ -33,7 +33,7 @@ async def test_ccdex_messages_uses_openai_responses_path_and_returns_anthropic_s
 
     async with async_client.stream(
         "POST",
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "claude-opus-4-6",
             "max_tokens": 1024,
@@ -50,7 +50,7 @@ async def test_ccdex_messages_uses_openai_responses_path_and_returns_anthropic_s
     assert '"type":"text_delta","text":"bridge ok"' in body
     assert '"type":"message_stop"' in body
     translated = captured["payload"]
-    assert translated.model == CCDEX_MODEL
+    assert translated.model == CCGPT_MODEL
     assert translated.reasoning.effort == "high"
     assert translated.service_tier == "priority"
     assert translated.to_payload()["service_tier"] == "priority"
@@ -69,7 +69,7 @@ async def test_ccdex_messages_uses_openai_responses_path_and_returns_anthropic_s
 
 
 @pytest.mark.asyncio
-async def test_ccdex_messages_propagates_per_task_effort(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ccgpt_messages_propagates_per_task_effort(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
     async def fake_stream(request, payload, context, api_key, **kwargs):
@@ -83,7 +83,7 @@ async def test_ccdex_messages_propagates_per_task_effort(async_client, monkeypat
 
     monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
     response = await async_client.post(
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "gpt-5.6-sol",
             "max_tokens": 1024,
@@ -100,12 +100,12 @@ async def test_ccdex_messages_propagates_per_task_effort(async_client, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_ccdex_context_overflow_returns_prompt_too_long_not_api_error(
+async def test_ccgpt_context_overflow_returns_prompt_too_long_not_api_error(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Upstream rejects an over-limit turn with context_length_exceeded before
     # streaming begins; _stream_responses turns that into the real non-streaming
-    # error response the ccdex handler must translate. Claude Code only reactive-
+    # error response the ccgpt handler must translate. Claude Code only reactive-
     # compacts when the error message contains "prompt is too long" — a bare
     # api_error drives the identical-retry storm this regression guards against.
     overflow_envelope = {
@@ -127,7 +127,7 @@ async def test_ccdex_context_overflow_returns_prompt_too_long_not_api_error(
     monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
 
     response = await async_client.post(
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "claude-opus-4-6",
             "max_tokens": 1024,
@@ -144,7 +144,7 @@ async def test_ccdex_context_overflow_returns_prompt_too_long_not_api_error(
 
 
 @pytest.mark.asyncio
-async def test_ccdex_midstream_context_overflow_emits_prompt_too_long_without_success(
+async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_success(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Upstream streams real assistant content, THEN fails mid-stream with a
@@ -170,7 +170,7 @@ async def test_ccdex_midstream_context_overflow_emits_prompt_too_long_without_su
 
     async with async_client.stream(
         "POST",
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "claude-opus-4-6",
             "max_tokens": 1024,
@@ -191,7 +191,7 @@ async def test_ccdex_midstream_context_overflow_emits_prompt_too_long_without_su
 
 
 @pytest.mark.asyncio
-async def test_ccdex_precontent_stream_overflow_returns_http_400(
+async def test_ccgpt_precontent_stream_overflow_returns_http_400(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Upstream emits `response.created` fast (so the pre-stream HTTP probe sees a
@@ -216,7 +216,7 @@ async def test_ccdex_precontent_stream_overflow_returns_http_400(
     monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
 
     response = await async_client.post(
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "claude-opus-4-6",
             "max_tokens": 1024,
@@ -234,7 +234,7 @@ async def test_ccdex_precontent_stream_overflow_returns_http_400(
 
 
 @pytest.mark.asyncio
-async def test_ccdex_precontent_top_level_overflow_frame_returns_http_400(
+async def test_ccgpt_precontent_top_level_overflow_frame_returns_http_400(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Same pre-content overflow, but delivered through the ChatGPT-backed Codex
@@ -254,7 +254,7 @@ async def test_ccdex_precontent_top_level_overflow_frame_returns_http_400(
     monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
 
     response = await async_client.post(
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "claude-opus-4-6",
             "max_tokens": 1024,
@@ -270,7 +270,7 @@ async def test_ccdex_precontent_top_level_overflow_frame_returns_http_400(
 
 
 @pytest.mark.asyncio
-async def test_ccdex_non_overflow_error_stays_api_error(
+async def test_ccgpt_non_overflow_error_stays_api_error(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     generic_envelope = {"error": {"type": "server_error", "message": "upstream exploded"}}
@@ -285,7 +285,7 @@ async def test_ccdex_non_overflow_error_stays_api_error(
     monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
 
     response = await async_client.post(
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "claude-opus-4-6",
             "max_tokens": 1024,
@@ -302,9 +302,9 @@ async def test_ccdex_non_overflow_error_stays_api_error(
 
 
 @pytest.mark.asyncio
-async def test_ccdex_count_tokens_is_local_and_native(async_client) -> None:
+async def test_ccgpt_count_tokens_is_local_and_native(async_client) -> None:
     response = await async_client.post(
-        "/v1/ccdex/messages/count_tokens",
+        "/v1/ccgpt/messages/count_tokens",
         json={"model": "caller-model", "messages": [{"role": "user", "content": "hello"}]},
     )
 
@@ -355,8 +355,8 @@ async def test_messages_route_serves_sol_alias_via_bridge(
     assert response.headers["content-type"].startswith("text/event-stream")
     assert '"type":"message_start"' in body
     assert '"type":"text_delta","text":"alias ok"' in body
-    assert captured["payload"].model == CCDEX_MODEL
-    assert captured["kwargs"]["locked_model"] == CCDEX_MODEL
+    assert captured["payload"].model == CCGPT_MODEL
+    assert captured["kwargs"]["locked_model"] == CCGPT_MODEL
     assert captured["kwargs"]["locked_reasoning_effort"] == expected_effort
     assert captured["kwargs"]["locked_service_tier"] == "priority"
 

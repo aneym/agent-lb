@@ -4,7 +4,7 @@ Agent-lb startup latency is currently opaque and sometimes dominated by avoidabl
 
 ## What Changes
 
-- Add a startup-performance contract spanning service boot, macOS service restart, and the `cc`/`ccdex`/`co` launcher paths.
+- Add a startup-performance contract spanning service boot, macOS service restart, and the `cc`/`ccgpt`/`co` launcher paths.
 - Add a repeatable benchmark command that records spawn, startup-probe, readiness-probe, and useful-output timing as machine-readable history with comparison thresholds.
 - Emit structured service-startup phase summaries and Prometheus startup metrics with bounded, non-sensitive labels.
 - Keep full schema-drift validation available to explicit database checks while removing it from the default readiness-critical path after migration state is confirmed current.

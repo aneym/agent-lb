@@ -136,7 +136,7 @@ async def test_v1_messages_forwards_server_tool_and_stream_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_v1_ccdex_messages_rejects_anthropic_defined_tools(
+async def test_v1_ccgpt_messages_rejects_anthropic_defined_tools(
     async_client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -150,7 +150,7 @@ async def test_v1_ccdex_messages_rejects_anthropic_defined_tools(
     monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream_responses)
 
     response = await async_client.post(
-        "/v1/ccdex/messages",
+        "/v1/ccgpt/messages",
         json={
             "model": "caller-controlled-model",
             "max_tokens": 1024,
@@ -165,7 +165,7 @@ async def test_v1_ccdex_messages_rejects_anthropic_defined_tools(
         "type": "error",
         "error": {
             "type": "invalid_request_error",
-            "message": "Anthropic-defined tools are not supported by the ccdex compatibility route",
+            "message": "Anthropic-defined tools are not supported by the ccgpt compatibility route",
         },
     }
     assert was_called is False

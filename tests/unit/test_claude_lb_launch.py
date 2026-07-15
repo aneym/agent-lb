@@ -21,9 +21,9 @@ def load_launcher_module():
     return module
 
 
-def test_ccdex_build_command_locks_model_effort_and_bypass_perms() -> None:
+def test_ccgpt_build_command_locks_model_effort_and_bypass_perms() -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = True
+    launcher.CCGPT_MODE = True
 
     command = launcher.build_command(["--model", "claude-opus-4-6", "--effort=max", "-p", "hello"])
 
@@ -40,9 +40,9 @@ def test_ccdex_build_command_locks_model_effort_and_bypass_perms() -> None:
     ]
 
 
-def test_ccdex_explicit_permission_mode_wins_over_bypass_default(monkeypatch) -> None:
+def test_ccgpt_explicit_permission_mode_wins_over_bypass_default(monkeypatch) -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = True
+    launcher.CCGPT_MODE = True
     monkeypatch.setenv("CC_PERMISSION_MODE", "acceptEdits")
 
     command = launcher.build_command(["--permission-mode", "plan", "-p", "hello"])
@@ -60,31 +60,31 @@ def test_ccdex_explicit_permission_mode_wins_over_bypass_default(monkeypatch) ->
     ]
 
 
-def test_ccdex_skip_permissions_flag_suppresses_bypass_injection() -> None:
+def test_ccgpt_skip_permissions_flag_suppresses_bypass_injection() -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = True
+    launcher.CCGPT_MODE = True
 
     command = launcher.build_command(["--dangerously-skip-permissions", "-p", "hello"])
 
     assert "--permission-mode" not in command
 
 
-def test_ccdex_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() -> None:
+def test_ccgpt_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = True
+    launcher.CCGPT_MODE = True
 
     gpt_body = b'{"model":"gpt-5.6-sol"}'
     claude_body = b'{"model":"claude-opus-4-8"}'
-    assert launcher._ccdex_upstream_path("/v1/messages", gpt_body) == "/v1/ccdex/messages"
-    with pytest.raises(launcher.CcdexModelViolation, match="rejected Messages request for claude-opus-4-8"):
-        launcher._ccdex_upstream_path("/v1/messages", claude_body)
-    assert launcher._ccdex_upstream_path("/v1/messages/count_tokens", claude_body) == "/v1/ccdex/messages/count_tokens"
-    assert launcher._ccdex_upstream_path("/api/organizations", gpt_body) == "/api/organizations"
+    assert launcher._ccgpt_upstream_path("/v1/messages", gpt_body) == "/v1/ccgpt/messages"
+    with pytest.raises(launcher.CcgptModelViolation, match="rejected Messages request for claude-opus-4-8"):
+        launcher._ccgpt_upstream_path("/v1/messages", claude_body)
+    assert launcher._ccgpt_upstream_path("/v1/messages/count_tokens", claude_body) == "/v1/ccgpt/messages/count_tokens"
+    assert launcher._ccgpt_upstream_path("/api/organizations", gpt_body) == "/api/organizations"
 
 
-def test_ccdex_http_shim_rejects_claude_before_upstream(monkeypatch) -> None:
+def test_ccgpt_http_shim_rejects_claude_before_upstream(monkeypatch) -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = True
+    launcher.CCGPT_MODE = True
     monkeypatch.setattr(
         launcher.urllib.request,
         "urlopen",
@@ -121,18 +121,18 @@ def test_ccdex_http_shim_rejects_claude_before_upstream(monkeypatch) -> None:
 
 def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = False
+    launcher.CCGPT_MODE = False
 
-    assert launcher._ccdex_upstream_path("/v1/messages", b'{"model":"gpt-5.6-sol"}') == "/v1/messages"
+    assert launcher._ccgpt_upstream_path("/v1/messages", b'{"model":"gpt-5.6-sol"}') == "/v1/messages"
     assert (
-        launcher._ccdex_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}')
+        launcher._ccgpt_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}')
         == "/v1/messages/count_tokens"
     )
 
 
 def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypatch) -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = False
+    launcher.CCGPT_MODE = False
     monkeypatch.setenv("CC_EFFORT_LEVEL", "xhigh")
     monkeypatch.setenv("CC_PERMISSION_MODE", "plan")
 
@@ -153,7 +153,7 @@ def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypa
 
 def test_regular_cc_defaults_to_fable_high(monkeypatch) -> None:
     launcher = load_launcher_module()
-    launcher.CCDEX_MODE = False
+    launcher.CCGPT_MODE = False
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
     monkeypatch.delenv("CC_EFFORT_LEVEL", raising=False)
 
@@ -170,7 +170,7 @@ def test_regular_cc_defaults_to_fable_high(monkeypatch) -> None:
     ]
 
 
-def test_ccdex_capability_probe_requires_native_token_count(monkeypatch) -> None:
+def test_ccgpt_capability_probe_requires_native_token_count(monkeypatch) -> None:
     launcher = load_launcher_module()
 
     class Response:
@@ -190,10 +190,10 @@ def test_ccdex_capability_probe_requires_native_token_count(monkeypatch) -> None
         lambda path, **kwargs: {"accounts": [{"provider": "openai", "status": "active"}]},
     )
 
-    assert launcher._probe_ccdex_at("http://127.0.0.1:2455", timeout=1) == (True, "")
+    assert launcher._probe_ccgpt_at("http://127.0.0.1:2455", timeout=1) == (True, "")
 
 
-def test_ccdex_capability_probe_rejects_endpoint_without_openai_pool(monkeypatch) -> None:
+def test_ccgpt_capability_probe_rejects_endpoint_without_openai_pool(monkeypatch) -> None:
     launcher = load_launcher_module()
 
     class Response:
@@ -209,13 +209,13 @@ def test_ccdex_capability_probe_rejects_endpoint_without_openai_pool(monkeypatch
     monkeypatch.setattr(launcher.urllib.request, "urlopen", lambda request, timeout: Response())
     monkeypatch.setattr(launcher, "lb_json", lambda path, **kwargs: {"accounts": []})
 
-    assert launcher._probe_ccdex_at("http://127.0.0.1:2455", timeout=1) == (
+    assert launcher._probe_ccgpt_at("http://127.0.0.1:2455", timeout=1) == (
         False,
         "no active OpenAI accounts",
     )
 
 
-def test_ccdex_endpoint_uses_capability_probe_without_health_probe(monkeypatch) -> None:
+def test_ccgpt_endpoint_uses_capability_probe_without_health_probe(monkeypatch) -> None:
     launcher = load_launcher_module()
     monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://127.0.0.1:2455")])
     monkeypatch.setattr(
@@ -223,9 +223,9 @@ def test_ccdex_endpoint_uses_capability_probe_without_health_probe(monkeypatch) 
         "_probe_health_at",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("redundant health probe")),
     )
-    monkeypatch.setattr(launcher, "_probe_ccdex_at", lambda url, timeout: (True, ""))
+    monkeypatch.setattr(launcher, "_probe_ccgpt_at", lambda url, timeout: (True, ""))
 
-    assert launcher.prepare_ccdex_endpoint() is True
+    assert launcher.prepare_ccgpt_endpoint() is True
 
 
 def test_remote_preference_retains_local_fallback(monkeypatch) -> None:

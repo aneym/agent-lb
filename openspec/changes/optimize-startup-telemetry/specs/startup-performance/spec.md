@@ -54,7 +54,7 @@ Service startup MUST continue to fail closed when the configured database is beh
 
 ### Requirement: Claude launchers minimize redundant startup work while preserving proof obligations
 
-The normal Claude launcher MUST select an endpoint for interactive sessions using the readiness probe and MUST defer sticky account selection until the first proxied message so account and quota enrichment do not block the Claude UI. Headless sessions MUST retain eager session-route claiming because reset waiting and early account failure are part of their command contract. The ccdex launcher MUST require both a successful native token-count capability request and at least one active, routable OpenAI account before selecting a candidate, and MUST refuse to bypass agent-lb. An operator-configured remote-first preference MUST retain the local candidate as a fallback. The loopback intercepting proxy MUST be confirmed connectable before Claude is executed through the portable detached subprocess path.
+The normal Claude launcher MUST select an endpoint for interactive sessions using the readiness probe and MUST defer sticky account selection until the first proxied message so account and quota enrichment do not block the Claude UI. Headless sessions MUST retain eager session-route claiming because reset waiting and early account failure are part of their command contract. The ccgpt launcher MUST require both a successful native token-count capability request and at least one active, routable OpenAI account before selecting a candidate, and MUST refuse to bypass agent-lb. An operator-configured remote-first preference MUST retain the local candidate as a fallback. The loopback intercepting proxy MUST be confirmed connectable before Claude is executed through the portable detached subprocess path.
 
 #### Scenario: Interactive launcher reaches a ready local endpoint
 
@@ -68,17 +68,17 @@ The normal Claude launcher MUST select an endpoint for interactive sessions usin
 - **THEN** it eagerly claims the session route without a redundant preceding health request
 - **AND** advertised reset waiting and account-selection failures remain visible before the command runs
 
-#### Scenario: ccdex reaches a compatible local endpoint
+#### Scenario: ccgpt reaches a compatible local endpoint
 
 - **WHEN** the first candidate returns a valid native token-count capability response
 - **AND** its account summary contains an active, routable OpenAI account
-- **THEN** ccdex selects it without a separate preceding health request
+- **THEN** ccgpt selects it without a separate preceding health request
 - **AND** an incompatible or unavailable endpoint is not treated as ready
 
-#### Scenario: ccdex probes an empty local instance
+#### Scenario: ccgpt probes an empty local instance
 
 - **WHEN** a local candidate implements native token counting but has no active OpenAI account
-- **THEN** ccdex rejects that candidate and probes the next configured endpoint
+- **THEN** ccgpt rejects that candidate and probes the next configured endpoint
 
 #### Scenario: Laptop prefers the owner instance
 
@@ -90,4 +90,4 @@ The normal Claude launcher MUST select an endpoint for interactive sessions usin
 
 - **WHEN** the launcher starts its loopback intercepting proxy
 - **THEN** the launcher waits for both the ready marker and a successful loopback connection before executing Claude
-- **AND** a startup timeout yields the existing safe fallback behavior for normal Claude and fail-closed behavior for ccdex
+- **AND** a startup timeout yields the existing safe fallback behavior for normal Claude and fail-closed behavior for ccgpt

@@ -13,9 +13,9 @@
 
 ## 3. Launcher Startup Optimization
 
-- [x] 3.1 Add tests proving interactive readiness selection, headless session claiming, ccdex capability plus routable-pool validation, and remote-first/local-fallback ordering
-- [x] 3.2 Defer interactive account selection to the first proxied message, collapse redundant headless probes, reject empty ccdex candidates, retain the measured-faster portable proxy subprocess, and preserve connectable-before-exec proof
-- [x] 3.3 Exercise `cc`, `ccdex`, and `co` dry-run or real paths and record before/after useful-output/proxy-ready samples
+- [x] 3.1 Add tests proving interactive readiness selection, headless session claiming, ccgpt capability plus routable-pool validation, and remote-first/local-fallback ordering
+- [x] 3.2 Defer interactive account selection to the first proxied message, collapse redundant headless probes, reject empty ccgpt candidates, retain the measured-faster portable proxy subprocess, and preserve connectable-before-exec proof
+- [x] 3.3 Exercise `cc`, `ccgpt`, and `co` dry-run or real paths and record before/after useful-output/proxy-ready samples
 
 ## 4. Installer Restart Optimization
 

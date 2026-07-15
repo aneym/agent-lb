@@ -123,9 +123,9 @@ from app.modules.proxy._service.support import request_input_contains_compaction
 from app.modules.proxy.anthropic_service import AnthropicProxyError, _is_fable_model
 from app.modules.proxy.api_key_usage import estimate_api_key_request_usage
 from app.modules.proxy.claude_codex_bridge import (
-    CCDEX_MODEL,
-    CCDEX_REASONING_EFFORT,
-    CCDEX_SERVICE_TIER,
+    CCGPT_MODEL,
+    CCGPT_REASONING_EFFORT,
+    CCGPT_SERVICE_TIER,
     anthropic_error_from_response,
     anthropic_status_for_error,
     claude_to_responses,
@@ -741,13 +741,13 @@ async def v1_messages(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    if payload.model in CCDEX_MODEL_ALIASES:
-        return await _ccdex_messages_response(
+    if payload.model in CCGPT_MODEL_ALIASES:
+        return await _ccgpt_messages_response(
             request,
             payload,
             get_proxy_context(request),
             api_key,
-            alias_effort=CCDEX_MODEL_ALIASES[payload.model],
+            alias_effort=CCGPT_MODEL_ALIASES[payload.model],
         )
     validate_model_access(api_key, payload.model)
     try:
@@ -804,8 +804,8 @@ async def v1_messages_count_tokens(
     model = payload.get("model")
     if not isinstance(model, str) or not model.strip():
         return _anthropic_error_response(400, "invalid_request_error", "model is required")
-    if model in CCDEX_MODEL_ALIASES:
-        validate_model_access(api_key, CCDEX_MODEL)
+    if model in CCGPT_MODEL_ALIASES:
+        validate_model_access(api_key, CCGPT_MODEL)
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
     validate_model_access(api_key, model)
     # Token counting is quota-free upstream, so this route never creates an
@@ -822,27 +822,27 @@ async def v1_messages_count_tokens(
 # Worker model aliases accepted directly on /v1/messages. Each maps to the
 # locked Sol profile with a pinned reasoning effort; None defers to the
 # request's own output_config.effort (bridge default: high).
-CCDEX_MODEL_ALIASES: dict[str, str | None] = {
-    CCDEX_MODEL: None,
-    f"{CCDEX_MODEL}-low": "low",
-    f"{CCDEX_MODEL}-medium": "medium",
-    f"{CCDEX_MODEL}-high": "high",
-    f"{CCDEX_MODEL}-xhigh": "xhigh",
+CCGPT_MODEL_ALIASES: dict[str, str | None] = {
+    CCGPT_MODEL: None,
+    f"{CCGPT_MODEL}-low": "low",
+    f"{CCGPT_MODEL}-medium": "medium",
+    f"{CCGPT_MODEL}-high": "high",
+    f"{CCGPT_MODEL}-xhigh": "xhigh",
 }
 
 
-@v1_router.post("/ccdex/messages", response_model=None)
-async def v1_ccdex_messages(
+@v1_router.post("/ccgpt/messages", response_model=None)
+async def v1_ccgpt_messages(
     request: Request,
     payload: AnthropicMessageRequest = Body(...),
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     """Run Claude Code's Messages protocol through the locked Codex Sol profile."""
-    return await _ccdex_messages_response(request, payload, context, api_key)
+    return await _ccgpt_messages_response(request, payload, context, api_key)
 
 
-async def _ccdex_messages_response(
+async def _ccgpt_messages_response(
     request: Request,
     payload: AnthropicMessageRequest,
     context: ProxyContext,
@@ -853,7 +853,7 @@ async def _ccdex_messages_response(
         return _anthropic_error_response(
             400,
             "invalid_request_error",
-            "Anthropic-defined tools are not supported by the ccdex compatibility route",
+            "Anthropic-defined tools are not supported by the ccgpt compatibility route",
         )
     responses_payload = claude_to_responses(payload)
     forwarded_headers = {
@@ -872,10 +872,10 @@ async def _ccdex_messages_response(
             openai_cache_affinity=True,
             prefer_http_bridge=True,
             forwarded_headers=forwarded_headers,
-            locked_model=CCDEX_MODEL,
+            locked_model=CCGPT_MODEL,
             locked_reasoning_effort=alias_effort
-            or (responses_payload.reasoning.effort if responses_payload.reasoning else CCDEX_REASONING_EFFORT),
-            locked_service_tier=CCDEX_SERVICE_TIER,
+            or (responses_payload.reasoning.effort if responses_payload.reasoning else CCGPT_REASONING_EFFORT),
+            locked_service_tier=CCGPT_SERVICE_TIER,
         )
     except ProxyRateLimitError as exc:
         return _anthropic_error_response(429, "rate_limit_error", str(exc))
@@ -907,12 +907,12 @@ async def _ccdex_messages_response(
     )
 
 
-@v1_router.post("/ccdex/messages/count_tokens", response_model=None)
-async def v1_ccdex_messages_count_tokens(
+@v1_router.post("/ccgpt/messages/count_tokens", response_model=None)
+async def v1_ccgpt_messages_count_tokens(
     payload: dict[str, JsonValue] = Body(...),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    validate_model_access(api_key, CCDEX_MODEL)
+    validate_model_access(api_key, CCGPT_MODEL)
     return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
 
 

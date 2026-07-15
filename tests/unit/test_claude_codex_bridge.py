@@ -6,7 +6,7 @@ import pytest
 
 from app.core.anthropic.models import AnthropicMessageRequest
 from app.modules.proxy.claude_codex_bridge import (
-    CCDEX_MODEL,
+    CCGPT_MODEL,
     anthropic_error_from_response,
     anthropic_status_for_error,
     claude_to_responses,
@@ -61,7 +61,7 @@ def test_request_translation_locks_sol_high_priority_and_maps_tools() -> None:
         )
     )
 
-    assert translated.model == CCDEX_MODEL
+    assert translated.model == CCGPT_MODEL
     assert translated.reasoning is not None and translated.reasoning.effort == "high"
     assert translated.service_tier == "priority"
     assert translated.to_payload()["service_tier"] == "priority"

@@ -13,10 +13,10 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 
-CCDEX_MODEL = "gpt-5.6-sol"
-CCDEX_REASONING_EFFORT = "high"
-CCDEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
-CCDEX_SERVICE_TIER = "priority"
+CCGPT_MODEL = "gpt-5.6-sol"
+CCGPT_REASONING_EFFORT = "high"
+CCGPT_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
+CCGPT_SERVICE_TIER = "priority"
 _SIGNATURE_PREFIX = "codex:"
 
 # Claude Code's harness only reactive-compacts when the failed turn's error
@@ -169,7 +169,7 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
         tools.append(converted)
 
     return ResponsesRequest(
-        model=CCDEX_MODEL,
+        model=CCGPT_MODEL,
         instructions=_system_text(raw.get("system")),
         input=input_items,
         tools=tools,
@@ -179,18 +179,18 @@ def claude_to_responses(payload: AnthropicMessageRequest) -> ResponsesRequest:
         store=False,
         stream=True,
         include=["reasoning.encrypted_content"],
-        service_tier=CCDEX_SERVICE_TIER,
+        service_tier=CCGPT_SERVICE_TIER,
     )
 
 
 def _reasoning_effort(payload: Mapping[str, JsonValue]) -> str:
     output_config = payload.get("output_config")
     if not isinstance(output_config, dict):
-        return CCDEX_REASONING_EFFORT
+        return CCGPT_REASONING_EFFORT
     effort = output_config.get("effort")
-    if isinstance(effort, str) and effort.lower() in CCDEX_REASONING_EFFORTS:
+    if isinstance(effort, str) and effort.lower() in CCGPT_REASONING_EFFORTS:
         return effort.lower()
-    return CCDEX_REASONING_EFFORT
+    return CCGPT_REASONING_EFFORT
 
 
 def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
@@ -312,7 +312,7 @@ async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:
         "id": f"msg_{uuid.uuid4().hex}",
         "type": "message",
         "role": "assistant",
-        "model": CCDEX_MODEL,
+        "model": CCGPT_MODEL,
         "content": [],
         "stop_reason": "end_turn",
         "stop_sequence": None,
@@ -328,7 +328,7 @@ async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:
         if event_type == "message_start" and isinstance(event.get("message"), dict):
             started = cast(JsonObject, event["message"])
             message["id"] = started.get("id", message["id"])
-            message["model"] = started.get("model", CCDEX_MODEL)
+            message["model"] = started.get("model", CCGPT_MODEL)
         elif event_type == "content_block_start":
             index = event.get("index")
             block = event.get("content_block")
@@ -473,7 +473,7 @@ class _ClaudeStreamState:
     saw_terminal: bool = False
     emitted_text: bool = False
     emitted_tool: bool = False
-    actual_model: str = CCDEX_MODEL
+    actual_model: str = CCGPT_MODEL
 
     def consume(self, event: JsonObject) -> list[JsonObject]:
         event_type = event.get("type")
@@ -594,7 +594,7 @@ class _ClaudeStreamState:
                     "id": self.message_id,
                     "type": "message",
                     "role": "assistant",
-                    "model": CCDEX_MODEL,
+                    "model": CCGPT_MODEL,
                     "content": [],
                     "stop_reason": None,
                     "stop_sequence": None,

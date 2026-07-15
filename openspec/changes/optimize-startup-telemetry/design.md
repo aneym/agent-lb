@@ -18,7 +18,7 @@ The implementation must retain fail-closed migration/version and launcher compat
 
 - Claiming comparable Docker or Helm performance without running those environments.
 - Persisting high-cardinality per-process startup data in the application database.
-- Removing SQLite integrity checks, migration-head checks, explicit `agent-lb-db check`, or ccdex's native compatibility probe.
+- Removing SQLite integrity checks, migration-head checks, explicit `agent-lb-db check`, or ccgpt's native compatibility probe.
 - Changing proxy request routing or account-selection policy.
 
 ## Decisions
@@ -43,7 +43,7 @@ The alternative—caching drift results by revision—was rejected because deplo
 
 ### Optimize launchers by collapsing redundant proof steps
 
-For interactive Claude routing, `/health/ready` selects a usable endpoint and sticky account selection is deferred to the first proxied message. The proxy already carries the session id and the message route performs the same account selection, so synchronously claiming a route and then loading the full account-summary banner only delays the UI. Headless runs retain eager session-route claiming because they need deterministic reset waiting and early failure; the claim itself replaces a preceding health request. For ccdex, native token counting proves reachability and protocol compatibility, while the account summary proves the endpoint can actually route Codex traffic; both are required because an empty local instance can implement token counting yet return 503 for every message. Failures fall through candidates and remain fail closed. `CLAUDE_LB_PREFER_REMOTE=1` supports an owner-first laptop posture while retaining a federated local mirror as fallback.
+For interactive Claude routing, `/health/ready` selects a usable endpoint and sticky account selection is deferred to the first proxied message. The proxy already carries the session id and the message route performs the same account selection, so synchronously claiming a route and then loading the full account-summary banner only delays the UI. Headless runs retain eager session-route claiming because they need deterministic reset waiting and early failure; the claim itself replaces a preceding health request. For ccgpt, native token counting proves reachability and protocol compatibility, while the account summary proves the endpoint can actually route Codex traffic; both are required because an empty local instance can implement token counting yet return 503 for every message. Failures fall through candidates and remain fail closed. `CLAUDE_LB_PREFER_REMOTE=1` supports an owner-first laptop posture while retaining a federated local mirror as fallback.
 
 The intercepting proxy retains its portable detached subprocess because direct measurement showed that a POSIX fork increased both median and tail latency on macOS. The parent still requires the ready file plus a successful loopback connect before launching Claude. This evidence-driven choice avoids turning process-mechanism novelty into a regression.
 

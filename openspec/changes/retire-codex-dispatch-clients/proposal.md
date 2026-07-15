@@ -10,7 +10,7 @@ transport, the `ccdex-gpt-only` guard hook, and the codex-host instruction
 adapter — is retired. Keeping the installer and policy shipping those artifacts
 would resurrect the retired stack on every install.
 
-The server-side CCDEX compatibility bridge (`/v1/ccdex/messages` translation,
+The server-side CCGPT compatibility bridge (`/v1/ccgpt/messages` translation,
 locked Sol profile, overflow handling, reasoning hygiene, token counting) is
 NOT retired: it is the substrate for the planned alias-registry bridge and its
 requirements remain in force. `clients/claude-lb-launch` keeps its codex-mode
@@ -42,5 +42,5 @@ changes here.
   cleanup).
 - Affected code: `clients/`, `config/coding-agents/`,
   `scripts/install-claude-clients.sh`, `tests/unit`, `tests/integration`.
-- Not affected: proxy runtime, `/v1/ccdex/messages` server bridge and its
+- Not affected: proxy runtime, `/v1/ccgpt/messages` server bridge and its
   integration tests, `clients/claude-lb-launch` behavior and tests.

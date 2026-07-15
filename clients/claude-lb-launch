@@ -59,8 +59,8 @@ from datetime import datetime
 from pathlib import Path
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
-CCDEX_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
-CCDEX_MODEL = "gpt-5.6-sol"
+CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
+CCGPT_MODEL = "gpt-5.6-sol"
 DEFAULT_CLAUDE_MODEL = "claude-fable-5"
 DEFAULT_CLAUDE_EFFORT = "high"
 HOP_BY_HOP_HEADERS = {
@@ -298,8 +298,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         headers["x-claude-session-id"] = session_id
 
         try:
-            upstream_path = _ccdex_upstream_path(self.path, body)
-        except CcdexModelViolation as error:
+            upstream_path = _ccgpt_upstream_path(self.path, body)
+        except CcgptModelViolation as error:
             message = json.dumps(
                 {
                     "type": "error",
@@ -1226,13 +1226,13 @@ def prepare_interactive_endpoint() -> bool:
     return False
 
 
-def prepare_ccdex_endpoint() -> bool:
+def prepare_ccgpt_endpoint() -> bool:
     """Select a compatible LB endpoint without claiming an Anthropic account."""
     global AGENT_LB_BASE_URL
     failures: list[str] = []
     timeout = _env_float("CLAUDE_LB_HEALTH_TIMEOUT", 3.0)
     for label, url in _lb_candidates():
-        compatible, capability_error = _probe_ccdex_at(
+        compatible, capability_error = _probe_ccgpt_at(
             url,
             timeout=min(2.0, timeout) if label == "local" else timeout,
         )
@@ -1243,20 +1243,20 @@ def prepare_ccdex_endpoint() -> bool:
         endpoint = urllib.parse.urlsplit(url).netloc or url
         suffix = " (local)" if label == "local" else ""
         print(
-            f"ccdex: {_c('Claude Code + Codex', '1;36')} · {CCDEX_MODEL}/high · "
+            f"ccgpt: {_c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/high · "
             f"{'bypass perms' if not _has_permission_option(sys.argv[1:]) else 'custom perms'} · "
             f"requested priority {_c(f'via {endpoint}{suffix}', '2')}",
             file=sys.stderr,
         )
         return True
-    print("ccdex: agent-lb unavailable (" + "; ".join(failures) + ")", file=sys.stderr)
+    print("ccgpt: agent-lb unavailable (" + "; ".join(failures) + ")", file=sys.stderr)
     return False
 
 
-def _probe_ccdex_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
-    payload = json.dumps({"model": CCDEX_MODEL, "messages": []}).encode()
+def _probe_ccgpt_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
+    payload = json.dumps({"model": CCGPT_MODEL, "messages": []}).encode()
     request = urllib.request.Request(
-        f"{base_url}/v1/ccdex/messages/count_tokens",
+        f"{base_url}/v1/ccgpt/messages/count_tokens",
         data=payload,
         headers={"content-type": "application/json", "accept": "application/json"},
         method="POST",
@@ -1265,14 +1265,14 @@ def _probe_ccdex_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8") or "{}")
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        return False, f"ccdex compatibility probe failed: {error}"
+        return False, f"ccgpt compatibility probe failed: {error}"
     count = body.get("input_tokens") if isinstance(body, dict) else None
     if not isinstance(count, int):
-        return False, "ccdex compatibility probe returned an invalid response"
+        return False, "ccgpt compatibility probe returned an invalid response"
     try:
         accounts = lb_json("/api/accounts", timeout=timeout, base_url=base_url).get("accounts") or []
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        return False, f"ccdex account-pool probe failed: {error}"
+        return False, f"ccgpt account-pool probe failed: {error}"
     if not any(
         account.get("provider") == "openai"
         and str(account.get("status", "")).lower() == "active"
@@ -1283,27 +1283,27 @@ def _probe_ccdex_at(base_url: str, *, timeout: float) -> tuple[bool, str]:
     return True, ""
 
 
-class CcdexModelViolation(ValueError):
+class CcgptModelViolation(ValueError):
     pass
 
 
-def _ccdex_upstream_path(path: str, body: bytes | None = None) -> str:
-    if not CCDEX_MODE:
+def _ccgpt_upstream_path(path: str, body: bytes | None = None) -> str:
+    if not CCGPT_MODE:
         return path
     if not path.startswith("/v1/messages"):
         return path
     if path == "/v1/messages/count_tokens":
-        return "/v1/ccdex/messages" + path.removeprefix("/v1/messages")
-    requested = _ccdex_request_model(body)
-    if requested != CCDEX_MODEL:
+        return "/v1/ccgpt/messages" + path.removeprefix("/v1/messages")
+    requested = _ccgpt_request_model(body)
+    if requested != CCGPT_MODEL:
         label = requested or "missing model"
-        raise CcdexModelViolation(
-            f"CCDEX only permits its canonical GPT model; rejected Messages request for {label}"
+        raise CcgptModelViolation(
+            f"CCGPT only permits its canonical GPT model; rejected Messages request for {label}"
         )
-    return "/v1/ccdex/messages" + path.removeprefix("/v1/messages")
+    return "/v1/ccgpt/messages" + path.removeprefix("/v1/messages")
 
 
-def _ccdex_request_model(body: bytes | None) -> str | None:
+def _ccgpt_request_model(body: bytes | None) -> str | None:
     if not body:
         return None
     try:
@@ -1332,16 +1332,16 @@ def _without_option(argv: list[str], option: str) -> list[str]:
 
 def build_command(argv: list[str]) -> list[str]:
     command = ["claude"]
-    if CCDEX_MODE:
+    if CCGPT_MODE:
         argv = _without_option(_without_option(argv, "--model"), "--effort")
-        command.extend(["--model", CCDEX_MODEL, "--effort", "high"])
+        command.extend(["--model", CCGPT_MODEL, "--effort", "high"])
     else:
         if arg_value(argv, "--model", "-m") is None and not os.environ.get("ANTHROPIC_MODEL"):
             command.extend(["--model", DEFAULT_CLAUDE_MODEL])
         if arg_value(argv, "--effort") is None:
             command.extend(["--effort", os.environ.get("CC_EFFORT_LEVEL") or DEFAULT_CLAUDE_EFFORT])
-    permission_mode = None if CCDEX_MODE else os.environ.get("CC_PERMISSION_MODE")
-    if CCDEX_MODE and not _has_permission_option(argv):
+    permission_mode = None if CCGPT_MODE else os.environ.get("CC_PERMISSION_MODE")
+    if CCGPT_MODE and not _has_permission_option(argv):
         permission_mode = "bypassPermissions"
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
@@ -1453,8 +1453,8 @@ def main() -> None:
     session_id = ""
     if lb_enabled():
         session_id = derive_session_id(argv)
-        if CCDEX_MODE:
-            endpoint_ready = prepare_ccdex_endpoint()
+        if CCGPT_MODE:
+            endpoint_ready = prepare_ccgpt_endpoint()
         elif headless_invocation(argv):
             endpoint_ready = print_lb_banner(argv, session_id)
         else:
@@ -1492,23 +1492,23 @@ def main() -> None:
             except RuntimeError as error:
                 print(f"cc: {error}", file=sys.stderr)
         if not routed:
-            if CCDEX_MODE:
-                print("ccdex: refusing to bypass agent-lb or fall back to Claude", file=sys.stderr)
+            if CCGPT_MODE:
+                print("ccgpt: refusing to bypass agent-lb or fall back to Claude", file=sys.stderr)
                 sys.exit(1)
             print(
                 "cc: falling back to plain claude (load balancer unavailable; using your normal Claude auth)",
                 file=sys.stderr,
             )
 
-    elif CCDEX_MODE:
-        print("ccdex: CLAUDE_LB_DISABLE is not allowed for this fail-closed command", file=sys.stderr)
+    elif CCGPT_MODE:
+        print("ccgpt: CLAUDE_LB_DISABLE is not allowed for this fail-closed command", file=sys.stderr)
         sys.exit(1)
 
     command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         return
-    if routed and not CCDEX_MODE and auto_resume_enabled() and headless_invocation(argv):
+    if routed and not CCGPT_MODE and auto_resume_enabled() and headless_invocation(argv):
         model = requested_model(argv)
         quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
         sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))

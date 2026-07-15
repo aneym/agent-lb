@@ -20,9 +20,9 @@ def _record(*, median: float, p95: float) -> BenchmarkRecord:
     return BenchmarkRecord(
         schema_version=1,
         recorded_at="2026-07-11T00:00:00+00:00",
-        label="ccdex",
+        label="ccgpt",
         mode="command",
-        command="ccdex",
+        command="ccgpt",
         git_revision="abc123",
         platform="test",
         python="3.13",
@@ -58,7 +58,7 @@ def test_write_record_appends_jsonl_without_raw_arguments(tmp_path: Path) -> Non
     write_record(path, record)
 
     payload = json.loads(path.read_text().strip())
-    assert payload["command"] == "ccdex"
+    assert payload["command"] == "ccgpt"
     assert "argv" not in payload
     assert payload["samples"][0]["completion_seconds"] == 1.0
 
