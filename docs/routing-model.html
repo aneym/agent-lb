@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding-Agent Routing — Canonical Model</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --k-bg: light-dark(#f4f3f0, #02040a);
+    --k-rail: light-dark(rgba(10,10,10,.025), rgba(223,223,223,.03));
+    --k-inset: light-dark(rgba(10,10,10,.045), rgba(223,223,223,.05));
+    --k-surface: light-dark(#faf9f6, rgba(223,223,223,.04));
+    --k-border: light-dark(rgba(10,10,10,.14), rgba(223,223,223,.14));
+    --k-border-hi: light-dark(rgba(10,10,10,.32), rgba(223,223,223,.34));
+    --k-ink: light-dark(#0a0a0a, #dfdfdf);
+    --k-ink-hi: light-dark(#000, #fff);
+    --k-muted: light-dark(rgba(10,10,10,.55), rgba(223,223,223,.55));
+    --k-dim: light-dark(rgba(10,10,10,.42), rgba(223,223,223,.42));
+    --k-accent-soft: light-dark(rgba(10,10,10,.06), rgba(223,223,223,.07));
+    --k-on-accent: light-dark(#f4f3f0, #02040a);
+    --k-bad: light-dark(#b3261e, #ff6b62);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--k-bg); color: var(--k-ink);
+    font: 15px/1.6 -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    max-width: 880px; margin: 0 auto; padding: 48px 24px 96px;
+  }
+  h1 { font-size: 26px; letter-spacing: -.02em; color: var(--k-ink-hi); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+       color: var(--k-dim); margin: 44px 0 14px; border-bottom: 1px solid var(--k-border);
+       padding-bottom: 8px; }
+  p { margin: 10px 0; color: var(--k-ink); }
+  .sub { color: var(--k-muted); margin-top: 6px; }
+  .stamp { font-size: 12px; color: var(--k-dim); margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--k-dim); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--k-border-hi); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--k-border); vertical-align: top; }
+  code, .mono { font: 12.5px/1.5 "SF Mono", ui-monospace, Menlo, monospace;
+       background: var(--k-inset); padding: 1px 5px; border-radius: 2px; }
+  .pill { display: inline-block; border: 1px solid var(--k-border-hi); border-radius: 999px;
+       padding: 1px 10px; font-size: 12px; color: var(--k-muted); }
+  .fill { background: var(--k-ink); color: var(--k-on-accent); border-color: var(--k-ink); }
+  .loop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0;
+       font-size: 13px; }
+  .loop .arrow { color: var(--k-dim); }
+  .card { background: var(--k-surface); border: 1px solid var(--k-border); border-radius: 2px;
+       padding: 14px 16px; margin: 12px 0; }
+  .evidence td:first-child { white-space: nowrap; color: var(--k-muted); }
+  .num { font-variant-numeric: tabular-nums; }
+  .bad { color: var(--k-bad); }
+  a { color: var(--k-ink-hi); text-decoration-color: var(--k-border-hi); text-underline-offset: 3px; }
+  .footer { margin-top: 56px; font-size: 12px; color: var(--k-dim); border-top: 1px solid var(--k-border); padding-top: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Coding-Agent Routing — Canonical Model</h1>
+<p class="sub">One expensive brain, cheap fast hands, and a machine that keeps it that way.</p>
+<p class="stamp">Updated 2026-07-15 · canon source: <code>config/coding-agents/ROUTING.md</code> (installed at <code>~/.agents/policy/coding-agents/</code>) · this page: <code>docs/routing-model.html</code></p>
+
+<h2>Northstar — hands vs brain</h2>
+<p><strong>Optimize for keeping Fable usage safe without sacrificing intelligence.</strong>
+Fable weekly capacity is a hard scarce resource (the pool has hit 100% of its 5-hour limit with
+Fable-out 60–75% on two accounts). The brain — Fable — decides, architects, verifies, and writes
+the artifacts that need full context (plans, PRDs, specs, docs like this one). The hands — cheap
+seats — do volume: reads, mechanical edits, retries, builds, test runs. Parallel fan-out is
+encouraged; the system gates economics, never concurrency.</p>
+
+<h2>The seat lineup (fixed per seat, never per task)</h2>
+<table>
+  <tr><th>Seat</th><th>Model</th><th>Serves</th><th>Pool</th></tr>
+  <tr><td><span class="pill fill">Driver</span></td><td class="mono">claude-fable-5 · high</td><td>decisions, canon, full-context artifacts, final acceptance</td><td>Claude (scarce)</td></tr>
+  <tr><td><span class="pill">Explore</span></td><td class="mono">sonnet</td><td>read-only scouting, codebase maps, transcript forensics</td><td>Claude</td></tr>
+  <tr><td><span class="pill">implementer</span></td><td class="mono">gpt-5.6-sol-medium</td><td>closed-spec build-run-report, migrations, fixes, dogfooding</td><td>Codex (bridge)</td></tr>
+  <tr><td><span class="pill">verifier</span></td><td class="mono">gpt-5.6-sol-xhigh</td><td>adversarial verification of executor claims</td><td>Codex (bridge)</td></tr>
+  <tr><td><span class="pill">fork</span></td><td class="mono">inherits Fable</td><td>context-carrying offload (long docs/plans) — exempt from the guard</td><td>Claude</td></tr>
+</table>
+<p class="sub">Sol seats are served by agent-lb's Messages-route aliases (<code>gpt-5.6-sol-*</code>) through the
+HTTP bridge. Catch-all subagents (<code>general-purpose</code>/default) must pin <code>sonnet</code>/<code>haiku</code>
+explicitly — inheriting the driver model is hook-denied.</p>
+
+<h2>The enforcement loop</h2>
+<div class="loop">
+  <span class="pill fill">prevent</span><span class="arrow">→</span>
+  <span class="pill fill">nudge</span><span class="arrow">→</span>
+  <span class="pill fill">correct</span><span class="arrow">→</span>
+  <span class="pill fill">learn</span><span class="arrow">→</span>
+  <span class="pill fill">remember</span><span class="arrow">→</span>
+  <span class="pill fill">observe</span><span class="arrow">→ (loops)</span>
+</div>
+<table>
+  <tr><th>Layer</th><th>Mechanism</th><th>Behavior</th></tr>
+  <tr><td>prevent</td><td class="mono">~/.claude/hooks/seat-guard.py<br>(global PreToolUse · Agent)</td>
+      <td>Denies expensive ad-hoc dispatches — explicit fable/opus overrides, or catch-all types inheriting the driver — with a corrective reason naming the seats. Fail-open, &lt;30&nbsp;ms.</td></tr>
+  <tr><td>nudge</td><td class="mono">~/.claude/hooks/routing-pulse.py<br>(global UserPromptSubmit)</td>
+      <td>Injects the session's own driver-vs-seat numbers from the session map when the ratio degrades (25+ driver reqs, seats &lt; 25%). Throttled 15&nbsp;min; silent when healthy or LB down.</td></tr>
+  <tr><td>correct</td><td class="mono">/route-fix &nbsp;<span style="font-family:inherit">skill</span></td>
+      <td>Manual audit + live re-routing for any session (<code>/route-fix</code> in-session, or <code>/route-fix &lt;id | /s/ link&gt;</code>). Diagnoses zero-dispatch grind, read-chain drift, retry loops, off-canon dispatch, and names false positives (live pairing, fast mode, coordinator reconciliation). Works headless.</td></tr>
+  <tr><td>learn</td><td class="mono">com.aneyman.fleet-audit<br>(launchd, 6-hourly · 03/09/15/21:43)</td>
+      <td>Snapshots every session's dispatch behavior (<code>~/.claude/tools/fleet-audit/</code>); daily sonnet digest flags the top sessions needing correction with <code>/s/</code> links and proposes policy improvements.</td></tr>
+  <tr><td>remember</td><td class="mono">ROUTING.md (repo-backed canon)</td>
+      <td>Single source of truth; every incident ends as a canon amendment (driver tool scope, driver work scope, catch-all rule) — validated by <code>verify-routing</code>.</td></tr>
+  <tr><td>observe</td><td class="mono">agent-lb session map</td>
+      <td>Status line carries <code>http://127.0.0.1:2455/s/&lt;id&gt;</code> → full per-session analytics.</td></tr>
+</table>
+
+<h2>The session map (the instrument everything reads)</h2>
+<p>Every Anthropic-path request through agent-lb persists its Claude Code session identity
+(<code>metadata.user_id</code> JSON → <code>X-Claude-Code-Session-Id</code> header → null, never synthesized), and
+the Sol bridge prefers real client identity over synthetic turn ids at log-write —
+so subagent seat traffic lands under its coordinator session, across retries.</p>
+<table>
+  <tr><th>Surface</th><th>What it answers</th></tr>
+  <tr><td class="mono">GET /api/sessions</td><td>who's active: models, requests, tokens (cached split), cost, errors, sparklines</td></tr>
+  <tr><td class="mono">GET /api/sessions/{id}/analytics</td><td>windowed per-seat totals (model + reasoning effort), bucketed timeline, latency &amp; tokens-per-request histograms — series sums equal session totals</td></tr>
+  <tr><td class="mono">GET /s/{8-char prefix}</td><td>short link → dashboard deep-link (<code>/sessions?session=…</code>) — lives in every status line</td></tr>
+  <tr><td class="mono">Dashboard → Sessions</td><td>list + full-width analytics view: stat tiles, stacked timeline, seat donut/table, histograms</td></tr>
+</table>
+<p class="sub">Known limit: the LB sees seats (model+effort), not agent instances — true "N subagents"
+counts need client-side transcript enrichment (fleet-audit analyzer is the prior art; backlogged).</p>
+
+<h2>Evidence — 2026-07-15</h2>
+<table class="evidence">
+  <tr><th>Finding</th><th>Detail</th></tr>
+  <tr><td>Prose doesn't bind</td><td>Fleet observation across 34 sessions: sessions loaded the policy and still ground zero-dispatch (two sessions: 25–49 hands-on calls, 0 dispatches). Post-policy advantage decayed without enforcement — hence the hooks.</td></tr>
+  <tr><td class="bad">Off-canon cost ~13×</td><td class="num">Identical delegated work: ad-hoc opus teammates $0.41/request vs canonical sol seats $0.03/request — and opus burns the scarce Claude pool. One session spent $21.69 on 53 opus subagent requests the bridge would have served for ~$1.60.</td></tr>
+  <tr><td>Correction works</td><td class="num">Session 55f4bb2e seat share: 21% → 29% → 44.5% over one afternoon after diagnosis + correction.</td></tr>
+  <tr><td>Guard self-corrects models</td><td>Headless e2e: off-canon dispatch denied → the model read the reason → retried on the implementer seat → succeeded. Zero human intervention.</td></tr>
+  <tr><td>Seats are reliable</td><td class="num">Entire session-map v1+v2 build ran on the lineup: hundreds of sol requests, 0 bridge errors, ~7s median; verifier caught 3 real shipping bugs (retry identity loss, window mismatch, bin edges).</td></tr>
+  <tr><td>First automated audit</td><td>Flagged 2 zero-dispatch sessions the fleet-wide ratio was masking; proposed the <code>hands ≥ 3 AND dispatch == 0</code> hard trigger; caught its own dead metric (sidechain share).</td></tr>
+</table>
+
+<h2>Where things live</h2>
+<table>
+  <tr><th>Thing</th><th>Path</th></tr>
+  <tr><td>Canon (source → installed)</td><td class="mono">agent-lb/config/coding-agents/ROUTING.md → ~/.agents/policy/coding-agents/</td></tr>
+  <tr><td>Seat definitions</td><td class="mono">~/.claude/agents/{Explore,implementer,verifier}.md</td></tr>
+  <tr><td>Hooks</td><td class="mono">~/.claude/hooks/{seat-guard,routing-pulse}.py + ~/.claude/settings.json</td></tr>
+  <tr><td>Correction skill</td><td class="mono">~/.claude/skills/route-fix/SKILL.md</td></tr>
+  <tr><td>Fleet audit</td><td class="mono">~/.claude/tools/fleet-audit/ + ~/Library/LaunchAgents/com.aneyman.fleet-audit.plist</td></tr>
+  <tr><td>Session map</td><td class="mono">agent-lb commits 7e86c190 (map, /s/, statusline) · 4ddd1552 (analytics, seat attribution) · OpenSpec: add-claude-session-map, add-session-analytics</td></tr>
+</table>
+
+<p class="footer">Canonical model of the routing system. Update this page when the canon changes —
+it is the human-readable mirror of ROUTING.md, not a second source of truth.</p>
+
+</body>
+</html>
