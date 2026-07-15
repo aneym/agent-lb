@@ -13,15 +13,11 @@ from typing import Any
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
-HOOK_COMMAND = "$HOME/.claude/hooks/ccdex-gpt-only.sh"
 MODEL = "claude-fable-5"
-LEGACY_HEADINGS = {
-    "claude": (
-        "Coding-agent routing",
-        "Orchestration — Fable architects, the fleet executes",
-    ),
-    "codex": ("Fable/Codex Routing", "Coding-agent routing"),
-}
+LEGACY_HEADINGS = (
+    "Coding-agent routing",
+    "Orchestration — Fable architects, the fleet executes",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,14 +56,14 @@ def h2_span(text: str, headings: tuple[str, ...], path: Path) -> tuple[int, int]
     return start, end
 
 
-def install_adapter(text: str, template: str, kind: str, path: Path) -> str:
+def install_adapter(text: str, template: str, path: Path) -> str:
     validate_markers(text, path)
     if START in text:
         start = text.index(START)
         end = text.index(END, start) + len(END)
         updated = text[:start] + template.strip() + text[end:]
     else:
-        span = h2_span(text, LEGACY_HEADINGS[kind], path)
+        span = h2_span(text, LEGACY_HEADINGS, path)
         if span:
             updated = text[: span[0]] + template.strip() + "\n\n" + text[span[1] :].lstrip("\n")
         elif text:
@@ -93,7 +89,7 @@ def is_owned_hook(command: Any) -> bool:
 
 def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
-    hooks = updated.setdefault("hooks", {})
+    hooks = updated.get("hooks", {})
     groups = hooks.get("PreToolUse", [])
     cleaned: list[dict[str, Any]] = []
     for group in groups:
@@ -102,24 +98,15 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
         if remaining:
             group_copy["hooks"] = remaining
             cleaned.append(group_copy)
-    if uninstall:
+    if groups:
         if cleaned:
             hooks["PreToolUse"] = cleaned
         else:
             hooks.pop("PreToolUse", None)
         if not hooks:
             updated.pop("hooks", None)
-        return updated
-
-    updated["model"] = MODEL
-    owned = {"type": "command", "command": HOOK_COMMAND}
-    cleaned.extend(
-        [
-            {"matcher": "Agent|Workflow", "hooks": [owned]},
-            {"matcher": "Bash", "hooks": [owned]},
-        ]
-    )
-    hooks["PreToolUse"] = cleaned
+    if not uninstall:
+        updated["model"] = MODEL
     return updated
 
 
@@ -140,11 +127,10 @@ def write_atomic(path: Path, content: str) -> None:
 def main() -> int:
     args = parse_args()
     source = Path(__file__).resolve().parent
-    targets = {
-        args.home / ".claude" / "CLAUDE.md": ("claude", (source / "claude-adapter.md").read_text()),
-        args.home / ".codex" / "AGENTS.md": ("codex", (source / "codex-adapter.md").read_text()),
-    }
-    originals = {path: read_text(path) for path in targets}
+    claude_path = args.home / ".claude" / "CLAUDE.md"
+    codex_path = args.home / ".codex" / "AGENTS.md"
+    template = (source / "claude-adapter.md").read_text()
+    originals = {path: read_text(path) for path in (claude_path, codex_path)}
     settings_path = args.home / ".claude" / "settings.json"
     settings_text = read_text(settings_path)
     try:
@@ -156,12 +142,13 @@ def main() -> int:
 
     try:
         desired_docs = {
-            path: (
-                uninstall_adapter(originals[path], path)
+            claude_path: (
+                uninstall_adapter(originals[claude_path], claude_path)
                 if args.uninstall
-                else install_adapter(originals[path], template, kind, path)
-            )
-            for path, (kind, template) in targets.items()
+                else install_adapter(originals[claude_path], template, claude_path)
+            ),
+            # The codex-host adapter is retired: converge always removes its managed block.
+            codex_path: uninstall_adapter(originals[codex_path], codex_path),
         }
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc

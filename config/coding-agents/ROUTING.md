@@ -5,48 +5,45 @@ computer. Its stable host-neutral path is
 `~/.agents/policy/coding-agents/ROUTING.md`. Host instructions and skills are
 adapters: when they disagree with this file, this file wins.
 
-## Modes
+## Mode: raw Claude Code harness (2026-07-15)
 
-| Entry point | Coordinator | Planning and review | Implementation and investigation | Forbidden routing |
-| --- | --- | --- | --- | --- |
-| `cc` (normal Claude Code) | Fable, high effort | Fable | Codex/GPT workers through `ccdex-worker`, Codex skills, or `codex exec` | No Composer, Gemini, Haiku, Sonnet, Opus, or task-based model switching |
-| `ccdex` (GPT compatibility host) | Canonical GPT, high effort | Canonical GPT | Canonical GPT/Codex only | No Claude `Agent` or `Workflow`; no Claude-model Messages request; no non-GPT fallback |
-| Native Codex | Codex using the current user configuration | Codex coordinates; for substantive planning, consult a tracked Fable planner when available | Codex | No non-Fable/non-Codex engineering lane; no task-based model switching |
+Claude Code, entered through `cc`, is the only coding harness. Fable/high is
+the session model: it coordinates, plans, implements, and verifies using the
+native harness — `Agent`/`Workflow` subagents, skills, and hooks. Subagents run
+on Claude models and default to `inherit`.
+
+The Codex dispatch stack is retired (2026-07-15): the `ccdex` entry point, the
+codex skills and plugin, the `ccdex-worker` MCP transport, and the
+`ccdex-gpt-only` hook. Do not reintroduce a second engineering lane or switch
+models by task type — no Codex, Composer, Gemini, or other model products as
+coding lanes.
+
+Planned evolution: worker model aliases (for example `worker-gpt`) served by
+the agent-lb alias registry, so a subagent can pin a non-Claude account pool
+while the harness stays Claude Code. Until that registry ships, subagent model
+choice is a Claude-model choice.
 
 ## Operating contract
 
-1. Select the entry-point mode once. Do not change models because the task is
-   frontend, backend, research, review, or computer use.
-2. In normal `cc`, Fable owns the user conversation, decomposition, written
-   worker contracts, reconciliation, and final verification. Codex/GPT owns
-   hands-on execution. If the GPT worker transport is unavailable, report the
-   blocker; do not silently substitute another Claude model.
-3. In `ccdex`, GPT owns the entire loop. A Workflow has no safe inherited model:
-   each embedded agent chooses its own model, so Claude `Agent` and `Workflow`
-   are prohibited. Fan-out uses `ccdex-worker` or direct Codex processes.
-4. In native Codex, Codex remains coordinator. Fable planning is consultation,
-   not a handoff of coordination or implementation.
-5. Delegates inherit the current configured model, reasoning, and service tier.
-   Do not pin a GPT version in skills or prompts unless the transport itself
-   requires a compatibility identifier.
-6. Every delegated lane returns a bounded closeout: conclusion, evidence,
-   verification, next action, and artifact paths. The coordinator independently
-   checks the acceptance criteria.
+1. One harness, one coordinator. Fable owns the user conversation,
+   decomposition, dispatch, reconciliation, and final verification.
+2. Delegated subagents return a bounded closeout: conclusion, evidence,
+   verification, next action, and artifact paths. The coordinator
+   independently checks the acceptance criteria.
+3. A model override on a subagent is an exception, not a routing rule: pin a
+   model in an agent definition only for a cost or capability reason the
+   definition itself states.
 
 ## Runtime enforcement
 
-- `clients/claude-lb-launch` defaults normal `cc` to Fable/high and forces
-  `ccdex` to the compatibility model/high.
-- In `ccdex`, the local launcher rejects noncanonical Messages inference before
-  it can select or contact an Anthropic account.
-- `~/.claude/hooks/ccdex-gpt-only.sh` rejects Claude `Agent` and `Workflow` calls
-  as an early, human-readable guardrail.
-- `scripts/install-claude-clients.sh` installs this policy, `cc`, `ccdex`, and
-  `ccdex-worker-mcp`, and registers the worker MCP for normal Claude Code.
+- `clients/claude-lb-launch` defaults `cc` sessions to Fable/high.
+- `scripts/install-claude-clients.sh` installs this policy and the `cc`
+  client, and removes retired ccdex artifacts (clients, hook, MCP
+  registration) when it finds them.
 
 ## Validation
 
 Run `~/.agents/policy/coding-agents/verify-routing` for deterministic machine
-checks. Routing is not proven by prose alone. A valid rollout also has one live
-normal-`cc` response reporting Fable and one live `ccdex` response reporting
-GPT, or an explicit current provider-capacity blocker for either.
+checks. Routing is not proven by prose alone. A valid rollout also has one
+live `cc` response reporting Fable, or an explicit current provider-capacity
+blocker.

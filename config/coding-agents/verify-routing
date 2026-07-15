@@ -10,6 +10,7 @@ from pathlib import Path
 HOME = Path(os.environ.get("AGENT_LB_USER_HOME", Path.home()))
 REPO = Path(__file__).resolve().parents[2]
 CANONICAL = HOME / ".agents" / "policy" / "coding-agents" / "ROUTING.md"
+MARKER = "<!-- agent-lb:coding-agent-routing:start -->"
 failures: list[str] = []
 
 
@@ -23,10 +24,17 @@ def check(condition: bool, message: str) -> None:
 
 check(CANONICAL.is_file(), f"canonical policy exists at {CANONICAL}")
 
-for adapter in (HOME / ".claude" / "CLAUDE.md", HOME / ".codex" / "AGENTS.md"):
-    text = adapter.read_text() if adapter.is_file() else ""
-    check(text.count("<!-- agent-lb:coding-agent-routing:start -->") == 1, f"{adapter} has one managed routing block")
-    check(text.count("~/.agents/policy/coding-agents/ROUTING.md") == 1, f"{adapter} points once to canonical policy")
+claude_doc = HOME / ".claude" / "CLAUDE.md"
+claude_text = claude_doc.read_text() if claude_doc.is_file() else ""
+check(claude_text.count(MARKER) == 1, f"{claude_doc} has one managed routing block")
+check(
+    claude_text.count("~/.agents/policy/coding-agents/ROUTING.md") == 1,
+    f"{claude_doc} points once to canonical policy",
+)
+
+codex_doc = HOME / ".codex" / "AGENTS.md"
+codex_text = codex_doc.read_text() if codex_doc.is_file() else ""
+check(MARKER not in codex_text, f"{codex_doc} carries no retired managed routing block")
 
 settings_path = HOME / ".claude" / "settings.json"
 try:
@@ -36,15 +44,15 @@ except json.JSONDecodeError:
     check(False, f"{settings_path} contains valid JSON")
 check(settings.get("model") == "claude-fable-5", "direct Claude Code default is Fable")
 
-owned_registrations: list[str] = []
-for group in settings.get("hooks", {}).get("PreToolUse", []):
-    for hook_config in group.get("hooks", []):
-        if "ccdex-gpt-only.sh" in hook_config.get("command", ""):
-            owned_registrations.append(group.get("matcher", ""))
-check(
-    sorted(owned_registrations) == ["Agent|Workflow", "Bash"],
-    "CCDEX hook is registered once for Agent/Workflow and Bash",
-)
+owned_registrations = [
+    (event, group.get("matcher", ""))
+    for event, groups in settings.get("hooks", {}).items()
+    for group in groups
+    for hook_config in group.get("hooks", [])
+    if "ccdex-gpt-only.sh" in hook_config.get("command", "")
+]
+check(not owned_registrations, "no retired CCDEX hook registrations remain in settings")
+check(not (HOME / ".claude" / "hooks" / "ccdex-gpt-only.sh").exists(), "retired CCDEX hook file is absent")
 
 pytest_bin = REPO / ".venv" / "bin" / "pytest"
 if pytest_bin.is_file():
@@ -67,34 +75,14 @@ if pytest_bin.is_file():
 else:
     check(False, f"routing test runner exists at {pytest_bin}")
 
-hook = HOME / ".claude" / "hooks" / "ccdex-gpt-only.sh"
-agent_input = json.dumps({"tool_name": "Agent", "tool_input": {"description": "probe"}})
-if hook.is_file() and os.access(hook, os.X_OK):
-    denied = subprocess.run(
-        [str(hook)],
-        input=agent_input,
-        text=True,
-        capture_output=True,
-        env={**os.environ, "CLAUDE_LB_CODEX_MODE": "1"},
-        timeout=10,
-    )
-    allowed = subprocess.run(
-        [str(hook)],
-        input=agent_input,
-        text=True,
-        capture_output=True,
-        env={**os.environ, "CLAUDE_LB_CODEX_MODE": "0"},
-        timeout=10,
-    )
-    check(denied.returncode == 0 and '"permissionDecision": "deny"' in denied.stdout, "CCDEX hook denies Claude Agent")
-    check(allowed.returncode == 0 and not allowed.stdout, "normal Claude Code hook allows Agent")
-else:
-    check(False, f"CCDEX hook is executable at {hook}")
-
-for name in ("cc", "ccdex", "ccdex-worker-mcp"):
-    target = HOME / ".local" / "bin" / name
-    expected = (REPO / "clients" / name).resolve()
-    check(target.is_symlink() and target.resolve() == expected, f"{name} resolves to the repository client")
+bin_dir = HOME / ".local" / "bin"
+cc_target = bin_dir / "cc"
+check(
+    cc_target.is_symlink() and cc_target.resolve() == (REPO / "clients" / "cc").resolve(),
+    "cc resolves to the repository client",
+)
+for name in ("ccdex", "ccdex-worker-mcp"):
+    check(not (bin_dir / name).exists(), f"retired client {name} is absent from {bin_dir}")
 
 policy_link = HOME / ".agents" / "policy" / "coding-agents"
 check(
@@ -116,7 +104,7 @@ try:
 except FileNotFoundError:
     check(False, f"Claude Code executable exists at {claude_bin}")
 else:
-    check(mcp.returncode == 0 and "Connected" in mcp.stdout, "ccdex-worker MCP is registered and connected")
+    check(mcp.returncode != 0, "retired ccdex-worker MCP is not registered")
 
 if failures:
     print(f"\n{len(failures)} routing check(s) failed", file=sys.stderr)
