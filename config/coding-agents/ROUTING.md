@@ -37,12 +37,20 @@ The canonical seat lineup (owner, 2026-07-15) is fixed per SEAT, not chosen
 per task. Sol seats are served by agent-lb's Messages-route model aliases
 (commit 5c173b29):
 
-| Seat                   | Agent definition                  | Model                | Effort            |
-| ---------------------- | --------------------------------- | -------------------- | ----------------- |
-| Driver (main loop)     | —                                 | `claude-fable-5`     | high              |
-| Explore / scouts       | `~/.claude/agents/Explore.md`     | `sonnet`             | inherit           |
-| Implementer            | `~/.claude/agents/implementer.md` | `gpt-5.6-sol-medium` | medium, fast tier |
-| Verifier (adversarial) | `~/.claude/agents/verifier.md`    | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
+| Seat                   | Agent definition                        | Model                | Effort            |
+| ---------------------- | --------------------------------------- | -------------------- | ----------------- |
+| Driver (main loop)     | —                                       | `claude-fable-5`     | high              |
+| Explore / scouts       | `~/.claude/agents/Explore.md`           | `sonnet`             | inherit           |
+| Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
+| Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
+| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-fable-5`     | inherit           |
+
+The frontend-designer seat is the sanctioned expensive exception (rule 3):
+design taste is capability-bound, so it runs on Fable — but it has no
+Edit/Write tools, produces only specs and ranked crits for the implementer
+seat, and stays low-volume/high-leverage (added 2026-07-15 after fleet audits
+showed UI sessions burning the most driver capacity on taste-then-pixels
+loops).
 
 Ad-hoc model switching outside these seats stays forbidden — no Codex-host
 dispatch, Composer, Gemini, or other model products as coding lanes, and no
