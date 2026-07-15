@@ -61,3 +61,4 @@ SUMMARY.md
 .superpowers/
 
 excalidraw.log
+.agents/scheduled_tasks.lock
