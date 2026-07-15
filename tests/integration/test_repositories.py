@@ -73,6 +73,55 @@ async def test_accounts_upsert_updates_existing_by_email(db_setup):
 
 
 @pytest.mark.asyncio
+async def test_account_reload_and_token_update_compare_and_swap(db_setup):
+    encryptor = TokenEncryptor()
+    original = _make_account("acc_refresh_cas", "refresh-cas@example.com")
+
+    async with SessionLocal() as stale_session:
+        stale_repo = AccountsRepository(stale_session)
+        cached = await stale_repo.upsert(original, merge_by_email=False)
+        original_refresh_token_encrypted = cached.refresh_token_encrypted
+
+        async with SessionLocal() as winner_session:
+            winner_repo = AccountsRepository(winner_session)
+            winner_updated = await winner_repo.update_tokens(
+                cached.id,
+                access_token_encrypted=encryptor.encrypt("winning-access"),
+                refresh_token_encrypted=encryptor.encrypt("winning-refresh"),
+                id_token_encrypted=encryptor.encrypt("winning-id"),
+                last_refresh=utcnow(),
+                expected_refresh_token_encrypted=original_refresh_token_encrypted,
+            )
+
+        assert winner_updated is True
+        assert encryptor.decrypt(cached.refresh_token_encrypted) == "refresh"
+        assert await stale_repo.get_by_id(cached.id) is cached
+
+        reloaded = await stale_repo.reload_by_id(cached.id)
+        assert reloaded is cached
+        assert encryptor.decrypt(reloaded.refresh_token_encrypted) == "winning-refresh"
+
+        reloaded.email = "stale-pending@example.com"
+        losing_update = await stale_repo.update_tokens(
+            cached.id,
+            access_token_encrypted=encryptor.encrypt("losing-access"),
+            refresh_token_encrypted=encryptor.encrypt("losing-refresh"),
+            id_token_encrypted=encryptor.encrypt("losing-id"),
+            last_refresh=utcnow(),
+            expected_refresh_token_encrypted=original_refresh_token_encrypted,
+        )
+
+        assert losing_update is False
+
+    async with SessionLocal() as verify_session:
+        stored = await AccountsRepository(verify_session).get_by_id("acc_refresh_cas")
+        assert stored is not None
+        assert stored.email == "refresh-cas@example.com"
+        assert encryptor.decrypt(stored.access_token_encrypted) == "winning-access"
+        assert encryptor.decrypt(stored.refresh_token_encrypted) == "winning-refresh"
+
+
+@pytest.mark.asyncio
 async def test_accounts_upsert_with_merge_disabled_keeps_duplicate_identity(db_setup):
     async with SessionLocal() as session:
         repo = AccountsRepository(session)

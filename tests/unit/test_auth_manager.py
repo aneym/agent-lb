@@ -31,8 +31,16 @@ class _DummyRepo:
         self.status_payload: dict[str, object] | None = None
         self.accounts_by_id: dict[str, Account] = {}
         self.taken_workspace_slots: set[tuple[str, str | None, str]] = set()
+        self.get_calls = 0
+        self.reload_calls = 0
+        self.tokens_update_result = True
 
     async def get_by_id(self, account_id: str) -> Account | None:
+        self.get_calls += 1
+        return self.accounts_by_id.get(account_id)
+
+    async def reload_by_id(self, account_id: str) -> Account | None:
+        self.reload_calls += 1
         return self.accounts_by_id.get(account_id)
 
     async def update_status(
@@ -42,7 +50,10 @@ class _DummyRepo:
         deactivation_reason: str | None = None,
         reset_at: int | None = None,
         blocked_at: int | None = None,
+        *,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool:
+        del expected_refresh_token_encrypted
         self.status_payload = {
             "account_id": account_id,
             "status": status,
@@ -63,6 +74,8 @@ class _DummyRepo:
         workspace_id: str | None = None,
         workspace_label: str | None = None,
         seat_type: str | None = None,
+        *,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool:
         self.tokens_payload = {
             "account_id": account_id,
@@ -76,8 +89,9 @@ class _DummyRepo:
             "workspace_id": workspace_id,
             "workspace_label": workspace_label,
             "seat_type": seat_type,
+            "expected_refresh_token_encrypted": expected_refresh_token_encrypted,
         }
-        return True
+        return self.tokens_update_result
 
     async def workspace_slot_taken(
         self,
@@ -792,6 +806,109 @@ async def test_refresh_account_does_not_deactivate_when_repo_has_newer_refresh_t
     assert result is latest_account
     assert repo.status_payload is None
     assert stale_account.status == AccountStatus.ACTIVE
+    assert repo.reload_calls == 1
+    assert repo.get_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_refresh_account_preserves_token_rotated_after_permanent_failure_reload(monkeypatch):
+    async def _fake_refresh(_: str, **_kwargs: object) -> TokenRefreshResult:
+        raise RefreshError("invalid_grant", "refresh failed", True)
+
+    monkeypatch.setattr(auth_manager_module, "refresh_access_token", _fake_refresh)
+
+    encryptor = TokenEncryptor()
+    stale_account = Account(
+        id="acc_status_cas_loser",
+        email="user@example.com",
+        plan_type="plus",
+        access_token_encrypted=encryptor.encrypt("access-old"),
+        refresh_token_encrypted=encryptor.encrypt("refresh-old"),
+        id_token_encrypted=encryptor.encrypt("id-old"),
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    same_version = Account(
+        **{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns}
+    )
+    winning_account = Account(
+        **{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns}
+    )
+    winning_account.refresh_token_encrypted = encryptor.encrypt("refresh-winning")
+
+    class _StatusRaceRepo(_DummyRepo):
+        async def update_status(
+            self,
+            account_id: str,
+            status: AccountStatus,
+            deactivation_reason: str | None = None,
+            reset_at: int | None = None,
+            blocked_at: int | None = None,
+            *,
+            expected_refresh_token_encrypted: bytes | None = None,
+        ) -> bool:
+            del status, deactivation_reason, reset_at, blocked_at, expected_refresh_token_encrypted
+            self.accounts_by_id[account_id] = winning_account
+            return False
+
+    repo = _StatusRaceRepo()
+    repo.accounts_by_id[stale_account.id] = same_version
+    manager = AuthManager(cast(AccountsRepositoryPort, repo))
+
+    result = await manager.refresh_account(stale_account)
+
+    assert result is winning_account
+    assert result.status == AccountStatus.ACTIVE
+    assert encryptor.decrypt(result.refresh_token_encrypted) == "refresh-winning"
+    assert repo.reload_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_account_preserves_newer_tokens_when_conditional_write_loses(monkeypatch):
+    async def _fake_refresh(_: str, **_kwargs: object) -> TokenRefreshResult:
+        return TokenRefreshResult(
+            access_token="losing-access",
+            refresh_token="losing-refresh",
+            id_token="losing-id",
+            account_id="acc_cas_loser",
+            plan_type="plus",
+            email=None,
+        )
+
+    monkeypatch.setattr(auth_manager_module, "refresh_access_token", _fake_refresh)
+
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="acc_cas_loser",
+        email="user@example.com",
+        plan_type="plus",
+        access_token_encrypted=encryptor.encrypt("access-old"),
+        refresh_token_encrypted=encryptor.encrypt("refresh-old"),
+        id_token_encrypted=encryptor.encrypt("id-old"),
+        last_refresh=utcnow(),
+        status=AccountStatus.ACTIVE,
+        deactivation_reason=None,
+    )
+    expected_refresh_token_encrypted = account.refresh_token_encrypted
+    latest_account = Account(
+        **{column.name: getattr(account, column.name) for column in Account.__table__.columns}
+    )
+    latest_account.access_token_encrypted = encryptor.encrypt("winning-access")
+    latest_account.refresh_token_encrypted = encryptor.encrypt("winning-refresh")
+
+    repo = _DummyRepo()
+    repo.tokens_update_result = False
+    repo.accounts_by_id[account.id] = latest_account
+    manager = AuthManager(cast(AccountsRepositoryPort, repo))
+
+    result = await manager.refresh_account(account)
+
+    assert result is latest_account
+    assert encryptor.decrypt(result.refresh_token_encrypted) == "winning-refresh"
+    assert repo.tokens_payload is not None
+    assert repo.tokens_payload["expected_refresh_token_encrypted"] == expected_refresh_token_encrypted
+    assert repo.reload_calls == 1
 
 
 @pytest.mark.asyncio

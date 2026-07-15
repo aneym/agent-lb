@@ -61,6 +61,9 @@ class AccountsRepository:
     async def get_by_id(self, account_id: str) -> Account | None:
         return await self._session.get(Account, account_id)
 
+    async def reload_by_id(self, account_id: str) -> Account | None:
+        return await self._session.get(Account, account_id, populate_existing=True)
+
     async def list_accounts(self, *, refresh_existing: bool = False) -> list[Account]:
         stmt = select(Account).order_by(Account.email)
         if refresh_existing:
@@ -441,6 +444,8 @@ class AccountsRepository:
         deactivation_reason: str | None = None,
         reset_at: int | None = None,
         blocked_at: int | None | object = _UNSET,
+        *,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool:
         values: dict[str, object | None] = {
             "status": status,
@@ -449,9 +454,10 @@ class AccountsRepository:
         }
         if blocked_at is not _UNSET:
             values["blocked_at"] = blocked_at
-        result = await self._session.execute(
-            update(Account).where(Account.id == account_id).values(**values).returning(Account.id)
-        )
+        stmt = update(Account).where(Account.id == account_id)
+        if expected_refresh_token_encrypted is not None:
+            stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
+        result = await self._session.execute(stmt.values(**values).returning(Account.id))
         await self._session.commit()
         return result.scalar_one_or_none() is not None
 
@@ -587,6 +593,8 @@ class AccountsRepository:
         workspace_id: str | None = None,
         workspace_label: str | None = None,
         seat_type: str | None = None,
+        *,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool:
         values: dict[str, bytes | datetime | str | None] = {
             "access_token_encrypted": access_token_encrypted,
@@ -606,11 +614,16 @@ class AccountsRepository:
             values["workspace_label"] = workspace_label
         if seat_type is not None:
             values["seat_type"] = seat_type
-        result = await self._session.execute(
-            update(Account).where(Account.id == account_id).values(**values).returning(Account.id)
-        )
+        stmt = update(Account).where(Account.id == account_id)
+        if expected_refresh_token_encrypted is not None:
+            stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
+        with self._session.no_autoflush:
+            result = await self._session.execute(stmt.values(**values).returning(Account.id))
+        if result.scalar_one_or_none() is None:
+            await self._session.rollback()
+            return False
         await self._session.commit()
-        return result.scalar_one_or_none() is not None
+        return True
 
     async def workspace_slot_taken(
         self,

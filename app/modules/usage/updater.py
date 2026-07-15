@@ -652,6 +652,7 @@ class UsageUpdater:
         account.deactivation_reason = reason
 
     async def _sync_identity_metadata(self, account: Account, payload: UsagePayload) -> bool:
+        expected_refresh_token_encrypted = account.refresh_token_encrypted
         next_plan_type = coerce_account_plan_type(payload.plan_type, account.plan_type or "free")
         payload_workspace_id = _clean_optional(payload.workspace_id)
         next_workspace_id = payload_workspace_id or account.workspace_id
@@ -687,7 +688,7 @@ class UsageUpdater:
         if not self._auth_manager:
             return True
 
-        await self._auth_manager._repo.update_tokens(
+        updated = await self._auth_manager._repo.update_tokens(
             account.id,
             access_token_encrypted=account.access_token_encrypted,
             refresh_token_encrypted=account.refresh_token_encrypted,
@@ -699,7 +700,12 @@ class UsageUpdater:
             workspace_id=account.workspace_id,
             workspace_label=account.workspace_label,
             seat_type=account.seat_type,
+            expected_refresh_token_encrypted=expected_refresh_token_encrypted,
         )
+        if not updated:
+            stored = await self._auth_manager._repo.reload_by_id(account.id)
+            if stored is not None:
+                _copy_refresh_sensitive_account_state(account, stored)
         return True
 
     async def _recover_quota_status_from_usage(
@@ -772,20 +778,24 @@ class UsageUpdater:
         stored = await self._accounts_repo.get_by_id(account.id)
         if stored is None:
             return
-        account.chatgpt_account_id = stored.chatgpt_account_id
-        account.email = stored.email
-        account.workspace_id = stored.workspace_id
-        account.workspace_label = stored.workspace_label
-        account.seat_type = stored.seat_type
-        account.plan_type = stored.plan_type
-        account.access_token_encrypted = stored.access_token_encrypted
-        account.refresh_token_encrypted = stored.refresh_token_encrypted
-        account.id_token_encrypted = stored.id_token_encrypted
-        account.last_refresh = stored.last_refresh
-        account.status = stored.status
-        account.deactivation_reason = stored.deactivation_reason
-        account.reset_at = stored.reset_at
-        account.blocked_at = stored.blocked_at
+        _copy_refresh_sensitive_account_state(account, stored)
+
+
+def _copy_refresh_sensitive_account_state(account: Account, stored: Account) -> None:
+    account.chatgpt_account_id = stored.chatgpt_account_id
+    account.email = stored.email
+    account.workspace_id = stored.workspace_id
+    account.workspace_label = stored.workspace_label
+    account.seat_type = stored.seat_type
+    account.plan_type = stored.plan_type
+    account.access_token_encrypted = stored.access_token_encrypted
+    account.refresh_token_encrypted = stored.refresh_token_encrypted
+    account.id_token_encrypted = stored.id_token_encrypted
+    account.last_refresh = stored.last_refresh
+    account.status = stored.status
+    account.deactivation_reason = stored.deactivation_reason
+    account.reset_at = stored.reset_at
+    account.blocked_at = stored.blocked_at
 
 
 def _credits_snapshot(payload: UsagePayload) -> tuple[bool | None, bool | None, float | None]:

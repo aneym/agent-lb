@@ -32,6 +32,8 @@ from app.db.session import get_background_session
 class AccountsRepositoryPort(Protocol):
     async def get_by_id(self, account_id: str) -> Account | None: ...
 
+    async def reload_by_id(self, account_id: str) -> Account | None: ...
+
     async def update_status(
         self,
         account_id: str,
@@ -39,6 +41,8 @@ class AccountsRepositoryPort(Protocol):
         deactivation_reason: str | None = None,
         reset_at: int | None = None,
         blocked_at: int | None = None,
+        *,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool: ...
 
     async def update_tokens(
@@ -54,6 +58,8 @@ class AccountsRepositoryPort(Protocol):
         workspace_id: str | None = None,
         workspace_label: str | None = None,
         seat_type: str | None = None,
+        *,
+        expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool: ...
 
     async def workspace_slot_taken(
@@ -249,23 +255,40 @@ class AuthManager:
         except ProviderLookupError as exc:
             raise RefreshError("unsupported_provider", str(exc), True) from exc
 
-        refresh_token = self._encryptor.decrypt(account.refresh_token_encrypted)
+        expected_refresh_token_encrypted = account.refresh_token_encrypted
+        refresh_token = self._encryptor.decrypt(expected_refresh_token_encrypted)
         try:
             result = await self._refresh_tokens(refresh_token, account=account, provider=provider)
         except RefreshError as exc:
             is_permanent = exc.is_permanent or classify_refresh_error(exc.code)
             if is_permanent:
                 exc.is_permanent = True
-                latest = await self._repo.get_by_id(account.id)
+                latest = await self._repo.reload_by_id(account.id)
                 if latest is not None and _refresh_token_material_changed(
                     self._encryptor,
                     latest.refresh_token_encrypted,
-                    account.refresh_token_encrypted,
+                    expected_refresh_token_encrypted,
                 ):
                     return latest
                 reason = permanent_failure_reason(exc.code)
                 status = account_status_for_permanent_failure(exc.code)
-                await self._repo.update_status(account.id, status, reason)
+                status_updated = await self._repo.update_status(
+                    account.id,
+                    status,
+                    reason,
+                    expected_refresh_token_encrypted=(
+                        latest.refresh_token_encrypted if latest is not None else expected_refresh_token_encrypted
+                    ),
+                )
+                if not status_updated:
+                    current = await self._repo.reload_by_id(account.id)
+                    if current is not None and _refresh_token_material_changed(
+                        self._encryptor,
+                        current.refresh_token_encrypted,
+                        expected_refresh_token_encrypted,
+                    ):
+                        return current
+                    raise
                 account.status = status
                 account.deactivation_reason = reason
             raise
@@ -325,7 +348,7 @@ class AuthManager:
         if workspace_matches_current_slot and result.seat_type:
             account.seat_type = result.seat_type
 
-        await self._repo.update_tokens(
+        tokens_updated = await self._repo.update_tokens(
             account.id,
             access_token_encrypted=account.access_token_encrypted,
             refresh_token_encrypted=account.refresh_token_encrypted,
@@ -337,7 +360,17 @@ class AuthManager:
             workspace_id=next_workspace_id,
             workspace_label=account.workspace_label,
             seat_type=account.seat_type,
+            expected_refresh_token_encrypted=expected_refresh_token_encrypted,
         )
+        if not tokens_updated:
+            latest = await self._repo.reload_by_id(account.id)
+            if latest is not None and latest.refresh_token_encrypted != expected_refresh_token_encrypted:
+                return latest
+            raise RefreshError(
+                "refresh_persistence_conflict",
+                "Refreshed credentials could not be stored because the account changed concurrently",
+                False,
+            )
         return account
 
     async def _refresh_tokens(
@@ -395,9 +428,10 @@ class AuthManager:
         if not raw_account_id:
             return account
 
+        expected_refresh_token_encrypted = account.refresh_token_encrypted
         account.chatgpt_account_id = raw_account_id
         try:
-            await self._repo.update_tokens(
+            updated = await self._repo.update_tokens(
                 account.id,
                 access_token_encrypted=account.access_token_encrypted,
                 refresh_token_encrypted=account.refresh_token_encrypted,
@@ -409,7 +443,12 @@ class AuthManager:
                 workspace_id=account.workspace_id,
                 workspace_label=account.workspace_label,
                 seat_type=account.seat_type,
+                expected_refresh_token_encrypted=expected_refresh_token_encrypted,
             )
+            if not updated:
+                latest = await self._repo.reload_by_id(account.id)
+                if latest is not None:
+                    return latest
         except Exception:
             logger.warning("Failed to persist chatgpt_account_id account_id=%s", account.id, exc_info=True)
         return account
