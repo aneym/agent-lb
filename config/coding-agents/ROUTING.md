@@ -99,14 +99,21 @@ alias bridge, not through a second harness.
 3. Subagent models are pinned by the canonical seat table above, in the agent
    definitions themselves. Any other model override is an exception that must
    state its cost or capability reason in the definition.
-4. Hub-and-spoke messaging (2026-07-15). Subagents report to the
-   coordinator ONLY and never SendMessage each other — peer names resolve
-   latest-wins with no directory, so lane-to-lane pings misroute, and
-   messaging a finished agent resumes it and fires fresh idle notifications
-   (observed as "misrouted agent pings" noise in prove-it lanes and lost
-   verifier↔frontend relays in agent-lb). The coordinator brokers all
-   cross-lane information; briefs should carry full context so lanes rarely
-   need it.
+4. Team messaging discipline (2026-07-15, relaxed same day: teams
+   intercommunicating is valuable — owner). Teammates MAY message each
+   other, with addressing discipline targeting the two observed failure
+   modes (misrouted pings from guessed names; resume/idle notification
+   storms from pinging finished agents):
+   - Address only teammates NAMED IN YOUR BRIEF or that messaged you first.
+     Never guess a name — resolution is latest-wins with no directory; a
+     wrong guess delivers your question to a stranger.
+   - Never ping a finished/idle agent just to confirm or thank — every send
+     resumes it and fires fresh notifications. No response after ONE follow-up
+     → escalate to the coordinator; never retry-storm a peer.
+   - Peer chat exchanges data and evidence. Scope changes, conflicts, and
+     cross-lane decisions go to the coordinator, who remains the authority.
+   - Closeouts still go to the coordinator — peer messages never substitute
+     for the bounded closeout.
 5. Driver scope (2026-07-15). The driver's own tool calls are for
    coordination only: reading a subagent's cited evidence to check it,
    spot-reading a handful of lines before a decision, and running the final
