@@ -73,7 +73,7 @@ encouraged; the system gates economics, never concurrency.</p>
 <table>
   <tr><th>Seat</th><th>Model</th><th>Serves</th><th>Pool</th></tr>
   <tr><td><span class="pill fill">Driver</span></td><td class="mono">claude-fable-5 · high</td><td>decisions, canon, full-context artifacts, final acceptance</td><td>Claude (scarce)</td></tr>
-  <tr><td><span class="pill">Explore</span></td><td class="mono">sonnet</td><td>read-only scouting, codebase maps, transcript forensics</td><td>Claude</td></tr>
+  <tr><td><span class="pill">Explore</span></td><td class="mono">gpt-5.6-sol-medium</td><td>read-only scouting, codebase maps, transcript forensics (moved off sonnet 2026-07-15: 3/3 accuracy at 3.1× speed, spares the Claude pool)</td><td>Codex (bridge)</td></tr>
   <tr><td><span class="pill">implementer</span></td><td class="mono">gpt-5.6-sol-medium</td><td>closed-spec build-run-report, migrations, fixes, dogfooding</td><td>Codex (bridge)</td></tr>
   <tr><td><span class="pill">verifier</span></td><td class="mono">gpt-5.6-sol-xhigh</td><td>adversarial verification of executor claims</td><td>Codex (bridge)</td></tr>
   <tr><td><span class="pill">frontend-designer</span></td><td class="mono">claude-fable-5</td><td>design direction &amp; ranked crits only — no Edit/Write; specs feed the implementer (sanctioned expensive exception)</td><td>Claude</td></tr>

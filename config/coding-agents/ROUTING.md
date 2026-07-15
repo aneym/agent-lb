@@ -40,11 +40,20 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 | Seat                   | Agent definition                        | Model                | Effort            |
 | ---------------------- | --------------------------------------- | -------------------- | ----------------- |
 | Driver (main loop)     | —                                       | `claude-fable-5`     | high              |
-| Explore / scouts       | `~/.claude/agents/Explore.md`           | `sonnet`             | inherit           |
+| Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
 | Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-fable-5`     | inherit           |
 | Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-fable-5`     | inherit           |
+
+Explore moved sonnet → gpt-5.6-sol-medium (owner, 2026-07-15 evening):
+benchmarked 3/3 repo-exploration accuracy matching sonnet at 3.1x speed with
+61% fewer calls (artifacts: /tmp/agent-lb-explore-benchmark-20260715), and a
+production-shaped Fable→sol Explore run verified via session analytics.
+Also relieves the Claude pool — sonnet Explore fan-outs were the first
+casualties of pool saturation (live-watch 21:15Z: scout failures on
+rate-limited sonnet). Caveat on record: n=3 benchmark; revisit if Explore
+quality regresses.
 
 The frontend-designer seat is the sanctioned expensive exception (rule 3):
 design taste is capability-bound, so it runs on Fable — but it has no
