@@ -5,6 +5,16 @@ computer. Its stable host-neutral path is
 `~/.agents/policy/coding-agents/ROUTING.md`. Host instructions and skills are
 adapters: when they disagree with this file, this file wins.
 
+## Northstar (owner, 2026-07-15)
+
+One expensive driver, one adversarial partner, cheap fast fan-out. Fable-level
+intelligence drives (orchestrates, decides, verifies) while spending as few of
+its own tokens as possible: subagents and subagent workflows do the volume
+work quickly and in parallel. GPT Sol at xhigh effort is the adversarial
+review subagent — the driver and it jam to decide direction on substantive
+calls. The alias registry exists to serve this shape; judge every routing
+change against it.
+
 ## Mode: raw Claude Code harness (2026-07-15)
 
 Claude Code, entered through `cc`, is the only coding harness. Fable/high is
@@ -20,8 +30,9 @@ coding lanes.
 
 Planned evolution: worker model aliases (for example `worker-gpt`) served by
 the agent-lb alias registry, so a subagent can pin a non-Claude account pool
-while the harness stays Claude Code. Until that registry ships, subagent model
-choice is a Claude-model choice.
+while the harness stays Claude Code. The first registry lane is the northstar's
+adversarial reviewer: GPT Sol at xhigh effort as a native subagent. Until the
+registry ships, subagent model choice is a Claude-model choice.
 
 ## Operating contract
 
