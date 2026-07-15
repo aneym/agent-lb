@@ -53,6 +53,17 @@ alias bridge, not through a second harness.
 3. Subagent models are pinned by the canonical seat table above, in the agent
    definitions themselves. Any other model override is an exception that must
    state its cost or capability reason in the definition.
+4. Driver scope (2026-07-15). The driver's own tool calls are for
+   coordination only: reading a subagent's cited evidence to check it,
+   spot-reading a handful of lines before a decision, and running the final
+   acceptance checks. Everything else — multi-file reading, format/pattern
+   discovery, investigation loops, harness/debug scripts, anything empirical
+   that can fail and be retried — is seat work, even when each step looks
+   one-call-sized. Bright lines: more than ~3 direct reads on the same
+   question, or ANY second attempt at a failed empirical step, means stop and
+   dispatch (Explore for read-only questions, implementer for
+   build-run-report). Drift erodes one "quick check" at a time; count calls,
+   not intentions.
 
 ## Runtime enforcement
 
