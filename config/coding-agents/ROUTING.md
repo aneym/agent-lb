@@ -15,24 +15,33 @@ review subagent — the driver and it jam to decide direction on substantive
 calls. The alias registry exists to serve this shape; judge every routing
 change against it.
 
-## Mode: raw Claude Code harness (2026-07-15)
+## Mode: raw Claude Code harness with canonical seats (2026-07-15)
 
 Claude Code, entered through `cc`, is the only coding harness. Fable/high is
-the session model: it coordinates, plans, implements, and verifies using the
-native harness — `Agent`/`Workflow` subagents, skills, and hooks. Subagents run
-on Claude models and default to `inherit`.
+the driver: it coordinates, decides, reconciles, and verifies using the native
+harness — `Agent`/`Workflow` subagents, skills, and hooks.
 
-The Codex dispatch stack is retired (2026-07-15): the `ccdex` entry point, the
-codex skills and plugin, the `ccdex-worker` MCP transport, and the
-`ccdex-gpt-only` hook. Do not reintroduce a second engineering lane or switch
-models by task type — no Codex, Composer, Gemini, or other model products as
-coding lanes.
+The canonical seat lineup (owner, 2026-07-15) is fixed per SEAT, not chosen
+per task. Sol seats are served by agent-lb's Messages-route model aliases
+(commit 5c173b29):
 
-Planned evolution: worker model aliases (for example `worker-gpt`) served by
-the agent-lb alias registry, so a subagent can pin a non-Claude account pool
-while the harness stays Claude Code. The first registry lane is the northstar's
-adversarial reviewer: GPT Sol at xhigh effort as a native subagent. Until the
-registry ships, subagent model choice is a Claude-model choice.
+| Seat                   | Agent definition                  | Model                | Effort            |
+| ---------------------- | --------------------------------- | -------------------- | ----------------- |
+| Driver (main loop)     | —                                 | `claude-fable-5`     | high              |
+| Explore / scouts       | `~/.claude/agents/Explore.md`     | `sonnet`             | inherit           |
+| Implementer            | `~/.claude/agents/implementer.md` | `gpt-5.6-sol-medium` | medium, fast tier |
+| Verifier (adversarial) | `~/.claude/agents/verifier.md`    | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
+
+Other subagents default to `inherit`. Ad-hoc model switching outside these
+seats stays forbidden — no Codex-host dispatch, Composer, Gemini, or other
+model products as coding lanes, and no per-task improvisation of the lineup.
+Changing the lineup means editing this table (and the agent files), not
+overriding it in a session.
+
+The Codex dispatch stack remains retired (2026-07-15): the `ccdex` entry
+point, the codex skills and plugin, the `ccdex-worker` MCP transport, and the
+`ccdex-gpt-only` hook. Sol seats run INSIDE the Claude Code harness via the
+alias bridge, not through a second harness.
 
 ## Operating contract
 
@@ -41,9 +50,9 @@ registry ships, subagent model choice is a Claude-model choice.
 2. Delegated subagents return a bounded closeout: conclusion, evidence,
    verification, next action, and artifact paths. The coordinator
    independently checks the acceptance criteria.
-3. A model override on a subagent is an exception, not a routing rule: pin a
-   model in an agent definition only for a cost or capability reason the
-   definition itself states.
+3. Subagent models are pinned by the canonical seat table above, in the agent
+   definitions themselves. Any other model override is an exception that must
+   state its cost or capability reason in the definition.
 
 ## Runtime enforcement
 
