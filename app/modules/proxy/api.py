@@ -741,6 +741,14 @@ async def v1_messages(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
+    if payload.model in CCDEX_MODEL_ALIASES:
+        return await _ccdex_messages_response(
+            request,
+            payload,
+            get_proxy_context(request),
+            api_key,
+            alias_effort=CCDEX_MODEL_ALIASES[payload.model],
+        )
     validate_model_access(api_key, payload.model)
     try:
         reservation = await _enforce_request_limits(
@@ -796,6 +804,9 @@ async def v1_messages_count_tokens(
     model = payload.get("model")
     if not isinstance(model, str) or not model.strip():
         return _anthropic_error_response(400, "invalid_request_error", "model is required")
+    if model in CCDEX_MODEL_ALIASES:
+        validate_model_access(api_key, CCDEX_MODEL)
+        return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
     validate_model_access(api_key, model)
     # Token counting is quota-free upstream, so this route never creates an
     # api-key reservation, settles usage, or writes response-driven account
@@ -808,6 +819,18 @@ async def v1_messages_count_tokens(
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
 
 
+# Worker model aliases accepted directly on /v1/messages. Each maps to the
+# locked Sol profile with a pinned reasoning effort; None defers to the
+# request's own output_config.effort (bridge default: high).
+CCDEX_MODEL_ALIASES: dict[str, str | None] = {
+    CCDEX_MODEL: None,
+    f"{CCDEX_MODEL}-low": "low",
+    f"{CCDEX_MODEL}-medium": "medium",
+    f"{CCDEX_MODEL}-high": "high",
+    f"{CCDEX_MODEL}-xhigh": "xhigh",
+}
+
+
 @v1_router.post("/ccdex/messages", response_model=None)
 async def v1_ccdex_messages(
     request: Request,
@@ -816,6 +839,16 @@ async def v1_ccdex_messages(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     """Run Claude Code's Messages protocol through the locked Codex Sol profile."""
+    return await _ccdex_messages_response(request, payload, context, api_key)
+
+
+async def _ccdex_messages_response(
+    request: Request,
+    payload: AnthropicMessageRequest,
+    context: ProxyContext,
+    api_key: ApiKeyData | None,
+    alias_effort: str | None = None,
+) -> Response:
     if payload.tools and any(isinstance(tool, AnthropicDefinedToolDefinition) for tool in payload.tools):
         return _anthropic_error_response(
             400,
@@ -840,11 +873,8 @@ async def v1_ccdex_messages(
             prefer_http_bridge=True,
             forwarded_headers=forwarded_headers,
             locked_model=CCDEX_MODEL,
-            locked_reasoning_effort=(
-                responses_payload.reasoning.effort
-                if responses_payload.reasoning
-                else CCDEX_REASONING_EFFORT
-            ),
+            locked_reasoning_effort=alias_effort
+            or (responses_payload.reasoning.effort if responses_payload.reasoning else CCDEX_REASONING_EFFORT),
             locked_service_tier=CCDEX_SERVICE_TIER,
         )
     except ProxyRateLimitError as exc:

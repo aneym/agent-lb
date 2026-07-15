@@ -311,3 +311,93 @@ async def test_ccdex_count_tokens_is_local_and_native(async_client) -> None:
     assert response.status_code == 200
     assert isinstance(response.json()["input_tokens"], int)
     assert response.json()["input_tokens"] > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("alias", "expected_effort"),
+    [
+        ("gpt-5.6-sol-medium", "medium"),
+        ("gpt-5.6-sol-xhigh", "xhigh"),
+    ],
+)
+async def test_messages_route_serves_sol_alias_via_bridge(
+    async_client, monkeypatch: pytest.MonkeyPatch, alias: str, expected_effort: str
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        captured["payload"] = payload
+        captured["kwargs"] = kwargs
+
+        async def source():
+            yield 'data: {"type":"response.created","response":{"id":"resp_alias","model":"gpt-5.6-sol"}}\n\n'
+            yield 'data: {"type":"response.output_text.delta","delta":"alias ok"}\n\n'
+            yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1}}}\n\n'
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": alias,
+            "max_tokens": 512,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        body = (await response.aread()).decode()
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"type":"message_start"' in body
+    assert '"type":"text_delta","text":"alias ok"' in body
+    assert captured["payload"].model == CCDEX_MODEL
+    assert captured["kwargs"]["locked_model"] == CCDEX_MODEL
+    assert captured["kwargs"]["locked_reasoning_effort"] == expected_effort
+    assert captured["kwargs"]["locked_service_tier"] == "priority"
+
+
+@pytest.mark.asyncio
+async def test_messages_route_plain_sol_alias_defers_to_request_effort(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        captured["kwargs"] = kwargs
+
+        async def source():
+            yield 'data: {"type":"response.completed","response":{"usage":{}}}\n\n'
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "gpt-5.6-sol",
+            "max_tokens": 512,
+            "stream": True,
+            "output_config": {"effort": "medium"},
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["kwargs"]["locked_reasoning_effort"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_messages_count_tokens_sol_alias_is_local(async_client) -> None:
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "gpt-5.6-sol-xhigh", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["input_tokens"], int)
+    assert response.json()["input_tokens"] > 0
