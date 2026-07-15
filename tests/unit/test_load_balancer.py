@@ -1589,7 +1589,11 @@ async def test_anthropic_eligibility_readmits_primary_window_with_none_reset(mon
             self.additional_usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
             self.usage = SimpleNamespace(
                 latest_by_account=AsyncMock(
-                    return_value={account.id: SimpleNamespace(used_percent=100.0, reset_at=None)}
+                    side_effect=lambda *, window, account_ids: (
+                        {account.id: SimpleNamespace(used_percent=100.0, reset_at=None)}
+                        if window == "primary"
+                        else {}
+                    )
                 )
             )
 
@@ -4543,10 +4547,12 @@ def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(mon
     assert state.status == AccountStatus.QUOTA_EXCEEDED
 
 
-def test_state_from_account_anthropic_opt_in_keeps_credit_billing_account_routable(monkeypatch):
-    """With ANTHROPIC_ROUTE_TO_EXTRA_USAGE enabled, exhausted windows stop
-    marking a credit-billing account unroutable so the eligibility prefilter
-    can admit it as a last resort."""
+def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monkeypatch):
+    """Anthropic credits do not globally clear exhausted standard quota.
+
+    The eligibility prefilter supplies exact paid-fallback IDs to the load
+    balancer for a request-scoped bypass instead.
+    """
     now = 1_700_000_000.0
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -4575,6 +4581,8 @@ def test_state_from_account_anthropic_opt_in_keeps_credit_billing_account_routab
             runtime=RuntimeState(),
         )
 
-        assert state.status == AccountStatus.ACTIVE
+        assert state.status == AccountStatus.RATE_LIMITED
+        assert state.used_percent == 100.0
+        assert state.reset_at == int(now + 3600)
     finally:
         get_settings.cache_clear()

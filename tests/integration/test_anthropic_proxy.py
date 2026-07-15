@@ -15,6 +15,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog, StickySession, StickySessionKind
 from app.db.session import SessionLocal
+from app.dependencies import _proxy_repo_context
 from app.modules.proxy.load_balancer import AccountSelection
 
 pytestmark = pytest.mark.integration
@@ -1695,10 +1696,17 @@ async def test_anthropic_fast_429_records_fast_cooldown_and_allows_standard_fall
     assert fast_quota["primaryWindow"]["usedPercent"] == 100.0
 
 
-async def _insert_weekly_usage(*, account_id: str, used_percent: float) -> None:
+async def _insert_weekly_usage(
+    *,
+    account_id: str,
+    used_percent: float,
+    reset_at: int | None = None,
+) -> None:
     from app.db.models import UsageHistory
 
-    reset_at = int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
+    effective_reset_at = reset_at or int(
+        (utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp()
+    )
     async with SessionLocal() as session:
         session.add(
             UsageHistory(
@@ -1706,7 +1714,7 @@ async def _insert_weekly_usage(*, account_id: str, used_percent: float) -> None:
                 provider="anthropic",
                 window="secondary",
                 used_percent=used_percent,
-                reset_at=reset_at,
+                reset_at=effective_reset_at,
                 window_minutes=10080,
                 recorded_at=utcnow(),
             )
@@ -2266,7 +2274,12 @@ async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_c
     )
     await _insert_weekly_usage(account_id="anthropic-scoped-exhausted", used_percent=30.0)
     await _insert_weekly_usage(account_id="anthropic-scoped-control", used_percent=10.0)
-    await _insert_fable_scoped_weekly(account_id="anthropic-scoped-exhausted", used_percent=100.0)
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-scoped-exhausted",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
 
     response = await async_client.post(
         "/api/anthropic/session-route",
@@ -2279,6 +2292,163 @@ async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_c
 
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-scoped-control"
+
+
+@pytest.mark.asyncio
+async def test_fable_scoped_exhaustion_with_elapsed_reset_remains_in_model_scope(
+    async_client,
+    monkeypatch,
+):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-fable-elapsed-scoped-headroom",
+        provider="anthropic",
+        access_token="anthropic-access-elapsed-scoped-headroom",
+        email="elapsed-scoped-headroom@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-fable-elapsed-scoped-paid",
+        provider="anthropic",
+        access_token="anthropic-access-elapsed-scoped-paid",
+        email="elapsed-scoped-paid@example.com",
+        status=AccountStatus.RATE_LIMITED,
+    )
+    now = utcnow()
+    past_reset_at = int((now - timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+    paid_reset_at = int((now + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-fable-elapsed-scoped-headroom",
+        used_percent=10.0,
+    )
+    await _insert_weekly_usage(
+        account_id="anthropic-fable-elapsed-scoped-headroom",
+        used_percent=10.0,
+    )
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-fable-elapsed-scoped-headroom",
+        used_percent=100.0,
+        reset_at=past_reset_at,
+    )
+    await _insert_primary_usage(
+        account_id="anthropic-fable-elapsed-scoped-paid",
+        used_percent=100.0,
+        reset_at=paid_reset_at,
+        credits_has=True,
+        credits_balance=25.0,
+    )
+    await _insert_weekly_usage(
+        account_id="anthropic-fable-elapsed-scoped-paid",
+        used_percent=20.0,
+    )
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-fable-elapsed-scoped-paid",
+        used_percent=20.0,
+        reset_at=paid_reset_at,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-fable-elapsed-scoped-paid",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=paid_reset_at,
+    )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+
+    assert eligibility.account_ids == ["anthropic-fable-elapsed-scoped-headroom"]
+    assert eligibility.paid_fallback_account_ids == frozenset()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-elapsed-scoped-headroom",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-fable-elapsed-scoped-headroom"
+
+
+@pytest.mark.asyncio
+async def test_all_active_fable_scoped_exhaustions_return_earliest_reset(
+    async_client,
+    monkeypatch,
+):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    now = utcnow()
+    earliest_reset = int((now + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    later_reset = earliest_reset + 3600
+    for account_id, reset_at in (
+        ("anthropic-fable-hard-excluded-a", earliest_reset),
+        ("anthropic-fable-hard-excluded-b", later_reset),
+    ):
+        await _insert_account(
+            account_id=account_id,
+            provider="anthropic",
+            access_token=f"anthropic-access-{account_id}",
+            email=f"{account_id}@example.com",
+        )
+        await _insert_primary_usage(account_id=account_id, used_percent=10.0)
+        await _insert_weekly_usage(account_id=account_id, used_percent=10.0)
+        await _insert_fable_scoped_weekly(
+            account_id=account_id,
+            used_percent=100.0,
+            reset_at=reset_at,
+        )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+    assert eligibility.account_ids == []
+    assert eligibility.blocked_count == 2
+    assert eligibility.next_reset_at == earliest_reset
+    assert eligibility.paid_fallback_account_ids == frozenset()
+
+    upstream_calls: list[str] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        upstream_calls.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(earliest_reset)
+    assert upstream_calls == []
 
 
 @pytest.mark.asyncio
@@ -2383,6 +2553,7 @@ async def _insert_primary_usage(
     used_percent: float,
     reset_at: int | None = None,
     credits_has: bool | None = None,
+    credits_unlimited: bool | None = None,
     credits_balance: float | None = None,
 ) -> None:
     from app.db.models import UsageHistory
@@ -2403,7 +2574,7 @@ async def _insert_primary_usage(
                 window_minutes=300,
                 recorded_at=utcnow(),
                 credits_has=credits_has,
-                credits_unlimited=False if credits_has is not None else None,
+                credits_unlimited=credits_unlimited,
                 credits_balance=credits_balance,
             )
         )
@@ -2427,7 +2598,18 @@ async def test_exhausted_primary_window_account_is_not_selected_when_alternative
         access_token="anthropic-access-headroom",
         email="headroom@example.com",
     )
-    await _insert_primary_usage(account_id="anthropic-exhausted", used_percent=100.0)
+    exhausted_reset = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-exhausted",
+        used_percent=100.0,
+        reset_at=exhausted_reset,
+        credits_has=True,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-exhausted",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=exhausted_reset,
+    )
     await _insert_primary_usage(account_id="anthropic-headroom", used_percent=10.0)
 
     captured: dict[str, Any] = {}
@@ -2476,7 +2658,18 @@ async def test_pool_of_exhausted_windows_returns_rate_limit_envelope_by_default(
         email="b@example.com",
     )
     earliest_reset = int((utcnow() + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_primary_usage(account_id="anthropic-exhausted-a", used_percent=100.0, reset_at=earliest_reset)
+    await _insert_primary_usage(
+        account_id="anthropic-exhausted-a",
+        used_percent=100.0,
+        reset_at=earliest_reset,
+        credits_has=True,
+        credits_balance=50.0,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-exhausted-a",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=earliest_reset,
+    )
     await _insert_primary_usage(
         account_id="anthropic-exhausted-b",
         used_percent=100.0,
@@ -2515,7 +2708,17 @@ async def test_pool_of_exhausted_windows_returns_rate_limit_envelope_by_default(
 
 
 @pytest.mark.asyncio
-async def test_route_to_extra_usage_opt_in_serves_as_last_resort(async_client, monkeypatch):
+@pytest.mark.parametrize(
+    ("credits_has", "credits_unlimited", "credits_balance"),
+    [(True, False, 186.6), (False, True, None)],
+)
+async def test_route_to_extra_usage_opt_in_serves_as_last_resort(
+    async_client,
+    monkeypatch,
+    credits_has,
+    credits_unlimited,
+    credits_balance,
+):
     from app.core.config.settings import get_settings
 
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
@@ -2527,12 +2730,51 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(async_client, m
         access_token="anthropic-access-exhausted",
         email="exhausted@example.com",
     )
+    await _insert_account(
+        account_id="anthropic-exhausted-without-credits",
+        provider="anthropic",
+        access_token="anthropic-access-without-credits",
+        email="without-credits@example.com",
+    )
+    paid_reset_at = int((utcnow() + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+    blocked_reset_at = paid_reset_at + 3600
     await _insert_primary_usage(
         account_id="anthropic-exhausted-only",
         used_percent=100.0,
-        credits_has=True,
-        credits_balance=186.6,
+        reset_at=paid_reset_at,
+        credits_has=credits_has,
+        credits_unlimited=credits_unlimited,
+        credits_balance=credits_balance,
     )
+    await _insert_primary_usage(
+        account_id="anthropic-exhausted-without-credits",
+        used_percent=100.0,
+        reset_at=blocked_reset_at,
+        credits_has=False,
+        credits_balance=0.0,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-exhausted-only",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=paid_reset_at,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-exhausted-without-credits",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=blocked_reset_at,
+    )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+    assert eligibility.account_ids == ["anthropic-exhausted-only"]
+    assert eligibility.blocked_count == 1
+    assert eligibility.next_reset_at == blocked_reset_at
+    assert eligibility.paid_fallback_account_ids == frozenset({"anthropic-exhausted-only"})
 
     upstream_calls: list[str] = []
 
@@ -2560,6 +2802,435 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(async_client, m
 
     assert response.status_code == 200
     assert upstream_calls == ["Bearer anthropic-access-exhausted"]
+
+
+@pytest.mark.asyncio
+async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_bypass(
+    async_client,
+    monkeypatch,
+):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    headroom_ids = [f"anthropic-fable-scoped-exhausted-{index}" for index in range(3)]
+    hard_exclusion_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    for account_id in headroom_ids:
+        await _insert_account(
+            account_id=account_id,
+            provider="anthropic",
+            access_token=f"anthropic-access-{account_id}",
+            email=f"{account_id}@example.com",
+        )
+        await _insert_primary_usage(account_id=account_id, used_percent=10.0)
+        await _insert_weekly_usage(account_id=account_id, used_percent=10.0)
+        await _insert_fable_scoped_weekly(
+            account_id=account_id,
+            used_percent=100.0,
+            reset_at=hard_exclusion_reset_at,
+        )
+
+    await _insert_account(
+        account_id="anthropic-fable-paid",
+        provider="anthropic",
+        access_token="anthropic-access-fable-paid",
+        email="fable-paid@example.com",
+        status=AccountStatus.RATE_LIMITED,
+    )
+    await _insert_account(
+        account_id="anthropic-fable-exhausted-no-credits",
+        provider="anthropic",
+        access_token="anthropic-access-fable-exhausted-no-credits",
+        email="fable-exhausted-no-credits@example.com",
+    )
+    paid_reset_at = int((utcnow() + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+    no_credit_reset_at = paid_reset_at + 1800
+    await _insert_primary_usage(
+        account_id="anthropic-fable-paid",
+        used_percent=100.0,
+        reset_at=paid_reset_at,
+        credits_has=True,
+        credits_balance=250.0,
+    )
+    await _insert_primary_usage(
+        account_id="anthropic-fable-exhausted-no-credits",
+        used_percent=100.0,
+        reset_at=no_credit_reset_at,
+        credits_has=False,
+        credits_balance=0.0,
+    )
+    for account_id, reset_at in (
+        ("anthropic-fable-paid", paid_reset_at),
+        ("anthropic-fable-exhausted-no-credits", no_credit_reset_at),
+    ):
+        await _insert_weekly_usage(account_id=account_id, used_percent=20.0)
+        await _insert_fable_scoped_weekly(account_id=account_id, used_percent=20.0)
+        await _insert_quota_cooldown(
+            account_id=account_id,
+            quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+            reset_at=reset_at,
+        )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+    assert eligibility.account_ids == ["anthropic-fable-paid"]
+    assert eligibility.paid_fallback_account_ids == frozenset({"anthropic-fable-paid"})
+    assert eligibility.blocked_count == 1
+    assert eligibility.next_reset_at == no_credit_reset_at
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-live-shaped-fable-paid-fallback",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-fable-paid"
+    async with SessionLocal() as session:
+        paid_account = await session.get(Account, "anthropic-fable-paid")
+        assert paid_account is not None
+        assert paid_account.status == AccountStatus.RATE_LIMITED
+
+
+@pytest.mark.asyncio
+async def test_fable_soft_headroom_blocks_paid_fallback(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-fable-paid-preferred",
+        provider="anthropic",
+        access_token="anthropic-access-fable-paid-preferred",
+        email="fable-paid-preferred@example.com",
+        status=AccountStatus.RATE_LIMITED,
+    )
+    await _insert_account(
+        account_id="anthropic-fable-soft-headroom",
+        provider="anthropic",
+        access_token="anthropic-access-fable-soft-headroom",
+        email="fable-soft-headroom@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-fable-paid-preferred",
+        used_percent=100.0,
+        reset_at=reset_at,
+        credits_has=True,
+        credits_balance=250.0,
+    )
+    await _insert_weekly_usage(account_id="anthropic-fable-paid-preferred", used_percent=20.0)
+    await _insert_fable_scoped_weekly(account_id="anthropic-fable-paid-preferred", used_percent=20.0)
+    await _insert_quota_cooldown(
+        account_id="anthropic-fable-paid-preferred",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=reset_at,
+    )
+    await _insert_primary_usage(account_id="anthropic-fable-soft-headroom", used_percent=10.0)
+    await _insert_weekly_usage(account_id="anthropic-fable-soft-headroom", used_percent=80.0)
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+    assert eligibility.account_ids == ["anthropic-fable-soft-headroom"]
+    assert eligibility.paid_fallback_account_ids == frozenset()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-soft-headroom-before-paid",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-fable-soft-headroom"
+
+
+@pytest.mark.asyncio
+async def test_fable_secondary_exhausted_preference_does_not_hide_soft_headroom(
+    async_client,
+    monkeypatch,
+):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-fable-preferred-weekly-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-fable-preferred-weekly-exhausted",
+        email="fable-preferred-weekly-exhausted@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-fable-soft-weekly-headroom",
+        provider="anthropic",
+        access_token="anthropic-access-fable-soft-weekly-headroom",
+        email="fable-soft-weekly-headroom@example.com",
+    )
+    weekly_reset_at = int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-fable-preferred-weekly-exhausted",
+        used_percent=10.0,
+    )
+    await _insert_weekly_usage(
+        account_id="anthropic-fable-preferred-weekly-exhausted",
+        used_percent=100.0,
+        reset_at=weekly_reset_at,
+    )
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-fable-preferred-weekly-exhausted",
+        used_percent=20.0,
+        reset_at=weekly_reset_at,
+    )
+    await _insert_primary_usage(
+        account_id="anthropic-fable-soft-weekly-headroom",
+        used_percent=10.0,
+    )
+    await _insert_weekly_usage(
+        account_id="anthropic-fable-soft-weekly-headroom",
+        used_percent=80.0,
+        reset_at=weekly_reset_at,
+    )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+    assert eligibility.account_ids == ["anthropic-fable-soft-weekly-headroom"]
+    assert eligibility.blocked_count == 1
+    assert eligibility.next_reset_at == weekly_reset_at
+    assert eligibility.paid_fallback_account_ids == frozenset()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-fable-soft-weekly-headroom",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-fable-soft-weekly-headroom"
+
+
+@pytest.mark.asyncio
+async def test_route_to_extra_usage_paid_only_eligibility_has_no_blocked_reset(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-paid-only",
+        provider="anthropic",
+        access_token="anthropic-access-paid-only",
+        email="paid-only@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-paid-only",
+        used_percent=100.0,
+        reset_at=reset_at,
+        credits_has=True,
+        credits_balance=25.0,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-paid-only",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=reset_at,
+    )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+
+    assert eligibility.account_ids == ["anthropic-paid-only"]
+    assert eligibility.blocked_count == 0
+    assert eligibility.next_reset_at is None
+    assert eligibility.paid_fallback_account_ids == frozenset({"anthropic-paid-only"})
+
+
+@pytest.mark.parametrize("credits_balance", [None, 0.0])
+@pytest.mark.asyncio
+async def test_route_to_extra_usage_requires_positive_finite_credit_balance(
+    async_client,
+    monkeypatch,
+    credits_balance,
+):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-exhausted-no-credits",
+        provider="anthropic",
+        access_token="anthropic-access-no-credits",
+        email="no-credits@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-exhausted-no-credits",
+        used_percent=100.0,
+        reset_at=reset_at,
+        credits_has=True,
+        credits_balance=credits_balance,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-exhausted-no-credits",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=reset_at,
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-no-extra-usage-credits",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "anthropic_quota_cooldown"
+
+
+@pytest.mark.asyncio
+async def test_route_to_extra_usage_does_not_bypass_real_request_quota_cooldown(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-exhausted-with-credits",
+        provider="anthropic",
+        access_token="anthropic-access-with-credits",
+        email="with-credits@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-exhausted-with-credits",
+        used_percent=100.0,
+        reset_at=reset_at,
+        credits_has=True,
+        credits_balance=25.0,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-exhausted-with-credits",
+        quota_key="anthropic_top_thinking",
+        reset_at=reset_at,
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-model-cooldown",
+            "model": "claude-fable-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "anthropic_quota_cooldown"
+
+
+@pytest.mark.asyncio
+async def test_route_to_extra_usage_does_not_bypass_secondary_exhaustion(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-primary-and-weekly-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-primary-and-weekly-exhausted",
+        email="primary-and-weekly-exhausted@example.com",
+    )
+    primary_reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    secondary_reset_at = int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(
+        account_id="anthropic-primary-and-weekly-exhausted",
+        used_percent=100.0,
+        reset_at=primary_reset_at,
+        credits_has=True,
+        credits_balance=25.0,
+    )
+    await _insert_weekly_usage(
+        account_id="anthropic-primary-and-weekly-exhausted",
+        used_percent=100.0,
+        reset_at=secondary_reset_at,
+    )
+    await _insert_quota_cooldown(
+        account_id="anthropic-primary-and-weekly-exhausted",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=primary_reset_at,
+    )
+
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility(
+        "anthropic",
+        "anthropic_top_thinking",
+        model="claude-fable-5",
+    )
+    assert eligibility.account_ids == []
+    assert eligibility.paid_fallback_account_ids == frozenset()
+    assert eligibility.next_reset_at == secondary_reset_at
+
+    upstream_calls: list[str] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        upstream_calls.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(secondary_reset_at)
+    assert upstream_calls == []
 
 
 @pytest.mark.asyncio
@@ -2694,7 +3365,7 @@ async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(a
     latest = max(cooldown_rows, key=lambda row: row.recorded_at)
     assert latest.used_percent == 100.0
     assert latest.reset_at == reset_at
-    assert latest.quota_key == "anthropic_top_thinking"
+    assert latest.quota_key == anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY
 
     second = await async_client.post("/v1/messages", json=payload, headers=headers)
     assert second.status_code == 200

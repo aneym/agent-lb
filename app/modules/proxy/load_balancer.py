@@ -314,6 +314,7 @@ class LoadBalancer:
         additional_limit_name: str | None = None,
         account_ids: Collection[str] | None = None,
         exclude_account_ids: Collection[str] | None = None,
+        ignore_primary_quota_account_ids: Collection[str] | None = None,
         burn_first_account_ids: Collection[str] | None = None,
         burn_first_sticky_drain: bool = False,
         require_security_work_authorized: bool = False,
@@ -327,6 +328,7 @@ class LoadBalancer:
     ) -> AccountSelection:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
+        request_ignore_primary_quota_ids = frozenset(ignore_primary_quota_account_ids or ())
         request_burn_first_ids = frozenset(burn_first_account_ids or ())
         # Last failed core-selection result; its per-account exclusion detail
         # and earliest-recovery hint ride the terminal AccountSelection so API
@@ -436,6 +438,7 @@ class LoadBalancer:
                         runtime=self._runtime,
                         routing_policy_override=selection_inputs.routing_policy_override,
                         ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
+                        ignore_primary_quota_account_ids=request_ignore_primary_quota_ids,
                         burn_first_account_ids=request_burn_first_ids,
                     )
                     effective_routing_costs = (
@@ -482,10 +485,11 @@ class LoadBalancer:
                         account = account_map.get(state.account_id)
                         if account is None:
                             continue
-                        self._sync_runtime_state(
+                        self._sync_request_selection_state(
                             account,
                             state,
                             selected=result.account is not None and state.account_id == result.account.account_id,
+                            preserve_quota_state=state.account_id in request_ignore_primary_quota_ids,
                         )
                         selected_states.append(state)
 
@@ -532,6 +536,7 @@ class LoadBalancer:
                             repos.accounts,
                             selected_account_map,
                             selected_states,
+                            skip_account_ids=request_ignore_primary_quota_ids,
                         )
                 except BaseException:
                     await self.release_account_lease(selected_lease)
@@ -619,6 +624,7 @@ class LoadBalancer:
                         runtime=self._runtime,
                         routing_policy_override=selection_inputs.routing_policy_override,
                         ignore_standard_quota_account_ids=selection_inputs.ignore_standard_quota_account_ids,
+                        ignore_primary_quota_account_ids=request_ignore_primary_quota_ids,
                         burn_first_account_ids=request_burn_first_ids,
                     )
                     effective_routing_costs = (
@@ -685,10 +691,11 @@ class LoadBalancer:
                         account = account_map.get(state.account_id)
                         if account is None:
                             continue
-                        self._sync_runtime_state(
+                        self._sync_request_selection_state(
                             account,
                             state,
                             selected=result.account is not None and state.account_id == result.account.account_id,
+                            preserve_quota_state=state.account_id in request_ignore_primary_quota_ids,
                         )
                         selected_states.append(state)
                     if result.account is not None:
@@ -728,6 +735,7 @@ class LoadBalancer:
                             repos.accounts,
                             selected_account_map,
                             selected_states,
+                            skip_account_ids=request_ignore_primary_quota_ids,
                         )
                 except BaseException:
                     await self.release_account_lease(selected_lease)
@@ -1722,15 +1730,35 @@ class LoadBalancer:
             runtime.version += 1
         return True
 
+    def _sync_request_selection_state(
+        self,
+        account: Account,
+        state: AccountState,
+        *,
+        selected: bool,
+        preserve_quota_state: bool,
+    ) -> None:
+        if not preserve_quota_state:
+            self._sync_runtime_state(account, state, selected=selected)
+            return
+        # Primary-only paid fallback is request-scoped. Preserve the runtime
+        # quota/cooldown/backoff state, recording only that selection occurred.
+        if selected:
+            runtime = self._runtime.setdefault(account.id, RuntimeState())
+            runtime.last_selected_at = time.time()
+            runtime.version += 1
+
     async def _persist_selection_state(
         self,
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[AccountState],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
         stale_account_ids: set[str] = set()
         for state in states:
-            if state.ignore_standard_quota:
+            if state.ignore_standard_quota or state.account_id in skip_account_ids:
                 continue
             account = account_map.get(state.account_id)
             if account is not None:
@@ -1817,6 +1845,7 @@ def _build_states(
     runtime: dict[str, RuntimeState],
     routing_policy_override: str | None = None,
     ignore_standard_quota_account_ids: frozenset[str] = frozenset(),
+    ignore_primary_quota_account_ids: frozenset[str] = frozenset(),
     burn_first_account_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[AccountState], dict[str, Account]]:
     states: list[AccountState] = []
@@ -1835,6 +1864,7 @@ def _build_states(
             primary_entry=latest_primary.get(account.id),
             secondary_entry=secondary_entry,
             runtime=runtime.setdefault(account.id, RuntimeState()),
+            ignore_primary_quota=account.id in ignore_primary_quota_account_ids,
         )
         if routing_policy_override is not None and account.id in ignore_standard_quota_account_ids:
             state.routing_policy = routing_policy_override
@@ -1981,6 +2011,7 @@ def _state_from_account(
     primary_entry: UsageHistory | AdditionalUsageHistory | None,
     secondary_entry: UsageHistory | AdditionalUsageHistory | None,
     runtime: RuntimeState,
+    ignore_primary_quota: bool = False,
 ) -> AccountState:
     routing_policy = _normalize_account_routing_policy(getattr(account, "routing_policy", None))
     primary_used = primary_entry.used_percent if primary_entry else None
@@ -2006,30 +2037,12 @@ def _state_from_account(
 
     secondary_used = effective_secondary_entry.used_percent if effective_secondary_entry else None
     secondary_reset = effective_secondary_entry.reset_at if effective_secondary_entry else None
-    # Anthropic extra-usage credits never act as an OpenAI-style quota
+    # Anthropic extra-usage credits never act as an OpenAI-style global quota
     # override: upstream keeps serving an exhausted window by billing metered
-    # dollars, so usable credits must not silently make the account look
-    # healthy. With the opt-in ANTHROPIC_ROUTE_TO_EXTRA_USAGE flag, exhausted
-    # windows stop marking a credit-billing account unroutable — the
-    # eligibility prefilter alone decides when it may serve (last resort).
+    # dollars, so usable credits must not make every request see the account as
+    # healthy. The Anthropic prefilter passes exact paid-fallback account IDs
+    # into _build_states for a request-scoped primary-quota bypass.
     if account.provider == ANTHROPIC_PROVIDER_NAME:
-        credits_has, credits_unlimited, credits_balance = _extract_credit_status(
-            primary_entry,
-            effective_secondary_entry,
-            secondary_entry,
-        )
-        has_billable_credits = (
-            credits_unlimited is True
-            or credits_has is True
-            or (credits_balance is not None and float(credits_balance) > 0.0)
-        )
-        if has_billable_credits and get_settings().anthropic_route_to_extra_usage:
-            if primary_used is not None and float(primary_used) >= 100.0:
-                primary_used = None
-                primary_reset = None
-            if secondary_used is not None and float(secondary_used) >= 100.0:
-                secondary_used = None
-                secondary_reset = None
         credits_has, credits_unlimited, credits_balance = None, None, None
     else:
         credits_has, credits_unlimited, credits_balance = _extract_credit_status(
@@ -2052,8 +2065,22 @@ def _state_from_account(
             secondary_used = 0.0
             secondary_reset = None
 
+    primary_quota_bypassed = (
+        ignore_primary_quota
+        and primary_used is not None
+        and primary_used >= 100.0
+        and primary_reset is not None
+        and primary_reset > now_epoch
+    )
+    if primary_quota_bypassed:
+        primary_used = None
+        primary_reset = None
+        primary_window_minutes = None
+
     ignore_zero_capacity_primary_runtime_reset = False
     status_seed = account.status
+    if primary_quota_bypassed and account.status == AccountStatus.RATE_LIMITED:
+        status_seed = AccountStatus.ACTIVE
     long_window_quota_available = (
         effective_secondary_entry is not None
         and _usage_entry_is_recent_enough(effective_secondary_entry.recorded_at)
@@ -2078,8 +2105,11 @@ def _state_from_account(
 
     # Use account.reset_at from DB as the authoritative source for runtime reset
     # and to survive process restarts.
+    ignore_primary_status_reset = primary_quota_bypassed and account.status == AccountStatus.RATE_LIMITED
     db_reset_at = (
-        None if ignore_zero_capacity_primary_runtime_reset else (float(account.reset_at) if account.reset_at else None)
+        None
+        if ignore_zero_capacity_primary_runtime_reset or ignore_primary_status_reset
+        else (float(account.reset_at) if account.reset_at else None)
     )
     effective_runtime_reset = db_reset_at or runtime.reset_at
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at

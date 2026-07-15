@@ -37,6 +37,122 @@ async def _repo_factory() -> AsyncIterator[ProxyRepositories]:
 
 
 @pytest.mark.asyncio
+async def test_request_scoped_primary_quota_bypass_is_exact_and_not_persisted(db_setup):
+    encryptor = TokenEncryptor()
+    now = utcnow()
+    now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+    account = Account(
+        id="anthropic-request-scoped-bypass",
+        provider="anthropic",
+        email="anthropic-request-scoped-bypass@example.com",
+        plan_type="max",
+        access_token_encrypted=encryptor.encrypt("anthropic-access-request-scoped-bypass"),
+        refresh_token_encrypted=encryptor.encrypt("anthropic-refresh-request-scoped-bypass"),
+        last_refresh=now,
+        status=AccountStatus.RATE_LIMITED,
+        reset_at=now_epoch + 3600,
+        deactivation_reason=None,
+    )
+
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(account)
+        await UsageRepository(session).add_entry(
+            account_id=account.id,
+            provider="anthropic",
+            used_percent=100.0,
+            window="primary",
+            reset_at=now_epoch + 3600,
+            window_minutes=300,
+        )
+
+    balancer = LoadBalancer(_repo_factory)
+    blocked = await balancer.select_account(
+        provider="anthropic",
+        account_ids=[account.id],
+        routing_strategy="usage_weighted",
+    )
+    wrong_id = await balancer.select_account(
+        provider="anthropic",
+        account_ids=[account.id],
+        ignore_primary_quota_account_ids=["another-account"],
+        routing_strategy="usage_weighted",
+    )
+    bypassed = await balancer.select_account(
+        provider="anthropic",
+        account_ids=[account.id],
+        ignore_primary_quota_account_ids=[account.id],
+        routing_strategy="usage_weighted",
+    )
+    blocked_again = await balancer.select_account(
+        provider="anthropic",
+        account_ids=[account.id],
+        routing_strategy="usage_weighted",
+    )
+
+    assert blocked.account is None
+    assert wrong_id.account is None
+    assert bypassed.account is not None
+    assert bypassed.account.id == account.id
+    assert blocked_again.account is None
+    async with SessionLocal() as session:
+        persisted = await session.get(Account, account.id)
+        assert persisted is not None
+        assert persisted.status == AccountStatus.RATE_LIMITED
+
+
+@pytest.mark.asyncio
+async def test_request_scoped_primary_quota_bypass_keeps_secondary_exhaustion_blocking(db_setup):
+    encryptor = TokenEncryptor()
+    now = utcnow()
+    now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+    account = Account(
+        id="anthropic-primary-secondary-exhausted",
+        provider="anthropic",
+        email="anthropic-primary-secondary-exhausted@example.com",
+        plan_type="max",
+        access_token_encrypted=encryptor.encrypt("anthropic-access-primary-secondary-exhausted"),
+        refresh_token_encrypted=encryptor.encrypt("anthropic-refresh-primary-secondary-exhausted"),
+        last_refresh=now,
+        status=AccountStatus.RATE_LIMITED,
+        reset_at=now_epoch + 3600,
+        deactivation_reason=None,
+    )
+
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(account)
+        usage = UsageRepository(session)
+        await usage.add_entry(
+            account_id=account.id,
+            provider="anthropic",
+            used_percent=100.0,
+            window="primary",
+            reset_at=now_epoch + 3600,
+            window_minutes=300,
+        )
+        await usage.add_entry(
+            account_id=account.id,
+            provider="anthropic",
+            used_percent=100.0,
+            window="secondary",
+            reset_at=now_epoch + 7200,
+            window_minutes=10080,
+        )
+
+    selection = await LoadBalancer(_repo_factory).select_account(
+        provider="anthropic",
+        account_ids=[account.id],
+        ignore_primary_quota_account_ids=[account.id],
+        routing_strategy="usage_weighted",
+    )
+
+    assert selection.account is None
+    async with SessionLocal() as session:
+        persisted = await session.get(Account, account.id)
+        assert persisted is not None
+        assert persisted.status == AccountStatus.RATE_LIMITED
+
+
+@pytest.mark.asyncio
 async def test_load_balancer_skips_secondary_quota(db_setup):
     encryptor = TokenEncryptor()
     now = utcnow()

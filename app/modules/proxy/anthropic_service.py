@@ -44,6 +44,11 @@ _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
+# Dedicated marker for a successful response that Anthropic served from paid
+# extra usage after rejecting the subscription window. Keeping this distinct
+# from request-quota 429 cooldowns lets the explicit paid fallback bypass only
+# the credit-billing tripwire, never a real upstream rejection.
+_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY = "anthropic_extra_usage"
 # Mirrored in app/modules/accounts/pulse.py (ANTHROPIC_FABLE_ACCESS_QUOTA_KEY)
 # — both must agree on the quota_key/window identifying the Fable-access
 # probe marker written by the account pulse.
@@ -135,6 +140,10 @@ class _AnthropicQuotaEligibility:
     account_ids: list[str]
     blocked_count: int = 0
     next_reset_at: int | None = None
+    # Exact IDs allowed to bypass a persisted primary-window RATE_LIMITED
+    # status for this request. This is intentionally narrower than account_ids:
+    # only the paid last-resort branch may populate it.
+    paid_fallback_account_ids: frozenset[str] = frozenset()
     # Accounts past the Fable weekly threshold: preferred (burn_first) for
     # non-Fable traffic so under-threshold accounts keep Fable headroom.
     burn_first_account_ids: frozenset[str] = frozenset()
@@ -396,12 +405,12 @@ class AnthropicProxyService:
                                         "Anthropic response reports extra-usage billing; recording quota "
                                         "cooldown account_id=%s quota_key=%s request_id=%s",
                                         account.id,
-                                        quota_key,
+                                        _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
                                         request_id,
                                     )
                                     await self._record_quota_cooldown(
                                         account,
-                                        quota_key=quota_key,
+                                        quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
                                         error=tripwire_error,
                                     )
 
@@ -611,6 +620,7 @@ class AnthropicProxyService:
             provider=provider_name,
             account_ids=eligibility.account_ids,
             exclude_account_ids=exclude_account_ids,
+            ignore_primary_quota_account_ids=eligibility.paid_fallback_account_ids,
             burn_first_account_ids=eligibility.burn_first_account_ids,
             burn_first_sticky_drain=bool(eligibility.burn_first_account_ids)
             and get_settings().anthropic_fable_sticky_drain_enabled,
@@ -748,19 +758,32 @@ class AnthropicProxyService:
             # as "remaining candidates" produces misleading diagnostics and
             # masks the real "all usable accounts are cooling down" state.
             account_ids = [account.id for account in selectable_accounts(provider_accounts)]
-            latest = await repos.additional_usage.latest_by_account(
+            request_quota_latest = await repos.additional_usage.latest_by_account(
                 quota_key,
                 _ANTHROPIC_COOLDOWN_WINDOW,
                 account_ids=account_ids,
             )
-            cooldowns = {
-                account_id: (float(entry.used_percent), entry.reset_at) for account_id, entry in latest.items()
+            request_quota_cooldowns = {
+                account_id: (float(entry.used_percent), entry.reset_at)
+                for account_id, entry in request_quota_latest.items()
             }
+            extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None]] = {}
+            if extra_usage_gate:
+                extra_usage_tripwire_latest = await repos.additional_usage.latest_by_account(
+                    _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+                    _ANTHROPIC_COOLDOWN_WINDOW,
+                    account_ids=account_ids,
+                )
+                extra_usage_tripwire_cooldowns = {
+                    account_id: (float(entry.used_percent), entry.reset_at)
+                    for account_id, entry in extra_usage_tripwire_latest.items()
+                }
             # A persisted primary window with reset_at=None must not gate an
             # account out of routing indefinitely. Only a bounded, still-future
             # reset counts as an active exhaustion here; a None reset re-admits
             # the account (a genuine 429 re-writes a bounded cooldown).
             primary_exhaustion: dict[str, int] = {}
+            credit_enabled_exhausted_account_ids: frozenset[str] = frozenset()
             if extra_usage_gate:
                 primary_usage = await repos.usage.latest_by_account(window="primary", account_ids=account_ids)
                 primary_exhaustion = {
@@ -771,16 +794,38 @@ class AnthropicProxyService:
                     and entry.reset_at is not None
                     and int(entry.reset_at) > now
                 }
+                credit_enabled_exhausted_account_ids = frozenset(
+                    account_id
+                    for account_id, entry in primary_usage.items()
+                    if account_id in primary_exhaustion
+                    and (
+                        entry.credits_unlimited is True
+                        or (
+                            entry.credits_has is True
+                            and entry.credits_balance is not None
+                            and float(entry.credits_balance) > 0.0
+                        )
+                    )
+                )
             weekly_usage_used_percent: dict[str, float] = {}
+            secondary_exhaustion: dict[str, int | None] = {}
+            if extra_usage_gate or fable_routing:
+                secondary_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
+                weekly_usage_used_percent = {
+                    account_id: float(entry.used_percent) for account_id, entry in secondary_usage.items()
+                }
+                secondary_exhaustion = {
+                    account_id: int(entry.reset_at) if entry.reset_at is not None else None
+                    for account_id, entry in secondary_usage.items()
+                    if entry.used_percent is not None
+                    and float(entry.used_percent) >= 100.0
+                    and (entry.reset_at is None or int(entry.reset_at) > now)
+                }
             fable_access_markers: dict[str, tuple[float, int | None]] = {}
             fable_scoped_markers: dict[str, tuple[float, int | None, int]] = {}
             if fable_routing:
-                weekly_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
                 # Snapshot scalars inside the repo session — the ORM rows
                 # detach once the context closes (regression 1f47e633).
-                weekly_usage_used_percent = {
-                    account_id: float(entry.used_percent) for account_id, entry in weekly_usage.items()
-                }
                 fable_access = await repos.additional_usage.latest_by_account(
                     _ANTHROPIC_FABLE_ACCESS_QUOTA_KEY,
                     _ANTHROPIC_FABLE_ACCESS_WINDOW,
@@ -807,105 +852,181 @@ class AnthropicProxyService:
                     for account_id, entry in fable_scoped.items()
                 }
 
+        fable_request = fable_routing and _is_fable_model(model)
+        threshold = settings.anthropic_fable_weekly_max_used_percent if fable_routing else 0.0
+        scoped_threshold = settings.anthropic_fable_scoped_max_used_percent if fable_routing else 0.0
+
+        def _weekly_used(account_id: str) -> float:
+            return weekly_usage_used_percent.get(account_id, 0.0)
+
+        def _fresh_scoped_percent(account_id: str) -> float | None:
+            # Anthropic's dedicated Fable-scoped weekly percent is
+            # authoritative when fresh. The caller additionally checks that
+            # an exhausted marker has a still-future reset before treating it
+            # as a hard model-scope exclusion.
+            marker = fable_scoped_markers.get(account_id)
+            if marker is None:
+                return None
+            scoped_used_percent, _scoped_reset_at, recorded_epoch = marker
+            if now - recorded_epoch >= _FABLE_SCOPED_FRESH_SECONDS:
+                return None
+            return scoped_used_percent
+
+        def _has_fresh_capable_fable_marker(account_id: str) -> bool:
+            marker = fable_access_markers.get(account_id)
+            if marker is None:
+                return False
+            marker_used_percent, marker_reset_at = marker
+            if marker_used_percent >= 100.0:
+                return False
+            return marker_reset_at is None or marker_reset_at > now
+
+        model_scope_account_ids = account_ids
+        preferred_fable_account_ids: frozenset[str] = frozenset()
+        hard_excluded_fable_account_ids: set[str] = set()
+        hard_excluded_fable_reset_by_account_id: dict[str, int] = {}
+        if fable_request:
+            model_scope_account_ids = []
+            preferred_ids: set[str] = set()
+            for account_id in account_ids:
+                scoped_percent = _fresh_scoped_percent(account_id)
+                scoped_marker = fable_scoped_markers.get(account_id)
+                scoped_reset_at = scoped_marker[1] if scoped_marker is not None else None
+                if (
+                    scoped_percent is not None
+                    and scoped_percent >= scoped_threshold
+                    and scoped_reset_at is not None
+                    and int(scoped_reset_at) > now
+                ):
+                    hard_excluded_fable_account_ids.add(account_id)
+                    hard_excluded_fable_reset_by_account_id[account_id] = int(scoped_reset_at)
+                    continue
+                model_scope_account_ids.append(account_id)
+                if (
+                    scoped_percent is not None
+                    or _weekly_used(account_id) < threshold
+                    or _has_fresh_capable_fable_marker(account_id)
+                ):
+                    preferred_ids.add(account_id)
+            preferred_fable_account_ids = frozenset(preferred_ids)
+
         eligible_account_ids: list[str] = []
-        exhausted_window_account_ids: list[str] = []
-        reset_candidates: list[int] = []
+        blocked_reset_by_account_id: dict[str, int] = {}
         blocked_count = 0
-        for account_id in account_ids:
-            cooldown = cooldowns.get(account_id)
-            if cooldown is not None and _anthropic_cooldown_is_active(cooldown[0], cooldown[1], now=now):
+        request_quota_blocked_account_ids: set[str] = set()
+        for account_id in model_scope_account_ids:
+            request_quota_cooldown = request_quota_cooldowns.get(account_id)
+            if request_quota_cooldown is not None and _anthropic_cooldown_is_active(
+                request_quota_cooldown[0], request_quota_cooldown[1], now=now
+            ):
                 blocked_count += 1
-                if cooldown[1] is not None:
-                    reset_candidates.append(int(cooldown[1]))
+                request_quota_blocked_account_ids.add(account_id)
+                if request_quota_cooldown[1] is not None:
+                    blocked_reset_by_account_id[account_id] = int(request_quota_cooldown[1])
                 continue
-            if account_id in primary_exhaustion:
+            primary_reset_at = primary_exhaustion.get(account_id)
+            secondary_is_exhausted = account_id in secondary_exhaustion
+            if primary_reset_at is not None or secondary_is_exhausted:
                 blocked_count += 1
-                reset_candidates.append(primary_exhaustion[account_id])
-                exhausted_window_account_ids.append(account_id)
+                if secondary_is_exhausted:
+                    secondary_reset_at = secondary_exhaustion[account_id]
+                    # An account cannot serve subscription or paid traffic
+                    # until every active quota window is available. Unknown
+                    # weekly reset time means there is no bounded retry time
+                    # for this account, even when primary has a known reset.
+                    if secondary_reset_at is not None:
+                        blocked_reset_by_account_id[account_id] = max(
+                            reset_at
+                            for reset_at in (primary_reset_at, secondary_reset_at)
+                            if reset_at is not None
+                        )
+                elif primary_reset_at is not None:
+                    blocked_reset_by_account_id[account_id] = primary_reset_at
+                continue
+            tripwire_cooldown = extra_usage_tripwire_cooldowns.get(account_id)
+            if tripwire_cooldown is not None and _anthropic_cooldown_is_active(
+                tripwire_cooldown[0], tripwire_cooldown[1], now=now
+            ):
+                blocked_count += 1
+                if tripwire_cooldown[1] is not None:
+                    blocked_reset_by_account_id[account_id] = int(tripwire_cooldown[1])
                 continue
             eligible_account_ids.append(account_id)
 
-        if not eligible_account_ids and exhausted_window_account_ids and settings.anthropic_route_to_extra_usage:
-            # Opt-in last resort: only when every subscription-covered
-            # candidate is gone may a credit-billing account serve traffic.
-            eligible_account_ids = exhausted_window_account_ids
-            blocked_count -= len(exhausted_window_account_ids)
+        if fable_request and eligible_account_ids:
+            preferred_standard_account_ids = [
+                account_id for account_id in eligible_account_ids if account_id in preferred_fable_account_ids
+            ]
+            if preferred_standard_account_ids:
+                eligible_account_ids = preferred_standard_account_ids
+            else:
+                # The heuristic is a preference, not a model-capability oracle.
+                # Healthy primary headroom in the soft Fable pool must be used
+                # before paid extra usage is considered.
+                logger.warning(
+                    "All subscription-covered Anthropic accounts are soft Fable fallbacks "
+                    "past the weekly threshold (%.0f%%); using that headroom model=%s",
+                    threshold,
+                    model,
+                )
+
+        pool_primary_exhausted = bool(model_scope_account_ids) and all(
+            account_id in primary_exhaustion for account_id in model_scope_account_ids
+        )
+        paid_fallback_account_ids: frozenset[str] = frozenset()
+        if not eligible_account_ids and pool_primary_exhausted and settings.anthropic_route_to_extra_usage:
+            # Opt-in last resort: only pool-wide primary-window exhaustion can
+            # authorize paid traffic. A healthy-primary account blocked by a
+            # model/quota cooldown must not cause another account to spend
+            # credits. Re-admit only exhausted accounts whose same latest
+            # primary snapshot reports usable extra-usage capacity; this also
+            # recognizes the dedicated response tripwire without weakening
+            # real request-quota cooldowns written by upstream 429 responses.
+            paid_candidates = [
+                account_id
+                for account_id in model_scope_account_ids
+                if account_id in credit_enabled_exhausted_account_ids
+                and account_id not in request_quota_blocked_account_ids
+                and account_id not in secondary_exhaustion
+            ]
+            if fable_request:
+                preferred_paid_candidates = [
+                    account_id for account_id in paid_candidates if account_id in preferred_fable_account_ids
+                ]
+                if preferred_paid_candidates:
+                    paid_candidates = preferred_paid_candidates
+            eligible_account_ids = paid_candidates
+            paid_fallback_account_ids = frozenset(paid_candidates)
+            blocked_count -= len(eligible_account_ids)
+            for account_id in eligible_account_ids:
+                blocked_reset_by_account_id.pop(account_id, None)
 
         burn_first_account_ids: frozenset[str] = frozenset()
-        if fable_routing and eligible_account_ids:
-            threshold = settings.anthropic_fable_weekly_max_used_percent
-            scoped_threshold = settings.anthropic_fable_scoped_max_used_percent
-
-            def _weekly_used(account_id: str) -> float:
-                return weekly_usage_used_percent.get(account_id, 0.0)
-
-            def _fresh_scoped_percent(account_id: str) -> float | None:
-                # Anthropic's dedicated Fable-scoped weekly percent is
-                # authoritative when fresh — it supersedes the overall-weekly
-                # heuristic entirely for this account (see
-                # _ANTHROPIC_FABLE_SCOPED_WEEKLY_QUOTA_KEY), not just when it
-                # grants more headroom than the heuristic would.
-                marker = fable_scoped_markers.get(account_id)
-                if marker is None:
-                    return None
-                scoped_used_percent, _scoped_reset_at, recorded_epoch = marker
-                if now - recorded_epoch >= _FABLE_SCOPED_FRESH_SECONDS:
-                    return None
-                return scoped_used_percent
-
-            def _is_over_threshold(account_id: str) -> bool:
+        if fable_routing and not fable_request and eligible_account_ids:
+            def _is_over_fable_threshold(account_id: str) -> bool:
                 scoped_percent = _fresh_scoped_percent(account_id)
                 if scoped_percent is not None:
                     return scoped_percent >= scoped_threshold
                 return _weekly_used(account_id) >= threshold
 
-            over_threshold = frozenset(
-                account_id for account_id in eligible_account_ids if _is_over_threshold(account_id)
+            burn_first_account_ids = frozenset(
+                account_id
+                for account_id in eligible_account_ids
+                if _is_over_fable_threshold(account_id)
             )
-            if _is_fable_model(model):
 
-                def _has_fresh_capable_fable_marker(account_id: str) -> bool:
-                    # Empirically verified access: the weekly threshold is an
-                    # unverified assumption, so a fresh probe that actually
-                    # succeeded admits the account alongside under-threshold
-                    # ones instead of permanently stranding its capacity.
-                    marker = fable_access_markers.get(account_id)
-                    if marker is None:
-                        return False
-                    marker_used_percent, marker_reset_at = marker
-                    if marker_used_percent >= 100.0:
-                        return False
-                    return marker_reset_at is None or marker_reset_at > now
-
-                def _fable_admitted(account_id: str) -> bool:
-                    scoped_percent = _fresh_scoped_percent(account_id)
-                    if scoped_percent is not None:
-                        # Scoped signal is authoritative in both directions —
-                        # it overrides the probe-marker fallback too.
-                        return scoped_percent < scoped_threshold
-                    if account_id not in over_threshold:
-                        return True
-                    return _has_fresh_capable_fable_marker(account_id)
-
-                fable_candidates = [account_id for account_id in eligible_account_ids if _fable_admitted(account_id)]
-                if fable_candidates:
-                    eligible_account_ids = fable_candidates
-                elif over_threshold:
-                    # The local threshold is a preference, not an oracle —
-                    # upstream decides whether Fable is actually refused.
-                    logger.warning(
-                        "All eligible Anthropic accounts are past the Fable weekly threshold "
-                        "(%.0f%%); falling back to the full pool model=%s",
-                        threshold,
-                        model,
-                    )
-            else:
-                burn_first_account_ids = over_threshold
+        if not eligible_account_ids and hard_excluded_fable_account_ids:
+            # Hard Fable exclusions remain outside model scope and therefore
+            # outside paid-pool exhaustion. They still explain a terminal
+            # no-route result and contribute their earliest known reset.
+            blocked_count += len(hard_excluded_fable_account_ids)
+            blocked_reset_by_account_id.update(hard_excluded_fable_reset_by_account_id)
 
         return _AnthropicQuotaEligibility(
             account_ids=eligible_account_ids,
             blocked_count=blocked_count,
-            next_reset_at=min(reset_candidates) if reset_candidates else None,
+            next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
+            paid_fallback_account_ids=paid_fallback_account_ids,
             burn_first_account_ids=burn_first_account_ids,
         )
 
