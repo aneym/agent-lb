@@ -1186,6 +1186,41 @@ async def test_prune_http_bridge_session_skips_wedged_session_with_visible_pendi
 
 
 @pytest.mark.asyncio
+async def test_prune_http_bridge_sessions_locked_throttles_full_registry_scans() -> None:
+    """The idle-prune scan runs synchronously under the bridge lock on every
+    session get-or-create; unthrottled it blocked the event loop for seconds
+    under load. Repeat calls within the throttle interval must be no-ops."""
+    from app.modules.proxy._service.http_bridge.mixin import _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS
+
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    first_key = proxy_service._HTTPBridgeSessionKey("request", "bridge-throttle-1", None)
+    first_session = _make_bridge_session(key=first_key, key_value="bridge-throttle-1")
+    first_session.last_used_at = time.monotonic() - 300.0
+    first_session.idle_ttl_seconds = 1.0
+    service._http_bridge_sessions[first_key] = first_session
+
+    async with service._http_bridge_lock:
+        first_scan = service._prune_http_bridge_sessions_locked()
+    assert [session.key for session in first_scan] == [first_key]
+
+    second_key = proxy_service._HTTPBridgeSessionKey("request", "bridge-throttle-2", None)
+    second_session = _make_bridge_session(key=second_key, key_value="bridge-throttle-2")
+    second_session.last_used_at = time.monotonic() - 300.0
+    second_session.idle_ttl_seconds = 1.0
+    service._http_bridge_sessions[second_key] = second_session
+
+    async with service._http_bridge_lock:
+        throttled_scan = service._prune_http_bridge_sessions_locked()
+    assert throttled_scan == []
+    assert service._http_bridge_sessions[second_key] is second_session
+
+    service._http_bridge_last_idle_prune_monotonic -= _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS + 1.0
+    async with service._http_bridge_lock:
+        third_scan = service._prune_http_bridge_sessions_locked()
+    assert [session.key for session in third_scan] == [second_key]
+
+
+@pytest.mark.asyncio
 async def test_get_or_create_http_bridge_session_replaces_live_session_when_account_is_no_longer_assigned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

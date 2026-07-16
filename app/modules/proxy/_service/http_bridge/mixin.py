@@ -216,6 +216,7 @@ _SECURITY_WORK_NO_AUTHORIZED_ACCOUNTS_MESSAGE = (
 )
 _HTTP_BRIDGE_BACKGROUND_CLOSE_TIMEOUT_SECONDS = 5.0
 _HTTP_BRIDGE_BACKGROUND_CLEANUP_WARN_THRESHOLD = 100
+_HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS = 5.0
 
 
 class _HTTPBridgeMixin(
@@ -1514,6 +1515,13 @@ class _HTTPBridgeMixin(
 
     def _prune_http_bridge_sessions_locked(self) -> list["_HTTPBridgeSession"]:
         now = _service_time().monotonic()
+        # This full-registry scan runs synchronously under _http_bridge_lock on
+        # every session get-or-create; unthrottled it blocked the event loop
+        # for seconds under load (2026-07-16 stalls). Idle TTLs are far longer
+        # than the throttle, so a bounded cadence changes nothing observable.
+        if now - self._http_bridge_last_idle_prune_monotonic < _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS:
+            return []
+        self._http_bridge_last_idle_prune_monotonic = now
         stale_keys: list[_HTTPBridgeSessionKey] = []
         for key, session in self._http_bridge_sessions.items():
             if session.closed:

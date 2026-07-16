@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -79,6 +81,51 @@ async def test_start_and_stop_lifecycle_runs_and_cancels_cleanly() -> None:
 
     await monitor.start()
     assert monitor._task is not None and not monitor._task.done()
+    assert monitor._watchdog_thread is not None and monitor._watchdog_thread.is_alive()
 
     await monitor.stop()
     assert monitor._task is None
+    assert monitor._watchdog_thread is None
+
+
+def test_watchdog_dumps_stacks_while_heartbeat_is_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    dump = MagicMock()
+    monkeypatch.setattr(lag_monitor, "dump_all_thread_stacks", dump)
+
+    monitor = lag_monitor.EventLoopLagMonitor(
+        warning_threshold_seconds=0.5,
+        check_interval_seconds=0.01,
+        stall_dump_threshold_seconds=0.05,
+    )
+    monitor._heartbeat_monotonic = time.monotonic() - 60.0
+    thread = threading.Thread(target=monitor._watchdog_loop, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while not dump.called and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        monitor._watchdog_stop.set()
+        thread.join(timeout=1.0)
+
+    assert dump.called
+    assert "event_loop_stall" in dump.call_args.kwargs["header"]
+
+
+def test_watchdog_does_not_dump_when_heartbeat_is_fresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    dump = MagicMock()
+    monkeypatch.setattr(lag_monitor, "dump_all_thread_stacks", dump)
+
+    monitor = lag_monitor.EventLoopLagMonitor(
+        warning_threshold_seconds=0.5,
+        check_interval_seconds=0.01,
+        stall_dump_threshold_seconds=5.0,
+    )
+    monitor._heartbeat_monotonic = time.monotonic()
+    thread = threading.Thread(target=monitor._watchdog_loop, daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    monitor._watchdog_stop.set()
+    thread.join(timeout=1.0)
+
+    assert not dump.called

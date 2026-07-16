@@ -1202,11 +1202,15 @@ def prepare_interactive_endpoint() -> bool:
     local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 0.35)
     remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 1.5)
     for label, url in _lb_candidates():
+        # 3 attempts spaced 1s apart: the LB event loop stalls in short bursts
+        # under heavy streaming load, and a single 0.35s probe landing inside
+        # one burst used to force the whole session onto plain-claude fallback
+        # (2026-07-16). The healthy path still returns on the first probe.
         ready, error, unreachable = _probe_health_at(
             url,
-            retries=1,
+            retries=3,
             timeout=local_timeout if label == "local" else remote_timeout,
-            gap=0.0,
+            gap=1.0,
         )
         if label == "local" and not ready and unreachable:
             ready = _wait_for_local_startup(url, probe_timeout=local_timeout)

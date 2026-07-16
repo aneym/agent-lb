@@ -29,6 +29,7 @@ class _HTTPBridgeServiceProtocol(Protocol):
     _background_cleanup_tasks: Any
     _http_bridge_draining: bool
     _http_bridge_lock: Any
+    _http_bridge_last_idle_prune_monotonic: float
     _work_admission: Any
 
     async def _ensure_fresh_with_budget(

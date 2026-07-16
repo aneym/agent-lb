@@ -25,8 +25,18 @@ const RETRY_INTERVAL_MS = Number(
 
 let lastHoldLogMs = 0;
 
+// Logging is best-effort: a full disk once crashed the whole front with an
+// unhandled ENOSPC 'error' event from launchd's stdout stream (2026-07-14),
+// taking port 2455 down with it. Swallow stream errors — proxying must
+// outlive the log file.
+process.stdout.on("error", () => {});
+
 function log(message) {
-  process.stdout.write(`${new Date().toISOString()} ${message}\n`);
+  try {
+    process.stdout.write(`${new Date().toISOString()} ${message}\n`);
+  } catch {
+    // ENOSPC/EPIPE on the log stream must never kill the proxy.
+  }
 }
 
 function connectUpstream(deadlineMs, onConnect, onGiveUp) {
