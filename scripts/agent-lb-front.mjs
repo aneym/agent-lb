@@ -42,7 +42,7 @@ function log(message) {
 function connectUpstream(deadlineMs, onConnect, onGiveUp) {
   const socket = net.connect({ host: HOST, port: UPSTREAM_PORT });
   socket.once("connect", () => onConnect(socket));
-  socket.once("error", () => {
+  socket.once("error", (error) => {
     socket.destroy();
     if (Date.now() >= deadlineMs) {
       onGiveUp();
@@ -51,7 +51,12 @@ function connectUpstream(deadlineMs, onConnect, onGiveUp) {
     const now = Date.now();
     if (now - lastHoldLogMs > 5000) {
       lastHoldLogMs = now;
-      log(`upstream :${UPSTREAM_PORT} down — holding connections`);
+      // error.code distinguishes a stopped backend (ECONNREFUSED) from
+      // accept-backlog overflow (also ECONNREFUSED, but backend logs keep
+      // flowing), front-side fd exhaustion (EMFILE), and resets (ECONNRESET).
+      log(
+        `upstream :${UPSTREAM_PORT} down (${error?.code || "unknown"}) — holding connections`,
+      );
     }
     setTimeout(
       () => connectUpstream(deadlineMs, onConnect, onGiveUp),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import ssl
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, cast
 from urllib.parse import urlparse, urlunparse
@@ -314,6 +315,16 @@ def _pop_header_case_insensitive(headers: dict[str, str], name: str) -> str | No
     return None
 
 
+_upstream_ssl_context: ssl.SSLContext | None = None
+
+
+def _shared_upstream_ssl_context() -> ssl.SSLContext:
+    global _upstream_ssl_context
+    if _upstream_ssl_context is None:
+        _upstream_ssl_context = ssl.create_default_context()
+    return _upstream_ssl_context
+
+
 def _responses_websocket_url(base_url: str) -> str:
     parsed = urlparse(f"{base_url.rstrip('/')}/codex/responses")
     if parsed.scheme == "https":
@@ -421,8 +432,18 @@ async def connect_responses_websocket(
         # healthy long turn has stalled.
         "ping_timeout": None,
         "max_size": settings.max_sse_event_bytes,
+        # permessage-deflate zlib-compresses every frame synchronously on the
+        # event loop; multi-MB prompt-cache frames were caught mid-encode in
+        # live stall dumps (2026-07-16). Trade upstream bandwidth for loop
+        # responsiveness.
+        "compression": None,
     }
     connect_kwargs["proxy"] = proxy_url
+    if url.startswith("wss://"):
+        # The library default builds a fresh SSLContext per connect, loading
+        # the macOS trust store synchronously on the event loop — also caught
+        # in the same stall dumps. Share one context per process.
+        connect_kwargs["ssl"] = _shared_upstream_ssl_context()
     try:
         response = await websocket_connect(url, **connect_kwargs)
     except asyncio.TimeoutError as exc:

@@ -15,7 +15,14 @@
 - [x] 3.1 `cc` interactive probe: 3 retries with 1s gap against `/health/ready`.
 - [x] 3.2 Front proxy log writes survive ENOSPC/EPIPE.
 
-## 4. Validation and rollout
+## 4. Round 2: residual-lag fixes
+
+- [x] 4.1 Share one upstream-websocket `SSLContext`; stop building one per connect on the loop.
+- [x] 4.2 Disable permessage-deflate on upstream websocket connects.
+- [x] 4.3 Raise `cc` local probe timeout default to 1.5s.
+- [x] 4.4 Extend websocket transport kwargs regression test (compression/ssl).
+
+## 5. Validation and rollout
 
 - [x] 4.1 `ruff check app clients`, launcher `py_compile`, `node --check` on the front script.
 - [x] 4.2 Focused pytest on http-bridge/health/resilience suites.

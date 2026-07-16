@@ -211,6 +211,8 @@ async def test_connect_responses_websocket_uses_websockets_transport(monkeypatch
     assert "ping_interval" not in kwargs
     assert kwargs["ping_timeout"] is None
     assert kwargs["max_size"] == 4321
+    assert kwargs["compression"] is None
+    assert kwargs["ssl"] is proxy_websocket_module._shared_upstream_ssl_context()
     additional_headers = cast(dict[str, str], kwargs["additional_headers"])
     assert additional_headers["Authorization"] == "Bearer access-token"
     assert additional_headers["chatgpt-account-id"] == "account-123"

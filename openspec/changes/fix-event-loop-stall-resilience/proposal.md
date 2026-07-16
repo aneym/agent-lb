@@ -34,6 +34,20 @@ front proxy once died entirely from an unhandled ENOSPC on its log stream.
   ENOSPC/EPIPE on the stdout stream can no longer crash the process holding
   port 2455.
 
+Round 2 (same day): post-fix watchdog captures showed the residual 0.5–2s
+lags were many small synchronous costs, each caught in live stack dumps:
+`ssl.create_default_context()` loading the macOS trust store on the loop for
+every upstream websocket connect, permessage-deflate zlib-encoding multi-MB
+prompt frames on the loop, and GC pauses during large SSE `json.loads`.
+Those lag bursts overflow the kernel accept backlog (`somaxconn=128`), so the
+front proxy sees refused upstream connects and holds/retries at 500ms — which
+a 0.35s `cc` probe can never ride out.
+
+- Upstream websocket connects share one process-wide `SSLContext` and disable
+  permessage-deflate (`compression=None`).
+- `cc` local `/health/ready` probe timeout default raised 0.35s → 1.5s so one
+  front hold-retry cycle fits inside a probe attempt.
+
 ## Impact
 
 - Affected specs: proxy-runtime-observability, deployment-installation

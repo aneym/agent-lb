@@ -1199,7 +1199,10 @@ def prepare_interactive_endpoint() -> bool:
     """
     global AGENT_LB_BASE_URL
     failures: list[str] = []
-    local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 0.35)
+    # 1.5s (was 0.35s): the front proxy holds and retries refused upstream
+    # connects every 500ms during short LB stalls, so a sub-second probe
+    # timeout gives up before the front can complete even one retry cycle.
+    local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 1.5)
     remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 1.5)
     for label, url in _lb_candidates():
         # 3 attempts spaced 1s apart: the LB event loop stalls in short bursts
