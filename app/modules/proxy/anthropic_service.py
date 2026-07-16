@@ -43,6 +43,13 @@ _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
+# Pool-wide last-resort horizon for requested-quota cooldowns. Upstream
+# request-rate 429s often arrive with no reset headers and get the 60s
+# default cooldown above; with a small pool those overlap into a permanent
+# pool-wide 429 even while every usage window reports headroom. A cooldown
+# resetting within this horizon is treated as transient (bypassable when the
+# whole pool is blocked); longer, header-derived resets stay authoritative.
+_ANTHROPIC_TRANSIENT_COOLDOWN_BYPASS_HORIZON_SECONDS = 120
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 # Dedicated marker for a successful response that Anthropic served from paid
 # extra usage after rejecting the subscription window. Keeping this distinct
@@ -1000,6 +1007,47 @@ class AnthropicProxyService:
             blocked_count -= len(eligible_account_ids)
             for account_id in eligible_account_ids:
                 blocked_reset_by_account_id.pop(account_id, None)
+
+        if not eligible_account_ids and request_quota_blocked_account_ids:
+            # Last resort for transient rate-limit cooldowns: when every
+            # remaining candidate is blocked only by a requested-quota
+            # cooldown that resets within the near-term horizon, re-admit
+            # those candidates and let upstream be the authority — a genuine
+            # limit answers 429 and rewrites a fresh bounded cooldown. All
+            # transient candidates are re-admitted (not just the earliest
+            # reset) so the caller's failover loop can exclude an account
+            # that just 429'd and still try the next one. Accounts with
+            # active primary/secondary exhaustion, an extra-usage tripwire,
+            # or a reset beyond the horizon stay blocked.
+            horizon = now + _ANTHROPIC_TRANSIENT_COOLDOWN_BYPASS_HORIZON_SECONDS
+
+            def _is_transient_cooldown_only(account_id: str) -> bool:
+                if account_id in primary_exhaustion or account_id in secondary_exhaustion:
+                    return False
+                tripwire = extra_usage_tripwire_cooldowns.get(account_id)
+                if tripwire is not None and _anthropic_cooldown_is_active(tripwire[0], tripwire[1], now=now):
+                    return False
+                cooldown = request_quota_cooldowns.get(account_id)
+                if cooldown is None or cooldown[1] is None:
+                    return False
+                return int(cooldown[1]) <= horizon
+
+            transient_account_ids = [
+                account_id
+                for account_id in model_scope_account_ids
+                if account_id in request_quota_blocked_account_ids and _is_transient_cooldown_only(account_id)
+            ]
+            if transient_account_ids:
+                logger.warning(
+                    "anthropic_transient_cooldown_bypass quota_key=%s readmitted=%d blocked=%d",
+                    quota_key,
+                    len(transient_account_ids),
+                    len(request_quota_blocked_account_ids),
+                )
+                eligible_account_ids = transient_account_ids
+                blocked_count -= len(transient_account_ids)
+                for account_id in transient_account_ids:
+                    blocked_reset_by_account_id.pop(account_id, None)
 
         burn_first_account_ids: frozenset[str] = frozenset()
         if fable_routing and not fable_request and eligible_account_ids:
