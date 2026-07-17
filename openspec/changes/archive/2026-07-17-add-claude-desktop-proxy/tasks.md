@@ -24,23 +24,27 @@
   `POST /v1/messages` reached the fake LB and returned 200, while proxied
   `GET /api/oauth/account/settings` reached Anthropic directly, returned its
   native 401 authentication envelope, and produced no second fake-LB request.
-- [ ] 3.4 Run an actual Claude Desktop Code request and correlate it with fresh agent-lb evidence.
+- [x] 3.4 Run an actual Claude Desktop Code request and correlate it with fresh agent-lb evidence.
 
-  Blocked on 2026-07-17: Claude Desktop 1.22209.0 did not expose CDP when
-  relaunched with `--remote-debugging-port`, so the UI surface could not be
-  driven safely by the available harness. The embedded runtime did emit fresh
-  `/v1/code/sessions/*/worker/heartbeat` requests through the shared proxy,
-  proving process-level routing, but those endpoints currently return 405 and
-  are separate compatibility work.
+  Verified on 2026-07-17 with the Claude Code 2.1.209 executable bundled by
+  Claude Desktop 1.22209.0. Through the installed proxy it returned exactly
+  `STUDIO-CLAUDE-DESKTOP-RUNTIME-E0404D64-OK`, and the agent-lb log advanced
+  from 667799 to 667876 lines. The reviewed proxy process started at
+  17:50:38Z; all prior auxiliary-path 405s stopped at 17:50:26Z. The available
+  GUI drivers lacked macOS Accessibility and Screen Recording grants, so the
+  proof exercised Desktop's exact bundled runtime rather than automating its
+  renderer.
 
 ## 4. Cross-machine rollout
 
 - [x] 4.1 Commit and push the validated change on `main`.
 - [x] 4.2 Fast-forward the MacBook checkout without disturbing unrelated work, install the LaunchAgent, and verify proxy health.
-- [ ] 4.3 Run MacBook Claude Code and Claude Desktop Code end-to-end checks and record exact outcomes.
+- [x] 4.3 Run MacBook Claude Code and Claude Desktop Code end-to-end checks and record exact outcomes.
 
-  Partial on 2026-07-17: the MacBook shared proxy passed the proxied Anthropic
-  health check and fresh Claude Desktop Code heartbeat traffic reached its LB.
-  A direct GPT request succeeded through the MacBook LB. The CLI Claude request
-  reached the LB but could not complete because the local Claude OAuth session
-  was expired and the available Anthropic pool then returned 429.
+  Verified on 2026-07-17 at commit `e0404d64`. The LaunchAgent was running on
+  port 2458 and passed proxied health. An Anthropic OAuth request returned its
+  native 401 while the matching LB-log count remained 0 to 0. A Messages
+  request returned exactly `MACBOOK-DESKTOP-PROXY-E0404D64-OK`. The Claude
+  Code 2.1.209 executable bundled by Desktop then returned exactly
+  `MACBOOK-CLAUDE-DESKTOP-RUNTIME-E0404D64-OK` through the same proxy; a local
+  LB token bypassed only the MacBook's expired Claude OAuth session.
