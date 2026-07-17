@@ -46,6 +46,7 @@ from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.modules.accounts import api as accounts_api
 from app.modules.accounts.pulse import build_account_pulse_scheduler
+from app.modules.accounts.reset_credit_scheduler import build_reset_credit_auto_redeem_scheduler
 from app.modules.api_keys import api as api_keys_api
 from app.modules.api_keys.reset_scheduler import build_api_key_limit_reset_scheduler
 from app.modules.audit import api as audit_api
@@ -167,6 +168,7 @@ async def lifespan(app: FastAPI):
         quota_planner_scheduler = build_quota_planner_scheduler()
         auth_guardian_scheduler = build_auth_guardian_scheduler()
         account_pulse_scheduler = build_account_pulse_scheduler()
+        reset_credit_auto_redeem_scheduler = build_reset_credit_auto_redeem_scheduler()
         federation_mirror_scheduler = build_federation_mirror_scheduler()
         event_loop_lag_monitor = build_event_loop_lag_monitor(
             warning_threshold_seconds=settings.event_loop_lag_warning_threshold_seconds
@@ -178,6 +180,7 @@ async def lifespan(app: FastAPI):
         await quota_planner_scheduler.start()
         await auth_guardian_scheduler.start()
         await account_pulse_scheduler.start()
+        await reset_credit_auto_redeem_scheduler.start()
         await federation_mirror_scheduler.start()
         await event_loop_lag_monitor.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
@@ -345,6 +348,7 @@ async def lifespan(app: FastAPI):
         await event_loop_lag_monitor.stop()
         await federation_mirror_scheduler.stop()
         await account_pulse_scheduler.stop()
+        await reset_credit_auto_redeem_scheduler.stop()
         await quota_planner_scheduler.stop()
         await auth_guardian_scheduler.stop()
         await sticky_session_cleanup_scheduler.stop()
