@@ -253,6 +253,9 @@ class Settings(BaseSettings):
     reset_credit_auto_redeem_enabled: bool = True
     reset_credit_auto_redeem_interval_seconds: int = Field(default=60, gt=0)
     reset_credit_auto_redeem_cooldown_seconds: int = Field(default=900, ge=0)
+    reset_credit_expiry_redeem_enabled: bool = True
+    reset_credit_expiry_redeem_window_hours: int = Field(default=24, gt=0)
+    reset_credit_expiry_sweep_interval_seconds: int = Field(default=3600, gt=0)
     # Anonymous, aggregate-only public usage endpoint (GET /api/usage/public). No PII is exposed.
     public_usage_enabled: bool = True
     openai_cache_affinity_max_age_seconds: int = Field(default=1800, gt=0)

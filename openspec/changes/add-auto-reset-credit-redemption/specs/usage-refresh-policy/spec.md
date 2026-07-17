@@ -14,6 +14,7 @@ only when no subscription-usable OpenAI account in a serving status remains
 - **AND** no auto-redemption occurred within the configured cooldown
 - **THEN** the scheduler redeems exactly one credit — preferring `quota_exceeded` accounts, then the earliest-expiring available credit
 - **AND** the redemption path refreshes the account's usage snapshot and invalidates the selection cache
+- **AND** the scheduler sends a wake probe to the account so the upstream limiter re-evaluates (stale post-reset `/wham/usage` must not re-trigger redemption)
 - **AND** the redemption is audit-logged as `account_reset_credit_redeemed` with `trigger: auto`
 
 #### Scenario: Any active account suppresses redemption
@@ -40,4 +41,28 @@ only when no subscription-usable OpenAI account in a serving status remains
 #### Scenario: Kill switch
 
 - **WHEN** `reset_credit_auto_redeem_enabled` is `false`
-- **THEN** the scheduler performs no pool evaluation and no redemption
+- **THEN** the scheduler performs no pool-exhaustion evaluation and no exhaustion-triggered redemption
+
+### Requirement: Expiring banked reset credits are redeemed before they lapse
+
+The scheduler MUST periodically sweep serving OpenAI accounts and attempt to
+redeem any available banked reset credit whose expiry falls within the
+configured window, regardless of pool capacity.
+
+#### Scenario: Credit expiring within the window is redeemed
+
+- **WHEN** the expiry sweep runs (at most once per `reset_credit_expiry_sweep_interval_seconds`)
+- **AND** a serving, subscription-usable OpenAI account has an available credit with `expires_at` within `reset_credit_expiry_redeem_window_hours`
+- **THEN** the scheduler attempts to consume that specific credit
+- **AND** on upstream code `reset` the redemption is audit-logged as `account_reset_credit_redeemed` with `trigger: expiring` and followed by a wake probe
+- **AND** the exhaustion cooldown is neither consulted nor started
+
+#### Scenario: Not-yet-redeemable expiring credit is retried, not lost
+
+- **WHEN** consuming an expiring credit returns upstream code `nothing_to_reset`
+- **THEN** the credit remains banked upstream and the scheduler retries it on subsequent sweeps until it is redeemed or lapses
+
+#### Scenario: Expiry sweep kill switch
+
+- **WHEN** `reset_credit_expiry_redeem_enabled` is `false`
+- **THEN** no expiry sweep runs and credits are only redeemed via the pool-exhaustion rule or the manual endpoint

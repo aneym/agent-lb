@@ -15,7 +15,7 @@ import contextlib
 import importlib
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
-from app.core.utils.time import utcnow
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
 from app.modules.accounts.repository import AccountsRepository
@@ -81,12 +81,16 @@ class ResetCreditAutoRedeemScheduler:
     interval_seconds: int
     cooldown_seconds: int
     enabled: bool
+    expiry_enabled: bool = False
+    expiry_window_hours: int = 24
+    expiry_sweep_interval_seconds: int = 3600
     _task: asyncio.Task[None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _last_redeemed_at: datetime | None = None
+    _last_expiry_sweep_at: datetime | None = None
 
     async def start(self) -> None:
-        if not self.enabled:
+        if not (self.enabled or self.expiry_enabled):
             return
         if self._task and not self._task.done():
             return
@@ -118,18 +122,121 @@ class ResetCreditAutoRedeemScheduler:
             return False
         return (utcnow() - self._last_redeemed_at).total_seconds() < self.cooldown_seconds
 
+    def _expiry_sweep_due(self) -> bool:
+        if not self.expiry_enabled:
+            return False
+        if self._last_expiry_sweep_at is None:
+            return True
+        return (utcnow() - self._last_expiry_sweep_at).total_seconds() >= self.expiry_sweep_interval_seconds
+
     async def _tick(self) -> None:
-        if self._cooldown_active():
+        exhaustion_eligible = self.enabled and not self._cooldown_active()
+        expiry_due = self._expiry_sweep_due()
+        if not exhaustion_eligible and not expiry_due:
             return
         if not await _get_leader_election().try_acquire():
             return
         async with get_background_session() as session:
             repo = AccountsRepository(session)
-            accounts = await repo.list_accounts()
-            candidates = exhausted_pool_or_none(list(accounts))
-            if candidates is None:
-                return
-            await self._redeem_first_available(session, repo, candidates)
+            accounts = list(await repo.list_accounts())
+            if exhaustion_eligible:
+                candidates = exhausted_pool_or_none(accounts)
+                if candidates is not None:
+                    await self._redeem_first_available(session, repo, candidates)
+            if expiry_due:
+                self._last_expiry_sweep_at = utcnow()
+                await self._expiry_sweep(session, repo, accounts)
+
+    async def _expiry_sweep(
+        self,
+        session: AsyncSession,
+        repo: AccountsRepository,
+        accounts: list[Account],
+    ) -> None:
+        """Redeem credits about to lapse, regardless of pool capacity.
+
+        Safe to attempt early: upstream ``nothing_to_reset`` leaves the credit
+        banked (only ``reset`` consumes one), so unredeemable attempts retry on
+        the next sweep until the credit expires or the account has usage to
+        wipe.
+        """
+        pool = serving_openai_pool(accounts)
+        if not pool:
+            return
+        service = _build_accounts_service(repo, session)
+        encryptor = TokenEncryptor()
+        window = timedelta(hours=self.expiry_window_hours)
+        now = utcnow()
+        for account in pool:
+            try:
+                payload = await rate_limit_resets.fetch_reset_credits(
+                    access_token=encryptor.decrypt(account.access_token_encrypted),
+                    chatgpt_account_id=account.chatgpt_account_id,
+                )
+            except ResetCreditsError as exc:
+                logger.warning(
+                    "Reset-credit listing failed during expiry sweep account=%s error=%s",
+                    account.id,
+                    exc.message,
+                )
+                continue
+            expiring = [
+                credit
+                for credit in payload.credits
+                if credit.status == "available" and _expires_within(credit.expires_at, now, window)
+            ]
+            for credit in expiring:
+                await self._redeem_expiring(service, account, credit.id, credit.expires_at)
+
+    async def _redeem_expiring(self, service, account: Account, credit_id: str, expires_at: str | None) -> None:  # noqa: ANN001
+        try:
+            result = await service.redeem_rate_limit_reset_credit(account.id, credit_id=credit_id)
+        except Exception:
+            logger.exception(
+                "Expiring reset-credit redemption failed account=%s credit=%s",
+                account.id,
+                credit_id,
+            )
+            return
+        if result is None:
+            return
+        if result.code == "nothing_to_reset":
+            logger.info(
+                "Expiring reset credit not redeemable yet (nothing to reset) account=%s credit=%s expires_at=%s",
+                account.id,
+                credit_id,
+                expires_at,
+            )
+            return
+        if result.status != "redeemed":
+            logger.warning(
+                "Expiring reset-credit redemption not applied account=%s credit=%s code=%s",
+                account.id,
+                credit_id,
+                result.code,
+            )
+            return
+        logger.info(
+            "Auto-redeemed expiring reset credit account=%s email=%s credit=%s expires_at=%s windows_reset=%s",
+            account.id,
+            account.email,
+            credit_id,
+            expires_at,
+            result.windows_reset,
+        )
+        await _wake_upstream_limiter(service, account)
+        AuditService.log_async(
+            "account_reset_credit_redeemed",
+            actor_ip=None,
+            details={
+                "account_id": account.id,
+                "credit_id": credit_id,
+                "code": result.code,
+                "windows_reset": result.windows_reset,
+                "trigger": "expiring",
+                "expires_at": expires_at,
+            },
+        )
 
     async def _redeem_first_available(
         self,
@@ -172,6 +279,7 @@ class ResetCreditAutoRedeemScheduler:
                 credit_id,
                 result.windows_reset,
             )
+            await _wake_upstream_limiter(service, account)
             AuditService.log_async(
                 "account_reset_credit_redeemed",
                 actor_ip=None,
@@ -184,6 +292,37 @@ class ResetCreditAutoRedeemScheduler:
                 },
             )
             return
+
+
+async def _wake_upstream_limiter(service, account: Account) -> None:  # noqa: ANN001
+    """Probe the account after a redemption so ``/wham/usage`` re-evaluates.
+
+    Upstream serves stale pre-reset usage until a real request wakes the
+    limiter (the account-probe endpoint exists for exactly this). Without the
+    wake, a redeemed account can keep reporting ``quota_exceeded`` locally —
+    which the exhaustion rule would misread as "still exhausted" and, after
+    cooldown, spend another credit on. Best-effort: probe failure only delays
+    recovery until organic traffic or the next probe.
+    """
+    try:
+        await service.probe_account(account.id)
+    except Exception:
+        logger.warning(
+            "Post-redemption wake probe failed account=%s; usage may stay stale until next refresh",
+            account.id,
+            exc_info=True,
+        )
+
+
+def _expires_within(expires_at: str | None, now: datetime, window: timedelta) -> bool:
+    if not expires_at:
+        return False
+    try:
+        parsed = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("Unparseable reset-credit expiry expires_at=%s", expires_at)
+        return False
+    return to_utc_naive(parsed) <= now + window
 
 
 async def _rank_candidates_by_credit_expiry(
@@ -239,4 +378,7 @@ def build_reset_credit_auto_redeem_scheduler() -> ResetCreditAutoRedeemScheduler
         interval_seconds=settings.reset_credit_auto_redeem_interval_seconds,
         cooldown_seconds=settings.reset_credit_auto_redeem_cooldown_seconds,
         enabled=settings.reset_credit_auto_redeem_enabled,
+        expiry_enabled=settings.reset_credit_expiry_redeem_enabled,
+        expiry_window_hours=settings.reset_credit_expiry_redeem_window_hours,
+        expiry_sweep_interval_seconds=settings.reset_credit_expiry_sweep_interval_seconds,
     )

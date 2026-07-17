@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -184,6 +184,7 @@ class TestRedeemSweep:
 
         await scheduler._redeem_first_available(AsyncMock(), AsyncMock(), accounts)
         service.redeem_rate_limit_reset_credit.assert_awaited_once_with("a1", credit_id="c-1")
+        service.probe_account.assert_awaited_once_with("a1")
         assert scheduler._cooldown_active() is True
 
     @pytest.mark.asyncio
@@ -240,3 +241,115 @@ class TestRedeemSweep:
 
         await scheduler._tick()
         acquired.try_acquire.assert_not_awaited()
+
+
+class TestExpiresWithin:
+    def test_within_window(self):
+        now = datetime(2026, 7, 17, 12, 0, 0)
+        assert scheduler_module._expires_within("2026-07-18T00:30:00Z", now, timedelta(hours=24)) is True
+
+    def test_outside_window(self):
+        now = datetime(2026, 7, 17, 12, 0, 0)
+        assert scheduler_module._expires_within("2026-08-12T00:00:00Z", now, timedelta(hours=24)) is False
+
+    def test_missing_or_invalid_expiry(self):
+        now = datetime(2026, 7, 17, 12, 0, 0)
+        assert scheduler_module._expires_within(None, now, timedelta(hours=24)) is False
+        assert scheduler_module._expires_within("not-a-date", now, timedelta(hours=24)) is False
+
+
+class TestExpirySweep:
+    @pytest.mark.asyncio
+    async def test_redeems_expiring_credit_without_touching_cooldown(self, monkeypatch):
+        scheduler = _scheduler()
+        scheduler.expiry_enabled = True
+        scheduler.expiry_window_hours = 24
+        account = _account("a1", AccountStatus.ACTIVE)
+
+        soon = (scheduler_module.utcnow() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        late = (scheduler_module.utcnow() + timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        async def _fake_fetch(*, access_token, chatgpt_account_id):  # noqa: ARG001
+            return ResetCreditsPayload(
+                credits=[_credit("c-soon", expires_at=soon), _credit("c-late", expires_at=late)],
+                available_count=2,
+            )
+
+        monkeypatch.setattr(rate_limit_resets, "fetch_reset_credits", _fake_fetch)
+
+        service = AsyncMock()
+        service.redeem_rate_limit_reset_credit.return_value = _consume_response("reset")
+        monkeypatch.setattr(scheduler_module, "_build_accounts_service", lambda repo, session: service)
+
+        await scheduler._expiry_sweep(AsyncMock(), AsyncMock(), [account])
+        service.redeem_rate_limit_reset_credit.assert_awaited_once_with("a1", credit_id="c-soon")
+        service.probe_account.assert_awaited_once_with("a1")
+        assert scheduler._cooldown_active() is False
+
+    @pytest.mark.asyncio
+    async def test_nothing_to_reset_is_non_fatal(self, monkeypatch):
+        scheduler = _scheduler()
+        scheduler.expiry_enabled = True
+        account = _account("a1", AccountStatus.ACTIVE)
+        soon = (scheduler_module.utcnow() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        async def _fake_fetch(*, access_token, chatgpt_account_id):  # noqa: ARG001
+            return ResetCreditsPayload(credits=[_credit("c-soon", expires_at=soon)], available_count=1)
+
+        monkeypatch.setattr(rate_limit_resets, "fetch_reset_credits", _fake_fetch)
+
+        service = AsyncMock()
+        service.redeem_rate_limit_reset_credit.return_value = _consume_response("nothing_to_reset")
+        monkeypatch.setattr(scheduler_module, "_build_accounts_service", lambda repo, session: service)
+
+        await scheduler._expiry_sweep(AsyncMock(), AsyncMock(), [account])
+        service.redeem_rate_limit_reset_credit.assert_awaited_once()
+        service.probe_account.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_exhaustion_cooldown_does_not_block_expiry_sweep(self, monkeypatch):
+        scheduler = _scheduler()
+        scheduler.expiry_enabled = True
+        scheduler._last_redeemed_at = scheduler_module.utcnow()
+
+        leader = AsyncMock()
+        leader.try_acquire.return_value = True
+        monkeypatch.setattr(scheduler_module, "_get_leader_election", lambda: leader)
+
+        sweep_calls: list[Any] = []
+
+        async def _fake_sweep(self, session, repo, accounts):  # noqa: ARG001
+            sweep_calls.append(accounts)
+
+        monkeypatch.setattr(ResetCreditAutoRedeemScheduler, "_expiry_sweep", _fake_sweep)
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return AsyncMock()
+
+            async def __aexit__(self, *args):
+                return False
+
+        monkeypatch.setattr(scheduler_module, "get_background_session", lambda: _FakeSessionCtx())
+
+        repo = AsyncMock()
+        repo.list_accounts.return_value = []
+        monkeypatch.setattr(scheduler_module, "AccountsRepository", lambda session: repo)
+
+        await scheduler._tick()
+        assert len(sweep_calls) == 1
+        assert scheduler._last_expiry_sweep_at is not None
+
+    @pytest.mark.asyncio
+    async def test_expiry_sweep_interval_gating(self):
+        scheduler = _scheduler()
+        scheduler.expiry_enabled = True
+        scheduler.expiry_sweep_interval_seconds = 3600
+        assert scheduler._expiry_sweep_due() is True
+        scheduler._last_expiry_sweep_at = scheduler_module.utcnow()
+        assert scheduler._expiry_sweep_due() is False
+
+    def test_expiry_kill_switch(self):
+        scheduler = _scheduler()
+        scheduler.expiry_enabled = False
+        assert scheduler._expiry_sweep_due() is False

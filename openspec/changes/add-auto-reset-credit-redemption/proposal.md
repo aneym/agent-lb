@@ -30,10 +30,22 @@ checks like this belong in deterministic code, not in an agent's judgment.
   not redeem again until the cooldown elapses, even if the pool is somehow
   still exhausted. The cooldown is in-memory; a restart during a still
   fully-exhausted pool may redeem once more, which matches the rule's intent.
+- **Expiry sweep** (operator follow-up, 2026-07-17): banked credits lapse 30
+  days after grant, so the scheduler also runs an hourly sweep that redeems
+  any available credit expiring within `reset_credit_expiry_redeem_window_hours`
+  (default 24) — regardless of pool capacity, on any serving account.
+  Attempting early is safe: upstream consumes a credit only on code `reset`;
+  `nothing_to_reset` leaves it banked, so a not-yet-redeemable expiring credit
+  retries every sweep until the account has usage to wipe or the credit
+  lapses. Expiry redemptions are audit-logged with `trigger: expiring` and do
+  not start or consult the exhaustion cooldown.
 - Settings (env-configurable, no dashboard plumbing):
   `reset_credit_auto_redeem_enabled` (default `true`),
   `reset_credit_auto_redeem_interval_seconds` (default 60),
-  `reset_credit_auto_redeem_cooldown_seconds` (default 900).
+  `reset_credit_auto_redeem_cooldown_seconds` (default 900),
+  `reset_credit_expiry_redeem_enabled` (default `true`),
+  `reset_credit_expiry_redeem_window_hours` (default 24),
+  `reset_credit_expiry_sweep_interval_seconds` (default 3600).
 - Auto-redemptions are audit-logged as `account_reset_credit_redeemed` with
   `trigger: auto`.
 
