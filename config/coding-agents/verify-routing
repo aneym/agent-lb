@@ -44,6 +44,23 @@ except json.JSONDecodeError:
     check(False, f"{settings_path} contains valid JSON")
 check(settings.get("model") == "claude-fable-5", "direct Claude Code default is Fable")
 
+designer_source = REPO / "config" / "coding-agents" / "agents" / "frontend-designer.md"
+designer_path = HOME / ".claude" / "agents" / "frontend-designer.md"
+designer_owner_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "frontend-designer"
+designer_source_text = designer_source.read_text() if designer_source.is_file() else ""
+designer_text = designer_path.read_text() if designer_path.is_file() else ""
+check(designer_source.is_file(), f"canonical frontend designer exists at {designer_source}")
+check("\nmodel: opus\n" in designer_source_text, "canonical frontend designer selects Opus")
+check(
+    designer_path.is_file() and designer_text == designer_source_text,
+    f"{designer_path} matches the canonical Opus designer definition",
+)
+check(
+    designer_owner_path.is_file()
+    and designer_owner_path.read_text() == "agent-lb:frontend-designer:v1\n",
+    f"{designer_owner_path} records installer ownership",
+)
+
 owned_registrations = [
     (event, group.get("matcher", ""))
     for event, groups in settings.get("hooks", {}).items()

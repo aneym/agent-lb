@@ -14,6 +14,9 @@ from typing import Any
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
 MODEL = "claude-fable-5"
+DESIGNER_RELATIVE_PATH = Path(".claude/agents/frontend-designer.md")
+DESIGNER_OWNER_RELATIVE_PATH = Path(".agent-lb/managed/coding-agents/frontend-designer")
+DESIGNER_OWNER = "agent-lb:frontend-designer:v1\n"
 LEGACY_HEADINGS = (
     "Coding-agent routing",
     "Orchestration — Fable architects, the fleet executes",
@@ -129,7 +132,10 @@ def main() -> int:
     source = Path(__file__).resolve().parent
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
+    designer_path = args.home / DESIGNER_RELATIVE_PATH
+    designer_owner_path = args.home / DESIGNER_OWNER_RELATIVE_PATH
     template = (source / "claude-adapter.md").read_text()
+    designer_template = (source / "agents" / "frontend-designer.md").read_text()
     originals = {path: read_text(path) for path in (claude_path, codex_path)}
     settings_path = args.home / ".claude" / "settings.json"
     settings_text = read_text(settings_path)
@@ -154,9 +160,27 @@ def main() -> int:
         raise SystemExit(f"error: {exc}") from exc
     desired_settings = reconcile_settings(settings, args.uninstall)
     desired_settings_text = json.dumps(desired_settings, indent=2) + "\n"
-    changes = {path: desired for path, desired in desired_docs.items() if desired != originals[path]}
+    changes: dict[Path, str | None] = {
+        path: desired for path, desired in desired_docs.items() if desired != originals[path]
+    }
     if desired_settings_text != settings_text:
         changes[settings_path] = desired_settings_text
+    designer_text = read_text(designer_path)
+    designer_owned = read_text(designer_owner_path) == DESIGNER_OWNER
+    preserve_customized_designer = (
+        args.uninstall and designer_owned and designer_path.exists() and designer_text != designer_template
+    )
+    preserve_unmanaged_designer = args.uninstall and not designer_owned and designer_path.exists()
+    if args.uninstall:
+        if designer_owned:
+            changes[designer_owner_path] = None
+            if designer_text == designer_template:
+                changes[designer_path] = None
+    else:
+        if designer_text != designer_template:
+            changes[designer_path] = designer_template
+        if not designer_owned:
+            changes[designer_owner_path] = DESIGNER_OWNER
 
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
@@ -164,10 +188,18 @@ def main() -> int:
     if args.preview:
         for path in changes:
             print(f"would {action} {path}")
+        if preserve_customized_designer:
+            print(f"would preserve customized {designer_path}")
+        if preserve_unmanaged_designer:
+            print(f"would preserve unmanaged {designer_path}")
         if not changes:
             print("managed routing configuration already converged")
         return 0
     if not changes:
+        if preserve_customized_designer:
+            print(f"preserved customized {designer_path}")
+        if preserve_unmanaged_designer:
+            print(f"preserved unmanaged {designer_path}")
         print("managed routing configuration already converged")
         return 0
 
@@ -187,8 +219,16 @@ def main() -> int:
     (checkpoint / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"checkpoint {checkpoint}")
     for path, content in changes.items():
-        write_atomic(path, content)
-        print(f"updated {path}")
+        if content is None:
+            path.unlink()
+            print(f"removed {path}")
+        else:
+            write_atomic(path, content)
+            print(f"updated {path}")
+    if preserve_customized_designer:
+        print(f"preserved customized {designer_path}")
+    if preserve_unmanaged_designer:
+        print(f"preserved unmanaged {designer_path}")
     return 0
 
 

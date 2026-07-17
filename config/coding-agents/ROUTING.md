@@ -43,7 +43,7 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 | Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
-| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-fable-5`     | inherit           |
+| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-opus-4-8`    | inherit           |
 | Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-fable-5`     | inherit           |
 
 Explore moved sonnet → gpt-5.6-sol-medium (owner, 2026-07-15 evening):
@@ -56,7 +56,7 @@ rate-limited sonnet). Caveat on record: n=3 benchmark; revisit if Explore
 quality regresses.
 
 The frontend-designer seat is the sanctioned expensive exception (rule 3):
-design taste is capability-bound, so it runs on Fable — but it has no
+design taste is capability-bound, so it runs on Opus — but it has no
 Edit/Write tools, produces only specs and ranked crits for the implementer
 seat, and stays low-volume/high-leverage (added 2026-07-15 after fleet audits
 showed UI sessions burning the most driver capacity on taste-then-pixels

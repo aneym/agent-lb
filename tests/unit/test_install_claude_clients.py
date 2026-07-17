@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install-claude-clients.sh"
 POLICY_INSTALLER = ROOT / "config" / "coding-agents" / "install-policy.py"
+MANAGED_DESIGNER = ROOT / "config" / "coding-agents" / "agents" / "frontend-designer.md"
+DESIGNER_OWNER = Path(".agent-lb/managed/coding-agents/frontend-designer")
 MARKER_BLOCK = (
     "<!-- agent-lb:coding-agent-routing:start -->\n"
     "## Fable/Codex Routing\n\nretired ccdex adapter\n"
@@ -198,3 +200,137 @@ def test_policy_installer_invalid_json_does_not_mutate_documents(tmp_path: Path)
     assert result.returncode != 0
     assert "invalid JSON" in result.stderr
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_policy_installer_installs_frontend_designer_and_converges_idempotently(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    designer = home / ".claude" / "agents" / "frontend-designer.md"
+    owner = home / DESIGNER_OWNER
+
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+    first_content = designer.read_bytes()
+    checkpoints = home / ".agent-lb" / "config-checkpoints" / "coding-agents"
+    first_checkpoints = sorted(checkpoints.iterdir())
+    second = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert first_content == MANAGED_DESIGNER.read_bytes()
+    assert b"\nmodel: opus\n" in first_content
+    assert designer.read_bytes() == first_content
+    assert owner.read_text() == "agent-lb:frontend-designer:v1\n"
+    assert sorted(checkpoints.iterdir()) == first_checkpoints
+    assert "already converged" in second.stdout
+
+    subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert not designer.exists()
+    assert not owner.exists()
+
+
+def test_policy_installer_previews_and_checkpoints_designer_replacement(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    agents = home / ".claude" / "agents"
+    designer = agents / "frontend-designer.md"
+    unrelated = agents / "keep-me.md"
+    agents.mkdir(parents=True)
+    original_designer = b"---\nname: frontend-designer\nmodel: fable\n---\n"
+    designer.write_bytes(original_designer)
+    unrelated.write_text("keep this agent\n")
+
+    preview = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--print"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"would converge managed routing configuration in {designer}" in preview.stdout
+    assert designer.read_bytes() == original_designer
+    assert unrelated.read_text() == "keep this agent\n"
+    assert not (home / ".agent-lb").exists()
+
+    installed = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    checkpoint = Path(
+        next(
+            line.removeprefix("checkpoint ")
+            for line in installed.stdout.splitlines()
+            if line.startswith("checkpoint ")
+        )
+    )
+
+    assert designer.read_bytes() == MANAGED_DESIGNER.read_bytes()
+    assert (checkpoint / ".claude" / "agents" / "frontend-designer.md").read_bytes() == original_designer
+    assert unrelated.read_text() == "keep this agent\n"
+
+
+def test_policy_installer_uninstall_preserves_customized_designer(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    designer = home / ".claude" / "agents" / "frontend-designer.md"
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+    designer.write_text(designer.read_text() + "\nLocal customization.\n")
+    customized = designer.read_bytes()
+
+    preview = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--print", "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"would preserve customized {designer}" in preview.stdout
+    assert f"preserved customized {designer}" in result.stdout
+    assert designer.read_bytes() == customized
+
+
+def test_policy_installer_uninstall_preserves_empty_customized_designer(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    designer = home / ".claude" / "agents" / "frontend-designer.md"
+    designer.parent.mkdir(parents=True)
+    designer.touch()
+
+    result = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"preserved unmanaged {designer}" in result.stdout
+    assert designer.exists()
+    assert designer.read_bytes() == b""
+
+
+def test_policy_installer_uninstall_preserves_identical_unmanaged_designer(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    designer = home / ".claude" / "agents" / "frontend-designer.md"
+    designer.parent.mkdir(parents=True)
+    designer.write_bytes(MANAGED_DESIGNER.read_bytes())
+
+    result = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"preserved unmanaged {designer}" in result.stdout
+    assert designer.read_bytes() == MANAGED_DESIGNER.read_bytes()
