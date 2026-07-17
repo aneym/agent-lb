@@ -118,22 +118,49 @@ request as already satisfied — check `accounts` before assuming anything faile
 
 ### Claude Code
 
-Recommended: install the vendored launch profiles, canonical routing adapters, and
-CCDEX worker transport. The installer is previewable, preserves pre-existing regular
-client and hook files as `.pre-agent-lb`, checkpoints changed global configuration
-under `~/.agent-lb/config-checkpoints/coding-agents/`, and registers the user-scoped
-worker MCP:
+Recommended: install the vendored `cc` launcher and canonical routing policy. The
+installer is previewable, preserves pre-existing regular client and hook files as
+`.pre-agent-lb`, checkpoints changed global configuration under
+`~/.agent-lb/config-checkpoints/coding-agents/`, and removes retired CCDEX clients,
+hooks, and MCP registration when present:
 
 ```bash
 scripts/install-claude-clients.sh --print
 scripts/install-claude-clients.sh
 ```
 
-`cc` defaults normal Claude Code to Fable/high. `ccdex` forces the canonical
-GPT/high compatibility profile. Normal Claude Code can dispatch GPT workers through
-the registered `ccdex-worker` MCP. The installer replaces only known legacy routing
-sections, the Claude model field, and equivalent CCDEX hook registrations; unrelated
+`cc` defaults normal Claude Code to Fable/high. GPT compatibility seats run inside
+the Claude Code harness through agent-lb's server-side model aliases. The installer
+replaces only routing-owned policy sections and the Claude model field; unrelated
 Claude/Codex instructions, settings, permissions, and hooks are preserved.
+
+### Claude Desktop Code (macOS)
+
+Claude Desktop's embedded Code runtime does not start through the `cc` wrapper. Install
+the dedicated loopback proxy after the main service and Claude accounts are healthy:
+
+```bash
+scripts/install-claude-desktop-proxy.sh --print
+scripts/install-claude-desktop-proxy.sh
+```
+
+The installer creates the KeepAlive LaunchAgent
+`com.aneyman.agent-lb-claude-desktop-proxy`, verifies a real Anthropic health request
+through `127.0.0.1:2458`, and only then updates `~/.claude/settings.json`. It preserves
+unrelated settings, refuses conflicting proxy or CA values, and keeps its private CA
+under `~/.agent-lb/tls/` rather than the system trust store. Fully quit and reopen
+Claude Desktop after installation, then run a task from its **Code** surface.
+
+This integration is specifically for Claude Desktop's embedded Code runtime. It does
+not claim to route ordinary Claude Desktop chat. Verify Code traffic with a fresh
+agent-lb request/session record; a successful `claude -p` CLI request alone is not a
+Desktop end-to-end test.
+
+Rollback is explicit and conditional, so later operator edits are preserved:
+
+```bash
+scripts/install-claude-desktop-proxy.sh --uninstall
+```
 
 Minimal alternative (no launcher):
 
@@ -295,6 +322,9 @@ Everything is API/CLI-driven — no task below ever requires the dashboard:
 | Restart service (e.g. after `git pull`) | `scripts/install-service.sh`                                                   |
 | Stop/remove service                     | `scripts/install-service.sh --uninstall`                                       |
 | Logs                                    | `~/.agent-lb/agent-lb.err.log`                                                 |
+| Install/restart Claude Desktop Code proxy | `scripts/install-claude-desktop-proxy.sh`                                    |
+| Claude Desktop Code proxy logs          | `~/.agent-lb/claude-desktop-proxy.err.log`                                     |
+| Remove Claude Desktop Code proxy        | `scripts/install-claude-desktop-proxy.sh --uninstall`                          |
 | Add / reauth an account                 | step 4 scripts                                                                 |
 | List accounts                           | `scripts/anthropic-auth.sh accounts`, `scripts/openai-auth.sh accounts`        |
 | Verify an account really works          | `POST /api/accounts/<id>/probe` (real upstream request; camelCase response)    |

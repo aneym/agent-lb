@@ -242,10 +242,12 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
     """Serves the MITM'd api.anthropic.com stream, forwarding to the LB.
 
     Instantiated by hand over an already-TLS-wrapped socket; its config
-    (upstream_base_url / session_id / parent_pid) comes from the `server` object.
+    (upstream_base_url / session_id / parent_pid / shared) comes from the
+    `server` object.
     Mirrors the old shim's forward/stream behaviour: strips hop-by-hop + host
-    headers, stamps `x-claude-session-id`, delimits every response by connection
-    close, and streams SSE line-by-line.
+    headers, stamps a launcher-scoped `x-claude-session-id` (while shared mode
+    preserves the caller's identity headers), delimits every response by
+    connection close, and streams SSE line-by-line.
     """
 
     protocol_version = "HTTP/1.1"
@@ -275,12 +277,15 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         parent_pid = self.server.parent_pid
         session_id = self.server.session_id
         upstream_base_url = self.server.upstream_base_url
+        shared = self.server.shared
 
-        try:
-            os.kill(parent_pid, 0)
-        except OSError:
-            self.send_error(503, "parent process exited")
-            return
+        if not shared:
+            try:
+                assert parent_pid is not None
+                os.kill(parent_pid, 0)
+            except OSError:
+                self.send_error(503, "parent process exited")
+                return
 
         body = None
         if self.command not in {"GET", "HEAD"}:
@@ -295,10 +300,11 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
         }
-        headers["x-claude-session-id"] = session_id
+        if session_id:
+            headers["x-claude-session-id"] = session_id
 
         try:
-            upstream_path = _ccgpt_upstream_path(self.path, body)
+            upstream_path = _ccgpt_upstream_path(self.path, body) if self.server.ccgpt_mode else self.path
         except CcgptModelViolation as error:
             message = json.dumps(
                 {
@@ -341,10 +347,12 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 return
             except Exception as error:
                 parent_alive = True
-                try:
-                    os.kill(parent_pid, 0)
-                except OSError:
-                    parent_alive = False
+                if not shared:
+                    try:
+                        assert parent_pid is not None
+                        os.kill(parent_pid, 0)
+                    except OSError:
+                        parent_alive = False
                 if attempt < connect_retries and parent_alive and _is_retryable_shim_connect_error(error):
                     time.sleep(min(backoff * (2**attempt), backoff_cap))
                     attempt += 1
@@ -522,15 +530,27 @@ def proxy_ready_path(session_id: str) -> Path:
     return shim_dir / f"{session_id}.proxy"
 
 
-def run_lb_proxy(ready_path: str, session_id: str, parent_pid: int, upstream_base_url: str) -> None:
+def run_lb_proxy(
+    ready_path: str,
+    session_id: str,
+    parent_pid: int | None,
+    upstream_base_url: str,
+    listen_port: int = 0,
+    *,
+    shared: bool = False,
+) -> None:
+    if not shared and parent_pid is None:
+        raise ValueError("parent_pid is required for a launcher-scoped proxy")
     ensure_mitm_certs()
     tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls_context.load_cert_chain(certfile=str(LEAF_CERT), keyfile=str(LEAF_KEY))
 
-    server = _ThreadingProxyServer(("127.0.0.1", 0), _ProxyHandler)
+    server = _ThreadingProxyServer(("127.0.0.1", listen_port), _ProxyHandler)
     server.tls_context = tls_context
     server.session_id = session_id
     server.parent_pid = parent_pid
+    server.shared = shared
+    server.ccgpt_mode = CCGPT_MODE and not shared
     server.upstream_base_url = upstream_base_url.rstrip("/")
     port = server.server_address[1]
 
@@ -540,6 +560,7 @@ def run_lb_proxy(ready_path: str, session_id: str, parent_pid: int, upstream_bas
     os.replace(tmp, ready)
 
     def stop_when_parent_exits() -> None:
+        assert parent_pid is not None
         while True:
             try:
                 os.kill(parent_pid, 0)
@@ -548,7 +569,8 @@ def run_lb_proxy(ready_path: str, session_id: str, parent_pid: int, upstream_bas
                 return
             time.sleep(2.0)
 
-    threading.Thread(target=stop_when_parent_exits, daemon=True).start()
+    if not shared:
+        threading.Thread(target=stop_when_parent_exits, daemon=True).start()
     try:
         server.serve_forever()
     finally:
@@ -611,6 +633,15 @@ def _spawn_lb_proxy(ready: Path, session_id: str, parent_pid: int, upstream_base
 
 def lb_enabled() -> bool:
     return os.environ.get("CLAUDE_LB_DISABLE") != "1"
+
+
+def bypass_anthropic_proxy() -> None:
+    """Keep plain-Claude fallback out of a configured shared desktop proxy."""
+    for name in ("NO_PROXY", "no_proxy"):
+        exclusions = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
+        if not any(entry.lower() == "api.anthropic.com" for entry in exclusions):
+            exclusions.append("api.anthropic.com")
+        os.environ[name] = ",".join(exclusions)
 
 
 def lb_json(path: str, *, timeout: float = 2.5, base_url: str | None = None) -> dict:
@@ -1458,6 +1489,23 @@ def main() -> None:
     if len(sys.argv) >= 6 and sys.argv[1] == "--lb-proxy":
         run_lb_proxy(sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])
         return
+    if len(sys.argv) >= 2 and sys.argv[1] == "--desktop-proxy":
+        # Shared machine-wide proxy (run under launchd) for clients that can't
+        # go through this launcher — the Claude desktop app wires to it via the
+        # settings.json env block. Foreground, fixed port, no parent watchdog.
+        listen_port = int(
+            sys.argv[2] if len(sys.argv) >= 3 else os.environ.get("CLAUDE_LB_DESKTOP_PROXY_PORT", "2458")
+        )
+        upstream = (sys.argv[3] if len(sys.argv) >= 4 else AGENT_LB_BASE_URL).rstrip("/")
+        run_lb_proxy(
+            str(proxy_ready_path("desktop")),
+            "",
+            None,
+            upstream,
+            listen_port=listen_port,
+            shared=True,
+        )
+        return
 
     argv = sys.argv[1:]
     routed = False
@@ -1514,6 +1562,9 @@ def main() -> None:
     elif CCGPT_MODE:
         print("ccgpt: CLAUDE_LB_DISABLE is not allowed for this fail-closed command", file=sys.stderr)
         sys.exit(1)
+
+    if not routed:
+        bypass_anthropic_proxy()
 
     command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":

@@ -103,7 +103,9 @@ def test_ccgpt_http_shim_rejects_claude_before_upstream(monkeypatch) -> None:
     client.shutdown(socket.SHUT_WR)
     fake_server = SimpleNamespace(
         parent_pid=os.getpid(),
+        shared=False,
         session_id="test-session",
+        ccgpt_mode=True,
         upstream_base_url="http://127.0.0.1:9",
     )
 
@@ -128,6 +130,58 @@ def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
         launcher._ccgpt_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}')
         == "/v1/messages/count_tokens"
     )
+
+
+def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(monkeypatch) -> None:
+    import io
+
+    launcher = load_launcher_module()
+    launcher.CCGPT_MODE = True
+    requests = []
+
+    def urlopen(request, timeout):
+        requests.append(request)
+        body = io.BytesIO(b"{}")
+        return SimpleNamespace(
+            status=200,
+            headers={"content-type": "application/json"},
+            read=body.read,
+        )
+
+    monkeypatch.setattr(launcher.urllib.request, "urlopen", urlopen)
+    client, server_socket = socket.socketpair()
+    body = b'{"model":"gpt-5.6-sol","messages":[]}'
+    request = (
+        b"POST /v1/messages HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode()
+        + b"Content-Type: application/json\r\n"
+        + b"X-Claude-Session-Id: desktop-session\r\n"
+        + b"X-Identity-Token: keep-me\r\n"
+        + b"Connection: close\r\n\r\n"
+        + body
+    )
+    client.sendall(request)
+    client.shutdown(socket.SHUT_WR)
+    fake_server = SimpleNamespace(
+        parent_pid=None,
+        shared=True,
+        session_id="",
+        ccgpt_mode=False,
+        upstream_base_url="http://127.0.0.1:2455",
+    )
+
+    launcher._LbApiHandler(server_socket, ("127.0.0.1", 0), fake_server)
+    server_socket.close()
+    while client.recv(4096):
+        pass
+    client.close()
+
+    assert len(requests) == 1
+    assert requests[0].full_url == "http://127.0.0.1:2455/v1/messages"
+    headers = {key.lower(): value for key, value in requests[0].header_items()}
+    assert headers["x-claude-session-id"] == "desktop-session"
+    assert headers["x-identity-token"] == "keep-me"
 
 
 def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypatch) -> None:
@@ -418,6 +472,110 @@ def test_proxy_spawn_uses_portable_subprocess(monkeypatch, tmp_path) -> None:
     launcher._spawn_lb_proxy(tmp_path / "ready", "session", 456, "http://127.0.0.1:2455")
 
     assert calls and calls[0][1].endswith("claude-lb-launch")
+
+
+def test_desktop_proxy_cli_uses_default_fixed_port(monkeypatch, tmp_path) -> None:
+    launcher = load_launcher_module()
+    calls = []
+    monkeypatch.delenv("CLAUDE_LB_DESKTOP_PROXY_PORT", raising=False)
+    monkeypatch.setattr(launcher.sys, "argv", ["claude-lb-launch", "--desktop-proxy"])
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session_id: tmp_path / f"{session_id}.proxy")
+    monkeypatch.setattr(launcher, "run_lb_proxy", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    launcher.main()
+
+    assert calls == [
+        (
+            (str(tmp_path / "desktop.proxy"), "", None, launcher.AGENT_LB_BASE_URL),
+            {"listen_port": 2458, "shared": True},
+        )
+    ]
+
+
+def test_desktop_proxy_cli_accepts_explicit_fixed_port_and_upstream(monkeypatch, tmp_path) -> None:
+    launcher = load_launcher_module()
+    calls = []
+    monkeypatch.setattr(
+        launcher.sys,
+        "argv",
+        ["claude-lb-launch", "--desktop-proxy", "3456", "http://127.0.0.1:9999/"],
+    )
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session_id: tmp_path / f"{session_id}.proxy")
+    monkeypatch.setattr(launcher, "run_lb_proxy", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    launcher.main()
+
+    assert calls == [
+        (
+            (str(tmp_path / "desktop.proxy"), "", None, "http://127.0.0.1:9999"),
+            {"listen_port": 3456, "shared": True},
+        )
+    ]
+
+
+def test_shared_proxy_has_no_parent_watchdog_or_ccgpt_rewrite(monkeypatch, tmp_path) -> None:
+    launcher = load_launcher_module()
+    launcher.CCGPT_MODE = True
+    servers = []
+
+    class FakeTlsContext:
+        def __init__(self, protocol):
+            pass
+
+        def load_cert_chain(self, **kwargs):
+            pass
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 2458)
+
+        def __init__(self, address, handler):
+            servers.append(self)
+
+        def serve_forever(self):
+            return
+
+    monkeypatch.setattr(launcher, "ensure_mitm_certs", lambda: None)
+    monkeypatch.setattr(launcher.ssl, "SSLContext", FakeTlsContext)
+    monkeypatch.setattr(launcher, "_ThreadingProxyServer", FakeServer)
+    monkeypatch.setattr(
+        launcher.threading,
+        "Thread",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared proxy must not start a parent watchdog")),
+    )
+
+    launcher.run_lb_proxy(
+        str(tmp_path / "desktop.proxy"),
+        "",
+        None,
+        "http://127.0.0.1:2455",
+        listen_port=2458,
+        shared=True,
+    )
+
+    assert len(servers) == 1
+    assert servers[0].shared is True
+    assert servers[0].parent_pid is None
+    assert servers[0].ccgpt_mode is False
+
+
+@pytest.mark.parametrize("disabled", [True, False])
+def test_plain_claude_paths_bypass_shared_proxy_without_clobbering_exclusions(monkeypatch, disabled) -> None:
+    launcher = load_launcher_module()
+    launcher.CCGPT_MODE = False
+    monkeypatch.setenv("NO_PROXY", "localhost,.internal")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    monkeypatch.setenv("CLAUDE_LB_DRY_RUN", "1")
+    if disabled:
+        monkeypatch.setenv("CLAUDE_LB_DISABLE", "1")
+    else:
+        monkeypatch.delenv("CLAUDE_LB_DISABLE", raising=False)
+        monkeypatch.setattr(launcher, "prepare_interactive_endpoint", lambda: False)
+    monkeypatch.setattr(launcher.sys, "argv", ["claude-lb-launch"])
+
+    launcher.main()
+
+    assert launcher.os.environ["NO_PROXY"] == "localhost,.internal,api.anthropic.com"
+    assert launcher.os.environ["no_proxy"] == "127.0.0.1,api.anthropic.com"
 
 
 def test_format_lb_pick_error_prettifies_anthropic_selection_failure() -> None:
