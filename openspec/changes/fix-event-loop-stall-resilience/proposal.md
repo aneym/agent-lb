@@ -46,7 +46,9 @@ a 0.35s `cc` probe can never ride out.
 - Upstream websocket connects share one process-wide `SSLContext` and disable
   permessage-deflate (`compression=None`).
 - `cc` local `/health/ready` probe timeout default raised 0.35s → 1.5s so one
-  front hold-retry cycle fits inside a probe attempt.
+  front hold-retry cycle fits inside a probe attempt; raised again 1.5s → 3.0s
+  (local and remote) after 2026-07-17 host overload (load avg 260, ready
+  probes spiking to ~1.7s) timed out all three 1.5s attempts against a live LB.
 
 ## Impact
 

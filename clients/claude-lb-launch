@@ -1199,11 +1199,15 @@ def prepare_interactive_endpoint() -> bool:
     """
     global AGENT_LB_BASE_URL
     failures: list[str] = []
-    # 1.5s (was 0.35s): the front proxy holds and retries refused upstream
-    # connects every 500ms during short LB stalls, so a sub-second probe
-    # timeout gives up before the front can complete even one retry cycle.
-    local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 1.5)
-    remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 1.5)
+    # 3.0s (was 1.5s, was 0.35s): the front proxy holds and retries refused
+    # upstream connects every 500ms during short LB stalls, and on a heavily
+    # loaded host (observed 2026-07-17: load avg 260, /health/ready spiking to
+    # ~1.7s) every 1.5s attempt in the retry cycle timed out even though the LB
+    # was alive. The healthy path still returns in tens of ms; only an
+    # up-but-slow server pays this budget, which is exactly when waiting beats
+    # falling back to plain claude.
+    local_timeout = _env_float("CLAUDE_LB_LOCAL_READY_TIMEOUT", 3.0)
+    remote_timeout = _env_float("CLAUDE_LB_REMOTE_READY_TIMEOUT", 3.0)
     for label, url in _lb_candidates():
         # 3 attempts spaced 1s apart: the LB event loop stalls in short bursts
         # under heavy streaming load, and a single 0.35s probe landing inside

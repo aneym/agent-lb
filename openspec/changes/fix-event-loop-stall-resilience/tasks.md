@@ -20,6 +20,8 @@
 - [x] 4.1 Share one upstream-websocket `SSLContext`; stop building one per connect on the loop.
 - [x] 4.2 Disable permessage-deflate on upstream websocket connects.
 - [x] 4.3 Raise `cc` local probe timeout default to 1.5s.
+- [x] 4.4 Raise `cc` ready-probe timeout defaults (local + remote) to 3.0s
+      after host-overload probes timed out against a live LB (2026-07-17).
 - [x] 4.4 Extend websocket transport kwargs regression test (compression/ssl).
 
 ## 5. Validation and rollout
