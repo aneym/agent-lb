@@ -18,8 +18,21 @@
 - [x] 3.3 Run ruff, targeted tests, strict OpenSpec validation, and a live Studio CLI/proxy smoke.
 - [ ] 3.4 Run an actual Claude Desktop Code request and correlate it with fresh agent-lb evidence.
 
+  Blocked on 2026-07-17: Claude Desktop 1.22209.0 did not expose CDP when
+  relaunched with `--remote-debugging-port`, so the UI surface could not be
+  driven safely by the available harness. The embedded runtime did emit fresh
+  `/v1/code/sessions/*/worker/heartbeat` requests through the shared proxy,
+  proving process-level routing, but those endpoints currently return 405 and
+  are separate compatibility work.
+
 ## 4. Cross-machine rollout
 
-- [ ] 4.1 Commit and push the validated change on `main`.
-- [ ] 4.2 Fast-forward the MacBook checkout without disturbing unrelated work, install the LaunchAgent, and verify proxy health.
+- [x] 4.1 Commit and push the validated change on `main`.
+- [x] 4.2 Fast-forward the MacBook checkout without disturbing unrelated work, install the LaunchAgent, and verify proxy health.
 - [ ] 4.3 Run MacBook Claude Code and Claude Desktop Code end-to-end checks and record exact outcomes.
+
+  Partial on 2026-07-17: the MacBook shared proxy passed the proxied Anthropic
+  health check and fresh Claude Desktop Code heartbeat traffic reached its LB.
+  A direct GPT request succeeded through the MacBook LB. The CLI Claude request
+  reached the LB but could not complete because the local Claude OAuth session
+  was expired and the available Anthropic pool then returned 429.
