@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.auth.refresh import RefreshError
+from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.dependencies import AccountsContext, get_accounts_context
@@ -24,6 +25,9 @@ from app.modules.accounts.schemas import (
     AccountProbeRequest,
     AccountProbeResponse,
     AccountReactivateResponse,
+    AccountResetCreditConsumeRequest,
+    AccountResetCreditConsumeResponse,
+    AccountResetCreditsResponse,
     AccountRoutingPolicyUpdateRequest,
     AccountRoutingPolicyUpdateResponse,
     AccountsResponse,
@@ -39,7 +43,12 @@ from app.modules.accounts.schemas import (
     DegradationStatus,
     ProviderAvailability,
 )
-from app.modules.accounts.service import AccountNotProbableError, AccountStateTransitionError, InvalidAuthJsonError
+from app.modules.accounts.service import (
+    AccountNotProbableError,
+    AccountResetCreditsUnavailableError,
+    AccountStateTransitionError,
+    InvalidAuthJsonError,
+)
 
 router = APIRouter(
     prefix="/api/accounts",
@@ -293,6 +302,67 @@ async def probe_account(
             "account_id": result.account_id,
             "probe_status_code": result.probe_status_code,
             "model": requested_model,
+        },
+    )
+    return result
+
+
+@router.get("/{account_id}/rate-limit-reset-credits", response_model=AccountResetCreditsResponse)
+async def list_account_reset_credits(
+    account_id: str,
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountResetCreditsResponse:
+    try:
+        result = await context.service.list_rate_limit_reset_credits(account_id)
+    except AccountResetCreditsUnavailableError as exc:
+        raise DashboardConflictError(str(exc), code="account_reset_credits_unavailable") from exc
+    except RefreshError as exc:
+        raise DashboardConflictError(
+            f"Reset-credit listing could not refresh account credentials: {exc.message}",
+            code="account_reset_credits_refresh_failed",
+        ) from exc
+    except ResetCreditsError as exc:
+        raise DashboardConflictError(
+            f"Upstream reset-credit listing failed: {exc.message}",
+            code="account_reset_credits_upstream_error",
+        ) from exc
+    if result is None:
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    return result
+
+
+@router.post("/{account_id}/rate-limit-reset-credits/consume", response_model=AccountResetCreditConsumeResponse)
+async def consume_account_reset_credit(
+    request: Request,
+    account_id: str,
+    body: AccountResetCreditConsumeRequest | None = None,
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AccountResetCreditConsumeResponse:
+    credit_id = body.credit_id if body is not None else None
+    try:
+        result = await context.service.redeem_rate_limit_reset_credit(account_id, credit_id=credit_id)
+    except AccountResetCreditsUnavailableError as exc:
+        raise DashboardConflictError(str(exc), code="account_reset_credits_unavailable") from exc
+    except RefreshError as exc:
+        raise DashboardConflictError(
+            f"Reset-credit redemption could not refresh account credentials: {exc.message}",
+            code="account_reset_credits_refresh_failed",
+        ) from exc
+    except ResetCreditsError as exc:
+        raise DashboardConflictError(
+            f"Upstream reset-credit redemption failed: {exc.message}",
+            code="account_reset_credits_upstream_error",
+        ) from exc
+    if result is None:
+        raise DashboardNotFoundError("Account not found", code="account_not_found")
+    AuditService.log_async(
+        "account_reset_credit_redeemed",
+        actor_ip=request.client.host if request.client else None,
+        details={
+            "account_id": account_id,
+            "credit_id": credit_id,
+            "code": result.code,
+            "windows_reset": result.windows_reset,
         },
     )
     return result

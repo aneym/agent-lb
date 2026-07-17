@@ -5,6 +5,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import cast
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -18,6 +19,7 @@ from app.core.auth import (
 )
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
+from app.core.clients import rate_limit_resets
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
@@ -47,6 +49,9 @@ from app.modules.accounts.schemas import (
     AccountOpenCodeAuthExportResponse,
     AccountProbeResponse,
     AccountRequestUsage,
+    AccountResetCredit,
+    AccountResetCreditConsumeResponse,
+    AccountResetCreditsResponse,
     AccountSubscriptionCheckResponse,
     AccountSubscriptionLedger,
     AccountSummary,
@@ -115,6 +120,10 @@ class InvalidAuthJsonError(Exception):
 
 class AccountNotProbableError(Exception):
     """Raised when an account is in a status that disallows probing."""
+
+
+class AccountResetCreditsUnavailableError(Exception):
+    """Raised when an account cannot list or redeem rate-limit reset credits."""
 
 
 class AccountStateTransitionError(Exception):
@@ -744,6 +753,76 @@ class AccountsService:
             account_status_before=status_before,
             account_status_after=refreshed.status.value,
         )
+
+    async def list_rate_limit_reset_credits(self, account_id: str) -> AccountResetCreditsResponse | None:
+        account = await self._repo.get_by_id(account_id)
+        if account is None:
+            return None
+        credit_account = await self._reset_credit_account(account)
+        access_token = self._encryptor.decrypt(credit_account.access_token_encrypted)
+        payload = await rate_limit_resets.fetch_reset_credits(
+            access_token=access_token,
+            chatgpt_account_id=credit_account.chatgpt_account_id,
+        )
+        return AccountResetCreditsResponse(
+            account_id=account_id,
+            available_count=payload.available_count,
+            credits=[AccountResetCredit(**credit.model_dump()) for credit in payload.credits],
+        )
+
+    async def redeem_rate_limit_reset_credit(
+        self,
+        account_id: str,
+        credit_id: str | None = None,
+    ) -> AccountResetCreditConsumeResponse | None:
+        """Consume one banked upstream reset credit and refresh usage state.
+
+        ``already_redeemed`` is idempotent success per the Codex app-server
+        contract, so both it and ``reset`` trigger the post-redeem refresh.
+        """
+        account = await self._repo.get_by_id(account_id)
+        if account is None:
+            return None
+        credit_account = await self._reset_credit_account(account)
+
+        primary_before, secondary_before = await self._latest_usage_percents(account_id)
+        access_token = self._encryptor.decrypt(credit_account.access_token_encrypted)
+        payload = await rate_limit_resets.consume_reset_credit(
+            access_token=access_token,
+            chatgpt_account_id=credit_account.chatgpt_account_id,
+            redeem_request_id=str(uuid4()),
+            credit_id=credit_id,
+        )
+
+        if payload.code in ("reset", "already_redeemed") and self._usage_repo and self._usage_updater:
+            await self._usage_updater.force_refresh(credit_account)
+            get_account_selection_cache().invalidate()
+
+        primary_after, secondary_after = await self._latest_usage_percents(account_id)
+        return AccountResetCreditConsumeResponse(
+            status="redeemed" if payload.code in ("reset", "already_redeemed") else "not_redeemed",
+            account_id=account_id,
+            code=payload.code,
+            windows_reset=payload.windows_reset,
+            primary_used_percent_before=primary_before,
+            primary_used_percent_after=primary_after,
+            secondary_used_percent_before=secondary_before,
+            secondary_used_percent_after=secondary_after,
+        )
+
+    async def _reset_credit_account(self, account: Account) -> Account:
+        provider = normalize_provider_name(account.provider)
+        if provider != OPENAI_PROVIDER_NAME:
+            raise AccountResetCreditsUnavailableError(
+                f"Provider {provider} does not support rate-limit reset credits"
+            )
+        if account.status in (AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+            raise AccountResetCreditsUnavailableError(
+                f"Account is {account.status.value} and cannot use reset credits"
+            )
+        if self._auth_manager is not None:
+            return await self._auth_manager.ensure_fresh(account, force=False)
+        return account
 
     async def _latest_usage_percents(self, account_id: str) -> tuple[float | None, float | None]:
         if self._usage_repo is None:

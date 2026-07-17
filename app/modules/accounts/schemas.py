@@ -319,6 +319,40 @@ class AccountProbeResponse(DashboardModel):
     account_status_after: str
 
 
+class AccountResetCredit(DashboardModel):
+    id: str
+    reset_type: str
+    status: str
+    granted_at: str
+    expires_at: str | None = None
+    title: str | None = None
+    description: str | None = None
+
+
+class AccountResetCreditsResponse(DashboardModel):
+    account_id: str
+    available_count: int
+    credits: list[AccountResetCredit] = Field(default_factory=list)
+
+
+class AccountResetCreditConsumeRequest(DashboardModel):
+    credit_id: str | None = Field(
+        default=None,
+        description="Optional reset-credit id to redeem. Upstream picks the next available credit when omitted.",
+    )
+
+
+class AccountResetCreditConsumeResponse(DashboardModel):
+    status: str
+    account_id: str
+    code: str
+    windows_reset: int
+    primary_used_percent_before: float | None = None
+    primary_used_percent_after: float | None = None
+    secondary_used_percent_before: float | None = None
+    secondary_used_percent_after: float | None = None
+
+
 class AccountTrendsResponse(DashboardModel):
     account_id: str
     primary: list[UsageTrendPoint] = Field(default_factory=list)
