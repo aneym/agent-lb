@@ -150,6 +150,9 @@ through `127.0.0.1:2458`, and only then updates `~/.claude/settings.json`. It pr
 unrelated settings, refuses conflicting proxy or CA values, and keeps its private CA
 under `~/.agent-lb/tls/` rather than the system trust store. Fully quit and reopen
 Claude Desktop after installation, then run a task from its **Code** surface.
+The proxy sends only Messages API calls to agent-lb. Same-host OAuth, telemetry,
+feature, and Code worker requests go directly to Anthropic, and unknown future paths
+default direct rather than entering the local service.
 
 This integration is specifically for Claude Desktop's embedded Code runtime. It does
 not claim to route ordinary Claude Desktop chat. Verify Code traffic with a fresh

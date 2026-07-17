@@ -8,6 +8,8 @@ Claude Desktop's embedded Claude Code runtime cannot be launched through the per
 - Add a macOS LaunchAgent installer that starts and verifies the shared proxy before atomically configuring Claude settings.
 - Preserve unrelated Claude settings, reject conflicting proxy/CA values, and restore only installer-owned values during uninstall.
 - Preserve explicit launcher bypass behavior even when shared proxy settings exist.
+- Route only Anthropic Messages requests to agent-lb while sending same-host OAuth,
+  telemetry, worker-heartbeat, and other auxiliary traffic directly to Anthropic.
 - Document the supported scope as Claude Desktop's embedded Claude Code runtime; ordinary Claude Desktop chat routing is not claimed.
 
 ## Capabilities
@@ -22,4 +24,4 @@ Claude Desktop's embedded Claude Code runtime cannot be launched through the per
 
 ## Impact
 
-Affected surfaces are `clients/claude-lb-launch`, a new macOS installer and LaunchAgent, Claude's user settings file, launcher and installer tests, and onboarding documentation. The agent-lb server API and routing semantics remain unchanged; supported GPT aliases continue to be selected by the server rather than rewritten in the client.
+Affected surfaces are `clients/claude-lb-launch`, a new macOS installer and LaunchAgent, Claude's user settings file, launcher and installer tests, and onboarding documentation. The agent-lb server API and routing semantics remain unchanged; supported GPT aliases continue to be selected by the server rather than rewritten in the client. Same-host auxiliary requests retain their caller credentials and identity but never enter the agent-lb server.

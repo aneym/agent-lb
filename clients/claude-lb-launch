@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import http.client
 import http.server
 import json
 import os
@@ -114,6 +115,30 @@ LEAF_CERT = TLS_DIR / "leaf.pem"
 LEAF_KEY = TLS_DIR / "leaf-key.pem"
 CERT_MARKER = TLS_DIR / ".v1"
 INTERCEPT_HOSTS = {"api.anthropic.com"}
+AGENT_LB_ANTHROPIC_PATHS = frozenset(
+    {
+        "/health",
+        "/v1/messages",
+        "/v1/messages/count_tokens",
+    }
+)
+
+
+def _routes_to_agent_lb(path: str) -> bool:
+    """Return whether an api.anthropic.com request belongs to agent-lb.
+
+    The TLS interception is host-wide because CONNECT happens before the
+    client sends an HTTP path. Once decrypted, only the Messages API and the
+    installer's health probe belong to agent-lb. Unknown same-host paths are
+    first-party Anthropic traffic and default to direct egress so new Claude
+    auxiliary APIs do not get swallowed by the local service.
+    """
+    parsed = urllib.parse.urlsplit(path)
+    if parsed.scheme or parsed.netloc:
+        return False
+    return parsed.path in AGENT_LB_ANTHROPIC_PATHS or (
+        parsed.path.endswith("/") and parsed.path[:-1] in AGENT_LB_ANTHROPIC_PATHS
+    )
 
 
 def _run_openssl(args: list[str]) -> None:
@@ -295,13 +320,18 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 length = 0
             body = self.rfile.read(length) if length > 0 else b""
 
+        routes_to_lb = _routes_to_agent_lb(self.path)
         headers = {
             key: value
             for key, value in self.headers.items()
             if key.lower() not in HOP_BY_HOP_HEADERS and key.lower() != "host"
         }
-        if session_id:
+        if routes_to_lb and session_id:
             headers["x-claude-session-id"] = session_id
+
+        if not routes_to_lb:
+            self._forward_direct(body, headers)
+            return
 
         try:
             upstream_path = _ccgpt_upstream_path(self.path, body) if self.server.ccgpt_mode else self.path
@@ -366,6 +396,34 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(message)
                 self.close_connection = True
                 return
+
+    def _forward_direct(self, body: bytes | None, headers: dict[str, str]) -> None:
+        """Forward a first-party auxiliary request without proxy recursion."""
+        connection: http.client.HTTPSConnection | None = None
+        try:
+            connection = http.client.HTTPSConnection(
+                "api.anthropic.com",
+                443,
+                timeout=600,
+                context=ssl.create_default_context(),
+            )
+            connection.request(self.command, self.path, body=body, headers=headers)
+            self._copy_response(connection.getresponse())
+        except Exception as error:
+            self._send_shim_error(error)
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def _send_shim_error(self, error: BaseException) -> None:
+        message = json.dumps({"error": {"message": str(error), "code": "claude_lb_shim_error"}}).encode()
+        self.send_response(502)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(message)))
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.wfile.write(message)
+        self.close_connection = True
 
     def _copy_response(self, response: object) -> None:
         status = getattr(response, "status", None) or getattr(response, "code", 502)
@@ -1332,17 +1390,29 @@ class CcgptModelViolation(ValueError):
 def _ccgpt_upstream_path(path: str, body: bytes | None = None) -> str:
     if not CCGPT_MODE:
         return path
-    if not path.startswith("/v1/messages"):
+    parsed = urllib.parse.urlsplit(path)
+    if parsed.scheme or parsed.netloc:
         return path
-    if path == "/v1/messages/count_tokens":
-        return "/v1/ccgpt/messages" + path.removeprefix("/v1/messages")
+    exact_paths = {
+        "/v1/messages",
+        "/v1/messages/",
+        "/v1/messages/count_tokens",
+        "/v1/messages/count_tokens/",
+    }
+    if parsed.path not in exact_paths:
+        return path
+    normalized = parsed.path[:-1] if parsed.path.endswith("/") else parsed.path
+    suffix = path[len(parsed.path) :]
+    trailing_slash = "/" if parsed.path.endswith("/") else ""
+    if normalized == "/v1/messages/count_tokens":
+        return f"/v1/ccgpt/messages/count_tokens{trailing_slash}{suffix}"
     requested = _ccgpt_request_model(body)
     if requested != CCGPT_MODEL:
         label = requested or "missing model"
         raise CcgptModelViolation(
             f"CCGPT only permits its canonical GPT model; rejected Messages request for {label}"
         )
-    return "/v1/ccgpt/messages" + path.removeprefix("/v1/messages")
+    return f"/v1/ccgpt/messages{trailing_slash}{suffix}"
 
 
 def _ccgpt_request_model(body: bytes | None) -> str | None:

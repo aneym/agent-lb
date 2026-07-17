@@ -316,6 +316,9 @@ It runs as the KeepAlive LaunchAgent
 endpoint before atomically updating `~/.claude/settings.json`, and preserves unrelated
 settings. Fully quit and reopen Claude Desktop after install. This routes the embedded
 Code runtime; ordinary Claude Desktop chat is not a supported or claimed surface.
+Within `api.anthropic.com`, only Messages API calls route to agent-lb. OAuth, telemetry,
+feature, and Code worker traffic keeps its caller credentials and goes directly to
+Anthropic; unknown future paths default direct.
 
 Verify the integration by running a Desktop Code task and correlating it with a fresh
 agent-lb request/session record. Logs are written to

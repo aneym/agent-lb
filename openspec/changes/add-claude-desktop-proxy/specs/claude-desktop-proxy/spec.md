@@ -48,6 +48,41 @@ The Claude launcher MUST bypass the shared proxy for `api.anthropic.com` wheneve
 - **THEN** the child process receives both uppercase and lowercase no-proxy exclusions for `api.anthropic.com`
 - **AND** its Anthropic traffic is not recaptured by the shared proxy
 
+### Requirement: Same-host routing is exact and defaults to Anthropic
+The shared proxy MUST route `/v1/messages` and `/v1/messages/count_tokens` to agent-lb. It MUST route every other `api.anthropic.com` application path directly to Anthropic except the installer-owned `/health` readiness probe. Unknown and newly introduced paths MUST default to direct Anthropic routing rather than a broad agent-lb prefix match.
+
+#### Scenario: Messages request uses the pooled service
+- **WHEN** the embedded Code runtime sends `/v1/messages` or `/v1/messages/count_tokens`, with an optional query string or trailing slash
+- **THEN** the proxy forwards the request to the configured agent-lb upstream
+- **AND** preserves the existing local-LB recovery and response behavior
+
+#### Scenario: Known auxiliary requests stay first-party
+- **WHEN** Claude sends telemetry, OAuth validation or settings, bootstrap, feature-flag, evaluation, analytics, or `/v1/code` worker traffic to `api.anthropic.com`
+- **THEN** the proxy sends the request directly to Anthropic
+- **AND** agent-lb does not receive the request
+
+#### Scenario: Future path is not claimed implicitly
+- **WHEN** Claude sends an unrecognized `api.anthropic.com` path, including a new path below `/v1`
+- **THEN** the proxy sends it directly to Anthropic
+- **AND** does not infer agent-lb ownership from the host or path prefix
+
+### Requirement: Direct auxiliary forwarding is transparent and non-recursive
+Direct auxiliary forwarding MUST preserve caller authorization, API key, cookie, Anthropic, and session headers while removing only Host and hop-by-hop headers. It MUST NOT add a launcher-scoped session identifier. It MUST establish direct TLS without consulting the configured `HTTPS_PROXY`, MUST pass through Anthropic HTTP status, headers, and body without following redirects or failing over to agent-lb, and MUST surface a direct connection failure once without entering the local-LB retry budget.
+
+#### Scenario: Authenticated auxiliary request
+- **WHEN** Claude sends an auxiliary request with caller credentials and session identity
+- **THEN** direct Anthropic egress receives those values unchanged
+- **AND** receives no launcher-only synthesized session identifier
+
+#### Scenario: Anthropic returns an HTTP error or redirect
+- **WHEN** direct Anthropic egress returns a 3xx, 4xx, or 5xx response
+- **THEN** the proxy returns that response without following it or retrying against agent-lb
+
+#### Scenario: Direct connection fails before an HTTP response
+- **WHEN** the proxy cannot establish or complete direct Anthropic egress
+- **THEN** it returns one shim connection error
+- **AND** does not wait behind the agent-lb recovery backoff
+
 ### Requirement: Preview and rollback are operator-visible
 The installer SHALL provide a non-mutating preview and a safe uninstall command. It MUST report the LaunchAgent label, port, upstream, settings path, and rollback behavior without printing credentials.
 

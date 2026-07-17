@@ -4,6 +4,8 @@
 - [x] 1.2 Preserve inbound request identity, avoid a shared synthesized session ID, and keep model alias routing server-side.
 - [x] 1.3 Preserve `CLAUDE_LB_DISABLE` and plain-Claude fallback behavior with proxy bypass exclusions.
 - [x] 1.4 Add focused launcher unit tests and byte-compile validation.
+- [x] 1.5 Route exact Messages paths to agent-lb and default all same-host auxiliary paths to direct, non-recursive Anthropic egress.
+- [x] 1.6 Add regression coverage for path ownership, credential and identity preservation, HTTP passthrough, and direct failure behavior.
 
 ## 2. Durable macOS installation
 
@@ -16,6 +18,12 @@
 - [x] 3.1 Document install, logs, verification, restart, and uninstall in `README.md` and `GETTING-STARTED.md`, scoped to Claude Desktop Code.
 - [x] 3.2 Correct stale Claude client documentation that still claims retired CCDEX artifacts are installed.
 - [x] 3.3 Run ruff, targeted tests, strict OpenSpec validation, and a live Studio CLI/proxy smoke.
+- [x] 3.5 Prove a live auxiliary path bypasses agent-lb while a Messages path still reaches it.
+
+  Verified 2026-07-17 with an isolated loopback proxy and fake LB: a proxied
+  `POST /v1/messages` reached the fake LB and returned 200, while proxied
+  `GET /api/oauth/account/settings` reached Anthropic directly, returned its
+  native 401 authentication envelope, and produced no second fake-LB request.
 - [ ] 3.4 Run an actual Claude Desktop Code request and correlate it with fresh agent-lb evidence.
 
   Blocked on 2026-07-17: Claude Desktop 1.22209.0 did not expose CDP when

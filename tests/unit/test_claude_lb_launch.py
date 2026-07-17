@@ -21,6 +21,53 @@ def load_launcher_module():
     return module
 
 
+def run_api_handler(launcher, request: bytes, fake_server: SimpleNamespace) -> bytes:
+    client, server_socket = socket.socketpair()
+    client.sendall(request)
+    client.shutdown(socket.SHUT_WR)
+    launcher._LbApiHandler(server_socket, ("127.0.0.1", 0), fake_server)
+    server_socket.close()
+    response = b""
+    while chunk := client.recv(4096):
+        response += chunk
+    client.close()
+    return response
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/health", True),
+        ("/health/", True),
+        ("/health?install=1", True),
+        ("/v1/messages", True),
+        ("/v1/messages/", True),
+        ("/v1/messages?beta=1", True),
+        ("/v1/messages/count_tokens", True),
+        ("/v1/messages/count_tokens/?beta=1", True),
+        ("/api/event_logging/v2/batch", False),
+        ("/api/oauth/account/settings", False),
+        ("/api/oauth/validate", False),
+        ("/api/claude_cli/bootstrap", False),
+        ("/api/claude_code_penguin_mode", False),
+        ("/api/eval/sdk-test", False),
+        ("/v1/code/sessions/session/worker/heartbeat", False),
+        ("/v1/code/triggers", False),
+        ("/v1/messages/batches", False),
+        ("/v1/messages//", False),
+        ("/v1/messages/count_tokens//", False),
+        ("/health//", False),
+        ("//evil.example/v1/messages", False),
+        ("https://evil.example/v1/messages", False),
+        ("/v1/files", False),
+    ],
+)
+def test_anthropic_path_routing_defaults_unknown_auxiliary_paths_direct(path: str, expected: bool) -> None:
+    launcher = load_launcher_module()
+
+    assert launcher._routes_to_agent_lb(path) is expected
+
+
 def test_ccgpt_build_command_locks_model_effort_and_bypass_perms() -> None:
     launcher = load_launcher_module()
     launcher.CCGPT_MODE = True
@@ -80,6 +127,18 @@ def test_ccgpt_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() 
         launcher._ccgpt_upstream_path("/v1/messages", claude_body)
     assert launcher._ccgpt_upstream_path("/v1/messages/count_tokens", claude_body) == "/v1/ccgpt/messages/count_tokens"
     assert launcher._ccgpt_upstream_path("/api/organizations", gpt_body) == "/api/organizations"
+    assert launcher._ccgpt_upstream_path("/v1/messages/batches", gpt_body) == "/v1/messages/batches"
+    assert launcher._ccgpt_upstream_path("/v1/messages//", gpt_body) == "/v1/messages//"
+    assert (
+        launcher._ccgpt_upstream_path("/v1/messages/count_tokens//", gpt_body)
+        == "/v1/messages/count_tokens//"
+    )
+    assert launcher._ccgpt_upstream_path("//evil.example/v1/messages", gpt_body) == "//evil.example/v1/messages"
+    assert launcher._ccgpt_upstream_path("/v1/messages/?beta=1", gpt_body) == "/v1/ccgpt/messages/?beta=1"
+    assert (
+        launcher._ccgpt_upstream_path("/v1/messages/count_tokens/?beta=1", gpt_body)
+        == "/v1/ccgpt/messages/count_tokens/?beta=1"
+    )
 
 
 def test_ccgpt_http_shim_rejects_claude_before_upstream(monkeypatch) -> None:
@@ -149,6 +208,11 @@ def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(mon
         )
 
     monkeypatch.setattr(launcher.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        launcher.http.client,
+        "HTTPSConnection",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Messages must route to agent-lb")),
+    )
     client, server_socket = socket.socketpair()
     body = b'{"model":"gpt-5.6-sol","messages":[]}'
     request = (
@@ -182,6 +246,179 @@ def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(mon
     headers = {key.lower(): value for key, value in requests[0].header_items()}
     assert headers["x-claude-session-id"] == "desktop-session"
     assert headers["x-identity-token"] == "keep-me"
+
+
+def test_auxiliary_request_routes_direct_with_original_credentials_and_identity(monkeypatch) -> None:
+    import io
+
+    launcher = load_launcher_module()
+    calls = []
+
+    class FakeConnection:
+        def __init__(self, host, port, *, timeout, context):
+            calls.append(("connect", host, port, timeout, context))
+
+        def request(self, method, path, *, body, headers):
+            calls.append(("request", method, path, body, headers))
+
+        def getresponse(self):
+            body = io.BytesIO(b'{"accepted":true}')
+            return SimpleNamespace(
+                status=202,
+                headers={"content-type": "application/json", "x-anthropic-request-id": "direct-1"},
+                read=body.read,
+            )
+
+        def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(launcher.http.client, "HTTPSConnection", FakeConnection)
+    monkeypatch.setattr(
+        launcher.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("auxiliary traffic must not reach agent-lb")),
+    )
+    body = b'{"events":[{"name":"test"}]}'
+    request = (
+        b"POST /api/event_logging/v2/batch?source=desktop HTTP/1.1\r\n"
+        b"Host: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode()
+        + b"Content-Type: application/json\r\n"
+        + b"Authorization: Bearer oauth-token\r\n"
+        + b"X-Api-Key: direct-key\r\n"
+        + b"Anthropic-Version: 2023-06-01\r\n"
+        + b"Cookie: session=direct-cookie\r\n"
+        + b"X-Claude-Session-Id: inbound-session\r\n"
+        + b"Connection: close\r\n\r\n"
+        + body
+    )
+    fake_server = SimpleNamespace(
+        parent_pid=os.getpid(),
+        shared=False,
+        session_id="launcher-synthetic-session",
+        ccgpt_mode=False,
+        upstream_base_url="http://127.0.0.1:9",
+    )
+
+    response = run_api_handler(launcher, request, fake_server)
+
+    assert response.startswith(b"HTTP/1.1 202")
+    assert b"x-anthropic-request-id: direct-1" in response.lower()
+    assert response.endswith(b'{"accepted":true}')
+    assert calls[0][0:4] == ("connect", "api.anthropic.com", 443, 600)
+    _, method, path, forwarded_body, headers = calls[1]
+    assert (method, path, forwarded_body) == (
+        "POST",
+        "/api/event_logging/v2/batch?source=desktop",
+        body,
+    )
+    normalized_headers = {key.lower(): value for key, value in headers.items()}
+    assert normalized_headers["authorization"] == "Bearer oauth-token"
+    assert normalized_headers["x-api-key"] == "direct-key"
+    assert normalized_headers["anthropic-version"] == "2023-06-01"
+    assert normalized_headers["cookie"] == "session=direct-cookie"
+    assert normalized_headers["x-claude-session-id"] == "inbound-session"
+    assert "host" not in normalized_headers
+    assert "connection" not in normalized_headers
+    assert "launcher-synthetic-session" not in normalized_headers.values()
+    assert calls[-1] == ("close",)
+
+
+@pytest.mark.parametrize("status", [307, 401, 429, 500])
+def test_direct_auxiliary_http_status_passes_through_without_redirect_or_failover(monkeypatch, status: int) -> None:
+    import io
+
+    launcher = load_launcher_module()
+    requests = []
+
+    class FakeConnection:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, method, path, *, body, headers):
+            requests.append((method, path, body, headers))
+
+        def getresponse(self):
+            body = io.BytesIO(b"upstream-body")
+            return SimpleNamespace(
+                status=status,
+                headers={"content-type": "text/plain", "location": "/next"},
+                read=body.read,
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(launcher.http.client, "HTTPSConnection", FakeConnection)
+    monkeypatch.setattr(
+        launcher.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not fail over to agent-lb")),
+    )
+    fake_server = SimpleNamespace(
+        parent_pid=None,
+        shared=True,
+        session_id="",
+        ccgpt_mode=False,
+        upstream_base_url="http://127.0.0.1:9",
+    )
+
+    response = run_api_handler(
+        launcher,
+        b"GET /v1/code/triggers HTTP/1.1\r\nHost: api.anthropic.com\r\nConnection: close\r\n\r\n",
+        fake_server,
+    )
+
+    assert response.startswith(f"HTTP/1.1 {status}".encode())
+    assert b"location: /next" in response.lower()
+    assert response.endswith(b"upstream-body")
+    assert len(requests) == 1
+
+
+def test_direct_auxiliary_connect_failure_is_one_shot_502_without_lb_retry(monkeypatch) -> None:
+    launcher = load_launcher_module()
+    attempts = []
+
+    class FailingConnection:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, method, path, *, body, headers):
+            attempts.append(path)
+            raise ConnectionRefusedError("direct Anthropic unavailable")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(launcher.http.client, "HTTPSConnection", FailingConnection)
+    monkeypatch.setattr(
+        launcher.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not fail over to agent-lb")),
+    )
+    monkeypatch.setattr(
+        launcher.time,
+        "sleep",
+        lambda *_: (_ for _ in ()).throw(AssertionError("direct failures must not enter LB retry backoff")),
+    )
+    fake_server = SimpleNamespace(
+        parent_pid=None,
+        shared=True,
+        session_id="",
+        ccgpt_mode=False,
+        upstream_base_url="http://127.0.0.1:9",
+    )
+
+    response = run_api_handler(
+        launcher,
+        b"GET /v1/messages/batches HTTP/1.1\r\nHost: api.anthropic.com\r\nConnection: close\r\n\r\n",
+        fake_server,
+    )
+
+    assert attempts == ["/v1/messages/batches"]
+    assert response.startswith(b"HTTP/1.1 502")
+    assert b'"code": "claude_lb_shim_error"' in response
+    assert b"direct Anthropic unavailable" in response
 
 
 def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypatch) -> None:

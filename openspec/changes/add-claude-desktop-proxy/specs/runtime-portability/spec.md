@@ -2,7 +2,7 @@
 
 ### Requirement: Launcher shim rides out load-balancer recovery windows
 
-The `claude-lb-launch` intercepting shim MUST retry connection-level upstream failures (refused, reset, broken pipe — errors where no HTTP response was produced) with bounded backoff for a default budget of at least 100 seconds, so that a watchdog-driven service recovery (~65s worst case) never surfaces a connection error to the agent. Real HTTP responses MUST NOT be retried. The budget MUST remain overridable via `CLAUDE_LB_SHIM_CONNECT_RETRIES`, `CLAUDE_LB_SHIM_CONNECT_BACKOFF`, and `CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP`. The same proxy implementation MUST support both a launcher-owned ephemeral port that exits with its parent and an explicitly selected fixed loopback port that remains alive without a parent watcher.
+The `claude-lb-launch` intercepting shim MUST retry connection-level agent-lb failures (refused, reset, broken pipe — errors where no HTTP response was produced) with bounded backoff for a default budget of at least 100 seconds, so that a watchdog-driven service recovery (~65s worst case) never surfaces a connection error to the agent. Real HTTP responses MUST NOT be retried. Direct first-party Anthropic auxiliary requests MUST NOT use this local-service recovery budget. The budget MUST remain overridable via `CLAUDE_LB_SHIM_CONNECT_RETRIES`, `CLAUDE_LB_SHIM_CONNECT_BACKOFF`, and `CLAUDE_LB_SHIM_CONNECT_BACKOFF_CAP`. The same proxy implementation MUST support both a launcher-owned ephemeral port that exits with its parent and an explicitly selected fixed loopback port that remains alive without a parent watcher.
 
 #### Scenario: LB restarts mid-session
 
@@ -14,6 +14,12 @@ The `claude-lb-launch` intercepting shim MUST retry connection-level upstream fa
 
 - **WHEN** the upstream returns an HTTP response (including 429/503)
 - **THEN** the shim forwards it without retrying
+
+#### Scenario: Direct Anthropic failure does not wait for local recovery
+
+- **WHEN** an auxiliary request routed directly to Anthropic fails before an HTTP response
+- **THEN** the shim surfaces the direct connection failure once
+- **AND** does not apply the agent-lb restart backoff
 
 #### Scenario: Launcher-owned proxy follows parent lifetime
 

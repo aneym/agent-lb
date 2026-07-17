@@ -31,12 +31,15 @@ The existing `cc` launcher creates a short-lived local HTTPS interception proxy 
 
 5. **Bypass through no-proxy exclusions.** Because Claude settings supply the global proxy URL to CLI subprocesses too, documented launcher bypass/fallback paths add `api.anthropic.com` to `NO_PROXY` and `no_proxy`. This preserves direct first-party behavior without weakening other proxy settings.
 
+6. **Exact LB path ownership, default-direct auxiliary traffic.** CONNECT exposes only the hostname, so the proxy must terminate TLS for all `api.anthropic.com` requests before it can inspect their path. After decryption, only `/v1/messages`, `/v1/messages/count_tokens`, and the installer's `/health` probe route to agent-lb. Every other path goes to Anthropic over a fresh direct TLS connection that does not consult `HTTPS_PROXY`. A default-direct rule is safer than a denylist because new Claude OAuth, telemetry, feature, and worker APIs remain first-party automatically. HTTP responses never trigger cross-target failover: replaying a non-idempotent request after an LB or Anthropic response could duplicate work or disclose it to the wrong service.
+
 ## Risks / Trade-offs
 
 - **Claude Desktop configuration behavior can change between app releases.** → Document the embedded Code scope and require an actual UI Code request plus fresh LB evidence on each target machine.
 - **A fixed port can collide with another process.** → Refuse foreign listeners and never kill them; allow an operator-configurable port.
 - **A global Claude setting affects CLI processes.** → Preserve launcher bypass with no-proxy exclusions and make uninstall explicit and conditional.
 - **The CA grants the local proxy authority for `api.anthropic.com` inside opted-in Claude processes.** → Keep the private key mode `0600`, never add it to the system trust store, and intercept only the existing allowlisted host.
+- **A future Anthropic API may need pooled routing.** → Default it direct until agent-lb implements and explicitly allowlists that contract; do not infer ownership from a broad `/v1` prefix.
 
 ## Migration Plan
 
