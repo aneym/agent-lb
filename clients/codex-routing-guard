@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""Keep Codex desktop routing pointed at the loopback Agent LB provider."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import stat
+import sys
+import tempfile
+import time
+import tomllib
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+BASE_URL = "http://127.0.0.1:2455/backend-api/codex"
+HEALTH_URL = os.environ.get("CODEX_ROUTING_GUARD_HEALTH_URL", "http://127.0.0.1:2455/health")
+MANAGED = {
+    "base_url": f'"{BASE_URL}"',
+    "wire_api": '"responses"',
+    "supports_websockets": "true",
+    "requires_openai_auth": "true",
+}
+ASSIGNMENT = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_-]+)(?P<gap>\s*=\s*)(?P<value>.*?)(?P<ending>\r?\n)?$")
+TABLE = re.compile(r"^\s*\[(?P<name>[^]]+)]\s*(?:#.*)?(?:\r?\n)?$")
+
+
+class GuardError(RuntimeError):
+    pass
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=Path.home() / ".codex" / "config.toml")
+    parser.add_argument("--provider", default=os.environ.get("CODEX_ROUTING_GUARD_PROVIDER", "agent-lb"))
+    parser.add_argument("--preview", action="store_true", help="report changes without writing")
+    return parser.parse_args()
+
+
+def _decode_toml(raw: bytes, path: Path) -> tuple[str, dict[str, object]]:
+    try:
+        text = raw.decode("utf-8")
+        parsed = tomllib.loads(text)
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise GuardError(f"invalid TOML in {path}: {exc}") from exc
+    return text, parsed
+
+
+def _provider_table_name(provider: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", provider):
+        raise GuardError("provider name must contain only letters, digits, underscores, or hyphens")
+    return f"model_providers.{provider}"
+
+
+def _replace_assignment(line: str, key: str, value: str) -> str:
+    match = ASSIGNMENT.match(line)
+    if not match or match.group("key") != key:
+        raise GuardError(f"unable to safely edit {key}")
+    current = match.group("value")
+    comment = ""
+    quoted = False
+    escaped = False
+    for index, char in enumerate(current):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quoted:
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == "#" and not quoted:
+            comment = current[index:]
+            break
+    suffix = f" {comment.lstrip()}" if comment else ""
+    ending = match.group("ending") or ""
+    return f'{match.group("indent")}{key}{match.group("gap")}{value}{suffix}{ending}'
+
+
+def repaired_text(text: str, parsed: dict[str, object], provider: str) -> tuple[str, list[str]]:
+    table_name = _provider_table_name(provider)
+    lines = text.splitlines(keepends=True)
+    changes: list[str] = []
+    current_table: str | None = None
+    provider_start: int | None = None
+    provider_end = len(lines)
+    top_provider_index: int | None = None
+    managed_indices: dict[str, int] = {}
+
+    for index, line in enumerate(lines):
+        table_match = TABLE.match(line)
+        if table_match:
+            if current_table == table_name and provider_end == len(lines):
+                provider_end = index
+            current_table = table_match.group("name").strip()
+            if current_table == table_name:
+                if provider_start is not None:
+                    raise GuardError(f"duplicate [{table_name}] table")
+                provider_start = index
+            continue
+        assignment = ASSIGNMENT.match(line)
+        if not assignment:
+            continue
+        key = assignment.group("key")
+        if current_table is None and key == "model_provider":
+            if top_provider_index is not None:
+                raise GuardError("duplicate top-level model_provider assignment")
+            top_provider_index = index
+        elif current_table == table_name and key in MANAGED:
+            if key in managed_indices:
+                raise GuardError(f"duplicate {key} in [{table_name}]")
+            managed_indices[key] = index
+
+    if top_provider_index is None:
+        insert_at = next((i for i, line in enumerate(lines) if TABLE.match(line)), len(lines))
+        lines.insert(insert_at, f'model_provider = "{provider}"\n')
+        changes.append("set top-level model_provider")
+        if provider_start is not None and provider_start >= insert_at:
+            provider_start += 1
+            provider_end += 1
+        managed_indices = {key: index + (1 if index >= insert_at else 0) for key, index in managed_indices.items()}
+    elif parsed.get("model_provider") != provider:
+        lines[top_provider_index] = _replace_assignment(lines[top_provider_index], "model_provider", f'"{provider}"')
+        changes.append("set top-level model_provider")
+
+    providers = parsed.get("model_providers")
+    selected = providers.get(provider) if isinstance(providers, dict) else None
+    if selected is not None and not isinstance(selected, dict):
+        raise GuardError(f"[{table_name}] must be a TOML table")
+
+    if provider_start is None:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += "\n"
+        if lines and lines[-1].strip():
+            lines.append("\n")
+        lines.append(f"[{table_name}]\n")
+        for key, value in MANAGED.items():
+            lines.append(f"{key} = {value}\n")
+        changes.append(f"add [{table_name}] provider table")
+    else:
+        insertion = provider_end
+        for key, value in MANAGED.items():
+            expected = tomllib.loads(f"x = {value}\n")["x"]
+            actual = selected.get(key) if isinstance(selected, dict) else None
+            if key in managed_indices:
+                if actual != expected:
+                    index = managed_indices[key]
+                    lines[index] = _replace_assignment(lines[index], key, value)
+                    changes.append(f"repair {key}")
+            else:
+                lines.insert(insertion, f"{key} = {value}\n")
+                insertion += 1
+                changes.append(f"add {key}")
+
+    return "".join(lines), changes
+
+
+def _health_check() -> None:
+    if os.environ.get("CODEX_ROUTING_GUARD_SKIP_HEALTH") == "1":
+        return
+    try:
+        with urllib.request.urlopen(HEALTH_URL, timeout=3) as response:  # noqa: S310 - fixed loopback URL
+            if response.status != 200:
+                raise GuardError(f"local Agent LB health returned HTTP {response.status}")
+    except (OSError, urllib.error.URLError) as exc:
+        raise GuardError(f"local Agent LB is unavailable at {HEALTH_URL}") from exc
+
+
+def _event_log(message: str, *, failure: bool = False) -> None:
+    log_path = Path(os.environ.get("CODEX_ROUTING_GUARD_LOG", Path.home() / ".agent-lb" / "codex-routing-guard.log"))
+    state_path = log_path.with_suffix(".failure-state")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if failure:
+        digest = hashlib.sha256(message.encode()).hexdigest()
+        now = int(time.time())
+        try:
+            prior_digest, prior_epoch = state_path.read_text().split(" ", 1)
+            if prior_digest == digest and now - int(prior_epoch) < 3600:
+                return
+        except (FileNotFoundError, OSError, ValueError):
+            pass
+        state_path.write_text(f"{digest} {now}\n")
+    elif state_path.exists():
+        state_path.unlink()
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write(f"{timestamp} {message}\n")
+
+
+def _atomic_replace(path: Path, original: bytes, replacement: bytes, source_stat: os.stat_result) -> None:
+    descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.routing-guard.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            os.fchmod(stream.fileno(), stat.S_IMODE(source_stat.st_mode))
+            stream.write(replacement)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.environ.get("CODEX_ROUTING_GUARD_FAIL_BEFORE_REPLACE") == "1":
+            raise GuardError("injected failure before atomic replace")
+        current_stat = path.stat()
+        if (
+            current_stat.st_dev != source_stat.st_dev
+            or current_stat.st_ino != source_stat.st_ino
+            or current_stat.st_mtime_ns != source_stat.st_mtime_ns
+            or path.read_bytes() != original
+        ):
+            raise GuardError("config changed while repair was being prepared; retrying later")
+        os.replace(temp_name, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def run(args: argparse.Namespace) -> int:
+    requested_path: Path = args.config.expanduser()
+    try:
+        path = requested_path.resolve(strict=True)
+        raw = path.read_bytes()
+        source_stat = path.stat()
+        text, parsed = _decode_toml(raw, path)
+        replacement, changes = repaired_text(text, parsed, args.provider)
+        if not changes:
+            return 0
+        if args.preview:
+            print(f"Would repair {path}: {', '.join(changes)}")
+            return 0
+        _health_check()
+        _atomic_replace(path, raw, replacement.encode("utf-8"), source_stat)
+        _event_log(f"repaired {path}: {', '.join(changes)}")
+        return 0
+    except (OSError, GuardError) as exc:
+        message = str(exc)
+        _event_log(f"failure: {message}", failure=True)
+        if os.environ.get("CODEX_ROUTING_GUARD_QUIET_ERRORS") != "1":
+            print(f"error: {message}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(parse_args()))
