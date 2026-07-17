@@ -98,6 +98,32 @@ point, the codex skills and plugin, the `ccdex-worker` MCP transport, and the
 `ccdex-gpt-only` hook. Sol seats run INSIDE the Claude Code harness via the
 alias bridge, not through a second harness.
 
+## Fan-out doctrine (owner, 2026-07-17)
+
+Fan-out is the DEFAULT, not an optimization the driver reaches for when
+reminded. When work decomposes into 2+ independent sub-units, dispatch them
+concurrently — multiple seat dispatches in one message, or a Workflow script
+when the orchestration is deterministic (pipelines, verify fan-out, loops).
+A brief that hands one seat a multi-unit pipeline is the DISPATCHER'S bug:
+split before spawning.
+
+What makes parallel implementation safe is a **shared contract**: before any
+implementation fan-out, the driver freezes the interface — types, schemas,
+function signatures, file ownership per lane, acceptance checks — and writes
+it verbatim into every brief. Lanes build against the contract, never against
+each other's in-flight work. No contract → no implementation fan-out (N
+incompatible halves is worse than serial).
+
+Serialize only real constraints: a consumer that needs a producer's LANDED
+artifact, shared-file clusters (chain into one worktree/lane), or shared
+mutable infrastructure (one browser driver, one tsc, one live deployment).
+Verification rides in parallel too — independent verify per unit as it lands,
+no barrier on sibling units.
+
+→ Prevents: decomposable work grinding through one serial seat (2026-07-17
+owner correction: a 3-part Hermes-VPS unit with two independent halves went
+to a single implementer).
+
 ## Operating contract
 
 1. One harness, one coordinator. Fable owns the user conversation,
@@ -134,6 +160,10 @@ alias bridge, not through a second harness.
    dispatch (Explore for read-only questions, implementer for
    build-run-report). Drift erodes one "quick check" at a time; count calls,
    not intentions.
+6. Fan out on a shared contract (owner, 2026-07-17). Independent sub-units
+   dispatch concurrently against a driver-frozen contract; one-seat serial
+   pipelines over decomposable work are a dispatch bug. Full text: the
+   Fan-out doctrine section above.
 
 ## Runtime enforcement
 
