@@ -43,6 +43,7 @@ import http.client
 import http.server
 import json
 import os
+import resource
 import select
 import shutil
 import socket
@@ -82,6 +83,14 @@ FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 SHIM_CONNECT_RETRIES_DEFAULT = 32
 SHIM_CONNECT_BACKOFF_DEFAULT = 0.5
 SHIM_CONNECT_BACKOFF_CAP_DEFAULT = 4.0
+# Claude Desktop's embedded client opens CONNECT tunnels it never closes;
+# without a read timeout each abandoned connection parks a handler thread and
+# its fd forever, and the long-lived shared desktop shim exhausts launchd's
+# 256-fd soft cap within hours (observed 2026-07-21: 245 leaked loopback fds
+# in <5h -> EMFILE 502s). Established blind tunnels are exempt: _splice()
+# uses select() and keeps idle tunnels (e.g. the Remote Control websocket)
+# open indefinitely; only a socket op wedged this long is torn down.
+SHIM_CLIENT_IDLE_TIMEOUT_SECONDS = 600
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +285,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
     """
 
     protocol_version = "HTTP/1.1"
+    timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -370,11 +380,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         while True:
             try:
                 response = urllib.request.urlopen(request, timeout=600)
-                self._copy_response(response)
-                return
             except urllib.error.HTTPError as error:
-                self._copy_response(error)
-                return
+                response = error
             except Exception as error:
                 parent_alive = True
                 if not shared:
@@ -387,15 +394,17 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     time.sleep(min(backoff * (2**attempt), backoff_cap))
                     attempt += 1
                     continue
-                message = json.dumps({"error": {"message": str(error), "code": "claude_lb_shim_error"}}).encode()
-                self.send_response(502)
-                self.send_header("content-type", "application/json")
-                self.send_header("content-length", str(len(message)))
-                self.send_header("connection", "close")
-                self.end_headers()
-                self.wfile.write(message)
-                self.close_connection = True
+                self._send_shim_error(error)
                 return
+            # Copy outside the retry try-block: a client hangup mid-stream is a
+            # ConnectionError too, and retrying it would re-send an already
+            # processed upstream request. Close the upstream response promptly
+            # instead of leaving its socket to the garbage collector.
+            try:
+                self._copy_response(response)
+            finally:
+                response.close()
+            return
 
     def _forward_direct(self, body: bytes | None, headers: dict[str, str]) -> None:
         """Forward a first-party auxiliary request without proxy recursion."""
@@ -491,6 +500,7 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     """Front HTTPS proxy: MITMs INTERCEPT_HOSTS, blind-tunnels everything else."""
 
     protocol_version = "HTTP/1.1"
+    timeout = SHIM_CLIENT_IDLE_TIMEOUT_SECONDS
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -526,6 +536,11 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             )
         except OSError:
             return
+        # The handler timeout put the shared open file description in
+        # non-blocking mode, and socket(fileno=...) adopts the fd's actual
+        # blocking state — without an explicit timeout the TLS handshake
+        # would fail (and could otherwise hang forever on a silent client).
+        raw.settimeout(SHIM_CLIENT_IDLE_TIMEOUT_SECONDS)
         try:
             tls = self.server.tls_context.wrap_socket(raw, server_side=True)
         except (OSError, ValueError):
@@ -588,6 +603,20 @@ def proxy_ready_path(session_id: str) -> Path:
     return shim_dir / f"{session_id}.proxy"
 
 
+def _raise_fd_soft_limit() -> None:
+    """Launchd starts children with a 256-fd soft cap; a proxy shim serving a
+    whole desktop session (or machine) needs real headroom while idle-reaping
+    catches up, so lift the soft limit toward macOS's OPEN_MAX. Best-effort:
+    a refusal must never stop the shim from serving."""
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = 10240 if hard == resource.RLIM_INFINITY else min(hard, 10240)
+        if soft < target:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError):
+        pass
+
+
 def run_lb_proxy(
     ready_path: str,
     session_id: str,
@@ -599,6 +628,7 @@ def run_lb_proxy(
 ) -> None:
     if not shared and parent_pid is None:
         raise ValueError("parent_pid is required for a launcher-scoped proxy")
+    _raise_fd_soft_limit()
     ensure_mitm_certs()
     tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls_context.load_cert_chain(certfile=str(LEAF_CERT), keyfile=str(LEAF_KEY))
