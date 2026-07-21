@@ -13,6 +13,7 @@ from app.core.clients.rate_limit_resets import (
     ResetCreditsError,
     ResetCreditsPayload,
 )
+from app.modules.accounts import reset_credit_cache
 
 pytestmark = pytest.mark.integration
 
@@ -111,6 +112,8 @@ async def test_list_reset_credits_returns_upstream_payload(async_client, monkeyp
     assert body["accountId"] == account_id
     assert body["availableCount"] == 1
     assert body["credits"][0]["id"] == "credit-1"
+    assert reset_credit_cache.get_count(account_id) == 1
+    reset_credit_cache.clear(account_id)
 
 
 @pytest.mark.asyncio

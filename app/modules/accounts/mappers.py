@@ -7,11 +7,12 @@ from app.core.auth import DEFAULT_EMAIL, DEFAULT_PLAN, extract_id_token_claims, 
 from app.core.config import settings as config_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import ANTHROPIC_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.usage.quota import apply_usage_quota
 from app.core.usage.types import UsageTrendBucket, UsageWindowRow
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, AccountLimitWarmup, AccountStatus, AdditionalUsageHistory, UsageHistory
+from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import is_locally_owned
 from app.modules.accounts.schemas import (
     AccountAdditionalQuota,
@@ -284,6 +285,11 @@ def _account_to_summary(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,
         credits_balance=credits_balance,
+        reset_credits_available=(
+            reset_credit_cache.get_count(account.id)
+            if normalize_provider_name(account.provider) == OPENAI_PROVIDER_NAME
+            else None
+        ),
         subscription=_account_subscription_ledger(account),
         request_usage=request_usage,
         additional_quotas=additional_quotas or [],

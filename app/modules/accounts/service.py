@@ -33,7 +33,7 @@ from app.core.providers import (
 )
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
-from app.modules.accounts import probes
+from app.modules.accounts import probes, reset_credit_cache
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
 from app.modules.accounts.repository import AccountsRepository
@@ -764,6 +764,10 @@ class AccountsService:
             access_token=access_token,
             chatgpt_account_id=credit_account.chatgpt_account_id,
         )
+        reset_credit_cache.record_count(
+            account_id,
+            sum(credit.status == "available" for credit in payload.credits),
+        )
         return AccountResetCreditsResponse(
             account_id=account_id,
             available_count=payload.available_count,
@@ -794,9 +798,27 @@ class AccountsService:
             credit_id=credit_id,
         )
 
-        if payload.code in ("reset", "already_redeemed") and self._usage_repo and self._usage_updater:
-            await self._usage_updater.force_refresh(credit_account)
-            get_account_selection_cache().invalidate()
+        if payload.code in ("reset", "already_redeemed"):
+            try:
+                refreshed_credits = await rate_limit_resets.fetch_reset_credits(
+                    access_token=access_token,
+                    chatgpt_account_id=credit_account.chatgpt_account_id,
+                )
+                reset_credit_cache.record_count(
+                    account_id,
+                    sum(credit.status == "available" for credit in refreshed_credits.credits),
+                )
+            except Exception:
+                reset_credit_cache.clear(account_id)
+                logger.warning(
+                    "Post-redemption reset-credit listing failed account=%s",
+                    account_id,
+                    exc_info=True,
+                )
+
+            if self._usage_repo and self._usage_updater:
+                await self._usage_updater.force_refresh(credit_account)
+                get_account_selection_cache().invalidate()
 
         primary_after, secondary_after = await self._latest_usage_percents(account_id)
         return AccountResetCreditConsumeResponse(

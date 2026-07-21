@@ -7,7 +7,7 @@ import pytest
 from app.core.config.settings import Settings
 from app.core.crypto import TokenEncryptor
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
-from app.modules.accounts import mappers
+from app.modules.accounts import mappers, reset_credit_cache
 from app.modules.accounts.mappers import _effective_status_from_usage, _normalize_account_routing_policy
 
 
@@ -190,6 +190,37 @@ def test_account_to_summary_surfaces_owner_instance(monkeypatch: pytest.MonkeyPa
     assert owned_summary.is_locally_owned is True
     assert mirrored_summary.owner_instance == "other-instance"
     assert mirrored_summary.is_locally_owned is False
+
+
+def test_account_to_summary_exposes_cached_reset_credits_for_openai_only() -> None:
+    encryptor = TokenEncryptor()
+    openai = _account(AccountStatus.ACTIVE)
+    openai.provider = "OpenAI"
+    anthropic = _account(AccountStatus.ACTIVE)
+    anthropic.id = "account-2"
+    anthropic.provider = "anthropic"
+    reset_credit_cache.reset()
+    reset_credit_cache.record_count(openai.id, 2)
+    reset_credit_cache.record_count(anthropic.id, 4)
+    try:
+        openai_summary = mappers._account_to_summary(
+            openai, None, None, None, None, None, None, encryptor, include_auth=False
+        )
+        anthropic_summary = mappers._account_to_summary(
+            anthropic, None, None, None, None, None, None, encryptor, include_auth=False
+        )
+
+        assert openai_summary.reset_credits_available == 2
+        assert openai_summary.model_dump(by_alias=True)["resetCreditsAvailable"] == 2
+        assert anthropic_summary.reset_credits_available is None
+
+        reset_credit_cache.clear(openai.id)
+        unknown_summary = mappers._account_to_summary(
+            openai, None, None, None, None, None, None, encryptor, include_auth=False
+        )
+        assert unknown_summary.reset_credits_available is None
+    finally:
+        reset_credit_cache.reset()
 
 
 def test_normalize_account_routing_policy() -> None:

@@ -11,6 +11,7 @@ from app.core.clients import rate_limit_resets
 from app.core.clients.rate_limit_resets import ConsumeResetCreditPayload, ResetCreditDetails, ResetCreditsPayload
 from app.core.crypto import TokenEncryptor
 from app.db.models import Account, AccountStatus
+from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.service import AccountResetCreditsUnavailableError, AccountsService
 
 pytestmark = pytest.mark.unit
@@ -18,6 +19,29 @@ pytestmark = pytest.mark.unit
 
 _ACCOUNT_ID = "acc_reset_test"
 _CHATGPT_ACCOUNT_ID = "chatgpt-reset-acc-1"
+
+
+@pytest.fixture(autouse=True)
+def _reset_credit_count_cache():
+    reset_credit_cache.reset()
+    yield
+    reset_credit_cache.reset()
+
+
+def _credits_payload(*statuses: str) -> ResetCreditsPayload:
+    return ResetCreditsPayload(
+        credits=[
+            ResetCreditDetails(
+                id=f"credit-{index}",
+                reset_type="weekly",
+                status=status,
+                granted_at="2026-07-01T00:00:00Z",
+                expires_at="2026-07-31T00:00:00Z",
+            )
+            for index, status in enumerate(statuses, start=1)
+        ],
+        available_count=sum(status == "available" for status in statuses),
+    )
 
 
 def _make_account(
@@ -114,10 +138,11 @@ async def test_list_reset_credits_maps_upstream_payload(monkeypatch):
     assert result.available_count == 1
     assert result.credits[0].id == "credit-1"
     assert result.credits[0].status == "available"
+    assert reset_credit_cache.get_count(_ACCOUNT_ID) == 1
 
 
 @pytest.mark.asyncio
-async def test_redeem_reset_credit_success_refreshes_usage(monkeypatch):
+async def test_redeem_reset_credit_success_refreshes_usage_and_credit_count(monkeypatch):
     service = _build_service(account=_make_account(), primary_pct=100.0, secondary_pct=100.0)
     captured: dict[str, Any] = {}
 
@@ -125,7 +150,11 @@ async def test_redeem_reset_credit_success_refreshes_usage(monkeypatch):
         captured.update(kwargs)
         return ConsumeResetCreditPayload(code="reset", windows_reset=2)
 
+    async def _fake_fetch(**kwargs):  # noqa: ARG001
+        return _credits_payload("available", "redeemed")
+
     monkeypatch.setattr(rate_limit_resets, "consume_reset_credit", _fake_consume)
+    monkeypatch.setattr(rate_limit_resets, "fetch_reset_credits", _fake_fetch)
 
     result = await service.redeem_rate_limit_reset_credit(_ACCOUNT_ID, credit_id="credit-1")
     assert result is not None
@@ -137,6 +166,28 @@ async def test_redeem_reset_credit_success_refreshes_usage(monkeypatch):
     # A fresh idempotency key must be generated per redemption attempt.
     assert isinstance(captured["redeem_request_id"], str) and captured["redeem_request_id"]
     service._usage_updater.force_refresh.assert_awaited_once()
+    assert reset_credit_cache.get_count(_ACCOUNT_ID) == 1
+
+
+@pytest.mark.asyncio
+async def test_redeem_reset_credit_refetch_failure_clears_cached_count(monkeypatch):
+    service = _build_service(account=_make_account())
+    reset_credit_cache.record_count(_ACCOUNT_ID, 3)
+
+    async def _fake_consume(**kwargs):  # noqa: ARG001
+        return ConsumeResetCreditPayload(code="reset", windows_reset=1)
+
+    async def _fake_fetch(**kwargs):  # noqa: ARG001
+        raise RuntimeError("listing unavailable")
+
+    monkeypatch.setattr(rate_limit_resets, "consume_reset_credit", _fake_consume)
+    monkeypatch.setattr(rate_limit_resets, "fetch_reset_credits", _fake_fetch)
+
+    result = await service.redeem_rate_limit_reset_credit(_ACCOUNT_ID)
+
+    assert result is not None
+    assert result.status == "redeemed"
+    assert reset_credit_cache.get_count(_ACCOUNT_ID) is None
 
 
 @pytest.mark.asyncio
@@ -163,7 +214,11 @@ async def test_redeem_reset_credit_already_redeemed_is_idempotent_success(monkey
     async def _fake_consume(**kwargs):
         return ConsumeResetCreditPayload(code="already_redeemed", windows_reset=0)
 
+    async def _fake_fetch(**kwargs):  # noqa: ARG001
+        return _credits_payload()
+
     monkeypatch.setattr(rate_limit_resets, "consume_reset_credit", _fake_consume)
+    monkeypatch.setattr(rate_limit_resets, "fetch_reset_credits", _fake_fetch)
 
     result = await service.redeem_rate_limit_reset_credit(_ACCOUNT_ID)
     assert result is not None

@@ -19,6 +19,7 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let routingPolicy: String?
   let status: String
   let fableEligible: Bool?
+  let resetCreditsAvailable: Int?
   let additionalQuotas: [AccountAdditionalQuota]?
   let usage: AccountUsage
   // §9.2: per-account credit sums drive the scoped pool windows.

@@ -29,6 +29,7 @@ from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
+from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.usage.repository import UsageRepository
@@ -180,10 +181,10 @@ class ResetCreditAutoRedeemScheduler:
                     exc.message,
                 )
                 continue
+            available = [credit for credit in payload.credits if credit.status == "available"]
+            reset_credit_cache.record_count(account.id, len(available))
             expiring = [
-                credit
-                for credit in payload.credits
-                if credit.status == "available" and _expires_within(credit.expires_at, now, window)
+                credit for credit in available if _expires_within(credit.expires_at, now, window)
             ]
             for credit in expiring:
                 await self._redeem_expiring(service, account, credit.id, credit.expires_at)
@@ -349,6 +350,7 @@ async def _rank_candidates_by_credit_expiry(
             )
             continue
         available = [credit for credit in payload.credits if credit.status == "available"]
+        reset_credit_cache.record_count(account.id, len(available))
         if not available:
             continue
         earliest = min(available, key=lambda credit: credit.expires_at or _NO_EXPIRY_SORT_KEY)

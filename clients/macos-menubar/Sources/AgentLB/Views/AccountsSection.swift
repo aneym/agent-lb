@@ -284,6 +284,7 @@ struct AccountRow: View {
             .truncationMode(.middle)
           planChip
           fableChip
+          resetCreditsChip
           Spacer(minLength: 6)
           refreshControl
           trailing
@@ -381,6 +382,21 @@ struct AccountRow: View {
         .fixedSize()
         .help(account.fableAvailabilityHelp ?? availability.help)
         .accessibilityLabel(account.fableAvailabilityHelp ?? availability.help)
+    }
+  }
+
+  @ViewBuilder
+  private var resetCreditsChip: some View {
+    if account.provider.lowercased() == "openai", let count = account.resetCreditsAvailable {
+      Text("⟲ \(count)")
+        .font(.system(size: 9, weight: .medium))
+        .foregroundStyle(count == 0 ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(.quaternary.opacity(count == 0 ? 0.35 : 0.5)))
+        .lineLimit(1)
+        .fixedSize()
+        .help("Banked rate-limit reset credits")
     }
   }
 

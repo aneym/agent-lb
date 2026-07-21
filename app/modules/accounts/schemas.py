@@ -134,6 +134,7 @@ class AccountSummary(DashboardModel):
     credits_has: bool | None = None
     credits_unlimited: bool | None = None
     credits_balance: float | None = None
+    reset_credits_available: int | None = None
     subscription: AccountSubscriptionLedger | None = None
     deactivation_reason: str | None = None
     auth: AccountAuthStatus | None = None

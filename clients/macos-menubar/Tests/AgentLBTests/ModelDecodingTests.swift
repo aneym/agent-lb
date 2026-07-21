@@ -66,6 +66,34 @@ final class ModelDecodingTests: XCTestCase {
     )
   }
 
+  func testResetCreditsAvailableDecodesWhenPresentAndOmitted() throws {
+    let json = """
+    {
+      "accounts": [
+        {
+          "accountId": "codex-with-credits",
+          "provider": "openai",
+          "displayName": "codex-with-credits@example.com",
+          "status": "active",
+          "resetCreditsAvailable": 2,
+          "usage": {}
+        },
+        {
+          "accountId": "codex-older-server",
+          "provider": "openai",
+          "displayName": "codex-older-server@example.com",
+          "status": "active",
+          "usage": {}
+        }
+      ]
+    }
+    """.data(using: .utf8)!
+
+    let response = try decoder.decode(AccountsResponse.self, from: json)
+    XCTAssertEqual(response.accounts[0].resetCreditsAvailable, 2)
+    XCTAssertNil(response.accounts[1].resetCreditsAvailable)
+  }
+
   func testFableAvailabilityOnlyAppliesToAnthropicAccounts() throws {
     let anthropicOut = makeTestAccount(
       id: "claude-out",
