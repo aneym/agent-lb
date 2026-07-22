@@ -345,6 +345,7 @@ async def _insert_quota_cooldown(
     quota_key: str,
     reset_at: int,
     window: str = "primary",
+    recorded_at: datetime | None = None,
 ) -> None:
     async with SessionLocal() as session:
         session.add(
@@ -357,6 +358,7 @@ async def _insert_quota_cooldown(
                 used_percent=100.0,
                 reset_at=reset_at,
                 window_minutes=10,
+                recorded_at=recorded_at or utcnow(),
             )
         )
         await session.commit()
@@ -2579,6 +2581,42 @@ async def _insert_primary_usage(
             )
         )
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_session_route_admits_recovered_primary_despite_historical_tripwire(async_client):
+    """The public routing surface must use current subscription headroom
+    instead of quarantining an account on an older paid-usage marker."""
+    await _insert_account(
+        account_id="anthropic-tripwire-recovered",
+        provider="anthropic",
+        access_token="anthropic-access-tripwire-recovered",
+        email="tripwire-recovered@example.com",
+    )
+    future_reset = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-tripwire-recovered",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=future_reset,
+        recorded_at=utcnow() - timedelta(minutes=5),
+    )
+    await _insert_primary_usage(
+        account_id="anthropic-tripwire-recovered",
+        used_percent=0.0,
+        reset_at=future_reset,
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-tripwire-recovered",
+            "model": "claude-sonnet-4-6",
+            "quotaKey": "anthropic_top",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == "anthropic-tripwire-recovered"
 
 
 @pytest.mark.asyncio

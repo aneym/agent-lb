@@ -774,7 +774,7 @@ class AnthropicProxyService:
                 account_id: (float(entry.used_percent), entry.reset_at)
                 for account_id, entry in request_quota_latest.items()
             }
-            extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None]] = {}
+            extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None, int]] = {}
             if extra_usage_gate:
                 extra_usage_tripwire_latest = await repos.additional_usage.latest_by_account(
                     _ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
@@ -782,7 +782,11 @@ class AnthropicProxyService:
                     account_ids=account_ids,
                 )
                 extra_usage_tripwire_cooldowns = {
-                    account_id: (float(entry.used_percent), entry.reset_at)
+                    account_id: (
+                        float(entry.used_percent),
+                        entry.reset_at,
+                        naive_utc_to_epoch(entry.recorded_at),
+                    )
                     for account_id, entry in extra_usage_tripwire_latest.items()
                 }
             # A persisted primary window with reset_at=None must not gate an
@@ -790,9 +794,15 @@ class AnthropicProxyService:
             # reset counts as an active exhaustion here; a None reset re-admits
             # the account (a genuine 429 re-writes a bounded cooldown).
             primary_exhaustion: dict[str, int] = {}
+            primary_headroom_recorded_at: dict[str, int] = {}
             credit_enabled_exhausted_account_ids: frozenset[str] = frozenset()
             if extra_usage_gate:
                 primary_usage = await repos.usage.latest_by_account(window="primary", account_ids=account_ids)
+                primary_headroom_recorded_at = {
+                    account_id: naive_utc_to_epoch(entry.recorded_at)
+                    for account_id, entry in primary_usage.items()
+                    if entry.used_percent is not None and float(entry.used_percent) < 100.0
+                }
                 primary_exhaustion = {
                     account_id: int(entry.reset_at)
                     for account_id, entry in primary_usage.items()
@@ -921,6 +931,14 @@ class AnthropicProxyService:
         blocked_reset_by_account_id: dict[str, int] = {}
         blocked_count = 0
         request_quota_blocked_account_ids: set[str] = set()
+
+        def _active_extra_usage_tripwire_blocks(account_id: str) -> bool:
+            tripwire = extra_usage_tripwire_cooldowns.get(account_id)
+            if tripwire is None or not _anthropic_cooldown_is_active(tripwire[0], tripwire[1], now=now):
+                return False
+            recovered_at = primary_headroom_recorded_at.get(account_id)
+            return recovered_at is None or recovered_at <= tripwire[2]
+
         for account_id in model_scope_account_ids:
             request_quota_cooldown = request_quota_cooldowns.get(account_id)
             if request_quota_cooldown is not None and _anthropic_cooldown_is_active(
@@ -951,9 +969,7 @@ class AnthropicProxyService:
                     blocked_reset_by_account_id[account_id] = primary_reset_at
                 continue
             tripwire_cooldown = extra_usage_tripwire_cooldowns.get(account_id)
-            if tripwire_cooldown is not None and _anthropic_cooldown_is_active(
-                tripwire_cooldown[0], tripwire_cooldown[1], now=now
-            ):
+            if tripwire_cooldown is not None and _active_extra_usage_tripwire_blocks(account_id):
                 blocked_count += 1
                 if tripwire_cooldown[1] is not None:
                     blocked_reset_by_account_id[account_id] = int(tripwire_cooldown[1])
@@ -1024,8 +1040,7 @@ class AnthropicProxyService:
             def _is_transient_cooldown_only(account_id: str) -> bool:
                 if account_id in primary_exhaustion or account_id in secondary_exhaustion:
                     return False
-                tripwire = extra_usage_tripwire_cooldowns.get(account_id)
-                if tripwire is not None and _anthropic_cooldown_is_active(tripwire[0], tripwire[1], now=now):
+                if _active_extra_usage_tripwire_blocks(account_id):
                     return False
                 cooldown = request_quota_cooldowns.get(account_id)
                 if cooldown is None or cooldown[1] is None:

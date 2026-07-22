@@ -1487,6 +1487,12 @@ class _DetachedUsageSentinel:
             raise AssertionError("used_percent accessed after repository context exit")
         return self._used_percent
 
+    @property
+    def recorded_at(self) -> datetime:
+        if self._is_closed():
+            raise AssertionError("recorded_at accessed after repository context exit")
+        return datetime(2026, 7, 22, 10, 0)
+
 
 @pytest.mark.asyncio
 async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monkeypatch):
@@ -1556,7 +1562,13 @@ async def test_anthropic_eligibility_readmits_additional_quota_row_with_none_res
             self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
             self.additional_usage = SimpleNamespace(
                 latest_by_account=AsyncMock(
-                    return_value={account.id: SimpleNamespace(used_percent=100.0, reset_at=None)}
+                    return_value={
+                        account.id: SimpleNamespace(
+                            used_percent=100.0,
+                            reset_at=None,
+                            recorded_at=datetime(2026, 7, 22, 10, 0),
+                        )
+                    }
                 )
             )
             self.usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
@@ -1625,7 +1637,13 @@ async def test_anthropic_eligibility_still_blocks_bounded_future_reset(monkeypat
             self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
             self.additional_usage = SimpleNamespace(
                 latest_by_account=AsyncMock(
-                    return_value={account.id: SimpleNamespace(used_percent=100.0, reset_at=future)}
+                    return_value={
+                        account.id: SimpleNamespace(
+                            used_percent=100.0,
+                            reset_at=future,
+                            recorded_at=datetime(2026, 7, 22, 10, 0),
+                        )
+                    }
                 )
             )
             self.usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
@@ -1643,6 +1661,68 @@ async def test_anthropic_eligibility_still_blocks_bounded_future_reset(monkeypat
 
     assert eligibility.account_ids == []
     assert eligibility.blocked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_eligibility_ignores_tripwire_after_primary_recovers(monkeypatch):
+    """A historical paid-usage tripwire must not quarantine an account after
+    its latest subscription primary window has recovered."""
+    account = _make_test_account(account_id="anthropic-recovered")
+    account.provider = "anthropic"
+    future = int(time.time()) + 3600
+    tripwire_recorded_at = datetime(2026, 7, 22, 10, 0)
+    recovered_recorded_at = datetime(2026, 7, 22, 11, 0)
+
+    class _RepoBundle:
+        def __init__(self) -> None:
+            self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
+            self.additional_usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    side_effect=lambda quota_key, window, *, account_ids: (
+                        {
+                            account.id: SimpleNamespace(
+                                used_percent=100.0,
+                                reset_at=future,
+                                recorded_at=tripwire_recorded_at,
+                            )
+                        }
+                        if quota_key == anthropic_service_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY
+                        else {}
+                    )
+                )
+            )
+            self.usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    side_effect=lambda *, window, account_ids: (
+                        {
+                            account.id: SimpleNamespace(
+                                used_percent=0.0,
+                                reset_at=future,
+                                credits_unlimited=False,
+                                credits_has=False,
+                                credits_balance=None,
+                                recorded_at=recovered_recorded_at,
+                            )
+                        }
+                        if window == "primary"
+                        else {}
+                    )
+                )
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(anthropic_service_module, "get_settings", _anthropic_eligibility_settings)
+    service = AnthropicProxyService(lambda: _RepoBundle())
+
+    eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top")
+
+    assert eligibility.account_ids == [account.id]
+    assert eligibility.blocked_count == 0
 
 
 def _quota_scoped_additional_usage(quota_key: str, entries: dict) -> AsyncMock:
