@@ -7,10 +7,10 @@ adapters: when they disagree with this file, this file wins.
 
 ## Northstar (owner, 2026-07-15)
 
-Optimize for keeping Fable usage safe without sacrificing intelligence —
-**hands vs brain**. Fable weekly capacity is a hard scarce resource; the brain
-decides, hands do volume. One expensive driver, one adversarial partner,
-cheap fast fan-out. Fable-level intelligence drives (orchestrates, decides,
+Optimize for keeping Claude capacity safe without sacrificing intelligence —
+**hands vs brain**. Claude weekly capacity is a hard scarce resource; the brain
+decides, hands do volume. One capable driver, one adversarial partner,
+cheap fast fan-out. Opus 5 drives (orchestrates, decides,
 verifies) while spending as few of its own tokens as possible: subagents and
 subagent workflows do the volume work quickly and in parallel.
 
@@ -29,7 +29,7 @@ change against it.
 
 ## Mode: raw Claude Code harness with canonical seats (2026-07-15)
 
-Claude Code, entered through `cc`, is the only coding harness. Fable/high is
+Claude Code, entered through `cc`, is the only coding harness. Opus 5/high is
 the driver: it coordinates, decides, reconciles, and verifies using the native
 harness — `Agent`/`Workflow` subagents, skills, and hooks.
 
@@ -39,12 +39,12 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 
 | Seat                   | Agent definition                        | Model                | Effort            |
 | ---------------------- | --------------------------------------- | -------------------- | ----------------- |
-| Driver (main loop)     | —                                       | `claude-fable-5`     | high              |
+| Driver (main loop)     | —                                       | `claude-opus-5`      | high              |
 | Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
-| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-opus-4-8`    | inherit           |
-| Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-fable-5`     | inherit           |
+| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-opus-5`      | inherit high      |
+| Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
 
 Explore moved sonnet → gpt-5.6-sol-medium (owner, 2026-07-15 evening):
 benchmarked 3/3 repo-exploration accuracy matching sonnet at 3.1x speed with
@@ -62,9 +62,14 @@ seat, and stays low-volume/high-leverage (added 2026-07-15 after fleet audits
 showed UI sessions burning the most driver capacity on taste-then-pixels
 loops).
 
-The planner seat (2026-07-15) is the sanctioned Fable TEAMMATE: a lane
+The planner seat (2026-07-24) is the sanctioned Fable-primary TEAMMATE: a lane
 coordinator that plans, dispatches its own canonical seats, and reconciles —
-the brain of a delegated workstream (loop lanes, multi-seat sub-projects).
+the brain of a delegated workstream (loop lanes, multi-seat sub-projects). Its
+`claude-planner` alias resolves to Fable 5 unless every otherwise-routable
+Anthropic account has a fresh, future-reset Fable-scoped exhaustion marker;
+only then does it resolve to Opus 5. Soft weekly thresholds, partial or stale
+markers, generic rate limits, auth/network/529 failures, and total Anthropic
+exhaustion do not trigger the fallback.
 Teammate enforcement fact (verified): hooks and CLAUDE.md context do NOT
 reach spawned teammates — 0 hook executions across 7 teammate transcripts vs
 14 in their coordinator. Therefore: (a) economics are enforced at the SPAWN
@@ -81,7 +86,7 @@ per-task improvisation of the lineup. Catch-all subagents
 explicitly; inheriting the expensive driver model is hook-denied (see
 Runtime enforcement). `fork` is exempt — context-carrying offload
 (long doc/plan generation with full conversation context) is a legitimate
-Fable lane. Changing the lineup means editing this table (and the agent
+Opus lane. Changing the lineup means editing this table (and the agent
 files), not overriding it in a session.
 
 Driver scope of WORK (not just tool calls): the driver keeps brain work —
@@ -97,6 +102,26 @@ The Codex dispatch stack remains retired (2026-07-15): the `ccdex` entry
 point, the codex skills and plugin, the `ccdex-worker` MCP transport, and the
 `ccdex-gpt-only` hook. Sol seats run INSIDE the Claude Code harness via the
 alias bridge, not through a second harness.
+
+## Kimi mode (owner, 2026-07-24)
+
+`kimi` is a driver-swap of the SAME harness and the SAME seat lineup, not a
+separate stack. It runs Claude Code through agent-lb like `cc`; only the
+driver and the Opus/Fable default slots remap to `kimi-k3`. The sonnet,
+haiku, and subagent slots are deliberately left unset so Explore/implementer
+(`gpt-5.6-sol-medium`), verifier (`gpt-5.6-sol-xhigh`), and sonnet catch-alls
+keep resolving to their own pools through the LB. Verified live 2026-07-24:
+one kimi-mode session logged driver `kimi-k3` + Explore `gpt-5.6-sol` +
+`claude-sonnet-5` in the same run.
+
+The old `kimi` function pointed straight at Moonshot and flattened opus,
+sonnet, haiku, AND subagent to one Kimi model — that silently destroyed the
+lineup, since sol-alias seats cannot be served when the base URL is not the
+LB. Never reintroduce that shape: a provider swap that also overrides the
+seat slots is a lineup change, and lineup changes mean editing this file.
+
+Kimi accounts are pooled by agent-lb like any other provider (change
+`add-kimi-provider`); credentials live in the LB, never in the launcher env.
 
 ## Fan-out doctrine (owner, 2026-07-17)
 
@@ -126,7 +151,7 @@ to a single implementer).
 
 ## Operating contract
 
-1. One harness, one coordinator. Fable owns the user conversation,
+1. One harness, one coordinator. Opus owns the user conversation,
    decomposition, dispatch, reconciliation, and final verification.
 2. Delegated subagents return a bounded closeout: conclusion, evidence,
    verification, next action, and artifact paths. The coordinator
@@ -167,7 +192,7 @@ to a single implementer).
 
 ## Runtime enforcement
 
-- `clients/claude-lb-launch` defaults `cc` sessions to Fable/high.
+- `clients/claude-lb-launch` defaults `cc` sessions to Opus 5/high.
 - `scripts/install-claude-clients.sh` installs this policy and the `cc`
   client, and removes retired ccdex artifacts (clients, hook, MCP
   registration) when it finds them.
@@ -185,5 +210,5 @@ to a single implementer).
 
 Run `~/.agents/policy/coding-agents/verify-routing` for deterministic machine
 checks. Routing is not proven by prose alone. A valid rollout also has one
-live `cc` response reporting Fable, or an explicit current provider-capacity
+live `cc` response reporting Opus 5/high, or an explicit current provider-capacity
 blocker.

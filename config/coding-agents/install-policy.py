@@ -13,10 +13,22 @@ from typing import Any
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
-MODEL = "claude-fable-5"
-DESIGNER_RELATIVE_PATH = Path(".claude/agents/frontend-designer.md")
-DESIGNER_OWNER_RELATIVE_PATH = Path(".agent-lb/managed/coding-agents/frontend-designer")
-DESIGNER_OWNER = "agent-lb:frontend-designer:v1\n"
+MODEL = "claude-opus-5"
+EFFORT_LEVEL = "high"
+MANAGED_AGENTS = (
+    (
+        Path(".claude/agents/frontend-designer.md"),
+        Path(".agent-lb/managed/coding-agents/frontend-designer"),
+        "agent-lb:frontend-designer:v1\n",
+        Path("agents/frontend-designer.md"),
+    ),
+    (
+        Path(".claude/agents/planner.md"),
+        Path(".agent-lb/managed/coding-agents/planner"),
+        "agent-lb:planner:v1\n",
+        Path("agents/planner.md"),
+    ),
+)
 LEGACY_HEADINGS = (
     "Coding-agent routing",
     "Orchestration — Fable architects, the fleet executes",
@@ -110,6 +122,7 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
             updated.pop("hooks", None)
     if not uninstall:
         updated["model"] = MODEL
+        updated["effortLevel"] = EFFORT_LEVEL
     return updated
 
 
@@ -132,10 +145,7 @@ def main() -> int:
     source = Path(__file__).resolve().parent
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
-    designer_path = args.home / DESIGNER_RELATIVE_PATH
-    designer_owner_path = args.home / DESIGNER_OWNER_RELATIVE_PATH
     template = (source / "claude-adapter.md").read_text()
-    designer_template = (source / "agents" / "frontend-designer.md").read_text()
     originals = {path: read_text(path) for path in (claude_path, codex_path)}
     settings_path = args.home / ".claude" / "settings.json"
     settings_text = read_text(settings_path)
@@ -165,22 +175,27 @@ def main() -> int:
     }
     if desired_settings_text != settings_text:
         changes[settings_path] = desired_settings_text
-    designer_text = read_text(designer_path)
-    designer_owned = read_text(designer_owner_path) == DESIGNER_OWNER
-    preserve_customized_designer = (
-        args.uninstall and designer_owned and designer_path.exists() and designer_text != designer_template
-    )
-    preserve_unmanaged_designer = args.uninstall and not designer_owned and designer_path.exists()
-    if args.uninstall:
-        if designer_owned:
-            changes[designer_owner_path] = None
-            if designer_text == designer_template:
-                changes[designer_path] = None
-    else:
-        if designer_text != designer_template:
-            changes[designer_path] = designer_template
-        if not designer_owned:
-            changes[designer_owner_path] = DESIGNER_OWNER
+    preserved_agents: list[tuple[str, Path]] = []
+    for relative_path, owner_relative_path, owner_marker, template_relative_path in MANAGED_AGENTS:
+        agent_path = args.home / relative_path
+        owner_path = args.home / owner_relative_path
+        agent_template = (source / template_relative_path).read_text()
+        agent_text = read_text(agent_path)
+        agent_owned = read_text(owner_path) == owner_marker
+        if args.uninstall:
+            if agent_owned:
+                changes[owner_path] = None
+                if agent_text == agent_template:
+                    changes[agent_path] = None
+                elif agent_path.exists():
+                    preserved_agents.append(("customized", agent_path))
+            elif agent_path.exists():
+                preserved_agents.append(("unmanaged", agent_path))
+        else:
+            if agent_text != agent_template:
+                changes[agent_path] = agent_template
+            if not agent_owned:
+                changes[owner_path] = owner_marker
 
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
@@ -188,18 +203,14 @@ def main() -> int:
     if args.preview:
         for path in changes:
             print(f"would {action} {path}")
-        if preserve_customized_designer:
-            print(f"would preserve customized {designer_path}")
-        if preserve_unmanaged_designer:
-            print(f"would preserve unmanaged {designer_path}")
+        for reason, path in preserved_agents:
+            print(f"would preserve {reason} {path}")
         if not changes:
             print("managed routing configuration already converged")
         return 0
     if not changes:
-        if preserve_customized_designer:
-            print(f"preserved customized {designer_path}")
-        if preserve_unmanaged_designer:
-            print(f"preserved unmanaged {designer_path}")
+        for reason, path in preserved_agents:
+            print(f"preserved {reason} {path}")
         print("managed routing configuration already converged")
         return 0
 
@@ -225,10 +236,8 @@ def main() -> int:
         else:
             write_atomic(path, content)
             print(f"updated {path}")
-    if preserve_customized_designer:
-        print(f"preserved customized {designer_path}")
-    if preserve_unmanaged_designer:
-        print(f"preserved unmanaged {designer_path}")
+    for reason, path in preserved_agents:
+        print(f"preserved {reason} {path}")
     return 0
 
 

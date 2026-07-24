@@ -59,12 +59,11 @@
 
 <h1>Coding-Agent Routing — Canonical Model</h1>
 <p class="sub">One expensive brain, cheap fast hands, and a machine that keeps it that way.</p>
-<p class="stamp">Updated 2026-07-15 · canon source: <code>config/coding-agents/ROUTING.md</code> (installed at <code>~/.agents/policy/coding-agents/</code>) · this page: <code>docs/routing-model.html</code></p>
+<p class="stamp">Updated 2026-07-24 · canon source: <code>config/coding-agents/ROUTING.md</code> (installed at <code>~/.agents/policy/coding-agents/</code>) · this page: <code>docs/routing-model.html</code></p>
 
 <h2>Northstar — hands vs brain</h2>
-<p><strong>Optimize for keeping Fable usage safe without sacrificing intelligence.</strong>
-Fable weekly capacity is a hard scarce resource (the pool has hit 100% of its 5-hour limit with
-Fable-out 60–75% on two accounts). The brain — Fable — decides, architects, verifies, and writes
+<p><strong>Optimize for keeping Claude capacity safe without sacrificing intelligence.</strong>
+Claude weekly capacity is a hard scarce resource. The brain — Opus 5 — decides, architects, verifies, and writes
 the artifacts that need full context (plans, PRDs, specs, docs like this one). The hands — cheap
 seats — do volume: reads, mechanical edits, retries, builds, test runs. Parallel fan-out is
 encouraged; the system gates economics, never concurrency.</p>
@@ -72,13 +71,13 @@ encouraged; the system gates economics, never concurrency.</p>
 <h2>The seat lineup (fixed per seat, never per task)</h2>
 <table>
   <tr><th>Seat</th><th>Model</th><th>Serves</th><th>Pool</th></tr>
-  <tr><td><span class="pill fill">Driver</span></td><td class="mono">claude-fable-5 · high</td><td>decisions, canon, full-context artifacts, final acceptance</td><td>Claude (scarce)</td></tr>
+  <tr><td><span class="pill fill">Driver</span></td><td class="mono">claude-opus-5 · high</td><td>decisions, canon, full-context artifacts, final acceptance</td><td>Claude (scarce)</td></tr>
   <tr><td><span class="pill">Explore</span></td><td class="mono">gpt-5.6-sol-medium</td><td>read-only scouting, codebase maps, transcript forensics (moved off sonnet 2026-07-15: 3/3 accuracy at 3.1× speed, spares the Claude pool)</td><td>Codex (bridge)</td></tr>
   <tr><td><span class="pill">implementer</span></td><td class="mono">gpt-5.6-sol-medium</td><td>closed-spec build-run-report, migrations, fixes, dogfooding</td><td>Codex (bridge)</td></tr>
   <tr><td><span class="pill">verifier</span></td><td class="mono">gpt-5.6-sol-xhigh</td><td>adversarial verification of executor claims</td><td>Codex (bridge)</td></tr>
-  <tr><td><span class="pill">frontend-designer</span></td><td class="mono">claude-fable-5</td><td>design direction &amp; ranked crits only — no Edit/Write; specs feed the implementer (sanctioned expensive exception)</td><td>Claude</td></tr>
-  <tr><td><span class="pill">planner</span></td><td class="mono">claude-fable-5</td><td>lane-coordinator teammate: plans, dispatches its own seats, reconciles; reads ROUTING.md first (teammates get no hooks/CLAUDE.md); one per lane</td><td>Claude</td></tr>
-  <tr><td><span class="pill">fork</span></td><td class="mono">inherits Fable</td><td>context-carrying offload (long docs/plans) — exempt from the guard</td><td>Claude</td></tr>
+  <tr><td><span class="pill">frontend-designer</span></td><td class="mono">claude-opus-5 · inherit high</td><td>design direction &amp; ranked crits only — no Edit/Write; specs feed the implementer (sanctioned expensive exception)</td><td>Claude</td></tr>
+  <tr><td><span class="pill">planner</span></td><td class="mono">claude-planner · high<br>Fable 5 primary → Opus 5 only on full scoped exhaustion</td><td>lane-coordinator teammate: plans, dispatches its own seats, reconciles; reads ROUTING.md first (teammates get no hooks/CLAUDE.md); one per lane</td><td>Claude</td></tr>
+  <tr><td><span class="pill">fork</span></td><td class="mono">inherits Opus 5/high</td><td>context-carrying offload (long docs/plans) — exempt from the guard</td><td>Claude</td></tr>
 </table>
 <p class="sub">Sol seats are served by agent-lb's Messages-route aliases (<code>gpt-5.6-sol-*</code>) through the
 HTTP bridge. Catch-all subagents (<code>general-purpose</code>/default) must pin <code>sonnet</code>/<code>haiku</code>

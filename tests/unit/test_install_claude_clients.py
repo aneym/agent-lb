@@ -10,6 +10,8 @@ INSTALLER = ROOT / "scripts" / "install-claude-clients.sh"
 POLICY_INSTALLER = ROOT / "config" / "coding-agents" / "install-policy.py"
 MANAGED_DESIGNER = ROOT / "config" / "coding-agents" / "agents" / "frontend-designer.md"
 DESIGNER_OWNER = Path(".agent-lb/managed/coding-agents/frontend-designer")
+MANAGED_PLANNER = ROOT / "config" / "coding-agents" / "agents" / "planner.md"
+PLANNER_OWNER = Path(".agent-lb/managed/coding-agents/planner")
 MARKER_BLOCK = (
     "<!-- agent-lb:coding-agent-routing:start -->\n"
     "## Fable/Codex Routing\n\nretired ccdex adapter\n"
@@ -90,6 +92,19 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
         "mcp remove --scope user ccdex-worker",
         "mcp remove --scope user ccdex-worker",
     ]
+    dry_run = subprocess.run(
+        [str(bin_dir / "cc")],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **env,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "CLAUDE_LB_DISABLE": "1",
+            "CLAUDE_LB_DRY_RUN": "1",
+        },
+    )
+    assert dry_run.stdout.strip() == "claude --model claude-opus-5 --effort high"
 
     subprocess.run([str(INSTALLER), "--uninstall"], check=True, env=env, capture_output=True, text=True)
     assert not (bin_dir / "cc").exists()
@@ -144,7 +159,8 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
     assert "agent-lb:coding-agent-routing" not in codex_text
 
     settings = json.loads(settings_path.read_text())
-    assert settings["model"] == "claude-fable-5"
+    assert settings["model"] == "claude-opus-5"
+    assert settings["effortLevel"] == "high"
     assert settings["env"] == {"KEEP": "yes"}
     assert settings["permissions"] == {"allow": ["keep-me"]}
     assert settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "keep-node-hook"
@@ -334,3 +350,120 @@ def test_policy_installer_uninstall_preserves_identical_unmanaged_designer(tmp_p
 
     assert f"preserved unmanaged {designer}" in result.stdout
     assert designer.read_bytes() == MANAGED_DESIGNER.read_bytes()
+
+
+def test_policy_installer_installs_planner_and_converges_idempotently(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    planner = home / ".claude" / "agents" / "planner.md"
+    owner = home / PLANNER_OWNER
+
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+    first_content = planner.read_bytes()
+    checkpoints = home / ".agent-lb" / "config-checkpoints" / "coding-agents"
+    first_checkpoints = sorted(checkpoints.iterdir())
+    second = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert first_content == MANAGED_PLANNER.read_bytes()
+    assert b"\nmodel: claude-planner\n" in first_content
+    assert b"\neffort: high\n" in first_content
+    assert planner.read_bytes() == first_content
+    assert owner.read_text() == "agent-lb:planner:v1\n"
+    assert sorted(checkpoints.iterdir()) == first_checkpoints
+    assert "already converged" in second.stdout
+
+    subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert not planner.exists()
+    assert not owner.exists()
+
+
+def test_policy_installer_previews_and_checkpoints_planner_replacement(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    agents = home / ".claude" / "agents"
+    planner = agents / "planner.md"
+    unrelated = agents / "keep-me.md"
+    agents.mkdir(parents=True)
+    original_planner = b"---\nname: planner\nmodel: fable\n---\n"
+    planner.write_bytes(original_planner)
+    unrelated.write_text("keep this agent\n")
+
+    preview = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--print"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"would converge managed routing configuration in {planner}" in preview.stdout
+    assert planner.read_bytes() == original_planner
+    assert unrelated.read_text() == "keep this agent\n"
+    assert not (home / ".agent-lb").exists()
+
+    installed = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    checkpoint = Path(
+        next(
+            line.removeprefix("checkpoint ")
+            for line in installed.stdout.splitlines()
+            if line.startswith("checkpoint ")
+        )
+    )
+
+    assert planner.read_bytes() == MANAGED_PLANNER.read_bytes()
+    assert (checkpoint / ".claude" / "agents" / "planner.md").read_bytes() == original_planner
+    assert unrelated.read_text() == "keep this agent\n"
+
+
+def test_policy_installer_uninstall_preserves_customized_planner(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    planner = home / ".claude" / "agents" / "planner.md"
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+    planner.write_text(planner.read_text() + "\nLocal customization.\n")
+    customized = planner.read_bytes()
+
+    preview = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--print", "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"would preserve customized {planner}" in preview.stdout
+    assert f"preserved customized {planner}" in result.stdout
+    assert planner.read_bytes() == customized
+
+
+def test_policy_installer_uninstall_preserves_identical_unmanaged_planner(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    planner = home / ".claude" / "agents" / "planner.md"
+    planner.parent.mkdir(parents=True)
+    planner.write_bytes(MANAGED_PLANNER.read_bytes())
+
+    result = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"preserved unmanaged {planner}" in result.stdout
+    assert planner.read_bytes() == MANAGED_PLANNER.read_bytes()

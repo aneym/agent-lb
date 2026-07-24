@@ -205,6 +205,7 @@ def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(mon
             status=200,
             headers={"content-type": "application/json"},
             read=body.read,
+            close=lambda: None,
         )
 
     monkeypatch.setattr(launcher.urllib.request, "urlopen", urlopen)
@@ -442,7 +443,7 @@ def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypa
     ]
 
 
-def test_regular_cc_defaults_to_fable_high(monkeypatch) -> None:
+def test_regular_cc_defaults_to_opus_5_high(monkeypatch) -> None:
     launcher = load_launcher_module()
     launcher.CCGPT_MODE = False
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
@@ -453,7 +454,7 @@ def test_regular_cc_defaults_to_fable_high(monkeypatch) -> None:
     assert command == [
         "claude",
         "--model",
-        "claude-fable-5",
+        "claude-opus-5",
         "--effort",
         "high",
         "-p",

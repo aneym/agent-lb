@@ -63,7 +63,7 @@ from pathlib import Path
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 CCGPT_MODEL = "gpt-5.6-sol"
-DEFAULT_CLAUDE_MODEL = "claude-fable-5"
+DEFAULT_CLAUDE_MODEL = "claude-opus-5"
 DEFAULT_CLAUDE_EFFORT = "high"
 HOP_BY_HOP_HEADERS = {
     "connection",
