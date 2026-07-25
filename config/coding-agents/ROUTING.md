@@ -45,6 +45,7 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
 | Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-opus-5`      | inherit high      |
 | Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
+| Plan reviewer          | `~/.claude/agents/plan-reviewer.md`     | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
 
 Explore moved sonnet → gpt-5.6-sol-medium (owner, 2026-07-15 evening):
 benchmarked 3/3 repo-exploration accuracy matching sonnet at 3.1x speed with
@@ -78,6 +79,18 @@ ride in their agent definitions, and the planner's definition orders it to
 read ROUTING.md as its first action; (c) teammate models bind from
 agent-registry frontmatter at spawn, so the registry is the control point —
 never RUN.md prose. One planner per lane; planners never spawn planners.
+
+The plan-reviewer seat (2026-07-25) is the second sanctioned Fable seat, on
+the same `claude-planner` alias as the planner: judging a plan is the same
+brain work as writing one, so it is capability-bound, not volume. It reviews
+plans/PRDs/specs before implementation dispatch — fact-checking every repo
+claim the plan makes against the actual codebase, then judging assumptions,
+acceptance criteria, decomposition (against the Fan-out doctrine below), and
+blast radius. It has no Edit/Write and never rewrites the plan; it returns a
+bounded verdict with `file:line` evidence, and the coordinator decides what
+changes. Findings without evidence do not count. Fact-checking the plan
+against the repo is the reason the seat exists: an internally coherent plan
+that is wrong about the codebase is the most expensive failure mode.
 
 Ad-hoc model switching outside these seats stays forbidden — no Codex-host
 dispatch, Composer, Gemini, or other model products as coding lanes, and no
@@ -122,6 +135,36 @@ seat slots is a lineup change, and lineup changes mean editing this file.
 
 Kimi accounts are pooled by agent-lb like any other provider (change
 `add-kimi-provider`); credentials live in the LB, never in the launcher env.
+
+## Fable driver mode (owner, 2026-07-25)
+
+`fable` is a driver-swap of the SAME harness and the SAME seat lineup, in the
+shape sanctioned for `kimi`. It runs Claude Code through agent-lb like `cc`
+(`clients/fable` execs `claude-lb-launch`, so LB probing, limit waiting, the
+banner, and session ids are identical); only the driver and the opus/fable
+default slots resolve to `claude-fable-5`. The sonnet, haiku, and subagent
+slots are deliberately left unset so Explore/implementer
+(`gpt-5.6-sol-medium`), verifier (`gpt-5.6-sol-xhigh`), and sonnet catch-alls
+keep resolving to their own pools through the LB. `AGENT_LB_FABLE_MODEL`
+overrides the driver model; an explicit `--model` still wins.
+
+Planning in this mode is Fable end to end without pinning anything new: the
+driver itself is Fable, Claude Code's built-in plan agent inherits the driver,
+and the planner and plan-reviewer seats already resolve Fable-first through
+`claude-planner`.
+
+This mode spends the scarce Claude pool by design — it is for sessions whose
+work IS brain work (architecture, spec/canon authoring, plan review), not a
+default. The hands-vs-brain contract does not relax inside it: volume work
+still goes to the sol seats, and seat-guard still denies expensive ad-hoc
+dispatches. A `fable` session that fans out to sol seats is the intended
+shape; one that reads forty files itself is the leak the pulse hook exists to
+catch.
+
+Never let this become a slot flattening. The retired `kimi` shape — one model
+across opus, sonnet, haiku, AND subagent — is exactly what destroys the
+lineup; a driver swap that also overrides the seat slots is a lineup change,
+and lineup changes mean editing this file.
 
 ## Fan-out doctrine (owner, 2026-07-17)
 
@@ -193,8 +236,10 @@ to a single implementer).
 ## Runtime enforcement
 
 - `clients/claude-lb-launch` defaults `cc` sessions to Opus 5/high.
-- `scripts/install-claude-clients.sh` installs this policy and the `cc`
-  client, and removes retired ccdex artifacts (clients, hook, MCP
+- `clients/fable` execs the same launcher with the driver and opus/fable
+  slots set to `claude-fable-5` and the seat slots untouched.
+- `scripts/install-claude-clients.sh` installs this policy and the `cc` and
+  `fable` clients, and removes retired ccdex artifacts (clients, hook, MCP
   registration) when it finds them.
 - `~/.claude/hooks/seat-guard.py` (global PreToolUse on Agent): denies
   expensive ad-hoc dispatches — explicit fable/opus overrides, or catch-all

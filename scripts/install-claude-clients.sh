@@ -25,16 +25,20 @@ case "${1:-}" in
   *) echo "usage: $0 [--print | --uninstall]" >&2; exit 2 ;;
 esac
 
-CLIENT_SOURCE="$REPO_DIR/clients/cc"
+# `cc` is the canonical Opus 5 driver; `fable` is the sanctioned driver-swap
+# (ROUTING.md, "Fable driver mode") that leaves the seat slots untouched.
+CLIENT_NAMES=(cc fable)
 POLICY_SOURCE="$REPO_DIR/config/coding-agents"
 POLICY_INSTALLER="$POLICY_SOURCE/install-policy.py"
 HOOK_TARGET="$USER_HOME/.claude/hooks/ccdex-gpt-only.sh"
 RETIRED_CLIENTS=(ccdex ccdex-worker-mcp)
 
-if [[ ! -x "$CLIENT_SOURCE" ]]; then
-  echo "error: $CLIENT_SOURCE is missing or not executable" >&2
-  exit 1
-fi
+for name in "${CLIENT_NAMES[@]}"; do
+  if [[ ! -x "$REPO_DIR/clients/$name" ]]; then
+    echo "error: $REPO_DIR/clients/$name is missing or not executable" >&2
+    exit 1
+  fi
+done
 if [[ ! -f "$POLICY_SOURCE/ROUTING.md" || ! -x "$POLICY_SOURCE/verify-routing" || ! -x "$POLICY_INSTALLER" ]]; then
   echo "error: canonical coding-agent policy is incomplete at $POLICY_SOURCE" >&2
   exit 1
@@ -56,7 +60,9 @@ remove_retired_artifacts() {
 }
 
 if [[ "$MODE" == "print" ]]; then
-  echo "link $BIN_DIR/cc -> $CLIENT_SOURCE"
+  for name in "${CLIENT_NAMES[@]}"; do
+    echo "link $BIN_DIR/$name -> $REPO_DIR/clients/$name"
+  done
   echo "link $POLICY_DIR/coding-agents -> $POLICY_SOURCE"
   "$POLICY_INSTALLER" --home "$USER_HOME" --print
   echo "remove retired ccdex artifacts (clients, hook, MCP registration)"
@@ -65,11 +71,13 @@ fi
 
 if [[ "$MODE" == "uninstall" ]]; then
   "$POLICY_INSTALLER" --home "$USER_HOME" --uninstall
-  target="$BIN_DIR/cc"
-  if [[ -L "$target" && "$(readlink "$target")" == "$CLIENT_SOURCE" ]]; then
-    rm "$target"
-    echo "removed $target"
-  fi
+  for name in "${CLIENT_NAMES[@]}"; do
+    target="$BIN_DIR/$name"
+    if [[ -L "$target" && "$(readlink "$target")" == "$REPO_DIR/clients/$name" ]]; then
+      rm "$target"
+      echo "removed $target"
+    fi
+  done
   policy_target="$POLICY_DIR/coding-agents"
   if [[ -L "$policy_target" && "$(readlink "$policy_target")" == "$POLICY_SOURCE" ]]; then
     rm "$policy_target"
@@ -82,19 +90,22 @@ fi
 "$POLICY_INSTALLER" --home "$USER_HOME"
 
 mkdir -p "$BIN_DIR"
-target="$BIN_DIR/cc"
-if [[ -e "$target" && ! -L "$target" ]]; then
-  backup="$target.pre-agent-lb"
-  if [[ ! -e "$backup" ]]; then
-    mv "$target" "$backup"
-    echo "preserved existing $target at $backup"
-  else
-    echo "error: refusing to replace $target; backup already exists at $backup" >&2
-    exit 1
+for name in "${CLIENT_NAMES[@]}"; do
+  client_source="$REPO_DIR/clients/$name"
+  target="$BIN_DIR/$name"
+  if [[ -e "$target" && ! -L "$target" ]]; then
+    backup="$target.pre-agent-lb"
+    if [[ ! -e "$backup" ]]; then
+      mv "$target" "$backup"
+      echo "preserved existing $target at $backup"
+    else
+      echo "error: refusing to replace $target; backup already exists at $backup" >&2
+      exit 1
+    fi
   fi
-fi
-ln -sfn "$CLIENT_SOURCE" "$target"
-echo "linked $target -> $CLIENT_SOURCE"
+  ln -sfn "$client_source" "$target"
+  echo "linked $target -> $client_source"
+done
 
 mkdir -p "$POLICY_DIR"
 policy_target="$POLICY_DIR/coding-agents"

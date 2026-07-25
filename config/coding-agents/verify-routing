@@ -79,7 +79,58 @@ check(
     f"{planner_owner_path} records installer ownership",
 )
 
+reviewer_source = REPO / "config" / "coding-agents" / "agents" / "plan-reviewer.md"
+reviewer_path = HOME / ".claude" / "agents" / "plan-reviewer.md"
+reviewer_owner_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "plan-reviewer"
+reviewer_source_text = reviewer_source.read_text() if reviewer_source.is_file() else ""
+reviewer_text = reviewer_path.read_text() if reviewer_path.is_file() else ""
+check(reviewer_source.is_file(), f"canonical plan reviewer exists at {reviewer_source}")
+check(
+    "\nmodel: claude-planner\n" in reviewer_source_text,
+    "canonical plan reviewer selects the planner route alias",
+)
+check("\neffort: high\n" in reviewer_source_text, "canonical plan reviewer pins high effort")
+check(
+    "disallowedTools: [Write, Edit]" in reviewer_source_text,
+    "canonical plan reviewer cannot write",
+)
+check(
+    reviewer_path.is_file() and reviewer_text == reviewer_source_text,
+    f"{reviewer_path} matches the canonical Fable-primary plan reviewer definition",
+)
+check(
+    reviewer_owner_path.is_file()
+    and reviewer_owner_path.read_text() == "agent-lb:plan-reviewer:v1\n",
+    f"{reviewer_owner_path} records installer ownership",
+)
+
+fable_client = REPO / "clients" / "fable"
+fable_text = fable_client.read_text() if fable_client.is_file() else ""
+check(os.access(fable_client, os.X_OK), f"{fable_client} is executable")
+check(
+    'DEFAULT_DRIVER_MODEL = "claude-fable-5"' in fable_text,
+    "fable driver mode targets claude-fable-5",
+)
+for slot in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"):
+    check(f'"{slot}"' in fable_text, f"fable driver mode swaps {slot}")
+for slot in (
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+):
+    check(
+        f'os.environ[{slot!r}]' not in fable_text and f'os.environ["{slot}"] =' not in fable_text,
+        f"fable driver mode leaves {slot} to the canonical seats",
+    )
+check(
+    'launcher = Path(__file__).resolve().with_name("claude-lb-launch")' in fable_text,
+    "fable driver mode runs through the canonical launcher",
+)
+installer_text = (REPO / "scripts" / "install-claude-clients.sh").read_text()
+check("CLIENT_NAMES=(cc fable)" in installer_text, "client installer installs cc and fable")
+
 routing_text = CANONICAL.read_text() if CANONICAL.is_file() else ""
+check("## Fable driver mode" in routing_text, "canonical policy documents Fable driver mode")
 for seat, model, effort in (
     ("Driver (main loop)", "claude-opus-5", "high"),
     ("Explore / scouts", "gpt-5.6-sol-medium", "medium, fast tier"),
@@ -87,6 +138,7 @@ for seat, model, effort in (
     ("Verifier (adversarial)", "gpt-5.6-sol-xhigh", "xhigh, fast tier"),
     ("Frontend designer", "claude-opus-5", "inherit high"),
     ("Planner (lane lead)", "claude-planner", "high"),
+    ("Plan reviewer", "claude-planner", "high"),
 ):
     matching_rows = [line for line in routing_text.splitlines() if f"| {seat}" in line]
     check(

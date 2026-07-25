@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""fable: the canonical `cc` harness with the driver swapped to Fable 5.
+
+Driver-swap only (ROUTING.md, "Fable driver mode"). The driver and the
+opus/fable default slots resolve to Fable; the sonnet, haiku, and subagent
+slots are deliberately left untouched so the canonical seats keep resolving
+through the LB — Explore/implementer on `gpt-5.6-sol-medium`, verifier on
+`gpt-5.6-sol-xhigh`, catch-alls on sonnet/haiku.
+
+Flattening every model slot to one driver model is the mistake the old `kimi`
+function made: it silently destroyed the seat lineup. A provider or driver
+swap that also overrides the seat slots is a lineup change, and lineup
+changes mean editing ROUTING.md.
+
+An explicit `--model`/`-m` argument still wins: the launcher forwards it and
+Claude Code prefers the flag over the environment.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+DRIVER_MODEL_ENV = "AGENT_LB_FABLE_MODEL"
+DEFAULT_DRIVER_MODEL = "claude-fable-5"
+# Slots the driver swap owns.
+DRIVER_SLOTS = (
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+)
+# Slots this client must never write: the canonical seats live here.
+SEAT_SLOTS = (
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+)
+
+
+def main() -> None:
+    if shutil.which("claude") is None:
+        print("fable: Claude Code executable 'claude' was not found on PATH", file=sys.stderr)
+        raise SystemExit(127)
+    model = os.environ.get(DRIVER_MODEL_ENV) or DEFAULT_DRIVER_MODEL
+    for slot in DRIVER_SLOTS:
+        os.environ[slot] = model
+    launcher = Path(__file__).resolve().with_name("claude-lb-launch")
+    os.execv(launcher, [str(launcher), *sys.argv[1:]])
+
+
+if __name__ == "__main__":
+    main()

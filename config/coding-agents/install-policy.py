@@ -28,6 +28,12 @@ MANAGED_AGENTS = (
         "agent-lb:planner:v1\n",
         Path("agents/planner.md"),
     ),
+    (
+        Path(".claude/agents/plan-reviewer.md"),
+        Path(".agent-lb/managed/coding-agents/plan-reviewer"),
+        "agent-lb:plan-reviewer:v1\n",
+        Path("agents/plan-reviewer.md"),
+    ),
 )
 LEGACY_HEADINGS = (
     "Coding-agent routing",
