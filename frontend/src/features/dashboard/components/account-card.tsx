@@ -6,6 +6,7 @@ import { MonoMeter } from "@/components/ui/mono-meter";
 import { StatusGlyph } from "@/components/ui/status-glyph";
 import { cn } from "@/lib/utils";
 import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
+import { getFableQuota } from "@/features/accounts/fable";
 import type { AccountSummary } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { normalizeStatus } from "@/utils/account-status";
@@ -92,6 +93,11 @@ export function AccountCard({
     account.resetAtSecondary ?? null,
   );
   const monthlyReset = formatQuotaResetLabel(account.resetAtMonthly ?? null);
+  const isAnthropic = (account.provider ?? "openai") === "anthropic";
+  const fable = monthlyOnly ? null : getFableQuota(account);
+  const quotaColumns = monthlyOnly
+    ? 1
+    : Number(!weeklyOnly) + 1 + Number(fable !== null);
 
   const title = account.displayName || account.email;
   const compactId = formatCompactAccountId(account.accountId);
@@ -148,7 +154,11 @@ export function AccountCard({
       <div
         className={cn(
           "mt-3.5 grid gap-3",
-          weeklyOnly || monthlyOnly ? "grid-cols-1" : "grid-cols-2",
+          quotaColumns > 2
+            ? "grid-cols-3"
+            : quotaColumns > 1
+              ? "grid-cols-2"
+              : "grid-cols-1",
         )}
       >
         {monthlyOnly ? (
@@ -161,7 +171,7 @@ export function AccountCard({
           <>
             {!weeklyOnly && (
               <QuotaBar
-                label="5h"
+                label={isAnthropic ? "Session" : "5h"}
                 percent={primaryRemaining}
                 resetLabel={primaryReset}
               />
@@ -171,6 +181,13 @@ export function AccountCard({
               percent={secondaryRemaining}
               resetLabel={secondaryReset}
             />
+            {fable ? (
+              <QuotaBar
+                label={fable.eligible === false ? "Fable · out" : "Fable"}
+                percent={fable.remainingPercent}
+                resetLabel={formatQuotaResetLabel(fable.resetAtIso)}
+              />
+            ) : null}
           </>
         )}
       </div>

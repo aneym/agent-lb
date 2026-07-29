@@ -2,8 +2,23 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountListItem } from "@/features/accounts/components/account-list-item";
+import { FABLE_SCOPED_WEEKLY_QUOTA_KEY } from "@/features/accounts/fable";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { createAccountSummary } from "@/test/mocks/factories";
+
+const FABLE_QUOTA_ENTRY = {
+  quotaKey: FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+  limitName: FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+  meteredFeature: FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+  displayLabel: "Fable weekly (scoped)",
+  routingPolicy: "inherit" as const,
+  primaryWindow: {
+    usedPercent: 38,
+    resetAt: 1_785_704_400,
+    windowMinutes: 10_080,
+  },
+  secondaryWindow: null,
+};
 
 describe("AccountListItem", () => {
   beforeEach(() => {
@@ -311,5 +326,34 @@ describe("AccountListItem", () => {
             "work@example.com · Team · Design Workspace / Member",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows a Fable meter for anthropic accounts reporting the scoped limit", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      fableEligible: true,
+      additionalQuotas: [FABLE_QUOTA_ENTRY],
+    });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Fable")).toBeInTheDocument();
+    expect(screen.getByText("Session")).toBeInTheDocument();
+    expect(screen.getByText("Week")).toBeInTheDocument();
+  });
+
+  it("shows no Fable meter for openai accounts", () => {
+    const account = createAccountSummary({
+      provider: "openai",
+      additionalQuotas: [FABLE_QUOTA_ENTRY],
+    });
+
+    render(
+      <AccountListItem account={account} selected={false} onSelect={vi.fn()} />,
+    );
+
+    expect(screen.queryByText("Fable")).not.toBeInTheDocument();
   });
 });

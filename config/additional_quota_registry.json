@@ -47,5 +47,12 @@
     "routing_policy": "normal",
     "applies_to_plans": ["glm-coding"],
     "limit_name_aliases": ["glm_coding_thinking"]
+  },
+  {
+    "quota_key": "anthropic_fable_scoped_weekly",
+    "display_label": "Fable weekly (scoped)",
+    "routing_policy": "inherit",
+    "limit_name_aliases": ["anthropic_fable_scoped_weekly"],
+    "metered_feature_aliases": ["anthropic_fable_scoped_weekly"]
   }
 ]

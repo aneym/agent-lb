@@ -119,6 +119,7 @@ export const AccountSummarySchema = z.object({
   auth: AccountAuthSchema.nullable().optional(),
   subscription: AccountSubscriptionLedgerSchema.nullable().optional(),
   additionalQuotas: z.array(AccountAdditionalQuotaSchema).default([]),
+  fableEligible: z.boolean().nullable().optional(),
   limitWarmupEnabled: z.boolean().default(false),
   limitWarmup: AccountLimitWarmupStatusSchema.nullable().optional(),
   isEmailDuplicate: z.boolean().optional(),

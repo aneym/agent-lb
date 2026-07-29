@@ -97,4 +97,39 @@ describe("AccountCard", () => {
     expect(screen.getByText("Re-auth required")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Re-auth" })).toBeInTheDocument();
   });
+
+  it("renders Session, Weekly, and Fable bars for anthropic accounts with the scoped limit", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      fableEligible: true,
+      additionalQuotas: [
+        {
+          quotaKey: "anthropic_fable_scoped_weekly",
+          limitName: "anthropic_fable_scoped_weekly",
+          meteredFeature: "anthropic_fable_scoped_weekly",
+          displayLabel: "Fable weekly (scoped)",
+          routingPolicy: "inherit",
+          primaryWindow: {
+            usedPercent: 38,
+            resetAt: 1_785_704_400,
+            windowMinutes: 10_080,
+          },
+          secondaryWindow: null,
+        },
+      ],
+    });
+    render(<AccountCard account={account} />);
+
+    expect(screen.getByText("Session")).toBeInTheDocument();
+    expect(screen.getByText("Weekly")).toBeInTheDocument();
+    expect(screen.getByText("Fable")).toBeInTheDocument();
+    expect(screen.queryByText("5h")).not.toBeInTheDocument();
+  });
+
+  it("renders no Fable bar for openai accounts", () => {
+    const account = createAccountSummary({ provider: "openai" });
+    render(<AccountCard account={account} />);
+
+    expect(screen.queryByText("Fable")).not.toBeInTheDocument();
+  });
 });

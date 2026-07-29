@@ -1,4 +1,8 @@
 import { MonoMeter } from "@/components/ui/mono-meter";
+import {
+  FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+  getFableQuota,
+} from "@/features/accounts/fable";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import {
   formatCompactNumber,
@@ -120,17 +124,29 @@ export function AccountUsagePanel({ account }: AccountUsagePanelProps) {
     : monthlyOnly
       ? "Monthly"
       : "Weekly";
+  // The Fable-scoped weekly limit is a first-class window: promoted into the
+  // main usage grid, and deduped from the generic additional-quotas list.
+  const fable = monthlyOnly ? null : getFableQuota(account);
+  const additionalQuotas = account.additionalQuotas.filter(
+    (quota) => fable === null || quota.quotaKey !== FABLE_SCOPED_WEEKLY_QUOTA_KEY,
+  );
+  const usageColumns =
+    Number(monthlyOnly || (!weeklyOnly && hasPrimaryWindow)) +
+    Number(!monthlyOnly && hasSecondaryWindow) +
+    Number(fable !== null);
 
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-medium">Usage</h3>
 
-      {(hasPrimaryWindow || hasSecondaryWindow || monthlyOnly) && (
+      {(hasPrimaryWindow || hasSecondaryWindow || monthlyOnly || fable) && (
         <div
           className={
-            weeklyOnly || monthlyOnly
-              ? "grid grid-cols-1 gap-4"
-              : "grid grid-cols-2 gap-4"
+            usageColumns > 2
+              ? "grid grid-cols-3 gap-4"
+              : usageColumns > 1
+                ? "grid grid-cols-2 gap-4"
+                : "grid grid-cols-1 gap-4"
           }
         >
           {monthlyOnly ? (
@@ -153,6 +169,13 @@ export function AccountUsagePanel({ account }: AccountUsagePanelProps) {
                   label={secondaryLabel}
                   percent={secondary}
                   resetAt={account.resetAtSecondary}
+                />
+              ) : null}
+              {fable ? (
+                <QuotaRow
+                  label={fable.eligible === false ? "Fable · out" : "Fable"}
+                  percent={fable.remainingPercent}
+                  resetAt={fable.resetAtIso}
                 />
               ) : null}
             </>
@@ -178,12 +201,12 @@ export function AccountUsagePanel({ account }: AccountUsagePanelProps) {
         )}
       </div>
 
-      {account.additionalQuotas.length > 0 ? (
+      {additionalQuotas.length > 0 ? (
         <div className="space-y-3 border-t pt-3">
           <p className="text-xs font-medium text-muted-foreground">
             Additional quotas
           </p>
-          {account.additionalQuotas.map((quota) => (
+          {additionalQuotas.map((quota) => (
             <div key={quota.quotaKey ?? quota.limitName} className="space-y-2">
               <p className="text-xs font-medium">
                 {quota.displayLabel ??

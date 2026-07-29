@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAccountQuotaDisplayStore } from "@/hooks/use-account-quota-display";
 import { OwnerInstanceBadge } from "@/features/accounts/components/owner-instance-badge";
+import { getFableQuota } from "@/features/accounts/fable";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
 import { formatQuotaResetLabel, formatSlug } from "@/utils/formatters";
@@ -85,8 +86,13 @@ export function AccountListItem({
     !monthlyOnly &&
     hasSecondaryWindow &&
     (quotaDisplay !== "5h" || !hasPrimaryWindow);
+  const fable = getFableQuota(account);
+  const showFableRow = !monthlyOnly && fable !== null;
   const visibleMeters =
-    Number(showPrimaryRow) + Number(showSecondaryRow) + Number(monthlyOnly);
+    Number(showPrimaryRow) +
+    Number(showSecondaryRow) +
+    Number(showFableRow) +
+    Number(monthlyOnly);
 
   return (
     <button
@@ -149,7 +155,11 @@ export function AccountListItem({
         <div
           className={cn(
             "mt-2 grid gap-3",
-            visibleMeters > 1 ? "grid-cols-2" : "grid-cols-1",
+            visibleMeters > 2
+              ? "grid-cols-3"
+              : visibleMeters > 1
+                ? "grid-cols-2"
+                : "grid-cols-1",
           )}
         >
           {monthlyOnly ? (
@@ -172,6 +182,13 @@ export function AccountListItem({
                   label={isAnthropic ? "Week" : "Weekly"}
                   percent={secondary}
                   resetAt={account.resetAtSecondary}
+                />
+              ) : null}
+              {showFableRow && fable ? (
+                <RowMeter
+                  label="Fable"
+                  percent={fable.remainingPercent}
+                  resetAt={fable.resetAtIso}
                 />
               ) : null}
             </>

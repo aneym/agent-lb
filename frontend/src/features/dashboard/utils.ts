@@ -4,9 +4,11 @@ import {
   Coins,
   DollarSign,
   Flame,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 
+import { getFableQuota } from "@/features/accounts/fable";
 import type { AccountProvider } from "@/features/accounts/schemas";
 import type {
   AccountSummary,
@@ -18,6 +20,7 @@ import type {
   UsageWindow,
 } from "@/features/dashboard/schemas";
 import { formatCompactAccountId } from "@/utils/account-identifiers";
+import { normalizeStatus } from "@/utils/account-status";
 import {
   formatCachedTokensMeta,
   formatCompactNumber,
@@ -952,6 +955,50 @@ export function buildWeeklyCreditPace(
   };
 }
 
+export type FablePoolRunway = {
+  meanRemainingPercent: number;
+  accountCount: number;
+  eligibleCount: number;
+};
+
+/**
+ * Pool-level Fable runway: mean Fable-scoped weekly remaining % across
+ * routable Anthropic accounts reporting the scoped window (menubar parity).
+ * Exhausted-but-routable accounts stay in the denominator — their capacity
+ * is gone until reset, so dropping them would overstate what's left.
+ */
+export function fablePoolRunway(
+  accounts: AccountSummary[],
+): FablePoolRunway | null {
+  const withFable = accounts
+    .filter((account) => {
+      const status = normalizeStatus(account.status);
+      return (
+        status !== "paused" && status !== "deactivated" && status !== "reauth"
+      );
+    })
+    .map((account) => ({
+      quota: getFableQuota(account),
+    }))
+    .filter(
+      (entry): entry is { quota: NonNullable<typeof entry.quota> } =>
+        entry.quota !== null,
+    );
+  if (withFable.length === 0) return null;
+  const total = withFable.reduce(
+    (sum, entry) => sum + entry.quota.remainingPercent,
+    0,
+  );
+  const eligibleCount = withFable.filter(
+    (entry) => entry.quota.eligible !== false,
+  ).length;
+  return {
+    meanRemainingPercent: total / withFable.length,
+    accountCount: withFable.length,
+    eligibleCount,
+  };
+}
+
 export function buildDashboardView(
   overview: DashboardOverview,
   requestLogs: RequestLog[],
@@ -1037,6 +1084,18 @@ export function buildDashboardView(
       meta: `Projected account-equivalents: ${formatBurnEquivalent(primaryBurnEquivalent)}/${primaryBurnLabel} · ${formatBurnEquivalent(secondaryBurnEquivalent)}/${secondaryBurnLabel}`,
       icon: Flame,
       trend: buildBurnTrend(trends.tokens, combinedBurnEquivalent),
+      trendColor: SPARKLINE_INK,
+    });
+  }
+
+  const fableRunway = fablePoolRunway(overview.accounts);
+  if (fableRunway !== null) {
+    stats.push({
+      label: "Fable runway (weekly scoped)",
+      value: `${Math.round(fableRunway.meanRemainingPercent)}%`,
+      meta: `${fableRunway.eligibleCount}/${fableRunway.accountCount} accounts Fable-eligible`,
+      icon: Gauge,
+      trend: [],
       trendColor: SPARKLINE_INK,
     });
   }

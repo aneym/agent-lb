@@ -8,6 +8,7 @@ import {
   buildDepletionView,
   buildRemainingItems,
   buildWeeklyCreditPace,
+  fablePoolRunway,
   filterOverviewByProvider,
   sumRemaining,
   weeklyCreditPaceStatus,
@@ -1338,5 +1339,85 @@ describe("buildDashboardView provider scoping", () => {
     });
 
     expect(view.stats.map((stat) => stat.label)).toContain("Requests (7d)");
+  });
+});
+
+describe("fablePoolRunway", () => {
+  function fableAccount(
+    accountId: string,
+    usedPercent: number,
+    overrides: Partial<AccountSummary> = {},
+  ): AccountSummary {
+    return createAccountSummary({
+      accountId,
+      email: `${accountId}@example.com`,
+      provider: "anthropic",
+      fableEligible: true,
+      additionalQuotas: [
+        {
+          quotaKey: "anthropic_fable_scoped_weekly",
+          limitName: "anthropic_fable_scoped_weekly",
+          meteredFeature: "anthropic_fable_scoped_weekly",
+          displayLabel: "Fable weekly (scoped)",
+          routingPolicy: "inherit",
+          primaryWindow: {
+            usedPercent,
+            resetAt: 1_785_704_400,
+            windowMinutes: 10_080,
+          },
+          secondaryWindow: null,
+        },
+      ],
+      ...overrides,
+    });
+  }
+
+  it("averages remaining percent across routable anthropic reporters", () => {
+    const runway = fablePoolRunway([
+      fableAccount("acc_a", 38),
+      fableAccount("acc_b", 60),
+      createAccountSummary({ accountId: "acc_codex", provider: "openai" }),
+    ]);
+
+    expect(runway).not.toBeNull();
+    expect(runway?.meanRemainingPercent).toBeCloseTo(51);
+    expect(runway?.accountCount).toBe(2);
+    expect(runway?.eligibleCount).toBe(2);
+  });
+
+  it("keeps exhausted-but-routable accounts in the denominator", () => {
+    const runway = fablePoolRunway([
+      fableAccount("acc_a", 0),
+      fableAccount("acc_out", 100, { fableEligible: false }),
+    ]);
+
+    expect(runway?.meanRemainingPercent).toBeCloseTo(50);
+    expect(runway?.accountCount).toBe(2);
+    expect(runway?.eligibleCount).toBe(1);
+  });
+
+  it("excludes paused, deactivated, and reauth accounts", () => {
+    const runway = fablePoolRunway([
+      fableAccount("acc_a", 20),
+      fableAccount("acc_paused", 0, { status: "paused" }),
+      fableAccount("acc_dead", 0, { status: "deactivated" }),
+      fableAccount("acc_reauth", 0, { status: "reauth_required" }),
+    ]);
+
+    expect(runway?.meanRemainingPercent).toBeCloseTo(80);
+    expect(runway?.accountCount).toBe(1);
+  });
+
+  it("returns null when no account reports the scoped window", () => {
+    expect(
+      fablePoolRunway([
+        createAccountSummary({ accountId: "acc_codex", provider: "openai" }),
+        createAccountSummary({
+          accountId: "acc_claude",
+          provider: "anthropic",
+          additionalQuotas: [],
+        }),
+      ]),
+    ).toBeNull();
   });
 });

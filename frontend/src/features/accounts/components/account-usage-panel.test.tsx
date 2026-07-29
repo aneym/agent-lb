@@ -156,4 +156,59 @@ describe("AccountUsagePanel", () => {
     expect(screen.queryByText("5h remaining")).not.toBeInTheDocument();
     expect(screen.queryByText("Weekly remaining")).not.toBeInTheDocument();
   });
+
+  it("promotes the Fable scoped weekly into the usage grid without duplicating it", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      fableEligible: true,
+      additionalQuotas: [
+        {
+          quotaKey: "anthropic_fable_scoped_weekly",
+          limitName: "anthropic_fable_scoped_weekly",
+          meteredFeature: "anthropic_fable_scoped_weekly",
+          displayLabel: "Fable weekly (scoped)",
+          routingPolicy: "inherit",
+          primaryWindow: {
+            usedPercent: 38,
+            resetAt: 1_785_704_400,
+            windowMinutes: 10_080,
+          },
+          secondaryWindow: null,
+        },
+      ],
+    });
+
+    render(<AccountUsagePanel account={account} />);
+
+    expect(screen.getByText("Fable remaining")).toBeInTheDocument();
+    // Promoted out of the generic list: no "Additional quotas" section left.
+    expect(screen.queryByText("Additional quotas")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fable weekly (scoped)")).not.toBeInTheDocument();
+  });
+
+  it("labels the Fable row as out when the account is not Fable-eligible", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      fableEligible: false,
+      additionalQuotas: [
+        {
+          quotaKey: "anthropic_fable_scoped_weekly",
+          limitName: "anthropic_fable_scoped_weekly",
+          meteredFeature: "anthropic_fable_scoped_weekly",
+          displayLabel: "Fable weekly (scoped)",
+          routingPolicy: "inherit",
+          primaryWindow: {
+            usedPercent: 100,
+            resetAt: null,
+            windowMinutes: 10_080,
+          },
+          secondaryWindow: null,
+        },
+      ],
+    });
+
+    render(<AccountUsagePanel account={account} />);
+
+    expect(screen.getByText("Fable · out remaining")).toBeInTheDocument();
+  });
 });
