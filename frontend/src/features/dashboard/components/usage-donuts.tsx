@@ -12,6 +12,8 @@ export type UsageDonutsProps = {
 	secondaryCenterValue?: number;
 	safeLinePrimary?: SafeLineView | null;
 	safeLineSecondary?: SafeLineView | null;
+	/** Codex has no 5h window (OpenAI removed it) — hide the primary donut. */
+	showPrimary?: boolean;
 };
 
 export function UsageDonuts({
@@ -23,6 +25,7 @@ export function UsageDonuts({
 	secondaryCenterValue,
 	safeLinePrimary,
 	safeLineSecondary,
+	showPrimary = true,
 }: UsageDonutsProps) {
 	const primaryChartItems = useMemo(
 		() =>
@@ -50,15 +53,21 @@ export function UsageDonuts({
 	);
 
 	return (
-		<div className="grid gap-4 lg:grid-cols-2">
-			<DonutChart
-				title="5-Hour Credits"
-				items={primaryChartItems}
-				total={primaryTotal}
-				centerValue={primaryCenterValue}
-				safeLine={safeLinePrimary}
-				centerLayout="credits"
-			/>
+		<div
+			className={
+				showPrimary ? "grid gap-4 lg:grid-cols-2" : "grid gap-4 grid-cols-1"
+			}
+		>
+			{showPrimary ? (
+				<DonutChart
+					title="5-Hour Credits"
+					items={primaryChartItems}
+					total={primaryTotal}
+					centerValue={primaryCenterValue}
+					safeLine={safeLinePrimary}
+					centerLayout="credits"
+				/>
+			) : null}
 			<DonutChart
 				title="Weekly Credits"
 				items={secondaryChartItems}

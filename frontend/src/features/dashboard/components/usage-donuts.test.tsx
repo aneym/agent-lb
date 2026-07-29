@@ -42,6 +42,21 @@ describe("UsageDonuts", () => {
     expect(screen.getAllByText("Credits").length).toBeGreaterThanOrEqual(2);
   });
 
+  it("hides the 5-hour donut when showPrimary is false (codex scope)", () => {
+    render(
+      <UsageDonuts
+        primaryItems={[]}
+        secondaryItems={[item({ accountId: "acc-2", label: "secondary@example.com", value: 80, remainingPercent: 40, color: "var(--chart-2)" })]}
+        primaryTotal={0}
+        secondaryTotal={200}
+        showPrimary={false}
+      />,
+    );
+
+    expect(screen.queryByText("5-Hour Credits")).not.toBeInTheDocument();
+    expect(screen.getByText("Weekly Credits")).toBeInTheDocument();
+  });
+
   it("renders safe line only for the primary donut", () => {
     render(
       <UsageDonuts

@@ -310,13 +310,15 @@ def _resolve_window_minutes(window: str, values: set[int]) -> int | None:
 
 
 def parse_usage_summary(
-    primary_window: UsageWindowSummary,
+    primary_window: UsageWindowSummary | None,
     secondary_window: UsageWindowSummary | None,
     monthly_window: UsageWindowSummary | None,
     cost: UsageCostSummary,
     metrics: UsageMetricsSummary | None = None,
 ) -> UsageSummaryPayload:
-    primary = normalize_usage_window(primary_window)
+    primary = None
+    if primary_window is not None:
+        primary = normalize_usage_window(primary_window)
     secondary = None
     if secondary_window is not None:
         secondary = normalize_usage_window(secondary_window)

@@ -17,6 +17,9 @@ struct PoolSection: View {
   let retry: () -> Void
 
   private var isScoped: Bool { scope != .all }
+  var displayedWindows: [ProviderScope.Window] {
+    scope == .openai ? [.secondary] : [.primary, .secondary]
+  }
 
   // Heights are enforced per PanelMetrics so PanelLayout stays exact:
   // label 14, cards 128, metric lines 14 (spacing 8/3).
@@ -40,15 +43,17 @@ struct PoolSection: View {
     let now = Date.now
     let headlineAccountCount = scopedAccounts.filter { $0.isHeadlineCountable }.count
     return HStack(alignment: .top, spacing: 10) {
-      WindowCard(
-        title: "5-HOUR LIMIT",
-        accountCount: headlineAccountCount,
-        window: primaryWindow(now: now),
-        recoveredCredits: recovered(.primary, now: now),
-        schedule: scheduleTooltip(.primary, now: now),
-        // §9.2 honesty: projections are pool-global — hide risk when scoped.
-        status: isScoped ? nil : riskStatus
-      )
+      if displayedWindows.contains(.primary) {
+        WindowCard(
+          title: "5-HOUR LIMIT",
+          accountCount: headlineAccountCount,
+          window: primaryWindow(now: now),
+          recoveredCredits: recovered(.primary, now: now),
+          schedule: scheduleTooltip(.primary, now: now),
+          // §9.2 honesty: projections are pool-global — hide risk when scoped.
+          status: isScoped ? nil : riskStatus
+        )
+      }
       WindowCard(
         title: secondaryTitle,
         accountCount: headlineAccountCount,

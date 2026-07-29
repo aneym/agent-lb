@@ -223,6 +223,17 @@ def test_account_to_summary_exposes_cached_reset_credits_for_openai_only() -> No
         reset_credit_cache.reset()
 
 
+def test_account_to_summary_openai_without_primary_usage_has_no_primary_gauge() -> None:
+    # OpenAI removed the codex 5h limit: no primary usage must not default to
+    # a full 100% primary gauge for openai accounts.
+    encryptor = TokenEncryptor()
+    openai = _account(AccountStatus.ACTIVE)
+    openai.provider = "openai"
+    summary = mappers._account_to_summary(openai, None, None, None, None, None, None, encryptor, include_auth=False)
+    assert summary.usage.primary_remaining_percent is None
+    assert summary.usage.secondary_remaining_percent is None
+
+
 def test_normalize_account_routing_policy() -> None:
     assert _normalize_account_routing_policy("normal") == "normal"
     assert _normalize_account_routing_policy("burn_first") == "burn_first"

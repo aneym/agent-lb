@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core import usage as usage_core
+from app.core.providers import OPENAI_PROVIDER_NAME
 from app.core.usage.logs import cached_input_tokens_from_log, cost_from_log, total_tokens_from_log
 from app.core.usage.types import (
     BucketModelAggregate,
@@ -203,7 +204,10 @@ def build_usage_summary_response(
     cost_override: UsageCostSummary | None = None,
 ) -> UsageSummaryResponse:
     account_map = {account.id: account for account in accounts}
-    primary_window = usage_core.summarize_usage_window(primary_rows, account_map, "primary")
+    # OpenAI removed the codex 5h limit (2026-07): a codex-only scope has no
+    # primary window at all, so report null instead of an empty 0% snapshot.
+    codex_only = bool(accounts) and all(account.provider.lower() == OPENAI_PROVIDER_NAME for account in accounts)
+    primary_window = None if codex_only else usage_core.summarize_usage_window(primary_rows, account_map, "primary")
     secondary_window = usage_core.summarize_usage_window(secondary_rows, account_map, "secondary")
     monthly_window = usage_core.summarize_usage_window(monthly_rows, account_map, "monthly") if monthly_rows else None
 
@@ -350,7 +354,7 @@ def _top_error_code(logs: list[RequestLog]) -> str | None:
 
 def _summary_payload_to_response(payload: UsageSummaryPayload) -> UsageSummaryResponse:
     return UsageSummaryResponse(
-        primary_window=build_usage_window_summary_model(payload.primary_window),
+        primary_window=(build_usage_window_summary_model(payload.primary_window) if payload.primary_window else None),
         secondary_window=(
             build_usage_window_summary_model(payload.secondary_window) if payload.secondary_window else None
         ),

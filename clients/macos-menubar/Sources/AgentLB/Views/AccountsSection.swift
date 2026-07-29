@@ -231,10 +231,9 @@ struct AccountsSection: View {
   }
 }
 
-// §9.3 account row (52 pt): 20 pt 5-hour ring gauge with the status glyph
-// in its center (paused/deactivated only); line 2 is a two-column grid —
-// one self-contained labeled cell per window:
-//   5H  [meter] 62% · 0:15   |   WK  [meter] 51% · 23h
+// §9.3 account row (52 pt): 20 pt active-window ring gauge with the status
+// glyph in its center (paused/deactivated only); line 2 has one self-contained
+// labeled cell per displayed window.
 struct AccountRow: View {
   @Environment(AppState.self) private var appState
   @Environment(\.privacyMask) private var privacyMask
@@ -309,6 +308,14 @@ struct AccountRow: View {
     return false
   }
 
+  private var isCodex: Bool { account.provider.lowercased() == "openai" }
+
+  private var ringPercent: Double? {
+    isCodex
+      ? account.usage.secondaryRemainingPercent
+      : account.usage.primaryRemainingPercent
+  }
+
   @ViewBuilder
   private var leadingRing: some View {
     if pendingAction {
@@ -317,7 +324,7 @@ struct AccountRow: View {
         .frame(width: 20, height: 20)
     } else {
       ZStack {
-        RingGauge(percent: account.usage.primaryRemainingPercent, lineWidth: 2)
+        RingGauge(percent: ringPercent, lineWidth: 2)
         centerGlyph
       }
       .frame(width: 20, height: 20)
@@ -527,15 +534,17 @@ struct AccountRow: View {
     }
   }
 
-  // §9.3 line 2: two equal columns, one per window.
+  // §9.3 line 2: one cell per displayed window.
   private var windowGrid: some View {
     HStack(alignment: .center, spacing: 12) {
-      WindowCell(
-        label: "5H",
-        percent: account.usage.primaryRemainingPercent,
-        resetAt: account.resetAtPrimary,
-        now: now
-      )
+      if !isCodex {
+        WindowCell(
+          label: "5H",
+          percent: account.usage.primaryRemainingPercent,
+          resetAt: account.resetAtPrimary,
+          now: now
+        )
+      }
       WindowCell(
         label: "WK",
         percent: account.usage.secondaryRemainingPercent,

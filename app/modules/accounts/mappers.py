@@ -142,7 +142,13 @@ def _account_to_summary(
     primary_remaining_percent = usage_core.remaining_percent_from_used(primary_used_percent)
     secondary_remaining_percent = usage_core.remaining_percent_from_used(secondary_used_percent)
 
-    if primary_remaining_percent is None and not weekly_only_usage and account.provider != ANTHROPIC_PROVIDER_NAME:
+    # Codex has no 5h window anymore (OpenAI removed it 2026-07), so openai
+    # accounts never default to a full primary gauge.
+    if (
+        primary_remaining_percent is None
+        and not weekly_only_usage
+        and normalize_provider_name(account.provider) not in (ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME)
+    ):
         primary_remaining_percent = 100.0
 
     status_primary_usage = effective_primary_usage

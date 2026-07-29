@@ -60,6 +60,47 @@ final class AccountsLayoutTests: XCTestCase {
   }
 
   @MainActor
+  func testCodexPoolDisplaysWeeklyWindowOnly() {
+    let codex = PoolSection(
+      summary: nil,
+      projections: nil,
+      scope: .openai,
+      scopedAccounts: [],
+      arbitrage: nil,
+      hasError: false,
+      retry: {}
+    )
+    let all = PoolSection(
+      summary: nil,
+      projections: nil,
+      scope: .all,
+      scopedAccounts: [],
+      arbitrage: nil,
+      hasError: false,
+      retry: {}
+    )
+    let claude = PoolSection(
+      summary: nil,
+      projections: nil,
+      scope: .anthropic,
+      scopedAccounts: [],
+      arbitrage: nil,
+      hasError: false,
+      retry: {}
+    )
+
+    XCTAssertEqual(codex.displayedWindows.count, 1)
+    XCTAssertTrue(codex.displayedWindows.contains(.secondary))
+    XCTAssertFalse(codex.displayedWindows.contains(.primary))
+    XCTAssertEqual(all.displayedWindows.count, 2)
+    XCTAssertTrue(all.displayedWindows.contains(.primary))
+    XCTAssertTrue(all.displayedWindows.contains(.secondary))
+    XCTAssertEqual(claude.displayedWindows.count, 2)
+    XCTAssertTrue(claude.displayedWindows.contains(.primary))
+    XCTAssertTrue(claude.displayedWindows.contains(.secondary))
+  }
+
+  @MainActor
   func testListCapsAtEightRows() throws {
     let base = try loadAccountsFixture()
     let nine = base + [makeTestAccount(id: "extra", displayName: "extra@example.com")]

@@ -321,14 +321,16 @@ private struct HeaderView: View {
     }
   }
 
-  // §8.2 L1: a mini ring of the pool's primary remaining percent doubles as
-  // the status glyph; degraded/down fall back to the §1.2 shape language.
+  // §8.2 L1: a mini ring of the first available pool window doubles as the
+  // status glyph; degraded/down fall back to the §1.2 shape language.
   @ViewBuilder
   private var headerStatus: some View {
     switch appState.serviceStatus {
     case .running:
       RingGauge(
-        percent: appState.summary?.primaryWindow?.remainingPercent,
+        percent: appState.summary?.primaryWindow?.remainingPercent
+          ?? appState.summary?.secondaryWindow?.remainingPercent
+          ?? appState.summary?.monthlyWindow?.remainingPercent,
         lineWidth: 2
       )
       .frame(width: 16, height: 16)

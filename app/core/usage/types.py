@@ -76,7 +76,9 @@ class UsageMetricsSummary:
 
 @dataclass(frozen=True)
 class UsageSummaryPayload:
-    primary_window: UsageWindowSnapshot
+    # None when the scoped pool has no 5h window at all (OpenAI removed the
+    # codex 5h limit in 2026-07; codex-only scopes report weekly only).
+    primary_window: UsageWindowSnapshot | None
     secondary_window: UsageWindowSnapshot | None
     monthly_window: UsageWindowSnapshot | None
     cost: UsageCostSummary

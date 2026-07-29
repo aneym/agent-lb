@@ -14,12 +14,13 @@ from app.modules.usage.repository import UsageRepository
 pytestmark = pytest.mark.integration
 
 
-def _make_account(account_id: str, email: str, plan_type: str = "plus") -> Account:
+def _make_account(account_id: str, email: str, plan_type: str = "plus", provider: str = "openai") -> Account:
     encryptor = TokenEncryptor()
     return Account(
         id=account_id,
         email=email,
         plan_type=plan_type,
+        provider=provider,
         access_token_encrypted=encryptor.encrypt("access"),
         refresh_token_encrypted=encryptor.encrypt("refresh"),
         id_token_encrypted=encryptor.encrypt("id"),
@@ -57,6 +58,63 @@ async def test_usage_summary_empty_returns_zeroes(async_client):
     assert metrics["cachedTokensSecondaryWindow"] == 0
     assert metrics["errorRate7d"] is None
     assert metrics["topError"] is None
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_codex_only_scope_has_no_primary_window(async_client, db_setup):
+    # OpenAI removed the codex 5h limit: a codex-only scope reports weekly only.
+    now = utcnow()
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+
+        await accounts_repo.upsert(_make_account("acc_codex", "codex@example.com"))
+        await usage_repo.add_entry(
+            "acc_codex",
+            30.0,
+            window="secondary",
+            window_minutes=10080,
+            recorded_at=now - timedelta(minutes=1),
+        )
+
+    response = await async_client.get("/api/usage/summary?provider=openai")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["primaryWindow"] is None
+    assert payload["secondaryWindow"]["remainingPercent"] == pytest.approx(70.0)
+
+    # A pool that only contains codex accounts has no 5h window unscoped either.
+    response = await async_client.get("/api/usage/summary")
+    assert response.status_code == 200
+    assert response.json()["primaryWindow"] is None
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_mixed_pool_keeps_primary_window(async_client, db_setup):
+    now = utcnow()
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+
+        await accounts_repo.upsert(_make_account("acc_codex", "codex@example.com"))
+        await accounts_repo.upsert(_make_account("acc_claude", "claude@example.com", provider="anthropic"))
+        await usage_repo.add_entry(
+            "acc_claude",
+            20.0,
+            window="primary",
+            window_minutes=300,
+            recorded_at=now - timedelta(minutes=1),
+        )
+
+    response = await async_client.get("/api/usage/summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["primaryWindow"] is not None
+    assert payload["primaryWindow"]["windowMinutes"] == 300
+
+    response = await async_client.get("/api/usage/summary?provider=anthropic")
+    assert response.status_code == 200
+    assert response.json()["primaryWindow"] is not None
 
 
 @pytest.mark.asyncio
