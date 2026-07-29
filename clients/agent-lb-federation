@@ -7,8 +7,8 @@
 # agent-lb instance:
 #   POST /api/federation/checkout/execute {account_id}
 #   POST /api/federation/checkin/execute  {account_id}
-# and reports per-account results. `status` shows local /health plus the
-# configured peer, and flags which federation state this CLI cannot read.
+# and reports per-account results. `status` reads the local federation health
+# endpoint, including mirror and usage-push state.
 #
 # Usage:
 #   clients/agent-lb-federation status
@@ -165,29 +165,27 @@ def _require_peer() -> str | None:
 
 def cmd_status(_args: argparse.Namespace) -> int:
     local = local_url()
-    local_ok, local_detail = health_ok(local)
-    print(f"local instance : {local}")
-    print(f"  /health      : {'ok' if local_ok else 'unreachable — ' + local_detail}")
+    result = _http("GET", f"{local}/api/federation/status", token=None, payload=None)
+    if not result.ok or not isinstance(result.body, dict):
+        print(f"error: federation status unavailable — {result.error or 'invalid response'}", file=sys.stderr)
+        return EXIT_FAILURE
 
-    peer = peer_url()
-    if peer is None:
-        print("peer instance  : (not configured — set AGENT_LB_FEDERATION_PEER_URL)")
-    else:
-        peer_ok, peer_detail = health_ok(peer)
-        print(f"peer instance  : {peer}  [source: AGENT_LB_FEDERATION_PEER_URL env]")
-        print(f"  /health      : {'ok' if peer_ok else 'unreachable — ' + peer_detail}")
-
-    token_set = federation_token() is not None
-    print(f"federation token: {'set' if token_set else 'NOT set (checkout/checkin will fail)'}")
-
-    # No /api/federation/* route exposes the local instance id or a per-account
-    # ownership map; /api/accounts carries owner_instance but requires a
-    # dashboard session this CLI does not hold. Report the gap, never invent an
-    # endpoint to fill it.
-    print("unavailable    : local instance id and per-account ownership are not")
-    print("                 exposed by any federation status endpoint (and")
-    print("                 /api/accounts needs a dashboard session this CLI lacks).")
-    return EXIT_OK if local_ok else EXIT_FAILURE
+    body = result.body
+    mirror = body.get("mirror") if isinstance(body.get("mirror"), dict) else {}
+    usage_push = body.get("usagePush") if isinstance(body.get("usagePush"), dict) else {}
+    accounts = body.get("accounts") if isinstance(body.get("accounts"), dict) else {}
+    print(f"local instance : {body.get('localInstanceId', '(unknown)')}")
+    print(f"peer instance  : {body.get('peerUrl') or '(not configured)'}")
+    print(f"federation     : {'enabled' if mirror.get('enabled') else 'disabled'}")
+    print(f"token          : {'configured' if body.get('tokenConfigured') else 'not configured'}")
+    print(f"mirror success : {mirror.get('lastSuccessAt') or '(never)'}")
+    print(f"mirror attempt : {mirror.get('lastAttemptAt') or '(never)'}")
+    print(f"mirror failures: {mirror.get('consecutiveFailures', 0)}")
+    print(f"mirror error   : {mirror.get('lastError') or '(none)'}")
+    print(f"usage push     : {usage_push.get('lastSuccessAt') or '(never)'}")
+    print(f"usage error    : {usage_push.get('lastError') or '(none)'}")
+    print(f"accounts       : {accounts.get('owned', 0)} owned, {accounts.get('mirrored', 0)} mirrored")
+    return EXIT_OK
 
 
 def _run_transfer(command: str, account_ids: list[str]) -> int:
@@ -255,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    status = sub.add_parser("status", help="Show local /health, the configured peer, and unavailable state.")
+    status = sub.add_parser("status", help="Show local federation, mirror, usage-push, and account health.")
     status.set_defaults(func=cmd_status)
 
     checkout = sub.add_parser(

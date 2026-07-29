@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -186,6 +187,23 @@ class AdditionalUsageHistory(Base):
     reset_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     window_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class FederationUsageDaily(Base):
+    __tablename__ = "federation_usage_daily"
+
+    instance_id: Mapped[str] = mapped_column(String, primary_key=True)
+    account_id: Mapped[str] = mapped_column(String, primary_key=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    cost: Mapped[float] = mapped_column(Float, nullable=False)
+    session_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_request_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reported_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class RequestLog(Base):

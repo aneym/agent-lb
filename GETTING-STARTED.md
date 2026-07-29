@@ -71,6 +71,30 @@ Verify:
 curl -fsS http://127.0.0.1:2455/health
 ```
 
+## Join an existing pool (federation follower)
+
+Use this alternative to step 4 when the machine should consume accounts from an existing
+agent-lb owner. The Mac must be on the same tailnet as the owner; clone the repository, run
+`uv sync`, and install the service through step 3 first. Followers do **not** connect OAuth
+accounts locally—the mirror imports routable access tokens while refresh ownership remains
+with the pool owner.
+
+Get the shared federation token from the pool operator without putting it on the command
+line, then configure and verify the follower:
+
+```bash
+export AGENT_LB_FEDERATION_TOKEN='<shared-token>'
+scripts/install-federation-follower.sh \
+  --peer-url https://studio.tailnet.example:2455 \
+  --instance-id partner-mba
+./clients/agent-lb-federation status
+```
+
+The installer exits successfully only after the local status endpoint observes a completed
+mirror pull. After that, continue to step 5 to wire clients normally. Use `--print` to preview
+the four federation environment values with the token redacted, or `--uninstall` to remove
+only those federation values and restart the service.
+
 ## 4. Connect accounts — one at a time
 
 Ask the human which accounts they want to pool (Claude and/or ChatGPT, and how many of

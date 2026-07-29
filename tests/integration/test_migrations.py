@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from alembic import command
 from anyio import to_thread
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -25,6 +26,7 @@ except ImportError:
 
 from app.db.migrate import (
     LEGACY_MIGRATION_ORDER,
+    _build_alembic_config,
     check_schema_drift,
     inspect_migration_state,
     run_startup_migrations,
@@ -677,6 +679,38 @@ async def test_run_startup_migrations_drops_accounts_email_unique_with_non_casca
             ).one()
             assert remaining_log[0] is None
             assert remaining_log[1] is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_federation_usage_daily_migration_up_and_down(tmp_path):
+    db_url = f"sqlite+aiosqlite:///{tmp_path / 'federation-usage.sqlite'}"
+    parent_revision = "20260715_160000_add_request_logs_session_time_index"
+
+    await to_thread.run_sync(lambda: run_upgrade(db_url, parent_revision, bootstrap_legacy=True))
+    await to_thread.run_sync(lambda: run_upgrade(db_url, "head", bootstrap_legacy=False))
+
+    engine = create_async_engine(db_url, future=True)
+    try:
+        async with engine.connect() as connection:
+            table = await connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='federation_usage_daily'")
+            )
+            assert table.scalar_one() == "federation_usage_daily"
+    finally:
+        await engine.dispose()
+
+    config = _build_alembic_config(db_url)
+    await to_thread.run_sync(lambda: command.downgrade(config, parent_revision))
+
+    engine = create_async_engine(db_url, future=True)
+    try:
+        async with engine.connect() as connection:
+            table = await connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='federation_usage_daily'")
+            )
+            assert table.scalar_one_or_none() is None
     finally:
         await engine.dispose()
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import TokenEncryptor
@@ -14,7 +16,10 @@ from app.db.models import (
     AccountTransfer,
     AccountTransferDirection,
     AccountTransferState,
+    FederationUsageDaily,
+    RequestLog,
 )
+from app.modules.federation.schemas import FederationUsageDayRollup
 
 # Mirrored-only rows never carry a real refresh token (the owner never exports
 # one over /mirror), but the column is NOT NULL. This placeholder is inert:
@@ -23,12 +28,144 @@ from app.db.models import (
 _MIRROR_REFRESH_TOKEN_PLACEHOLDER = ""
 
 
+@dataclass(frozen=True, slots=True)
+class StoredFederationUsageRollup:
+    instance_id: str
+    rollup: FederationUsageDayRollup
+    reported_at: datetime
+
+
 class FederationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def get_account(self, account_id: str) -> Account | None:
         return await self._session.get(Account, account_id)
+
+    async def upsert_usage_report(
+        self,
+        instance_id: str,
+        rollups: list[FederationUsageDayRollup],
+        *,
+        reported_at: datetime,
+    ) -> None:
+        for rollup in rollups:
+            key = {
+                "instance_id": instance_id,
+                "account_id": rollup.account_id,
+                "day": rollup.day,
+            }
+            values = {
+                "provider": rollup.provider,
+                "requests": rollup.requests,
+                "input_tokens": rollup.input_tokens,
+                "output_tokens": rollup.output_tokens,
+                "cache_read_tokens": rollup.cache_read_tokens,
+                "cost": rollup.cost,
+                "session_count": rollup.session_count,
+                "last_request_at": rollup.last_request_at,
+                "reported_at": reported_at,
+            }
+            primary_key = tuple(key.values())
+            existing = await self._session.get(FederationUsageDaily, primary_key)
+            if existing is None:
+                try:
+                    async with self._session.begin_nested():
+                        self._session.add(FederationUsageDaily(**key, **values))
+                        await self._session.flush()
+                except IntegrityError:
+                    existing = await self._session.get(FederationUsageDaily, primary_key)
+                    if existing is None:
+                        raise
+                else:
+                    continue
+            for field_name, value in values.items():
+                setattr(existing, field_name, value)
+        await self._session.commit()
+
+    async def list_local_usage_rollups(self, *, window_days: int) -> list[FederationUsageDayRollup]:
+        earliest_day = (utcnow() - timedelta(days=window_days)).date()
+        since = datetime.combine(earliest_day, datetime.min.time())
+        day = func.date(RequestLog.requested_at)
+        statement = (
+            select(
+                day.label("day"),
+                RequestLog.account_id,
+                func.max(RequestLog.provider).label("provider"),
+                func.count().label("requests"),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(RequestLog.cache_read_tokens), 0).label("cache_read_tokens"),
+                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost"),
+                func.count(func.distinct(RequestLog.session_id)).label("session_count"),
+                func.max(RequestLog.requested_at).label("last_request_at"),
+            )
+            .where(
+                and_(
+                    RequestLog.account_id.is_not(None),
+                    RequestLog.deleted_at.is_(None),
+                    RequestLog.requested_at >= since,
+                )
+            )
+            .group_by(day, RequestLog.account_id)
+            .order_by(day.desc(), RequestLog.account_id.asc())
+        )
+        rows = (await self._session.execute(statement)).all()
+        return [
+            FederationUsageDayRollup(
+                day=date.fromisoformat(str(row.day)),
+                account_id=str(row.account_id),
+                provider=str(row.provider),
+                requests=int(row.requests),
+                input_tokens=int(row.input_tokens),
+                output_tokens=int(row.output_tokens),
+                cache_read_tokens=int(row.cache_read_tokens),
+                cost=float(row.cost),
+                session_count=int(row.session_count),
+                last_request_at=row.last_request_at,
+            )
+            for row in rows
+        ]
+
+    async def list_stored_usage_rollups(self, *, window_days: int) -> list[StoredFederationUsageRollup]:
+        earliest_day = (utcnow() - timedelta(days=window_days)).date()
+        rows = (
+            await self._session.execute(
+                select(FederationUsageDaily).where(FederationUsageDaily.day >= earliest_day)
+            )
+        ).scalars().all()
+        return [
+            StoredFederationUsageRollup(
+                instance_id=row.instance_id,
+                rollup=FederationUsageDayRollup(
+                    day=row.day,
+                    account_id=row.account_id,
+                    provider=row.provider,
+                    requests=row.requests,
+                    input_tokens=row.input_tokens,
+                    output_tokens=row.output_tokens,
+                    cache_read_tokens=row.cache_read_tokens,
+                    cost=row.cost,
+                    session_count=row.session_count,
+                    last_request_at=row.last_request_at,
+                ),
+                reported_at=row.reported_at,
+            )
+            for row in rows
+        ]
+
+    async def count_accounts_by_ownership(self, local_instance_id: str) -> tuple[int, int]:
+        owned = await self._session.scalar(
+            select(func.count()).select_from(Account).where(
+                or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id)
+            )
+        )
+        mirrored = await self._session.scalar(
+            select(func.count()).select_from(Account).where(
+                and_(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id)
+            )
+        )
+        return int(owned or 0), int(mirrored or 0)
 
     async def list_locally_owned_accounts(self, local_instance_id: str) -> list[Account]:
         stmt = select(Account).where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))

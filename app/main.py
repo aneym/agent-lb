@@ -170,6 +170,7 @@ async def lifespan(app: FastAPI):
         account_pulse_scheduler = build_account_pulse_scheduler()
         reset_credit_auto_redeem_scheduler = build_reset_credit_auto_redeem_scheduler()
         federation_mirror_scheduler = build_federation_mirror_scheduler()
+        app.state.federation_mirror_scheduler = federation_mirror_scheduler
         event_loop_lag_monitor = build_event_loop_lag_monitor(
             warning_threshold_seconds=settings.event_loop_lag_warning_threshold_seconds
         )
@@ -445,6 +446,7 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_api.router)
     app.include_router(health_api.router)
     app.include_router(federation_api.router)
+    app.include_router(federation_api.dashboard_router)
 
     static_dir = Path(__file__).parent / "static"
     index_html = static_dir / "index.html"

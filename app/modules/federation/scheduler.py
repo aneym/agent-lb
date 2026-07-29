@@ -6,12 +6,15 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
+from app.core.utils.time import utcnow
 from app.db.session import get_background_session
 from app.modules.federation.peer_client import AiohttpFederationPeerClient, FederationPeerClient
 from app.modules.federation.repository import FederationRepository
+from app.modules.federation.schemas import FederationUsageReportRequest
 from app.modules.proxy.account_cache import get_account_selection_cache
 
 logger = logging.getLogger(__name__)
@@ -36,12 +39,18 @@ class FederationMirrorScheduler:
     federation_token: str | None
     local_instance_id: str
     repo_factory: _RepoFactory
+    usage_window_days: int = 7
     peer_client: FederationPeerClient = field(default_factory=AiohttpFederationPeerClient)
     encryptor: TokenEncryptor = field(default_factory=TokenEncryptor)
     sleep: Callable[[float], Awaitable[None]] = field(default_factory=lambda: asyncio.sleep)
     _task: asyncio.Task[None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
-    _consecutive_failures: int = 0
+    consecutive_failures: int = 0
+    last_success_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    last_error: str | None = None
+    usage_push_last_success_at: datetime | None = None
+    usage_push_last_error: str | None = None
 
     async def start(self) -> None:
         if not self.enabled or not self.peer_url or not self.federation_token:
@@ -64,20 +73,26 @@ class FederationMirrorScheduler:
         while not self._stop.is_set():
             delay = self.interval_seconds
             try:
+                self.last_attempt_at = utcnow()
                 await self.mirror_once()
-                self._consecutive_failures = 0
-            except Exception:
-                self._consecutive_failures += 1
+                self.consecutive_failures = 0
+                self.last_success_at = utcnow()
+                self.last_error = None
+            except Exception as exc:
+                self.consecutive_failures += 1
+                self.last_error = str(exc)
                 delay = min(
                     _FAILURE_BACKOFF_MAX_SECONDS,
-                    _FAILURE_BACKOFF_BASE_SECONDS * (2 ** min(self._consecutive_failures - 1, 6)),
+                    _FAILURE_BACKOFF_BASE_SECONDS * (2 ** min(self.consecutive_failures - 1, 6)),
                 )
                 logger.warning(
                     "Federation mirror pull failed consecutive_failures=%s retry_in_seconds=%.0f",
-                    self._consecutive_failures,
+                    self.consecutive_failures,
                     delay,
                     exc_info=True,
                 )
+            else:
+                await self._push_usage_report()
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
             except asyncio.TimeoutError:
@@ -113,6 +128,24 @@ class FederationMirrorScheduler:
             # the selection cache expires or the process restarts.
             get_account_selection_cache().invalidate()
 
+    async def _push_usage_report(self) -> None:
+        if not self.peer_url or not self.federation_token:
+            return
+        try:
+            async with self.repo_factory() as repo:
+                rollups = await repo.list_local_usage_rollups(window_days=self.usage_window_days)
+            await self.peer_client.push_usage_report(
+                peer_url=self.peer_url,
+                token=self.federation_token,
+                report=FederationUsageReportRequest(instance_id=self.local_instance_id, rollups=rollups),
+            )
+        except Exception as exc:
+            self.usage_push_last_error = str(exc)
+            logger.warning("Federation usage report push failed; mirror pull remains successful", exc_info=True)
+            return
+        self.usage_push_last_success_at = utcnow()
+        self.usage_push_last_error = None
+
 
 @asynccontextmanager
 async def _default_federation_repo_factory() -> AsyncIterator[FederationRepository]:
@@ -128,5 +161,6 @@ def build_federation_mirror_scheduler() -> FederationMirrorScheduler:
         peer_url=settings.federation_peer_url,
         federation_token=settings.federation_token,
         local_instance_id=settings.local_instance_id,
+        usage_window_days=settings.federation_usage_window_days,
         repo_factory=_default_federation_repo_factory,
     )

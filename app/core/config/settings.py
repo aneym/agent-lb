@@ -300,6 +300,7 @@ class Settings(BaseSettings):
     federation_token: str | None = None
     federation_peer_url: str | None = None
     federation_mirror_interval_seconds: int = Field(default=300, gt=0)
+    federation_usage_window_days: int = Field(default=7, gt=0)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
     http_responses_session_bridge_advertise_base_url: str | None = None
     sticky_session_cleanup_enabled: bool = True

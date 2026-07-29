@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from datetime import datetime
 
 from app.core.auth import token_expiry_epoch_ms
 from app.core.config.settings import Settings, get_settings
@@ -23,6 +24,13 @@ from app.modules.federation.schemas import (
     FederationMirrorAccount,
     FederationMirrorResponse,
     FederationTransferStatusResponse,
+    FederationUsageAccount,
+    FederationUsageDay,
+    FederationUsageDayRollup,
+    FederationUsageInstance,
+    FederationUsageInstancesResponse,
+    FederationUsageReportResponse,
+    FederationUsageTotals,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +51,39 @@ class FederationService:
         self._peer_client = peer_client or AiohttpFederationPeerClient()
 
     # --- owner-side: exports current state / receives transfer requests ---
+
+    async def accept_usage_report(
+        self, instance_id: str, rollups: list[FederationUsageDayRollup]
+    ) -> FederationUsageReportResponse:
+        reported_at = utcnow()
+        await self._repo.upsert_usage_report(instance_id, rollups, reported_at=reported_at)
+        return FederationUsageReportResponse(
+            instance_id=instance_id,
+            accepted=len(rollups),
+            reported_at=reported_at,
+        )
+
+    async def get_usage_instances(self) -> FederationUsageInstancesResponse:
+        local_id = self._settings.local_instance_id
+        window_days = self._settings.federation_usage_window_days
+        local_rollups = await self._repo.list_local_usage_rollups(window_days=window_days)
+        stored = await self._repo.list_stored_usage_rollups(window_days=window_days)
+        by_instance: dict[str, list[tuple[FederationUsageDayRollup, datetime | None]]] = {
+            local_id: [(rollup, None) for rollup in local_rollups]
+        }
+        for stored_rollup in stored:
+            if stored_rollup.instance_id == local_id:
+                continue
+            by_instance.setdefault(stored_rollup.instance_id, []).append(
+                (stored_rollup.rollup, stored_rollup.reported_at)
+            )
+        return FederationUsageInstancesResponse(
+            window_days=window_days,
+            instances=[
+                self._build_usage_instance(instance_id, rows)
+                for instance_id, rows in sorted(by_instance.items())
+            ],
+        )
 
     async def build_mirror_response(self) -> FederationMirrorResponse:
         local_id = self._settings.local_instance_id
@@ -264,6 +305,43 @@ class FederationService:
         return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=result.settled)
 
     # --- internal helpers ---
+
+    @staticmethod
+    def _totals(rollups: list[FederationUsageDayRollup]) -> FederationUsageTotals:
+        return FederationUsageTotals(
+            requests=sum(row.requests for row in rollups),
+            input_tokens=sum(row.input_tokens for row in rollups),
+            output_tokens=sum(row.output_tokens for row in rollups),
+            cost=sum(row.cost for row in rollups),
+        )
+
+    @classmethod
+    def _build_usage_instance(
+        cls,
+        instance_id: str,
+        rows: list[tuple[FederationUsageDayRollup, datetime | None]],
+    ) -> FederationUsageInstance:
+        days: list[FederationUsageDay] = []
+        for day in sorted({rollup.day for rollup, _ in rows}, reverse=True):
+            day_rows = [(rollup, reported_at) for rollup, reported_at in rows if rollup.day == day]
+            days.append(
+                FederationUsageDay(
+                    day=day,
+                    totals=cls._totals([rollup for rollup, _ in day_rows]),
+                    accounts=[
+                        FederationUsageAccount(
+                            **rollup.model_dump(),
+                            reported_at=reported_at,
+                        )
+                        for rollup, reported_at in day_rows
+                    ],
+                )
+            )
+        return FederationUsageInstance(
+            instance_id=instance_id,
+            totals=cls._totals([rollup for rollup, _ in rows]),
+            days=days,
+        )
 
     def _auth_payload(self, account: Account) -> FederationAuthPayload:
         access_token = self._encryptor.decrypt(account.access_token_encrypted)

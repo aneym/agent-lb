@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from datetime import date, datetime
+
+from pydantic import BaseModel, Field
+
+from app.modules.shared.schemas import DashboardModel
 
 
 class FederationMirrorAccount(BaseModel):
@@ -20,6 +24,95 @@ class FederationMirrorAccount(BaseModel):
 class FederationMirrorResponse(BaseModel):
     instance_id: str
     accounts: list[FederationMirrorAccount]
+
+
+class FederationUsageDayRollup(BaseModel):
+    day: date
+    account_id: str
+    provider: str
+    requests: int = Field(ge=0)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    cache_read_tokens: int = Field(ge=0)
+    cost: float = Field(ge=0)
+    session_count: int = Field(ge=0)
+    last_request_at: datetime | None = None
+
+
+class FederationUsageReportRequest(BaseModel):
+    instance_id: str = Field(min_length=1)
+    rollups: list[FederationUsageDayRollup]
+
+
+class FederationUsageReportResponse(BaseModel):
+    instance_id: str
+    accepted: int
+    reported_at: datetime
+
+
+class FederationUsageTotals(DashboardModel):
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0
+
+
+class FederationUsageAccount(DashboardModel):
+    account_id: str
+    provider: str
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cost: float
+    session_count: int
+    last_request_at: datetime | None = None
+    reported_at: datetime | None = None
+
+
+class FederationUsageDay(DashboardModel):
+    day: date
+    totals: FederationUsageTotals
+    accounts: list[FederationUsageAccount]
+
+
+class FederationUsageInstance(DashboardModel):
+    instance_id: str
+    totals: FederationUsageTotals
+    days: list[FederationUsageDay]
+
+
+class FederationUsageInstancesResponse(DashboardModel):
+    window_days: int
+    instances: list[FederationUsageInstance]
+
+
+class FederationMirrorStatus(DashboardModel):
+    enabled: bool
+    interval_seconds: int
+    last_success_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    consecutive_failures: int
+    last_error: str | None = None
+
+
+class FederationUsagePushStatus(DashboardModel):
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+
+
+class FederationAccountCounts(DashboardModel):
+    owned: int
+    mirrored: int
+
+
+class FederationStatusResponse(DashboardModel):
+    local_instance_id: str
+    token_configured: bool
+    peer_url: str | None = None
+    mirror: FederationMirrorStatus
+    usage_push: FederationUsagePushStatus
+    accounts: FederationAccountCounts
 
 
 class FederationAuthPayload(BaseModel):

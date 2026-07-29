@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
-from app.dependencies import UsageContext, get_usage_context
+from app.dependencies import FederationContext, UsageContext, get_federation_context, get_usage_context
+from app.modules.federation.schemas import FederationUsageInstancesResponse
 from app.modules.usage.schemas import UsageHistoryResponse, UsageSummaryResponse, UsageWindowResponse
 
 router = APIRouter(
@@ -11,6 +12,13 @@ router = APIRouter(
     tags=["dashboard"],
     dependencies=[Depends(validate_dashboard_session), Depends(set_dashboard_error_format)],
 )
+
+
+@router.get("/instances", response_model=FederationUsageInstancesResponse)
+async def get_usage_instances(
+    context: FederationContext = Depends(get_federation_context),
+) -> FederationUsageInstancesResponse:
+    return await context.service.get_usage_instances()
 
 
 @router.get("/summary", response_model=UsageSummaryResponse)
