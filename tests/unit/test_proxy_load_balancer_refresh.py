@@ -1421,14 +1421,18 @@ async def test_round_robin_does_not_serialize_concurrent_selection(monkeypatch) 
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
-    ) -> None:
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
+    ) -> set[str]:
         nonlocal inflight_persist_calls
         inflight_persist_calls += 1
         try:
             if inflight_persist_calls >= 2:
                 overlap_observed.set()
             await asyncio.sleep(0.05)
-            await original_persist_selection_state(self, accounts_repo, account_map, states)
+            return await original_persist_selection_state(
+                self, accounts_repo, account_map, states, skip_account_ids=skip_account_ids
+            )
         finally:
             inflight_persist_calls -= 1
 
@@ -1490,13 +1494,17 @@ async def test_select_account_does_not_clobber_concurrent_error_state(monkeypatc
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
-    ) -> None:
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
+    ) -> set[str]:
         nonlocal blocked_once
         if not blocked_once and any(state.error_count == 0 for state in states):
             blocked_once = True
             select_sync_blocked.set()
             await release_select_sync.wait()
-        await original_persist_selection_state(self, accounts_repo, account_map, states)
+        return await original_persist_selection_state(
+            self, accounts_repo, account_map, states, skip_account_ids=skip_account_ids
+        )
 
     monkeypatch.setattr(LoadBalancer, "_persist_selection_state", controlled_persist_selection_state)
 
@@ -1865,9 +1873,13 @@ async def test_select_account_retries_after_post_persist_permanent_failure(monke
     original_persist_selection_state = balancer._persist_selection_state
     injected = False
 
-    async def wrapped_persist_selection_state(accounts_repo_arg, account_map, states):
+    async def wrapped_persist_selection_state(
+        accounts_repo_arg, account_map, states, *, skip_account_ids: frozenset[str] = frozenset()
+    ):
         nonlocal injected
-        result = await original_persist_selection_state(accounts_repo_arg, account_map, states)
+        result = await original_persist_selection_state(
+            accounts_repo_arg, account_map, states, skip_account_ids=skip_account_ids
+        )
         if not injected:
             injected = True
             await balancer.mark_permanent_failure(account, "refresh_token_expired")
@@ -1913,9 +1925,13 @@ async def test_select_account_retries_after_post_persist_quota_exceeded(monkeypa
     original_persist_selection_state = balancer._persist_selection_state
     injected = False
 
-    async def wrapped_persist_selection_state(accounts_repo_arg, account_map, states):
+    async def wrapped_persist_selection_state(
+        accounts_repo_arg, account_map, states, *, skip_account_ids: frozenset[str] = frozenset()
+    ):
         nonlocal injected
-        result = await original_persist_selection_state(accounts_repo_arg, account_map, states)
+        result = await original_persist_selection_state(
+            accounts_repo_arg, account_map, states, skip_account_ids=skip_account_ids
+        )
         if not injected:
             injected = True
             await balancer.mark_quota_exceeded(account, {"message": "quota exceeded"})
@@ -2161,6 +2177,8 @@ async def test_select_account_sticky_reloads_inputs_after_stale_selected_persist
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
         nonlocal first_persist
         if first_persist:
@@ -2168,7 +2186,9 @@ async def test_select_account_sticky_reloads_inputs_after_stale_selected_persist
             account.status = AccountStatus.DEACTIVATED
             account.deactivation_reason = "Refresh token expired - re-login required"
             return {account.id}
-        return await original_persist_selection_state(accounts_repo, account_map, states)
+        return await original_persist_selection_state(
+            accounts_repo, account_map, states, skip_account_ids=skip_account_ids
+        )
 
     monkeypatch.setattr(balancer, "_load_selection_inputs", counted_load_selection_inputs)
     monkeypatch.setattr(sticky_repo, "get_account_id", pinned_account_id)
@@ -2244,8 +2264,10 @@ async def test_select_account_sticky_does_not_return_stale_selection_at_retry_ca
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
-        del accounts_repo, account_map, states
+        del accounts_repo, account_map, states, skip_account_ids
         return {account.id}
 
     monkeypatch.setattr(balancer, "_load_selection_inputs", counted_load_selection_inputs)
@@ -2663,10 +2685,14 @@ async def test_select_account_retries_no_accounts_after_runtime_recovery(monkeyp
         accounts_repo_arg: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
         persist_started.set()
         await release_persist.wait()
-        return await original_persist_selection_state(accounts_repo_arg, account_map, states)
+        return await original_persist_selection_state(
+            accounts_repo_arg, account_map, states, skip_account_ids=skip_account_ids
+        )
 
     monkeypatch.setattr(balancer, "_persist_selection_state", blocking_persist_selection_state)
 

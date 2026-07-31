@@ -83,6 +83,7 @@ _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
             "idx_logs_status_error_time",
             "idx_logs_api_key_time_account",
             "idx_logs_source_requested_at",
+            "idx_logs_session_time",
         }
     ),
     "account_limit_warmups": frozenset(
@@ -570,10 +571,25 @@ def _unwrap_schema_drift_diff(diff: object) -> object:
     return diff
 
 
+def _is_manually_verified_index_diff(diff: tuple) -> bool:
+    # Expression-based indexes get approximate autogen signatures on some
+    # alembic/dialect combinations, flapping as remove_index/add_index pairs.
+    # Their presence is asserted by _manual_schema_drift_diffs instead.
+    if diff[0] not in {"add_index", "remove_index"} or len(diff) < 2:
+        return False
+    index = diff[1]
+    table_name = getattr(getattr(index, "table", None), "name", None)
+    required = _MANUAL_DRIFT_INDEX_REQUIREMENTS.get(str(table_name), frozenset())
+    return str(getattr(index, "name", None)) in required
+
+
 def _is_ignored_schema_drift(connection: Connection, diff: object) -> bool:
     diff = _unwrap_schema_drift_diff(diff)
     if not isinstance(diff, tuple) or not diff:
         return False
+
+    if _is_manually_verified_index_diff(diff):
+        return True
 
     if diff[0] == "remove_column" and len(diff) >= 4:
         column = diff[3]
