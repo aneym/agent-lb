@@ -171,7 +171,8 @@ and lineup changes mean editing this file.
 Fan-out is the DEFAULT, not an optimization the driver reaches for when
 reminded. When work decomposes into 2+ independent sub-units, dispatch them
 concurrently — multiple seat dispatches in one message, or a Workflow script
-when the orchestration is deterministic (pipelines, verify fan-out, loops).
+when the orchestration is deterministic (pipelines, verify fan-out, loops;
+standing opt-in + model rules: Workflow orchestration section below).
 A brief that hands one seat a multi-unit pipeline is the DISPATCHER'S bug:
 split before spawning.
 
@@ -191,6 +192,41 @@ no barrier on sibling units.
 → Prevents: decomposable work grinding through one serial seat (2026-07-17
 owner correction: a 3-part Hermes-VPS unit with two independent halves went
 to a single implementer).
+
+## Workflow orchestration (owner standing opt-in, 2026-08-01)
+
+This section is the owner's explicit, durable request to use the Claude Code
+`Workflow` tool: any session governed by this file may run workflows without
+a per-prompt ask whenever the Fan-out doctrine applies — 2+ independent
+sub-units whose orchestration is deterministic (pipelines, per-unit verify
+fan-out, discovery loops, migration sweeps). Prefer a Workflow script over
+hand-serialized Agent dispatches when the control flow is loops, conditionals,
+or fan-out; prefer plain seat dispatches when it is one or two seats, or when
+the next step depends on driver judgment between units.
+
+Model rules do NOT relax inside a script:
+
+- Every `agent()` call MUST pin a canonical seat via `opts.agentType`
+  (`Explore`, `implementer`, `verifier`; frontend-designer/planner only per
+  their seat rules above). A bare `agent()` inherits the DRIVER model — the
+  exact leak this file exists to prevent — and seat-guard cannot see inside
+  Workflow scripts, so this rule is the control point, enforced at script
+  authoring time.
+- Never pass `opts.model`; seat models bind from agent-registry frontmatter.
+  `opts.effort` may only go DOWN (e.g. `low` for mechanical stages), never up
+  past the seat's table effort.
+- Shared-contract law still applies: parallel implementer stages get the
+  frozen contract verbatim in their prompts, or they don't fan out.
+- Respect the session's workflow size guideline (default medium, <15 agents)
+  unless the task genuinely calls for more; `log()` any coverage a cap drops.
+- Closeout discipline holds: scripts return bounded structured results and
+  the driver still independently verifies acceptance — a workflow's green
+  return is a claim, not proof.
+
+→ Prevents: decomposable work grinding serially for speed reasons (the
+workflow IS the fast path), and workflow scripts silently burning
+driver-model tokens on volume stages (the economics leak seat-guard cannot
+catch inside scripts).
 
 ## Operating contract
 
