@@ -1630,6 +1630,15 @@ def main() -> None:
                 # else (the RC bridge, telemetry, OAuth refresh) untouched.
                 os.environ["HTTPS_PROXY"] = proxy_url
                 os.environ["https_proxy"] = proxy_url
+                # Descendants (shells, hermes, any httpx tool) inherit HTTPS_PROXY
+                # and would route loopback API calls through the MITM, which 501s
+                # non-Anthropic POSTs. Loopback must always connect direct.
+                for name in ("NO_PROXY", "no_proxy"):
+                    exclusions = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
+                    for host in ("127.0.0.1", "localhost"):
+                        if not any(entry.lower() == host for entry in exclusions):
+                            exclusions.append(host)
+                    os.environ[name] = ",".join(exclusions)
                 # Trust the MITM leaf — scoped to this process only, never added to
                 # the system trust store. Claude merges this with the bundled +
                 # system roots, so every other host keeps validating normally.
