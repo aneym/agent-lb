@@ -212,6 +212,12 @@ _PUBLIC_RESPONSE_OUTPUT_ITEM_TYPES = frozenset(
         "mcp_approval_request",
         "mcp_list_tools",
         "output_image",
+        # Native server-side compaction (``context_management``): the provider
+        # seals summarized context into ``encrypted_content`` and the client
+        # replays that exact blob on later turns. It carries no text, so the
+        # normalization below would find nothing to extract and drop the item —
+        # leaving OpenAI SDK clients unable to obtain a checkpoint at all.
+        "compaction",
     }
 )
 _PUBLIC_RESPONSE_TEXT_PART_TYPES = frozenset({"output_text", "input_text", "text", "refusal"})

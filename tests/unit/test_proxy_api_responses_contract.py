@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 import app.modules.proxy.api as proxy_api_module
+from app.modules.proxy.request_policy import normalize_responses_request_payload
 
 pytestmark = pytest.mark.unit
 
@@ -1073,13 +1074,17 @@ async def test_normalize_public_responses_stream_forwards_codex_compaction_item_
     assert blocks[-1] == "data: [DONE]\n\n"
 
 
+# Native OpenAI Responses server-side compaction (``context_management``) makes
+# ``compaction`` a first-class Responses output item rather than a Codex-only
+# vendor item: the provider seals summarized context into ``encrypted_content``
+# and the client must replay that exact blob on later turns. A live probe
+# through the deployed proxy (2026-08-09) confirmed upstream issues the item on
+# this route. Dropping it on the public surface left OpenAI SDK clients unable to
+# obtain a checkpoint at all, so native compaction was silently inert.
+
+
 @pytest.mark.asyncio
-async def test_normalize_public_responses_stream_strips_compaction_item_under_sdk_contract() -> None:
-    # Boundary guard: the public /v1 OpenAI-SDK contract has no ``compaction``
-    # output item type, so under enforce_openai_sdk_contract=True the unsupported
-    # item is dropped and a compaction-only terminal becomes a contract failure
-    # rather than leaking a non-standard item to OpenAI SDK consumers. This keeps
-    # the Codex fix scoped to the Codex-native surface only.
+async def test_normalize_public_responses_stream_preserves_compaction_item_under_sdk_contract() -> None:
     blocks = [
         block
         async for block in proxy_api_module._normalize_public_responses_stream(
@@ -1092,7 +1097,129 @@ async def test_normalize_public_responses_stream_strips_compaction_item_under_sd
     ]
 
     payloads = [p for b in blocks if (p := proxy_api_module._parse_sse_payload(b)) is not None]
+    assert all(p.get("type") != "response.failed" for p in payloads)
+
+    done_events = [p for p in payloads if p.get("type") == "response.output_item.done"]
+    assert len(done_events) == 1
+    assert done_events[0]["item"] == _COMPACTION_ITEM
+
+    completed_events = [p for p in payloads if p.get("type") == "response.completed"]
+    assert len(completed_events) == 1
+    response = completed_events[0]["response"]
+    assert isinstance(response, dict)
+    assert response["output"] == [_COMPACTION_ITEM]
+
+
+@pytest.mark.asyncio
+async def test_normalize_public_responses_stream_backfills_compaction_item_into_empty_terminal() -> None:
+    # Upstream streams the compaction item but sends a terminal envelope whose
+    # ``output`` array is empty (observed live). OpenAI SDK consumers read the
+    # checkpoint off ``stream.get_final_response().output``, so it must be
+    # backfilled there too.
+    empty_completed = {
+        "type": "response.completed",
+        "sequence_number": 2,
+        "response": {"id": "resp_c", "object": "response", "status": "completed", "output": []},
+    }
+    blocks = [
+        block
+        async for block in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                f"data: {json.dumps(_COMPACTION_CREATED)}\n\n",
+                f"data: {json.dumps(_COMPACTION_ITEM_DONE)}\n\n",
+                f"data: {json.dumps(empty_completed)}\n\n",
+            ),
+        )
+    ]
+
+    payloads = [p for b in blocks if (p := proxy_api_module._parse_sse_payload(b)) is not None]
+    completed_events = [p for p in payloads if p.get("type") == "response.completed"]
+    assert len(completed_events) == 1
+    response = completed_events[0]["response"]
+    assert isinstance(response, dict)
+    assert response["output"] == [_COMPACTION_ITEM]
+
+
+@pytest.mark.asyncio
+async def test_collect_responses_payload_preserves_compaction_output_item() -> None:
+    # Non-streaming public path: the compaction item rides alongside the
+    # assistant message instead of being coerced into a message.
+    compaction_item = {"id": "cmp_1", **_COMPACTION_ITEM}
+    message_item = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": "OK"}],
+    }
+    compaction_done = {"type": "response.output_item.done", "output_index": 0, "item": compaction_item}
+    message_done = {"type": "response.output_item.done", "output_index": 1, "item": message_item}
+    result = await proxy_api_module._collect_responses_payload(
+        _iter_blocks(
+            f"data: {json.dumps(compaction_done)}\n\n",
+            f"data: {json.dumps(message_done)}\n\n",
+            'data: {"type":"response.completed","response":{"id":"resp_1","object":"response",'
+            '"status":"completed","output":[]}}\n\n',
+        )
+    )
+
+    body = result.model_dump(mode="json", exclude_none=True)
+    assert body["output"] == [compaction_item, message_item]
+
+
+@pytest.mark.asyncio
+async def test_normalize_public_responses_stream_still_drops_textless_unsupported_item() -> None:
+    # The compaction carve-out must not widen into "forward any unknown item":
+    # a text-less item of another unsupported type is still dropped and still
+    # turns a terminal envelope made only of such items into a contract failure.
+    opaque_item = {"id": "op_1", "type": "vendor_opaque", "blob": "xyz"}
+    opaque_done = {
+        "type": "response.output_item.done",
+        "sequence_number": 1,
+        "output_index": 0,
+        "item": opaque_item,
+    }
+    opaque_completed = {
+        "type": "response.completed",
+        "sequence_number": 2,
+        "response": {"id": "resp_c", "object": "response", "status": "completed", "output": [opaque_item]},
+    }
+    blocks = [
+        block
+        async for block in proxy_api_module._normalize_public_responses_stream(
+            _iter_blocks(
+                f"data: {json.dumps(_COMPACTION_CREATED)}\n\n",
+                f"data: {json.dumps(opaque_done)}\n\n",
+                f"data: {json.dumps(opaque_completed)}\n\n",
+            ),
+        )
+    ]
+
+    payloads = [p for b in blocks if (p := proxy_api_module._parse_sse_payload(b)) is not None]
     types = [p.get("type") for p in payloads]
     assert "response.output_item.done" not in types
     assert "response.completed" not in types
     assert "response.failed" in types
+
+
+def test_responses_request_preserves_context_management_and_compaction_replay() -> None:
+    # Replay side: the client sends the provider's sealed checkpoint back as an
+    # input item alongside the top-level compaction config. Both must reach
+    # upstream byte-for-byte or the provider cannot decrypt the blob.
+    blob = "gAAAAABmENCRYPTED-replay"
+    payload: dict[str, Any] = {
+        "model": "gpt-5.6",
+        "stream": True,
+        "context_management": [{"type": "compaction", "compact_threshold": 4000}],
+        "input": [
+            {"type": "compaction", "encrypted_content": blob},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+    }
+
+    upstream = normalize_responses_request_payload(payload, openai_compat=True).to_payload()
+
+    assert upstream["context_management"] == [{"type": "compaction", "compact_threshold": 4000}]
+    input_items = upstream["input"]
+    assert isinstance(input_items, list)
+    assert input_items[0] == {"type": "compaction", "encrypted_content": blob}
