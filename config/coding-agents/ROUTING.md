@@ -29,7 +29,12 @@ change against it.
 
 ## Mode: raw Claude Code harness with canonical seats (2026-07-15)
 
-Claude Code, entered through `cc`, is the only coding harness. Opus 5/high is
+Claude Code, entered through `cc`, is the only coding harness. Opus 5/high with
+the 1M context variant is the normal driver. The launcher defaults to
+`claude-opus-5[1m]` and a 1M autocompact window; explicit model or autocompact
+flags still win. Fable remains an explicit brain-work driver and currently has
+a verified 200k model context, even though its compaction ceiling is configured
+at 1M for forward compatibility. Opus 5/high is
 the driver: it coordinates, decides, reconciles, and verifies using the native
 harness — `Agent`/`Workflow` subagents, skills, and hooks.
 
@@ -43,9 +48,16 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 | Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
 | Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
+| Copywriter             | `~/.claude/agents/copywriter.md`        | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
 | Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-opus-5`      | inherit high      |
 | Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
-| Plan reviewer          | `~/.claude/agents/plan-reviewer.md`     | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
+| Plan reviewer          | `~/.claude/agents/plan-reviewer.md`     | `claude-planner`       | high; Fable 5 primary, Opus 5 on scoped exhaustion |
+
+Session lifecycle: finish and verify one coherent unit, write or return its
+bounded handoff, then terminate that worker before starting a materially new
+unit. Rotate at clean boundaries, not mid-edit, mid-test, mid-merge, mid-deploy,
+or while a consequential decision is unresolved. Fresh sessions are the
+default between phases; `/resume` is for genuinely continuous work.
 
 Explore moved sonnet → gpt-5.6-sol-medium (owner, 2026-07-15 evening):
 benchmarked 3/3 repo-exploration accuracy matching sonnet at 3.1x speed with
@@ -55,6 +67,12 @@ Also relieves the Claude pool — sonnet Explore fan-outs were the first
 casualties of pool saturation (live-watch 21:15Z: scout failures on
 rate-limited sonnet). Caveat on record: n=3 benchmark; revisit if Explore
 quality regresses.
+
+Copywriter seat added (owner, 2026-08-03): `gpt-5.6-sol-xhigh` for marketing
+and product copy — owner judges 5.6 the stronger copywriter (less verbose, no
+private-language drift). The driver still writes conversational and technical
+prose; user-facing marketing copy dispatches to this seat. Carries the Orwell
+writing system from global CLAUDE.md in its agent definition.
 
 The frontend-designer seat is the sanctioned expensive exception (rule 3):
 design taste is capability-bound, so it runs on Opus — but it has no
@@ -227,6 +245,50 @@ Model rules do NOT relax inside a script:
 workflow IS the fast path), and workflow scripts silently burning
 driver-model tokens on volume stages (the economics leak seat-guard cannot
 catch inside scripts).
+
+## Dispatch hygiene (owner-directed session audit, 2026-08-04)
+
+Findings from a full-session audit of the Buzz/Hermes overnight build. Each
+rule names the mistake it prevents; all evidence is from that session.
+
+1. **Preflight the brief's load-bearing environment.** Before dispatching a
+   seat whose plan depends on external state — a daemon, disk headroom for a
+   build, an unlocked GUI session, a TCC grant — the driver verifies that
+   state (seconds) and writes the verified facts into the brief.
+   → Prevents: a validation seat briefed onto a dead-on-arrival plan (Docker
+   was down; 14 GB disk for a multi-GB Rust build), and a full AX GUI driver
+   built before anyone checked that the screen was locked.
+2. **Two failed hypotheses → hand the repro to a seat.** Empirical debugging
+   (bisection, wire captures, env archaeology) leaves the driver after the
+   second falsified hypothesis: freeze the repro command and observations
+   into a brief and dispatch. Standing first check for any local HTTP
+   anomaly: `env | grep -i proxy` before any capture tooling.
+   → Prevents: the driver burning ~15 calls tracing an "HTTP 501" that was
+   `HTTPS_PROXY` in its own shell.
+3. **Fix cycles dispatch on complete verdicts.** When a verifier is
+   mid-report, wait for its bounded closeout before briefing the fix cycle;
+   only a stop-ship blocker justifies acting on a partial. Batch all known
+   scope — defects, standards, restructuring — into one fix brief.
+   → Prevents: three serial instruction batches to one implementer,
+   including an amend that later restructuring partially discarded.
+4. **Background seats carry a liveness deadline.** State the expected
+   closeout window in the brief; when the coordinator goes idle with seats
+   in flight, arm a watchdog (Monitor or a delayed background job). Silence
+   past the window = one ping, then respawn with the same brief.
+   → Prevents: a verifier sitting nine hours unreported overnight while the
+   coordinator waited.
+5. **Local knowledge before external research.** Research briefs begin with
+   a recall pass over local knowledge surfaces (agent memory, nest
+   RESEARCH/GUIDES, profile skills) and hand hits to seats as starting
+   context.
+   → Prevents: re-deriving a Buzz↔Hermes integration case study that had
+   existed in a profile's skills since July, found late by accident.
+
+Counter-evidence worth keeping: the implementer→verifier adversarial loop is
+not overhead — in the audited session it caught a key-destroying defect and
+a validation gap sitting behind 322 green tests and a clean clippy. Speed
+comes from the five rules above, never from skipping the verify pass on
+work that outlives the session.
 
 ## Operating contract
 
