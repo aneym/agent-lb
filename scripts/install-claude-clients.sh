@@ -25,9 +25,9 @@ case "${1:-}" in
   *) echo "usage: $0 [--print | --uninstall]" >&2; exit 2 ;;
 esac
 
-# `cc` is the canonical Opus 5 driver; `fable` is the sanctioned driver-swap
-# (ROUTING.md, "Fable driver mode") that leaves the seat slots untouched.
-CLIENT_NAMES=(cc fable)
+# `cc` and `fable` use the canonical Fable driver. `opus` is the explicit
+# genuine-1M Opus driver. All three preserve the canonical seat lineup.
+CLIENT_NAMES=(cc fable opus)
 POLICY_SOURCE="$REPO_DIR/config/coding-agents"
 POLICY_INSTALLER="$POLICY_SOURCE/install-policy.py"
 HOOK_TARGET="$USER_HOME/.claude/hooks/ccdex-gpt-only.sh"

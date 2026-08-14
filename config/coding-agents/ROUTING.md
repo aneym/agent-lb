@@ -29,12 +29,12 @@ change against it.
 
 ## Mode: raw Claude Code harness with canonical seats (2026-07-15)
 
-Claude Code, entered through `cc`, is the only coding harness. Opus 5/high with
-the 1M context variant is the normal driver. The launcher defaults to
-`claude-opus-5[1m]` and a 1M autocompact window; explicit model or autocompact
-flags still win. Fable remains an explicit brain-work driver and currently has
-a verified 200k model context, even though its compaction ceiling is configured
-at 1M for forward compatibility. Opus 5/high is
+Claude Code, entered through `cc`, is the only coding harness. Fable 5/high is
+the normal driver because it owns orchestration and routes volume to the
+canonical worker seats. `cc` and `fable` are equivalent entrypoints. `opus` is
+the explicit Opus 5 `[1m]` command for work that specifically needs genuine 1M
+context. Fable currently has a verified 200k model context, even though its
+compaction ceiling is configured at 1M for forward compatibility. Fable 5/high is
 the driver: it coordinates, decides, reconciles, and verifies using the native
 harness — `Agent`/`Workflow` subagents, skills, and hooks.
 
@@ -333,11 +333,12 @@ work that outlives the session.
 
 ## Runtime enforcement
 
-- `clients/claude-lb-launch` defaults `cc` sessions to Opus 5/high.
-- `clients/fable` execs the same launcher with the driver and opus/fable
+- `clients/cc` delegates to `clients/fable`; Fable 5/high is the default.
+- `clients/fable` execs the launcher with the driver and opus/fable
   slots set to `claude-fable-5` and the seat slots untouched.
-- `scripts/install-claude-clients.sh` installs this policy and the `cc` and
-  `fable` clients, and removes retired ccdex artifacts (clients, hook, MCP
+- `clients/opus` is the explicit Opus 5 `[1m]` entrypoint.
+- `scripts/install-claude-clients.sh` installs this policy and the `cc`,
+  `fable`, and `opus` clients, and removes retired ccdex artifacts (clients, hook, MCP
   registration) when it finds them.
 - `~/.claude/hooks/seat-guard.py` (global PreToolUse on Agent): denies
   expensive ad-hoc dispatches — explicit fable/opus overrides, or catch-all

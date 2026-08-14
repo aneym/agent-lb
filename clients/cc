@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
+"""cc: canonical Claude Code harness with Fable 5 as the driver."""
+
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
 
 def main() -> None:
-    if shutil.which("claude") is None:
-        print("cc: Claude Code executable 'claude' was not found on PATH", file=sys.stderr)
-        raise SystemExit(127)
-    launcher = Path(__file__).resolve().with_name("claude-lb-launch")
-    os.execv(launcher, [str(launcher), *sys.argv[1:]])
+    fable = Path(__file__).resolve().with_name("fable")
+    os.execv(fable, [str(fable), *sys.argv[1:]])
 
 
 if __name__ == "__main__":
