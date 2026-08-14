@@ -39,6 +39,8 @@ def test_installer_preview_is_non_mutating(tmp_path: Path) -> None:
     assert not bin_dir.exists()
     assert not policy_dir.exists()
     assert f"link {bin_dir}/cc -> {ROOT}/clients/cc" in result.stdout
+    assert f"link {bin_dir}/fable -> {ROOT}/clients/fable" in result.stdout
+    assert f"link {bin_dir}/opus -> {ROOT}/clients/opus" in result.stdout
     assert f"link {policy_dir}/coding-agents -> {ROOT}/config/coding-agents" in result.stdout
     assert f"would converge managed routing configuration in {user_home}/.claude/CLAUDE.md" in result.stdout
     assert "remove retired ccdex artifacts (clients, hook, MCP registration)" in result.stdout
@@ -104,7 +106,8 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
             "CLAUDE_LB_DRY_RUN": "1",
         },
     )
-    assert dry_run.stdout.strip() == "claude --model claude-opus-5 --effort high"
+    assert "--autocompact 1m" in dry_run.stdout
+    assert "--model claude-opus-5" not in dry_run.stdout
 
     subprocess.run([str(INSTALLER), "--uninstall"], check=True, env=env, capture_output=True, text=True)
     assert not (bin_dir / "cc").exists()
@@ -159,7 +162,7 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
     assert "agent-lb:coding-agent-routing" not in codex_text
 
     settings = json.loads(settings_path.read_text())
-    assert settings["model"] == "claude-opus-5"
+    assert settings["model"] == "fable"
     assert settings["effortLevel"] == "high"
     assert settings["env"] == {"KEEP": "yes"}
     assert settings["permissions"] == {"allow": ["keep-me"]}

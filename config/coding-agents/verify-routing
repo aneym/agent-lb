@@ -42,7 +42,7 @@ try:
 except json.JSONDecodeError:
     settings = {}
     check(False, f"{settings_path} contains valid JSON")
-check(settings.get("model") == "claude-opus-5", "direct Claude Code default is Opus 5")
+check(settings.get("model") == "fable", "direct Claude Code default is Fable 5")
 check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
 
 designer_source = REPO / "config" / "coding-agents" / "agents" / "frontend-designer.md"
@@ -127,7 +127,7 @@ check(
     "fable driver mode runs through the canonical launcher",
 )
 installer_text = (REPO / "scripts" / "install-claude-clients.sh").read_text()
-check("CLIENT_NAMES=(cc fable)" in installer_text, "client installer installs cc and fable")
+check("CLIENT_NAMES=(cc fable opus)" in installer_text, "client installer installs cc, fable, and opus")
 
 routing_text = CANONICAL.read_text() if CANONICAL.is_file() else ""
 check("## Fable driver mode" in routing_text, "canonical policy documents Fable driver mode")

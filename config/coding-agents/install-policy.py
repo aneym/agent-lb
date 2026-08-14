@@ -13,7 +13,7 @@ from typing import Any
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
-MODEL = "claude-opus-5"
+MODEL = "fable"
 EFFORT_LEVEL = "high"
 MANAGED_AGENTS = (
     (
