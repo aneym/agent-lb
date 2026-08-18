@@ -117,6 +117,69 @@ def test_parse_messages_sse_stream_yields_usage_and_tool_use_block():
         cache_read_input_tokens=200,
     )
 
+
+def test_collect_usage_from_chunk_detects_in_band_error_event():
+    from app.modules.proxy.anthropic_service import _collect_usage_from_chunk
+
+    stream = (
+        _sse_block(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_01",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "claude-fable-5",
+                    "content": [],
+                    "usage": {"input_tokens": 12},
+                },
+            },
+        )
+        + "\n\n"
+        + _sse_block(
+            "error",
+            {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}},
+        )
+        + "\n\n"
+    ).encode("utf-8")
+
+    # Split mid-event to exercise the cross-chunk reassembly buffer.
+    buffer = ""
+    usage = None
+    error = None
+    for chunk in (stream[:41], stream[41:]):
+        buffer, usage, chunk_error = _collect_usage_from_chunk(buffer, chunk, usage)
+        if chunk_error is not None:
+            error = chunk_error
+
+    assert usage == AnthropicUsage(input_tokens=12)
+    assert error is not None
+    assert error.error.type == "overloaded_error"
+    assert error.error.message == "Overloaded"
+
+
+def test_collect_usage_from_chunk_without_error_returns_none():
+    from app.modules.proxy.anthropic_service import _collect_usage_from_chunk
+
+    stream = (
+        _sse_block(
+            "message_delta",
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}},
+        )
+        + "\n\n"
+    ).encode("utf-8")
+
+    buffer, usage, error = _collect_usage_from_chunk("", stream, None)
+
+    assert buffer == ""
+    assert usage == AnthropicUsage(output_tokens=5)
+    assert error is None
+
+
+def test_parse_messages_sse_stream_yields_tool_use_block_details():
+    events = [event for block in _event_blocks(ANTHROPIC_SSE_STREAM) if (event := parse_sse_event(block)) is not None]
+
     tool_event = events[4]
     assert isinstance(tool_event, AnthropicContentBlockStartEvent)
     assert isinstance(tool_event.content_block, AnthropicToolUseBlock)

@@ -109,6 +109,14 @@ save_state() {
 # ticks (grace window for a deploy that bootstraps right back).
 if ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
   missing=$((missing + 1))
+  if (( missing == 1 )) && [[ -f "$PLIST_FILE" ]]; then
+    # First tick after the job vanished: capture whether a plist edit
+    # accompanied the unload so the bootout source is attributable later
+    # (the 2026-08-18 mid-stream outage was traced only via plist mtime).
+    plist_mtime=$(stat -f '%Sm' -t '%Y-%m-%dT%H:%M:%S' "$PLIST_FILE" 2>/dev/null || echo unknown)
+    plist_sha=$(shasum -a 256 "$PLIST_FILE" 2>/dev/null | cut -c1-12)
+    log "job missing forensics: plist_mtime=$plist_mtime plist_sha=${plist_sha:-unknown}"
+  fi
   if (( missing >= MISSING_THRESHOLD )); then
     if [[ -f "$PLIST_FILE" ]]; then
       log "service not bootstrapped (missing=$missing >= $MISSING_THRESHOLD) and no pause file — bootstrapping $PLIST_FILE"

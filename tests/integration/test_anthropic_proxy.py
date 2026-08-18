@@ -807,6 +807,68 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
 
 
 @pytest.mark.asyncio
+async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_client, monkeypatch):
+    # Anthropic reports mid-stream failures as an in-band SSE `error` event on
+    # an HTTP 200 stream. The proxy must forward the bytes verbatim (the
+    # request is not retryable once output started) but the request log must
+    # record the failure instead of a success (2026-08-18 audit).
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    upstream_bytes = (
+        b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","type":"message",'
+        b'"role":"assistant","model":"claude-fable-5","content":[],"usage":{"input_tokens":10}}}\n\n'
+        b'event: content_block_start\ndata: {"type":"content_block_start","index":0,'
+        b'"content_block":{"type":"text","text":""}}\n\n'
+        b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,'
+        b'"delta":{"type":"text_delta","text":"partial"}}\n\n'
+        b'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n'
+    )
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers, json_body
+        return _FakeResponseContext(_FakeResponse(200, upstream_bytes))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    ) as response:
+        assert response.status_code == 200
+        body = await response.aread()
+
+    # Forwarded verbatim: the client sees the partial output and the error event.
+    assert body == upstream_bytes
+
+    async with SessionLocal() as session:
+        result = await session.execute(select(RequestLog))
+        logs = list(result.scalars())
+    assert len(logs) == 1
+    log = logs[0]
+    assert log.account_id == "anthropic-account"
+    assert log.status == "error"
+    assert log.error_code == "stream_error_overloaded_error"
+    assert log.error_message == "Overloaded"
+    assert log.input_tokens == 10
+
+
+@pytest.mark.asyncio
 async def test_anthropic_count_tokens_forwards_verbatim_without_usage_writes(async_client, monkeypatch):
     await _insert_account(
         account_id="anthropic-account",

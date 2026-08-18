@@ -69,6 +69,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "client writing to a stale socket before the request reaches the app."
         ),
     )
+    parser.add_argument(
+        "--timeout-graceful-shutdown",
+        default=os.getenv("UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN", "75"),
+        help=(
+            "Seconds to let in-flight requests finish after SIGTERM before forcing "
+            "connections closed. Restarts that skip a drain sever active streams "
+            "mid-response (observed 2026-08-18); keep this below the launchd "
+            "ExitTimeOut so launchd's SIGKILL never races the drain."
+        ),
+    )
 
     return parser.parse_args(argv)
 
@@ -88,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     port = _parse_server_port(args.port)
     timeout_keep_alive = _parse_server_timeout_keep_alive(args.timeout_keep_alive)
+    timeout_graceful_shutdown = _parse_server_timeout_graceful_shutdown(args.timeout_graceful_shutdown)
     os.environ["PORT"] = str(port)
 
     _load_uvicorn().run(
@@ -97,6 +108,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         ssl_certfile=args.ssl_certfile,
         ssl_keyfile=args.ssl_keyfile,
         timeout_keep_alive=timeout_keep_alive,
+        # Drain in-flight streams on SIGTERM instead of severing them; a
+        # restart without a drain surfaces as "Server error mid-response"
+        # in every active client session.
+        timeout_graceful_shutdown=timeout_graceful_shutdown,
         # Mirror the upstream websocket leg (proxy_websocket): keep sending
         # transport pings so intermediaries see liveness, but disable the pong
         # deadline. Agent clients block their event loop for well over 20s
@@ -137,6 +152,17 @@ def _parse_server_timeout_keep_alive(raw_timeout: str) -> int:
         return int(raw_timeout)
     except ValueError as exc:
         message = f"--timeout-keep-alive/UVICORN_TIMEOUT_KEEP_ALIVE must be an integer, got {raw_timeout!r}."
+        raise SystemExit(message) from exc
+
+
+def _parse_server_timeout_graceful_shutdown(raw_timeout: str) -> int:
+    try:
+        return int(raw_timeout)
+    except ValueError as exc:
+        message = (
+            "--timeout-graceful-shutdown/UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN must be an "
+            f"integer, got {raw_timeout!r}."
+        )
         raise SystemExit(message) from exc
 
 

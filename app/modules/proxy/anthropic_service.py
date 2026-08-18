@@ -17,7 +17,12 @@ from urllib.parse import urljoin
 import aiohttp
 from pydantic import ValidationError
 
-from app.core.anthropic.models import AnthropicMessageRequest, AnthropicUsage, merge_usage_values
+from app.core.anthropic.models import (
+    AnthropicErrorEvent,
+    AnthropicMessageRequest,
+    AnthropicUsage,
+    merge_usage_values,
+)
 from app.core.anthropic.parsing import parse_sse_event
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.types import UpstreamError
@@ -422,6 +427,7 @@ class AnthropicProxyService:
                                     )
 
                                 text_buffer = ""
+                                stream_error: AnthropicErrorEvent | None = None
                                 # Non-streaming responses are a single JSON document, not SSE, so the
                                 # SSE collector never sees usage. Buffer the raw body and parse it at the end.
                                 raw_body = bytearray() if not payload.stream else None
@@ -432,11 +438,52 @@ class AnthropicProxyService:
                                     if raw_body is not None:
                                         raw_body.extend(chunk_bytes)
                                     else:
-                                        text_buffer, usage = _collect_usage_from_chunk(text_buffer, chunk_bytes, usage)
+                                        text_buffer, usage, chunk_error = _collect_usage_from_chunk(
+                                            text_buffer, chunk_bytes, usage
+                                        )
+                                        if chunk_error is not None:
+                                            stream_error = chunk_error
                                     streamed_bytes = True
                                     yield chunk_bytes
                                 if raw_body is not None:
                                     usage = _usage_from_json_body(bytes(raw_body)) or usage
+
+                                if stream_error is not None:
+                                    # Bytes already went out, so the request cannot be
+                                    # retried — but the failure must reach account
+                                    # health and the request log instead of counting
+                                    # as a success.
+                                    stream_error_type = stream_error.error.type or "unknown"
+                                    logger.warning(
+                                        "anthropic_stream_error_event request_id=%s account_id=%s "
+                                        "error_type=%s message=%s",
+                                        request_id,
+                                        account.id,
+                                        stream_error_type,
+                                        stream_error.error.message,
+                                    )
+                                    await self._load_balancer.record_error(account)
+                                    await self._persist_request_log(
+                                        account=account,
+                                        provider_name=provider_name,
+                                        request_id=request_id,
+                                        model=payload.model,
+                                        started_at=started_at,
+                                        status="error",
+                                        error_code=f"stream_error_{stream_error_type}",
+                                        error_message=stream_error.error.message,
+                                        api_key=api_key,
+                                        session_id=session_id,
+                                        useragent=useragent,
+                                        useragent_group=useragent_group,
+                                        usage=usage,
+                                    )
+                                    await self._finalize_api_key_reservation(
+                                        api_key_reservation,
+                                        model=payload.model,
+                                        usage=usage,
+                                    )
+                                    return
 
                                 await self._load_balancer.record_success(account)
                                 if tripwire_error is None:
@@ -1543,7 +1590,14 @@ def _collect_usage_from_chunk(
     text_buffer: str,
     chunk: bytes,
     usage: AnthropicUsage | None,
-) -> tuple[str, AnthropicUsage | None]:
+) -> tuple[str, AnthropicUsage | None, AnthropicErrorEvent | None]:
+    """Parse forwarded SSE chunks for usage and in-band error events.
+
+    Anthropic reports mid-stream failures as an SSE ``error`` event on an
+    HTTP 200 stream; without inspecting the forwarded bytes those failures
+    are invisible to account health and request logging.
+    """
+    error_event: AnthropicErrorEvent | None = None
     text_buffer += chunk.decode("utf-8", errors="replace")
     normalized = text_buffer.replace("\r\n", "\n")
     while "\n\n" in normalized:
@@ -1551,11 +1605,14 @@ def _collect_usage_from_chunk(
         event = parse_sse_event(block)
         if event is None:
             continue
+        if isinstance(event, AnthropicErrorEvent):
+            error_event = event
+            continue
         event_usage = getattr(event, "usage", None)
         if event_usage is None and getattr(event, "message", None) is not None:
             event_usage = event.message.usage
         usage = merge_usage_values(usage, event_usage)
-    return normalized, usage
+    return normalized, usage, error_event
 
 
 def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:
