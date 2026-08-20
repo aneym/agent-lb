@@ -14,6 +14,7 @@ from app.core.types import JsonObject, JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 
 CCGPT_MODEL = "gpt-5.6-sol"
+CCGPT_TERRA_MODEL = "gpt-5.6-terra"
 CCGPT_REASONING_EFFORT = "high"
 CCGPT_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 CCGPT_SERVICE_TIER = "priority"
@@ -199,9 +200,11 @@ def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
     return max(1, math.ceil(len(encoded) / 4))
 
 
-async def responses_to_claude_events(source: AsyncIterator[bytes | str]) -> AsyncIterator[JsonObject]:
+async def responses_to_claude_events(
+    source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL
+) -> AsyncIterator[JsonObject]:
     """Translate an upstream Responses SSE byte stream into Anthropic Messages events."""
-    state = _ClaudeStreamState()
+    state = _ClaudeStreamState(actual_model=model)
     buffer = ""
     async for chunk in source:
         buffer += chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
@@ -594,7 +597,7 @@ class _ClaudeStreamState:
                     "id": self.message_id,
                     "type": "message",
                     "role": "assistant",
-                    "model": CCGPT_MODEL,
+                    "model": self.actual_model,
                     "content": [],
                     "stop_reason": None,
                     "stop_sequence": None,

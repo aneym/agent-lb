@@ -238,7 +238,7 @@ def test_policy_installer_installs_frontend_designer_and_converges_idempotently(
     )
 
     assert first_content == MANAGED_DESIGNER.read_bytes()
-    assert b"\nmodel: opus\n" in first_content
+    assert b"\nmodel: fable\n" in first_content
     assert designer.read_bytes() == first_content
     assert owner.read_text() == "agent-lb:frontend-designer:v1\n"
     assert sorted(checkpoints.iterdir()) == first_checkpoints

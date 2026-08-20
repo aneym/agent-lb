@@ -51,10 +51,10 @@ designer_owner_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "fronte
 designer_source_text = designer_source.read_text() if designer_source.is_file() else ""
 designer_text = designer_path.read_text() if designer_path.is_file() else ""
 check(designer_source.is_file(), f"canonical frontend designer exists at {designer_source}")
-check("\nmodel: opus\n" in designer_source_text, "canonical frontend designer selects Opus")
+check("\nmodel: fable\n" in designer_source_text, "canonical frontend designer selects Fable")
 check(
     designer_path.is_file() and designer_text == designer_source_text,
-    f"{designer_path} matches the canonical Opus designer definition",
+    f"{designer_path} matches the canonical Fable designer definition",
 )
 check(
     designer_owner_path.is_file()
@@ -134,9 +134,9 @@ check("## Fable driver mode" in routing_text, "canonical policy documents Fable 
 for seat, model, effort in (
     ("Driver (main loop)", "claude-opus-5", "high"),
     ("Explore / scouts", "gpt-5.6-sol-medium", "medium, fast tier"),
-    ("Implementer", "gpt-5.6-sol-medium", "medium, fast tier"),
+    ("Implementer", "gpt-5.6-terra-medium", "medium, fast tier"),
     ("Verifier (adversarial)", "gpt-5.6-sol-xhigh", "xhigh, fast tier"),
-    ("Frontend designer", "claude-opus-5", "inherit high"),
+    ("Frontend designer", "claude-fable-5", "inherit high"),
     ("Planner (lane lead)", "claude-planner", "high"),
     ("Plan reviewer", "claude-planner", "high"),
 ):
@@ -145,11 +145,16 @@ for seat, model, effort in (
         len(matching_rows) == 1 and f"`{model}`" in matching_rows[0] and effort in matching_rows[0],
         f"{seat} retains canonical {model}/{effort} routing",
     )
-for stale_model in ("claude-fable-5", "claude-opus-4-8"):
+# Frontend designer is exempt from the claude-fable-5 scan since the seat was
+# pinned to Fable (design is Fable always — owner, 2026-08-20).
+for stale_model, seats in (
+    ("claude-fable-5", ("Driver (main loop)",)),
+    ("claude-opus-4-8", ("Driver (main loop)", "Frontend designer")),
+):
     migrated_rows = [
         line
         for line in routing_text.splitlines()
-        if any(seat in line for seat in ("Driver (main loop)", "Frontend designer"))
+        if any(seat in line for seat in seats)
     ]
     check(
         all(stale_model not in row for row in migrated_rows),

@@ -130,6 +130,7 @@ from app.modules.proxy.claude_codex_bridge import (
     CCGPT_MODEL,
     CCGPT_REASONING_EFFORT,
     CCGPT_SERVICE_TIER,
+    CCGPT_TERRA_MODEL,
     anthropic_error_from_response,
     anthropic_status_for_error,
     claude_to_responses,
@@ -752,12 +753,14 @@ async def v1_messages(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
     if payload.model in CCGPT_MODEL_ALIASES:
+        locked_model, alias_effort = CCGPT_MODEL_ALIASES[payload.model]
         return await _ccgpt_messages_response(
             request,
             payload,
             get_proxy_context(request),
             api_key,
-            alias_effort=CCGPT_MODEL_ALIASES[payload.model],
+            alias_effort=alias_effort,
+            locked_model=locked_model,
         )
     validate_model_access(api_key, payload.model)
     try:
@@ -815,7 +818,8 @@ async def v1_messages_count_tokens(
     if not isinstance(model, str) or not model.strip():
         return _anthropic_error_response(400, "invalid_request_error", "model is required")
     if model in CCGPT_MODEL_ALIASES:
-        validate_model_access(api_key, CCGPT_MODEL)
+        locked_model, _ = CCGPT_MODEL_ALIASES[model]
+        validate_model_access(api_key, locked_model)
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
     validate_model_access(api_key, model)
     # Token counting is quota-free upstream, so this route never creates an
@@ -829,15 +833,19 @@ async def v1_messages_count_tokens(
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
 
 
-# Worker model aliases accepted directly on /v1/messages. Each maps to the
-# locked Sol profile with a pinned reasoning effort; None defers to the
+# Worker model aliases accepted directly on /v1/messages. Each maps to its
+# locked upstream model and a pinned reasoning effort; None defers to the
 # request's own output_config.effort (bridge default: high).
-CCGPT_MODEL_ALIASES: dict[str, str | None] = {
-    CCGPT_MODEL: None,
-    f"{CCGPT_MODEL}-low": "low",
-    f"{CCGPT_MODEL}-medium": "medium",
-    f"{CCGPT_MODEL}-high": "high",
-    f"{CCGPT_MODEL}-xhigh": "xhigh",
+CCGPT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
+    alias: (model, effort)
+    for model in (CCGPT_MODEL, CCGPT_TERRA_MODEL)
+    for alias, effort in (
+        (model, None),
+        (f"{model}-low", "low"),
+        (f"{model}-medium", "medium"),
+        (f"{model}-high", "high"),
+        (f"{model}-xhigh", "xhigh"),
+    )
 }
 
 
@@ -858,6 +866,7 @@ async def _ccgpt_messages_response(
     context: ProxyContext,
     api_key: ApiKeyData | None,
     alias_effort: str | None = None,
+    locked_model: str = CCGPT_MODEL,
 ) -> Response:
     if payload.tools and any(isinstance(tool, AnthropicDefinedToolDefinition) for tool in payload.tools):
         return _anthropic_error_response(
@@ -867,6 +876,7 @@ async def _ccgpt_messages_response(
         )
     client_session_id = _anthropic_request_session_id(payload, request.headers)
     responses_payload = claude_to_responses(payload)
+    responses_payload.model = locked_model
     forwarded_headers = {
         key: value
         for key, value in request.headers.items()
@@ -884,7 +894,7 @@ async def _ccgpt_messages_response(
             prefer_http_bridge=True,
             forwarded_headers=forwarded_headers,
             client_session_id=client_session_id,
-            locked_model=CCGPT_MODEL,
+            locked_model=locked_model,
             locked_reasoning_effort=alias_effort
             or (responses_payload.reasoning.effort if responses_payload.reasoning else CCGPT_REASONING_EFFORT),
             locked_service_tier=CCGPT_SERVICE_TIER,
@@ -905,7 +915,9 @@ async def _ccgpt_messages_response(
     # terminal error before any assistant content must become a non-200 HTTP error
     # (Claude Code only reactive-compacts on a failed HTTP request received before
     # it creates the assistant turn), while a failure after content stays in-band.
-    startup_error, events = await split_startup_error(responses_to_claude_events(upstream.body_iterator))
+    startup_error, events = await split_startup_error(
+        responses_to_claude_events(upstream.body_iterator, model=locked_model)
+    )
     if startup_error is not None:
         return JSONResponse(content=startup_error, status_code=anthropic_status_for_error(startup_error))
     claude_stream = format_claude_events(events)

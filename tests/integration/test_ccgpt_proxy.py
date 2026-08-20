@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.clients.proxy import ProxyResponseError
 from app.modules.proxy import api as proxy_api
-from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL
+from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL, CCGPT_TERRA_MODEL
 
 pytestmark = pytest.mark.integration
 
@@ -322,14 +322,19 @@ async def test_ccgpt_count_tokens_is_local_and_native(async_client) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("alias", "expected_effort"),
+    ("alias", "expected_model", "expected_effort"),
     [
-        ("gpt-5.6-sol-medium", "medium"),
-        ("gpt-5.6-sol-xhigh", "xhigh"),
+        ("gpt-5.6-sol-medium", CCGPT_MODEL, "medium"),
+        ("gpt-5.6-sol-xhigh", CCGPT_MODEL, "xhigh"),
+        ("gpt-5.6-terra-medium", CCGPT_TERRA_MODEL, "medium"),
     ],
 )
-async def test_messages_route_serves_sol_alias_via_bridge(
-    async_client, monkeypatch: pytest.MonkeyPatch, alias: str, expected_effort: str
+async def test_messages_route_serves_worker_alias_via_bridge(
+    async_client,
+    monkeypatch: pytest.MonkeyPatch,
+    alias: str,
+    expected_model: str,
+    expected_effort: str,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -338,7 +343,7 @@ async def test_messages_route_serves_sol_alias_via_bridge(
         captured["kwargs"] = kwargs
 
         async def source():
-            yield 'data: {"type":"response.created","response":{"id":"resp_alias","model":"gpt-5.6-sol"}}\n\n'
+            yield f'data: {{"type":"response.created","response":{{"id":"resp_alias","model":"{expected_model}"}}}}\n\n'
             yield 'data: {"type":"response.output_text.delta","delta":"alias ok"}\n\n'
             yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":1}}}\n\n'
 
@@ -361,16 +366,18 @@ async def test_messages_route_serves_sol_alias_via_bridge(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert '"type":"message_start"' in body
+    assert f'"model":"{expected_model}"' in body
     assert '"type":"text_delta","text":"alias ok"' in body
-    assert captured["payload"].model == CCGPT_MODEL
-    assert captured["kwargs"]["locked_model"] == CCGPT_MODEL
+    assert captured["payload"].model == expected_model
+    assert captured["kwargs"]["locked_model"] == expected_model
     assert captured["kwargs"]["locked_reasoning_effort"] == expected_effort
     assert captured["kwargs"]["locked_service_tier"] == "priority"
 
 
 @pytest.mark.asyncio
-async def test_messages_route_plain_sol_alias_defers_to_request_effort(
-    async_client, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("alias", [CCGPT_MODEL, CCGPT_TERRA_MODEL])
+async def test_messages_route_plain_alias_defers_to_request_effort(
+    async_client, monkeypatch: pytest.MonkeyPatch, alias: str
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -386,7 +393,7 @@ async def test_messages_route_plain_sol_alias_defers_to_request_effort(
     response = await async_client.post(
         "/v1/messages",
         json={
-            "model": "gpt-5.6-sol",
+            "model": alias,
             "max_tokens": 512,
             "stream": True,
             "output_config": {"effort": "medium"},
@@ -395,14 +402,16 @@ async def test_messages_route_plain_sol_alias_defers_to_request_effort(
     )
 
     assert response.status_code == 200
+    assert captured["kwargs"]["locked_model"] == alias
     assert captured["kwargs"]["locked_reasoning_effort"] == "medium"
 
 
 @pytest.mark.asyncio
-async def test_messages_count_tokens_sol_alias_is_local(async_client) -> None:
+@pytest.mark.parametrize("alias", ["gpt-5.6-sol-xhigh", "gpt-5.6-terra-xhigh"])
+async def test_messages_count_tokens_worker_alias_is_local(async_client, alias: str) -> None:
     response = await async_client.post(
         "/v1/messages/count_tokens",
-        json={"model": "gpt-5.6-sol-xhigh", "messages": [{"role": "user", "content": "hello"}]},
+        json={"model": alias, "messages": [{"role": "user", "content": "hello"}]},
     )
 
     assert response.status_code == 200

@@ -46,10 +46,10 @@ per task. Sol seats are served by agent-lb's Messages-route model aliases
 | ---------------------- | --------------------------------------- | -------------------- | ----------------- |
 | Driver (main loop)     | —                                       | `claude-opus-5`      | high              |
 | Explore / scouts       | `~/.claude/agents/Explore.md`           | `gpt-5.6-sol-medium` | medium, fast tier |
-| Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-sol-medium` | medium, fast tier |
+| Implementer            | `~/.claude/agents/implementer.md`       | `gpt-5.6-terra-medium` | medium, fast tier |
 | Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
 | Copywriter             | `~/.claude/agents/copywriter.md`        | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
-| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-opus-5`      | inherit high      |
+| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `claude-fable-5`     | inherit high      |
 | Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
 | Plan reviewer          | `~/.claude/agents/plan-reviewer.md`     | `claude-planner`       | high; Fable 5 primary, Opus 5 on scoped exhaustion |
 
@@ -75,13 +75,25 @@ prose; user-facing marketing copy dispatches to this seat. Carries the Orwell
 writing system from global CLAUDE.md in its agent definition.
 
 The frontend-designer seat is the sanctioned expensive exception (rule 3):
-design taste is capability-bound, so it runs on Opus — but it has no
+design taste is capability-bound, so it runs on Fable — but it has no
 Edit/Write tools, produces only specs and ranked crits for the implementer
 seat, and stays low-volume/high-leverage (added 2026-07-15 after fleet audits
 showed UI sessions burning the most driver capacity on taste-then-pixels
 loops).
 
 The planner seat (2026-07-24) is the sanctioned Fable-primary TEAMMATE: a lane
+Implementer moved sol → terra (owner, 2026-08-20): `gpt-5.6-terra-medium`,
+a trial run — the owner's words were "for now". While the trial holds, every
+implementer closeout gets an audit before acceptance: the coordinator reads
+the diff itself or dispatches the verifier seat; no terra output lands
+unreviewed. Served by the same agent-lb Messages bridge as the sol aliases.
+Revert = this table plus `~/.claude/agents/implementer.md`.
+
+Design is Fable always (owner, 2026-08-20): the frontend-designer seat is
+pinned `model: fable` in its agent definition instead of riding the driver's
+opus slot, so design judgment stays on Fable even when a session runs the
+explicit `opus` driver.
+
 coordinator that plans, dispatches its own canonical seats, and reconciles —
 the brain of a delegated workstream (loop lanes, multi-seat sub-projects). Its
 `claude-planner` alias resolves to Fable 5 unless every otherwise-routable
@@ -139,8 +151,9 @@ alias bridge, not through a second harness.
 `kimi` is a driver-swap of the SAME harness and the SAME seat lineup, not a
 separate stack. It runs Claude Code through agent-lb like `cc`; only the
 driver and the Opus/Fable default slots remap to `kimi-k3`. The sonnet,
-haiku, and subagent slots are deliberately left unset so Explore/implementer
-(`gpt-5.6-sol-medium`), verifier (`gpt-5.6-sol-xhigh`), and sonnet catch-alls
+haiku, and subagent slots are deliberately left unset so Explore
+(`gpt-5.6-sol-medium`), implementer (`gpt-5.6-terra-medium`), verifier
+(`gpt-5.6-sol-xhigh`), and sonnet catch-alls
 keep resolving to their own pools through the LB. Verified live 2026-07-24:
 one kimi-mode session logged driver `kimi-k3` + Explore `gpt-5.6-sol` +
 `claude-sonnet-5` in the same run.

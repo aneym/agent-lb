@@ -6,8 +6,10 @@ The canonical policy is `~/.agents/policy/coding-agents/ROUTING.md`; it wins ove
 project instructions, orchestration notes, and skills when they disagree.
 
 - Claude Code is the only coding harness. Fable 5/high drives and routes; the canonical
-  seats are Explore→gpt-5.6-sol-medium, implementer→gpt-5.6-sol-medium,
-  verifier→gpt-5.6-sol-xhigh (agent-lb alias bridge), fixed per seat.
+  seats are Explore→gpt-5.6-sol-medium, implementer→gpt-5.6-terra-medium (on
+  trial since 2026-08-20 — the coordinator audits every implementer closeout),
+  verifier→gpt-5.6-sol-xhigh (agent-lb alias bridge), fixed per seat. Design
+  (frontend-designer) is Fable always.
 - The Codex dispatch stack is retired (2026-07-15). No ad-hoc model switching
   outside the canonical seats; changing the lineup means editing ROUTING.md
   and the agent files.
