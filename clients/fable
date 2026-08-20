@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 DRIVER_MODEL_ENV = "AGENT_LB_FABLE_MODEL"
-DEFAULT_DRIVER_MODEL = "claude-fable-5"
+DEFAULT_DRIVER_MODEL = "claude-fable-5[1m]"
 DEFAULT_AUTOCOMPACT = "1m"
 # Slots the driver swap owns.
 DRIVER_SLOTS = (

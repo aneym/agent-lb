@@ -108,8 +108,8 @@ fable_client = REPO / "clients" / "fable"
 fable_text = fable_client.read_text() if fable_client.is_file() else ""
 check(os.access(fable_client, os.X_OK), f"{fable_client} is executable")
 check(
-    'DEFAULT_DRIVER_MODEL = "claude-fable-5"' in fable_text,
-    "fable driver mode targets claude-fable-5",
+    'DEFAULT_DRIVER_MODEL = "claude-fable-5[1m]"' in fable_text,
+    "fable driver mode targets claude-fable-5[1m]",
 )
 for slot in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"):
     check(f'"{slot}"' in fable_text, f"fable driver mode swaps {slot}")
