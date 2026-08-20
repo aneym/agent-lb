@@ -88,6 +88,37 @@ def _normalize_usage(usage: UsageTokens | ResponseUsage | None) -> UsageTokens |
 
 
 DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
+    # GPT-5.6 tier rates as of the 2026-07-30 price cut (Terra -20%, Luna -80%,
+    # Sol unchanged); cache reads are 90% off input. Long-context (>272k input)
+    # bills the whole request at 2x input / 1.5x output. Priority rates are
+    # unpublished for 5.6, so priority traffic falls back to standard rates.
+    "gpt-5.6-sol": ModelPrice(
+        input_per_1m=5.0,
+        cached_input_per_1m=0.5,
+        output_per_1m=30.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=10.0,
+        long_context_cached_input_per_1m=1.0,
+        long_context_output_per_1m=45.0,
+    ),
+    "gpt-5.6-terra": ModelPrice(
+        input_per_1m=2.0,
+        cached_input_per_1m=0.2,
+        output_per_1m=12.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=4.0,
+        long_context_cached_input_per_1m=0.4,
+        long_context_output_per_1m=18.0,
+    ),
+    "gpt-5.6-luna": ModelPrice(
+        input_per_1m=0.2,
+        cached_input_per_1m=0.02,
+        output_per_1m=1.2,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=0.4,
+        long_context_cached_input_per_1m=0.04,
+        long_context_output_per_1m=1.8,
+    ),
     "gpt-5.5": ModelPrice(
         input_per_1m=5.0,
         cached_input_per_1m=0.5,
@@ -278,6 +309,11 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
+    # Bare "gpt-5.6" is OpenAI's alias for Sol; the tier patterns win by length.
+    "gpt-5.6-sol*": "gpt-5.6-sol",
+    "gpt-5.6-terra*": "gpt-5.6-terra",
+    "gpt-5.6-luna*": "gpt-5.6-luna",
+    "gpt-5.6*": "gpt-5.6-sol",
     "gpt-5.5-pro*": "gpt-5.5-pro",
     "gpt-5.5*": "gpt-5.5",
     "gpt-5.4-pro*": "gpt-5.4-pro",
