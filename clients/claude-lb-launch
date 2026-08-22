@@ -789,7 +789,7 @@ def start_lb_proxy(session_id: str) -> str:
                 port = 0
             if port and _proxy_port_ready(port):
                 return f"http://127.0.0.1:{port}"
-        time.sleep(0.05)
+        time.sleep(0.01)
     raise RuntimeError("Claude LB intercepting proxy did not start")
 
 
