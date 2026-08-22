@@ -100,11 +100,11 @@ SHIM_CLIENT_IDLE_TIMEOUT_SECONDS = 600
 # worst-case API request bodies want ~27) and half-duplex Wi-Fi airtime are
 # scarce; the intercepted api.anthropic.com path is never shaped. Megabits/s;
 # CLAUDE_LB_TUNNEL_RATE_MBPS overrides, <=0 (or non-finite) disables shaping.
-# 25 sized for the repositioned Wi-Fi link (432 Mbps PHY, ~52 Mbps measured
-# single-flow goodput, 2026-08-22): roughly half the observed capacity stays
-# free for API streams and interactive use. Raise toward ~100 only if the
-# link is upgraded to sustain it (wired or 6 GHz).
-SHIM_TUNNEL_RATE_MBPS_DEFAULT = 25.0
+# 40 sized for the wired-to-extender link (301 Mbps down / 43 Mbps up measured
+# 2026-08-22): downlink has 7x headroom, and the budget stays under the
+# measured uplink so a tunneled upload flood cannot saturate it (the budget
+# is combined up+down and cannot tell directions apart).
+SHIM_TUNNEL_RATE_MBPS_DEFAULT = 40.0
 # Tunnels that relayed at least this much get a closing summary on stderr so
 # heavy flows are attributable without packet capture (the shared desktop shim
 # logs to ~/.agent-lb/claude-desktop-proxy.err.log; per-session shims discard).
