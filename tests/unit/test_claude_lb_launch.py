@@ -1055,3 +1055,95 @@ def test_shim_connect_retry_budget_outlasts_watchdog_recovery() -> None:
     # startup); the shim must keep retrying well past that instead of
     # surfacing a 502 broken pipe to the agent.
     assert budget >= 100
+
+
+def test_tunnel_bucket_from_env_defaults_and_disable(monkeypatch) -> None:
+    launcher = load_launcher_module()
+
+    monkeypatch.delenv("CLAUDE_LB_TUNNEL_RATE_MBPS", raising=False)
+    bucket = launcher._tunnel_bucket_from_env()
+    assert bucket is not None
+    assert bucket.rate == pytest.approx(launcher.SHIM_TUNNEL_RATE_MBPS_DEFAULT * 125_000.0)
+
+    monkeypatch.setenv("CLAUDE_LB_TUNNEL_RATE_MBPS", "0")
+    assert launcher._tunnel_bucket_from_env() is None
+
+    # NaN passes a plain <=0 gate; it must disable shaping, not poison sleeps.
+    monkeypatch.setenv("CLAUDE_LB_TUNNEL_RATE_MBPS", "nan")
+    assert launcher._tunnel_bucket_from_env() is None
+
+    monkeypatch.setenv("CLAUDE_LB_TUNNEL_RATE_MBPS", "8")
+    bucket = launcher._tunnel_bucket_from_env()
+    assert bucket is not None
+    assert bucket.rate == pytest.approx(1_000_000.0)
+
+
+def test_tunnel_bucket_paces_aggregate_relay_rate() -> None:
+    launcher = load_launcher_module()
+
+    # 1 MB/s with a 10KB burst: four 50KB chunks book 0.2s of schedule; after
+    # the burst window the caller must have slept ~0.14s of it.
+    bucket = launcher._TunnelBucket(1_000_000.0, burst_bytes=10_000.0)
+    started = time.monotonic()
+    for _ in range(4):
+        bucket.throttle(50_000)
+    elapsed = time.monotonic() - started
+    assert elapsed >= 0.12
+
+    # Disabled shaping never sleeps regardless of volume.
+    unlimited = launcher._TunnelBucket(0.0)
+    started = time.monotonic()
+    unlimited.throttle(10**9)
+    assert time.monotonic() - started < 0.05
+
+
+def test_tunnel_bucket_small_writes_bypass_sleep_but_debit_schedule() -> None:
+    launcher = load_launcher_module()
+
+    bucket = launcher._TunnelBucket(1_000_000.0, burst_bytes=10_000.0)
+    # Small frames (RC websocket scale) pass without sleeping...
+    started = time.monotonic()
+    for _ in range(5):
+        bucket.throttle(1_000)
+    assert time.monotonic() - started < 0.05
+    # ...but they booked schedule: once the booked backlog exceeds the burst
+    # window, small writes throttle too, so chunking small cannot dodge
+    # shaping. 30 x 8KB = 240KB at 1 MB/s must take ~0.24s minus the burst.
+    started = time.monotonic()
+    for _ in range(30):
+        bucket.throttle(8_000)
+    assert time.monotonic() - started >= 0.15
+
+
+def test_splice_relays_both_directions_and_reports_totals() -> None:
+    launcher = load_launcher_module()
+
+    client_far, client_near = socket.socketpair()
+    upstream_near, upstream_far = socket.socketpair()
+    result: dict[str, tuple[int, int]] = {}
+
+    def run() -> None:
+        result["totals"] = launcher._splice(client_near, upstream_near)
+
+    import threading
+
+    pump = threading.Thread(target=run, daemon=True)
+    pump.start()
+
+    # Stay under the AF_UNIX socketpair buffer: a payload larger than the
+    # in-flight capacity deadlocks this single-threaded send/read sequence.
+    client_far.sendall(b"a" * 4_000)
+    received = b""
+    while len(received) < 4_000:
+        received += upstream_far.recv(65536)
+    upstream_far.sendall(b"b" * 1_000)
+    reply = client_far.recv(65536)
+
+    client_far.close()
+    pump.join(timeout=5)
+    upstream_far.close()
+
+    assert not pump.is_alive()
+    assert received == b"a" * 4_000
+    assert reply == b"b" * 1_000
+    assert result["totals"] == (4_000, 1_000)

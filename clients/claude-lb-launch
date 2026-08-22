@@ -42,6 +42,7 @@ import hashlib
 import http.client
 import http.server
 import json
+import math
 import os
 import resource
 import select
@@ -91,6 +92,21 @@ SHIM_CONNECT_BACKOFF_CAP_DEFAULT = 4.0
 # uses select() and keeps idle tunnels (e.g. the Remote Control websocket)
 # open indefinitely; only a socket op wedged this long is torn down.
 SHIM_CLIENT_IDLE_TIMEOUT_SECONDS = 600
+# Blind CONNECT tunnels relay at line rate by default, so one bulk download by
+# a tunneled client (e.g. a 400MB GitHub fetch observed 2026-08-22) saturates
+# the uplink's airtime and starves the latency-sensitive Anthropic streams the
+# MITM path carries. Shape the aggregate blind-tunnel relay rate per proxy
+# process — combined up+down, because both the ISP uplink (~50 Mbps, of which
+# worst-case API request bodies want ~27) and half-duplex Wi-Fi airtime are
+# scarce; the intercepted api.anthropic.com path is never shaped. Megabits/s;
+# CLAUDE_LB_TUNNEL_RATE_MBPS overrides, <=0 (or non-finite) disables shaping.
+# 10 sized for the current ~50 Mbps-usable Wi-Fi link; raise (~100) once the
+# machine is wired to the 250 Mbps line.
+SHIM_TUNNEL_RATE_MBPS_DEFAULT = 10.0
+# Tunnels that relayed at least this much get a closing summary on stderr so
+# heavy flows are attributable without packet capture (the shared desktop shim
+# logs to ~/.agent-lb/claude-desktop-proxy.err.log; per-session shims discard).
+SHIM_TUNNEL_LOG_MIN_BYTES = 8 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -461,14 +477,71 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         self.close_connection = True
 
 
-def _splice(a: socket.socket, b: socket.socket) -> None:
+class _TunnelBucket:
+    """Aggregate rate limiter shared by every blind tunnel in a proxy process.
+
+    Only blind CONNECT relays draw from it; the MITMed api.anthropic.com path
+    never passes through. Earliest-departure-time pacing: each chunk books its
+    transmission slot under the lock and sleeps until that slot, so admission
+    is FIFO by arrival — a tunnel delivering small chunks cannot starve one
+    delivering 64KB chunks the way an all-or-nothing token debit can, and no
+    chunk size can exceed the budget into an unsatisfiable wait.
+    """
+
+    # Writes this small (RC websocket frames, OAuth exchanges) skip the sleep
+    # while the booked backlog stays under one burst window. They still debit
+    # the schedule, so a stream chunked small to dodge shaping steals at most
+    # one burst window of budget before it throttles like everything else.
+    SMALL_WRITE_BYTES = 8192
+
+    def __init__(self, rate_bytes_per_second: float, burst_bytes: float | None = None) -> None:
+        self.rate = rate_bytes_per_second
+        # Burst is one second of budget, floored at two relay chunks so a tiny
+        # configured rate cannot stall a single 64KB recv() indefinitely.
+        capacity = max(rate_bytes_per_second, 131072.0) if burst_bytes is None else burst_bytes
+        self.burst_seconds = capacity / rate_bytes_per_second if rate_bytes_per_second > 0 else 0.0
+        self.next_free = time.monotonic() - self.burst_seconds
+        self.lock = threading.Lock()
+
+    def throttle(self, nbytes: int) -> None:
+        if self.rate <= 0:
+            return
+        with self.lock:
+            now = time.monotonic()
+            base = max(self.next_free, now - self.burst_seconds)
+            wait = base - now
+            self.next_free = base + nbytes / self.rate
+        if nbytes <= self.SMALL_WRITE_BYTES and wait <= self.burst_seconds:
+            return
+        while wait > 0:
+            step = min(wait, 0.5)
+            time.sleep(step)
+            wait -= step
+
+
+def _tunnel_bucket_from_env() -> _TunnelBucket | None:
+    rate_mbps = _env_float("CLAUDE_LB_TUNNEL_RATE_MBPS", SHIM_TUNNEL_RATE_MBPS_DEFAULT)
+    # NaN passes a plain <=0 gate and would poison every sleep computation,
+    # killing each tunnel on its first chunk machine-wide.
+    if not math.isfinite(rate_mbps) or rate_mbps <= 0:
+        return None
+    return _TunnelBucket(rate_mbps * 125_000.0)
+
+
+def _splice(
+    a: socket.socket,
+    b: socket.socket,
+    bucket: "_TunnelBucket | None" = None,
+) -> tuple[int, int]:
     """Bidirectionally pump bytes between two sockets until either side closes.
 
     Used for blind CONNECT tunnels (non-intercepted hosts, incl. the long-lived
     Remote Control websocket). The select timeout is only an idle tick — idle
-    connections are kept open, never torn down.
+    connections are kept open, never torn down. Returns (bytes a->b, bytes b->a).
     """
     ends = (a, b)
+    a_to_b = 0
+    b_to_a = 0
     try:
         while True:
             readable, _, errored = select.select(ends, [], ends, 300)
@@ -481,19 +554,26 @@ def _splice(a: socket.socket, b: socket.socket) -> None:
                 try:
                     data = src.recv(65536)
                 except OSError:
-                    return
+                    return a_to_b, b_to_a
                 if not data:
-                    return
+                    return a_to_b, b_to_a
+                if bucket is not None:
+                    bucket.throttle(len(data))
                 try:
                     dst.sendall(data)
                 except OSError:
-                    return
+                    return a_to_b, b_to_a
+                if src is a:
+                    a_to_b += len(data)
+                else:
+                    b_to_a += len(data)
     finally:
         for sock in ends:
             try:
                 sock.close()
             except OSError:
                 pass
+    return a_to_b, b_to_a
 
 
 class _ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -578,7 +658,17 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 pass
             return
-        _splice(self.connection, upstream)
+        started = time.monotonic()
+        sent, received = _splice(self.connection, upstream, getattr(self.server, "tunnel_bucket", None))
+        if sent + received >= SHIM_TUNNEL_LOG_MIN_BYTES:
+            duration = max(time.monotonic() - started, 0.001)
+            # Single write so concurrent tunnel-close lines from other handler
+            # threads cannot interleave mid-line in the shared shim's err.log.
+            sys.stderr.write(
+                f"cc-proxy: tunnel {host}:{port} relayed "
+                f"{received / 1e6:.1f}MB down / {sent / 1e6:.1f}MB up in {duration:.0f}s\n"
+            )
+            sys.stderr.flush()
 
 
 class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -635,6 +725,7 @@ def run_lb_proxy(
 
     server = _ThreadingProxyServer(("127.0.0.1", listen_port), _ProxyHandler)
     server.tls_context = tls_context
+    server.tunnel_bucket = _tunnel_bucket_from_env()
     server.session_id = session_id
     server.parent_pid = parent_pid
     server.shared = shared
