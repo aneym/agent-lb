@@ -4,7 +4,7 @@ All agent HTTPS traffic on a machine funnels through the launcher's shim proxies
 
 ## What Changes
 
-- Shape the aggregate blind-tunnel relay rate per shim proxy process with earliest-departure-time pacing (default 10 Mbps combined up+down, `CLAUDE_LB_TUNNEL_RATE_MBPS` override, non-positive or non-finite value disables shaping).
+- Shape the aggregate blind-tunnel relay rate per shim proxy process with earliest-departure-time pacing (default 25 Mbps combined up+down, `CLAUDE_LB_TUNNEL_RATE_MBPS` override, non-positive or non-finite value disables shaping).
 - Never shape the MITMed api.anthropic.com path; agent/model concurrency and API throughput stay unlimited.
 - Exempt small writes (<= 8KB) from pacing sleeps while the booked backlog stays inside one burst window, so Remote Control websocket frames and OAuth exchanges see no added latency; the exemption still debits the schedule so small-chunked streams cannot dodge shaping.
 - Log a one-line summary to stderr for any tunnel that relayed at least 8 MB, so heavy flows are attributable from the shim log.

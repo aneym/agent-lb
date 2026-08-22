@@ -2,7 +2,7 @@
 
 ### Requirement: Blind-tunnel rate shaping
 
-Each shim proxy process SHALL pace the aggregate bytes it relays across all blind CONNECT tunnels (combined directions) to a configured rate, defaulting to 10 Mbps, using earliest-departure-time scheduling so no tunnel can be starved by another tunnel's chunk-size pattern. The `CLAUDE_LB_TUNNEL_RATE_MBPS` environment variable SHALL override the rate, and a non-positive or non-finite value SHALL disable shaping entirely.
+Each shim proxy process SHALL pace the aggregate bytes it relays across all blind CONNECT tunnels (combined directions) to a configured rate, defaulting to 25 Mbps, using earliest-departure-time scheduling so no tunnel can be starved by another tunnel's chunk-size pattern. The `CLAUDE_LB_TUNNEL_RATE_MBPS` environment variable SHALL override the rate, and a non-positive or non-finite value SHALL disable shaping entirely.
 
 #### Scenario: Bulk tunnel download is paced
 
