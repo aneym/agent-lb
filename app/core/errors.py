@@ -97,9 +97,14 @@ def is_previous_response_not_found_error(
 ) -> bool:
     if code == "previous_response_not_found":
         return True
-    if code != "invalid_request_error" or param != "previous_response_id":
+    if code != "invalid_request_error":
         return False
-    return is_previous_response_not_found_message(message)
+    # ChatGPT's websocket backend can omit both code and param for an
+    # expired anchor. Match its exact message, not arbitrary invalid input.
+    if param in (None, "previous_response_id") and message is not None:
+        if " ".join(message.lower().split()) == "invalid `previous_response_id`.":
+            return True
+    return param == "previous_response_id" and is_previous_response_not_found_message(message)
 
 
 def response_failed_event(

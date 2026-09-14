@@ -50,6 +50,8 @@ from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
+    extract_input_file_ids,
+    extract_input_image_file_references,
 )
 from app.core.types import JsonValue
 from app.core.utils.sse import CODEX_KEEPALIVE_FRAME as CODEX_KEEPALIVE_FRAME  # noqa: F401
@@ -677,6 +679,88 @@ def _prepare_websocket_request_state_for_auth_replay(
     return request_text
 
 
+def _websocket_request_can_rotate_account(
+    request_state: _WebSocketRequestState,
+    continuity_state: _WebSocketContinuityState | None,
+) -> bool:
+    """Only a verified full resend can discard an account-local anchor."""
+    if (
+        request_state.file_required_preferred_account
+        or request_state.downstream_visible
+        or not request_state.fresh_upstream_request_is_retry_safe
+        or not request_state.fresh_upstream_request_text
+    ):
+        return False
+    fresh_payload = _websocket_account_portable_request_payload(
+        request_state,
+        request_state.fresh_upstream_request_text,
+        allow_previous_response_id=False,
+    )
+    if fresh_payload is None:
+        return False
+    input_value = fresh_payload.get("input")
+    if request_state.proxy_injected_previous_response_id:
+        return True
+    return bool(
+        continuity_state is not None
+        and continuity_state.last_completed_response_id == request_state.previous_response_id
+        and continuity_state.last_completed_input_count > 0
+        and _websocket_client_previous_response_full_resend_is_retry_safe(
+            previous_response_id=request_state.previous_response_id,
+            input_value=input_value,
+            continuity_state=continuity_state,
+        )
+    )
+
+
+def _websocket_account_portable_request_payload(
+    request_state: _WebSocketRequestState,
+    request_text: str | None,
+    *,
+    allow_previous_response_id: bool,
+) -> dict[str, JsonValue] | None:
+    if request_state.file_required_preferred_account or not request_text:
+        return None
+    try:
+        payload = json.loads(request_text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if not allow_previous_response_id and payload.get("previous_response_id"):
+        return None
+    if payload.get("conversation"):
+        return None
+    input_value = payload.get("input")
+    if extract_input_file_ids(input_value) or extract_input_image_file_references(input_value):
+        return None
+    return cast(dict[str, JsonValue], payload)
+
+
+def _websocket_owner_quota_can_request_full_history_reset(request_state: _WebSocketRequestState) -> bool:
+    if not request_state.expose_stale_previous_response_classifier:
+        return False
+    if (
+        _websocket_account_portable_request_payload(
+            request_state,
+            request_state.request_text,
+            allow_previous_response_id=True,
+        )
+        is None
+    ):
+        return False
+    if request_state.fresh_upstream_request_text is None:
+        return True
+    return (
+        _websocket_account_portable_request_payload(
+            request_state,
+            request_state.fresh_upstream_request_text,
+            allow_previous_response_id=False,
+        )
+        is not None
+    )
+
+
 def _websocket_owner_pinned_quota_error_code(
     request_state: _WebSocketRequestState | None,
     *,
@@ -813,7 +897,10 @@ def _maybe_rewrite_websocket_previous_response_not_found_event(
     upstream_control: _WebSocketUpstreamControl,
     original_text: str,
 ) -> tuple[OpenAIEvent | None, dict[str, JsonValue] | None, str | None, str]:
-    error_code = _websocket_event_error_code(event_type, payload)
+    error_code = _normalize_error_code(
+        _websocket_event_error_code(event_type, payload),
+        _websocket_event_error_type(event_type, payload),
+    )
     error_param = _websocket_event_error_param(event_type, payload)
     error_message = _websocket_event_error_message(event_type, payload)
     should_rewrite = _facade()._is_previous_response_not_found_error(
@@ -899,9 +986,18 @@ def _rewrite_websocket_previous_response_owner_unavailable_event(
         previous_response_id=request_state.previous_response_id,
         session_id=request_state.session_id,
     )
+    if _websocket_owner_quota_can_request_full_history_reset(request_state):
+        error_code = PREVIOUS_RESPONSE_STALE_CODE
+        error_message = (
+            "Previous response owner account reached its usage limit; "
+            "retry with full history and without previous_response_id."
+        )
+    else:
+        error_code = "upstream_unavailable"
+        error_message = "Previous response owner account is unavailable; retry later."
     rewritten_event_payload = response_failed_event(
-        "upstream_unavailable",
-        "Previous response owner account is unavailable; retry later.",
+        error_code,
+        error_message,
         error_type="server_error",
         response_id=_websocket_downstream_response_id(request_state),
     )
