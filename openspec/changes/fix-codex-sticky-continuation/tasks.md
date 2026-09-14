@@ -6,6 +6,6 @@
 - [x] Add bounded, full-history-only quota rotation and file/output guards.
 - [x] Add exact-payload and rotation regressions.
 - [x] Complete focused continuity checks and live Codex stale-anchor validation.
-- [ ] Selectively deploy reviewed local runtime and verify health.
+- [x] Selectively deploy reviewed local runtime and verify health.
 - [ ] Prove real cross-account rotation when two existing OpenAI accounts are usable.
-- [ ] Record exact evidence limitations and deployment hashes in lane closeout.
+- [x] Record exact evidence limitations and deployment hashes in lane closeout.
