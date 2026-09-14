@@ -1,0 +1,11 @@
+# Evidence and operating behavior
+
+The incident receipts live in the Agent Rails program checks/codex-sticky-routing directory. Both terminal timestamps match agent-lb request errors within milliseconds. Both failed requests selected the same preferred account as their preceding successful turns. The request log does not store the submitted previous_response_id, so exact origin lineage cannot be independently reconstructed. Cross-account routing is not a confirmed incident cause.
+
+Affinity priority remains turn-state, Codex session/conversation headers, then prompt-cache/sticky-thread hints. A previous_response_id resolves through the account index and successful request logs. Its owner wins over soft cache locality.
+
+For the exact invalid-anchor rejection, existing full-resend recovery removes the anchor and retries once before output. Short continuations are not silently stripped. Codex receives codex_previous_response_stale; generic Responses clients receive stream_incomplete.
+
+For quota rejection on a connected websocket, the request must be unstarted and eligible for one replay. The retained full input must either precede proxy anchor injection or match the known completed request's input prefix. File/image file references and explicit file pins forbid cross-account replay. The router restores that full input, removes previous_response_id, clears the old account preference, excludes the rejected account and updates its health through the normal handler. The same logical request reservation remains owned until final settlement. A short or unverified Codex continuation receives codex_previous_response_stale with an explicit instruction to resend full history; the proxy does not silently strip its delta. Generic Responses clients retain upstream_unavailable. File-dependent and conversation-bound requests retain owner-unavailable behavior. Already-started or already-retried requests cannot transparently rotate. This does not introduce account rotation for HTTP bridge requests or bypass preflight owner saturation.
+
+Live rotation requires two actually usable accounts. An injected quota rejection is fault-injection evidence, not naturally exhausted quota. A source hash or mocked test is not a deployed or provider result.

@@ -386,6 +386,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_precreated_auth_error_code,
     _websocket_precreated_retry_error_code,
     _websocket_receive_timeout_for_pending_requests,
+    _websocket_request_can_rotate_account,
     _websocket_response_id,
     _wrapped_websocket_error_event,
 )
@@ -2833,15 +2834,23 @@ class _WebSocketMixin:
             and request_state.previous_response_id is not None
             and request_state.preferred_account_id is not None
         ):
-            await proxy._handle_stream_error(
-                account,
-                {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},
-                retry_error_code,
-            )
-            event, payload, event_type, downstream_text = _rewrite_websocket_previous_response_owner_unavailable_event(
-                request_state=request_state,
-            )
-            retry_error_code = None
+            if _websocket_request_can_rotate_account(request_state, continuity_state):
+                # The retry branch below restores the verified full body before
+                # reconnecting. Never send this account's anchor to its successor.
+                request_state.excluded_account_ids.add(account.id)
+                request_state.preferred_account_id = None
+            else:
+                await proxy._handle_stream_error(
+                    account,
+                    {"message": _websocket_event_error_message(event_type, payload) or "Upstream error"},
+                    retry_error_code,
+                )
+                event, payload, event_type, downstream_text = (
+                    _rewrite_websocket_previous_response_owner_unavailable_event(
+                        request_state=request_state,
+                    )
+                )
+                retry_error_code = None
         if retry_error_code is not None:
             if retry_is_previous_response_not_found:
                 if not (

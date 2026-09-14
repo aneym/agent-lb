@@ -62,3 +62,15 @@ def test_previous_response_stream_incomplete_error_is_public_safe():
     assert payload["error"]["code"] == "stream_incomplete"
     assert payload["error"]["type"] == "server_error"
     assert payload["error"]["message"] == PREVIOUS_RESPONSE_STREAM_INCOMPLETE_MESSAGE
+
+
+def test_previous_response_invalid_classifier_matches_backend_error_without_param():
+    assert is_previous_response_not_found_error(
+        code="invalid_request_error", param=None, message="Invalid `previous_response_id`."
+    )
+    assert not is_previous_response_not_found_error(
+        code="invalid_request_error", param="model", message="Invalid `previous_response_id`."
+    )
+    assert not is_previous_response_not_found_error(
+        code="invalid_request_error", param=None, message="Invalid `input`."
+    )
