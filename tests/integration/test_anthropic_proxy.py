@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
+import aiohttp
 import pytest
 from sqlalchemy import select
 
@@ -4602,7 +4603,9 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     cooldown_reset_at = int((utcnow() + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_quota_cooldown(
         account_id="anthropic-cooling",
-        quota_key="anthropic_top",
+        # Opus requests are held out by Opus-scoped cooldowns only; a legacy
+        # anthropic_top marker belongs to Fable and no longer blocks Opus.
+        quota_key="anthropic_opus",
         reset_at=cooldown_reset_at,
     )
     await _insert_account(
@@ -4648,7 +4651,7 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     quota_sentence = message.split("Model quota: ", 1)[1].split(". ", 1)[0]
     clauses = [clause.strip() for clause in quota_sentence.split(";")]
     assert clauses[0] == (
-        f"anthropic_top cooldown excluded 1 account until {datetime.fromtimestamp(cooldown_reset_at).isoformat()}"
+        f"anthropic_opus cooldown excluded 1 account until {datetime.fromtimestamp(cooldown_reset_at).isoformat()}"
     )
     assert "1 account out of window or capped" in clauses
     assert datetime.fromtimestamp(weekly_reset_at).isoformat() not in clauses[0]
@@ -4687,3 +4690,107 @@ async def test_opus_specific_cooldown_remains_a_real_blocker(async_client):
     })
     assert response.status_code == 429
     assert response.json()["error"]["retryAt"].endswith("Z")
+
+
+
+class _FailingConnectContext:
+    """Upstream context whose connect phase fails, like aiohttp under a starved loop."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    async def __aenter__(self):
+        raise self._error
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_timeout_retries_then_succeeds(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-connect-retry",
+        provider="anthropic",
+        access_token="anthropic-access-connect-retry",
+        email="connect-retry@example.com",
+    )
+
+    opens: list[int] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers, json_body
+        opens.append(len(opens))
+        if len(opens) <= 2:
+            return _FailingConnectContext(
+                aiohttp.ServerTimeoutError("Connection timeout to host https://api.anthropic.com/v1/messages")
+            )
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+    monkeypatch.setattr(anthropic_proxy_module, "_CONNECT_RETRY_SLEEP", fake_sleep)
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 200
+    assert len(opens) == 3
+    assert sleeps == [pytest.approx(0.5), pytest.approx(1.0)]
+
+
+@pytest.mark.asyncio
+async def test_upstream_connect_failure_exhausted_returns_503_not_500(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-connect-dead",
+        provider="anthropic",
+        access_token="anthropic-access-connect-dead",
+        email="connect-dead@example.com",
+    )
+
+    opens: list[int] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers, json_body
+        opens.append(len(opens))
+        return _FailingConnectContext(
+            aiohttp.ServerTimeoutError("Connection timeout to host https://api.anthropic.com/v1/messages")
+        )
+
+    async def fake_sleep(delay: float) -> None:
+        del delay
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+    monkeypatch.setattr(anthropic_proxy_module, "_CONNECT_RETRY_SLEEP", fake_sleep)
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 503
+    assert "upstream_unreachable" in response.text
+    assert len(opens) == 3
