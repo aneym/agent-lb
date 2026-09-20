@@ -887,7 +887,13 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert captured["headers"]["anthropic-beta"] == "oauth-2025-04-20"
     assert captured["headers"]["anthropic-version"] == "2023-06-01"
     assert "x-api-key" not in {key.lower() for key in captured["headers"]}
-    assert captured["json_body"]["system"] == payload["system"]
+    # The client's own system prompt still reaches upstream verbatim; the
+    # Claude Code identity block that Anthropic's OAuth endpoint requires is
+    # prepended ahead of it.
+    assert captured["json_body"]["system"] == [
+        {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
+        {"type": "text", "text": payload["system"]},
+    ]
     assert captured["json_body"]["messages"] == payload["messages"]
     assert captured["json_body"]["thinking"] == payload["thinking"]
     assert captured["json_body"]["context_management"] == payload["context_management"]
@@ -3883,3 +3889,161 @@ async def test_upstream_529_full_outage_fails_fast_with_overloaded_error(async_c
     async with SessionLocal() as session:
         cooldowns = list((await session.execute(select(AdditionalUsageHistory))).scalars())
     assert cooldowns == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_adds_claude_code_identity_for_plain_api_clients(async_client, monkeypatch):
+    """Anthropic's OAuth endpoint only serves requests whose first system block
+    is the Claude Code identity; without it every account answers 429 and the
+    proxy records that as a quota cooldown, so the pool reads as exhausted
+    after two attempts. A client that sends no system prompt of its own (curl,
+    an SDK, another harness) must still reach upstream with the identity."""
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["json_body"] = dict(json_body)
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "say ok"}],
+        },
+    ) as response:
+        assert response.status_code == 200
+        await response.aread()
+
+    assert captured["json_body"]["system"] == [
+        {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_keeps_claude_code_identity_payload_untouched(async_client, monkeypatch):
+    """A real Claude Code payload already leads with the identity, so nothing
+    is prepended — a duplicated block would change the cached prefix."""
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["json_body"] = dict(json_body)
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    system = [
+        {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
+        {"type": "text", "text": "Session context."},
+    ]
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 32,
+            "stream": True,
+            "system": system,
+            "messages": [{"role": "user", "content": "say ok"}],
+        },
+    ) as response:
+        assert response.status_code == 200
+        await response.aread()
+
+    assert captured["json_body"]["system"] == system
+
+
+@pytest.mark.asyncio
+async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_windows(async_client, monkeypatch):
+    """The cooldown clause must speak only for accounts a cooldown is holding
+    out, dated by that cooldown. Reporting every blocked account as a cooldown
+    and dating it with the pool-wide retry hint turned a weekly-exhausted
+    account into "cooldown excluded 2 accounts until <days out>", which is what
+    sent the 2026-09-20 investigation after a quota wall that did not exist."""
+    await _insert_account(
+        account_id="anthropic-cooling",
+        provider="anthropic",
+        access_token="anthropic-access-cooling",
+        email="cooling@example.com",
+    )
+    cooldown_reset_at = int((utcnow() + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-cooling",
+        quota_key="anthropic_top",
+        reset_at=cooldown_reset_at,
+    )
+    await _insert_account(
+        account_id="anthropic-weekly-spent",
+        provider="anthropic",
+        access_token="anthropic-access-weekly",
+        email="weekly@example.com",
+    )
+    weekly_reset_at = int((utcnow() + timedelta(days=3)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_weekly_usage(
+        account_id="anthropic-weekly-spent",
+        used_percent=100.0,
+        reset_at=weekly_reset_at,
+    )
+
+    # One healthy account keeps a candidate in the pool, so the failure comes
+    # from the selector and carries the quota detail (an empty candidate list
+    # short-circuits to the "all accounts are cooling down" 429 instead).
+    await _insert_account(
+        account_id="anthropic-healthy",
+        provider="anthropic",
+        access_token="anthropic-access-healthy",
+        email="healthy@example.com",
+    )
+
+    async def fake_select_account(self, **kwargs):
+        del self, kwargs
+        return AccountSelection(account=None, error_message="No available accounts", error_code=None)
+
+    monkeypatch.setattr(anthropic_proxy_module.LoadBalancer, "select_account", fake_select_account)
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "session-route-cooldown-split",
+            "model": "claude-opus-5",
+            "quotaKey": "anthropic_top",
+        },
+    )
+
+    assert response.status_code == 503
+    message = response.json()["error"]["message"]
+    quota_sentence = message.split("Model quota: ", 1)[1].split(". ", 1)[0]
+    clauses = [clause.strip() for clause in quota_sentence.split(";")]
+    assert clauses[0] == (
+        f"anthropic_top cooldown excluded 1 account until {datetime.fromtimestamp(cooldown_reset_at).isoformat()}"
+    )
+    assert "1 account out of window or capped" in clauses
+    assert datetime.fromtimestamp(weekly_reset_at).isoformat() not in clauses[0]

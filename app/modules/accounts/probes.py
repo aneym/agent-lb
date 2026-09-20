@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
+from app.core.anthropic.identity import CLAUDE_CODE_IDENTITY
 from app.core.anthropic.oauth import ANTHROPIC_OAUTH_BETA
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
@@ -23,7 +24,6 @@ PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
 # Sentinel status for transport-level probe failures (DNS, TLS, timeout): no
 # HTTP response was received, so no real status code applies.
 PROBE_NETWORK_FAILURE_STATUS = 0
-_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 _PROBE_ERROR_MESSAGE_LIMIT = 500
 
 
@@ -134,7 +134,7 @@ async def send_messages_probe(
     body = {
         "model": model,
         "max_tokens": max_tokens,
-        "system": [{"type": "text", "text": _CLAUDE_CODE_IDENTITY}],
+        "system": [{"type": "text", "text": CLAUDE_CODE_IDENTITY}],
         "messages": [{"role": "user", "content": "Reply OK only."}],
         "stream": False,
     }

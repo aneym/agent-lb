@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
+from app.core.anthropic.identity import CLAUDE_CODE_IDENTITY
 from app.core.anthropic.models import AnthropicUsage, merge_usage_values
 from app.core.anthropic.oauth import ANTHROPIC_OAUTH_BETA
 from app.core.anthropic.parsing import parse_sse_event
@@ -18,10 +19,8 @@ _DEFAULT_ANTHROPIC_PRIMER_PROMPT = "Reply with OK only."
 _ERROR_MESSAGE_LIMIT = 1000
 
 # Anthropic OAuth (Bearer) credentials are only honored when the first system
-# block is exactly the Claude Code identity line. Real traffic carries it via the
-# inbound Claude Code client; a synthetic primer must supply it itself or the
-# upstream rejects the request with 401.
-_CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+# block is the Claude Code identity line (CLAUDE_CODE_IDENTITY); a synthetic
+# primer must supply it itself or the upstream rejects the request.
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +62,7 @@ async def send_anthropic_primer(
     body = {
         "model": model,
         "max_tokens": 4,
-        "system": [{"type": "text", "text": _CLAUDE_CODE_IDENTITY}],
+        "system": [{"type": "text", "text": CLAUDE_CODE_IDENTITY}],
         "messages": [{"role": "user", "content": prompt or _DEFAULT_ANTHROPIC_PRIMER_PROMPT}],
         "stream": True,
     }
