@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from json import JSONDecodeError
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from fastapi import (
     APIRouter,
@@ -3571,15 +3571,22 @@ def _anthropic_error_response(
     message: str,
     *,
     retry_at: int | None = None,
+    details: Any | None = None,
 ) -> JSONResponse:
+    error: dict[str, Any] = {
+        "type": error_type,
+        "message": message,
+    }
+    # Upstream's structured `details` is what clients classify on. Claude Code
+    # reads `thread_not_found` out of it to replay a stateful thread; without
+    # it the client sees a bare 404 and reports the selected model as missing.
+    if details is not None:
+        error["details"] = details
     return JSONResponse(
         status_code=status_code,
         content={
             "type": "error",
-            "error": {
-                "type": error_type,
-                "message": message,
-            },
+            "error": error,
         },
         headers=_retry_headers(retry_at),
     )
@@ -3600,7 +3607,7 @@ def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
     # reset time or ride out short waits with its own retry loop.
     if exc.retry_at is not None or exc.status_code == 429:
         return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
-    return _anthropic_error_response(exc.status_code, exc.code, exc.message)
+    return _anthropic_error_response(exc.status_code, exc.code, exc.message, details=exc.details)
 
 
 async def _collect_anthropic_body(body: AsyncIterator[bytes]) -> bytes:
@@ -3623,8 +3630,11 @@ async def _anthropic_stream_error_guard(
     except AnthropicProxyError as exc:
         await _release_reservation(api_key_reservation)
         error_type = "rate_limit_error" if (exc.retry_at is not None or exc.status_code == 429) else exc.code
+        error_body: dict[str, Any] = {"type": error_type, "message": exc.message}
+        if exc.details is not None:
+            error_body["details"] = exc.details
         envelope = json.dumps(
-            {"type": "error", "error": {"type": error_type, "message": exc.message}},
+            {"type": "error", "error": error_body},
             ensure_ascii=False,
         )
         if streaming:

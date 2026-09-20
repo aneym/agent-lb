@@ -178,6 +178,11 @@ class _AnthropicQuotaEligibility:
 class _AnthropicErrorDetails:
     message: str
     error_type: str | None = None
+    # Anthropic's structured `error.details` object. Clients classify some
+    # errors from it rather than from the prose message — Claude Code reads
+    # `thread_not_found` out of it to replay a stateful thread instead of
+    # failing the turn — so the proxy must carry it through untouched.
+    details: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,12 +200,14 @@ class AnthropicProxyError(Exception):
         *,
         code: str = "anthropic_proxy_error",
         retry_at: int | None = None,
+        details: Any | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message
         self.code = code
         self.retry_at = retry_at
+        self.details = details
 
 
 class AnthropicProxyService:
@@ -421,7 +428,15 @@ class AnthropicProxyService:
                                     continue
                                 if resp.status >= 400:
                                     error_details = await _read_error_details(resp)
-                                    await self._load_balancer.record_error(account)
+                                    # A 404 is a statement about the request —
+                                    # an unknown model, or server-side thread
+                                    # state the account no longer holds — never
+                                    # about the account's health. Counting it
+                                    # as an account error pushed healthy
+                                    # accounts down the ranking on every
+                                    # stateful-thread miss (2026-09-20).
+                                    if resp.status != 404:
+                                        await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
                                         account=account,
                                         provider_name=provider_name,
@@ -440,6 +455,7 @@ class AnthropicProxyService:
                                         resp.status,
                                         error_details.message,
                                         code=error_details.error_type or _anthropic_error_type_for_status(resp.status),
+                                        details=error_details.details,
                                     )
 
                                 # A 200 whose unified rate-limit headers report
@@ -1776,12 +1792,14 @@ async def _read_error_details(resp: aiohttp.ClientResponse) -> _AnthropicErrorDe
                 return _AnthropicErrorDetails(
                     message,
                     error_type if isinstance(error_type, str) else None,
+                    error.get("details"),
                 )
         if isinstance(payload.get("message"), str):
             error_type = payload.get("type")
             return _AnthropicErrorDetails(
                 payload["message"],
                 error_type if isinstance(error_type, str) else None,
+                payload.get("details"),
             )
     return _AnthropicErrorDetails(f"Anthropic upstream returned HTTP {resp.status}")
 

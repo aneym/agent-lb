@@ -712,6 +712,112 @@ async def test_anthropic_messages_mid_stream_failure_emits_sse_error_event(async
     assert error_data["error"]["type"] == "rate_limit_error"
 
 
+# Upstream drops server-side thread state and answers a `thread.continue` with
+# a 404 whose prose says nothing a client can match on; the machine-readable
+# code lives in `error.details`. Claude Code replays the turn statelessly when
+# it can read `thread_not_found` there, and otherwise falls through to its
+# generic 404 handler and reports the *selected model* as missing — which is
+# how a healthy route surfaced as "the model may not exist" (2026-09-20). The
+# proxy must therefore carry `details` through untouched. The body below is
+# the live upstream 404, captured through the proxy on 2026-09-20.
+_THREAD_NOT_FOUND_BODY = json.dumps(
+    {
+        "type": "error",
+        "error": {
+            "type": "not_found_error",
+            "message": (
+                "No thread state was found for the requested `previous_message_id`. "
+                'Replay the full conversation with `thread: {"type": "create"}` to start a new Thread.'
+            ),
+            "details": {"error_code": "thread_not_found"},
+        },
+    }
+).encode()
+
+
+def _fake_thread_not_found_response(self, session, *, provider_name, headers, json_body):
+    del self, session, provider_name, headers, json_body
+    return _FakeResponseContext(
+        _FakeResponse(404, _THREAD_NOT_FOUND_BODY, headers={"content-type": "application/json"})
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_preserves_upstream_error_details(async_client, monkeypatch):
+    _disable_pool_exhausted_wait(monkeypatch)
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        _fake_thread_not_found_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thread": {"type": "continue", "previous_message_id": "msg_stale"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 404
+    error = response.json()["error"]
+    assert error["type"] == "not_found_error"
+    assert error["details"] == {"error_code": "thread_not_found"}
+
+    # A 404 describes the request, not the account: it must not degrade the
+    # account's health ranking.
+    async with SessionLocal() as session:
+        account = (await session.execute(select(Account))).scalar_one()
+    assert account.status == AccountStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_anthropic_messages_stream_error_event_preserves_details(async_client, monkeypatch):
+    _disable_pool_exhausted_wait(monkeypatch)
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        _fake_thread_not_found_response,
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-fable-5",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thread": {"type": "continue", "previous_message_id": "msg_stale"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    ) as response:
+        assert response.status_code == 200
+        body = await response.aread()
+
+    text = body.decode("utf-8")
+    error_data = json.loads(text.split("event: error\ndata: ", 1)[1].split("\n\n", 1)[0])
+    assert error_data["error"]["type"] == "not_found_error"
+    assert error_data["error"]["details"] == {"error_code": "thread_not_found"}
+
+
 @pytest.mark.asyncio
 async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monkeypatch):
     await _insert_account(
