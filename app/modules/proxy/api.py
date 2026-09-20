@@ -622,6 +622,21 @@ async def codex_safety_arc(
     return await _codex_control_proxy(request, "safety/arc", context, api_key)
 
 
+@router.post("/alpha/search")
+async def codex_alpha_search(
+    request: Request,
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    """Codex's built-in `web_search` tool posts here.
+
+    Without this route the SPA catch-all (``@app.get("/{path:path}")`` in
+    ``app/main.py``) is the only match for the path, so the POST comes back
+    405 and every Codex seat behind agent-lb loses web search.
+    """
+    return await _codex_control_proxy(request, "alpha/search", context, api_key)
+
+
 @router.get("/agent-identities/jwks")
 async def codex_agent_identities_jwks(
     request: Request,

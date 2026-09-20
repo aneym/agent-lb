@@ -520,6 +520,11 @@ async def test_thread_goal_set_uses_active_account_when_budget_selection_is_empt
             "safety/arc",
             {"decision": "allow"},
         ),
+        (
+            "/backend-api/codex/alpha/search",
+            "alpha/search",
+            {"query": "agent-lb"},
+        ),
     ],
 )
 async def test_codex_control_json_endpoints_forward_upstream(
