@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -59,3 +60,22 @@ async def test_additional_quotas_include_fable_scoped_weekly():
     assert fable is not None
     assert fable.primary_window is not None
     assert fable.primary_window.used_percent == 57.0
+
+
+@pytest.mark.asyncio
+async def test_fable_scoped_weekly_lookup_feeds_the_account_summary():
+    """The same row also reaches `fableScopedWeekly` and the pools endpoint,
+    through one batched lookup keyed on (quota key, window) — not an N+1."""
+    clear_account_caches()
+    entry = _fable_entry(used_percent=87.0)
+    service = _build_service(entry)
+
+    by_account = await service._fable_scoped_weekly_by_account([_ACCOUNT_ID])
+
+    assert by_account == {_ACCOUNT_ID: entry}
+    additional_usage_repo = cast(AsyncMock, service._additional_usage_repo)
+    additional_usage_repo.latest_by_account.assert_awaited_once_with(
+        _FABLE_QUOTA_KEY,
+        "primary",
+        account_ids=[_ACCOUNT_ID],
+    )
