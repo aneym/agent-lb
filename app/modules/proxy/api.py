@@ -2150,6 +2150,16 @@ async def _build_codex_models_response(api_key: ApiKeyData | None) -> Response:
         await _release_reservation(reservation)
         return JSONResponse(content=CodexModelsResponse(models=[]).model_dump(mode="json"))
 
+    entries = _codex_model_entries(models, allowed_models, visibility_allowed_models)
+    await _release_reservation(reservation)
+    return JSONResponse(content=CodexModelsResponse(models=entries).model_dump(mode="json"))
+
+
+def _codex_model_entries(
+    models: Mapping[str, UpstreamModel],
+    allowed_models: set[str] | None,
+    visibility_allowed_models: set[str] | None,
+) -> list[CodexModelEntry]:
     entries: list[CodexModelEntry] = []
     for slug, model in models.items():
         if visibility_allowed_models is None:
@@ -2163,8 +2173,7 @@ async def _build_codex_models_response(api_key: ApiKeyData | None) -> Response:
                 visibility="list" if slug in visibility_allowed_models else "hide",
             )
         )
-    await _release_reservation(reservation)
-    return JSONResponse(content=CodexModelsResponse(models=entries).model_dump(mode="json"))
+    return entries
 
 
 async def _build_models_response(api_key: ApiKeyData | None) -> Response:
@@ -2175,6 +2184,7 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
     )
 
     allowed_models = _allowed_models_for_api_key(api_key)
+    visibility_allowed_models = _codex_model_visibility_allowed_models(api_key)
     created = int(time.time())
 
     registry = get_model_registry()
@@ -2182,7 +2192,7 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
 
     if not models:
         await _release_reservation(reservation)
-        return JSONResponse(content=ModelListResponse(data=[]).model_dump(mode="json"))
+        return JSONResponse(content=ModelListResponse(data=[], models=[]).model_dump(mode="json"))
 
     items: list[ModelListItem] = []
     for slug, model in models.items():
@@ -2211,7 +2221,12 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
             )
         )
     await _release_reservation(reservation)
-    return JSONResponse(content=ModelListResponse(data=items).model_dump(mode="json"))
+    return JSONResponse(
+        content=ModelListResponse(
+            data=items,
+            models=_codex_model_entries(models, allowed_models, visibility_allowed_models),
+        ).model_dump(mode="json")
+    )
 
 
 def _allowed_models_for_api_key(api_key: ApiKeyData | None) -> set[str] | None:

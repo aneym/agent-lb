@@ -28,6 +28,22 @@ class AnthropicUsageCostBreakdown:
 
 
 DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
+    # Opus 5 and Fable 5.1 were priced in the deployed runtime but never landed
+    # in the repo; without them a clean deploy from main would bill both at $0.
+    "claude-opus-5": AnthropicModelPrice(
+        input_per_1m=5.0,
+        cache_creation_5m_input_per_1m=6.25,
+        cache_creation_1h_input_per_1m=10.0,
+        cache_read_input_per_1m=0.50,
+        output_per_1m=25.0,
+    ),
+    "claude-fable-5-1": AnthropicModelPrice(
+        input_per_1m=10.0,
+        cache_creation_5m_input_per_1m=12.50,
+        cache_creation_1h_input_per_1m=20.0,
+        cache_read_input_per_1m=1.0,
+        output_per_1m=50.0,
+    ),
     "claude-fable-5": AnthropicModelPrice(
         input_per_1m=10.0,
         cache_creation_5m_input_per_1m=12.50,
@@ -41,6 +57,13 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_creation_1h_input_per_1m=20.0,
         cache_read_input_per_1m=1.0,
         output_per_1m=50.0,
+    ),
+    "claude-sonnet-5": AnthropicModelPrice(
+        input_per_1m=2.0,
+        cache_creation_5m_input_per_1m=2.50,
+        cache_creation_1h_input_per_1m=4.0,
+        cache_read_input_per_1m=0.20,
+        output_per_1m=10.0,
     ),
     "claude-opus-4-5": AnthropicModelPrice(
         input_per_1m=5.0,
@@ -126,6 +149,9 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     # longest-match wins — e.g. claude-opus-4-5-* maps to its own $5/$25 price, not Opus-4's $15/$75.
     "claude-fable-5*": "claude-fable-5",
     "claude-mythos-5*": "claude-mythos-5",
+    "claude-opus-5*": "claude-opus-5",
+    "claude-fable-5-1*": "claude-fable-5-1",
+    "claude-sonnet-5*": "claude-sonnet-5",
     "claude-opus-4-5*": "claude-opus-4-5",
     "claude-sonnet-4-5*": "claude-sonnet-4-5",
     "claude-haiku-4-5*": "claude-haiku-4-5",

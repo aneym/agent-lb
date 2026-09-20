@@ -36,6 +36,45 @@ def test_get_pricing_for_model_alias():
     assert price.output_per_1m == 2.0
 
 
+def _cost_for(model: str, usage: UsageTokens, service_tier: str | None = None) -> float | None:
+    resolved = get_pricing_for_model(model, DEFAULT_PRICING_MODELS, DEFAULT_MODEL_ALIASES)
+    if resolved is None:
+        return None
+    return calculate_cost_from_usage(usage, resolved[1], service_tier=service_tier)
+
+
+def test_gpt_6_astra_is_priced():
+    """An unpriced model bills $0, which silently uncaps USD-based team caps."""
+    usage = UsageTokens(input_tokens=60_000, output_tokens=20_000, cached_input_tokens=10_000)
+    cost = _cost_for("gpt-6-astra", usage)
+    assert cost is not None
+    assert cost > 0
+    # 50k fresh input @ $10 + 10k cached @ $1 + 20k output @ $50 per 1M.
+    assert cost == pytest.approx(0.5 + 0.01 + 1.0)
+
+
+def test_gpt_6_astra_effort_suffix_resolves_to_base_price():
+    result = get_pricing_for_model("gpt-6-astra-xhigh", DEFAULT_PRICING_MODELS, DEFAULT_MODEL_ALIASES)
+    assert result is not None
+    model, price = result
+    assert model == "gpt-6-astra"
+    assert price.input_per_1m == 10.0
+    assert price.output_per_1m == 50.0
+
+
+def test_gpt_6_astra_priority_tier_doubles_standard_rates():
+    # Kept under the 272k long-context threshold so only the tier varies.
+    usage = UsageTokens(input_tokens=100_000, output_tokens=100_000)
+    assert _cost_for("gpt-6-astra", usage) == pytest.approx(6.0)
+    assert _cost_for("gpt-6-astra", usage, "priority") == pytest.approx(12.0)
+
+
+def test_gpt_6_astra_long_context_surcharge():
+    usage = UsageTokens(input_tokens=300_000, output_tokens=100_000)
+    # >272k input bills the whole request at 2x input ($20) / 1.5x output ($75).
+    assert _cost_for("gpt-6-astra", usage) == pytest.approx(6.0 + 7.5)
+
+
 def test_get_pricing_for_model_gpt_5_3_alias():
     result = get_pricing_for_model("gpt-5.3-codex-2026", DEFAULT_PRICING_MODELS, DEFAULT_MODEL_ALIASES)
     assert result is not None
