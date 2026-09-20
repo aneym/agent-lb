@@ -2219,9 +2219,23 @@ def test_v1_responses_websocket_marks_fresh_turn_as_retry_safe_at_prep_time(
     assert connect_record[0]["fresh_upstream_request_text_set"] is True
 
 
+@pytest.mark.parametrize(
+    "upstream_error",
+    [
+        {
+            "type": "invalid_request_error",
+            "code": "previous_response_not_found",
+            "message": "Previous response with id 'resp_ws_prev_anchor' not found.",
+            "param": "previous_response_id",
+        },
+        {"type": "invalid_request_error", "message": "Invalid `previous_response_id`."},
+        {"type": "invalid_request_error", "code": "usage_limit_reached", "message": "Usage limit reached."},
+    ],
+)
 @pytest.mark.parametrize("endpoint", ["/v1/responses", "/backend-api/codex/responses"])
 def test_responses_websocket_replays_client_full_resend_previous_response_miss_without_anchor(
     endpoint,
+    upstream_error,
     app_instance,
     monkeypatch,
 ):
@@ -2257,12 +2271,7 @@ def test_responses_websocket_replays_client_full_resend_previous_response_miss_w
                         {
                             "type": "error",
                             "status": 400,
-                            "error": {
-                                "type": "invalid_request_error",
-                                "code": "previous_response_not_found",
-                                "message": "Previous response with id 'resp_ws_prev_anchor' not found.",
-                                "param": "previous_response_id",
-                            },
+                            "error": upstream_error,
                         },
                         separators=(",", ":"),
                     ),
@@ -2337,7 +2346,6 @@ def test_responses_websocket_replays_client_full_resend_previous_response_miss_w
             prefer_earlier_reset_window,
             routing_strategy,
             model,
-            request_state,
             api_key,
             client_send_lock,
             websocket,
@@ -2346,8 +2354,18 @@ def test_responses_websocket_replays_client_full_resend_previous_response_miss_w
         connect_count += 1
         if connect_count == 1:
             return SimpleNamespace(id="acct_ws_prev_mask"), first_upstream
+        if upstream_error.get("code") == "usage_limit_reached":
+            assert request_state.preferred_account_id is None
+            assert "acct_ws_prev_mask" in request_state.excluded_account_ids
+            return SimpleNamespace(id="acct_ws_rotated"), recovered_upstream
         return SimpleNamespace(id="acct_ws_prev_mask"), recovered_upstream
 
+    handled_errors = []
+
+    async def fake_handle_stream_error(self, account, error, code):
+        handled_errors.append((account.id, code))
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_handle_stream_error", fake_handle_stream_error)
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
     monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
@@ -2400,8 +2418,26 @@ def test_responses_websocket_replays_client_full_resend_previous_response_miss_w
     assert "previous_response_id" not in replay_payload
     assert replay_payload["input"] == full_resend_input
 
+    if upstream_error.get("code") == "usage_limit_reached":
+        assert handled_errors == [("acct_ws_prev_mask", "usage_limit_reached")]
+    else:
+        assert handled_errors == []
 
+
+@pytest.mark.parametrize(
+    "upstream_error",
+    [
+        {
+            "type": "invalid_request_error",
+            "code": "invalid_request_error",
+            "message": "Previous response with id 'resp_ws_prev_anchor' not found.",
+            "param": "previous_response_id",
+        },
+        {"type": "invalid_request_error", "message": "Invalid `previous_response_id`."},
+    ],
+)
 def test_v1_responses_websocket_masks_invalid_request_previous_response_not_found_without_retry(
+    upstream_error,
     app_instance,
     monkeypatch,
 ):
@@ -2437,12 +2473,7 @@ def test_v1_responses_websocket_masks_invalid_request_previous_response_not_foun
                         {
                             "type": "error",
                             "status": 400,
-                            "error": {
-                                "type": "invalid_request_error",
-                                "code": "invalid_request_error",
-                                "message": ("Previous response with id 'resp_ws_prev_anchor' not found."),
-                                "param": "previous_response_id",
-                            },
+                            "error": upstream_error,
                         },
                         separators=(",", ":"),
                     ),
@@ -5869,7 +5900,26 @@ def test_backend_responses_websocket_transparently_retries_precreated_error_usag
     assert json.loads(first_upstream.sent_text[0]) == json.loads(second_upstream.sent_text[0])
 
 
-def test_backend_responses_websocket_previous_response_usage_limit_returns_upstream_unavailable(
+@pytest.mark.parametrize(
+    ("endpoint", "expected_code", "expected_message"),
+    [
+        (
+            "/backend-api/codex/responses",
+            proxy_module.PREVIOUS_RESPONSE_STALE_CODE,
+            "Previous response owner account reached its usage limit; "
+            "retry with full history and without previous_response_id.",
+        ),
+        (
+            "/v1/responses",
+            "upstream_unavailable",
+            "Previous response owner account is unavailable; retry later.",
+        ),
+    ],
+)
+def test_responses_websocket_short_previous_response_usage_limit_requests_safe_reset_only_for_codex(
+    endpoint,
+    expected_code,
+    expected_message,
     app_instance,
     monkeypatch,
 ):
@@ -5981,13 +6031,13 @@ def test_backend_responses_websocket_previous_response_usage_limit_returns_upstr
     }
 
     with TestClient(app_instance) as client:
-        with client.websocket_connect("/backend-api/codex/responses") as websocket:
+        with client.websocket_connect(endpoint) as websocket:
             websocket.send_text(json.dumps(request_payload))
             event = json.loads(websocket.receive_text())
 
     assert event["type"] == "response.failed"
-    assert event["response"]["error"]["code"] == "upstream_unavailable"
-    assert event["response"]["error"]["message"] == "Previous response owner account is unavailable; retry later."
+    assert event["response"]["error"]["code"] == expected_code
+    assert event["response"]["error"]["message"] == expected_message
     assert connect_models == ["gpt-5.1"]
     assert captured_preferred_accounts == ["acct_ws_proxy_owner"]
     assert handled_error_codes == ["usage_limit_reached"]
