@@ -247,3 +247,61 @@ async def test_websocket_reservation_runs_the_gate_before_reserving(monkeypatch)
         )
 
     assert calls == ["model-beta"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "requested_model",
+    [
+        "claude-opus-5",
+        "claude-opus-5[1m]",
+        "claude-opus-5-1m",
+        "Claude-Opus-5[1M]",
+    ],
+)
+async def test_allowlisted_model_covers_its_context_window_spellings(requested_model):
+    repository = _FakeTeamRepository(_make_member(allowed_models=json.dumps(["claude-opus-5"])))
+    service = TeamService(repository)
+
+    await service.check_member_gate(_make_api_key("member-1"), requested_model)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "requested_model",
+    ["gpt-5.6-sol", "gpt-5.6-sol-xhigh", "gpt-5.6-sol-low"],
+)
+async def test_allowlisted_model_covers_its_reasoning_effort_aliases(requested_model):
+    repository = _FakeTeamRepository(_make_member(allowed_models=json.dumps(["gpt-5.6-sol"])))
+    service = TeamService(repository)
+
+    await service.check_member_gate(_make_api_key("member-1"), requested_model)
+
+
+@pytest.mark.asyncio
+async def test_context_window_spelling_in_the_allowlist_covers_the_base_model():
+    repository = _FakeTeamRepository(_make_member(allowed_models=json.dumps(["claude-opus-5[1m]"])))
+    service = TeamService(repository)
+
+    await service.check_member_gate(_make_api_key("member-1"), "claude-opus-5")
+
+
+@pytest.mark.asyncio
+async def test_a_different_model_is_still_rejected_despite_the_normalization():
+    repository = _FakeTeamRepository(_make_member(allowed_models=json.dumps(["claude-opus-5"])))
+    service = TeamService(repository)
+
+    for requested_model in ("claude-sonnet-5", "claude-opus-4-8[1m]", "gpt-6-astra"):
+        with pytest.raises(TeamModelNotAllowedError):
+            await service.check_member_gate(_make_api_key("member-1"), requested_model)
+
+
+@pytest.mark.asyncio
+async def test_effort_alias_in_the_allowlist_still_refuses_a_different_family():
+    repository = _FakeTeamRepository(_make_member(allowed_models=json.dumps(["gpt-5.6-sol-xhigh"])))
+    service = TeamService(repository)
+
+    await service.check_member_gate(_make_api_key("member-1"), "gpt-5.6-sol")
+
+    with pytest.raises(TeamModelNotAllowedError):
+        await service.check_member_gate(_make_api_key("member-1"), "gpt-5.6-luna")

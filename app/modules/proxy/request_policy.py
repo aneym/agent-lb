@@ -165,6 +165,21 @@ def resolve_model_alias(model: str | None) -> str | None:
     return alias[0]
 
 
+def strip_model_alias_suffix(model: str) -> str:
+    """Drop trailing reasoning-effort and service-tier tokens from a model id.
+
+    ``resolve_model_alias`` only collapses the base models in
+    ``_GPT5_ALIAS_BASE_MODELS``. Newer families (``gpt-5.6-*``, ``gpt-6-*``)
+    carry the same suffixes without being listed there, so a caller comparing a
+    requested model against a configured one needs the suffix gone either way.
+    """
+
+    parts = model.strip().lower().split("-")
+    while len(parts) > 1 and parts[-1] in _MODEL_ALIAS_TOKENS:
+        parts.pop()
+    return "-".join(parts)
+
+
 def normalize_upstream_model_alias(payload: ResponsesRequest | ResponsesCompactRequest) -> None:
     requested_model = payload.model
     alias = _resolve_model_alias_parts(requested_model)

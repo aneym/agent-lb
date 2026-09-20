@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from app.core.exceptions import (
 from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import ApiKey, TeamMember, TeamMemberStatus
 from app.modules.api_keys.service import ApiKeyData
+from app.modules.proxy.request_policy import resolve_model_alias, strip_model_alias_suffix
 from app.modules.team.repository import (
     TeamRepository,
     TeamUsageDayRow,
@@ -195,6 +197,44 @@ def deserialize_allowed_models(raw: str | None) -> list[str] | None:
     return [str(item) for item in parsed]
 
 
+_MODEL_CONTEXT_SUFFIX = re.compile(r"(?:\[[^\]]*\]|-1m)$")
+
+
+def _model_match_keys(model: str) -> set[str]:
+    """Every spelling of ``model`` that one allowlist entry has to cover.
+
+    Clients name the same upstream model several ways. Claude Code appends a
+    context marker (``claude-opus-5[1m]``, ``claude-opus-5-1m``) and Codex
+    appends a reasoning-effort token (``gpt-5.6-sol-xhigh``). The key-level
+    check already collapses the effort aliases before comparing; the member
+    allowlist has to collapse the same ones, or an allowlist naming the base
+    model refuses the client's own spelling of that very model.
+
+    Collapsing the context marker means an entry is a decision about the model,
+    not about its context window: allowing ``claude-opus-5`` allows the 1M form
+    too, and vice versa.
+    """
+
+    normalized = model.strip().lower()
+    if not normalized:
+        return set()
+    keys = {normalized, _MODEL_CONTEXT_SUFFIX.sub("", normalized)}
+    for key in tuple(keys):
+        alias = resolve_model_alias(key)
+        if alias:
+            keys.add(alias.strip().lower())
+        keys.add(strip_model_alias_suffix(key))
+    keys.discard("")
+    return keys
+
+
+def _model_is_allowed(model: str, allowed_models: list[str]) -> bool:
+    allowed: set[str] = set()
+    for entry in allowed_models:
+        allowed |= _model_match_keys(entry)
+    return bool(_model_match_keys(model) & allowed)
+
+
 def _cap_for(member: TeamMember, window: str, kind: str) -> float | int | None:
     return getattr(member, f"{kind}_cap_{window}" + ("_usd" if kind == "cost" else ""), None)
 
@@ -218,7 +258,7 @@ class TeamService:
             raise TeamMemberSuspendedError(f"Team member '{member.name}' is suspended")
 
         allowed_models = deserialize_allowed_models(member.allowed_models)
-        if allowed_models and model is not None and model not in allowed_models:
+        if allowed_models and model is not None and not _model_is_allowed(model, allowed_models):
             raise TeamModelNotAllowedError(f"Model '{model}' is not allowed for team member '{member.name}'")
 
         now = utcnow()
