@@ -120,6 +120,39 @@ async def test_v1_models_list(async_client):
 
 
 @pytest.mark.asyncio
+async def test_v1_models_also_carries_codex_models_field(async_client):
+    """Codex CLI 0.155+ reads /v1/models and requires a top-level ``models`` list."""
+    await _populate_test_registry()
+    resp = await async_client.get("/v1/models")
+    assert resp.status_code == 200
+    payload = resp.json()
+
+    # OpenAI-compatible clients keep reading ``data``.
+    assert payload["object"] == "list"
+    assert {item["id"] for item in payload["data"]} == {"gpt-5.2", "gpt-5.3-codex"}
+
+    # Codex reads ``models`` and expects its own entry shape, not ModelListItem.
+    assert "models" in payload
+    entries = payload["models"]
+    assert {entry["slug"] for entry in entries} == {"gpt-5.2", "gpt-5.3-codex"}
+    for entry in entries:
+        assert entry["display_name"]
+        assert "supported_reasoning_levels" in entry
+        assert "context_window" in entry
+        assert "id" not in entry
+
+
+@pytest.mark.asyncio
+async def test_v1_models_codex_field_matches_codex_route(async_client):
+    await _populate_test_registry()
+    v1 = await async_client.get("/v1/models")
+    codex = await async_client.get("/backend-api/codex/models")
+    assert v1.status_code == 200
+    assert codex.status_code == 200
+    assert v1.json()["models"] == codex.json()["models"]
+
+
+@pytest.mark.asyncio
 async def test_v1_models_uses_bootstrap_models_when_registry_not_populated(async_client):
     registry = get_model_registry()
     registry._snapshot = None

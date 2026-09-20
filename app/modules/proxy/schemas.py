@@ -201,6 +201,13 @@ class ModelListResponse(BaseModel):
 
     object: str = "list"
     data: list[ModelListItem]
+    # Codex CLI 0.155+ points its provider at ``<base>/v1`` and deserializes
+    # this route into its own ``ModelsResponse``, which has a single required
+    # ``models`` field. Without it every run prints "failed to refresh available
+    # models: missing field `models`" and falls back to its built-in catalog.
+    # Carrying both keys keeps OpenAI-compatible clients (Cursor, SDKs) on
+    # ``data`` and satisfies Codex, with no user-agent sniffing.
+    models: list[CodexModelEntry] = []
 
 
 class V1UsageLimitResponse(BaseModel):

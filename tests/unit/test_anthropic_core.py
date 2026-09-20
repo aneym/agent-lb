@@ -269,6 +269,18 @@ def test_pricing_resolves_current_generation_models():
     assert opus[1].output_per_1m == 25.0
 
 
+def test_pricing_covers_claude_sonnet_5():
+    """Sonnet 5 was unpriced, so every Sonnet 5 request billed $0 against USD caps."""
+    sonnet5 = get_pricing_for_model("claude-sonnet-5-20260219")
+    assert sonnet5 is not None
+    assert sonnet5[0] == "claude-sonnet-5"
+    assert sonnet5[1].input_per_1m == 2.0
+    assert sonnet5[1].output_per_1m == 10.0
+    assert sonnet5[1].cache_read_input_per_1m == 0.20
+    assert sonnet5[1].cache_creation_5m_input_per_1m == 2.50
+    assert sonnet5[1].cache_creation_1h_input_per_1m == 4.0
+
+
 def test_model_registry_parses_anthropic_model_list_payload():
     payload = {
         "data": [

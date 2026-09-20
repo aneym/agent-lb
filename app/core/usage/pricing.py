@@ -88,6 +88,25 @@ def _normalize_usage(usage: UsageTokens | ResponseUsage | None) -> UsageTokens |
 
 
 DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
+    # GPT-6 Astra: $10 input / $1 cached input / $50 output per 1M. Fast
+    # ("priority") is 2x standard, which matches the service tier the Codex
+    # model catalog advertises for Astra ("2x speed, increased usage").
+    # Long-context (>272k input) follows the same 2x input / 1.5x output rule
+    # as the 5.6 tiers; 272k is also the context_window the catalog reports.
+    # Batch/flex rates are unconfirmed, so flex traffic falls back to standard
+    # (over-bills rather than under-bills a cost cap).
+    "gpt-6-astra": ModelPrice(
+        input_per_1m=10.0,
+        cached_input_per_1m=1.0,
+        output_per_1m=50.0,
+        priority_input_per_1m=20.0,
+        priority_cached_input_per_1m=2.0,
+        priority_output_per_1m=100.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=20.0,
+        long_context_cached_input_per_1m=2.0,
+        long_context_output_per_1m=75.0,
+    ),
     # GPT-5.6 tier rates as of the 2026-07-30 price cut (Terra -20%, Luna -80%,
     # Sol unchanged); cache reads are 90% off input. Long-context (>272k input)
     # bills the whole request at 2x input / 1.5x output. Priority rates are
@@ -309,6 +328,10 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
 }
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
+    # Effort-suffixed slugs ("gpt-6-astra-xhigh", "gpt-6-astra-fast") share the
+    # base model's rates. No bare "gpt-6*" alias: only Astra is published, and a
+    # guessed catch-all would silently misprice a future tier.
+    "gpt-6-astra*": "gpt-6-astra",
     # Bare "gpt-5.6" is OpenAI's alias for Sol; the tier patterns win by length.
     "gpt-5.6-sol*": "gpt-5.6-sol",
     "gpt-5.6-terra*": "gpt-5.6-terra",
