@@ -162,6 +162,8 @@ from app.modules.proxy.schemas import (
     RateLimitStatusPayload,
     ReasoningLevelSchema,
     V1UsageLimitResponse,
+    V1UsageMemberResponse,
+    V1UsageMemberWindowResponse,
     V1UsageResponse,
     WarmupFailedAccount,
     WarmupRequest,
@@ -175,7 +177,8 @@ from app.modules.proxy.types import (
     RateLimitStatusPayloadData,
     RateLimitWindowSnapshotData,
 )
-from app.modules.team.gate import check_member_gate
+from app.modules.team.gate import check_member_gate, get_member_self_status
+from app.modules.team.service import TeamMemberSelfStatus
 from app.modules.usage.mappers import usage_history_to_window_row
 from app.modules.usage.repository import UsageRepository
 
@@ -1116,6 +1119,7 @@ async def v1_usage(
         total_cost_usd=usage.total_cost_usd,
         limits=[_to_v1_usage_limit_response(limit) for limit in usage.limits],
         upstream_limits=_ordered_aggregate_limits(aggregate_limits),
+        member=_to_v1_usage_member_response(await get_member_self_status(api_key)),
     )
 
 
@@ -1212,6 +1216,30 @@ async def v1_warmup_by_mode(
 
 def _ordered_aggregate_limits(aggregate_limits: dict[str, V1UsageLimitResponse]) -> list[V1UsageLimitResponse]:
     return [limit for window in ("5h", "7d", "monthly") if (limit := aggregate_limits.get(window)) is not None]
+
+
+def _to_v1_usage_member_response(status: TeamMemberSelfStatus | None) -> V1UsageMemberResponse | None:
+    if status is None:
+        return None
+    return V1UsageMemberResponse(
+        id=status.id,
+        name=status.name,
+        status=status.status,
+        gate=status.gate,
+        allowed_models=status.allowed_models,
+        windows=[
+            V1UsageMemberWindowResponse(
+                window=window.window,
+                cost_cap_usd=window.cost_cap_usd,
+                token_cap=window.token_cap,
+                cost_usd=window.cost_usd,
+                tokens=window.tokens,
+                window_start=window.window_start.isoformat() + "Z",
+                window_end=window.window_end.isoformat() + "Z",
+            )
+            for window in status.windows
+        ],
+    )
 
 
 def _to_v1_usage_limit_response(limit: ApiKeySelfLimitData) -> V1UsageLimitResponse:

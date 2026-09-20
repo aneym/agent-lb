@@ -142,6 +142,29 @@ class TeamMemberData:
 
 
 @dataclass(frozen=True, slots=True)
+class TeamMemberWindowStatus:
+    window: str
+    cost_cap_usd: float | None
+    token_cap: int | None
+    cost_usd: float
+    tokens: int
+    window_start: datetime
+    window_end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TeamMemberSelfStatus:
+    """What a member key is allowed to learn about its own member."""
+
+    id: str
+    name: str
+    status: str
+    gate: str
+    allowed_models: list[str] | None
+    windows: list[TeamMemberWindowStatus]
+
+
+@dataclass(frozen=True, slots=True)
 class TeamMemberUsageDetail:
     member_id: str
     window: str
@@ -335,6 +358,41 @@ class TeamService:
             totals=await self._repository.aggregate_usage(member.id, since=since),
             models=await self._repository.aggregate_usage_by_model(member.id, since=since),
             series=await self._repository.aggregate_usage_by_day(member.id, since=since),
+        )
+
+    async def get_member_self_status(self, member_id: str) -> TeamMemberSelfStatus | None:
+        """Caps, usage and gate for one member, for that member's own key.
+
+        Returns ``None`` when the member row is gone, so a key whose member was
+        deleted degrades to "no member" instead of failing the usage call. Reads
+        usage through the same short-lived cache the gate uses, so a tray client
+        polling this endpoint cannot turn into a per-poll aggregate query.
+        """
+
+        member = await self._repository.get_by_id(member_id)
+        if member is None:
+            return None
+
+        now = utcnow()
+        usage = {window: await self._usage_for_window(member.id, window, now=now) for window in TEAM_WINDOWS}
+        return TeamMemberSelfStatus(
+            id=member.id,
+            name=member.name,
+            status=_status_value(member.status),
+            gate=compute_gate(member, usage),
+            allowed_models=deserialize_allowed_models(member.allowed_models),
+            windows=[
+                TeamMemberWindowStatus(
+                    window=window,
+                    cost_cap_usd=_optional_float(_cap_for(member, window, "cost")),
+                    token_cap=_optional_int(_cap_for(member, window, "token")),
+                    cost_usd=usage[window].cost_usd,
+                    tokens=usage[window].tokens,
+                    window_start=window_start(window, now),
+                    window_end=window_end(window, now),
+                )
+                for window in TEAM_WINDOWS
+            ],
         )
 
     async def _require_member(self, member_id: str) -> TeamMember:

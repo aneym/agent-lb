@@ -216,6 +216,29 @@ class V1UsageLimitResponse(BaseModel):
     source: str = "api_key_limit"
 
 
+class V1UsageMemberWindowResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    window: str
+    cost_cap_usd: float | None = None
+    token_cap: int | None = None
+    cost_usd: float
+    tokens: int
+    window_start: str
+    window_end: str
+
+
+class V1UsageMemberResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    status: str
+    gate: str
+    allowed_models: list[str] | None = None
+    windows: list[V1UsageMemberWindowResponse] = []
+
+
 class V1UsageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -225,6 +248,7 @@ class V1UsageResponse(BaseModel):
     total_cost_usd: float
     limits: list[V1UsageLimitResponse]
     upstream_limits: list[V1UsageLimitResponse] = []
+    member: V1UsageMemberResponse | None = None
 
 
 class WarmupRequest(BaseModel):

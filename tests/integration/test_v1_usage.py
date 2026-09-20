@@ -3,15 +3,70 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKeyLimit, LimitType, LimitWindow, UsageHistory
+from app.db.models import (
+    Account,
+    AccountStatus,
+    ApiKey,
+    ApiKeyLimit,
+    LimitType,
+    LimitWindow,
+    RequestLog,
+    UsageHistory,
+)
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
 from app.modules.request_logs.repository import RequestLogsRepository
+from app.modules.team.service import reset_team_usage_cache
+from app.modules.team.windows import window_end, window_start
 
 pytestmark = pytest.mark.integration
+
+
+async def _create_member_key(async_client, **member_overrides) -> tuple[dict, str]:
+    """Create a team member plus one key attached to it; returns (member, plain key)."""
+
+    payload = {"name": f"member-{utcnow().timestamp()}"}
+    payload.update(member_overrides)
+    created = await async_client.post("/api/team/members", json=payload)
+    assert created.status_code == 200, created.text
+    member = created.json()
+
+    issued = await async_client.post(f"/api/team/members/{member['id']}/keys", json={})
+    assert issued.status_code == 200, issued.text
+    reset_team_usage_cache()
+    return member, issued.json()["key"]
+
+
+async def _member_key_id(member_id: str) -> str:
+    async with SessionLocal() as session:
+        result = await session.execute(select(ApiKey.id).where(ApiKey.member_id == member_id))
+        return result.scalar_one()
+
+
+async def _seed_member_request_log(*, api_key_id: str, requested_at, cost_usd: float, tokens: int) -> None:
+    async with SessionLocal() as session:
+        session.add(
+            RequestLog(
+                api_key_id=api_key_id,
+                request_id=f"req-member-{api_key_id}-{requested_at.isoformat()}",
+                model="model-alpha",
+                status="success",
+                cost_usd=cost_usd,
+                input_tokens=tokens,
+                output_tokens=0,
+                requested_at=requested_at,
+            )
+        )
+        await session.commit()
+    reset_team_usage_cache()
+
+
+def _window(payload: dict, name: str) -> dict:
+    return next(entry for entry in payload["member"]["windows"] if entry["window"] == name)
 
 
 async def _create_api_key(
@@ -290,6 +345,7 @@ async def test_v1_usage_returns_zero_usage_for_key_without_logs(async_client):
         "total_cost_usd": 0.0,
         "limits": [],
         "upstream_limits": [],
+        "member": None,
     }
 
 
@@ -708,3 +764,108 @@ async def test_v1_usage_ignores_paused_and_deactivated_accounts_in_aggregate_cre
             "source": "aggregate",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_v1_usage_member_is_null_for_a_key_without_a_member(async_client, db_setup):
+    _, plain_key = await _create_api_key(name="no-member")
+
+    response = await async_client.get("/v1/usage", headers={"Authorization": f"Bearer {plain_key}"})
+
+    assert response.status_code == 200
+    assert response.json()["member"] is None
+
+
+@pytest.mark.asyncio
+async def test_v1_usage_member_reports_caps_usage_and_window_boundaries(async_client, db_setup):
+    member, plain_key = await _create_member_key(
+        async_client,
+        costCapDayUsd=10.0,
+        costCapWeekUsd=40.0,
+        costCapMonthUsd=100.0,
+        tokenCapDay=1_000,
+        allowedModels=["model-alpha"],
+    )
+
+    now = utcnow()
+    key_id = await _member_key_id(member["id"])
+    await _seed_member_request_log(api_key_id=key_id, requested_at=now, cost_usd=2.0, tokens=200)
+
+    response = await async_client.get("/v1/usage", headers={"Authorization": f"Bearer {plain_key}"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["member"]["id"] == member["id"]
+    assert payload["member"]["name"] == member["name"]
+    assert payload["member"]["status"] == "active"
+    assert payload["member"]["gate"] == "ok"
+    assert payload["member"]["allowed_models"] == ["model-alpha"]
+    assert [entry["window"] for entry in payload["member"]["windows"]] == ["day", "week", "month"]
+
+    day = _window(payload, "day")
+    assert day["cost_cap_usd"] == 10.0
+    assert day["token_cap"] == 1_000
+    assert day["cost_usd"] == pytest.approx(2.0)
+    assert day["tokens"] == 200
+    assert day["window_start"] == window_start("day", now).isoformat() + "Z"
+    assert day["window_end"] == window_end("day", now).isoformat() + "Z"
+
+    week = _window(payload, "week")
+    assert week["cost_cap_usd"] == 40.0
+    assert week["token_cap"] is None
+    assert week["window_start"] == window_start("week", now).isoformat() + "Z"
+
+    month = _window(payload, "month")
+    assert month["cost_cap_usd"] == 100.0
+    assert month["window_end"] == window_end("month", now).isoformat() + "Z"
+
+
+@pytest.mark.asyncio
+async def test_v1_usage_member_gate_tracks_near_cap_and_over_cap(async_client, db_setup):
+    member, plain_key = await _create_member_key(async_client, costCapDayUsd=10.0)
+    key_id = await _member_key_id(member["id"])
+
+    now = utcnow()
+    await _seed_member_request_log(api_key_id=key_id, requested_at=now, cost_usd=8.5, tokens=10)
+    near = await async_client.get("/v1/usage", headers={"Authorization": f"Bearer {plain_key}"})
+    assert near.json()["member"]["gate"] == "near_cap"
+
+    await _seed_member_request_log(
+        api_key_id=key_id,
+        requested_at=now - timedelta(seconds=1),
+        cost_usd=2.0,
+        tokens=10,
+    )
+    over = await async_client.get("/v1/usage", headers={"Authorization": f"Bearer {plain_key}"})
+    assert over.json()["member"]["gate"] == "over_cap"
+
+
+@pytest.mark.asyncio
+async def test_v1_usage_member_reports_suspension_without_blocking_the_call(async_client, db_setup):
+    member, plain_key = await _create_member_key(async_client)
+
+    suspended = await async_client.patch(f"/api/team/members/{member['id']}", json={"status": "suspended"})
+    assert suspended.status_code == 200, suspended.text
+    reset_team_usage_cache()
+
+    response = await async_client.get("/v1/usage", headers={"Authorization": f"Bearer {plain_key}"})
+
+    assert response.status_code == 200
+    assert response.json()["member"]["status"] == "suspended"
+    assert response.json()["member"]["gate"] == "suspended"
+
+
+@pytest.mark.asyncio
+async def test_v1_usage_member_caps_are_null_when_unset(async_client, db_setup):
+    _, plain_key = await _create_member_key(async_client)
+
+    response = await async_client.get("/v1/usage", headers={"Authorization": f"Bearer {plain_key}"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    for entry in payload["member"]["windows"]:
+        assert entry["cost_cap_usd"] is None
+        assert entry["token_cap"] is None
+        assert entry["cost_usd"] == 0.0
+        assert entry["tokens"] == 0
+    assert payload["member"]["gate"] == "ok"
