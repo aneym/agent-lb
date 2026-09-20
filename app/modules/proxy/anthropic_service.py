@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 import aiohttp
 from pydantic import ValidationError
 
+from app.core.anthropic.identity import ensure_claude_code_identity_body
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
@@ -165,6 +166,14 @@ class _AnthropicQuotaEligibility:
     account_ids: list[str]
     blocked_count: int = 0
     next_reset_at: int | None = None
+    # Of `blocked_count`, the accounts held out by a request-quota cooldown
+    # this request did not re-admit, and the earliest reset among them. The
+    # rest are blocked by an exhausted primary/secondary window or a tripwire,
+    # which is a different fact about the pool: reporting them all as "quota
+    # cooldown" sent the 2026-09-20 investigation after a cooldown that had
+    # already been bypassed, with a weekly reset days out quoted as its end.
+    cooldown_blocked_count: int = 0
+    cooldown_reset_at: int | None = None
     # Exact IDs allowed to bypass a persisted primary-window RATE_LIMITED
     # status for this request. This is intentionally narrower than account_ids:
     # only the paid last-resort branch may populate it.
@@ -330,6 +339,16 @@ class AnthropicProxyService:
                             fast_mode=_anthropic_fast_mode_requested(payload),
                         )
                         body_payload = payload.model_dump(mode="json", exclude_none=True)
+                        if (
+                            provider_name == ANTHROPIC_PROVIDER_NAME
+                            and get_settings().anthropic_claude_code_identity_enabled
+                        ):
+                            # Anthropic's OAuth endpoint only serves requests
+                            # whose first system block is the Claude Code
+                            # identity; without it every account answers 429,
+                            # which reads as a pool-wide quota wall. Claude
+                            # Code sends it, a plain API client does not.
+                            body_payload = ensure_claude_code_identity_body(body_payload)
 
                         async with lease_http_session() as session:
                             async with self._open_upstream_response(
@@ -766,6 +785,8 @@ class AnthropicProxyService:
                 quota_reset_at=eligibility.next_reset_at,
                 quota_blocked_count=eligibility.blocked_count,
                 quota_candidate_count=len(eligibility.account_ids),
+                quota_cooldown_blocked_count=eligibility.cooldown_blocked_count,
+                quota_cooldown_reset_at=eligibility.cooldown_reset_at,
                 selection_error_code=selection.error_code,
                 selection_error_message=selection.error_message,
             )
@@ -787,6 +808,8 @@ class AnthropicProxyService:
         quota_reset_at: int | None = None,
         quota_blocked_count: int = 0,
         quota_candidate_count: int | None = None,
+        quota_cooldown_blocked_count: int = 0,
+        quota_cooldown_reset_at: int | None = None,
         selection_error_code: str | None = None,
         selection_error_message: str | None = None,
     ) -> tuple[str, int | None]:
@@ -826,9 +849,10 @@ class AnthropicProxyService:
             quota_key=quota_key,
             blocked_count=quota_blocked_count,
             candidate_count=quota_candidate_count,
+            cooldown_blocked_count=quota_cooldown_blocked_count,
+            cooldown_reset_at=quota_cooldown_reset_at,
             selection_error_code=selection_error_code,
             selection_error_message=selection_error_message,
-            retry_at=retry_at,
         )
         quota_sentence = f"Model quota: {quota_detail}. " if quota_detail else ""
         stored_note = (
@@ -845,12 +869,14 @@ class AnthropicProxyService:
         logger.warning(
             (
                 "Anthropic account selection failed model=%s quota_key=%s statuses=%s "
-                "quota_blocked=%s quota_candidates=%s selection_error_code=%s retry_at=%s"
+                "quota_blocked=%s quota_cooldown_blocked=%s quota_candidates=%s "
+                "selection_error_code=%s retry_at=%s"
             ),
             model,
             quota_key,
             status_summary,
             quota_blocked_count,
+            quota_cooldown_blocked_count,
             quota_candidate_count,
             selection_error_code,
             retry_at,
@@ -1206,10 +1232,20 @@ class AnthropicProxyService:
             blocked_count += len(hard_excluded_fable_account_ids)
             blocked_reset_by_account_id.update(hard_excluded_fable_reset_by_account_id)
 
+        # Only cooldowns that survived every re-admission path may be reported
+        # as a cooldown; a re-admitted account is not being held out by one.
+        cooling_account_ids = request_quota_blocked_account_ids - set(eligible_account_ids)
+        cooldown_resets = [
+            blocked_reset_by_account_id[account_id]
+            for account_id in cooling_account_ids
+            if account_id in blocked_reset_by_account_id
+        ]
         return _AnthropicQuotaEligibility(
             account_ids=eligible_account_ids,
             blocked_count=blocked_count,
             next_reset_at=min(blocked_reset_by_account_id.values()) if blocked_reset_by_account_id else None,
+            cooldown_blocked_count=len(cooling_account_ids),
+            cooldown_reset_at=min(cooldown_resets) if cooldown_resets else None,
             paid_fallback_account_ids=paid_fallback_account_ids,
             burn_first_account_ids=burn_first_account_ids,
         )
@@ -1641,15 +1677,27 @@ def _anthropic_selection_quota_detail(
     quota_key: str,
     blocked_count: int,
     candidate_count: int | None,
+    cooldown_blocked_count: int,
+    cooldown_reset_at: int | None,
     selection_error_code: str | None,
     selection_error_message: str | None,
-    retry_at: int | None,
 ) -> str | None:
     parts: list[str] = []
-    if blocked_count > 0:
-        noun = "account" if blocked_count == 1 else "accounts"
-        reset_text = f" until {datetime.fromtimestamp(retry_at).isoformat()}" if retry_at is not None else ""
-        parts.append(f"{quota_key} cooldown excluded {blocked_count} {noun}{reset_text}")
+    # A cooldown clause may only speak for accounts a cooldown is actually
+    # holding out, with that cooldown's own reset. Reporting every blocked
+    # account as a cooldown, dated by the pool-wide retry hint, turned two
+    # weekly-exhausted accounts plus a 60-second cooldown into "cooldown
+    # excluded 2 accounts until <three days out>" (2026-09-20).
+    if cooldown_blocked_count > 0:
+        noun = "account" if cooldown_blocked_count == 1 else "accounts"
+        reset_text = (
+            f" until {datetime.fromtimestamp(cooldown_reset_at).isoformat()}" if cooldown_reset_at is not None else ""
+        )
+        parts.append(f"{quota_key} cooldown excluded {cooldown_blocked_count} {noun}{reset_text}")
+    other_blocked_count = max(0, blocked_count - cooldown_blocked_count)
+    if other_blocked_count > 0:
+        noun = "account" if other_blocked_count == 1 else "accounts"
+        parts.append(f"{other_blocked_count} {noun} out of window or capped")
     if candidate_count is not None and (blocked_count > 0 or selection_error_code):
         noun = "account" if candidate_count == 1 else "accounts"
         parts.append(f"{candidate_count} {noun} remained after the {quota_key} prefilter")
