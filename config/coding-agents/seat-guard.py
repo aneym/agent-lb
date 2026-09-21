@@ -179,4 +179,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # The installed wrapper ends in `|| true`, so a crash would admit. Deny instead.
+    try:
+        main()
+    except Exception:
+        emit_denial("seat-guard crashed; failing closed")
