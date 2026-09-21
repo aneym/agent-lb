@@ -8,7 +8,7 @@ The coding-agent seat guard depends on limit-watch telemetry, but the poller cur
 
 - Make limit-watch require numeric, above-reserve core windows for Anthropic accounts.
 - Preserve the documented OpenAI exception: a null primary window is valid when the weekly window has headroom.
-- Require Fable-scoped weekly headroom for the Fable eligible count and reject refreshes older than fifteen minutes.
+- Require Fable-scoped weekly headroom for the Fable eligible count and reject only stale Fable-scoped telemetry; `lastRefreshAt` is an auth-token refresh timestamp, not telemetry.
 - Add provider minima and privacy-safe unusable-account reasons to the snapshot.
 
 ## Capabilities

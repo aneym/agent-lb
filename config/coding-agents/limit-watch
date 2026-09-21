@@ -6,11 +6,12 @@ accounts. Read-only against the LB: it makes no inference calls, writes no
 LB config, and changes no account caps. Its only writes are its own state
 file and an Unblock ask.
 
-Usable account = status "active", fresh telemetry, and every applicable
-reported window above reserve. Anthropic accounts fail closed if either core
+Usable account = status "active", no active rate-limit reset, and every
+applicable reported window above reserve. Anthropic accounts fail closed if either core
 window is missing or non-numeric. OpenAI legitimately reports a null primary
 window on some accounts, so its weekly window alone is sufficient in that
-case. Fable capacity additionally requires its scoped weekly quota.
+case. Fable capacity additionally requires its scoped weekly quota and fresh
+Fable-scoped weekly telemetry.
 
 Transitions that file an ask (deduplicated against the state file, so a
 steady-state poll never re-files):
@@ -104,16 +105,9 @@ def eligibility(account, reserve_percent, now=None):
         reasons.append("status is not active")
 
     now = now or datetime.now(timezone.utc)
-    freshness_unknown = False
-    refreshed = account.get("lastRefreshAt")
-    if refreshed is None:
-        freshness_unknown = True
-    else:
-        refreshed_at = parse_timestamp(refreshed)
-        if refreshed_at is None:
-            reasons.append("freshness: invalid")
-        elif (now - refreshed_at).total_seconds() > FRESHNESS_SECONDS:
-            reasons.append("freshness: stale")
+    rate_limit_reset = parse_timestamp(account.get("rateLimitResetAt"))
+    if rate_limit_reset is not None and rate_limit_reset > now:
+        reasons.append(f"rate limited until {account['rateLimitResetAt']}")
 
     usage = account.get("usage") or {}
     primary = usage.get("primaryRemainingPercent")
@@ -136,7 +130,9 @@ def eligibility(account, reserve_percent, now=None):
         reasons.append("secondary remaining <= reserve")
     else:
         remaining.append(secondary)
-    return not reasons, reasons, remaining, freshness_unknown
+    # lastRefreshAt records authentication token refreshes, not usage
+    # telemetry. No non-Fable account has a live usage-freshness signal.
+    return not reasons, reasons, remaining, True
 
 
 def is_usable(account, reserve_percent):
@@ -153,6 +149,26 @@ def fable_scoped_remaining(account):
             return 100 - used
         return None
     return None
+
+
+def fable_eligibility(account, reserve_percent, now=None):
+    """Return Fable-specific admission reasons after general eligibility."""
+    now = now or datetime.now(timezone.utc)
+    reasons = []
+    scope = account.get("fableScopedWeekly")
+    if isinstance(scope, dict):
+        recorded_at = parse_timestamp(scope.get("recordedAt"))
+        if scope.get("fresh") is False or (
+            recorded_at is not None and (now - recorded_at).total_seconds() > FRESHNESS_SECONDS
+        ):
+            reasons.append("fable window stale")
+
+    remaining = fable_scoped_remaining(account)
+    if not is_number(remaining):
+        reasons.append("fable scoped weekly remaining missing or non-numeric")
+    elif remaining <= reserve_percent:
+        reasons.append("fable scoped weekly remaining <= reserve")
+    return not reasons, reasons
 
 
 def nearest_reset_local(accounts):
@@ -292,14 +308,17 @@ def run_once(args):
                 )
 
     fable_accts = [a for a in accounts if a.get("fableEligible")]
-    fable_usable = [
-        a for a in fable_accts
-        if eligibility(a, args.reserve, observed_at)[0]
-        and (fable_scoped_remaining(a) is not None)
-        and fable_scoped_remaining(a) > args.reserve
+    fable_eligible = [
+        (a, eligibility(a, args.reserve, observed_at), fable_eligibility(a, args.reserve, observed_at))
+        for a in fable_accts
     ]
+    fable_usable = [a for a, general, scoped in fable_eligible if general[0] and scoped[0]]
     fable_count = len(fable_usable)
     fable_total = len(fable_accts)
+    fable_reasons = [
+        {"account_id": account_id(a), "reasons": scoped[1]}
+        for a, general, scoped in fable_eligible if general[0] and not scoped[0]
+    ]
     prev_fable_low = state.get("fable_low")
     now_fable_low = fable_count < 2
     if now_fable_low and prev_fable_low is False:
@@ -325,6 +344,7 @@ def run_once(args):
         "providers": snapshot_providers,
         "fable_eligible_usable": fable_count,
         "fable_eligible_total": fable_total,
+        "fable_reasons": fable_reasons,
     }
     if not args.dry_run:
         write_snapshot(snapshot)

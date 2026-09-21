@@ -19,7 +19,6 @@ def account(provider="anthropic", **changes):
         "provider": provider,
         "status": "active",
         "usage": {"primaryRemainingPercent": 55, "secondaryRemainingPercent": 65},
-        "lastRefreshAt": datetime.now(timezone.utc).isoformat(),
         "additionalQuotas": [],
     }
     value.update(changes)
@@ -78,27 +77,57 @@ def test_openai_weekly_at_reserve_is_unusable():
     assert result["providers"]["openai"]["usable_count"] == 0
 
 
-def test_fable_scoped_weekly_at_reserve_excludes_fable_count():
+def test_fable_scoped_weekly_reserve_and_staleness_exclude_fable_count():
     module = runpy.run_path(str(LIMIT_WATCH))
-    fable = account(fableEligible=True, additionalQuotas=[{
+    at_reserve = account(fableEligible=True, additionalQuotas=[{
         "quotaKey": "anthropic_fable_scoped_weekly",
         "primaryWindow": {"usedPercent": 80},
     }])
-    result = snapshot(module, [fable])
-    assert result["providers"]["anthropic"]["usable_count"] == 1
-    assert result["fable_eligible_usable"] == 0
-
-
-def test_stale_refresh_is_unusable_but_absent_refresh_is_unknown_only():
-    module = runpy.run_path(str(LIMIT_WATCH))
-    stale = account(lastRefreshAt=(datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat())
-    unknown = account(accountId="abcdefgh-more", lastRefreshAt=None)
-    result = snapshot(module, [stale, unknown])
-    assert result["providers"]["anthropic"]["usable_count"] == 1
-    assert result["providers"]["anthropic"]["reasons"] == [
-        {"account_id": "12345678", "reasons": ["freshness: stale"]}
-    ]
+    stale = account(accountId="abcdefgh-more", fableEligible=True, fableScopedWeekly={
+        "fresh": False,
+    }, additionalQuotas=[{
+        "quotaKey": "anthropic_fable_scoped_weekly",
+        "primaryWindow": {"usedPercent": 50},
+    }])
+    old_record = account(accountId="ijklmnop-more", fableEligible=True, fableScopedWeekly={
+        "fresh": True,
+        "recordedAt": (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat(),
+    }, additionalQuotas=[{
+        "quotaKey": "anthropic_fable_scoped_weekly",
+        "primaryWindow": {"usedPercent": 50},
+    }])
+    result = snapshot(module, [at_reserve, stale, old_record])
+    assert result["providers"]["anthropic"]["usable_count"] == 3
     assert result["providers"]["anthropic"]["freshness"] == "unknown"
+    assert result["fable_eligible_usable"] == 0
+    assert result["fable_reasons"] == [
+        {"account_id": "12345678", "reasons": ["fable scoped weekly remaining <= reserve"]},
+        {"account_id": "abcdefgh", "reasons": ["fable window stale"]},
+        {"account_id": "ijklmnop", "reasons": ["fable window stale"]},
+    ]
+
+
+def test_healthy_openai_account_with_days_old_last_refresh_stays_usable():
+    module = runpy.run_path(str(LIMIT_WATCH))
+    result = snapshot(module, [account("openai", lastRefreshAt=(
+        datetime.now(timezone.utc) - timedelta(days=4)
+    ).isoformat(), usage={"primaryRemainingPercent": None, "secondaryRemainingPercent": 65})])
+    assert result["providers"]["openai"]["usable_count"] == 1
+    assert result["providers"]["openai"]["freshness"] == "unknown"
+
+
+def test_inactive_and_future_rate_limited_accounts_are_unusable():
+    module = runpy.run_path(str(LIMIT_WATCH))
+    reset = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    result = snapshot(module, [
+        account(accountId="inactive-one", status="quota_exceeded"),
+        account(accountId="limited-one", rateLimitResetAt=reset),
+    ])
+    assert result["providers"]["anthropic"]["usable_count"] == 0
+    assert result["providers"]["anthropic"]["reasons"] == [
+        {"account_id": "inactive", "reasons": ["status is not active"]},
+        {"account_id": "limited-", "reasons": [f"rate limited until {reset}"]},
+    ]
 
 
 def test_snapshot_preserves_guard_keys_and_reports_minimum():
