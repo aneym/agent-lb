@@ -5,4 +5,4 @@
 - [x] Restore runtime Fable threshold to 100 with backup and graceful zero-in-flight restart.
 - [x] Verify live Fable eligibility changed to true for the account at 90-percent usage.
 - [x] Install CLI on PATH and verify live read-only results.
-- [ ] Notify existing w56:p2Z agent and observe resumed work.
+- [x] Notify existing w56:p2Z agent and observe resumed work.

@@ -70,3 +70,19 @@ Sent one Herdr `agent prompt` to exact existing pane `w56:p2Z`, session
 Readback shows the full message delivered and agent working (`Sublimating`).
 The message carries the owner override, CLI command, and instructions to reconcile
 existing jobs without duplicate writers; no iMessage action authorized.
+
+## Live provider recovery proven
+At `2026-09-21T19:45:19.704379Z`, Agent LB request logs recorded:
+- session `834653fa-30a9-45a4-b11c-1265bfe11cb7` (the requested `w56:p2Z`)
+- model `claude-fable-5-1`, status `ok`, no error
+- account `2c436b54-a7e2-4299-9d6b-689ad2dda8cb`
+
+Herdr readback shows the agent running the new CLI and reading its existing job
+output. This is real provider/session evidence, separate from the 29 passing local
+tests and GET-only status checks. No duplicate writer was created.
+
+## Outcome
+Requested local CLI and advisory routing recovery are installed and verified.
+Remaining integration follow-up: this worktree is committed but not merged/pushed;
+foreign main checkout policy prose was not modified. The resumed coordinator
+received Alex's explicit overriding instruction. OpenSpec validator was unavailable.
