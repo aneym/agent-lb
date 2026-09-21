@@ -430,3 +430,69 @@ class CodingAgentRoutingTests(unittest.TestCase):
         record = json.loads((self.home / "dispatch.jsonl").read_text())
         self.assertEqual(record["subagent_type"], "fork")
         self.assertTrue(record["fork"])
+
+    def test_seat_guard_failure_class_invalid_agent_payload_denies(self) -> None:
+        for payload in (
+            "[]",
+            json.dumps({"tool_name": "Agent"}),
+            json.dumps({"tool_name": "Agent", "tool_input": []}),
+            json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": 1}}),
+            json.dumps({"tool_name": "Agent", "tool_input": {"model": 1}}),
+        ):
+            with self.subTest(payload=payload):
+                _, out, _ = self.run_seat_guard_raw(payload, None)
+                self.assertIn("permissionDecision\": \"deny", out)
+        _, out, _ = self.run_seat_guard_raw(json.dumps({"tool_name": "Bash"}), None)
+        self.assertEqual(out, "")
+
+    def test_seat_guard_failure_class_top_level_setup_denies(self) -> None:
+        guard = self.home / "seat-guard-crash.py"
+        guard.write_text((SOURCE / "seat-guard.py").read_text().replace(
+            "    import hashlib", "    raise RuntimeError('forced setup failure')", 1,
+        ))
+        result = subprocess.run(
+            [sys.executable, str(guard)], input="{}", text=True,
+            capture_output=True, env=os.environ, check=False,
+        )
+        self.assertIn("permissionDecision\": \"deny", result.stdout)
+        self.assertIn("seat-guard crashed; failing closed", result.stdout)
+
+    def test_seat_guard_failure_class_fork_fable_pin_denies_before_fork_admission(self) -> None:
+        _, out, _ = self.run_seat_guard({"subagent_type": "fork", "model": "claude-fable-5"}, None)
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("pins a Fable model", out)
+        _, out, _ = self.run_seat_guard({"subagent_type": "fork", "model": "claude-sonnet-4-6"}, None)
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("missing snapshot", out)
+
+    def test_seat_guard_failure_class_future_snapshot_denies(self) -> None:
+        _, out, _ = self.run_seat_guard(
+            {"subagent_type": "opus-seat"},
+            self.limit_watch_snapshot(polled_at="2999-01-01T00:00:00Z"),
+        )
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("snapshot dated in the future", out)
+
+    def test_seat_guard_failure_class_override_ledger_write_denies(self) -> None:
+        blocked_ledger = self.home / "not-a-directory"
+        blocked_ledger.write_text("file")
+        with patch.dict(os.environ, {"SEAT_GUARD_ALLOW_ANTHROPIC": "1", "ROUTE_LEDGER": str(blocked_ledger / "dispatch.jsonl")}):
+            _, out, _ = self.run_seat_guard({"subagent_type": "claude"}, None)
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("could not record Anthropic override", out)
+
+    def test_seat_guard_failure_class_bad_route_table_keeps_snapshot_gate(self) -> None:
+        for name, prepare in (
+            ("missing", lambda path: None),
+            ("unreadable", lambda path: path.mkdir()),
+            ("invalid", lambda path: path.write_text("not-json")),
+        ):
+            with self.subTest(name=name):
+                bad_table = self.home / ("routing-table-" + name + ".json")
+                prepare(bad_table)
+                with patch.dict(os.environ, {"ROUTE_TABLE": str(bad_table)}):
+                    _, out, _ = self.run_seat_guard({"subagent_type": "opus-seat"}, None)
+                    self.assertIn("permissionDecision\": \"deny", out)
+                    self.assertIn("missing snapshot", out)
+                    _, out, _ = self.run_seat_guard({"subagent_type": "implementer"}, None)
+                self.assertEqual(out, "")
