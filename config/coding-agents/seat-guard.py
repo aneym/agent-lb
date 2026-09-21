@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse guard on the Agent tool: protect Anthropic quota and record dispatches.
+"""
+
+from __future__ import annotations  # the hook runs under /usr/bin/python3 (3.9)PreToolUse guard on the Agent tool: protect Anthropic quota and record dispatches.
 
 Opus, Sonnet, and Fable share the ``anthropic_top_thinking`` quota. Anthropic
 volume dispatches require a fresh, healthy limit-watch snapshot; non-Anthropic
