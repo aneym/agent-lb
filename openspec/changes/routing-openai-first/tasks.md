@@ -1,4 +1,5 @@
 ## 1. Implementation
+- [x] Fail-close Anthropic-model Agent seats against the limit-watch snapshot while preserving non-Anthropic forwarders.
 - [x] Track and update routing sources and installer mapping.
 - [x] Enforce account-level admission and freshness, including provider-specific unavailable windows and advisory verifier fallback.
 - [x] Add typed Jev classification and dispatch ledger output.

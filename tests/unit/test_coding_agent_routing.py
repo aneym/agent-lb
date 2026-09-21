@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from datetime import datetime, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,6 +55,29 @@ class CodingAgentRoutingTests(unittest.TestCase):
 
     def accounts(self, body: dict) -> None:
         (self.home / "api_accounts.json").write_text(json.dumps(body))
+
+    def run_seat_guard(self, tool_input: dict, snapshot: object | None) -> tuple[int, str, str]:
+        snapshot_path = self.home / "limit-watch.json"
+        if snapshot is not None:
+            snapshot_path.write_text(json.dumps(snapshot))
+        result = subprocess.run(
+            [sys.executable, str(SOURCE / "seat-guard.py")],
+            input=json.dumps({"tool_name": "Agent", "tool_input": tool_input}),
+            text=True,
+            capture_output=True,
+            env={**os.environ, "LIMIT_WATCH_SNAPSHOT": str(snapshot_path)},
+            check=False,
+        )
+        return result.returncode, result.stdout, result.stderr
+
+    def limit_watch_snapshot(self, *, usable_count: int = 2, fable_eligible_usable: int = 2,
+                            polled_at: str | None = None) -> dict:
+        return {
+            "polled_at": polled_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "reachable": True,
+            "providers": {"anthropic": {"usable_count": usable_count}},
+            "fable_eligible_usable": fable_eligible_usable,
+        }
 
     def jev_response(self, *, difficulty: float = 2, money: float = .98) -> dict:
         import route_jev
@@ -310,3 +334,48 @@ class CodingAgentRoutingTests(unittest.TestCase):
         result = json.loads(out)
         self.assertEqual((result["model"], result["vendor"]), ("claude-opus-5", "anthropic"))
         self.assertNotEqual(result["verifier"]["vendor"], "openai")
+
+    def test_seat_guard_stale_snapshot_denies(self) -> None:
+        _, out, _ = self.run_seat_guard(
+            {"subagent_type": "verifier"},
+            self.limit_watch_snapshot(polled_at="2020-01-01T00:00:00Z"),
+        )
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("stale snapshot", out)
+
+    def test_seat_guard_missing_snapshot_denies(self) -> None:
+        _, out, _ = self.run_seat_guard({"subagent_type": "opus-seat"}, None)
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("missing snapshot", out)
+
+    def test_seat_guard_usable_under_two_denies(self) -> None:
+        for name, snapshot, reason in (
+            ("anthropic", self.limit_watch_snapshot(usable_count=1), "usable_count < 2"),
+            ("fable-eligible", self.limit_watch_snapshot(fable_eligible_usable=1), "fable_eligible_usable < 2"),
+        ):
+            with self.subTest(name=name):
+                _, out, _ = self.run_seat_guard({"model": "claude-sonnet-4-6"}, snapshot)
+                self.assertIn("permissionDecision\": \"deny", out)
+                self.assertIn(reason, out)
+
+    def test_seat_guard_healthy_anthropic_seat_admits(self) -> None:
+        _, out, _ = self.run_seat_guard(
+            {"subagent_type": "plan-reviewer"}, self.limit_watch_snapshot(),
+        )
+        self.assertEqual(out, "")
+
+    def test_seat_guard_non_anthropic_forwarder_admits_when_snapshot_missing(self) -> None:
+        _, out, _ = self.run_seat_guard({"subagent_type": "implementer"}, None)
+        self.assertEqual(out, "")
+
+    def test_seat_guard_override_admits(self) -> None:
+        with patch.dict(os.environ, {"SEAT_GUARD_ALLOW_ANTHROPIC": "1"}):
+            _, out, _ = self.run_seat_guard({"subagent_type": "claude"}, None)
+        self.assertEqual(out, "")
+        record = json.loads((self.home / "dispatch.jsonl").read_text())
+        self.assertTrue(record["anthropic_override"])
+
+    def test_seat_guard_internal_error_denies(self) -> None:
+        _, out, _ = self.run_seat_guard({"subagent_type": "security-reviewer"}, [])
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("internal error", out)

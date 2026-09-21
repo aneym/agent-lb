@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse guard on the Agent tool: protect the Fable pool, record every dispatch.
+"""PreToolUse guard on the Agent tool: protect Anthropic quota and record dispatches.
 
-Routing rule (router program, 2026-09-19; amended 2026-09-20): Fable is the
-driver and the judge. Opus 5 and Sonnet are NOT free — they draw from the same
-``anthropic_top_thinking`` Anthropic quota as Fable, measured on 2026-09-20 when
-429s on that quota named ``claude-opus-5``, ``claude-sonnet-4-6`` and
-``claude-fable-5-1``, and ~10 Opus seats outspent the driver 5:1 and emptied
-three of five accounts. Volume belongs on a non-Anthropic seat (Codex, Cursor,
-Kimi, GLM); Opus is for judgment and review, dispatched deliberately rather than
-freely. Only two shapes are denied here — an explicit ``claude-fable-*`` model on
-a subagent, and a catch-all ``subagent_type`` that would silently inherit a Fable
-driver. ``fork`` is always allowed (the context IS the deliverable) but is
-written to the ledger with ``"fork": true``.
-
-Every Agent call, allowed or denied, appends a C2 ``dispatch`` line to
-``~/.claude/logs/dispatch.jsonl``. Fail-open: an I/O or parse error never blocks.
+Opus, Sonnet, and Fable share the ``anthropic_top_thinking`` quota. Anthropic
+volume dispatches require a fresh, healthy limit-watch snapshot; non-Anthropic
+forwarders retain their existing behavior. ``fork`` is always allowed and recorded
+with ``"fork": true``. Ledger I/O remains best-effort, but Anthropic quota-check
+errors deny the dispatch.
 """
 
 import hashlib
@@ -24,11 +15,19 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-CATCH_ALL = {"general-purpose", "claude", ""}
-# The Agent tool's model parameter is an enum (sonnet|opus|haiku|fable), not a
-# full model id, so match the substring: "fable" and "claude-fable-5-1" both hit.
-FABLE = "fable"
+ANTHROPIC_SEAT_TYPES = {
+    "opus-seat", "explore", "plan", "planner", "verifier", "general-purpose",
+    "claude", "security-reviewer", "plan-reviewer", "copywriter",
+    "frontend-designer", "code-simplifier", "build-error-resolver",
+}
+FORWARDER_SEATS = {
+    "astra", "implementer", "codex-verifier", "codex-test-runner",
+    "computer-use", "cursor-seat",
+}
+ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
+SNAPSHOT_MAX_AGE_SECONDS = 600
 CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)
 LEDGER = Path(os.environ.get("ROUTE_LEDGER") or os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
 # Same installed path the `route` CLI reads (ROUTE_TABLE): one table, two readers.
@@ -39,9 +38,8 @@ TABLE = Path(
 )
 
 REASON = (
-    "seat-guard: {what}. Fable plans; OpenAI builds; Astra validates. "
-    "Opus is a scarce cross-vendor read, required after Astra for money paths. "
-    "Use `route dispatch-line <task text>` or `route pick <class>` to select a seat. "
+    "seat-guard: {what}. Opus, Sonnet and Fable share anthropic_top_thinking. "
+    "Route to a Codex or cursor seat via `route pick <class>`. "
     "Canon: ~/.agents/policy/coding-agents/ROUTING.md"
 )
 
@@ -82,6 +80,52 @@ def append(record: dict) -> None:
         pass
 
 
+def is_anthropic_seat(subagent: str, model: str) -> bool:
+    """Return whether this dispatch consumes the shared Anthropic quota."""
+    if any(marker in model for marker in ANTHROPIC_MODEL_MARKERS):
+        return True
+    if subagent in FORWARDER_SEATS:
+        return False
+    return subagent in ANTHROPIC_SEAT_TYPES or subagent.startswith("effort-")
+
+
+def anthropic_snapshot_denial(snapshot_path: Path) -> str | None:
+    """Validate the limit-watch snapshot; callers deny on every guard error."""
+    try:
+        snapshot: Any = json.loads(snapshot_path.read_text())
+    except FileNotFoundError:
+        return "missing snapshot"
+    except (OSError, json.JSONDecodeError):
+        return "unparseable snapshot"
+    try:
+        if not isinstance(snapshot, dict):
+            raise ValueError("snapshot is not an object")
+        polled_at = str(snapshot["polled_at"])
+        if polled_at.endswith("Z"):
+            polled_at = polled_at[:-1] + "+00:00"
+        observed_at = datetime.fromisoformat(polled_at)
+        if observed_at.tzinfo is None:
+            raise ValueError("polled_at is not timezone-aware")
+        age_seconds = (datetime.now(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()
+        if age_seconds > SNAPSHOT_MAX_AGE_SECONDS:
+            return "stale snapshot"
+        if snapshot["reachable"] is not True:
+            return "snapshot reports unreachable"
+        usable_count = snapshot["providers"]["anthropic"]["usable_count"]
+        if not isinstance(usable_count, int):
+            raise ValueError("usable_count is not an integer")
+        if usable_count < 2:
+            return "anthropic usable_count < 2"
+        fable_eligible_usable = snapshot["fable_eligible_usable"]
+        if not isinstance(fable_eligible_usable, int):
+            raise ValueError("fable_eligible_usable is not an integer")
+        if fable_eligible_usable < 2:
+            return "fable_eligible_usable < 2"
+    except Exception:
+        return "internal error reading snapshot"
+    return None
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -114,10 +158,14 @@ def main() -> None:
         return
 
     denial = None
-    if model and FABLE in model:
-        denial = "this dispatch pins a Fable model on a subagent"
-    elif not model and subagent in CATCH_ALL:
-        denial = "this catch-all subagent_type would inherit the driver model"
+    if is_anthropic_seat(subagent, model):
+        if os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") == "1":
+            record["anthropic_override"] = True
+            record["reason"] = "SEAT_GUARD_ALLOW_ANTHROPIC=1 owner override"
+        else:
+            denial = anthropic_snapshot_denial(
+                Path(os.environ.get("LIMIT_WATCH_SNAPSHOT") or Path.home() / ".agent-lb" / "state" / "limit-watch.json")
+            )
 
     if denial:
         record["denied"] = True

@@ -32,6 +32,14 @@ Classify SHALL send only task text and path names in one TypeSafe System One ask
 - **WHEN** the typed service is unavailable
 - **THEN** classify and dispatch-line SHALL exit 3 with JEV UNAVAILABLE and SHALL NOT emit a successful decision
 
+### Requirement: Anthropic seat quota admission
+
+The Agent PreToolUse guard SHALL treat Opus, Sonnet, Fable, Haiku, and Claude-model seats as Anthropic volume, except named non-Anthropic forwarder seats. It SHALL deny Anthropic volume when the configured limit-watch snapshot is missing, unparseable, older than 600 seconds, unreachable, or reports fewer than two Anthropic usable or Fable-eligible usable accounts. Guard errors SHALL deny Anthropic volume. An explicit SEAT_GUARD_ALLOW_ANTHROPIC=1 override MAY admit the dispatch and SHALL be recorded.
+
+#### Scenario: Anthropic snapshot is unhealthy
+- **WHEN** an Anthropic-model Agent dispatch sees a stale or unavailable limit-watch snapshot
+- **THEN** the guard SHALL deny it with the named reason and direct the user to `route pick <class>` for a Codex or Cursor seat
+
 ### Requirement: Anthropic telemetry is visible
 The routing pulse SHALL count Fable, Opus and Sonnet requests and SHALL emit one telemetry-missing line on analytics failure. Policy and guard text SHALL describe Opus as a scarce cross-vendor read, not an unrationed implementation default.
 
