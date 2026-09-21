@@ -454,7 +454,22 @@ class CodingAgentRoutingTests(unittest.TestCase):
             [sys.executable, str(guard)], input="{}", text=True,
             capture_output=True, env=os.environ, check=False,
         )
-        self.assertIn("permissionDecision\": \"deny", result.stdout)
+        self.assertIn("permissionDecision\":\"deny", result.stdout)
+        self.assertIn("seat-guard crashed; failing closed", result.stdout)
+
+    def test_seat_guard_failure_class_shadowed_json_denies(self) -> None:
+        shadow = self.home / "shadow"
+        shadow.mkdir()
+        (shadow / "json.py").write_text("raise RuntimeError('shadowed json')\n")
+        result = subprocess.run(
+            [sys.executable, str(SOURCE / "seat-guard.py")],
+            input="{}",
+            text=True,
+            capture_output=True,
+            env={**os.environ, "PYTHONPATH": str(shadow)},
+            check=False,
+        )
+        self.assertIn("permissionDecision\":\"deny", result.stdout)
         self.assertIn("seat-guard crashed; failing closed", result.stdout)
 
     def test_seat_guard_failure_class_fork_fable_pin_denies_before_fork_admission(self) -> None:

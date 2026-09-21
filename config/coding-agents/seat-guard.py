@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """Fail-closed Agent PreToolUse guard.
 
-The installed wrapper ends in ``|| true``, so every failure reachable by this
-file must emit a denial. A failure of this minimal printer itself cannot be
-recovered from inside the hook.
+The installed wrapper supplies a shell-level denial fallback. Failures handled
+inside this file still emit denials with their specific reason.
 """
 
-import json, sys
+import sys
 
+FALLBACK_DENIAL = (
+    '{"hookSpecificOutput":{"hookEventName":"PreToolUse",'
+    '"permissionDecision":"deny",'
+    '"permissionDecisionReason":"seat-guard crashed; failing closed"}}'
+)
+
+
+def emit_fallback_denial():
+    print(FALLBACK_DENIAL)
 
 def emit_denial(denial):
     reason = "seat-guard: " + denial
@@ -22,6 +30,7 @@ def emit_denial(denial):
 
 try:
     import hashlib
+    import json
     import os
     import re
     from datetime import datetime, timezone
@@ -165,4 +174,4 @@ try:
 
     main()
 except Exception:
-    emit_denial("seat-guard crashed; failing closed")
+    emit_fallback_denial()

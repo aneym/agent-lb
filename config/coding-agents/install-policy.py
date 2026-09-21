@@ -15,6 +15,11 @@ START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
 MODEL = "fable"
 EFFORT_LEVEL = "high"
+SEAT_GUARD_COMMAND = (
+    '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
+    '{ printf %s \'{"hookSpecificOutput":{"hookEventName":"PreToolUse",'
+    '"permissionDecision":"deny","permissionDecisionReason":"seat-guard crashed; failing closed"}}\'; }'
+)
 MANAGED_AGENTS = (
     (
         Path(".claude/agents/frontend-designer.md"),
@@ -118,7 +123,10 @@ def uninstall_adapter(text: str, path: Path) -> str:
 
 
 def is_owned_hook(command: Any) -> bool:
-    return isinstance(command, str) and "ccdex-gpt-only.sh" in command
+    return isinstance(command, str) and (
+        "ccdex-gpt-only.sh" in command
+        or "$HOME/.claude/hooks/seat-guard.py" in command
+    )
 
 
 def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, Any]:
@@ -142,6 +150,11 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
     if not uninstall:
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL
+        hooks = updated.setdefault("hooks", {})
+        hooks.setdefault("PreToolUse", []).append({
+            "matcher": "Agent",
+            "hooks": [{"type": "command", "command": SEAT_GUARD_COMMAND}],
+        })
     return updated
 
 

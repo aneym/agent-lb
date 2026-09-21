@@ -9,6 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install-claude-clients.sh"
 POLICY_INSTALLER = ROOT / "config" / "coding-agents" / "install-policy.py"
+SEAT_GUARD_COMMAND = (
+    '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
+    '{ printf %s \'{"hookSpecificOutput":{"hookEventName":"PreToolUse",'
+    '"permissionDecision":"deny","permissionDecisionReason":"seat-guard crashed; failing closed"}}\'; }'
+)
 MANAGED_DESIGNER = ROOT / "config" / "coding-agents" / "agents" / "frontend-designer.md"
 DESIGNER_OWNER = Path(".agent-lb/managed/coding-agents/frontend-designer")
 MANAGED_PLANNER = ROOT / "config" / "coding-agents" / "agents" / "planner.md"
@@ -295,7 +300,51 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
         for group in settings["hooks"]["PreToolUse"]
         for hook_config in group["hooks"]
     ]
-    assert commands == [("Bash", "keep-safety-hook")]
+    assert commands == [
+        ("Bash", "keep-safety-hook"),
+        ("Agent", SEAT_GUARD_COMMAND),
+    ]
+
+    subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    settings = json.loads(settings_path.read_text())
+    assert settings["hooks"]["PreToolUse"] == [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": "keep-safety-hook"}]}
+    ]
+
+
+def test_policy_installer_emitted_seat_guard_wrapper_fails_closed(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+    settings = json.loads((home / ".claude" / "settings.json").read_text())
+    command = next(
+        hook["command"]
+        for group in settings["hooks"]["PreToolUse"]
+        if group["matcher"] == "Agent"
+        for hook in group["hooks"]
+    )
+    assert command == SEAT_GUARD_COMMAND
+
+    installed_guard = home / ".claude" / "hooks" / "seat-guard.py"
+    installed_guard.write_text("raise RuntimeError('broken installed hook')\n")
+    result = subprocess.run(
+        ["/bin/sh", "-c", command],
+        input="{}",
+        text=True,
+        capture_output=True,
+        env={**os.environ, "HOME": str(home)},
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny",'
+        '"permissionDecisionReason":"seat-guard crashed; failing closed"}}'
+    )
 
 
 def test_policy_installer_preflight_failure_does_not_mutate_any_target(tmp_path: Path) -> None:
