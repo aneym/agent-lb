@@ -1,5 +1,15 @@
 # Canonical coding-agent modes
 
+> **Advisory override (2026-09-21):** Model routing and provider capacity are
+> status, never admission control. The `seat-guard` hook and all quota/reserve
+> signals MUST inform and log a dispatch without blocking it, including missing,
+> stale, exhausted, or unavailable snapshots. Check
+> `agent-lb status --provider anthropic --model claude-fable-5-1 --json` when
+> capacity matters; its result is not an authorization gate. This supersedes
+> reserve/model-choice denial language below, including `critical`/`exhausted`
+> claims that nothing new starts. Security requirements remain unchanged,
+> including the no-Fable-on-Cursor ZDR restriction.
+
 This file is the single source of truth for coding-agent model routing on this
 computer. Its stable host-neutral path is
 `~/.agents/policy/coding-agents/ROUTING.md`. Host instructions and skills are

@@ -220,6 +220,7 @@ class Settings(BaseSettings):
     # Threshold against Anthropic's own dedicated Fable-scoped weekly percent
     # (authoritative when fresh) — distinct from the overall-weekly heuristic
     # threshold above, which stays the fallback when no fresh scoped data exists.
+    # Quota awareness is advisory; the default does not reserve unused capacity.
     anthropic_fable_scoped_max_used_percent: float = Field(default=100.0, ge=0, le=100)
     # Fable-class traffic never stamps burn_first, so a budget-pressured pin with
     # no burn-first target would otherwise ride to the 429 wall; this lets it

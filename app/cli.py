@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -26,6 +27,34 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         formatter_class=_CliHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    status = subparsers.add_parser(
+        "status",
+        help="Read a safe status snapshot from a running local agent-lb service.",
+        formatter_class=_CliHelpFormatter,
+    )
+    status.add_argument("--json", action="store_true", help="Emit stable JSON (schema_version 1).")
+    status.add_argument("--provider", metavar="PROVIDER", help="Only include this provider.")
+    status.add_argument("--model", metavar="NAME", help="Assess this model from observed telemetry.")
+    status.add_argument("--thinking", action="store_true", help="Assess the model's thinking quota.")
+    status.add_argument(
+        "--base-url", metavar="URL", default=None, help="Service URL (default: AGENT_LB_BASE_URL or localhost)."
+    )
+    status.add_argument(
+        "--timeout", type=float, default=3.0, metavar="SECONDS", help="Per-request timeout (default: 3)."
+    )
+
+    accounts = subparsers.add_parser("accounts", help="Alias for `status`.", formatter_class=_CliHelpFormatter)
+    accounts.add_argument("--json", action="store_true", help="Emit stable JSON (schema_version 1).")
+    accounts.add_argument("--provider", metavar="PROVIDER", help="Only include this provider.")
+    accounts.add_argument("--model", metavar="NAME", help="Assess this model from observed telemetry.")
+    accounts.add_argument("--thinking", action="store_true", help="Assess the model's thinking quota.")
+    accounts.add_argument(
+        "--base-url", metavar="URL", default=None, help="Service URL (default: AGENT_LB_BASE_URL or localhost)."
+    )
+    accounts.add_argument(
+        "--timeout", type=float, default=3.0, metavar="SECONDS", help="Per-request timeout (default: 3)."
+    )
 
     codex_sessions = subparsers.add_parser(
         "codex-sessions",
@@ -92,6 +121,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             _run_codex_sessions_retag(args)
             return
         raise SystemExit("codex-sessions requires a subcommand")
+
+    if args.command in {"status", "accounts"}:
+        if not math.isfinite(args.timeout) or args.timeout <= 0:
+            raise SystemExit("--timeout must be finite and greater than zero.")
+        from app.status_cli import run
+
+        run(args)
+        return
 
     if bool(args.ssl_certfile) ^ bool(args.ssl_keyfile):
         raise SystemExit("Both --ssl-certfile and --ssl-keyfile must be provided together.")
@@ -164,8 +201,7 @@ def _parse_server_timeout_graceful_shutdown(raw_timeout: str) -> int:
         return int(raw_timeout)
     except ValueError as exc:
         message = (
-            "--timeout-graceful-shutdown/UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN must be an "
-            f"integer, got {raw_timeout!r}."
+            f"--timeout-graceful-shutdown/UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN must be an integer, got {raw_timeout!r}."
         )
         raise SystemExit(message) from exc
 

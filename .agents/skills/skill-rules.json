@@ -8,6 +8,8 @@
       "description": "Fresh-machine onboarding: install agent-lb, start the service, connect accounts, wire clients (GETTING-STARTED.md)",
       "promptTriggers": {
         "keywords": [
+          "agent-lb status",
+          "check model quota",
           "get started",
           "getting started",
           "set me up",

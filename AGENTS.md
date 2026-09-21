@@ -201,3 +201,7 @@ session's live routing numbers are behind the status-line link
 (`http://127.0.0.1:2455/s/<session-prefix>`).
 
 <!-- routing:end -->
+
+## Status awareness
+
+Use `agent-lb status --json` or `agent-lb status --provider anthropic --model claude-fable-5-1 --thinking --json` before planning heavy model work. Quota snapshots are advisory: do not deny agent launches because of a local reserve estimate or missing telemetry. Respect actual provider limits and explicit spending authorization.
