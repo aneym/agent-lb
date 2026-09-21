@@ -8,9 +8,8 @@ file and an Unblock ask.
 
 Usable account = status "active", no active rate-limit reset, and every
 applicable reported window above reserve. Anthropic accounts fail closed if either core
-window is missing or non-numeric. OpenAI legitimately reports a null primary
-window on some accounts, so its weekly window alone is sufficient in that
-case. Fable capacity additionally requires its scoped weekly quota and fresh
+window is missing or non-numeric. Other providers can legitimately omit a
+window, so one numeric window above reserve is sufficient. Fable capacity additionally requires its scoped weekly quota and fresh
 Fable-scoped weekly telemetry.
 
 Transitions that file an ask (deduplicated against the state file, so a
@@ -117,19 +116,16 @@ def eligibility(account, reserve_percent, now=None):
 
     # OpenAI can legitimately omit the short primary window; its weekly window
     # is then the only core window required for admission.
-    if provider != "openai" or primary is not None:
-        if not is_number(primary):
-            reasons.append("primary remaining missing or non-numeric")
-        elif primary <= reserve_percent:
-            reasons.append("primary remaining <= reserve")
+    for name, value in (("primary", primary), ("secondary", secondary)):
+        if not is_number(value):
+            if provider == "anthropic":
+                reasons.append(f"{name} remaining missing or non-numeric")
+        elif value <= reserve_percent:
+            reasons.append(f"{name} remaining <= reserve")
         else:
-            remaining.append(primary)
-    if not is_number(secondary):
-        reasons.append("secondary remaining missing or non-numeric")
-    elif secondary <= reserve_percent:
-        reasons.append("secondary remaining <= reserve")
-    else:
-        remaining.append(secondary)
+            remaining.append(value)
+    if provider != "anthropic" and not remaining:
+        reasons.append("no numeric remaining window")
     # lastRefreshAt records authentication token refreshes, not usage
     # telemetry. No non-Fable account has a live usage-freshness signal.
     return not reasons, reasons, remaining, True

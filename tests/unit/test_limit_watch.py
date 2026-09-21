@@ -69,6 +69,14 @@ def test_openai_null_primary_uses_weekly_alone():
     assert result["providers"]["openai"]["usable_count"] == 1
 
 
+def test_glm_primary_only_account_stays_usable():
+    module = runpy.run_path(str(LIMIT_WATCH))
+    result = snapshot(module, [account("glm", usage={
+        "primaryRemainingPercent": 100.0, "secondaryRemainingPercent": None,
+    })])
+    assert result["providers"]["glm"]["usable_count"] == 1
+
+
 def test_openai_weekly_at_reserve_is_unusable():
     module = runpy.run_path(str(LIMIT_WATCH))
     result = snapshot(module, [account("openai", usage={
