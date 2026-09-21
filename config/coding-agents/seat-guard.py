@@ -17,11 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ANTHROPIC_SEAT_TYPES = {
-    "opus-seat", "explore", "plan", "planner", "verifier", "general-purpose",
-    "claude", "security-reviewer", "plan-reviewer", "copywriter",
-    "frontend-designer", "code-simplifier", "build-error-resolver",
-}
 FORWARDER_SEATS = {
     "astra", "implementer", "codex-verifier", "codex-test-runner",
     "computer-use", "cursor-seat",
@@ -84,9 +79,15 @@ def is_anthropic_seat(subagent: str, model: str) -> bool:
     """Return whether this dispatch consumes the shared Anthropic quota."""
     if any(marker in model for marker in ANTHROPIC_MODEL_MARKERS):
         return True
-    if subagent in FORWARDER_SEATS:
-        return False
-    return subagent in ANTHROPIC_SEAT_TYPES or subagent.startswith("effort-")
+    return subagent not in FORWARDER_SEATS
+
+
+def emit_denial(denial: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": REASON.format(what=denial),
+    }}))
 
 
 def anthropic_snapshot_denial(snapshot_path: Path) -> str | None:
@@ -130,6 +131,7 @@ def main() -> None:
     try:
         payload = json.load(sys.stdin)
     except Exception:
+        emit_denial("malformed Agent hook input")
         return
     if not isinstance(payload, dict) or payload.get("tool_name") != "Agent":
         return
@@ -157,8 +159,8 @@ def main() -> None:
         append(record)
         return
 
-    denial = None
-    if is_anthropic_seat(subagent, model):
+    denial = "this dispatch pins a Fable model on a subagent" if "fable" in model else None
+    if denial is None and is_anthropic_seat(subagent, model):
         if os.environ.get("SEAT_GUARD_ALLOW_ANTHROPIC") == "1":
             record["anthropic_override"] = True
             record["reason"] = "SEAT_GUARD_ALLOW_ANTHROPIC=1 owner override"
@@ -173,11 +175,7 @@ def main() -> None:
     append(record)
     if not denial:
         return
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": REASON.format(what=denial),
-    }}))
+    emit_denial(denial)
 
 
 if __name__ == "__main__":

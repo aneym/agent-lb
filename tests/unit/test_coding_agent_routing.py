@@ -57,12 +57,15 @@ class CodingAgentRoutingTests(unittest.TestCase):
         (self.home / "api_accounts.json").write_text(json.dumps(body))
 
     def run_seat_guard(self, tool_input: dict, snapshot: object | None) -> tuple[int, str, str]:
+        return self.run_seat_guard_raw(json.dumps({"tool_name": "Agent", "tool_input": tool_input}), snapshot)
+
+    def run_seat_guard_raw(self, payload: str, snapshot: object | None) -> tuple[int, str, str]:
         snapshot_path = self.home / "limit-watch.json"
         if snapshot is not None:
             snapshot_path.write_text(json.dumps(snapshot))
         result = subprocess.run(
             [sys.executable, str(SOURCE / "seat-guard.py")],
-            input=json.dumps({"tool_name": "Agent", "tool_input": tool_input}),
+            input=payload,
             text=True,
             capture_output=True,
             env={**os.environ, "LIMIT_WATCH_SNAPSHOT": str(snapshot_path)},
@@ -379,3 +382,51 @@ class CodingAgentRoutingTests(unittest.TestCase):
         _, out, _ = self.run_seat_guard({"subagent_type": "security-reviewer"}, [])
         self.assertIn("permissionDecision\": \"deny", out)
         self.assertIn("internal error", out)
+
+    def test_seat_guard_failure_class_fable_pin_ignores_snapshot_and_override(self) -> None:
+        with patch.dict(os.environ, {"SEAT_GUARD_ALLOW_ANTHROPIC": "1"}):
+            _, out, _ = self.run_seat_guard(
+                {"subagent_type": "implementer", "model": "claude-fable-5"},
+                self.limit_watch_snapshot(),
+            )
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("pins a Fable model", out)
+
+    def test_seat_guard_failure_class_unknown_seats_default_to_anthropic(self) -> None:
+        for subagent in ("", "claude-code-guide", "statusline-setup",
+                         "hookify:conversation-analyzer", "argent-environment-inspector"):
+            with self.subTest(subagent=subagent):
+                _, out, _ = self.run_seat_guard({"subagent_type": subagent}, None)
+                self.assertIn("permissionDecision\": \"deny", out)
+                self.assertIn("missing snapshot", out)
+
+    def test_seat_guard_failure_class_normalizes_subagent_and_model(self) -> None:
+        _, out, _ = self.run_seat_guard(
+            {"subagent_type": " Explore ", "model": " GPT-5.6-terra "}, None,
+        )
+        self.assertIn("permissionDecision\": \"deny", out)
+        record = json.loads((self.home / "dispatch.jsonl").read_text())
+        self.assertEqual((record["subagent_type"], record["model"]), ("explore", "gpt-5.6-terra"))
+        _, out, _ = self.run_seat_guard(
+            {"subagent_type": " Implementer ", "model": " CLAUDE-SONNET-4-6 "}, None,
+        )
+        self.assertIn("permissionDecision\": \"deny", out)
+
+    def test_seat_guard_failure_class_malformed_stdin_denies(self) -> None:
+        _, out, _ = self.run_seat_guard_raw("{not-json", None)
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("malformed Agent hook input", out)
+
+    def test_seat_guard_failure_class_forwarder_anthropic_model_is_quota_gated(self) -> None:
+        _, out, _ = self.run_seat_guard(
+            {"subagent_type": "implementer", "model": "claude-sonnet-4-6"}, None,
+        )
+        self.assertIn("permissionDecision\": \"deny", out)
+        self.assertIn("missing snapshot", out)
+
+    def test_seat_guard_failure_class_fork_is_recorded(self) -> None:
+        _, out, _ = self.run_seat_guard({"subagent_type": " fork "}, None)
+        self.assertEqual(out, "")
+        record = json.loads((self.home / "dispatch.jsonl").read_text())
+        self.assertEqual(record["subagent_type"], "fork")
+        self.assertTrue(record["fork"])
