@@ -1,0 +1,6 @@
+{
+  "accounts": [
+    {"accountId": "openai-a", "provider": "openai", "status": "active", "usage": {"primaryRemainingPercent": 65, "secondaryRemainingPercent": 62}},
+    {"accountId": "anthropic-a", "provider": "anthropic", "status": "active", "usage": {"primaryRemainingPercent": 45, "secondaryRemainingPercent": 74}}
+  ]
+}

@@ -35,6 +35,19 @@ MANAGED_AGENTS = (
         Path("agents/plan-reviewer.md"),
     ),
 )
+# Runtime sources live beside this installer, not in the destination home.
+MANAGED_AGENTS += tuple(
+    (Path(destination), Path(f".agent-lb/managed/coding-agents/{marker}"),
+     f"agent-lb:{marker}:v1\n", Path(source))
+    for destination, marker, source in (
+        (".agent-lb/bin/route", "route-cli", "route"),
+        (".agent-lb/bin/route_jev.py", "route-jev", "route_jev.py"),
+        (".agent-lb/managed/coding-agents/routing-table.json", "route-table", "routing-table.json"),
+        (".claude/hooks/routing-pulse.py", "routing-pulse", "routing-pulse.py"),
+        (".claude/hooks/seat-guard.py", "seat-guard", "seat-guard.py"),
+    )
+)
+
 LEGACY_HEADINGS = (
     "Coding-agent routing",
     "Orchestration — Fable architects, the fleet executes",
@@ -241,6 +254,8 @@ def main() -> int:
             print(f"removed {path}")
         else:
             write_atomic(path, content)
+            if path == args.home / ".agent-lb/bin/route":
+                path.chmod(0o755)
             print(f"updated {path}")
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")
