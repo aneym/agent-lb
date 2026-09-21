@@ -100,9 +100,10 @@ class CodingAgentRoutingTests(unittest.TestCase):
     def test_unknown_data_is_refused_instead_of_assumed_healthy(self) -> None:
         body = json.loads(FIXTURE.read_text())
         for account in body["accounts"]:
+            account["resetAtPrimary"] = None
+            account["resetAtSecondary"] = None
             account["usage"] = {
                 "primaryRemainingPercent": None, "secondaryRemainingPercent": None,
-                "resetAtPrimary": None, "resetAtSecondary": None,
             }
         self.accounts(body)
         code, _, error = self.run_cli("pick", "implement")
@@ -218,12 +219,80 @@ class CodingAgentRoutingTests(unittest.TestCase):
         result = json.loads(out)
         self.assertEqual((result["pool"], result["limitingWindow"]["window"]), ("openai-codex", "weekly"))
 
+    def test_top_level_reset_marks_missing_percent_as_reported_unknown(self) -> None:
+        body = json.loads(FIXTURE.read_text())
+        openai = body["accounts"][0]
+        openai["resetAtPrimary"] = "2026-09-28T00:00:00Z"
+        self.accounts(body)
+        code, out, error = self.run_cli("pools", "--json")
+        self.assertEqual((code, error), (0, ""))
+        openai_pool = next(pool for pool in json.loads(out)["pools"] if pool["id"] == "openai-codex")
+        self.assertEqual((openai_pool["status"], openai_pool["usableNow"]), ("blocked", 0))
+        self.assertEqual(openai_pool["limitingWindow"]["reason"], "unknown reported window percent")
+
+        openai["resetAtPrimary"] = None
+        self.accounts(body)
+        code, out, error = self.run_cli("pools", "--json")
+        self.assertEqual((code, error), (0, ""))
+        openai_pool = next(pool for pool in json.loads(out)["pools"] if pool["id"] == "openai-codex")
+        self.assertEqual((openai_pool["status"], openai_pool["usableNow"]), ("ok", 1))
+
+    def test_selected_anthropic_quota_gates_model_without_blocking_general_pool(self) -> None:
+        body = json.loads(FIXTURE.read_text())
+        body["accounts"][0]["status"] = "quota_exceeded"
+        anthropic = body["accounts"][1]
+        anthropic["additionalQuotas"] = [{
+            "quotaKey": "anthropic_top_thinking",
+            "primaryWindow": {"usedPercent": 100, "resetAt": 1789948800, "windowMinutes": 300},
+            "secondaryWindow": {"usedPercent": 20, "resetAt": 1790553600, "windowMinutes": 10080},
+        }]
+        self.accounts(body)
+
+        code, _, error = self.run_cli("pick", "review")
+        self.assertEqual(code, 2)
+        self.assertIn("anthropic_top_thinking primary 0% <= reserve 20%", error)
+        code, out, error = self.run_cli("pools", "--json")
+        self.assertEqual((code, error), (0, ""))
+        anthropic_pool = next(pool for pool in json.loads(out)["pools"] if pool["id"] == "anthropic-general")
+        self.assertEqual((anthropic_pool["status"], anthropic_pool["usableNow"]), ("ok", 1))
+
+        anthropic["additionalQuotas"][0]["primaryWindow"]["usedPercent"] = 10
+        anthropic["additionalQuotas"][0]["secondaryWindow"]["usedPercent"] = 80
+        self.accounts(body)
+        code, _, error = self.run_cli("pick", "review")
+        self.assertEqual(code, 2)
+        self.assertIn("anthropic_top_thinking secondary 20% <= reserve 20%", error)
+
+    def test_selected_fable_model_also_uses_scoped_weekly_quota(self) -> None:
+        body = json.loads(FIXTURE.read_text())
+        anthropic = body["accounts"][1]
+        body["accounts"] = [anthropic]
+        anthropic["fableEligible"] = True
+        anthropic["additionalQuotas"] = [
+            {"quotaKey": "anthropic_top_thinking",
+             "primaryWindow": {"usedPercent": 10, "resetAt": 1789948800}},
+            {"quotaKey": "anthropic_fable_scoped_weekly",
+             "primaryWindow": {"usedPercent": 100, "resetAt": 1790553600}},
+        ]
+        self.accounts(body)
+        table = json.loads((SOURCE / "routing-table.json").read_text())
+        table["classes"]["review"]["chain"] = [
+            {"seat": "fable-review", "model": "claude-fable-5", "effort": "medium"}
+        ]
+        table["pools"]["claude-fable-5"] = "anthropic-fable"
+        local_table = self.home / "routing-table.json"
+        local_table.write_text(json.dumps(table))
+        with patch.dict(os.environ, {"ROUTE_TABLE": str(local_table)}):
+            code, _, error = self.run_cli("pick", "review")
+        self.assertEqual(code, 2)
+        self.assertIn("anthropic_fable_scoped_weekly primary 0% <= reserve 20%", error)
+
     def test_blocked_verifier_pool_does_not_block_implement_pick(self) -> None:
         body = json.loads(FIXTURE.read_text())
         body["accounts"].append({
             "accountId": "glm-a", "provider": "glm", "status": "active",
-            "usage": {"primaryRemainingPercent": 65, "secondaryRemainingPercent": None,
-                      "resetAtPrimary": "2026-09-22T00:00:00Z", "resetAtSecondary": None},
+            "resetAtPrimary": "2026-09-22T00:00:00Z", "resetAtSecondary": None,
+            "usage": {"primaryRemainingPercent": 65, "secondaryRemainingPercent": None},
         })
         body["accounts"][0]["status"] = "quota_exceeded"
         body["accounts"][1]["status"] = "quota_exceeded"

@@ -270,13 +270,38 @@ def window_percent(account: dict[str, Any], key: str) -> float | None:
     return float(value) if math.isfinite(value) and 0 <= value <= 100 else None
 
 
+def _additional_quota_windows(account: dict[str, Any]) -> dict[str, dict[str, float | None]]:
+    normalized: dict[str, dict[str, float | None]] = {}
+    quotas = account.get("additionalQuotas")
+    if not isinstance(quotas, list):
+        return normalized
+    for quota in quotas:
+        if not isinstance(quota, dict) or not isinstance(quota.get("quotaKey"), str):
+            continue
+        windows: dict[str, float | None] = {}
+        for name, field in (("primary", "primaryWindow"), ("secondary", "secondaryWindow")):
+            window = quota.get(field)
+            if not isinstance(window, dict):
+                continue
+            used = window.get("usedPercent")
+            if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used):
+                windows[name] = None
+            elif 0 <= used <= 100:
+                windows[name] = 100.0 - float(used)
+            else:
+                windows[name] = None
+        if windows:
+            normalized[quota["quotaKey"]] = windows
+    return normalized
+
+
 def account_limit(account: dict[str, Any], reserve: float) -> dict[str, Any]:
     short = window_percent(account, "primaryRemainingPercent")
     weekly = window_percent(account, "secondaryRemainingPercent")
     usage = account.get("usage") if isinstance(account.get("usage"), dict) else {}
     windows = {
-        "primary": (short, usage.get("resetAtPrimary")),
-        "weekly": (weekly, usage.get("resetAtSecondary")),
+        "primary": (short, account.get("resetAtPrimary")),
+        "weekly": (weekly, account.get("resetAtSecondary")),
     }
     reported = {name: percent for name, (percent, reset) in windows.items() if percent is not None or reset is not None}
     known = {name: percent for name, percent in reported.items() if percent is not None}
@@ -299,7 +324,60 @@ def account_limit(account: dict[str, Any], reserve: float) -> dict[str, Any]:
     else:
         reason = "admitted"
     return {"account": account.get("accountId", "unknown"), "window": window,
-            "remainingPercent": remaining, "reason": reason, "usable": reason == "admitted"}
+            "remainingPercent": remaining, "reason": reason, "usable": reason == "admitted",
+            "additionalQuotaWindows": _additional_quota_windows(account),
+            "fableEligible": account.get("fableEligible")}
+
+
+def _anthropic_quota_key(model: str, effort: str | None) -> str | None:
+    if not model.startswith("claude-"):
+        return None
+    if "haiku" in model.lower():
+        return "anthropic_standard"
+    if (effort or "medium").lower() in {"", "none", "off"}:
+        return "anthropic_top"
+    return "anthropic_top_thinking"
+
+
+def model_account_limit(limit: dict[str, Any], entry: dict[str, Any], reserve: float) -> dict[str, Any]:
+    if not limit.get("usable"):
+        return limit
+    model = entry.get("model")
+    if not isinstance(model, str):
+        return limit
+    quota_keys: list[str] = []
+    quota_key = _anthropic_quota_key(model, entry.get("effort"))
+    if quota_key is not None:
+        quota_keys.append(quota_key)
+    if "fable" in model.lower():
+        quota_keys.append("anthropic_fable_scoped_weekly")
+        if limit.get("fableEligible") is False:
+            return {**limit, "window": "anthropic_fable_scoped_weekly", "remainingPercent": None,
+                    "reason": "fable eligibility false", "usable": False}
+
+    reported: list[tuple[str, float | None]] = []
+    all_windows = limit.get("additionalQuotaWindows")
+    if isinstance(all_windows, dict):
+        for key in quota_keys:
+            windows = all_windows.get(key)
+            if not isinstance(windows, dict):
+                continue
+            reported.extend((f"{key} {name}", percent) for name, percent in windows.items())
+    if not reported:
+        return limit
+    unknown = next((name for name, percent in reported if percent is None), None)
+    if unknown is not None:
+        return {**limit, "window": unknown, "remainingPercent": None,
+                "reason": f"{unknown} unknown reported window percent", "usable": False}
+    window, remaining = min(reported, key=lambda item: item[1])
+    if remaining is not None and remaining <= reserve:
+        return {**limit, "window": window, "remainingPercent": remaining,
+                "reason": f"{window} {remaining:g}% <= reserve {reserve:g}%", "usable": False}
+    base_remaining = limit.get("remainingPercent")
+    if isinstance(base_remaining, (int, float)) and base_remaining <= remaining:
+        return limit
+    return {**limit, "window": window, "remainingPercent": remaining,
+            "reason": "admitted", "usable": True}
 
 
 def _pool_ids(account: dict[str, Any]) -> list[str]:
@@ -501,15 +579,19 @@ def pick(task_class: str, *, reserve: float = 20, difficulty: float = 1,
         if not seat_is_up(seats, entry["seat"]):
             skipped.append(f"{entry['seat']}: seat-down")
             return None
-        if not status.get("usableNow"):
+        model_limits = [model_account_limit(item, entry, reserve)
+                        for item in status.get("accountLimits", []) if isinstance(item, dict)]
+        usable = [item for item in model_limits if item.get("usable")]
+        if not usable:
             reasons = "; ".join(f"{item['account']} {item['window']}: {item['reason']}"
-                                for item in status.get("accountLimits", []))
+                                for item in model_limits)
             skipped.append(
                 f"{entry['seat']}/{entry['model']}: pool {pool} blocked ({reasons or 'unknown-account-data'})"
             )
             return None
+        limiting = max(usable, key=lambda item: item["remainingPercent"])
         return {**entry, "effort": entry.get("effort", "medium"), "pool": pool, "vendor": vendor,
-                "limitingWindow": status["limitingWindow"]}
+                "limitingWindow": limiting}
 
     chain = apply_overrides(spec.get("chain", []), table.get("overrides"), task_class)
     if task_class == "implement" and difficulty >= 4:

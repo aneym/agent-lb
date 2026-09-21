@@ -32,6 +32,11 @@ Every pick refreshes /api/accounts without persisting local state. If refresh
 fails it refuses, even if a recent aggregate cache exists. A successful endpoint
 read is account-state refresh evidence, not a new upstream quota probe. Unknown
 provider pools, missing windows and percentages at or below reserve are blocked.
+The endpoint exposes resetAtPrimary/resetAtSecondary at account level, not inside
+usage. Claude candidates also use the runtime's model/effort quota mapping and
+gate on every reported applicable additionalQuotas window; Fable adds its scoped
+weekly quota. Those gates are candidate-specific, so an exhausted top-thinking
+window does not erase capacity for a compatible model in the general pool.
 The limiting window identifies the bottleneck of the best eligible account;
 it is not a promise that the load balancer will select that account.
 
