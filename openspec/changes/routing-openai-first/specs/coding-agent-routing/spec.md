@@ -5,11 +5,11 @@ The router SHALL rank implementer Terra medium, implementer Sol medium, Cursor S
 
 #### Scenario: Money-path implementation
 - **WHEN** a task is flagged for auth, RLS, billing, migrations, receipts, idempotency or tool boundaries
-- **THEN** Astra validation and a required second read by claude-opus-5 SHALL accompany the implementation pick
-- **AND** an unavailable required verifier SHALL block the decision
+- **THEN** Astra validation and a second read by claude-opus-5 SHOULD accompany the implementation pick when their pools admit
+- **AND** unavailable verifier pools SHALL return the implementer with a null verifier, a named reason, and warnings without blocking the decision
 
 ### Requirement: Fresh account reserve admission
-A pool SHALL admit a class only when at least one account is active and has known finite short-window and weekly remaining percentages strictly above the reserve, default 20 percent and configurable with --reserve. The router SHALL read /api/accounts, never admit from aggregate headroom, and SHALL refresh or refuse state older than 300 seconds with a named reason. Unknown data SHALL NOT admit a pool. Output SHALL identify the limiting account and window. Pools SHALL display usable-now and minimum known short-window percent, and blocked when usable-now is zero.
+A pool SHALL admit a class only when at least one account is active, has no current rate-limit reset, reports at least one usage window, and has every reported finite remaining percentage strictly above the reserve, default 20 percent and configurable with --reserve. A window with both a null percentage and null reset SHALL be not applicable. The router SHALL read /api/accounts, never admit from aggregate headroom, and SHALL refresh or refuse state older than 300 seconds with a named reason. Accounts with no reported window data or an unknown reported window percentage SHALL NOT admit a pool. Output SHALL identify the limiting account and window. Pools SHALL display usable-now and minimum known short-window percent, and blocked when usable-now is zero.
 
 #### Scenario: Healthy weekly headroom hides a blocked short window
 - **WHEN** all accounts fail status or either reserve gate

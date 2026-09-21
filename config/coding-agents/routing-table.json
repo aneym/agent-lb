@@ -89,6 +89,12 @@
           "seat": "astra",
           "model": "gpt-6-astra",
           "effort": "medium"
+        },
+        {
+          "seat": "verifier",
+          "model": "claude-opus-5",
+          "effort": "medium",
+          "vendor": "anthropic"
         }
       ],
       "money_path_second": {

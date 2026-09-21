@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from typing import Any
@@ -46,7 +48,7 @@ def request_body(task: str, paths: list[str]) -> dict[str, Any]:
 def ask(task: str, paths: list[str]) -> dict[str, Any]:
     key = os.environ.get("TYPESAFE_API_KEY")
     if not key:
-        raise JevUnavailable("auth: TYPESAFE_API_KEY is not configured")
+        return ask_via_cli(task, paths)
     request = urllib.request.Request(
         ENDPOINT, data=json.dumps(request_body(task, paths)).encode(), method="POST",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -64,6 +66,45 @@ def ask(task: str, paths: list[str]) -> dict[str, Any]:
         reason = "timeout" if isinstance(error, TimeoutError) else "network"
         raise JevUnavailable(reason) from None
     return parse(payload)
+
+
+def ask_via_cli(task: str, paths: list[str]) -> dict[str, Any]:
+    """Use the installed Jev client so its private configuration stays private."""
+    executable = shutil.which("jev")
+    if not executable:
+        raise JevUnavailable("auth: TYPESAFE_API_KEY is not configured and jev CLI is unavailable")
+    prompt = task if not paths else f"{task}\nPaths: {', '.join(paths)}"
+    try:
+        completed = subprocess.run(
+            [executable, "route", prompt], capture_output=True, text=True, timeout=25, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise JevUnavailable(f"cli: {type(error).__name__}") from None
+    if completed.returncode == 3:
+        raise JevUnavailable("cli unavailable")
+    if completed.returncode != 0:
+        raise JevUnavailable(f"cli failed: exit {completed.returncode}")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        raise ValueError("Jev CLI returned invalid JSON") from None
+    if not isinstance(payload, dict):
+        raise ValueError("Jev CLI returned an invalid route")
+    destination = payload.get("destination")
+    aliases = {"code": "implement", "coding": "implement", "analysis": "explore", "question": "plan"}
+    task_class = aliases.get(destination, destination)
+    if task_class not in CLASSES:
+        raise ValueError("Jev CLI returned an unknown destination")
+    difficulty = payload.get("difficulty")
+    if isinstance(difficulty, str):
+        difficulty = {"low": 1, "medium": 3, "high": 5}.get(difficulty.lower())
+    return {
+        "class": task_class,
+        "difficulty": number(difficulty, 5),
+        "money_path": bool(payload.get("high_risk")),
+        "needs_write": bool(payload.get("needs_tools")),
+        "jev_confidence": number(payload.get("confidence"), 1),
+    }
 
 
 def number(value: Any, maximum: float) -> float:

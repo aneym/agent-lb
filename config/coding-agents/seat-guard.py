@@ -30,7 +30,7 @@ CATCH_ALL = {"general-purpose", "claude", ""}
 # full model id, so match the substring: "fable" and "claude-fable-5-1" both hit.
 FABLE = "fable"
 CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)
-LEDGER = Path(os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
+LEDGER = Path(os.environ.get("ROUTE_LEDGER") or os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
 # Same installed path the `route` CLI reads (ROUTE_TABLE): one table, two readers.
 TABLE = Path(
     os.environ.get("ROUTING_TABLE")

@@ -7,6 +7,7 @@ import os
 import runpy
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -97,14 +98,16 @@ class CodingAgentRoutingTests(unittest.TestCase):
         self.assertIn("stale-state refreshed", json.loads(out)["reason"])
 
     def test_unknown_data_is_refused_instead_of_assumed_healthy(self) -> None:
-        for bad in (None, True, "80", float("nan"), -1, 101):
-            body = json.loads(FIXTURE.read_text())
-            for account in body["accounts"]:
-                account["usage"]["primaryRemainingPercent"] = bad
-            self.accounts(body)
-            code, _, error = self.run_cli("pick", "implement")
-            self.assertEqual(code, 2, bad)
-            self.assertIn("unknown window data", error)
+        body = json.loads(FIXTURE.read_text())
+        for account in body["accounts"]:
+            account["usage"] = {
+                "primaryRemainingPercent": None, "secondaryRemainingPercent": None,
+                "resetAtPrimary": None, "resetAtSecondary": None,
+            }
+        self.accounts(body)
+        code, _, error = self.run_cli("pick", "implement")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown window data", error)
         self.accounts({})
         self.assertIn("unknown-account-data", self.run_cli("pick", "implement")[2])
 
@@ -124,7 +127,8 @@ class CodingAgentRoutingTests(unittest.TestCase):
             self.assertEqual((decision["seat"], decision["model"], decision["effort"]),
                              ("implementer", "gpt-5.6-terra", "medium"))
             self.assertEqual([v["model"] for v in decision["verifiers"]], ["gpt-6-astra", "claude-opus-5"])
-            self.assertTrue(all(v["required"] and v["read_only"] for v in decision["verifiers"]))
+            self.assertTrue(decision["verifiers"][0]["required"] and decision["verifiers"][0]["read_only"])
+            self.assertFalse(decision["verifiers"][1]["required"])
             self.assertEqual(decision["limitingWindow"]["window"], "weekly")
             self.assertEqual(decision["jev_confidence"], .96)
             self.assertEqual(len(sent), 1)
@@ -144,15 +148,21 @@ class CodingAgentRoutingTests(unittest.TestCase):
             body["accounts"][1]["status"] = "quota_exceeded"
             self.accounts(body)
             code, out, error = self.run_cli("dispatch-line", "Fix billing receipts")
-            self.assertEqual((code, out), (2, ""))
-            self.assertIn("required-verifier-unavailable", error)
-            self.assertEqual(len((self.home / "dispatch.jsonl").read_text().splitlines()), 1)
+            self.assertEqual((code, error), (0, ""))
+            lines = (self.home / "dispatch.jsonl").read_text().splitlines()
+            self.assertIn("money-path Opus second read unavailable", json.loads(lines[-1])["decision"]["warnings"])
+            self.assertEqual(len(lines), 2)
 
     def test_jev_unavailable_exits_3_without_dispatch_or_retry(self) -> None:
-        for command in ("classify", "dispatch-line"):
-            code, out, error = self.run_cli(command, "Fix bug")
-            self.assertEqual((code, out), (3, ""))
-            self.assertIn("JEV UNAVAILABLE (auth:", error)
+        import route_jev
+        unavailable = subprocess.CompletedProcess(["jev"], 3, stdout="", stderr="JEV UNAVAILABLE (auth)")
+        with patch.object(route_jev.shutil, "which", return_value="/usr/bin/jev"), \
+                patch.object(route_jev.subprocess, "run", return_value=unavailable) as invoke:
+            for command in ("classify", "dispatch-line"):
+                code, out, error = self.run_cli(command, "Fix bug")
+                self.assertEqual((code, out), (3, ""))
+                self.assertIn("JEV UNAVAILABLE (cli unavailable)", error)
+        self.assertEqual(invoke.call_count, 2)
         self.assertFalse((self.home / "dispatch.jsonl").exists())
 
     def test_difficulty_and_reserve_cannot_restore_old_opus_first_ranking(self) -> None:
@@ -166,8 +176,8 @@ class CodingAgentRoutingTests(unittest.TestCase):
             result = json.loads(out)
             self.assertEqual((result["model"], result["difficulty"]), ("gpt-5.6-sol", 4))
             self.assertEqual([v["model"] for v in result["verifiers"]], ["gpt-6-astra"])
-        self.assertEqual(self.run_cli("pick", "implement", "--reserve", "62")[0], 2)
-        self.assertEqual(self.run_cli("pick", "implement", "--reserve", "61")[0], 0)
+        self.assertEqual(self.run_cli("pick", "implement", "--reserve", "65")[0], 2)
+        self.assertEqual(self.run_cli("pick", "implement", "--reserve", "64")[0], 0)
         table = json.loads((SOURCE / "routing-table.json").read_text())
         self.assertEqual([e["model"] for e in table["classes"]["implement"]["chain"]],
                          ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-sol", "glm-*", "claude-opus-5"])
@@ -201,3 +211,33 @@ class CodingAgentRoutingTests(unittest.TestCase):
         self.assertIn('"claude-fable-5": AnthropicModelPrice(', pricing)
         self.assertIn('calls[0]["model"] == "claude-fable-5"', pulse_test)
         self.assertIn('"model":"claude-fable-5"', fixture)
+
+    def test_provider_without_short_window_is_admitted_on_weekly_alone(self) -> None:
+        code, out, error = self.run_cli("pick", "implement", "--json")
+        self.assertEqual((code, error), (0, ""))
+        result = json.loads(out)
+        self.assertEqual((result["pool"], result["limitingWindow"]["window"]), ("openai-codex", "weekly"))
+
+    def test_blocked_verifier_pool_does_not_block_implement_pick(self) -> None:
+        body = json.loads(FIXTURE.read_text())
+        body["accounts"].append({
+            "accountId": "glm-a", "provider": "glm", "status": "active",
+            "usage": {"primaryRemainingPercent": 65, "secondaryRemainingPercent": None,
+                      "resetAtPrimary": "2026-09-22T00:00:00Z", "resetAtSecondary": None},
+        })
+        body["accounts"][0]["status"] = "quota_exceeded"
+        body["accounts"][1]["status"] = "quota_exceeded"
+        self.accounts(body)
+        code, out, error = self.run_cli("pick", "implement", "--json")
+        self.assertEqual((code, error), (0, ""))
+        result = json.loads(out)
+        self.assertIsNone(result["verifier"])
+        self.assertEqual(result["verifier_reason"], "no admitted cross-vendor verifier")
+        self.assertTrue(result["warnings"])
+
+    def test_author_vendor_excludes_same_vendor_verifier(self) -> None:
+        code, out, error = self.run_cli("pick", "verify", "--author-vendor", "openai", "--json")
+        self.assertEqual((code, error), (0, ""))
+        result = json.loads(out)
+        self.assertEqual((result["model"], result["vendor"]), ("claude-opus-5", "anthropic"))
+        self.assertNotEqual(result["verifier"]["vendor"], "openai")

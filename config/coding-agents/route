@@ -19,7 +19,8 @@
 #                      falling back to config/coding-agents/routing-table.json beside this script)
 #   ROUTE_STATE        routing state path (default ~/.claude/routing-state.json)
 #   ROUTE_ALERT        alert path (default ~/.claude/routing-ALERT)
-#   ROUTE_LEDGER       dispatch ledger path (default ~/.claude/logs/dispatch.jsonl)
+#   ROUTE_LEDGER       dispatch ledger path (default ~/.claude/logs/dispatch.jsonl;
+#                      DISPATCH_LEDGER is accepted for hook compatibility)
 #   ROUTE_CURSOR_CMD   cursor probe command (default "cursor-agent status")
 #   ROUTE_CODEX_CMD    codex probe command (default "node <codex-companion.mjs> status")
 #   ROUTE_FIXTURE_DIR  TEST ONLY — serve HTTP reads from files in this directory instead of the
@@ -113,7 +114,8 @@ def alert_path() -> Path:
 
 
 def ledger_path() -> Path:
-    return _env_path("ROUTE_LEDGER", Path.home() / ".claude" / "logs" / "dispatch.jsonl")
+    value = (os.environ.get("ROUTE_LEDGER") or os.environ.get("DISPATCH_LEDGER") or "").strip()
+    return Path(value).expanduser() if value else Path.home() / ".claude" / "logs" / "dispatch.jsonl"
 
 
 def cursor_command() -> list[str]:
@@ -271,13 +273,31 @@ def window_percent(account: dict[str, Any], key: str) -> float | None:
 def account_limit(account: dict[str, Any], reserve: float) -> dict[str, Any]:
     short = window_percent(account, "primaryRemainingPercent")
     weekly = window_percent(account, "secondaryRemainingPercent")
-    window = "primary" if short is None or (weekly is not None and short <= weekly) else "weekly"
-    remaining = short if window == "primary" else weekly
+    usage = account.get("usage") if isinstance(account.get("usage"), dict) else {}
+    windows = {
+        "primary": (short, usage.get("resetAtPrimary")),
+        "weekly": (weekly, usage.get("resetAtSecondary")),
+    }
+    reported = {name: percent for name, (percent, reset) in windows.items() if percent is not None or reset is not None}
+    known = {name: percent for name, percent in reported.items() if percent is not None}
+    window = min(known, key=known.get) if known else (next(iter(reported), "unknown"))
+    remaining = known.get(window)
+    cooldown = _parse_ts(account.get("rateLimitResetAt"))
     status = account.get("status")
-    reason = f"status {status or 'unknown'}" if status != "active" else (
-        "unknown window data" if short is None or weekly is None else
-        f"{window} {remaining:g}% <= reserve {reserve:g}%" if remaining <= reserve else "admitted"
-    )
+    if status != "active":
+        reason = f"status {status or 'unknown'}"
+    elif cooldown is not None and cooldown > datetime.now(timezone.utc):
+        reason = f"rate limited until {account['rateLimitResetAt']}"
+    elif not reported:
+        reason = "unknown window data"
+    elif not known:
+        reason = "unknown reported window percent"
+    elif any(percent is None for percent in reported.values()):
+        reason = "unknown reported window percent"
+    elif remaining is not None and remaining <= reserve:
+        reason = f"{window} {remaining:g}% <= reserve {reserve:g}%"
+    else:
+        reason = "admitted"
     return {"account": account.get("accountId", "unknown"), "window": window,
             "remainingPercent": remaining, "reason": reason, "usable": reason == "admitted"}
 
@@ -448,13 +468,14 @@ def apply_overrides(chain: list[dict[str, Any]], overrides: Any, class_name: str
 
 
 def pick(task_class: str, *, reserve: float = 20, difficulty: float = 1,
-         money_path: bool = False, table: dict[str, Any] | None = None) -> dict[str, Any]:
+         money_path: bool = False, author_vendor: str | None = None,
+         table: dict[str, Any] | None = None) -> dict[str, Any]:
     table = load_table() if table is None else table
     spec = table.get("classes", {}).get(task_class)
     if not isinstance(spec, dict):
         fail(f"unknown class {task_class!r}")
     if spec.get("driver"):
-        verification = pick("verify", reserve=reserve, money_path=True, table=table) if money_path else None
+        verification = pick("verify", reserve=reserve, money_path=True, author_vendor=author_vendor, table=table) if money_path else None
         return {"class": task_class, "seat": "driver", "model": "claude-fable-5", "effort": "high",
                 "pool": None, "limitingWindow": None,
                 "verifiers": verification["verifiers"] if verification else [], "fallbacks": [],
@@ -470,9 +491,13 @@ def pick(task_class: str, *, reserve: float = 20, difficulty: float = 1,
     pools = pools_by_id(document)
     skipped: list[str] = []
 
-    def admitted(entry: dict[str, Any]) -> dict[str, Any] | None:
+    def admitted(entry: dict[str, Any], *, exclude_author_vendor: bool = False) -> dict[str, Any] | None:
         pool = pool_for_model(table, entry["model"])
         status = pools.get(pool, {})
+        vendor = vendor_for(entry, pool)
+        if exclude_author_vendor and author_vendor and vendor == author_vendor:
+            skipped.append(f"{entry['seat']}/{entry['model']}: author vendor {author_vendor} excluded")
+            return None
         if not seat_is_up(seats, entry["seat"]):
             skipped.append(f"{entry['seat']}: seat-down")
             return None
@@ -483,29 +508,50 @@ def pick(task_class: str, *, reserve: float = 20, difficulty: float = 1,
                 f"{entry['seat']}/{entry['model']}: pool {pool} blocked ({reasons or 'unknown-account-data'})"
             )
             return None
-        return {**entry, "effort": entry.get("effort", "medium"), "pool": pool,
+        return {**entry, "effort": entry.get("effort", "medium"), "pool": pool, "vendor": vendor,
                 "limitingWindow": status["limitingWindow"]}
 
     chain = apply_overrides(spec.get("chain", []), table.get("overrides"), task_class)
     if task_class == "implement" and difficulty >= 4:
         chain = [entry for entry in chain if entry["model"] != "gpt-5.6-terra"]
-    routable = [found for entry in chain if (found := admitted(entry)) is not None]
+    routable = [found for entry in chain if (found := admitted(
+        entry, exclude_author_vendor=task_class == "verify"
+    )) is not None]
     if not routable:
         fail(f"nothing routable for {task_class}: " + "; ".join(skipped))
-    verifiers = []
+    verifiers: list[dict[str, Any]] = []
+    verifier: dict[str, Any] | None = None
+    verifier_reason: str | None = None
+    warnings: list[str] = []
     if task_class in ("implement", "mechanical", "verify") or money_path:
         verification = table["classes"]["verify"]
-        required = list(verification["chain"][:1])
+        verify_chain = list(verification.get("chain", []))
+        money_second = verification.get("money_path_second")
+        if money_path and isinstance(money_second, dict) and not any(
+            entry.get("model") == money_second.get("model") for entry in verify_chain
+        ):
+            verify_chain.append(money_second)
+        for entry in verify_chain:
+            found = admitted(entry, exclude_author_vendor=author_vendor is not None)
+            if found is not None:
+                verifier = {**found, "required": True, "read_only": True}
+                verifiers.append(verifier)
+                break
+        if verifier is None:
+            verifier_reason = "no admitted cross-vendor verifier"
+            warnings.append("verifier unavailable; implementer remains routable")
         if money_path:
-            required.append(verification["money_path_second"])
-        for entry in required:
-            found = admitted(entry)
-            if found is None:
-                fail("required-verifier-unavailable: " + skipped[-1])
-            verifiers.append({**found, "required": True, "read_only": True})
-    return {"class": task_class, **routable[0], "verifiers": verifiers,
+            second = next((entry for entry in verify_chain if entry.get("model") == "claude-opus-5"), None)
+            if isinstance(second, dict) and (verifier is None or verifier.get("model") != second.get("model")):
+                found = admitted(second, exclude_author_vendor=author_vendor is not None)
+                if found is None:
+                    warnings.append("money-path Opus second read unavailable")
+                else:
+                    verifiers.append({**found, "required": False, "read_only": True})
+    return {"class": task_class, **routable[0], "verifiers": verifiers, "verifier": verifier,
+            "verifier_reason": verifier_reason, "warnings": warnings,
             "fallbacks": routable[1:], "state_age_s": age,
-            "reason": "fresh /api/accounts; active and both windows above reserve"
+            "reason": "fresh /api/accounts; active, no current rate limit, and reported windows above reserve"
                       + ("; stale-state refreshed" if stale else ""), "skipped": skipped}
 
 
@@ -515,7 +561,8 @@ MONEY_PATH = re.compile(
 
 
 def command_pick(args: argparse.Namespace) -> int:
-    result = pick(args.task_class, reserve=args.reserve, money_path=bool(MONEY_PATH.search(args.task_text)))
+    result = pick(args.task_class, reserve=args.reserve, money_path=bool(MONEY_PATH.search(args.task_text)),
+                  author_vendor=args.author_vendor)
     _print_pick(result, as_json=args.json)
     return EXIT_OK
 
@@ -1153,7 +1200,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pick = sub.add_parser("pick", help="first routable seat for a class")
     pick.add_argument("task_class", metavar="class")
     pick.add_argument(
-        "--author-vendor", default=None, help="legacy argument; Astra validation is not author-vendor filtered"
+        "--author-vendor", default=None, help="exclude same-vendor seats when picking verify or a verifier"
     )
     pick.add_argument("--json", action="store_true")
     pick.add_argument("--reserve", type=reserve_percent, default=20)

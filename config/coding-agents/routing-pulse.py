@@ -15,7 +15,7 @@ from pathlib import Path
 
 LB = os.environ.get("AGENT_LB_URL") or "http://127.0.0.1:2455"
 CANON = "~/.agents/policy/coding-agents/ROUTING.md"
-LEDGER = Path(os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
+LEDGER = Path(os.environ.get("ROUTE_LEDGER") or os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
 DRIVER_MODELS = ("fable", "opus", "sonnet")
 BURST_MINUTES = 60
 BURST_MIN_REQUESTS = 40
