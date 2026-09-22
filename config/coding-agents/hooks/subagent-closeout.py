@@ -212,10 +212,24 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
         candidates = [
             record for record in reversed(open_dispatches) if digest and record.get("prompt_sha256") == digest
         ]
+        same_seat = [
+            record for record in candidates if seat and str(record.get("subagent_type") or "").lower() == seat.lower()
+        ]
+        if same_seat:
+            candidates = same_seat
+        if len(candidates) == 1:
+            return candidates[0], "prompt_hash"
         if candidates:
-            # Several open dispatches with one prompt and no telling name: any pick
-            # may be the sibling's, so say so rather than claim an exact join.
-            return candidates[0], "prompt_hash" if len(candidates) == 1 else "prompt_hash_ambiguous"
+            # Several open dispatches with one prompt and no telling name or seat:
+            # any pick may be the sibling's. Return only the facts they all share
+            # (the newest is kept aside for replaying ledgers written before this).
+            shared = {
+                key: candidates[0].get(key)
+                for key in ("task_class", "subagent_type", "model")
+                if all(record.get(key) == candidates[0].get(key) for record in candidates)
+            }
+            shared["_newest"] = candidates[0]
+            return shared, "prompt_hash_ambiguous"
     for name in names:
         for record in reversed(open_dispatches):
             if name and str(record.get("name") or "").lower() == name.lower():
@@ -242,16 +256,19 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
         if record.get("event") == "dispatch" and not record.get("denied"):
             open_dispatches.append(record)
         elif record.get("event") == "closeout":
-            if record.get("match") == "prompt_hash_ambiguous":
+            if record.get("match") == "prompt_hash_ambiguous" and not record.get("matched"):
                 # It claimed no dispatch, so replaying it must not close one either.
                 continue
-            closed, _ = resolve(
+            closed, how = resolve(
                 open_dispatches,
                 [str(record.get("prompt_sha256") or "")],
                 [str(record.get("name") or "")],
                 str(record.get("subagent_type") or record.get("agent_type") or ""),
             )
-            if closed is not None:
+            if how == "prompt_hash_ambiguous":
+                # A historical closeout the earlier hook pinned on the newest sibling.
+                closed = closed.get("_newest")
+            if closed is not None and closed in open_dispatches:
                 open_dispatches.remove(closed)
     return resolve(open_dispatches, digests, [agent_name, agent_type], agent_type)
 
@@ -285,7 +302,7 @@ def main() -> None:
     if how == "prompt_hash_ambiguous":
         # Siblings with one prompt share class, seat and model, but which of them
         # stopped is unknown: keep those shared facts and attribute to none of them.
-        shared, dispatch = dispatch, None
+        shared, dispatch = {k: v for k, v in dispatch.items() if k != "_newest"}, None
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
         "ts": stamp(now()),
