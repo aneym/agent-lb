@@ -106,10 +106,11 @@ own child processes. It fails before spawning if inventory is prohibited.
 - Delivery-only test: PASS (exit 0), including syntax checks of both patched
   modules, idempotence, atomic incompatible-hunk rejection, and six invalid
   idle settings. Log: `/private/tmp/codex-broker-delivery-tests.log`.
-- Full test command: BLOCKED (exit 1) at process-inventory preflight:
-  `spawnSync ps EPERM`. No brokers or app-servers were started. Tests A/B and
-  all process-tree cases are NOT RUN. Log:
-  `/private/tmp/codex-broker-tests.log`.
+- Full test command: PASS on ac862487, all nine runtime cases (A real
+  zero-client, B real connected, C-I stand-in trees, identity and pid-reuse
+  checks) plus the delivery checks, with real PID evidence. An earlier sandboxed
+  run was blocked at `spawnSync ps EPERM`; the unsandboxed run superseded it.
+  Evidence: `checks/idle-reap-integration-identity-2026-09-22.txt`.
 - Live apply script: BLOCKED (exit 1): git reported `Operation not permitted`
   unlinking/writing the installed plugin files. Subsequent git status/diff
   confirmed the installed checkout remains clean, unpatched at the base SHA.
@@ -117,8 +118,9 @@ own child processes. It fails before spawning if inventory is prohibited.
 - OpenSpec change strict validation: PASS. The change is intentionally left
   active, not archived, because runtime verification and live application
   remain incomplete.
-- Do not merge to main until Tests A/B pass with real PID evidence and the
-  repository's exact-SHA verification gate is green.
+- Merge condition met: Tests A/B pass with real PID evidence. The one open
+  reviewer finding (the ps-to-kill gap) is accepted; see Residual risk in
+  design.md.
 - Global strict spec validation: FAIL (36 passed, 2 failed). Untouched
   `anthropic-messages-compat` and `oauth-refresh-safety` specs have requirements
   missing scenarios. Full output: `/private/tmp/codex-broker-spec-validation.log`.

@@ -10,6 +10,8 @@ Use the existing socket set and shutdown path. A broker-only client option creat
 ## Risks / Trade-offs
 The tree walk covers descendants in any group, but not a process forked after the walk that leaves every recorded group. Tests must record actual group membership. Hard-killing the broker itself cannot run in-process cleanup. Updating files does not update already running brokers; this task deliberately leaves those alone.
 
+Residual risk: between the ps re-read that revalidates a process and the kill() call that signals it, the process can exit and its pid or group id can be reused, so the signal could reach an unrelated process. macOS has no pidfd, so POSIX kill cannot bind a signal to a verified process identity and no further revalidation closes the gap. After revalidation the window is microseconds, and pkill and launchd accept the same gap. We accept it, because leaving brokers unreaped has leaked about 38 GB of memory.
+
 ## Migration Plan
 Run scripts/apply-codex-plugin-cc-patch.sh after every plugin update/reinstall. No automatic integration exists. Reverse the patch only with an explicit checked git apply --reverse against the installed plugin.
 
