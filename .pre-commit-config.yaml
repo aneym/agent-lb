@@ -35,7 +35,7 @@ repos:
         files: ^frontend/
         stages: [pre-push]
       - id: local-ci
-        name: local CI parity check
+        name: exact-commit local CI (commit changes before running)
         entry: make ci
         language: system
         always_run: true

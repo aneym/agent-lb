@@ -124,12 +124,8 @@ def test_trigger_codex_review_tolerates_github_app_write_denial(monkeypatch: pyt
     assert "request Codex review on aneym/agent-lb#714" in warnings[0]
 
 
-def test_workflow_prefers_privileged_token_and_enables_tolerant_apply() -> None:
-    workflow = Path(".github/workflows/codex-review-labels.yml").read_text(encoding="utf-8")
-
-    assert "secrets.CODEX_LABEL_SYNC_TOKEN || secrets.RELEASE_PLEASE_TOKEN || github.token" in workflow
-    assert workflow.count("--tolerate-write-permission-errors") == 2
-    assert workflow.count("--tolerate-read-errors") == 1
+def test_hosted_codex_label_workflow_is_removed() -> None:
+    assert not Path(".github/workflows/codex-review-labels.yml").exists()
 
 
 def test_main_tolerates_read_errors_when_requested(

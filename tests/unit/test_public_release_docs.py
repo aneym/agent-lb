@@ -440,7 +440,7 @@ def test_public_release_pr_head_proof_script_fails_closed_and_stays_read_only() 
     assert "gh pr view" in script
     assert (
         "--json number,state,isDraft,baseRefName,headRefName,headRefOid,"
-        "headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision,labels,url" in script
+        "headRepositoryOwner,mergeable,mergeStateStatus,reviewDecision,url" in script
     )
     assert 'pr_head_sha="$(printf' in script
     assert '.headRefOid // ""' in script
@@ -454,21 +454,13 @@ def test_public_release_pr_head_proof_script_fails_closed_and_stays_read_only() 
     assert ".headRepositoryOwner.login == $owner" in script
     assert '.mergeable == "MERGEABLE"' in script
     assert '.mergeStateStatus == "CLEAN"' in script
-    assert "🤖 codex: ok" in script
-    assert "🤖 codex: needs work" in script
-    assert "gh pr checks" in script
-    assert "--required" in script
-    assert "CI Required" in script
-    assert "jq -e" in script
-    assert ".github/scripts/sync_codex_ok_labels.py" in script
-    assert "--no-trigger-missing-codex" in script
-    assert "--no-approve-workflow-runs" in script
-    assert 'require_codex_fragment "head=${pr_head_short}"' in script
-    assert "checks=success" in script
-    assert "merge=CLEAN" in script
-    assert "review=clean" in script
-    assert "ok=True->True/keep" in script
-    assert "needs_work=False->False/keep" in script
+    assert '.reviewDecision != "CHANGES_REQUESTED"' in script
+    assert "python3 scripts/local_ci.py status" in script
+    assert "python3 scripts/local_ci.py show" in script
+    assert "gh pr checks" not in script
+    assert "CI Required" not in script
+    assert "🤖 codex" not in script
+    assert ".github/scripts/sync_codex_ok_labels.py" not in script
     assert 'echo "PR head proof passed for ${REPO}#${PR_NUMBER} at ${PR_HEAD_PROOF_AT}"' in script
     for mutating_command in (
         "git commit",
@@ -1855,43 +1847,13 @@ def test_active_release_management_openspec_pins_public_release_proof_identity_c
         assert contract in normalized
 
 
-def test_active_openspec_unchecked_tasks_are_pr_head_gates() -> None:
-    active_task_files = sorted(
-        path for path in (ROOT / "openspec/changes").glob("*/tasks.md") if "archive" not in path.parts
-    )
-    unchecked_tasks: list[str] = []
-    missing_boundaries: list[str] = []
+def test_pr_head_proof_uses_local_exact_sha_receipt() -> None:
+    script = (ROOT / "scripts/public-release-pr-head-proof.sh").read_text()
 
-    for path in active_task_files:
-        lines = path.read_text().splitlines()
-        for index, line in enumerate(lines):
-            if not line.startswith("- [ ] "):
-                continue
-
-            task = f"{path.relative_to(ROOT)}: {line}"
-            unchecked_tasks.append(task)
-            evidence_window = "\n".join(lines[index : index + 8])
-            normalized_window = " ".join(evidence_window.split())
-            if "Confirm GitHub CI and Codex review on the PR head" not in line:
-                missing_boundaries.append(f"{task} is not a PR-head gate")
-            if "Pending until" not in normalized_window or "PR exists" not in normalized_window:
-                missing_boundaries.append(f"{task} does not explain the PR-head evidence boundary")
-            if "gh pr list --repo aneym/agent-lb --state open" not in normalized_window:
-                missing_boundaries.append(f"{task} does not record live PR evidence")
-            if "gh run list --repo aneym/agent-lb --branch main --limit 10" not in normalized_window:
-                missing_boundaries.append(f"{task} does not record live CI-run evidence")
-            if PR_HEAD_SNAPSHOT_AT not in normalized_window:
-                missing_boundaries.append(f"{task} does not use the latest PR-head snapshot timestamp")
-            if "./scripts/public-release-pr-head-proof.sh <pr-number>" not in normalized_window:
-                missing_boundaries.append(f"{task} does not name the PR-head proof command")
-
-    assert unchecked_tasks == [
-        "openspec/changes/create-pytest-required-check-placeholders/tasks.md: "
-        "- [ ] 2.4 Confirm GitHub CI and Codex review on the PR head.",
-        "openspec/changes/require-beta-candidate-validation/tasks.md: "
-        "- [ ] 4.7 Confirm GitHub CI and Codex review on the PR head.",
-    ]
-    assert missing_boundaries == []
+    assert 'python3 scripts/local_ci.py status "${pr_head_sha}"' in script
+    assert 'python3 scripts/local_ci.py show "${pr_head_sha}"' in script
+    assert "gh pr checks" not in script
+    assert "sync_codex_ok_labels.py" not in script
 
 
 def test_active_openspec_changes_have_spec_deltas() -> None:

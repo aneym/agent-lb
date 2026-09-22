@@ -1,5 +1,11 @@
-PYTEST_ARGS := -q -ra -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true --timeout=180 --timeout-method=thread --durations=20
-POSTGRES_TEST_DATABASE_URL ?= postgresql+asyncpg://agent_lb:agent_lb@127.0.0.1:5432/agent_lb
+PYTEST_ARGS := -v -ra -o faulthandler_timeout=300 -o faulthandler_exit_on_timeout=true --timeout=180 --timeout-method=thread --durations=20
+POSTGRES_TEST_DATABASE_URL ?=
+CI_RUN_ID := $(shell date +%s)-$(shell echo $$$$)
+CI_IMAGE ?= ghcr.io/aneym/agent-lb-ci:$(CI_RUN_ID)
+CI_CLUSTER ?= agent-lb-ci-$(CI_RUN_ID)
+CI_BASE_REF ?= origin/main
+CI_HEAD_REF ?=
+CI_EVENT_PATH ?=
 PYTHON ?= .venv/bin/python
 POSTGRES_PYTEST_TARGETS := \
 	tests/integration/test_migrations.py::test_postgresql_migration_contract_policy_and_drift_match \
@@ -44,8 +50,8 @@ frontend-build: frontend-install
 
 .PHONY: lint typecheck architecture-check
 lint: architecture-check
-	uvx ruff check .
-	uvx ruff format --check .
+	uv run ruff check .
+	uv run ruff format --check .
 
 architecture-check:
 	$(PYTHON) scripts/check_proxy_architecture.py
@@ -76,21 +82,23 @@ test-e2e: frontend-build
 	PYTHONFAULTHANDLER=1 uv run pytest $(PYTEST_ARGS) tests/e2e
 
 test-postgres:
+	@test -n "$(POSTGRES_TEST_DATABASE_URL)" || (echo "Set a disposable POSTGRES_TEST_DATABASE_URL"; exit 1)
 	uv sync --dev --frozen
-	AGENT_LB_TEST_DATABASE_URL="$${AGENT_LB_TEST_DATABASE_URL:-$(POSTGRES_TEST_DATABASE_URL)}" \
+	AGENT_LB_TEST_DATABASE_URL="$(POSTGRES_TEST_DATABASE_URL)" \
 	  PYTHONFAULTHANDLER=1 \
 	  uv run pytest $(PYTEST_ARGS) $(POSTGRES_PYTEST_TARGETS)
 
 .PHONY: migration-check migration-check-postgres
 migration-check:
 	uv sync --dev --frozen
-	TMP_DB="$$(mktemp -u /tmp/agent-lb-ci-migrate-XXXXXX.db)"; \
+	set -e; TMP_DB="$$(mktemp /tmp/agent-lb-ci-migrate-XXXXXX)"; \
 	DB_URL="sqlite+aiosqlite:///$${TMP_DB}"; \
 	trap 'rm -f "$${TMP_DB}"' EXIT; \
 	uv run agent-lb-db --db-url "$${DB_URL}" upgrade head; \
 	uv run agent-lb-db --db-url "$${DB_URL}" check
 
 migration-check-postgres:
+	@test -n "$(POSTGRES_TEST_DATABASE_URL)" || (echo "Set a disposable POSTGRES_TEST_DATABASE_URL"; exit 1)
 	uv sync --dev --frozen
 	uv run agent-lb-db --db-url "$(POSTGRES_TEST_DATABASE_URL)" upgrade head
 	uv run agent-lb-db --db-url "$(POSTGRES_TEST_DATABASE_URL)" check
@@ -109,8 +117,8 @@ package: frontend-build
 
 .PHONY: docker
 docker:
-	docker build -t agent-lb:ci .
-	trivy image --format table --exit-code 1 --severity CRITICAL --ignore-unfixed agent-lb:ci
+	docker build -t $(CI_IMAGE) .
+	trivy image --format table --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed $(CI_IMAGE)
 
 .PHONY: helm-deps helm-lint helm-template helm-kubeconform
 helm-deps:
@@ -156,15 +164,42 @@ helm-kubeconform:
 helm-check: helm-lint helm-template helm-kubeconform
 
 helm-smoke-kind:
-	kind create cluster --name agent-lb-smoke --image kindest/node:v1.35.0 --wait 120s
-	docker build -t ghcr.io/aneym/agent-lb:ci .
-	kind load docker-image ghcr.io/aneym/agent-lb:ci --name agent-lb-smoke
-	KUBE_CONTEXT=kind-agent-lb-smoke IMAGE_REGISTRY=ghcr.io IMAGE_REPOSITORY=aneym/agent-lb IMAGE_TAG=ci ./scripts/helm-kind-smoke.sh bundled
-	KUBE_CONTEXT=kind-agent-lb-smoke IMAGE_REGISTRY=ghcr.io IMAGE_REPOSITORY=aneym/agent-lb IMAGE_TAG=ci ./scripts/helm-kind-smoke.sh external-db
+	@set -e; \
+	if kind get clusters | grep -Fxq "$(CI_CLUSTER)"; then echo "Refusing existing cluster $(CI_CLUSTER)"; exit 1; fi; \
+	trap 'kind delete cluster --name "$(CI_CLUSTER)"' EXIT; \
+	kind create cluster --name "$(CI_CLUSTER)" --image kindest/node:v1.35.0 --wait 120s; \
+	docker build -t $(CI_IMAGE) .; \
+	kind load docker-image $(CI_IMAGE) --name "$(CI_CLUSTER)"; \
+	KUBE_CONTEXT=kind-$(CI_CLUSTER) IMAGE_REGISTRY=ghcr.io IMAGE_REPOSITORY=aneym/agent-lb-ci IMAGE_TAG=$$(echo $(CI_IMAGE) | cut -d: -f2) ./scripts/helm-kind-smoke.sh bundled; \
+	KUBE_CONTEXT=kind-$(CI_CLUSTER) IMAGE_REGISTRY=ghcr.io IMAGE_REPOSITORY=aneym/agent-lb-ci IMAGE_TAG=$$(echo $(CI_IMAGE) | cut -d: -f2) ./scripts/helm-kind-smoke.sh external-db
 
-.PHONY: ci-fast ci
+.PHONY: ci-fast ci ci-targets ci-doctor menubar-test menubar-build contributors beta-release-guard
 ci-fast: lint typecheck frontend-test test-unit package
 
-ci: frontend-lint frontend-typecheck frontend-test frontend-build lint typecheck \
-	test-unit test-integration-core test-integration-bridge test-e2e test-postgres \
-	migration-check migration-check-postgres package docker helm-check helm-smoke-kind
+CI_TARGETS := contributors beta-release-guard frontend-lint frontend-typecheck frontend-test frontend-build \
+	lint typecheck test-unit test-integration-core test-integration-bridge test-e2e \
+	test-postgres migration-check migration-check-postgres package docker helm-check helm-smoke-kind \
+	menubar-test menubar-build
+
+ci-targets:
+	@printf '%s\n' $(CI_TARGETS)
+
+ci:
+	python3 scripts/local_ci.py run $(or $(REF),HEAD)
+
+ci-doctor:
+	python3 scripts/local_ci.py doctor
+
+contributors:
+	$(PYTHON) .github/scripts/check_all_contributors.py
+
+beta-release-guard:
+	$(PYTHON) -m scripts.guard_beta_release --mode pr --base-ref "$(CI_BASE_REF)" --head-ref "$(CI_HEAD_REF)" --event-path "$(CI_EVENT_PATH)"
+
+menubar-test:
+	cd clients/macos-menubar && swift test
+
+menubar-build:
+	$(MAKE) -C clients/macos-menubar bundle
+	codesign --verify --deep clients/macos-menubar/AgentLB.app
+	plutil -lint clients/macos-menubar/AgentLB.app/Contents/Info.plist

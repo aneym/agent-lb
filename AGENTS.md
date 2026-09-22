@@ -119,8 +119,8 @@ or an AI assistant acting on behalf of either), the binding workflow is
 in [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md). The sections
 an AI assistant most often needs are:
 
-- [Merge gates](.github/CONTRIBUTING.md#merge-gates) — CI green +
-  `@codex review` clean (or findings addressed) + `mergeable=CLEAN` +
+- [Merge gates](.github/CONTRIBUTING.md#merge-gates) — exact-SHA local CI
+  receipt green + owner/coordinator diff review + `mergeable=CLEAN` +
   OpenSpec change folder for behavior changes + `Fixes #N` /
   `Closes #N` for issue cover.
 - [Collaborator rules](.github/CONTRIBUTING.md#collaborator-rules) —
@@ -130,11 +130,11 @@ an AI assistant most often needs are:
   — self-merge allowed after **14 days** with all gates met and a
   comment invoking the clause.
 
-An assistant preparing a merge MUST verify the gates against the
-actual GitHub state (status check rollup, codex review submissions,
-`mergeable` field) rather than asserting them from local history.
-Local `uv run pytest` / `uv run ruff` / `codex review --base origin/main`
-are encouraged but not substitutes for the cloud gates.
+An assistant preparing a merge MUST run `python3 scripts/local_ci.py status
+<40sha>` for the exact candidate SHA and inspect its receipt with `show`.
+The receipt must be from the coordinator machine and have every required tier
+green. The assistant must also inspect the actual diff and GitHub mergeability;
+hosted CI checks and Codex labels are not merge gates.
 
 ## PR Readiness / Review Trapdoors
 
@@ -152,12 +152,8 @@ These rules encode recurring review blockers observed across agent-lb PRs.
   examples in `context.md` or change notes, and run strict OpenSpec validation
   before calling the PR ready. Code/tests alone are not enough when OpenSpec is
   required.
-- Codex review state must come from current-head GitHub evidence. Check labels,
-  latest Codex review/comment/reaction, and GraphQL review threads before using
-  or claiming `🤖 codex: ok`. Usage-limit, environment, or missing-review
-  results mean missing evidence, not approval. Unresolved non-outdated P-level
-  Codex threads block readiness even when a top-level review comment looks
-  clean.
+- Review the current candidate diff directly. A hosted Codex label or cloud
+  check is neither required nor a substitute for owner/coordinator review.
 - Proxy failover and retry patches must prove account ownership and settlement
   invariants. File-pinned requests must not cross accounts; API-key reservations
   must settle before error-health writes; excluded accounts must actually leave
