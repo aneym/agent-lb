@@ -15,8 +15,12 @@ The patched broker SHALL start an idle timer at startup and when the last socket
 - **WHEN** the last client disconnects and another connects before expiration
 - **THEN** the old timer SHALL be cancelled and a full new window SHALL begin only after the final disconnect
 
-### Requirement: Broker-owned process group cleanup
-On POSIX the broker's app-server SHALL run in a private process group. Shutdown SHALL signal that group with SIGTERM and, if it survives three seconds, SIGKILL, including when the group leader has already exited. Concurrent shutdown requests SHALL share cleanup. CLI and JSON-RPC interfaces SHALL remain unchanged.
+### Requirement: Broker-owned process tree cleanup
+On POSIX the broker's app-server SHALL run in a private process group. Shutdown SHALL record the app-server's descendant tree, including descendants in other process groups, then send SIGTERM to every recorded group and process and, after three seconds, SIGKILL to any that remain, including when the group leader has already exited. Concurrent shutdown requests SHALL share cleanup. CLI and JSON-RPC interfaces SHALL remain unchanged.
+
+#### Scenario: An MCP server runs in its own process group
+- **WHEN** shutdown begins and an app-server descendant leads a process group other than the app-server's
+- **THEN** that descendant and its children SHALL no longer be running after the broker exits
 
 #### Scenario: A descendant ignores TERM
 - **WHEN** shutdown begins and an app-server descendant in its process group ignores TERM

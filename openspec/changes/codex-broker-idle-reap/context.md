@@ -42,15 +42,22 @@ line-delimited JSON-RPC, including `broker/shutdown`, are unchanged.
 
 The timer starts when the broker listens and when the final socket closes.
 Every connection cancels it. Shutdown stops new connections, flushes/closes
-existing sockets, terminates the app-server's private POSIX process group,
-and removes the socket/pid file. Group TERM is followed by group KILL after
-three seconds if the group still exists, even if the leader has exited.
-Ordinary direct app-server clients and Windows tree cleanup are unchanged.
+existing sockets, reaps the app-server's process tree, and removes the
+socket/pid file. Before signalling, the broker walks the app-server's
+descendants with `ps -axo pid=,ppid=,pgid=` until a pass finds nothing new,
+and records every member PID and every group led by a member. It sends TERM
+to each group and member, waits up to three seconds, then sends KILL to
+whatever recorded target still exists, including members re-parented to init.
+A recorded PID is signalled only while it still has its recorded group, which
+guards against PID reuse. Ordinary direct app-server clients and Windows tree
+cleanup are unchanged.
 
-Processes that deliberately detach into another process group are outside
-POSIX group signalling. The real-Codex test checks that its test MCP and
-TERM-resistant descendant remain in the owned group. This does not establish
-that every third-party MCP implementation follows that convention.
+Codex 0.155.1 starts each MCP server in its own process group (observed
+2026-09-22), so signalling the app-server group alone left MCP descendants
+running. The real-Codex test asserts an MCP fixture sits outside the
+app-server group and that every recorded descendant is gone after exit. A
+descendant that forks after the walk and leaves every recorded group is not
+reaped. If `ps` is unavailable the tree degrades to the app-server's group.
 
 Applying the patch affects newly launched brokers only. It cannot repair
 already running Node processes. Do not kill existing brokers as part of this

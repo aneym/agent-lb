@@ -29,6 +29,15 @@ function table() {
   });
 }
 let preexisting;
+function descendants(root) {
+  const rows = table();
+  const tree = new Set([root]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const p of rows) if (tree.has(p.ppid) && !tree.has(p.pid)) { tree.add(p.pid); grew = true; }
+  }
+  return [...tree];
+}
 function snapshot(label, pids, groups = []) {
   const rows = table().filter(p => pids.includes(p.pid) || groups.includes(p.pgid));
   console.log(`${label}: ps -axo pid=,ppid=,pgid=,stat=,comm=\n${JSON.stringify(rows, null, 2)}`);
@@ -232,11 +241,18 @@ TERM_LOG = ${JSON.stringify(termLog)}
     } else if (!binary) {
       await until(() => fs.existsSync(pidLog) && fs.readFileSync(pidLog, 'utf8').trim().split('\n').length >= 2);
     }
-    observed = snapshot(`${label} before shutdown`, [broker.pid], [appPid]).map(p => p.pid);
+    // Codex puts MCP servers in their own groups, so the broker's tree, not
+    // one group, is what shutdown must reap.
+    observed = snapshot(`${label} before shutdown`, descendants(broker.pid), [appPid]).map(p => p.pid);
     if (fs.existsSync(pidLog)) {
       const fixturePids = fs.readFileSync(pidLog, 'utf8').trim().split('\n').map(Number);
       for (const pid of fixturePids) {
-        assert(observed.includes(pid), `Fixture PID ${pid} escaped group; cleanup is incomplete`);
+        assert(observed.includes(pid), `Fixture PID ${pid} is not a broker descendant; test setup is wrong`);
+      }
+      if (mcp) {
+        const groups = new Set(table().filter(p => fixturePids.includes(p.pid)).map(p => p.pgid));
+        assert(![...groups].every(g => g === appPid), 'Expected an MCP server outside the app-server group');
+        console.log(`${label} fixture groups outside app-server group: ${[...groups].filter(g => g !== appPid).join(', ')}`);
       }
     }
     const lastDisconnect = Date.now();

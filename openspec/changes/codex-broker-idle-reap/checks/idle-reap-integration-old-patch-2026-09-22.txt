@@ -1,0 +1,111 @@
+Evidence directory: /private/tmp/broker-reap-HlQpeC
+Patched: /private/tmp/broker-reap-HlQpeC/plugin
+Drift rejection (expected nonzero=1):
+error: patch failed: plugins/codex/scripts/app-server-broker.mjs:63
+error: plugins/codex/scripts/app-server-broker.mjs: patch does not apply
+ERROR: codex-plugin-cc patch is incompatible in /private/tmp/broker-reap-HlQpeC/plugin; file/hunk diagnostics above. No files changed. Rebase the repo-owned patch on the updated plugin.
+PASS checked application, idempotence, atomic drift rejection
+PASS invalid idle windows rejected before app-server spawn
+Real Codex: /Users/aneyman/.codex/packages/standalone/releases/0.155.1-aarch64-apple-darwin/bin/codex
+codex-cli 0.155.1
+A-real-zero-clients before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 81957,
+    "ppid": 81764,
+    "pgid": 81957,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 81984,
+    "ppid": 81957,
+    "pgid": 81984,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 81985,
+    "ppid": 81984,
+    "pgid": 81984,
+    "stat": "S",
+    "comm": "/Library/Developer/CommandLineTools/usr/bin/git"
+  },
+  {
+    "pid": 81986,
+    "ppid": 81985,
+    "pgid": 81984,
+    "stat": "S",
+    "comm": "/Library/Developer/CommandLineTools/usr/libexec/git-core/git"
+  },
+  {
+    "pid": 81987,
+    "ppid": 81986,
+    "pgid": 81984,
+    "stat": "S",
+    "comm": "/Library/Developer/CommandLineTools/usr/libexec/git-core/git-remote-https"
+  }
+]
+A-real-zero-clients after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+PASS A-real-zero-clients: broker=81957 app-server=81984, total=1855ms; all observed PIDs absent
+B-real-connected still alive after 3456ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 82235,
+    "ppid": 81764,
+    "pgid": 82235,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 82262,
+    "ppid": 82235,
+    "pgid": 82262,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 82540,
+    "ppid": 82262,
+    "pgid": 82262,
+    "stat": "R",
+    "comm": "/Library/Developer/CommandLineTools/usr/bin/git"
+  }
+]
+B-real-connected before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 82235,
+    "ppid": 81764,
+    "pgid": 82235,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 82262,
+    "ppid": 82235,
+    "pgid": 82262,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 82357,
+    "ppid": 82262,
+    "pgid": 82357,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 82373,
+    "ppid": 82357,
+    "pgid": 82357,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+B-real-connected fixture groups outside app-server group: 82357
+Error: Timed out after 5000ms
+    at until (file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:52:9)
+    at async runCase (file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:266:5)
+    at async file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:295:5

@@ -1,6 +1,8 @@
+diff --git a/plugins/codex/scripts/app-server-broker.mjs b/plugins/codex/scripts/app-server-broker.mjs
+index 1954274..4515f88 100644
 --- a/plugins/codex/scripts/app-server-broker.mjs
 +++ b/plugins/codex/scripts/app-server-broker.mjs
-@@ -63,13 +63,32 @@
+@@ -63,13 +63,32 @@ async function main() {
    const endpoint = String(options.endpoint);
    const listenTarget = parseBrokerEndpoint(endpoint);
    const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
@@ -34,7 +36,7 @@
  
    function clearSocketOwnership(socket) {
      if (activeRequestSocket === socket) {
-@@ -99,23 +118,38 @@
+@@ -99,23 +118,38 @@ async function main() {
      }
    }
  
@@ -49,7 +51,6 @@
 -    }
 -    if (pidFile && fs.existsSync(pidFile)) {
 -      fs.unlinkSync(pidFile);
--    }
 +  function shutdown(server) {
 +    if (!shutdownPromise) {
 +      clearTimeout(idleTimer);
@@ -60,7 +61,7 @@
 +          socket.end();
 +          socket.destroySoon();
 +        }
-+        await appClient.close();
++        await appClient.close().catch(() => {});
 +        await serverClosed;
 +        if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
 +          fs.unlinkSync(listenTarget.path);
@@ -69,7 +70,7 @@
 +          fs.unlinkSync(pidFile);
 +        }
 +      })();
-+    }
+     }
 +    return shutdownPromise;
    }
  
@@ -85,7 +86,7 @@
      sockets.add(socket);
      socket.setEncoding("utf8");
      let buffer = "";
-@@ -225,11 +259,13 @@
+@@ -225,11 +259,13 @@ async function main() {
      socket.on("close", () => {
        sockets.delete(socket);
        clearSocketOwnership(socket);
@@ -99,7 +100,7 @@
      });
    });
  
-@@ -243,7 +279,7 @@
+@@ -243,7 +279,7 @@ async function main() {
      process.exit(0);
    });
  
@@ -108,9 +109,20 @@
  }
  
  main().catch((error) => {
+diff --git a/plugins/codex/scripts/lib/app-server.mjs b/plugins/codex/scripts/lib/app-server.mjs
+index 72b30a7..8ba5138 100644
 --- a/plugins/codex/scripts/lib/app-server.mjs
 +++ b/plugins/codex/scripts/lib/app-server.mjs
-@@ -192,6 +192,7 @@
+@@ -10,7 +10,7 @@
+ import fs from "node:fs";
+ import net from "node:net";
+ import process from "node:process";
+-import { spawn } from "node:child_process";
++import { spawn, spawnSync } from "node:child_process";
+ import readline from "node:readline";
+ import { parseBrokerEndpoint } from "./broker-endpoint.mjs";
+ import { ensureBrokerSession, loadBrokerSession } from "./broker-lifecycle.mjs";
+@@ -192,6 +192,7 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
        env: this.options.env ?? process.env,
        stdio: ["pipe", "pipe", "pipe"],
        shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
@@ -118,7 +130,7 @@
        windowsHide: true
      });
  
-@@ -230,6 +231,11 @@
+@@ -230,6 +231,11 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
    }
  
    async close() {
@@ -130,7 +142,7 @@
      if (this.closed) {
        await this.exitPromise;
        return;
-@@ -265,6 +271,37 @@
+@@ -265,6 +271,27 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
      await this.exitPromise;
    }
  
@@ -139,28 +151,18 @@
 +    this.readline?.close();
 +    const pid = this.proc?.pid;
 +    if (pid) {
-+      // The private group outlives its leader when MCP children retain pipes.
-+      // Never use proc.killed or exitPromise to decide whether it needs KILL.
-+      terminateProcessTree(pid);
++      // Codex starts MCP servers in their own process groups, so the app-server
++      // group alone misses them. Record the whole tree before signalling:
++      // descendants re-parented to init stay reachable through the record.
++      const tree = collectProcessTree(pid);
++      signalTree(tree, "SIGTERM");
 +      this.proc.stdin.end();
 +      const deadline = Date.now() + 3_000;
-+      while (true) {
-+        try {
-+          process.kill(-pid, 0);
-+        } catch (error) {
-+          if (error.code === "ESRCH") break;
-+          throw error;
-+        }
-+        if (Date.now() >= deadline) {
-+          try {
-+            process.kill(-pid, "SIGKILL");
-+          } catch (error) {
-+            if (error.code !== "ESRCH") throw error;
-+          }
-+          break;
-+        }
++      // Never use proc.killed or exitPromise to decide whether KILL is needed.
++      while (Date.now() < deadline && signalTree(tree, 0)) {
 +        await new Promise((resolve) => setTimeout(resolve, 50));
 +      }
++      signalTree(tree, "SIGKILL");
 +    }
 +    await this.exitPromise;
 +  }
@@ -168,3 +170,62 @@
    sendMessage(message) {
      const line = `${JSON.stringify(message)}\n`;
      const stdin = this.proc?.stdin;
+@@ -332,6 +359,58 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
+   }
+ }
+ 
++function readProcessTable() {
++  const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid="], { encoding: "utf8" });
++  if (result.status !== 0) {
++    return null;
++  }
++  return result.stdout
++    .trim()
++    .split("\n")
++    .map((line) => line.trim().split(/\s+/).map(Number))
++    .filter(([pid, ppid, pgid]) => pid > 1 && ppid >= 0 && pgid > 1);
++}
++
++// Walks descendants of root until a ps pass finds nothing new. Records each
++// member's group, and treats a group as owned only when a member leads it, so
++// a descendant that joined a foreign group never gets that group signalled.
++// Without ps the tree degrades to the root's private group.
++function collectProcessTree(root) {
++  const members = new Map([[root, root]]);
++  for (let pass = 0; pass < 20; pass++) {
++    const before = members.size;
++    for (const [pid, ppid, pgid] of readProcessTable() ?? []) {
++      if (members.has(ppid) && !members.has(pid)) members.set(pid, pgid);
++    }
++    if (members.size === before) break;
++  }
++  const groups = new Set([...members.values()].filter((pgid) => members.has(pgid) && pgid !== process.pid));
++  return { members, groups };
++}
++
++function signalTarget(target, signal) {
++  try {
++    process.kill(target, signal);
++    return true;
++  } catch (error) {
++    if (error.code === "ESRCH" || error.code === "EPERM") return false;
++    throw error;
++  }
++}
++
++// Signals every recorded group and member; returns whether any target existed.
++// A recorded pid is signalled only while it still sits in its recorded group,
++// which guards against a reused pid during the grace period.
++function signalTree(tree, signal) {
++  let alive = false;
++  for (const group of tree.groups) alive = signalTarget(-group, signal) || alive;
++  const current = new Map((readProcessTable() ?? []).map(([pid, , pgid]) => [pid, pgid]));
++  for (const [pid, pgid] of tree.members) {
++    if (current.get(pid) === pgid) alive = signalTarget(pid, signal) || alive;
++  }
++  return alive;
++}
++
+ export class CodexAppServerClient {
+   static async connect(cwd, options = {}) {
+     let brokerEndpoint = null;
