@@ -3312,3 +3312,45 @@ def test_merge_additional_rate_limits_leaves_unexhausted_window_reset_none() -> 
 
     window = merged[next(iter(merged))]["primary"]
     assert window.reset_at is None
+
+
+@pytest.mark.asyncio
+async def test_usage_refresh_records_openai_banked_reset_count(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
+    from app.core.config.settings import get_settings
+    from app.modules.accounts import reset_credit_cache
+
+    get_settings.cache_clear()
+    reset_credit_cache.reset()
+    summaries: dict[str, dict[str, Any] | None] = {
+        "acc_banked": {"available_count": 1, "applicable_available_count": 1},
+        "acc_listed": None,
+    }
+
+    async def stub_fetch_usage(*, access_token: str, account_id: str | None, **_: Any) -> UsagePayload:
+        data: dict[str, Any] = {
+            "rate_limit": {"primary_window": {"used_percent": 10.0, "reset_at": 1735689600, "limit_window_seconds": 60}}
+        }
+        summary = summaries[account_id or ""]
+        if summary is not None:
+            data["rate_limit_reset_credits"] = summary
+        return UsagePayload.model_validate(data)
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_usage", stub_fetch_usage)
+    reset_credit_cache.record_count("acc_listed", 2)
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo=None)
+
+    try:
+        await updater.refresh_accounts(
+            [
+                _make_account("acc_banked", "acc_banked"),
+                _make_account("acc_listed", "acc_listed", email="b@example.com"),
+            ],
+            latest_usage={},
+        )
+
+        assert reset_credit_cache.get_count("acc_banked") == 1
+        # No summary in the payload keeps the count from the last inventory listing.
+        assert reset_credit_cache.get_count("acc_listed") == 2
+    finally:
+        reset_credit_cache.reset()

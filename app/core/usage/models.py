@@ -35,6 +35,12 @@ class AdditionalRateLimitPayload(BaseModel):
     rate_limit: RateLimitPayload | None = None
 
 
+class RateLimitResetCreditsSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    available_count: int | None = None
+
+
 class UsagePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -50,3 +56,5 @@ class UsagePayload(BaseModel):
     # Unset for OpenAI/GLM payloads.
     fable_scoped_weekly: UsageWindow | None = None
     reset_credits_available: int | None = None
+    # OpenAI /wham/usage summary of banked rate-limit reset credits.
+    rate_limit_reset_credits: RateLimitResetCreditsSummary | None = None
