@@ -1,0 +1,96 @@
+Evidence directory: /private/tmp/broker-reap-Hcywk9
+Patched: /private/tmp/broker-reap-Hcywk9/plugin
+Drift rejection (expected nonzero=1):
+error: patch failed: plugins/codex/scripts/app-server-broker.mjs:63
+error: plugins/codex/scripts/app-server-broker.mjs: patch does not apply
+ERROR: codex-plugin-cc patch is incompatible in /private/tmp/broker-reap-Hcywk9/plugin; file/hunk diagnostics above. No files changed. Rebase the repo-owned patch on the updated plugin.
+PASS checked application, idempotence, atomic drift rejection
+PASS invalid idle windows rejected before app-server spawn
+Real Codex: /Users/aneyman/.codex/packages/standalone/releases/0.155.1-aarch64-apple-darwin/bin/codex
+codex-cli 0.155.1
+A-real-zero-clients before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 50628,
+    "ppid": 50412,
+    "pgid": 50628,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 50665,
+    "ppid": 50628,
+    "pgid": 50665,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 50666,
+    "ppid": 50665,
+    "pgid": 50665,
+    "stat": "S",
+    "comm": "(git)"
+  },
+  {
+    "pid": 50693,
+    "ppid": 50666,
+    "pgid": 50665,
+    "stat": "S",
+    "comm": "(git)"
+  },
+  {
+    "pid": 50694,
+    "ppid": 50693,
+    "pgid": 50665,
+    "stat": "S",
+    "comm": "(git-remote-http)"
+  }
+]
+A-real-zero-clients after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+PASS A-real-zero-clients: broker=50628 app-server=50665, total=1848ms; all observed PIDs absent
+B-real-connected still alive after 3443ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 50871,
+    "ppid": 50412,
+    "pgid": 50871,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 50899,
+    "ppid": 50871,
+    "pgid": 50899,
+    "stat": "Ss",
+    "comm": "codex"
+  }
+]
+B-real-connected before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 50871,
+    "ppid": 50412,
+    "pgid": 50871,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 50899,
+    "ppid": 50871,
+    "pgid": 50899,
+    "stat": "Ss",
+    "comm": "codex"
+  }
+]
+AssertionError [ERR_ASSERTION]: Fixture PID 50983 escaped group; cleanup is incomplete
+    at runCase (file:///Volumes/StudioExt/repos/agent-lb-worktrees/codex-broker-idle-reap/tests/integration/codex_broker_idle_reap.mjs:239:9)
+    at async file:///Volumes/StudioExt/repos/agent-lb-worktrees/codex-broker-idle-reap/tests/integration/codex_broker_idle_reap.mjs:279:5 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+node tests/integration/codex_broker_idle_reap.mjs  0.69s user 1.11s system 17% cpu 10.500 total
