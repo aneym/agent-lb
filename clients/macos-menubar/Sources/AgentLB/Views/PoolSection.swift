@@ -48,6 +48,7 @@ struct PoolSection: View {
           title: "5-HOUR LIMIT",
           accountCount: headlineAccountCount,
           window: primaryWindow(now: now),
+          knownFull: knownFull(.primary),
           recoveredCredits: recovered(.primary, now: now),
           schedule: scheduleTooltip(.primary, now: now),
           // §9.2 honesty: projections are pool-global — hide risk when scoped.
@@ -58,6 +59,7 @@ struct PoolSection: View {
         title: secondaryTitle,
         accountCount: headlineAccountCount,
         window: secondaryWindow(now: now),
+        knownFull: knownFull(.secondary),
         recoveredCredits: recovered(.secondary, now: now),
         schedule: scheduleTooltip(.secondary, now: now),
         status: isScoped ? nil : paceStatus
@@ -92,6 +94,14 @@ struct PoolSection: View {
       .recoveredCredits
   }
 
+  private func knownFull(_ window: ProviderScope.Window) -> Bool {
+    if isScoped {
+      return ResetDisplay.allKnownFull(scopedAccounts, window: window)
+    }
+    let usage = window == .primary ? summary?.primaryWindow : summary?.secondaryWindow ?? summary?.monthlyWindow
+    return usage.map(ResetDisplay.isKnownFull) ?? false
+  }
+
   // §10: hover schedule — `<displayName> · <HH:mm> · +<n> cr`, soonest first.
   // §12: names are swapped for pseudonyms in privacy mode.
   private func scheduleTooltip(_ window: ProviderScope.Window, now: Date) -> String {
@@ -101,8 +111,8 @@ struct PoolSection: View {
         let name = byId[entry.accountId]
           .map { privacyMask.name(for: $0, real: entry.displayName) } ?? entry.displayName
         var line = "\(name) · \(Format.hhmm(entry.resetAt))"
-        if let recovery = entry.recoveredCredits {
-          line += " · +\(Format.compactCredits(recovery)) cr"
+        if let recovery = entry.recoveredCredits, recovery > 0 {
+          line += " · \(ResetDisplay.recoveryCredits(recovery))"
         }
         return line
       }
@@ -203,6 +213,7 @@ private struct WindowCard: View {
   let title: String
   let accountCount: Int
   let window: UsageWindow?
+  let knownFull: Bool
   /// §10: credits regained at the next reset; nil → recovery unknowable.
   let recoveredCredits: Double?
   /// §10: per-account reset schedule, one line each, soonest first.
@@ -286,7 +297,11 @@ private struct WindowCard: View {
   // lineLimit(1) makes wrapping impossible at any width.
   @ViewBuilder
   private var resetLine: some View {
-    if let resetAt = window?.resetAt {
+    if knownFull {
+      Text("Full · no reset needed")
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundStyle(.secondary)
+    } else if let resetAt = window?.resetAt {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         Text(resetText(resetAt: resetAt, now: context.date))
           .monospacedDigit()
@@ -303,10 +318,8 @@ private struct WindowCard: View {
   }
 
   private func resetText(resetAt: Date, now: Date) -> String {
-    var text = "next reset in \(Format.countdownCompact(to: resetAt, relativeTo: now))"
-    if let recoveredCredits {
-      text += " · +\(Format.compactCredits(recoveredCredits)) cr"
-    }
-    return text
+    ResetDisplay.resetText(
+      resetAt: resetAt, knownFull: knownFull, recoveredCredits: recoveredCredits, now: now
+    )
   }
 }
