@@ -84,6 +84,25 @@ agents should use the `agent-lb-account-operator` skill and local
 </tr>
 </table>
 
+## Check quota without making a model call
+
+```bash
+agent-lb status
+agent-lb status --provider anthropic --model claude-fable-5-1 --thinking --json
+```
+
+These commands read the running service; they do not start a server, make inference
+calls, or block work. Use the reported windows, resets, and model-specific reasons
+to plan work. Low headroom is information, not permission to deny a dispatch.
+A successful status read exits 0 even when quota is exhausted; service or telemetry
+errors exit 2. Unknown or stale telemetry is not proof that an account is exhausted.
+The snapshot is not a reservation or a guarantee that the next request will succeed.
+Actual provider limits, authentication, and explicitly configured spending limits
+still apply. Set `AGENT_LB_BASE_URL` or pass `--base-url` for a non-default service.
+From a checkout without a PATH install, use `.venv/bin/agent-lb status`.
+For an existing internal runtime, `scripts/install-status-cli.sh` adds the PATH
+entry under `~/.local/bin` without restarting the service or replacing a command.
+
 ## Quick Start
 
 ### Source checkout

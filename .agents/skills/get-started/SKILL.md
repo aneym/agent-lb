@@ -46,3 +46,5 @@ contract:
    `/v1`, and deployed apps can use the LB through a reachable backend base URL,
    but browser-direct code and deployed loopback URLs cannot spend the user's
    local subscription accounts.
+
+For an existing service, use `agent-lb status --json` for read-only quota awareness. See the runbook section "Check quota without making a model call". Low or unknown quota is advisory, not a launch guard.

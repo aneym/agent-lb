@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import json
+import threading
+from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from app import cli
+
+pytestmark = pytest.mark.unit
+
+
+class _Handler(BaseHTTPRequestHandler):
+    routes: dict[str, tuple[int, object]] = {}
+    requests: list[str] = []
+
+    def do_GET(self) -> None:  # noqa: N802
+        type(self).requests.append(self.path)
+        code, body = type(self).routes.get(self.path, (404, {"token": "must-not-print"}))
+        encoded = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, *_args) -> None:
+        pass
+
+
+@pytest.fixture
+def service():
+    _Handler.requests = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+def _account(**overrides):
+    account = {
+        "accountId": "acc-safe-id",
+        "provider": "anthropic",
+        "email": "secret@example.test",
+        "displayName": "Secret Operator",
+        "status": "active",
+        "subscription": {"status": "active"},
+        "usage": {"primaryRemainingPercent": 53, "secondaryRemainingPercent": 37},
+        "additionalQuotas": [],
+    }
+    account.update(overrides)
+    return account
+
+
+def _set_routes(accounts: list[dict]) -> None:
+    _Handler.routes = {
+        "/health/ready": (200, {"status": "ready"}),
+        "/api/accounts": (200, {"accounts": accounts}),
+    }
+
+
+def test_status_uses_only_read_only_endpoints_and_redacts_account_identity(service, capsys):
+    _set_routes([_account()])
+
+    cli.main(["status", "--json", "--base-url", service])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert _Handler.requests == ["/health/ready", "/api/accounts"]
+    assert payload["schema_version"] == 1
+    assert payload["accounts"][0]["account_id"] == "acc-safe-id"
+    assert "secret@example.test" not in json.dumps(payload)
+    assert "Secret Operator" not in json.dumps(payload)
+
+
+def test_exhausted_quota_is_a_successful_snapshot(service, capsys):
+    reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _set_routes(
+        [
+            _account(
+                additionalQuotas=[
+                    {"quotaKey": "anthropic_top", "primaryWindow": {"usedPercent": 100, "resetAt": reset}}
+                ]
+            )
+        ]
+    )
+
+    cli.main(["status", "--json", "--base-url", service])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["accounts"][0]["usable"] == "usable"
+    assert payload["accounts"][0]["quota_cooldowns"] == [{"quota_key": "anthropic_top", "reset_at": reset}]
+
+
+def test_service_error_is_safe_json_and_exit_two(service, capsys):
+    _Handler.routes = {"/health/ready": (503, {"cookie": "must-not-print"})}
+
+    with pytest.raises(SystemExit) as result:
+        cli.main(["status", "--json", "--base-url", service])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result.value.code == 2
+    assert payload["health"]["state"] == "error"
+    assert "must-not-print" not in json.dumps(payload)
+
+
+def test_model_fable_reports_observed_exhaustion_and_policy_as_distinct(service, capsys):
+    reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _set_routes(
+        [
+            _account(
+                fableEligible=False,
+                fableScopedWeekly={"usedPercent": 100, "resetAt": reset, "fresh": True},
+            )
+        ]
+    )
+
+    cli.main(["status", "--json", "--model", "claude-fable-5", "--base-url", service])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["model"]["status"] == "blocked"
+    assert "observed Fable scoped weekly quota is exhausted until its reset" in payload["model"]["reasons"]
+    assert payload["accounts"][0]["fable"]["routing_policy_eligible"] is False
+
+
+def test_numeric_quota_reset_and_runtime_fable_telemetry_are_projected(service, capsys):
+    reset_epoch = int((datetime.now(UTC) + timedelta(hours=1)).timestamp())
+    _set_routes(
+        [
+            _account(
+                fableScopedWeekly={"usedPercent": 90, "resetAt": reset_epoch, "fresh": True},
+                additionalQuotas=[
+                    {
+                        "quotaKey": "anthropic_top",
+                        "primaryWindow": {"usedPercent": 100, "resetAt": reset_epoch},
+                    }
+                ],
+            )
+        ]
+    )
+
+    cli.main(["status", "--json", "--base-url", service])
+
+    account = json.loads(capsys.readouterr().out)["accounts"][0]
+    assert account["fable"]["scoped_weekly"]["remaining_percent"] == 10
+    assert account["fable"]["freshness"] == "fresh"
+    assert account["quota_cooldowns"][0]["reset_at"] == str(reset_epoch)
+
+
+def test_model_fable_with_missing_scoped_freshness_stays_unknown(service, capsys):
+    _set_routes([_account(fableEligible=True)])
+
+    cli.main(["status", "--json", "--model", "claude-fable-5", "--base-url", service])
+
+    assert json.loads(capsys.readouterr().out)["model"]["status"] == "unknown"
+
+
+def test_stale_fable_exhaustion_is_unknown_not_blocked(service, capsys):
+    reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _set_routes([_account(fableScopedWeekly={"usedPercent": 100, "resetAt": reset, "fresh": False})])
+
+    cli.main(["status", "--json", "--model", "claude-fable-5", "--base-url", service])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["model"]["status"] == "unknown"
+    assert "Fable scoped telemetry is stale" in payload["model"]["reasons"]
+
+
+def test_model_scoped_cooldown_does_not_block_general_account(service, capsys):
+    reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _set_routes(
+        [
+            _account(
+                additionalQuotas=[
+                    {
+                        "quotaKey": "anthropic_top_thinking",
+                        "primaryWindow": {"usedPercent": 100, "resetAt": reset},
+                    }
+                ]
+            )
+        ]
+    )
+
+    cli.main(["status", "--json", "--base-url", service])
+
+    assert json.loads(capsys.readouterr().out)["accounts"][0]["usable"] == "usable"
+
+
+def test_thinking_flag_selects_actual_fable_anthropic_quota_key(service, capsys):
+    reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _set_routes(
+        [
+            _account(
+                fableScopedWeekly={"usedPercent": 50, "fresh": True},
+                additionalQuotas=[
+                    {"quotaKey": "anthropic_top", "primaryWindow": {"usedPercent": 0}},
+                    {
+                        "quotaKey": "anthropic_top_thinking",
+                        "primaryWindow": {"usedPercent": 100, "resetAt": reset},
+                    },
+                ],
+            )
+        ]
+    )
+
+    cli.main(["status", "--json", "--model", "claude-fable-5", "--thinking", "--base-url", service])
+
+    assert json.loads(capsys.readouterr().out)["model"]["status"] == "blocked"
+
+
+def test_unknown_account_and_model_are_not_assumed_usable(service, capsys):
+    _set_routes([_account(status="mystery")])
+
+    cli.main(["status", "--json", "--model", "future-model", "--base-url", service])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["accounts"][0]["usable"] == "unknown"
+    assert payload["model"]["status"] == "unknown"
+
+
+def test_openai_weekly_only_usage_and_malformed_quota_are_safe(service, capsys):
+    _set_routes(
+        [
+            _account(
+                provider="openai",
+                usage={"secondaryRemainingPercent": 25},
+                additionalQuotas=[{"quotaKey": "codex", "modelIds": None, "primaryWindow": "bad"}],
+            )
+        ]
+    )
+
+    cli.main(["status", "--json", "--base-url", service])
+
+    account = json.loads(capsys.readouterr().out)["accounts"][0]
+    assert account["usable"] == "usable"
+    assert account["primary"]["remaining_percent"] is None
+    assert account["quota_windows"][0]["model_ids"] == []
+
+
+def test_invalid_inputs_fail_safely_and_human_output_has_account_windows(service, capsys):
+    _set_routes([_account(usage={"primaryRemainingPercent": float("nan"), "secondaryRemainingPercent": 25})])
+
+    cli.main(["status", "--base-url", service])
+
+    output = capsys.readouterr().out
+    assert "acc-safe-id" in output
+    assert "primary unknown" in output
+    assert "weekly 25%" in output
+
+    with pytest.raises(SystemExit, match="finite"):
+        cli.main(["status", "--timeout", "nan", "--base-url", service])
+    with pytest.raises(SystemExit) as result:
+        cli.main(["status", "--json", "--base-url", "http://127.0.0.1:bad"])
+    assert result.value.code == 2
