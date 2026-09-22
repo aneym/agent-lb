@@ -6,6 +6,6 @@
 
 ## Validation
 
-- [ ] Verify runner isolation, receipt validation and failure cases.
+- [x] Verify runner isolation, receipt validation and failure cases.
 - [ ] Run every local CI leg and retain actual pass/fail evidence.
 - [ ] Merge the approved change and run local CI against main.

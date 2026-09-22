@@ -1,9 +1,79 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
+import pytest
+
 from scripts import local_ci
+
+
+@pytest.mark.parametrize("pg_failure", [False, True])
+def test_run_isolates_dirty_source_and_continues_all_gates(monkeypatch, tmp_path: Path, pg_failure: bool) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    ci_home = tmp_path / "ci"
+    monkeypatch.setenv("AGENT_LB_CI_HOME", str(ci_home))
+    monkeypatch.setattr(local_ci, "repo_root", lambda: source)
+    monkeypatch.setattr(local_ci, "resolve_ref", lambda *_: "a" * 40)
+    monkeypatch.setattr(local_ci, "clean", lambda path: path != source)
+    monkeypatch.setattr(local_ci, "worktree_at", lambda *_: True)
+    targets = sorted(local_ci.BASELINE_TARGETS)
+    monkeypatch.setattr(local_ci, "ci_targets", lambda *_: targets)
+    environments: dict[str, dict[str, str]] = {}
+
+    def fake_command(args, **kwargs):
+        if args[:3] == ["git", "worktree", "add"]:
+            Path(args[4]).mkdir(parents=True)
+        return ""
+
+    def fake_logged(args, cwd, env, log, timeout=1800):
+        if args[0] == "make":
+            assert cwd != source
+            environments[args[1]] = env.copy()
+        log.write_text("127.0.0.1:54399\n" if args[:2] == ["docker", "port"] else "test output\n")
+        failed = pg_failure and args[:2] == ["docker", "run"]
+        return {
+            "command": args,
+            "exit_code": 127 if failed else 0,
+            "status": "failed" if failed else "passed",
+            "timed_out": False,
+            "duration_seconds": 0,
+            "log_path": str(log),
+            "log_sha256": local_ci.sha256(log),
+        }
+
+    monkeypatch.setattr(local_ci, "command", fake_command)
+    monkeypatch.setattr(local_ci, "run_logged", fake_logged)
+    assert local_ci.run("HEAD") == (1 if pg_failure else 0)
+    path = local_ci.latest_receipt(ci_home, "a" * 40)
+    assert path is not None
+    data = json.loads(path.read_text())
+    assert [leg["target"] for leg in data["legs"]] == targets
+    assert set(environments) == set(targets) - (local_ci.PG_TARGETS if pg_failure else set())
+    for target, env in environments.items():
+        url = env["AGENT_LB_TEST_DATABASE_URL"]
+        if target in local_ci.PG_TARGETS:
+            assert url.startswith("postgresql+asyncpg://")
+            assert url.endswith("/agent_lb_migration" if target == "migration-check-postgres" else "/agent_lb")
+        else:
+            assert url.startswith("sqlite+aiosqlite:///")
+            assert "POSTGRES_TEST_DATABASE_URL" not in env
+    assert local_ci.validate_receipt(path, "a" * 40)[0] is not pg_failure
+
+
+def test_timeout_cannot_pass_when_child_handles_term_with_exit_zero(tmp_path: Path) -> None:
+    entry = local_ci.run_logged(
+        [sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM, lambda *_: exit(0)); time.sleep(10)"],
+        tmp_path,
+        local_ci.os.environ.copy(),
+        tmp_path / "timeout.log",
+        timeout=1,
+    )
+    assert entry["exit_code"] == 0
+    assert entry["timed_out"] is True
+    assert entry["status"] == "failed"
 
 
 def receipt(tmp_path: Path, *, sha: str = "a" * 40) -> Path:

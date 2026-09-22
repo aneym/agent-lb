@@ -17,7 +17,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 SCHEMA_VERSION = 1
 PG_TARGETS = {"test-postgres", "migration-check-postgres"}
@@ -276,10 +276,7 @@ def record_command(
     entry["label"] = label
     receipt[section].append(entry)
     write_receipt(receipt_path, receipt)
-    outcome = (
-        f"exit={entry['exit_code']} timeout={entry['timed_out']} "
-        f"duration={entry['duration_seconds']}s"
-    )
+    outcome = f"exit={entry['exit_code']} timeout={entry['timed_out']} duration={entry['duration_seconds']}s"
     print(f"[{section}] {entry['status'].upper()} {label} {outcome}", flush=True)
     return entry
 
@@ -468,10 +465,7 @@ def run(ref: str) -> int:
             entry["target"] = target
             receipt["legs"].append(entry)
             write_receipt(receipt_path, receipt)
-            outcome = (
-                f"exit={entry['exit_code']} timeout={entry['timed_out']} "
-                f"duration={entry['duration_seconds']}s"
-            )
+            outcome = f"exit={entry['exit_code']} timeout={entry['timed_out']} duration={entry['duration_seconds']}s"
             print(f"[leg {index + 1}/{len(targets)}] {entry['status'].upper()} {target} {outcome}", flush=True)
         receipt["worktree_clean_after"] = clean(worktree) and worktree_at(worktree, exact_sha)
     except BaseException as exc:
@@ -602,7 +596,9 @@ def validate_receipt(receipt_path: Path, sha: str) -> tuple[bool, str]:
         ]:
             return False, "receipt bootstrap evidence is invalid"
         if any(
-            not valid_logged_entry(leg) or leg.get("command") != ["make", target]
+            not isinstance(leg, dict)
+            or not valid_logged_entry(leg)
+            or cast(dict[str, Any], leg).get("command") != ["make", target]
             for target, leg in zip(required, legs, strict=True)
         ):
             return False, "receipt target evidence is invalid"
