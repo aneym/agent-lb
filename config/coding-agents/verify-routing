@@ -26,10 +26,10 @@ check(CANONICAL.is_file(), f"canonical policy exists at {CANONICAL}")
 
 claude_doc = HOME / ".claude" / "CLAUDE.md"
 claude_text = claude_doc.read_text() if claude_doc.is_file() else ""
-check(claude_text.count(MARKER) == 1, f"{claude_doc} has one managed routing block")
+check(MARKER not in claude_text, f"{claude_doc} has no retired routing block")
 check(
-    claude_text.count("~/.agents/policy/coding-agents/ROUTING.md") == 1,
-    f"{claude_doc} points once to canonical policy",
+    all(value in claude_text for value in ("Aside on Book", "Tailscale URLs", "MACHINES.md")),
+    f"{claude_doc} contains the approved delivery defaults",
 )
 
 codex_doc = HOME / ".codex" / "AGENTS.md"
@@ -134,9 +134,10 @@ check("## Fable driver mode" in routing_text, "canonical policy documents Fable 
 for seat, model, effort in (
     ("Driver (main loop)", "claude-opus-5-5", "high"),
     ("Explore / scouts", "gpt-5.6-sol-medium", "medium, fast tier"),
-    ("Implementer", "gpt-5.6-terra-medium", "medium, fast tier"),
+    ("Implementer", "gpt-6-astra", "medium"),
+    ("Computer use", "gpt-6-astra", "medium, read-only probe"),
     ("Verifier (adversarial)", "gpt-5.6-sol-xhigh", "xhigh, fast tier"),
-    ("Frontend designer", "claude-fable-5", "inherit high"),
+    ("Frontend designer", "fable", "inherit high"),
     ("Planner (lane lead)", "claude-planner", "high"),
     ("Plan reviewer", "claude-planner", "high"),
 ):
@@ -145,10 +146,10 @@ for seat, model, effort in (
         len(matching_rows) == 1 and f"`{model}`" in matching_rows[0] and effort in matching_rows[0],
         f"{seat} retains canonical {model}/{effort} routing",
     )
-# Frontend designer is exempt from the claude-fable-5 scan since the seat was
-# pinned to Fable (design is Fable always — owner, 2026-08-20).
+# Frontend designer uses Claude Code's moving `fable` alias so minor releases
+# become the default without another seat-definition migration.
 for stale_model, seats in (
-    ("claude-fable-5", ("Driver (main loop)",)),
+    ("claude-fable-5[1m]", ("Driver (main loop)",)),
     ("claude-opus-4-8", ("Driver (main loop)", "Frontend designer")),
 ):
     migrated_rows = [
@@ -207,6 +208,14 @@ check(
 )
 for name in ("ccdex", "ccdex-worker-mcp"):
     check(not (bin_dir / name).exists(), f"retired client {name} is absent from {bin_dir}")
+
+for name in ("implementer", "computer-use"):
+    source = REPO / "config/coding-agents/agents" / f"{name}.md"
+    installed = HOME / ".claude/agents" / f"{name}.md"
+    text = source.read_text() if source.exists() else ""
+    check(installed.exists() and installed.read_text() == text, f"{name} matches managed Codex forwarder")
+    check("model: sonnet" in text and "--model gpt-6-astra --effort medium" in text,
+          f"{name} forwards to Codex Astra medium, not a Claude GPT alias")
 
 policy_link = HOME / ".agents" / "policy" / "coding-agents"
 check(

@@ -1750,8 +1750,19 @@ def build_command(argv: list[str]) -> list[str]:
     else:
         if arg_value(argv, "--model", "-m") is None and not os.environ.get("ANTHROPIC_MODEL"):
             command.extend(["--model", DEFAULT_CLAUDE_MODEL])
-        if arg_value(argv, "--effort") is None:
-            command.extend(["--effort", os.environ.get("CC_EFFORT_LEVEL") or DEFAULT_CLAUDE_EFFORT])
+        effort_arg = arg_value(argv, "--effort")
+        effort_env = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
+        # none/off are quota-routing sentinels for anthropic_top (no thinking).
+        # Claude Code only accepts low|medium|high|xhigh|max — strip sentinels.
+        if effort_arg is None:
+            if effort_env.lower() not in {"", "none", "off"}:
+                command.extend(["--effort", effort_env])
+            elif effort_env.lower() in {"none", "off"}:
+                pass  # omit --effort → non-thinking / top-model quota
+            else:
+                command.extend(["--effort", DEFAULT_CLAUDE_EFFORT])
+        elif effort_arg.lower() in {"none", "off"}:
+            argv = _without_option(argv, "--effort")
     permission_mode = None if CCGPT_MODE else os.environ.get("CC_PERMISSION_MODE")
     if CCGPT_MODE and not _has_permission_option(argv):
         permission_mode = "bypassPermissions"
@@ -1799,8 +1810,8 @@ def auto_resume_enabled() -> bool:
 
 def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
     command = ["claude"]
-    effort = os.environ.get("CC_EFFORT_LEVEL")
-    if effort:
+    effort = (os.environ.get("CC_EFFORT_LEVEL") or "").strip()
+    if effort and effort.lower() not in {"none", "off"}:
         command.extend(["--effort", effort])
     permission_mode = os.environ.get("CC_PERMISSION_MODE")
     if permission_mode:

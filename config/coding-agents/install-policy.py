@@ -17,6 +17,18 @@ MODEL = "fable"
 EFFORT_LEVEL = "high"
 MANAGED_AGENTS = (
     (
+        Path(".claude/agents/implementer.md"),
+        Path(".agent-lb/managed/coding-agents/implementer"),
+        "agent-lb:implementer:v1\n",
+        Path("agents/implementer.md"),
+    ),
+    (
+        Path(".claude/agents/computer-use.md"),
+        Path(".agent-lb/managed/coding-agents/computer-use"),
+        "agent-lb:computer-use:v1\n",
+        Path("agents/computer-use.md"),
+    ),
+    (
         Path(".claude/agents/frontend-designer.md"),
         Path(".agent-lb/managed/coding-agents/frontend-designer"),
         "agent-lb:frontend-designer:v1\n",
@@ -97,6 +109,10 @@ def install_adapter(text: str, template: str, path: Path) -> str:
 def uninstall_adapter(text: str, path: Path) -> str:
     validate_markers(text, path)
     if START not in text:
+        span = h2_span(text, LEGACY_HEADINGS, path)
+        if span:
+            updated = text[:span[0]].rstrip() + "\n\n" + text[span[1]:].lstrip("\n")
+            return updated.rstrip() + "\n" if updated.strip() else ""
         return text
     start = text.index(START)
     end = text.index(END, start) + len(END)
@@ -167,7 +183,7 @@ def main() -> int:
             claude_path: (
                 uninstall_adapter(originals[claude_path], claude_path)
                 if args.uninstall
-                else install_adapter(originals[claude_path], template, claude_path)
+                else uninstall_adapter(originals[claude_path], claude_path)
             ),
             # The codex-host adapter is retired: converge always removes its managed block.
             codex_path: uninstall_adapter(originals[codex_path], codex_path),
