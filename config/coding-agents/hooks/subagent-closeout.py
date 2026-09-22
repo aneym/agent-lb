@@ -237,6 +237,28 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
     return None, "none"
 
 
+def replayed_dispatch(open_dispatches: list, closeout: dict):
+    """The open dispatch a PAST closeout claimed, identified by what it recorded.
+
+    A past closeout stores its dispatch's own hash, seat and name, so replay may
+    narrow by all three (unlike a live stop, whose agent_type can be a caller
+    name). Among exact equals the newest wins, as the hook that wrote it chose.
+    """
+    digest = str(closeout.get("prompt_sha256") or "")
+    seat = str(closeout.get("subagent_type") or "").lower()
+    name = str(closeout.get("name") or "").lower()
+    if digest:
+        candidates = [record for record in reversed(open_dispatches) if record.get("prompt_sha256") == digest]
+        for key, wanted in (("subagent_type", seat), ("name", name)):
+            narrowed = [record for record in candidates if wanted and str(record.get(key) or "").lower() == wanted]
+            if narrowed:
+                candidates = narrowed
+        if candidates:
+            return candidates[0]
+    closed, how = resolve(open_dispatches, [""], [name], seat)
+    return None if how == "prompt_hash_ambiguous" else closed
+
+
 def match(records: list, session_id, agent_type: str, agent_name: str, digests: list):
     """The dispatch this stop belongs to, and how it was found.
 
@@ -256,16 +278,8 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
             if record.get("match") == "prompt_hash_ambiguous" and not record.get("matched"):
                 # It claimed no dispatch, so replaying it must not close one either.
                 continue
-            closed, how = resolve(
-                open_dispatches,
-                [str(record.get("prompt_sha256") or "")],
-                [str(record.get("name") or "")],
-                str(record.get("subagent_type") or record.get("agent_type") or ""),
-            )
-            if how == "prompt_hash_ambiguous":
-                # A historical closeout the earlier hook pinned on the newest sibling.
-                closed = closed.get("_newest")
-            if closed is not None and closed in open_dispatches:
+            closed = replayed_dispatch(open_dispatches, record)
+            if closed is not None:
                 open_dispatches.remove(closed)
     return resolve(open_dispatches, digests, [agent_name, agent_type], agent_type)
 
