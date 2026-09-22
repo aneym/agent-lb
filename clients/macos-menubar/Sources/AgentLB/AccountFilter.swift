@@ -13,6 +13,7 @@ struct AccountFilter: Equatable, Sendable {
 
   enum Sort: String, CaseIterable, Sendable {
     case resetSoonest, resetLatest, nameAsc, nameDesc
+    case remainingAsc, remainingDesc
   }
 
   var provider: Provider = .all
@@ -108,6 +109,10 @@ struct AccountFilter: Equatable, Sendable {
       return accounts.sorted { byName($0, $1, ascending: true) }
     case .nameDesc:
       return accounts.sorted { byName($0, $1, ascending: false) }
+    case .remainingAsc:
+      return accounts.sorted { byRemaining($0, $1, ascending: true) }
+    case .remainingDesc:
+      return accounts.sorted { byRemaining($0, $1, ascending: false) }
     }
   }
 
@@ -122,6 +127,26 @@ struct AccountFilter: Equatable, Sendable {
       if l != r { return ascending ? l < r : l > r }
       return byName(lhs, rhs, ascending: true)
     }
+  }
+
+  /// Cross-provider usage ordering favors the weekly/secondary window, then
+  /// monthly, then primary. A zero is a known depleted value; only nil is
+  /// unknown and always belongs after known values.
+  private func byRemaining(_ lhs: Account, _ rhs: Account, ascending: Bool) -> Bool {
+    switch (remainingPercent(of: lhs), remainingPercent(of: rhs)) {
+    case (nil, nil): return byName(lhs, rhs, ascending: true)
+    case (nil, _): return false
+    case (_, nil): return true
+    case (let l?, let r?):
+      if l != r { return ascending ? l < r : l > r }
+      return byName(lhs, rhs, ascending: true)
+    }
+  }
+
+  private func remainingPercent(of account: Account) -> Double? {
+    account.usage.secondaryRemainingPercent
+      ?? account.usage.monthlyRemainingPercent
+      ?? account.usage.primaryRemainingPercent
   }
 
   // Plain lowercased comparison (not localized collation) so ordering is

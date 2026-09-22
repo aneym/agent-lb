@@ -7,9 +7,9 @@ import SwiftUI
 //
 // Sizing-relevant state (status filter, query, search visibility) is OWNED
 // BY ROOTVIEW and passed as bindings: the panel height is a pure function of
-// that state (PanelLayout), so RootView must see every input. The sort mode
-// (height-neutral) stays here via @AppStorage("accountSort"). `listHeight`
-// is the exact PanelLayout-computed frame for the scroll area.
+// that state (PanelLayout), so RootView must see every input. Sort mode is
+// height-neutral and persisted separately for the All and provider scopes.
+// `listHeight` is the exact PanelLayout-computed frame for the scroll area.
 struct AccountsSection: View {
   @Environment(AppState.self) private var appState
   let accounts: [Account]
@@ -23,9 +23,13 @@ struct AccountsSection: View {
 
   @FocusState private var searchFocused: Bool
   @AppStorage("accountSort") private var sortRaw = AccountFilter.Sort.resetSoonest.rawValue
+  @AppStorage("allAccountSort") private var allSortRaw = AccountFilter.Sort.remainingAsc.rawValue
 
   private var sort: AccountFilter.Sort {
-    AccountFilter.Sort(rawValue: sortRaw) ?? .resetSoonest
+    if isScoped {
+      return AccountFilter.Sort(rawValue: sortRaw) ?? .resetSoonest
+    }
+    return AccountFilter.Sort(rawValue: allSortRaw) ?? .remainingAsc
   }
 
   private var filter: AccountFilter {
@@ -102,8 +106,16 @@ struct AccountsSection: View {
       Divider()
       Picker("Sort", selection: Binding(
         get: { sort },
-        set: { sortRaw = $0.rawValue }
+        set: {
+          if isScoped {
+            sortRaw = $0.rawValue
+          } else {
+            allSortRaw = $0.rawValue
+          }
+        }
       )) {
+        Text("Usage remaining (lowest)").tag(AccountFilter.Sort.remainingAsc)
+        Text("Usage remaining (highest)").tag(AccountFilter.Sort.remainingDesc)
         Text("Reset (soonest)").tag(AccountFilter.Sort.resetSoonest)
         Text("Reset (latest)").tag(AccountFilter.Sort.resetLatest)
         Text("Name A-Z").tag(AccountFilter.Sort.nameAsc)
