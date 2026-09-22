@@ -57,6 +57,7 @@
   },
   {
     "quota_key": "openrouter_credits",
+    "usage_source": "primary",
     "display_label": "OpenRouter credits",
     "routing_policy": "normal",
     "model_ids": [
@@ -86,6 +87,7 @@
   },
   {
     "quota_key": "anthropic_catalog",
+    "usage_source": "primary",
     "display_label": "Anthropic catalog",
     "routing_policy": "normal",
     "model_ids": ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5"],
@@ -93,6 +95,7 @@
   },
   {
     "quota_key": "openai_subscription",
+    "usage_source": "primary",
     "display_label": "OpenAI subscription",
     "routing_policy": "normal",
     "model_ids": ["gpt-6-astra", "gpt-5.6-luna"],

@@ -18,7 +18,7 @@ class AdditionalModelLimit:
 
 def get_additional_model_limit(model: str | None) -> AdditionalModelLimit | None:
     resolved = get_additional_quota_definition_for_model(model)
-    if resolved is None:
+    if resolved is None or resolved.usage_source != "additional":
         return None
     normalized_model = model.strip().lower() if model is not None else None
     if normalized_model is None:

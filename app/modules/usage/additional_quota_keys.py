@@ -10,6 +10,12 @@ from typing import TypedDict
 
 _NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 ADDITIONAL_QUOTA_ROUTING_POLICIES = frozenset({"inherit", "burn_first", "normal", "preserve"})
+# "additional": the upstream reports this limit in additional_rate_limits, so a
+# model mapped to it routes only on fresh additional_usage rows.
+# "primary": the limit is the account's own primary/secondary windows (or another
+# provider's credits); nothing writes additional rows for it, so it labels models
+# without gating OpenAI routing.
+ADDITIONAL_QUOTA_USAGE_SOURCES = frozenset({"additional", "primary"})
 
 
 def _normalize_identifier(value: str | None) -> str | None:
@@ -24,6 +30,7 @@ class AdditionalQuotaDefinition:
     quota_key: str
     display_label: str
     routing_policy: str = "inherit"
+    usage_source: str = "additional"
     model_ids: frozenset[str] = frozenset()
     raw_model_ids: tuple[str, ...] = ()
     applies_to_plans: frozenset[str] | None = None
@@ -52,6 +59,7 @@ class AdditionalQuotaRegistryEntry(TypedDict, total=False):
     quota_key: str
     display_label: str
     routing_policy: str
+    usage_source: str
     model_ids: list[str]
     applies_to_plans: list[str]
     quota_key_aliases: list[str]
@@ -80,6 +88,9 @@ def _definition_from_json(item: AdditionalQuotaRegistryEntry) -> AdditionalQuota
     if quota_key is None:
         raise ValueError(f"invalid additional quota_key in registry: {raw_quota_key!r}")
     display_label = str(item["display_label"]).strip()
+    usage_source = str(item.get("usage_source") or "additional").strip().lower()
+    if usage_source not in ADDITIONAL_QUOTA_USAGE_SOURCES:
+        raise ValueError(f"invalid additional quota usage_source in registry: {usage_source!r}")
     raw_limit_name_aliases = frozenset(
         alias for alias in (str(value).strip() for value in item.get("limit_name_aliases", [])) if alias
     )
@@ -119,6 +130,7 @@ def _definition_from_json(item: AdditionalQuotaRegistryEntry) -> AdditionalQuota
         quota_key=quota_key,
         display_label=display_label,
         routing_policy=_normalize_routing_policy(item.get("routing_policy")),
+        usage_source=usage_source,
         model_ids=model_ids,
         raw_model_ids=raw_model_ids,
         applies_to_plans=applies_to_plans,

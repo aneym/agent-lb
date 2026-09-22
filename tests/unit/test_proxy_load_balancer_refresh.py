@@ -1161,6 +1161,53 @@ async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param("gpt-6-astra", id="subscription-label-entry"),
+        pytest.param("gpt-5.6-sol", id="other-provider-credits-entry"),
+    ],
+)
+async def test_openai_model_on_primary_usage_registry_entry_routes_without_additional_rows(model: str) -> None:
+    """Outage 2026-09-22: every gpt-6-astra call 503'd with additional_quota_data_unavailable.
+
+    Registry entries whose usage lives in the account's own windows have no
+    additional_usage rows upstream, so they must not gate OpenAI routing.
+    """
+    account = _make_account("acc-subscription-only", email="sub@example.com")
+    now = utcnow()
+    now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+    usage_repo = StubUsageRepository(
+        primary={
+            account.id: UsageHistory(
+                id=41,
+                account_id=account.id,
+                recorded_at=now,
+                window="primary",
+                used_percent=10.0,
+                reset_at=now_epoch + 300,
+                window_minutes=300,
+            )
+        },
+        secondary={},
+    )
+    balancer = LoadBalancer(
+        lambda: _repo_factory(
+            StubAccountsRepository([account]),
+            usage_repo,
+            StubStickySessionsRepository(),
+            StubAdditionalUsageRepository(primary={}),
+        )
+    )
+
+    selection = await balancer.select_account(model=model)
+
+    assert selection.error_code is None
+    assert selection.account is not None
+    assert selection.account.id == account.id
+
+
+@pytest.mark.asyncio
 async def test_select_account_uses_canonical_quota_key_for_upstream_limit_alias(monkeypatch) -> None:
     account = _make_account("acc-additional-alias", email="alias@example.com")
     now = utcnow()
