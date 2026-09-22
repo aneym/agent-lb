@@ -12,6 +12,12 @@ falls back to the newest open dispatch for the seat, recorded as
 ``"match": "fallback"``. ``ok`` is read off the last message, the only outcome
 signal the payload has.
 
+The same transcript supplies the seat's cost: ``model`` (last assistant
+``message.model``), ``tokens_in`` / ``tokens_out`` / ``cache_read_tokens`` from
+assistant ``message.usage`` (one count per ``message.id``, last streaming line
+wins), and ``wall_s`` between the first and last transcript timestamps. A
+missing or unreadable transcript leaves those null.
+
 Appends one C2 ``closeout`` line. Fail-open: it never blocks a subagent.
 """
 
@@ -86,6 +92,112 @@ def first_prompt(path: str):
     return None
 
 
+def transcript_path(payload: dict) -> str:
+    """The subagent JSONL, or "" when the payload doesn't point at one.
+
+    Only the subagent's own transcript will do; the session transcript opens
+    with the user's prompt, not the Agent tool's.
+    """
+    path = str(payload.get("agent_transcript_path") or "")
+    if path:
+        return path
+    candidate = str(payload.get("transcript_path") or "")
+    return candidate if "/subagents/" in candidate else ""
+
+
+def _as_int(value) -> int:
+    try:
+        if value is None or isinstance(value, bool):
+            return 0
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_stamp(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _usage_totals(usage: dict):
+    fresh = _as_int(usage.get("input_tokens"))
+    created = _as_int(usage.get("cache_creation_input_tokens"))
+    cached = _as_int(usage.get("cache_read_input_tokens"))
+    return fresh + created + cached, _as_int(usage.get("output_tokens")), cached
+
+
+def transcript_usage(path: str) -> dict:
+    """Cost fields from a subagent transcript. All null when it can't be read."""
+    empty = {
+        "model": None,
+        "tokens_in": None,
+        "tokens_out": None,
+        "cache_read_tokens": None,
+        "wall_s": None,
+    }
+    if not path:
+        return empty
+    try:
+        handle = open(path)
+    except Exception:
+        return empty
+    model = None
+    by_id = {}
+    anonymous = []
+    stamps = []
+    try:
+        with handle:
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                moment = _parse_stamp(row.get("timestamp"))
+                if moment is not None:
+                    stamps.append(moment)
+                message = row.get("message") or {}
+                if not isinstance(message, dict) or message.get("role") != "assistant":
+                    continue
+                seen = message.get("model")
+                if isinstance(seen, str) and seen:
+                    model = seen
+                usage = message.get("usage")
+                if not isinstance(usage, dict):
+                    usage = {}
+                message_id = message.get("id")
+                if message_id is None or message_id == "":
+                    anonymous.append(usage)
+                    continue
+                try:
+                    by_id[message_id] = usage
+                except TypeError:
+                    anonymous.append(usage)
+    except Exception:
+        return empty
+    tokens_in = tokens_out = cache_read = 0
+    for usage in list(by_id.values()) + anonymous:
+        inn, out, cached = _usage_totals(usage)
+        tokens_in += inn
+        tokens_out += out
+        cache_read += cached
+    wall = None
+    if len(stamps) >= 2:
+        wall = round((stamps[-1] - stamps[0]).total_seconds(), 1)
+    return {
+        "model": model,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cache_read_tokens": cache_read,
+        "wall_s": wall,
+    }
+
+
 def prompt_digests(payload: dict) -> list:
     """Candidate sha256s of the prompt this subagent was launched with.
 
@@ -95,12 +207,7 @@ def prompt_digests(payload: dict) -> list:
     1f07ce8e…, which is what seat-guard recorded). An unnamed dispatch stores
     the prompt bare. Hash both readings and let the ledger say which was real.
     """
-    path = str(payload.get("agent_transcript_path") or "")
-    if not path:
-        # Only the subagent's own transcript will do; the session transcript
-        # opens with the user's prompt, not the Agent tool's.
-        candidate = str(payload.get("transcript_path") or "")
-        path = candidate if "/subagents/" in candidate else ""
+    path = transcript_path(payload)
     content = first_prompt(path) if path else None
     if not content:
         return []
@@ -184,20 +291,26 @@ def main() -> None:
 
     digests = prompt_digests(payload)
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
+    usage = transcript_usage(transcript_path(payload))
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
         "ts": stamp(now()),
         "event": "closeout",
         "session_id": session_id,
         # agent_type is what the payload calls it, which is the NAME whenever the
-        # dispatch had one. The seat, model and class are the dispatch's own, so
-        # S3's `route report` can group closeouts by seat at all.
+        # dispatch had one. The seat and class are the dispatch's own, so
+        # S3's `route report` can group closeouts by seat at all. model is the
+        # model the transcript actually ran.
         "agent_type": agent_type or None,
         "subagent_type": (dispatch or {}).get("subagent_type") or agent_type.lower() or None,
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
         "task_class": (dispatch or {}).get("task_class"),
-        "model": (dispatch or {}).get("model"),
+        "model": usage["model"],
+        "tokens_in": usage["tokens_in"],
+        "tokens_out": usage["tokens_out"],
+        "cache_read_tokens": usage["cache_read_tokens"],
+        "wall_s": usage["wall_s"],
         # The hash of the dispatch this closeout was ATTRIBUTED to, so replaying
         # the ledger resolves it back to the same row. A digest that matched
         # nothing is kept separately rather than written here as if it had.
