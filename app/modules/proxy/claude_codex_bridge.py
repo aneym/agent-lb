@@ -13,8 +13,8 @@ from app.core.openai.requests import ResponsesRequest
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.sse import format_sse_event, parse_sse_data_json
 
-CCGPT_MODEL = "gpt-5.6-sol"
-CCGPT_TERRA_MODEL = "gpt-5.6-terra"
+CCGPT_MODEL = "gpt-6-sol"
+CCGPT_WORKER_MODEL = "gpt-6-luna"
 CCGPT_REASONING_EFFORT = "high"
 CCGPT_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh"})
 CCGPT_SERVICE_TIER = "priority"

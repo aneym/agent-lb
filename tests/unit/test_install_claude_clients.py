@@ -48,7 +48,7 @@ def test_installer_preview_is_non_mutating(tmp_path: Path) -> None:
     assert f"link {bin_dir}/claude-lb-launch -> {current}/clients/claude-lb-launch" in result.stdout
     assert f"link {bin_dir}/agent-defs-doctor -> {current}/clients/agent-defs-doctor" in result.stdout
     assert f"link {policy_dir}/coding-agents -> {current}/config/coding-agents" in result.stdout
-    assert f"would converge managed routing configuration in {user_home}/.claude/CLAUDE.md" not in result.stdout
+    assert f"would converge managed routing configuration in {user_home}/.claude/CLAUDE.md" in result.stdout
     assert "remove retired ccdex artifacts (clients, hook, MCP registration)" in result.stdout
     assert f"link {bin_dir}/ccdex" not in result.stdout
 
@@ -99,7 +99,8 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
     assert not hook.exists()
     assert (policy_dir / "coding-agents").is_symlink()
     assert (policy_dir / "coding-agents").resolve() == first_version / "config" / "coding-agents"
-    assert not (user_home / ".claude" / "CLAUDE.md").exists()
+    claude_text = (user_home / ".claude" / "CLAUDE.md").read_text()
+    assert claude_text.count("<!-- agent-lb:coding-agent-routing:start -->") == 1
     codex_text = codex_doc.read_text()
     assert "keep-codex" in codex_text
     assert "agent-lb:coding-agent-routing" not in codex_text
@@ -120,7 +121,7 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
         },
     )
     assert "--autocompact 1m" in dry_run.stdout
-    assert "--model claude-opus-5-5[1m]" in dry_run.stdout
+    assert "--model opus[1m]" in dry_run.stdout
 
     subprocess.run([str(INSTALLER), "--uninstall"], check=True, env=env, capture_output=True, text=True)
     for name in ("cc", "fable", "opus", "claude-lb-launch", "agent-defs-doctor"):
@@ -278,13 +279,13 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
     assert {path: path.read_bytes() for path in first} == first
     assert "keep-before" in claude_doc.read_text() and "keep-after" in claude_doc.read_text()
     assert "legacy sonnet routing" not in claude_doc.read_text()
-    assert "agent-lb:coding-agent-routing:start" not in claude_doc.read_text()
+    assert claude_doc.read_text().count("agent-lb:coding-agent-routing:start") == 1
     codex_text = codex_doc.read_text()
     assert "keep-codex" in codex_text and "keep-safety" in codex_text
     assert "agent-lb:coding-agent-routing" not in codex_text
 
     settings = json.loads(settings_path.read_text())
-    assert settings["model"] == "fable"
+    assert settings["model"] == "opus"
     assert settings["effortLevel"] == "high"
     assert settings["env"] == {"KEEP": "yes"}
     assert settings["permissions"] == {"allow": ["keep-me"]}
@@ -360,7 +361,7 @@ def test_policy_installer_installs_frontend_designer_and_converges_idempotently(
     )
 
     assert first_content == MANAGED_DESIGNER.read_bytes()
-    assert b"\nmodel: fable\n" in first_content
+    assert b"\nmodel: opus\n" in first_content
     assert designer.read_bytes() == first_content
     assert owner.read_text() == "agent-lb:frontend-designer:v1\n"
     assert sorted(checkpoints.iterdir()) == first_checkpoints
@@ -494,7 +495,7 @@ def test_policy_installer_installs_planner_and_converges_idempotently(tmp_path: 
     )
 
     assert first_content == MANAGED_PLANNER.read_bytes()
-    assert b"\nmodel: claude-planner\n" in first_content
+    assert b"\nmodel: opus\n" in first_content
     assert b"\neffort: high\n" in first_content
     assert planner.read_bytes() == first_content
     assert owner.read_text() == "agent-lb:planner:v1\n"

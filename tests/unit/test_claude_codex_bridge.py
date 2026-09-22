@@ -84,7 +84,7 @@ def test_request_translation_locks_sol_high_priority_and_maps_tools() -> None:
 @pytest.mark.asyncio
 async def test_response_translation_emits_native_text_stream() -> None:
     async def source():
-        yield 'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-5.6-sol"}}\n\n'
+        yield 'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-6-sol"}}\n\n'
         yield 'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
         yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":3}}}\n\n'
 

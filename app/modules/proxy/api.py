@@ -131,7 +131,7 @@ from app.modules.proxy.claude_codex_bridge import (
     CCGPT_MODEL,
     CCGPT_REASONING_EFFORT,
     CCGPT_SERVICE_TIER,
-    CCGPT_TERRA_MODEL,
+    CCGPT_WORKER_MODEL,
     anthropic_error_from_response,
     anthropic_status_for_error,
     claude_to_responses,
@@ -875,7 +875,7 @@ async def v1_messages_count_tokens(
 # request's own output_config.effort (bridge default: high).
 CCGPT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
     alias: (model, effort)
-    for model in (CCGPT_MODEL, CCGPT_TERRA_MODEL)
+    for model in (CCGPT_MODEL, CCGPT_WORKER_MODEL)
     for alias, effort in (
         (model, None),
         (f"{model}-low", "low"),

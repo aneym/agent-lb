@@ -109,12 +109,12 @@ def test_explicit_cli_model_is_preserved(monkeypatch: pytest.MonkeyPatch) -> Non
     ]
 
 
-def test_launch_defaults_never_pin_an_older_opus() -> None:
-    """A superseded Opus id as a launch default silently downgrades every cc session."""
+def test_launch_defaults_follow_the_newest_opus() -> None:
+    """cc and opus launch Claude Code's `opus` alias, so a new Opus needs no edit (owner, 2026-09-22)."""
     newest = "claude-opus-5-5"
     clients = ROOT / "clients"
-    assert f'MODEL = "{newest}[1m]"' in (clients / "opus").read_text()
+    assert 'MODEL = "opus[1m]"' in (clients / "opus").read_text()
     assert f'DEFAULT_OPUS_MODEL = "{newest}"' in (clients / "fable").read_text()
-    assert f'DEFAULT_CLAUDE_MODEL = "{newest}[1m]"' in (clients / "claude-lb-launch").read_text()
+    assert 'DEFAULT_CLAUDE_MODEL = "opus[1m]"' in (clients / "claude-lb-launch").read_text()
     assert f'EXPECTED_MODEL_DEFAULT = "{newest}"' in (clients / "opus-runtime-doctor").read_text()
     assert 'with_name("opus")' in (clients / "cc").read_text()

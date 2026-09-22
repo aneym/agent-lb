@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,47 +13,39 @@ ADAPTER = ROOT / "config" / "coding-agents" / "claude-adapter.md"
 VERIFIER = ROOT / "config" / "coding-agents" / "verify-routing"
 
 
-def test_canonical_claude_native_routes_use_opus_5_high_with_fable_first_planner() -> None:
-    routing = ROUTING.read_text()
-    adapter = ADAPTER.read_text()
+def test_lineup_plans_on_opus_and_retires_fable_astra_and_gpt_5_6() -> None:
+    routing = " ".join(ROUTING.read_text().split())
+    adapter = " ".join(ADAPTER.read_text().split())
     verifier = VERIFIER.read_text()
+    table = json.loads((ROOT / "config" / "coding-agents" / "routing-table.json").read_text())
 
-    assert "| Driver (main loop)" in routing
-    assert "| `claude-opus-5-5`" in routing
-    assert "| high" in routing
-    assert "| Frontend designer" in routing
-    assert "| Planner (lane lead)" in routing
-    planner_row = next(line for line in routing.splitlines() if "| Planner (lane lead)" in line)
-    assert "`claude-planner`" in planner_row
-    assert "Fable 5 primary, Opus 5 on scoped exhaustion" in planner_row
-    for legacy in ("claude-opus-4-8", "Fable/high"):
-        assert legacy not in "\n".join(
-            line
-            for line in routing.splitlines()
-            if any(route in line for route in ("Driver (main loop)", "Frontend designer"))
-        )
-        assert legacy not in adapter
+    assert "## The lineup (owner, 2026-09-22)" in routing
+    assert "## Operating rules (owner, 2026-09-22)" in routing
+    for text in (routing, adapter):
+        assert "Fable" in text and "Astra" in text and "gpt-5.6" in text
+        assert "route resolve" in text
+    assert "Fable drives" not in adapter
+    for pattern in ("claude-fable-*", "gpt-*-astra", "gpt-5.6*"):
+        assert pattern in table["retired"]
+    for name in ("planner", "plan-reviewer", "frontend-designer", "verifier", "opus-seat"):
+        definition = (ROOT / "config" / "coding-agents" / "agents" / f"{name}.md").read_text()
+        assert "\nmodel: opus\n" in definition
+    assert not (ROOT / "config" / "coding-agents" / "agents" / "astra.md").exists()
     assert 'settings.get("model") == "opus"' in verifier
-    assert 'settings.get("effortLevel") == "high"' in verifier
-    assert "model: claude-planner" in verifier
-    assert "claude-opus-5-5" in verifier
 
 
-def test_gpt_sol_routes_remain_fixed() -> None:
-    routing = ROUTING.read_text()
-    verifier = VERIFIER.read_text()
-    expected_rows = (
-        "| Explore / scouts       | `~/.claude/agents/Explore.md`           "
-        "| `gpt-5.6-sol-medium` | medium, fast tier |",
-        "| Implementer            | `~/.claude/agents/implementer.md`       "
-        "| `gpt-5.6-terra-medium` | medium, fast tier |",
-        "| Verifier (adversarial) | `~/.claude/agents/verifier.md`          "
-        "| `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |",
-    )
-    for row in expected_rows:
-        assert row in routing
-    assert 'CCGPT_MODEL = "gpt-5.6-sol"' in verifier
-    assert '"--effort", "high"' in verifier
+def test_implementation_is_cheap_and_audited_by_the_other_vendor() -> None:
+    agents = ROOT / "config" / "coding-agents" / "agents"
+    table = json.loads((ROOT / "config" / "coding-agents" / "routing-table.json").read_text())
+
+    assert 'route resolve terra-latest)" --effort medium --write' in (agents / "implementer.md").read_text()
+    for name in ("codex-verifier", "codex-test-runner", "computer-use", "codex-sol"):
+        assert 'route resolve sol-latest)"' in (agents / f"{name}.md").read_text()
+    implement = [entry["model"] for entry in table["classes"]["implement"]["chain"]]
+    assert implement[:2] == ["terra-latest", "grok-latest"]
+    audit = table["classes"]["implement"]["audit"]["by_author_vendor"]
+    assert audit["anthropic"]["model"] == "sol-latest"
+    assert {audit[vendor]["model"] for vendor in ("openai", "cursor", "glm", "kimi")} == {"opus-latest"}
 
 
 def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> None:

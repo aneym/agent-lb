@@ -1,245 +1,294 @@
 #!/usr/bin/env python3
+"""Check the installed coding-agent routing against this policy directory.
+
+The source is the directory this script lives in (the repo's
+config/coding-agents or its ~/.agents/policy mirror), so the same checks run
+from either copy. Lineup (owner, 2026-09-22): the newest Opus or Sol plans
+and drives, nothing runs on Fable or a retired model, models are named by
+family alias and resolved to the newest served model, and implementation is
+cheap and audited cross-vendor.
+"""
+
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HOME = Path(os.environ.get("AGENT_LB_USER_HOME", Path.home()))
-REPO = Path(__file__).resolve().parents[2]
-CANONICAL = HOME / ".agents" / "policy" / "coding-agents" / "ROUTING.md"
-MARKER = "<!-- agent-lb:coding-agent-routing:start -->"
+SOURCE = Path(__file__).resolve().parent
+CANONICAL = HOME / ".agents" / "policy" / "coding-agents"
+MARKER_START = "<!-- agent-lb:coding-agent-routing:start -->"
+MARKER_END = "<!-- agent-lb:coding-agent-routing:end -->"
+FORBIDDEN = ("fable", "claude-planner", "astra")
+# A model id in a pin context: `--model X`, `model: X`, `model=X`, "model `X`".
+MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
+GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
+MANAGED = (
+    ("implementer", ".claude/agents/implementer.md", "agents/implementer.md"),
+    ("computer-use", ".claude/agents/computer-use.md", "agents/computer-use.md"),
+    ("frontend-designer", ".claude/agents/frontend-designer.md", "agents/frontend-designer.md"),
+    ("planner", ".claude/agents/planner.md", "agents/planner.md"),
+    ("plan-reviewer", ".claude/agents/plan-reviewer.md", "agents/plan-reviewer.md"),
+    ("codex-sol", ".claude/agents/codex-sol.md", "agents/codex-sol.md"),
+    ("Explore", ".claude/agents/Explore.md", "agents/Explore.md"),
+    ("opus-seat", ".claude/agents/opus-seat.md", "agents/opus-seat.md"),
+    ("cursor-seat", ".claude/agents/cursor-seat.md", "agents/cursor-seat.md"),
+    ("codex-verifier", ".claude/agents/codex-verifier.md", "agents/codex-verifier.md"),
+    ("codex-test-runner", ".claude/agents/codex-test-runner.md", "agents/codex-test-runner.md"),
+    ("verifier", ".claude/agents/verifier.md", "agents/verifier.md"),
+    ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
+)
 failures: list[str] = []
 
 
 def check(condition: bool, message: str) -> None:
-    if condition:
-        print(f"PASS {message}")
-    else:
+    print(f"{'PASS' if condition else 'FAIL'} {message}")
+    if not condition:
         failures.append(message)
-        print(f"FAIL {message}")
 
 
-check(CANONICAL.is_file(), f"canonical policy exists at {CANONICAL}")
+def read(path: Path) -> str:
+    return path.read_text() if path.is_file() else ""
+
+
+def forbidden(model: str) -> bool:
+    return any(marker in model.lower() for marker in FORBIDDEN)
+
+
+def frontmatter_model(text: str) -> str | None:
+    head = text.split("\n---", 1)[0]
+    for line in head.splitlines():
+        if line.startswith("model:"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return None
+
+
+# Policy mirror and CLAUDE.md block.
+for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json"):
+    check(read(CANONICAL / name) == read(SOURCE / name) != "", f"{CANONICAL / name} matches {SOURCE / name}")
 
 claude_doc = HOME / ".claude" / "CLAUDE.md"
-claude_text = claude_doc.read_text() if claude_doc.is_file() else ""
-check(MARKER not in claude_text, f"{claude_doc} has no retired routing block")
+claude_text = read(claude_doc)
+check(
+    claude_text.count(MARKER_START) == 1 and claude_text.count(MARKER_END) == 1,
+    f"{claude_doc} has exactly one managed routing block",
+)
+check(read(SOURCE / "claude-adapter.md").strip() in claude_text, f"{claude_doc} routing block matches the adapter")
 check(
     all(value in claude_text for value in ("Aside on Book", "Tailscale URLs", "MACHINES.md")),
-    f"{claude_doc} contains the approved delivery defaults",
+    f"{claude_doc} keeps the approved delivery defaults",
 )
-
-codex_doc = HOME / ".codex" / "AGENTS.md"
-codex_text = codex_doc.read_text() if codex_doc.is_file() else ""
-check(MARKER not in codex_text, f"{codex_doc} carries no retired managed routing block")
+check(MARKER_START not in read(HOME / ".codex" / "AGENTS.md"), "~/.codex/AGENTS.md carries no managed routing block")
 
 settings_path = HOME / ".claude" / "settings.json"
 try:
-    settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+    settings = json.loads(read(settings_path) or "{}")
 except json.JSONDecodeError:
     settings = {}
     check(False, f"{settings_path} contains valid JSON")
-check(settings.get("model") == "opus", "direct Claude Code default is the newest Opus (5.5)")
+check(settings.get("model") == "opus", "direct Claude Code default model is opus (Opus 5.5)")
 check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
+guard_registered = any(
+    "seat-guard.py" in hook.get("command", "")
+    for group in settings.get("hooks", {}).get("PreToolUse", [])
+    if group.get("matcher") == "Agent"
+    for hook in group.get("hooks", [])
+)
+check(guard_registered, "seat guard is registered as the Agent PreToolUse hook")
 
-designer_source = REPO / "config" / "coding-agents" / "agents" / "frontend-designer.md"
-designer_path = HOME / ".claude" / "agents" / "frontend-designer.md"
-designer_owner_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "frontend-designer"
-designer_source_text = designer_source.read_text() if designer_source.is_file() else ""
-designer_text = designer_path.read_text() if designer_path.is_file() else ""
-check(designer_source.is_file(), f"canonical frontend designer exists at {designer_source}")
-check("\nmodel: fable\n" in designer_source_text, "canonical frontend designer selects Fable")
-check(
-    designer_path.is_file() and designer_text == designer_source_text,
-    f"{designer_path} matches the canonical Fable designer definition",
-)
-check(
-    designer_owner_path.is_file()
-    and designer_owner_path.read_text() == "agent-lb:frontend-designer:v1\n",
-    f"{designer_owner_path} records installer ownership",
-)
+# Managed seat definitions and the hook.
+for name, installed, source in MANAGED:
+    check(read(HOME / installed) == read(SOURCE / source) != "", f"{installed} matches {source}")
+    owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
+    check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
 
-planner_source = REPO / "config" / "coding-agents" / "agents" / "planner.md"
-planner_path = HOME / ".claude" / "agents" / "planner.md"
-planner_owner_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "planner"
-planner_source_text = planner_source.read_text() if planner_source.is_file() else ""
-planner_text = planner_path.read_text() if planner_path.is_file() else ""
-check(planner_source.is_file(), f"canonical planner exists at {planner_source}")
-check("\nmodel: claude-planner\n" in planner_source_text, "canonical planner selects the planner route alias")
-check("\neffort: high\n" in planner_source_text, "canonical planner pins high effort")
+check(not (HOME / ".claude" / "agents" / "astra.md").exists(), "the retired astra seat is not installed")
+
+# No subagent type runs on Fable or Astra, managed or not.
+for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
+    model = frontmatter_model(read(path)) or ""
+    check(not forbidden(model), f"{path.name} does not pin a Fable model ({model or 'unset'})")
+for name in ("planner", "plan-reviewer", "frontend-designer"):
+    model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
+    check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
 check(
-    planner_path.is_file() and planner_text == planner_source_text,
-    f"{planner_path} matches the canonical Fable-primary planner definition",
+    'route resolve terra-latest)" --effort medium' in read(SOURCE / "agents" / "implementer.md"),
+    "implementer forwards to the newest Terra at medium",
 )
 check(
-    planner_owner_path.is_file() and planner_owner_path.read_text() == "agent-lb:planner:v1\n",
-    f"{planner_owner_path} records installer ownership",
+    'route resolve sol-latest)" --effort xhigh' in read(SOURCE / "agents" / "codex-verifier.md"),
+    "codex-verifier forwards to the newest Sol at xhigh",
 )
 
-reviewer_source = REPO / "config" / "coding-agents" / "agents" / "plan-reviewer.md"
-reviewer_path = HOME / ".claude" / "agents" / "plan-reviewer.md"
-reviewer_owner_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "plan-reviewer"
-reviewer_source_text = reviewer_source.read_text() if reviewer_source.is_file() else ""
-reviewer_text = reviewer_path.read_text() if reviewer_path.is_file() else ""
-check(reviewer_source.is_file(), f"canonical plan reviewer exists at {reviewer_source}")
-check(
-    "\nmodel: claude-planner\n" in reviewer_source_text,
-    "canonical plan reviewer selects the planner route alias",
-)
-check("\neffort: high\n" in reviewer_source_text, "canonical plan reviewer pins high effort")
-check(
-    "disallowedTools: [Write, Edit]" in reviewer_source_text,
-    "canonical plan reviewer cannot write",
-)
-check(
-    reviewer_path.is_file() and reviewer_text == reviewer_source_text,
-    f"{reviewer_path} matches the canonical Fable-primary plan reviewer definition",
-)
-check(
-    reviewer_owner_path.is_file()
-    and reviewer_owner_path.read_text() == "agent-lb:plan-reviewer:v1\n",
-    f"{reviewer_owner_path} records installer ownership",
-)
-
-fable_client = REPO / "clients" / "fable"
-fable_text = fable_client.read_text() if fable_client.is_file() else ""
-check(os.access(fable_client, os.X_OK), f"{fable_client} is executable")
-check(
-    'DEFAULT_DRIVER_MODEL = "claude-fable-5-1[1m]"' in fable_text,
-    "fable driver mode targets claude-fable-5-1[1m]",
-)
-for slot in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"):
-    check(f'"{slot}"' in fable_text, f"fable driver mode swaps {slot}")
-for slot in (
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "CLAUDE_CODE_SUBAGENT_MODEL",
-):
-    check(
-        f'os.environ[{slot!r}]' not in fable_text and f'os.environ["{slot}"] =' not in fable_text,
-        f"fable driver mode leaves {slot} to the canonical seats",
-    )
-check(
-    'launcher = Path(__file__).resolve().with_name("claude-lb-launch")' in fable_text,
-    "fable driver mode runs through the canonical launcher",
-)
-installer_text = (REPO / "scripts" / "install-claude-clients.sh").read_text()
-check("CLIENT_NAMES=(cc fable opus)" in installer_text, "client installer installs cc, fable, and opus")
-
-routing_text = CANONICAL.read_text() if CANONICAL.is_file() else ""
-check("## Fable driver mode" in routing_text, "canonical policy documents Fable driver mode")
-for seat, model, effort in (
-    ("Driver (main loop)", "claude-opus-5-5", "high"),
-    ("Explore / scouts", "gpt-5.6-sol-medium", "medium, fast tier"),
-    ("Implementer", "gpt-6-astra", "medium"),
-    ("Computer use", "gpt-6-astra", "medium, read-only probe"),
-    ("Verifier (adversarial)", "gpt-5.6-sol-xhigh", "xhigh, fast tier"),
-    ("Frontend designer", "fable", "inherit high"),
-    ("Planner (lane lead)", "claude-planner", "high"),
-    ("Plan reviewer", "claude-planner", "high"),
-):
-    matching_rows = [line for line in routing_text.splitlines() if f"| {seat}" in line]
-    check(
-        len(matching_rows) == 1 and f"`{model}`" in matching_rows[0] and effort in matching_rows[0],
-        f"{seat} retains canonical {model}/{effort} routing",
-    )
-# Frontend designer uses Claude Code's moving `fable` alias so minor releases
-# become the default without another seat-definition migration.
-for stale_model, seats in (
-    ("claude-fable-5[1m]", ("Driver (main loop)",)),
-    ("claude-opus-4-8", ("Driver (main loop)", "Frontend designer")),
-):
-    migrated_rows = [
-        line
-        for line in routing_text.splitlines()
-        if any(seat in line for seat in seats)
-    ]
-    check(
-        all(stale_model not in row for row in migrated_rows),
-        f"migrated Claude-native routes do not retain {stale_model}",
-    )
-
-launcher_text = (REPO / "clients" / "claude-lb-launch").read_text()
-check('CCGPT_MODEL = "gpt-5.6-sol"' in launcher_text, "CCDEX compatibility model remains gpt-5.6-sol")
-check(
-    'command.extend(["--model", CCGPT_MODEL, "--effort", "high"])' in launcher_text,
-    "CCDEX compatibility effort remains high",
-)
-
-owned_registrations = [
-    (event, group.get("matcher", ""))
-    for event, groups in settings.get("hooks", {}).items()
-    for group in groups
-    for hook_config in group.get("hooks", [])
-    if "ccdex-gpt-only.sh" in hook_config.get("command", "")
-]
-check(not owned_registrations, "no retired CCDEX hook registrations remain in settings")
-check(not (HOME / ".claude" / "hooks" / "ccdex-gpt-only.sh").exists(), "retired CCDEX hook file is absent")
-
-pytest_bin = REPO / ".venv" / "bin" / "pytest"
-if pytest_bin.is_file():
-    launcher_test = subprocess.run(
-        [
-            str(pytest_bin),
-            "-q",
-            "tests/unit/test_claude_lb_launch.py",
-            "tests/unit/test_install_claude_clients.py",
-        ],
-        cwd=REPO,
-        text=True,
-        capture_output=True,
-        timeout=120,
-    )
-    check(launcher_test.returncode == 0, "launcher and installer routing tests pass")
-    if launcher_test.returncode:
-        print(launcher_test.stdout[-2000:])
-        print(launcher_test.stderr[-2000:], file=sys.stderr)
-else:
-    check(False, f"routing test runner exists at {pytest_bin}")
-
-bin_dir = HOME / ".local" / "bin"
-cc_target = bin_dir / "cc"
-check(
-    cc_target.is_symlink() and cc_target.resolve() == (REPO / "clients" / "cc").resolve(),
-    "cc resolves to the repository client",
-)
-for name in ("ccdex", "ccdex-worker-mcp"):
-    check(not (bin_dir / name).exists(), f"retired client {name} is absent from {bin_dir}")
-
-for name in ("implementer", "computer-use"):
-    source = REPO / "config/coding-agents/agents" / f"{name}.md"
-    installed = HOME / ".claude/agents" / f"{name}.md"
-    text = source.read_text() if source.exists() else ""
-    check(installed.exists() and installed.read_text() == text, f"{name} matches managed Codex forwarder")
-    check("model: sonnet" in text and "--model gpt-6-astra --effort medium" in text,
-          f"{name} forwards to Codex Astra medium, not a Claude GPT alias")
-
-policy_link = HOME / ".agents" / "policy" / "coding-agents"
-check(
-    policy_link.is_symlink() and policy_link.resolve() == (REPO / "config" / "coding-agents").resolve(),
-    "policy link resolves to the repository policy",
-)
-
-claude_bin = os.environ.get("AGENT_LB_CLAUDE_BIN")
-if not claude_bin:
-    local_claude = HOME / ".local" / "bin" / "claude"
-    claude_bin = str(local_claude) if local_claude.is_file() else "claude"
+# Routing table: installed copy equals the source apart from learned overrides.
+table_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
 try:
-    mcp = subprocess.run(
-        [claude_bin, "mcp", "get", "ccdex-worker"],
+    live_table = json.loads(read(table_path) or "{}")
+    source_table = json.loads(read(SOURCE / "routing-table.json") or "{}")
+except json.JSONDecodeError:
+    live_table, source_table = {}, {}
+    check(False, "routing tables are valid JSON")
+strip = lambda table: {key: value for key, value in table.items() if key != "overrides"}  # noqa: E731
+check(bool(source_table) and strip(live_table) == strip(source_table), f"{table_path} matches the source table")
+classes = source_table.get("classes", {})
+chain_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
+check(bool(chain_models) and not any(forbidden(m) for m in chain_models), "no routing-table class runs on Fable")
+check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
+plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
+check(
+    plan_chain[:1] in (["opus-latest"], ["sol-latest"]), f"plan leads with opus-latest or sol-latest ({plan_chain[:1]})"
+)
+for name in ("implement", "mechanical"):
+    spec = classes.get(name, {})
+    models = [entry.get("model") for entry in spec.get("chain", [])]
+    check("opus-latest" not in models, f"{name} runs on cheaper seats, never Opus")
+    audit = spec.get("audit", {})
+    by_vendor = audit.get("by_author_vendor", {})
+    check(
+        audit.get("required") is True
+        and by_vendor.get("anthropic", {}).get("model") == "sol-latest"
+        and all(by_vendor.get(v, {}).get("model") == "opus-latest" for v in ("openai", "cursor", "glm", "kimi")),
+        f"{name} closeouts are audited cross-vendor (newest Opus / newest Sol)",
+    )
+
+# Retired and older-than-newest model ids, anywhere a seat could be pinned.
+retired = tuple(source_table.get("retired") or ())
+aliases = source_table.get("aliases") or {}
+check(bool(retired) and bool(aliases), "the table declares family aliases and retired models")
+try:
+    served_out = subprocess.run(
+        [
+            sys.executable,
+            str((SOURCE / ".." / ".." / "clients" / "route").resolve())
+            if (SOURCE / ".." / ".." / "clients" / "route").exists()
+            else str(HOME / ".agent-lb" / "bin" / "route"),
+            "models",
+            "--json",
+        ],
         text=True,
         capture_output=True,
         timeout=30,
+        env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table.json")},
     )
-except FileNotFoundError:
-    check(False, f"Claude Code executable exists at {claude_bin}")
+    resolution = {row["alias"]: row["model"] for row in json.loads(served_out.stdout)["aliases"]}
+except Exception:
+    resolution = {}
+    check(False, "route models resolves the family aliases")
+newest_by_family = {}
+for alias, spec in aliases.items():
+    if spec.get("family") and resolution.get(alias):
+        newest_by_family[spec["family"]] = resolution[alias]
+
+
+def stale_reason(model):
+    bare = model.strip("`'\"").lower().split("[", 1)[0]
+    if bare in aliases or bare in ("opus", "sonnet", "haiku", "inherit") or "*" in bare:
+        return None
+    if any(fnmatch.fnmatchcase(bare, pattern) for pattern in retired):
+        return "retired"
+    match = GPT_ID.match(bare)
+    if match and match.group(2) in newest_by_family and newest_by_family[match.group(2)] != bare:
+        return f"older than {newest_by_family[match.group(2)]}"
+    return None
+
+
+pinned_sources = [(path, read(path)) for path in sorted((HOME / ".claude" / "agents").glob("*.md"))]
+pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("ROUTING.md", "claude-adapter.md")]
+pinned_sources += [(HOME / ".codex" / "AGENTS.md", read(HOME / ".codex" / "AGENTS.md"))]
+stale = []
+for path, text in pinned_sources:
+    for match in MODEL_PIN.finditer(text):
+        reason = stale_reason(match.group(1).rstrip(".,;:)"))
+        if reason:
+            stale.append(f"{path.name}: {match.group(1)} ({reason})")
+table_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
+table_models += [
+    auditor.get("model", "")
+    for spec in classes.values()
+    for auditor in (spec.get("audit", {}).get("by_author_vendor", {}) or {}).values()
+]
+table_models += list(source_table.get("pools", {}))
+for model in table_models:
+    reason = stale_reason(model)
+    if reason:
+        stale.append(f"routing-table.json: {model} ({reason})")
+env_slots = settings.get("env", {}) if isinstance(settings.get("env"), dict) else {}
+for key, value in env_slots.items():
+    if key.startswith("ANTHROPIC_DEFAULT_") and isinstance(value, str) and stale_reason(value):
+        stale.append(f"settings.json env {key}: {value} ({stale_reason(value)})")
+check(not stale, "no retired or older-than-newest model is pinned" + (": " + "; ".join(stale) if stale else ""))
+
+# Seat guard behaviour: deny a pinned Fable model and a Fable-defined type.
+hook = SOURCE / "hooks" / "seat-guard.py"
+with tempfile.TemporaryDirectory() as scratch:
+    agents_dir = Path(scratch) / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "legacy-fable.md").write_text("---\nname: legacy-fable\nmodel: claude-fable-5-1\n---\nbody\n")
+    env = os.environ | {
+        "SEAT_GUARD_AGENTS_DIR": str(agents_dir),
+        "DISPATCH_LEDGER": str(Path(scratch) / "dispatch.jsonl"),
+        "LIMIT_WATCH_SNAPSHOT": str(Path(scratch) / "missing.json"),
+    }
+
+    def decision(tool_input: dict) -> str | None:
+        payload = json.dumps({"tool_name": "Agent", "tool_input": {"prompt": "x", **tool_input}})
+        result = subprocess.run(
+            ["/usr/bin/python3" if Path("/usr/bin/python3").exists() else sys.executable, str(hook)],
+            input=payload,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        try:
+            return json.loads(result.stdout)["hookSpecificOutput"].get("permissionDecision")
+        except (json.JSONDecodeError, KeyError):
+            return "error"
+
+    check(decision({"subagent_type": "opus-seat", "model": "fable"}) == "deny", "seat guard denies model=fable")
+    check(decision({"subagent_type": "legacy-fable"}) == "deny", "seat guard denies a Fable-defined subagent type")
+    check(decision({"subagent_type": "implementer", "model": "sonnet"}) is None, "seat guard admits a cheap seat")
+
+# The installed router returns a live, non-retired seat for every class.
+route_bin = HOME / ".agent-lb" / "bin" / "route"
+if route_bin.is_file():
+    for task_class, spec in classes.items():
+        extra = ["--author-vendor", "anthropic"] if spec.get("cross_vendor") else []
+        result = subprocess.run(
+            [sys.executable, str(route_bin), "pick", task_class, *extra, "--json"],
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        try:
+            picked = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            picked = {}
+        model = picked.get("model") or ""
+        ok = bool(model) and not forbidden(model) and stale_reason(model) is None
+        if task_class == "plan":
+            ok = ok and picked.get("alias") in ("opus-latest", "sol-latest")
+        check(ok, f"route pick {task_class} -> {picked.get('seat')}/{model or result.stderr.strip()}")
 else:
-    check(mcp.returncode != 0, "retired ccdex-worker MCP is not registered")
+    check(False, f"route CLI exists at {route_bin}")
+
+# Launchers: cc drives on Opus 5.5.
+cc_text = read((HOME / ".local" / "bin" / "cc").resolve())
+check('with_name("opus")' in cc_text, "~/.local/bin/cc execs the opus client")
+check(
+    'MODEL = "opus[1m]"' in read((HOME / ".local" / "bin" / "opus").resolve()),
+    "~/.local/bin/opus launches Claude Code's newest Opus (opus[1m])",
+)
+for name in ("ccdex", "ccdex-worker-mcp"):
+    check(not (HOME / ".local" / "bin" / name).exists(), f"retired client {name} is absent")
 
 if failures:
     print(f"\n{len(failures)} routing check(s) failed", file=sys.stderr)
     raise SystemExit(1)
-print("\nAll deterministic coding-agent routing checks passed.")
+print("\nAll coding-agent routing checks passed.")

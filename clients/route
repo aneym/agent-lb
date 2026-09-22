@@ -10,6 +10,8 @@
 #   route doctor [--write]                       probe seats and pools; write routing-state.json
 #   route report [--days N]                      dispatch ledger joined with LB session cost
 #   route learn  [--apply]                       propose (or write) chain demotions from outcomes
+#   route resolve <alias> [<alias> ...]          newest served model for the first resolvable family alias
+#   route models [--json]                        every family alias with what it resolves to now
 #
 # Env:
 #   AGENT_LB_URL       LB base URL (default http://127.0.0.1:2455)
@@ -20,6 +22,9 @@
 #   ROUTE_LEDGER       dispatch ledger path (default ~/.claude/logs/dispatch.jsonl)
 #   ROUTE_CURSOR_CMD   cursor probe command (default "cursor-agent status")
 #   ROUTE_CODEX_CMD    codex probe command (default "node <codex-companion.mjs> status")
+#   ROUTE_MODELS_CACHE last good LB model list (default ~/.cache/agent-lb/route-models.json)
+#   ROUTE_CURSOR_MODELS_CMD  Cursor model list command (default "cursor-agent --list-models"),
+#                      cached beside the LB list for a day
 #   ROUTE_FIXTURE_DIR  TEST ONLY — serve HTTP reads from files in this directory instead of the
 #                      network. A request to /api/pools reads api_pools.json; a missing file is a
 #                      404. Never set this outside tests.
@@ -32,8 +37,10 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
+import re
 import secrets
 import shlex
 import statistics
@@ -382,6 +389,169 @@ def command_pools(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# --- model aliases -----------------------------------------------------------
+#
+# Seats name a family alias (opus-latest, sol-latest, ...) instead of a version so a new
+# release is picked up with no edits. OpenAI families resolve against the LB's own model
+# list; Claude families resolve to Claude Code's harness alias (`opus`, `sonnet`), which
+# the installed Claude Code maps to the newest model of that family. Anything matching the
+# table's `retired` patterns never resolves and is flagged by verify-routing and the seat
+# guard.
+
+MODELS_CACHE_MAX_AGE_SECONDS = 86400
+DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
+
+
+def models_cache_path() -> Path:
+    return _env_path("ROUTE_MODELS_CACHE", Path.home() / ".cache" / "agent-lb" / "route-models.json")
+
+
+def retired_patterns(table: dict[str, Any]) -> tuple[str, ...]:
+    configured = table.get("retired")
+    if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
+        return tuple(configured)
+    return DEFAULT_RETIRED
+
+
+def is_retired(model: str, patterns: tuple[str, ...]) -> bool:
+    bare = model.lower().split("[", 1)[0]
+    return any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
+
+
+def _model_ids(body: Any) -> list[str]:
+    items = body.get("models") or body.get("data") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        return []
+    ids = [item.get("id") or item.get("slug") for item in items if isinstance(item, dict)]
+    return [value for value in ids if isinstance(value, str) and value]
+
+
+def served_models() -> tuple[list[str], str]:
+    """The LB's model list, falling back to the last good copy (at most a day old)."""
+    for path in ("/api/models", "/v1/models"):
+        result = http_get(path, timeout=3.0)
+        ids = _model_ids(result.body) if result.ok else []
+        if ids:
+            cache = models_cache_path()
+            try:
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
+            except OSError:
+                pass
+            return ids, f"lb {path}"
+    try:
+        cached = json.loads(models_cache_path().read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return [], "no LB model list and no cache"
+    stamp = _parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
+    ids = cached.get("models") if isinstance(cached, dict) else None
+    if stamp is None or not isinstance(ids, list):
+        return [], "model cache unreadable"
+    if (datetime.now(timezone.utc) - stamp).total_seconds() > MODELS_CACHE_MAX_AGE_SECONDS:
+        return [], "LB unreachable and the model cache is over a day old"
+    return [value for value in ids if isinstance(value, str)], "cache (LB unreachable)"
+
+
+def cursor_models() -> list[str]:
+    """Cursor's model ids (`cursor-agent --list-models`), cached for a day."""
+    cache = models_cache_path().with_name("route-cursor-models.json")
+    try:
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+        stamp = _parse_ts(cached.get("ts"))
+        if stamp and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS:
+            return [value for value in cached.get("models", []) if isinstance(value, str)]
+    except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
+        pass
+    command = shlex.split(os.environ.get("ROUTE_CURSOR_MODELS_CMD") or "cursor-agent --list-models")
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    ids = [line.split(" - ", 1)[0].strip() for line in result.stdout.splitlines() if " - " in line]
+    ids = [value for value in ids if re.fullmatch(r"[\w.\-]+", value)]
+    if ids:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
+        except OSError:
+            pass
+    return ids
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[str | None, str]:
+    """(model, reason). A name that is not an alias is returned unchanged unless retired."""
+    retired = retired_patterns(table)
+    aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
+    spec = aliases.get(name)
+    if not isinstance(spec, dict):
+        if is_retired(name, retired):
+            return None, f"{name} is retired"
+        return name, "not an alias"
+    harness = spec.get("harness")
+    if isinstance(harness, str) and harness:
+        return harness, f"Claude Code alias {harness!r} (its newest {harness})"
+    family = spec.get("family")
+    if not isinstance(family, str) or not family:
+        return None, f"alias {name} has no family"
+    if spec.get("vendor") == "cursor":
+        # Cursor families: `<family>-<version>-<variant>`, optionally `cursor-` prefixed.
+        variant = spec.get("variant") or "medium-fast"
+        pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-(\d+(?:\.\d+)*)-{re.escape(variant)}$")
+        served = cursor_models()
+        if not served:
+            return None, "Cursor model list unavailable (cursor-agent --list-models)"
+    else:
+        pattern = re.compile(rf"^gpt-(\d+(?:\.\d+)*)-{re.escape(family)}$")
+    candidates = []
+    for model in served:
+        match = pattern.match(model)
+        if match and not is_retired(model, retired):
+            candidates.append((_version_key(match.group(1)), model))
+    if not candidates:
+        return None, f"no non-retired {family} model is served"
+    return max(candidates)[1], f"newest served {family}"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def command_resolve(args: argparse.Namespace) -> int:
+    table = load_table()
+    served, source = served_models()
+    reasons = []
+    for name in args.aliases:
+        model, reason = resolve_alias(table, name, served)
+        if model:
+            print(model)
+            return EXIT_OK
+        reasons.append(f"{name}: {reason}")
+    print(f"route: nothing resolvable ({'; '.join(reasons)}; models from {source})", file=sys.stderr)
+    return EXIT_UNROUTABLE
+
+
+def command_models(args: argparse.Namespace) -> int:
+    table = load_table()
+    served, source = served_models()
+    aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
+    rows = []
+    for name in aliases:
+        model, reason = resolve_alias(table, name, served)
+        rows.append({"alias": name, "model": model, "reason": reason})
+    if args.json:
+        print(json.dumps({"source": source, "aliases": rows, "retired": list(retired_patterns(table))}, indent=2))
+        return EXIT_OK
+    print(f"models from {source}")
+    for row in rows:
+        print(f"{row['alias']:<15} {row['model'] or '-':<18} {row['reason']}")
+    print("retired         " + ", ".join(retired_patterns(table)))
+    return EXIT_OK
+
+
 # --- pick --------------------------------------------------------------------
 
 
@@ -474,7 +644,7 @@ def command_pick(args: argparse.Namespace) -> int:
             "seat": "driver",
             "model": None,
             "pool": None,
-            "reason": "driver class: stays on the Fable driver session, no subagent",
+            "reason": "driver class: stays on the driver session, no subagent",
             "fallbacks": [],
         }
         _print_pick(result, as_json=args.json)
@@ -505,12 +675,20 @@ def command_pick(args: argparse.Namespace) -> int:
     ordered = apply_overrides(entries, table.get("overrides"), args.task_class)
     routable: list[dict[str, Any]] = []
     skipped: list[str] = []
+    aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
+    served: list[str] | None = None
     for entry in ordered:
         seat = entry.get("seat")
-        model = entry.get("model")
-        if not isinstance(seat, str) or not isinstance(model, str):
+        alias = entry.get("model")
+        if not isinstance(seat, str) or not isinstance(alias, str):
             continue
-        pool = pool_for_model(table, model)
+        if alias in aliases and served is None:
+            served, _ = served_models()
+        model, why = resolve_alias(table, alias, served or [])
+        if model is None:
+            skipped.append(f"{seat} ({why})")
+            continue
+        pool = pool_for_model(table, alias)
         vendor = vendor_for(entry, pool)
         if cross_vendor and vendor == args.author_vendor:
             skipped.append(f"{seat} (same vendor as author: {vendor})")
@@ -522,7 +700,9 @@ def command_pick(args: argparse.Namespace) -> int:
         if status == "exhausted":
             skipped.append(f"{seat} (pool {pool} exhausted)")
             continue
-        routable.append({"seat": seat, "model": model, "pool": pool, "vendor": vendor, "poolStatus": status})
+        routable.append(
+            {"seat": seat, "model": model, "alias": alias, "pool": pool, "vendor": vendor, "poolStatus": status}
+        )
 
     if not routable:
         detail = "; ".join(skipped) if skipped else "no chain entry survived filtering"
@@ -541,11 +721,17 @@ def command_pick(args: argparse.Namespace) -> int:
         reasons.append("skipped " + "; ".join(skipped))
     if pools_error:
         reasons.append(f"pool status unknown ({pools_error})")
+    audit = spec.get("audit")
+    auditor = None
+    if isinstance(audit, dict) and isinstance(audit.get("by_author_vendor"), dict):
+        auditor = audit["by_author_vendor"].get(chosen["vendor"])
     result = {
         "class": args.task_class,
         "state_age_s": None if age is None else round(age, 1),
+        "audit": auditor,
         "seat": chosen["seat"],
         "model": chosen["model"],
+        "alias": chosen["alias"],
         "pool": chosen["pool"],
         "reason": "; ".join(reasons),
         "fallbacks": [
@@ -561,13 +747,20 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
     print(f"seat      {result['seat']}")
-    print(f"model     {result['model'] or '-'}")
+    alias = result.get("alias")
+    shown = result["model"] or "-"
+    if alias and alias != result["model"]:
+        shown = f"{shown} (from {alias})"
+    print(f"model     {shown}")
     print(f"pool      {result['pool'] or '-'}")
     age = result.get("state_age_s")
     print(f"state age {'no state file' if age is None else f'{age}s'}")
     print(f"reason    {result['reason']}")
     fallbacks = ", ".join(f"{entry['seat']}/{entry['model']}" for entry in result["fallbacks"]) or "none"
     print(f"fallbacks {fallbacks}")
+    auditor = result.get("audit")
+    if isinstance(auditor, dict):
+        print(f"audit     {auditor.get('seat')}/{auditor.get('model')} audits this seat's closeout before acceptance")
 
 
 # --- doctor ------------------------------------------------------------------
@@ -795,7 +988,8 @@ def backing_probe(table: dict[str, Any], seat: str, model: str, models: list[str
         return SEAT_PROBE[seat]
     if model.startswith("cursor-"):
         return "cursor-agent"
-    if model.startswith("gpt-"):
+    alias = (table.get("aliases") or {}).get(model) if isinstance(table.get("aliases"), dict) else None
+    if model.startswith("gpt-") or (isinstance(alias, dict) and alias.get("vendor") == "openai"):
         return "codex-companion"
     if model in models:
         return f"model:{model}"
@@ -1148,6 +1342,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     report = sub.add_parser("report", help="dispatch ledger joined with LB session cost")
     report.add_argument("--days", type=int, default=7)
     report.set_defaults(handler=command_report)
+
+    resolve = sub.add_parser("resolve", help="newest served model for the first resolvable family alias")
+    resolve.add_argument("aliases", nargs="+", metavar="alias")
+    resolve.set_defaults(handler=command_resolve)
+
+    models = sub.add_parser("models", help="every family alias and what it resolves to now")
+    models.add_argument("--json", action="store_true")
+    models.set_defaults(handler=command_models)
 
     learn = sub.add_parser("learn", help="propose chain demotions from recorded outcomes")
     learn.add_argument("--apply", action="store_true", help="write the overrides into the routing table")

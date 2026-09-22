@@ -13,7 +13,7 @@ from typing import Any
 
 START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
-MODEL = "fable"
+MODEL = "opus"
 EFFORT_LEVEL = "high"
 MANAGED_AGENTS = (
     (
@@ -46,6 +46,70 @@ MANAGED_AGENTS = (
         "agent-lb:plan-reviewer:v1\n",
         Path("agents/plan-reviewer.md"),
     ),
+    (
+        Path(".claude/agents/codex-sol.md"),
+        Path(".agent-lb/managed/coding-agents/codex-sol"),
+        "agent-lb:codex-sol:v1\n",
+        Path("agents/codex-sol.md"),
+    ),
+    (
+        Path(".claude/agents/Explore.md"),
+        Path(".agent-lb/managed/coding-agents/Explore"),
+        "agent-lb:Explore:v1\n",
+        Path("agents/Explore.md"),
+    ),
+    (
+        Path(".claude/agents/opus-seat.md"),
+        Path(".agent-lb/managed/coding-agents/opus-seat"),
+        "agent-lb:opus-seat:v1\n",
+        Path("agents/opus-seat.md"),
+    ),
+    (
+        Path(".claude/agents/cursor-seat.md"),
+        Path(".agent-lb/managed/coding-agents/cursor-seat"),
+        "agent-lb:cursor-seat:v1\n",
+        Path("agents/cursor-seat.md"),
+    ),
+    (
+        Path(".claude/agents/codex-verifier.md"),
+        Path(".agent-lb/managed/coding-agents/codex-verifier"),
+        "agent-lb:codex-verifier:v1\n",
+        Path("agents/codex-verifier.md"),
+    ),
+    (
+        Path(".claude/agents/codex-test-runner.md"),
+        Path(".agent-lb/managed/coding-agents/codex-test-runner"),
+        "agent-lb:codex-test-runner:v1\n",
+        Path("agents/codex-test-runner.md"),
+    ),
+    (
+        Path(".claude/agents/verifier.md"),
+        Path(".agent-lb/managed/coding-agents/verifier"),
+        "agent-lb:verifier:v1\n",
+        Path("agents/verifier.md"),
+    ),
+    (
+        Path(".claude/hooks/seat-guard.py"),
+        Path(".agent-lb/managed/coding-agents/seat-guard"),
+        "agent-lb:seat-guard:v1\n",
+        Path("hooks/seat-guard.py"),
+    ),
+)
+# Seats retired by the owner's 2026-09-22 lineup (no Codex Astra). The
+# installer removes them; the checkpoint keeps the removed copy.
+RETIRED_AGENTS = (Path(".claude/agents/astra.md"),)
+# The live routing table keeps the `overrides` that `route learn` writes; the
+# installer replaces everything else from the canonical table.
+ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
+ROUTING_TABLE_OWNER = (Path(".agent-lb/managed/coding-agents/routing-table"), "agent-lb:routing-table:v1\n")
+# Mirror of this directory that ROUTING.md names as the canonical path.
+POLICY_DIR = Path(".agents/policy/coding-agents")
+POLICY_FILES = (
+    "ROUTING.md",
+    "claude-adapter.md",
+    "install-policy.py",
+    "verify-routing",
+    "routing-table.json",
 )
 LEGACY_HEADINGS = (
     "Coding-agent routing",
@@ -111,7 +175,7 @@ def uninstall_adapter(text: str, path: Path) -> str:
     if START not in text:
         span = h2_span(text, LEGACY_HEADINGS, path)
         if span:
-            updated = text[:span[0]].rstrip() + "\n\n" + text[span[1]:].lstrip("\n")
+            updated = text[: span[0]].rstrip() + "\n\n" + text[span[1] :].lstrip("\n")
             return updated.rstrip() + "\n" if updated.strip() else ""
         return text
     start = text.index(START)
@@ -146,6 +210,19 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL
     return updated
+
+
+def desired_routing_table(source_path: Path, live_path: Path) -> str:
+    table = json.loads(source_path.read_text())
+    live_text = read_text(live_path)
+    if live_text:
+        try:
+            live = json.loads(live_text)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"error: invalid JSON in {live_path}: {exc}") from exc
+        if isinstance(live, dict) and "overrides" in live:
+            table["overrides"] = live["overrides"]
+    return json.dumps(table, indent=2) + "\n"
 
 
 def write_atomic(path: Path, content: str) -> None:
@@ -183,7 +260,7 @@ def main() -> int:
             claude_path: (
                 uninstall_adapter(originals[claude_path], claude_path)
                 if args.uninstall
-                else uninstall_adapter(originals[claude_path], claude_path)
+                else install_adapter(originals[claude_path], template, claude_path)
             ),
             # The codex-host adapter is retired: converge always removes its managed block.
             codex_path: uninstall_adapter(originals[codex_path], codex_path),
@@ -191,13 +268,16 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     desired_settings = reconcile_settings(settings, args.uninstall)
-    desired_settings_text = json.dumps(desired_settings, indent=2) + "\n"
+    desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
     }
-    if desired_settings_text != settings_text:
+    # Compare parsed settings so a formatting-only difference never rewrites the file.
+    if desired_settings != settings:
         changes[settings_path] = desired_settings_text
     preserved_agents: list[tuple[str, Path]] = []
+    replace_policy_link = False
+    policy_link_target = ""
     for relative_path, owner_relative_path, owner_marker, template_relative_path in MANAGED_AGENTS:
         agent_path = args.home / relative_path
         owner_path = args.home / owner_relative_path
@@ -218,6 +298,41 @@ def main() -> int:
                 changes[agent_path] = agent_template
             if not agent_owned:
                 changes[owner_path] = owner_marker
+
+    if not args.uninstall:
+        for relative in RETIRED_AGENTS:
+            if (args.home / relative).exists():
+                changes[args.home / relative] = None
+        table_path = args.home / ROUTING_TABLE
+        desired_table = desired_routing_table(source / "routing-table.json", table_path)
+        if desired_table != read_text(table_path):
+            changes[table_path] = desired_table
+        owner_path, owner_marker = ROUTING_TABLE_OWNER
+        if read_text(args.home / owner_path) != owner_marker:
+            changes[args.home / owner_path] = owner_marker
+        policy_dir = args.home / POLICY_DIR
+        # The router CLI lives in the repo's clients/, so only a repo run installs it.
+        route_source = source.parent.parent / "clients" / "route"
+        if route_source.is_file():
+            route_path = args.home / ".agent-lb" / "bin" / "route"
+            if read_text(route_path) != route_source.read_text():
+                changes[route_path] = route_source.read_text()
+            route_owner = args.home / ".agent-lb" / "managed" / "coding-agents" / "route-cli"
+            if read_text(route_owner) != "agent-lb:route-cli:v1\n":
+                changes[route_owner] = "agent-lb:route-cli:v1\n"
+        # The canonical path must hold exactly what was installed, so a symlink into
+        # a checkout (whose working tree can drift) is replaced by a real copy.
+        replace_policy_link = policy_dir.is_symlink() and policy_dir.resolve() != source
+        if replace_policy_link:
+            policy_link_target = os.readlink(policy_dir)
+        if replace_policy_link or policy_dir.resolve() != source:
+            policy_sources = [Path(name) for name in POLICY_FILES]
+            policy_sources += [path.relative_to(source) for path in sorted((source / "agents").glob("*.md"))]
+            policy_sources += [path.relative_to(source) for path in sorted((source / "hooks").glob("*.py"))]
+            for relative in policy_sources:
+                wanted = (source / relative).read_text()
+                if read_text(policy_dir / relative) != wanted:
+                    changes[policy_dir / relative] = wanted
 
     action = (
         "remove managed routing configuration from" if args.uninstall else "converge managed routing configuration in"
@@ -249,7 +364,14 @@ def main() -> int:
             manifest[str(relative)] = "copied"
         else:
             manifest[str(path.relative_to(args.home))] = "absent"
+    if replace_policy_link:
+        manifest[str(POLICY_DIR)] = f"symlink -> {policy_link_target}"
     (checkpoint / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if replace_policy_link:
+        policy_dir = args.home / POLICY_DIR
+        policy_dir.unlink()
+        policy_dir.mkdir(parents=True)
+        print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
     print(f"checkpoint {checkpoint}")
     for path, content in changes.items():
         if content is None:
@@ -257,6 +379,8 @@ def main() -> int:
             print(f"removed {path}")
         else:
             write_atomic(path, content)
+            if path.suffix == ".py" or path.name in ("verify-routing", "route"):
+                os.chmod(path, path.stat().st_mode | 0o111)
             print(f"updated {path}")
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")

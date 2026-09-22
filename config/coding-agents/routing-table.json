@@ -1,24 +1,533 @@
 {
-  "version": 1,
+  "version": 2,
   "classes": {
-    "plan": {"driver": true},
-    "review": {"chain": [{"seat": "plan-reviewer", "model": "claude-planner"}]},
-    "explore": {"chain": [{"seat": "Explore", "model": "claude-sonnet-5"}, {"seat": "cursor-seat", "model": "cursor-grok-4.6-low-fast"}, {"seat": "opus-seat", "model": "claude-opus-5"}]},
-    "implement": {"chain": [{"seat": "opus-seat", "model": "claude-opus-5"}, {"seat": "implementer", "model": "gpt-6-astra"}, {"seat": "cursor-seat", "model": "gpt-5.6-sol-high"}]},
-    "mechanical": {"chain": [{"seat": "cursor-seat", "model": "cursor-grok-4.6-medium-fast"}, {"seat": "opus-seat", "model": "claude-opus-5"}]},
-    "verify": {"cross_vendor": true, "chain": [{"seat": "verifier", "model": "claude-opus-5", "vendor": "anthropic"}, {"seat": "codex-verifier", "model": "gpt-5.6-sol-xhigh", "vendor": "openai"}, {"seat": "cursor-seat", "model": "gpt-5.6-sol-xhigh", "vendor": "cursor"}]},
-    "computer": {"chain": [{"seat": "computer-use", "model": "gpt-6-astra"}]}
+    "plan": {
+      "chain": [
+        {
+          "seat": "planner",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        },
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "review": {
+      "chain": [
+        {
+          "seat": "plan-reviewer",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        },
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        }
+      ]
+    },
+    "explore": {
+      "chain": [
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
+        {
+          "seat": "Explore",
+          "model": "sonnet-latest",
+          "vendor": "anthropic"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        }
+      ]
+    },
+    "research": {
+      "chain": [
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        },
+        {
+          "seat": "Explore",
+          "model": "sonnet-latest",
+          "vendor": "anthropic"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        }
+      ]
+    },
+    "implement": {
+      "chain": [
+        {
+          "seat": "implementer",
+          "model": "terra-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
+        {
+          "seat": "cursor-seat",
+          "model": "grok-latest",
+          "vendor": "cursor"
+        },
+        {
+          "seat": "cursor-seat",
+          "model": "glm-*",
+          "vendor": "glm"
+        },
+        {
+          "seat": "cursor-seat",
+          "model": "kimi-*",
+          "vendor": "kimi"
+        }
+      ],
+      "audit": {
+        "required": true,
+        "rule": "every implement/mechanical closeout is audited by a stronger model from the other vendor before acceptance",
+        "by_author_vendor": {
+          "openai": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "cursor": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "glm": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "kimi": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "anthropic": {
+            "seat": "codex-verifier",
+            "model": "sol-latest",
+            "vendor": "openai",
+            "effort": "xhigh"
+          }
+        }
+      }
+    },
+    "mechanical": {
+      "chain": [
+        {
+          "seat": "cursor-seat",
+          "model": "grok-latest",
+          "vendor": "cursor"
+        },
+        {
+          "seat": "cursor-seat",
+          "model": "glm-*",
+          "vendor": "glm"
+        },
+        {
+          "seat": "cursor-seat",
+          "model": "kimi-*",
+          "vendor": "kimi"
+        }
+      ],
+      "audit": {
+        "required": true,
+        "rule": "every implement/mechanical closeout is audited by a stronger model from the other vendor before acceptance",
+        "by_author_vendor": {
+          "openai": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "cursor": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "glm": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "kimi": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
+          },
+          "anthropic": {
+            "seat": "codex-verifier",
+            "model": "sol-latest",
+            "vendor": "openai",
+            "effort": "xhigh"
+          }
+        }
+      }
+    },
+    "verify": {
+      "cross_vendor": true,
+      "chain": [
+        {
+          "seat": "verifier",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        },
+        {
+          "seat": "codex-verifier",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "xhigh"
+        }
+      ]
+    },
+    "computer": {
+      "chain": [
+        {
+          "seat": "computer-use",
+          "model": "sol-latest",
+          "vendor": "openai"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        }
+      ]
+    },
+    "council": {
+      "chain": [
+        {
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic"
+        }
+      ]
+    }
   },
   "pools": {
-    "claude-opus-5": "anthropic-general",
-    "claude-sonnet-5": "anthropic-general",
-    "claude-planner": "anthropic-fable",
-    "gpt-6-astra": "openai-codex",
-    "gpt-5.6-sol-high": "openai-codex",
-    "gpt-5.6-sol-xhigh": "openai-codex",
+    "opus-latest": "anthropic-general",
+    "sonnet-latest": "anthropic-general",
+    "sol-latest": "openai-codex",
+    "terra-latest": "openai-codex",
+    "luna-latest": "openai-codex",
+    "grok-latest": "cursor",
+    "grok-latest-low": "cursor",
     "cursor-*": "cursor",
     "kimi-*": "kimi",
     "glm-*": "glm"
   },
-  "overrides": []
+  "overrides": [
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "briefs-align-planner",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 50% over 8 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 8,
+        "ok": 4,
+        "okRate": 0.5,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T22:12:11Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "implementer",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 54% over 28 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 28,
+        "ok": 15,
+        "okRate": 0.536,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T22:12:11Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "jacob-cli-install",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 60% over 5 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 5,
+        "ok": 3,
+        "okRate": 0.6,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T22:12:11Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "opus-seat",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 50% over 16 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 16,
+        "ok": 8,
+        "okRate": 0.5,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T22:12:11Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "task-system",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 50% over 8 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 8,
+        "ok": 4,
+        "okRate": 0.5,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T22:12:11Z"
+    },
+    {
+      "class": "verify",
+      "demote": {
+        "seat": "codex-verifier",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 15% over 39 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 39,
+        "ok": 6,
+        "okRate": 0.154,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T22:12:11Z"
+    },
+    {
+      "class": "explore",
+      "demote": {
+        "seat": "opus-seat",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 60% over 5 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 5,
+        "ok": 3,
+        "okRate": 0.6,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-20T23:43:12Z"
+    },
+    {
+      "class": "implement",
+      "demote": {
+        "seat": "opus-seat",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 70% over 128 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 128,
+        "ok": 89,
+        "okRate": 0.695,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-21T01:43:19Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "codex-test-runner",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 62% over 8 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 8,
+        "ok": 5,
+        "okRate": 0.625,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-21T09:14:06Z"
+    },
+    {
+      "class": "explore",
+      "demote": {
+        "seat": "explore",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 67% over 9 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 9,
+        "ok": 6,
+        "okRate": 0.667,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-21T19:45:16Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "phone-hero-planner",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 60% over 5 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 5,
+        "ok": 3,
+        "okRate": 0.6,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-21T20:45:23Z"
+    },
+    {
+      "class": "unknown",
+      "demote": {
+        "seat": "workflow-subagent",
+        "model": "unknown"
+      },
+      "reason": "ok-rate 50% over 8 closeouts, below the 70% floor",
+      "evidence": {
+        "closeouts": 8,
+        "ok": 4,
+        "okRate": 0.5,
+        "windowDays": 1,
+        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
+      },
+      "ts": "2026-09-22T17:18:46Z"
+    }
+  ],
+  "policy": {
+    "mode": "adaptive",
+    "owner_date": "2026-09-20",
+    "pace": {
+      "ahead_gt": 15,
+      "behind_lt": -10,
+      "cycle_hours": 168
+    },
+    "bands": {
+      "ok": "eligible>=3",
+      "low": "eligible==2",
+      "critical": "eligible==1",
+      "exhausted": "eligible==0"
+    },
+    "admit": {
+      "ok_on_pace": "all classes in the pool ranking",
+      "ahead": "all classes plus the next class down",
+      "behind_or_low": "judgment classes only (plan, review, verify)",
+      "critical": "nothing new",
+      "exhausted": "nothing"
+    },
+    "judgment_classes": [
+      "plan",
+      "review",
+      "verify",
+      "design",
+      "audit"
+    ],
+    "source_of_truth": "~/.agents/policy/coding-agents/ROUTING.md",
+    "lineup": {
+      "owner_date": "2026-09-22",
+      "drivers": [
+        "opus-latest",
+        "sol-latest"
+      ],
+      "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
+      "implementation": "cheap seats (terra-latest when served, grok-latest on Cursor, GLM, Kimi), each closeout audited by the other vendor: opus-latest for non-Anthropic authors, sol-latest for Anthropic authors"
+    }
+  },
+  "notes": [
+    "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
+    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus orchestrates; cheaper seats implement; the other vendor's stronger model audits (classes.*.audit).",
+    "2026-09-22: gpt-6-terra is not in the upstream model catalog for these accounts (the LB answers 503 no available accounts), so terra-latest resolves to nothing and implement falls through to grok-latest."
+  ],
+  "aliases": {
+    "opus-latest": {
+      "vendor": "anthropic",
+      "harness": "opus",
+      "note": "Claude Code's opus alias: the newest Opus the installed Claude Code serves"
+    },
+    "sonnet-latest": {
+      "vendor": "anthropic",
+      "harness": "sonnet",
+      "note": "Claude Code's sonnet alias"
+    },
+    "sol-latest": {
+      "vendor": "openai",
+      "family": "sol",
+      "note": "newest non-retired gpt-*-sol the LB serves"
+    },
+    "terra-latest": {
+      "vendor": "openai",
+      "family": "terra",
+      "note": "newest non-retired gpt-*-terra the LB serves; none today (gpt-6-terra is not in the upstream catalog, gpt-5.6-terra is retired), so it is skipped until one ships"
+    },
+    "luna-latest": {
+      "vendor": "openai",
+      "family": "luna",
+      "note": "newest non-retired gpt-*-luna the LB serves (Codex-native delegation only)"
+    },
+    "grok-latest": {
+      "vendor": "cursor",
+      "family": "grok",
+      "variant": "medium-fast",
+      "note": "newest Grok on Cursor (cursor-agent --list-models), medium-fast"
+    },
+    "grok-latest-low": {
+      "vendor": "cursor",
+      "family": "grok",
+      "variant": "low-fast",
+      "note": "newest Grok on Cursor, low-fast (scouting)"
+    }
+  },
+  "retired": [
+    "claude-fable-*",
+    "fable",
+    "claude-planner",
+    "claude-opus-5",
+    "claude-opus-4-*",
+    "claude-sonnet-4-*",
+    "gpt-*-astra",
+    "gpt-*-astra-*",
+    "astra",
+    "gpt-5.6*",
+    "gpt-5.5*",
+    "gpt-5.4*",
+    "gpt-5-*",
+    "gpt-5"
+  ]
 }

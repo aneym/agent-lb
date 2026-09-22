@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Advisory Agent PreToolUse routing telemetry.
+"""Agent PreToolUse routing telemetry and the retired-model rule.
 
-This hook never controls admission: model and capacity state are surfaced as
-status so the caller can choose deliberately.
+Capacity is advisory: pool state is surfaced as status so the caller can
+choose deliberately. One model rule is enforced: since the owner's 2026-09-22
+lineup nothing runs on a retired model (Fable, the claude-planner alias, the
+gpt-5.6 generation and older; the routing table's `retired` list). A dispatch
+is denied when it pins one, names a subagent type whose definition pins one,
+or carries a brief that tells a forwarder to use one (`--model <id>`,
+`model: <id>`).
 """
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -20,6 +26,10 @@ ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
 SNAPSHOT_MAX_FUTURE_SECONDS = 60
 CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)
+AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
+DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
+# A model id in a pin context: `--model X`, `model: X`, `model=X`, "model `X`".
+MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
 
 def emit_advisory(advisory: str) -> None:
@@ -31,12 +41,70 @@ def emit_advisory(advisory: str) -> None:
                     "additionalContext": (
                         "seat-guard advisory: " + advisory + ". "
                         "Capacity is status, not admission control. Check "
-                        "`agent-lb status --provider anthropic --model claude-fable-5-1 --json`."
+                        "`route pools` or `agent-lb status --provider anthropic --json`."
                     ),
                 }
             }
         )
     )
+
+
+def emit_deny(reason: str) -> None:
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        "seat-guard: " + reason + ". No seat or subagent runs on Fable or a retired model "
+                        "(owner lineup 2026-09-22). Name a family alias instead: `opus`/`sonnet` for Claude "
+                        "seats, `route resolve sol-latest|astra-latest|terra-latest|luna-latest` for Codex; "
+                        "`route pick <class>` picks the seat. Canon: ~/.agents/policy/coding-agents/ROUTING.md."
+                    ),
+                }
+            }
+        )
+    )
+
+
+def retired_patterns(table: Path) -> tuple:
+    try:
+        configured = json.loads(table.read_text()).get("retired")
+    except Exception:
+        return DEFAULT_RETIRED
+    if isinstance(configured, list) and configured and all(isinstance(item, str) for item in configured):
+        return tuple(configured)
+    return DEFAULT_RETIRED
+
+
+def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
+    bare = model.strip().strip("`'\"").lower().split("[", 1)[0]
+    return bool(bare) and any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
+
+
+def retired_pins(prompt: str, patterns: tuple) -> list:
+    found = []
+    for match in MODEL_PIN.finditer(prompt):
+        candidate = match.group(1).rstrip(".,;:)")
+        if forbidden_model(candidate, patterns) and candidate not in found:
+            found.append(candidate)
+    return found
+
+
+def definition_model(subagent: str, agents_dir: Path) -> str | None:
+    if not subagent or "/" in subagent or subagent.startswith("."):
+        return None
+    for path in agents_dir.glob("*.md"):
+        if path.stem.lower() != subagent:
+            continue
+        try:
+            head = path.read_text().split("\n---", 1)[0]
+        except OSError:
+            return None
+        match = AGENT_MODEL.search(head)
+        return match.group(1).strip().strip("'\"").lower() if match else None
+    return None
 
 
 def now() -> str:
@@ -102,8 +170,6 @@ def snapshot_advisory(snapshot_path: Path) -> str | None:
             return "snapshot reports unreachable"
         if snapshot["providers"]["anthropic"]["usable_count"] < 2:
             return "anthropic usable_count < 2"
-        if snapshot["fable_eligible_usable"] < 2:
-            return "fable_eligible_usable < 2"
     except Exception:
         return "internal error reading snapshot"
     return None
@@ -149,9 +215,22 @@ def main() -> None:
         "cwd": payload.get("cwd"),
     }
     advisories: list[str] = []
-    if "fable" in model:
-        record["model_advisory"] = "this dispatch pins a Fable model on a subagent"
-        advisories.append(record["model_advisory"])
+    agents_dir = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
+    pinned = definition_model(subagent, agents_dir)
+    retired = retired_patterns(table)
+    brief_pins = retired_pins(prompt, retired)
+    deny_reason = None
+    if forbidden_model(model, retired):
+        deny_reason = f"this dispatch pins the retired model {model!r} on a subagent"
+    elif not model and pinned and forbidden_model(pinned, retired):
+        deny_reason = f"subagent type {subagent!r} is defined on the retired model {pinned!r}"
+    elif brief_pins:
+        deny_reason = "the brief tells the seat to use the retired model " + ", ".join(repr(pin) for pin in brief_pins)
+    if deny_reason:
+        record["denied"] = deny_reason
+        append(record, ledger)
+        emit_deny(deny_reason)
+        return
     is_fork = subagent == "fork"
     if is_fork:
         record["fork"] = True
