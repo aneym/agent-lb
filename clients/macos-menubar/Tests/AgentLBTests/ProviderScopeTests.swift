@@ -304,4 +304,120 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertNil(window.usage.resetAt)
     XCTAssertNil(window.recoveredCredits)
   }
+
+  // MARK: - Known-full reset presentation
+
+  func testFiveKnownFullAccountsSkipPrimaryResetSchedule() throws {
+    let full = (0..<5).map { index in
+      makeTestAccount(
+        id: "full-\(index)", remainingCreditsPrimary: 100, capacityCreditsPrimary: 100,
+        resetAtPrimary: now.addingTimeInterval(Double(600 + index * 60))
+      )
+    }
+
+    let window = ProviderScope.summarizeWindow(full, window: .primary, now: now)
+    XCTAssertEqual(try XCTUnwrap(window.usage.remainingCredits), 500)
+    XCTAssertEqual(try XCTUnwrap(window.usage.capacityCredits), 500)
+    XCTAssertNil(window.usage.resetAt)
+    XCTAssertNil(window.recoveredCredits)
+    XCTAssertTrue(ResetDisplay.allKnownFull(full, window: .primary))
+    XCTAssertEqual(
+      ResetDisplay.resetText(resetAt: now.addingTimeInterval(600), knownFull: true, recoveredCredits: 0, now: now),
+      "Full · no reset needed"
+    )
+    XCTAssertTrue(ProviderScope.resetSchedule(full, window: .primary, now: now).isEmpty)
+  }
+
+  func testAllScopeSummaryUsesKnownCreditsBeforeRoundedPercent() {
+    let full = UsageWindow(
+      remainingPercent: 100, capacityCredits: 500, remainingCredits: 500,
+      resetAt: now.addingTimeInterval(600), windowMinutes: 300
+    )
+    let fractionalDeficit = UsageWindow(
+      remainingPercent: 100, capacityCredits: 500, remainingCredits: 499.5,
+      resetAt: now.addingTimeInterval(600), windowMinutes: 300
+    )
+    let unknown = UsageWindow(
+      remainingPercent: nil, capacityCredits: nil, remainingCredits: nil,
+      resetAt: now.addingTimeInterval(600), windowMinutes: 300
+    )
+
+    XCTAssertTrue(ResetDisplay.isKnownFull(full))
+    XCTAssertFalse(ResetDisplay.isKnownFull(fractionalDeficit))
+    XCTAssertFalse(ResetDisplay.isKnownFull(unknown))
+    XCTAssertEqual(
+      ResetDisplay.resetText(
+        resetAt: full.resetAt, knownFull: ResetDisplay.isKnownFull(full), recoveredCredits: nil, now: now
+      ),
+      "Full · no reset needed"
+    )
+    XCTAssertEqual(
+      ResetDisplay.resetText(
+        resetAt: unknown.resetAt, knownFull: ResetDisplay.isKnownFull(unknown), recoveredCredits: nil, now: now
+      ),
+      "next reset in 0:10"
+    )
+  }
+
+  func testFullEarlyAccountDoesNotMaskLaterDepletedRecovery() throws {
+    let full = makeTestAccount(
+      id: "full", remainingCreditsPrimary: 500, capacityCreditsPrimary: 500,
+      resetAtPrimary: now.addingTimeInterval(600)
+    )
+    let depleted = makeTestAccount(
+      id: "depleted", remainingCreditsPrimary: 0, capacityCreditsPrimary: 500,
+      resetAtPrimary: now.addingTimeInterval(1_200)
+    )
+
+    let window = ProviderScope.summarizeWindow([full, depleted], window: .primary, now: now)
+    XCTAssertEqual(window.usage.resetAt, now.addingTimeInterval(1_200))
+    XCTAssertEqual(try XCTUnwrap(window.recoveredCredits), 500)
+    XCTAssertFalse(ResetDisplay.allKnownFull([full, depleted], window: .primary))
+    XCTAssertEqual(ProviderScope.resetSchedule([full, depleted], window: .primary, now: now).map(\.accountId), ["depleted"])
+  }
+
+  func testWeeklyFullIsIndependentFromPrimaryDeficit() {
+    let account = makeTestAccount(
+      remainingCreditsPrimary: 490, capacityCreditsPrimary: 500,
+      remainingCreditsSecondary: 500, capacityCreditsSecondary: 500,
+      resetAtPrimary: now.addingTimeInterval(600),
+      resetAtSecondary: now.addingTimeInterval(1_200)
+    )
+    XCTAssertFalse(ResetDisplay.allKnownFull([account], window: .primary))
+    XCTAssertTrue(ResetDisplay.allKnownFull([account], window: .secondary))
+    XCTAssertTrue(ProviderScope.resetSchedule([account], window: .secondary, now: now).isEmpty)
+  }
+
+  func testUnknownWindowTelemetryDoesNotCreateFullStateOrHideReset() {
+    let full = makeTestAccount(
+      id: "full", remainingCreditsPrimary: 500, capacityCreditsPrimary: 500,
+      resetAtPrimary: now.addingTimeInterval(1_200)
+    )
+    let unknown = makeTestAccount(id: "unknown", resetAtPrimary: now.addingTimeInterval(600))
+    let window = ProviderScope.summarizeWindow([full, unknown], window: .primary, now: now)
+
+    XCTAssertFalse(ResetDisplay.allKnownFull([full, unknown], window: .primary))
+    XCTAssertEqual(window.usage.resetAt, now.addingTimeInterval(600))
+    XCTAssertNil(window.recoveredCredits)
+    XCTAssertEqual(ProviderScope.resetSchedule([full, unknown], window: .primary, now: now).map(\.accountId), ["unknown"])
+  }
+
+  func testZeroCapacityIsNotKnownFullAndFractionalRecoveryDoesNotShowZero() {
+    let zero = makeTestAccount(
+      remainingCreditsPrimary: 0, capacityCreditsPrimary: 0,
+      resetAtPrimary: now.addingTimeInterval(600)
+    )
+    let fractional = makeTestAccount(
+      remainingCreditsPrimary: 99.5, capacityCreditsPrimary: 100,
+      resetAtPrimary: now.addingTimeInterval(1_200)
+    )
+    XCTAssertFalse(ResetDisplay.allKnownFull([zero], window: .primary))
+    XCTAssertFalse(ResetDisplay.isKnownFull(UsageWindow(
+      remainingPercent: 100, capacityCredits: 0, remainingCredits: 0,
+      resetAt: now.addingTimeInterval(600), windowMinutes: 300
+    )))
+    XCTAssertEqual(ResetDisplay.recoveryCredits(0.5), "+<1 cr")
+    XCTAssertEqual(Format.percent(99.96), "99.9%")
+    XCTAssertEqual(ProviderScope.resetSchedule([fractional], window: .primary, now: now).first?.recoveredCredits, 0.5)
+  }
 }

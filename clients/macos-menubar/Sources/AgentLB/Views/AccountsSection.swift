@@ -541,6 +541,7 @@ struct AccountRow: View {
         WindowCell(
           label: "5H",
           percent: account.usage.primaryRemainingPercent,
+          knownFull: ResetDisplay.isKnownFull(account, window: .primary),
           resetAt: account.resetAtPrimary,
           now: now
         )
@@ -548,6 +549,7 @@ struct AccountRow: View {
       WindowCell(
         label: "WK",
         percent: account.usage.secondaryRemainingPercent,
+        knownFull: ResetDisplay.isKnownFull(account, window: .secondary),
         resetAt: account.resetAtSecondary,
         now: now
       )
@@ -600,6 +602,7 @@ struct AccountRow: View {
 private struct WindowCell: View {
   let label: String
   let percent: Double?
+  let knownFull: Bool
   let resetAt: Date?
   let now: Date
 
@@ -630,7 +633,7 @@ private struct WindowCell: View {
   private var detail: String {
     var parts: [String] = []
     if let percent { parts.append(Format.percent(percent)) }
-    if let resetAt, resetAt > now {
+    if !knownFull, let resetAt, resetAt > now {
       parts.append(Format.countdownCompact(to: resetAt, relativeTo: now))
     }
     return parts.isEmpty ? "—" : parts.joined(separator: " · ")
