@@ -77,7 +77,7 @@ def test_ccgpt_build_command_locks_model_effort_and_bypass_perms() -> None:
     assert command == [
         "claude",
         "--model",
-        "gpt-5.6-sol",
+        "gpt-6-sol",
         "--effort",
         "high",
         "--permission-mode",
@@ -97,7 +97,7 @@ def test_ccgpt_explicit_permission_mode_wins_over_bypass_default(monkeypatch) ->
     assert command == [
         "claude",
         "--model",
-        "gpt-5.6-sol",
+        "gpt-6-sol",
         "--effort",
         "high",
         "--permission-mode",
@@ -120,7 +120,7 @@ def test_ccgpt_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() 
     launcher = load_launcher_module()
     launcher.CCGPT_MODE = True
 
-    gpt_body = b'{"model":"gpt-5.6-sol"}'
+    gpt_body = b'{"model":"gpt-6-sol"}'
     claude_body = b'{"model":"claude-opus-4-8"}'
     assert launcher._ccgpt_upstream_path("/v1/messages", gpt_body) == "/v1/ccgpt/messages"
     with pytest.raises(launcher.CcgptModelViolation, match="rejected Messages request for claude-opus-4-8"):
@@ -184,9 +184,9 @@ def test_regular_cc_never_rewrites_messages_even_for_gpt_model() -> None:
     launcher = load_launcher_module()
     launcher.CCGPT_MODE = False
 
-    assert launcher._ccgpt_upstream_path("/v1/messages", b'{"model":"gpt-5.6-sol"}') == "/v1/messages"
+    assert launcher._ccgpt_upstream_path("/v1/messages", b'{"model":"gpt-6-sol"}') == "/v1/messages"
     assert (
-        launcher._ccgpt_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-5.6-sol"}')
+        launcher._ccgpt_upstream_path("/v1/messages/count_tokens", b'{"model":"gpt-6-sol"}')
         == "/v1/messages/count_tokens"
     )
 
@@ -215,7 +215,7 @@ def test_shared_proxy_preserves_identity_headers_and_does_not_rewrite_models(mon
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Messages must route to agent-lb")),
     )
     client, server_socket = socket.socketpair()
-    body = b'{"model":"gpt-5.6-sol","messages":[]}'
+    body = b'{"model":"gpt-6-sol","messages":[]}'
     request = (
         b"POST /v1/messages HTTP/1.1\r\n"
         b"Host: api.anthropic.com\r\n"
@@ -443,7 +443,7 @@ def test_regular_cc_preserves_explicit_model_and_adds_configured_effort(monkeypa
     ]
 
 
-def test_regular_launcher_defaults_to_fable_5_1_1m_high(monkeypatch) -> None:
+def test_regular_launcher_defaults_to_the_newest_opus_1m_high(monkeypatch) -> None:
     launcher = load_launcher_module()
     launcher.CCGPT_MODE = False
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
@@ -454,7 +454,7 @@ def test_regular_launcher_defaults_to_fable_5_1_1m_high(monkeypatch) -> None:
     assert command == [
         "claude",
         "--model",
-        "claude-fable-5-1[1m]",
+        "opus[1m]",
         "--effort",
         "high",
         "-p",

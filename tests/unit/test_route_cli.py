@@ -13,7 +13,10 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "clients" / "route"
-TABLE = REPO / "config" / "coding-agents" / "routing-table.json"
+# CLI mechanics run against a frozen table so lineup changes in the canonical
+# table do not rewrite these tests; the canonical lineup has its own checks.
+TABLE = REPO / "tests" / "fixtures" / "route" / "routing-table.json"
+CANONICAL_TABLE = REPO / "config" / "coding-agents" / "routing-table.json"
 
 UNREACHABLE_LB = "http://127.0.0.1:1"
 
@@ -607,3 +610,53 @@ def test_report_on_an_empty_ledger_says_so(home: Path) -> None:
 
     assert result.returncode == 0
     assert "No dispatches" in result.stdout
+
+
+def test_canonical_table_runs_no_class_on_fable() -> None:
+    table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    models = [entry["model"] for spec in table["classes"].values() for entry in spec.get("chain", [])]
+    assert models
+    assert not [model for model in models if "fable" in model or model == "claude-planner"]
+    assert not [key for key in table["pools"] if "fable" in key or key == "claude-planner"]
+
+
+def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    write_fixture(
+        fixtures,
+        "api_models.json",
+        {"models": [{"id": m} for m in ("gpt-6-sol", "gpt-6-astra", "gpt-5.6-terra", "gpt-6-luna", "gpt-5.6-sol")]},
+    )
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
+
+    def pick(*args: str) -> subprocess.CompletedProcess[str]:
+        return run("pick", *args, "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+
+    plan, implement, audit = pick("plan"), pick("implement"), pick("verify", "--author-vendor", "anthropic")
+
+    assert plan.returncode == 0, plan.stderr
+    assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
+    # No non-retired Terra and no Cursor list: implement falls to the GLM wildcard, audited by Opus.
+    assert implement.returncode == 0, implement.stderr
+    picked = json.loads(implement.stdout)
+    assert picked["model"] == "glm-*"
+    assert picked["audit"]["model"] == "opus-latest"
+    assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
+
+
+def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    write_fixture(
+        fixtures,
+        "api_models.json",
+        {"models": [{"id": m} for m in ("gpt-5.6-sol", "gpt-6-sol", "gpt-6-astra", "gpt-5.6-terra")]},
+    )
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json")}
+
+    sol = run("resolve", "sol-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    terra = run("resolve", "terra-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    retired = run("resolve", "gpt-6-astra", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+
+    assert (sol.returncode, sol.stdout.strip()) == (0, "gpt-6-sol")
+    assert terra.returncode == 2 and "no non-retired terra" in terra.stderr
+    assert retired.returncode == 2 and "retired" in retired.stderr

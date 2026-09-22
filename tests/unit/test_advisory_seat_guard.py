@@ -12,6 +12,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 HOOK = Path(__file__).resolve().parents[2] / "config" / "coding-agents" / "hooks" / "seat-guard.py"
+TABLE = HOOK.parent.parent / "routing-table.json"
 
 
 def invoke(
@@ -42,9 +43,11 @@ def invoke(
         text=True,
         capture_output=True,
         check=True,
-        env=os.environ | {"LIMIT_WATCH_SNAPSHOT": str(snapshot_path), "DISPATCH_LEDGER": str(ledger)},
+        env=os.environ
+        | {"LIMIT_WATCH_SNAPSHOT": str(snapshot_path), "DISPATCH_LEDGER": str(ledger), "ROUTE_TABLE": str(TABLE)},
     )
-    output = json.loads(result.stdout)["hookSpecificOutput"]
+    # An admitted dispatch with nothing to report prints nothing.
+    output = json.loads(result.stdout)["hookSpecificOutput"] if result.stdout.strip() else {}
     record = json.loads(ledger.read_text()) if ledger.exists() else None
     return output, record
 
@@ -83,11 +86,57 @@ def test_capacity_states_are_advisory_and_remain_telemetry(
     assert record and record["capacity_advisory"] == expected
 
 
-def test_fable_model_choice_is_advisory_and_logged(tmp_path: Path) -> None:
+def test_fable_model_pinned_on_a_subagent_is_denied_and_logged(tmp_path: Path) -> None:
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="claude-fable-5-1")
+    assert output["permissionDecision"] == "deny"
+    assert "No seat or subagent runs on Fable or a retired model" in output["permissionDecisionReason"]
+    assert record and record["denied"] == "this dispatch pins the retired model 'claude-fable-5-1' on a subagent"
+
+
+def test_subagent_type_defined_on_fable_is_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "implementer.md").write_text("---\nname: implementer\nmodel: claude-planner\n---\nbody\n")
+    monkeypatch.setenv("SEAT_GUARD_AGENTS_DIR", str(agents))
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="")
+    assert output["permissionDecision"] == "deny"
+    assert record and "defined on the retired model 'claude-planner'" in record["denied"]
+
+
+def test_brief_that_pins_a_retired_codex_model_is_denied(tmp_path: Path) -> None:
+    payload = json.dumps(
+        {
+            "tool_name": "Agent",
+            "tool_input": {
+                "subagent_type": "cursor-seat",
+                "prompt": "Run cursor-agent --model gpt-5.6-sol on the diff and report.",
+            },
+        }
+    )
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
+    assert output["permissionDecision"] == "deny"
+    assert record and record["denied"] == "the brief tells the seat to use the retired model 'gpt-5.6-sol'"
+
+
+def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) -> None:
+    payload = json.dumps(
+        {
+            "tool_name": "Agent",
+            "tool_input": {
+                "subagent_type": "implementer",
+                "prompt": "Replace the gpt-5.6-sol pins with route resolve sol-latest; --model gpt-6-sol is fine.",
+            },
+        }
+    )
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
     assert "permissionDecision" not in output
-    assert "pins a Fable model" in output["additionalContext"]
-    assert record and record["model_advisory"] == "this dispatch pins a Fable model on a subagent"
+    assert record and "denied" not in record
+
+
+def test_opus_dispatch_is_admitted(tmp_path: Path) -> None:
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="opus")
+    assert "permissionDecision" not in output
+    assert record and "denied" not in record
 
 
 def test_malformed_input_is_never_a_permission_denial(tmp_path: Path) -> None:

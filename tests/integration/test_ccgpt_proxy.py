@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.clients.proxy import ProxyResponseError
 from app.modules.proxy import api as proxy_api
-from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL, CCGPT_TERRA_MODEL
+from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL, CCGPT_WORKER_MODEL
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +23,7 @@ async def test_ccgpt_messages_uses_openai_responses_path_and_returns_anthropic_s
         captured["kwargs"] = kwargs
 
         async def source():
-            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6-sol"}}\n\n'
             yield 'data: {"type":"response.output_text.delta","delta":"bridge ok"}\n\n'
             yield 'data: {"type":"response.completed","response":{"usage":{"input_tokens":7,"output_tokens":2}}}\n\n'
 
@@ -68,7 +68,7 @@ async def test_ccgpt_messages_uses_openai_responses_path_and_returns_anthropic_s
         "codex_session_affinity": True,
         "openai_cache_affinity": True,
         "prefer_http_bridge": True,
-        "locked_model": "gpt-5.6-sol",
+        "locked_model": "gpt-6-sol",
         "locked_reasoning_effort": "high",
         "locked_service_tier": "priority",
     }
@@ -91,7 +91,7 @@ async def test_ccgpt_messages_propagates_per_task_effort(async_client, monkeypat
     response = await async_client.post(
         "/v1/ccgpt/messages",
         json={
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-sol",
             "max_tokens": 1024,
             "stream": True,
             "output_config": {"effort": "xhigh"},
@@ -163,7 +163,7 @@ async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_su
     # success (message_delta/message_stop) after the error.
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
-            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6-sol"}}\n\n'
             yield 'data: {"type":"response.output_text.delta","delta":"partial answer"}\n\n'
             yield (
                 'data: {"type":"response.failed","response":{"error":{'
@@ -211,7 +211,7 @@ async def test_ccgpt_precontent_stream_overflow_returns_http_400(
     # `invalid_request_error` with no `message_start` in the body.
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
-            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6-sol"}}\n\n'
             yield (
                 'data: {"type":"response.failed","response":{"error":{'
                 '"code":"context_length_exceeded",'
@@ -249,7 +249,7 @@ async def test_ccgpt_precontent_top_level_overflow_frame_returns_http_400(
     # past the pre-stream probe as a later frame and must still become HTTP 400.
     async def fake_stream(request, payload, context, api_key, **kwargs):
         async def source():
-            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-5.6-sol"}}\n\n'
+            yield 'data: {"type":"response.created","response":{"id":"resp_live","model":"gpt-6-sol"}}\n\n'
             yield (
                 'data: {"type":"error","status_code":400,"error_type":"invalid_request_error",'
                 '"code":"context_length_exceeded",'
@@ -324,9 +324,9 @@ async def test_ccgpt_count_tokens_is_local_and_native(async_client) -> None:
 @pytest.mark.parametrize(
     ("alias", "expected_model", "expected_effort"),
     [
-        ("gpt-5.6-sol-medium", CCGPT_MODEL, "medium"),
-        ("gpt-5.6-sol-xhigh", CCGPT_MODEL, "xhigh"),
-        ("gpt-5.6-terra-medium", CCGPT_TERRA_MODEL, "medium"),
+        ("gpt-6-sol-medium", CCGPT_MODEL, "medium"),
+        ("gpt-6-sol-xhigh", CCGPT_MODEL, "xhigh"),
+        ("gpt-6-luna-medium", CCGPT_WORKER_MODEL, "medium"),
     ],
 )
 async def test_messages_route_serves_worker_alias_via_bridge(
@@ -375,7 +375,7 @@ async def test_messages_route_serves_worker_alias_via_bridge(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("alias", [CCGPT_MODEL, CCGPT_TERRA_MODEL])
+@pytest.mark.parametrize("alias", [CCGPT_MODEL, CCGPT_WORKER_MODEL])
 async def test_messages_route_plain_alias_defers_to_request_effort(
     async_client, monkeypatch: pytest.MonkeyPatch, alias: str
 ) -> None:
@@ -407,7 +407,7 @@ async def test_messages_route_plain_alias_defers_to_request_effort(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("alias", ["gpt-5.6-sol-xhigh", "gpt-5.6-terra-xhigh"])
+@pytest.mark.parametrize("alias", ["gpt-6-sol-xhigh", "gpt-6-luna-xhigh"])
 async def test_messages_count_tokens_worker_alias_is_local(async_client, alias: str) -> None:
     response = await async_client.post(
         "/v1/messages/count_tokens",
