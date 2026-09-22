@@ -194,6 +194,10 @@ def stale_reason(model):
     # Retirement first: a wildcard pin such as gpt-5.6* is as retired as the ids it covers.
     if any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare) for pattern in retired):
         return "retired"
+    if ("*" in bare or "?" in bare) and bare.startswith(("gpt-", "claude-")):
+        # A version glob can overlap a retired generation without matching its pattern
+        # (gpt-5.*-sol vs gpt-5.6*); name the family alias instead.
+        return "wildcard version pin; use a family alias"
     if bare in aliases or bare in ("opus", "sonnet", "haiku", "inherit") or "*" in bare:
         return None
     match = GPT_ID.match(bare)

@@ -33,6 +33,11 @@ class PoolSummary(DashboardModel):
     status: str = Field(pattern=r"^(ok|low|exhausted)$")
     # Fable pool only: which signal the numbers came from.
     source: str | None = None
+    # Weekly pools only: the mean weekly (secondary) remaining over usable accounts,
+    # not capped by the five-hour window, and the earliest weekly reset among them.
+    # `route pick` paces spend against the weekly cycle with these.
+    weekly_remaining_percent: float | None = None
+    weekly_reset_at: datetime | None = None
 
 
 class PoolsResponse(DashboardModel):

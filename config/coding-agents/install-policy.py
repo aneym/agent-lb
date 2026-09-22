@@ -221,6 +221,13 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
         if remaining:
             group_copy["hooks"] = remaining
             cleaned.append(group_copy)
+    if uninstall:
+        # The managed guard file goes away on uninstall; so does its registration.
+        cleaned = [
+            {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_seat_guard_hook(hook.get("command"))]}
+            for group in cleaned
+        ]
+        cleaned = [group for group in cleaned if group["hooks"]]
     if groups:
         if cleaned:
             hooks["PreToolUse"] = cleaned
@@ -405,6 +412,13 @@ def main() -> int:
             manifest[str(path.relative_to(args.home))] = "absent"
     if replace_policy_link:
         manifest[str(POLICY_DIR)] = f"symlink -> {policy_link_target}"
+        # Keep everything the link exposed, managed or not, before it is replaced.
+        shutil.copytree(
+            args.home / POLICY_DIR,
+            checkpoint / "policy-link-target",
+            ignore=shutil.ignore_patterns("__pycache__"),
+            symlinks=True,
+        )
     (checkpoint / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     if replace_policy_link:
         policy_dir = args.home / POLICY_DIR

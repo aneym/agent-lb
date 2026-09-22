@@ -636,11 +636,11 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
 
     assert plan.returncode == 0, plan.stderr
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
-    # No pool data skips the pace-gated Opus entry, no Terra or Cursor list is served,
-    # and wildcards are not models: nothing is routable rather than a literal "glm-*".
+    # No pool data skips the pace-gated Opus entry and no Terra or Cursor model is
+    # served: nothing is routable, rather than a wildcard or an unpaced Opus.
     assert implement.returncode == 2
     assert "pace unknown" in implement.stderr
-    assert "glm-* is a wildcard, not a served model" in implement.stderr
+    assert "no non-retired terra model is served" in implement.stderr
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
 
@@ -686,7 +686,8 @@ def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligi
     [
         (60.0, 84.0, 3, "opus-seat", "admitted: pool anthropic-general pace +10.0"),
         (20.0, 84.0, 3, "cursor-seat", "behind pace: -30.0 < -10"),
-        (60.0, 84.0, 1, "cursor-seat", "critical: 1 eligible account"),
+        (60.0, 84.0, 1, "cursor-seat", "critical: 1 eligible account(s)"),
+        (60.0, 84.0, 2, "cursor-seat", "low: 2 eligible account(s)"),
     ],
 )
 def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
@@ -772,3 +773,90 @@ def test_report_groups_closeouts_under_the_dispatched_model_and_sums_tokens(home
     assert result.returncode == 0, result.stderr
     assert "| implement | opus-seat | opus | 1 | 0 | 1 | 100% | 120 | 1,200 | 300 |" in result.stdout
     assert "claude-opus-5-5" not in result.stdout
+
+
+def test_pace_reads_the_weekly_figures_not_the_five_hour_capped_aggregate(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_fixture(
+        fixtures,
+        "api_pools.json",
+        {
+            "pools": [
+                {
+                    "id": "anthropic-general",
+                    "status": "ok",
+                    "eligibleAccounts": 4,
+                    "aggregateRemainingPercent": 10.0,
+                    "resetAt": reset,
+                    "weeklyRemainingPercent": 80.0,
+                    "weeklyResetAt": reset,
+                }
+            ]
+        },
+    )
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["seat"] == "opus-seat"
+    assert "pace +30.0" in json.loads(result.stdout)["reason"]
+
+
+def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    _paced_pools(fixtures, 60.0, 84.0, 4)
+    # No Sol served: Opus-written work could not be audited, so Opus is skipped.
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-luna"}]})
+    extra = {
+        "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
+        "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
+    }
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert result.returncode == 0, result.stderr
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "cursor-seat"
+    assert "its auditor sol-latest is unavailable" in picked["reason"]
+
+
+def test_report_counts_repeated_records_as_one_task_with_rework(tmp_path: Path) -> None:
+    extra = {"ROUTE_LEDGER": str(tmp_path / "dispatch.jsonl")}
+    for audit, rework in (("fix-needed", "0"), ("pass", "1")):
+        run(
+            "record",
+            "--task",
+            "t-1",
+            "--seat",
+            "cursor-seat",
+            "--model",
+            "grok",
+            "--tokens-in",
+            "100",
+            "--tokens-out",
+            "10",
+            "--wall-s",
+            "20",
+            "--audit",
+            audit,
+            "--rework",
+            rework,
+            home=tmp_path,
+            extra=extra,
+        )
+    run(
+        "record",
+        "--class",
+        "mechanical",
+        "--task",
+        "m-1",
+        "--seat",
+        "cursor-seat",
+        "--model",
+        "grok",
+        "--audit",
+        "pass",
+        home=tmp_path,
+        extra=extra,
+    )
+    report = run("report", "--implement", home=tmp_path, extra=extra)
+    assert "| cursor-seat | grok | 1 | 1/1 | 1.0 | 40 | 200 | 20 | 220 |" in report.stdout

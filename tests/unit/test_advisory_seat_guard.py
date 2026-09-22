@@ -148,6 +148,13 @@ def test_brief_that_asks_to_remove_a_retired_pin_is_admitted(tmp_path: Path, bri
     assert record and "denied" not in record
 
 
+def test_negated_removal_followed_by_a_use_instruction_is_still_denied(tmp_path: Path) -> None:
+    brief = "Do not remove it; use `--model gpt-5.6-sol` for this run."
+    payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": "cursor-seat", "prompt": brief}})
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
+    assert output["permissionDecision"] == "deny"
+
+
 def test_opus_dispatch_is_admitted(tmp_path: Path) -> None:
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="opus")
     assert "permissionDecision" not in output

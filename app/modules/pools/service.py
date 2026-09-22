@@ -196,12 +196,22 @@ def _weekly_pool(
         for summary in summaries
         if is_pool_usable(summary)
     ]
-    return _pool(
+    pool = _pool(
         pool_id=pool_id,
         provider=provider,
         kind="weekly",
         accounts=len(summaries),
         candidates=candidates,
+    )
+    usable = [summary for summary in summaries if is_pool_usable(summary)]
+    if not usable:
+        return pool
+    resets = [summary.reset_at_secondary for summary in usable if summary.reset_at_secondary is not None]
+    return pool.model_copy(
+        update={
+            "weekly_remaining_percent": sum(_secondary_remaining(summary) for summary in usable) / len(usable),
+            "weekly_reset_at": min(resets) if resets else None,
+        }
     )
 
 

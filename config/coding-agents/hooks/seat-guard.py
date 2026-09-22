@@ -83,12 +83,16 @@ def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
     return bool(bare) and any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
 
 
-# Words just before a pin that make it a reference to drop, not an instruction to use.
+# A pin is only a reference to drop, not an instruction to use, when a removal word
+# sits in the same clause right before it ("remove --model X", "replace model: X").
+# The clause ends at sentence punctuation or a new instruction verb, so "do not
+# remove it; use --model X" is still an instruction to use X.
 REMOVAL_CONTEXT = re.compile(
-    r"\b(?:remove|removes|removing|replace|replaces|replacing|retire|retired|drop|delete|strip|"
-    r"instead of|no longer|never|not|was|were|from|used to|old|stale)\b[^\n]{0,40}$",
+    r"\b(?:remove|removes|removing|replace|replaces|replacing|retire|drop|delete|strip|"
+    r"instead of|no longer|never|used to)\b[^.;:!?\n]{0,40}$",
     re.IGNORECASE,
 )
+CLAUSE_BREAK = re.compile(r"[.;:!?\n]|\b(?:use|set|pass|switch to|then)\b", re.IGNORECASE)
 
 
 def retired_pins(prompt: str, patterns: tuple) -> list:
@@ -97,8 +101,10 @@ def retired_pins(prompt: str, patterns: tuple) -> list:
         candidate = match.group(1).rstrip(".,;:)")
         if not forbidden_model(candidate, patterns) or candidate in found:
             continue
-        line_start = prompt.rfind("\n", 0, match.start()) + 1
-        if REMOVAL_CONTEXT.search(prompt[line_start : match.start()]):
+        before = prompt[max(0, match.start() - 80) : match.start()]
+        breaks = list(CLAUSE_BREAK.finditer(before))
+        clause = before[breaks[-1].end() :] if breaks else before
+        if REMOVAL_CONTEXT.search(clause):
             continue
         found.append(candidate)
     return found

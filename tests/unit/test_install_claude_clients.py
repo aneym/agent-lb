@@ -626,3 +626,33 @@ def test_policy_installer_replaces_a_symlinked_policy_dir_with_a_full_copy(tmp_p
     for name in ("ROUTING.md", "routing-table.json", "claude-adapter.md", "verify-routing"):
         assert (policy / name).read_bytes() == (POLICY_INSTALLER.parent / name).read_bytes()
     assert (policy / "agents" / "planner.md").exists()
+
+
+def test_symlink_migration_checkpoints_every_file_the_link_exposed(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    target = tmp_path / "old-policy"
+    target.mkdir()
+    (target / "ROUTING.md").write_text("old canon\n")
+    (target / "notes-only-here.md").write_text("custom\n")
+    policy = home / ".agents" / "policy" / "coding-agents"
+    policy.parent.mkdir(parents=True)
+    policy.symlink_to(target)
+
+    result = subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+
+    checkpoint = Path(
+        next(line.removeprefix("checkpoint ") for line in result.stdout.splitlines() if line.startswith("checkpoint "))
+    )
+    assert (checkpoint / "policy-link-target" / "notes-only-here.md").read_text() == "custom\n"
+    assert (policy / "ROUTING.md").read_bytes() == (POLICY_INSTALLER.parent / "ROUTING.md").read_bytes()
+
+
+def test_uninstall_removes_the_seat_guard_registration(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"], check=True, capture_output=True, text=True
+    )
+    settings = json.loads((home / ".claude" / "settings.json").read_text())
+    commands = [h["command"] for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
+    assert not any("hooks/seat-guard.py" in command for command in commands)

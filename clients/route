@@ -367,8 +367,11 @@ def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
     Positive means the pool has more left than time left (spend it), negative means it is
     being spent faster than the cycle allows.
     """
-    remaining = pool.get("aggregateRemainingPercent")
-    reset_at = _parse_ts(pool.get("resetAt"))
+    # The weekly figures when the LB sends them: the aggregate is capped by the
+    # five-hour window and would read a short burst as the week running out.
+    weekly = pool.get("weeklyRemainingPercent")
+    remaining = weekly if weekly is not None else pool.get("aggregateRemainingPercent")
+    reset_at = _parse_ts(pool.get("weeklyResetAt") if weekly is not None else pool.get("resetAt"))
     if isinstance(remaining, bool) or not isinstance(remaining, (int, float)) or reset_at is None:
         return None
     hours_left = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
@@ -414,6 +417,7 @@ def command_pools(args: argparse.Namespace) -> int:
 # guard.
 
 MODELS_CACHE_MAX_AGE_SECONDS = 86400
+LOW_BAND_MAX_ELIGIBLE = 2
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
 
 
@@ -731,15 +735,41 @@ def command_pick(args: argparse.Namespace) -> int:
             if pace is None:
                 skipped.append(f"{seat} (pool {pool} pace unknown)")
                 continue
-            if pool_doc.get("eligibleAccounts") is not None and pool_doc["eligibleAccounts"] <= 1:
-                skipped.append(f"{seat} (pool {pool} critical: {pool_doc['eligibleAccounts']} eligible account)")
+            eligible = pool_doc.get("eligibleAccounts")
+            if isinstance(eligible, int) and eligible <= LOW_BAND_MAX_ELIGIBLE:
+                # ROUTING.md rule 1: a low (2) or critical (1) pool serves judgment only.
+                band = "critical" if eligible <= 1 else "low"
+                skipped.append(f"{seat} (pool {pool} {band}: {eligible} eligible account(s))")
                 continue
             if pace < min_pace:
                 skipped.append(f"{seat} (pool {pool} behind pace: {pace:+.1f} < {min_pace:+g})")
                 continue
             paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
+        auditor = None
+        audit_spec = spec.get("audit")
+        if isinstance(audit_spec, dict) and isinstance(audit_spec.get("by_author_vendor"), dict):
+            audit_entry = audit_spec["by_author_vendor"].get(vendor)
+            if not isinstance(audit_entry, dict) or not isinstance(audit_entry.get("model"), str):
+                skipped.append(f"{seat} (no auditor declared for author vendor {vendor})")
+                continue
+            if audit_entry["model"] in aliases and served is None:
+                served, _ = served_models()
+            audit_model, audit_why = resolve_alias(table, audit_entry["model"], served or [])
+            if audit_model is None:
+                # Work nobody can audit is not accepted work; route to a seat that can be.
+                skipped.append(f"{seat} (its auditor {audit_entry['model']} is unavailable: {audit_why})")
+                continue
+            auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
         routable.append(
-            {"seat": seat, "model": model, "alias": alias, "pool": pool, "vendor": vendor, "poolStatus": status}
+            {
+                "seat": seat,
+                "model": model,
+                "alias": alias,
+                "pool": pool,
+                "vendor": vendor,
+                "poolStatus": status,
+                "auditor": auditor,
+            }
         )
 
     if not routable:
@@ -761,16 +791,7 @@ def command_pick(args: argparse.Namespace) -> int:
         reasons.append("skipped " + "; ".join(skipped))
     if pools_error:
         reasons.append(f"pool status unknown ({pools_error})")
-    audit = spec.get("audit")
-    auditor = None
-    if isinstance(audit, dict) and isinstance(audit.get("by_author_vendor"), dict):
-        entry = audit["by_author_vendor"].get(chosen["vendor"])
-        if isinstance(entry, dict) and isinstance(entry.get("model"), str):
-            # Return a dispatchable model next to the alias, resolved like the seat was.
-            if entry["model"] in aliases and served is None:
-                served, _ = served_models()
-            resolved, why = resolve_alias(table, entry["model"], served or [])
-            auditor = {**entry, "alias": entry["model"], "model": resolved, "reason": why}
+    auditor = chosen["auditor"]
     result = {
         "class": args.task_class,
         "state_age_s": None if age is None else round(age, 1),
@@ -1355,7 +1376,12 @@ def implement_results(since: datetime) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         stamp = _parse_ts(record.get("ts"))
-        if record.get("event") == IMPLEMENT_EVENT and stamp is not None and stamp >= since:
+        if (
+            record.get("event") == IMPLEMENT_EVENT
+            and record.get("class", "implement") == "implement"
+            and stamp is not None
+            and stamp >= since
+        ):
             rows.append(record)
     return rows
 
@@ -1366,22 +1392,37 @@ def print_implement_report(since: datetime, days: int) -> None:
     if not results:
         print("No implement_result rows yet (`route record` writes them).")
         return
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    # One row per task per seat/model: repeated records for a task are its rework
+    # attempts, so they add tokens and time but not tasks; the last verdict stands.
+    tasks: dict[tuple[str, str, str], dict[str, Any]] = {}
     for record in results:
-        groups.setdefault((str(record.get("seat")), str(record.get("model"))), []).append(record)
+        key = (str(record.get("seat")), str(record.get("model")), str(record.get("task")))
+        task = tasks.setdefault(key, {"attempts": 0, "tokens_in": 0, "tokens_out": 0, "wall_s": 0.0, "rework": 0})
+        task["attempts"] += 1
+        task["audit"] = record.get("audit")
+        for field in ("tokens_in", "tokens_out"):
+            if isinstance(record.get(field), int) and not isinstance(record.get(field), bool):
+                task[field] += record[field]
+        if isinstance(record.get("wall_s"), (int, float)):
+            task["wall_s"] += float(record["wall_s"])
+        if isinstance(record.get("rework"), int):
+            task["rework"] = max(task["rework"], record["rework"])
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for (seat, model, _task), task in tasks.items():
+        task["rework"] = max(task["rework"], task["attempts"] - 1)
+        groups.setdefault((seat, model), []).append(task)
     print("| seat | model | tasks | audit pass | mean rework | median wall s | tokens in | tokens out | tokens/task |")
     print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
-    for (seat, model), records in sorted(groups.items()):
-        passes = sum(1 for r in records if r.get("audit") == "pass")
-        rework = [r["rework"] for r in records if isinstance(r.get("rework"), int)]
-        walls = [r["wall_s"] for r in records if isinstance(r.get("wall_s"), (int, float))]
-        tin = sum(r["tokens_in"] for r in records if isinstance(r.get("tokens_in"), int))
-        tout = sum(r["tokens_out"] for r in records if isinstance(r.get("tokens_out"), int))
-        per_task = f"{(tin + tout) / len(records):,.0f}" if (tin or tout) else "-"
-        mean_rework = f"{statistics.mean(rework):.1f}" if rework else "-"
+    for (seat, model), group in sorted(groups.items()):
+        passes = sum(1 for task in group if task.get("audit") == "pass")
+        tin = sum(task["tokens_in"] for task in group)
+        tout = sum(task["tokens_out"] for task in group)
+        walls = [task["wall_s"] for task in group if task["wall_s"]]
+        per_task = f"{(tin + tout) / len(group):,.0f}" if (tin or tout) else "-"
+        mean_rework = f"{statistics.mean(task['rework'] for task in group):.1f}"
         median_wall = f"{statistics.median(walls):.0f}" if walls else "-"
         print(
-            f"| {seat} | {model} | {len(records)} | {passes}/{len(records)} | {mean_rework} | "
+            f"| {seat} | {model} | {len(group)} | {passes}/{len(group)} | {mean_rework} | "
             f"{median_wall} | {tin:,} | {tout:,} | {per_task} |"
         )
 

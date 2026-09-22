@@ -303,6 +303,8 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
         "resetAt",
         "status",
         "source",
+        "weeklyRemainingPercent",
+        "weeklyResetAt",
     }
 
 
@@ -323,3 +325,18 @@ def test_blocked_accounts_do_not_inflate_usable_count_or_headroom() -> None:
     assert pool.eligible_accounts == 2
     assert pool.headroom_percent == 90.0
     assert pool.aggregate_remaining_percent == 24.2
+
+
+def test_weekly_pool_reports_weekly_remaining_uncapped_by_the_five_hour_window() -> None:
+    summaries = [
+        _summary("a", primary_remaining=10.0, secondary_remaining=80.0, reset_at_secondary=_LATER_RESET),
+        _summary("b", primary_remaining=100.0, secondary_remaining=60.0, reset_at_secondary=_RESET),
+    ]
+
+    pool = _pool(build_pools(summaries), "anthropic-general")
+
+    # The aggregate is what can be served now (capped by the 5h window); the weekly
+    # figure is what the weekly cycle still has, which is what pacing needs.
+    assert pool.aggregate_remaining_percent == 35.0
+    assert pool.weekly_remaining_percent == 70.0
+    assert pool.weekly_reset_at == _RESET
