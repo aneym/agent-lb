@@ -124,15 +124,16 @@ release-please from your commit titles.
 - **Secrets**: never commit API keys, tokens, account credentials, or `.env`
   files. The CI redaction is best-effort, not a safety net.
 
-Run the full lint/test gate locally before pushing:
+Run the complete local CI tier before asking to merge:
 
 ```bash
-uv run pre-commit run local-ci --hook-stage manual --all-files
+python3 scripts/local_ci.py run <PR|sha|main>
+python3 scripts/local_ci.py status <40sha>
 ```
 
-The `local-ci` hook runs `make ci`, which is the local
-version of the GitHub Actions CI gate. You can also run a single CI job while
-iterating, for example:
+Use `python3 scripts/local_ci.py show <40sha>` to inspect the receipt and
+`python3 scripts/local_ci.py doctor` to diagnose unavailable local tools.
+Local CI always runs the entire suite; a selector is not a merge gate.
 
 ```bash
 make lint
@@ -191,11 +192,12 @@ PR titles must follow the same format — that's the title release-please reads.
 
 1. Create a branch from `main`: `git checkout -b <type>/<short-name>`.
 2. Make atomic commits with Conventional Commit titles.
-3. Run the lint/test gate locally (see above).
+3. Run local CI and retain its exact-SHA receipt (see above).
 4. Open a PR using the template. Link the relevant issue.
-5. Codex Review (and a human maintainer) will review. Address feedback by
-   pushing follow-up commits — no force-pushing during active review.
-6. Once approved and CI is green, a maintainer squash-merges with a clean
+5. An owner or coordinator reviews the current diff. Address findings with
+   follow-up commits — no force-pushing during active review.
+6. Once the exact-SHA local receipt is green and the diff is reviewed, a
+   maintainer squash-merges with a clean
    Conventional Commits title.
 
 ## Merge gates and collaborator rules
@@ -209,29 +211,22 @@ quality so far.
 
 Before a PR is squash-merged into `main`:
 
-1. **CI must be all-green** on the merge-target head. "UNSTABLE, looks
-   fine" is not a green CI; rerun, fix, or wait. The Helm / migration /
-   PostgreSQL test jobs are part of the gate, not optional. The
-   `CI Required` check is the branch-protection check to require: it
-   depends on every CI job and also runs for merge queue synthetic merge
-   groups, so a stale PR head cannot bypass a broken merge result.
-2. **`@codex review` must be clean — or its findings addressed — on the
-   merge-target head.** Every PR triggers `@codex review` at least once
-   against the head that's about to be merged. Local `codex review
-   --base origin/main` runs are encouraged but don't substitute for the
-   cloud review (the cloud `@codex review` reliably catches things the
-   local run misses).
-   The `🤖 codex: ok` label is maintained by the trusted
-   `Codex review labels` workflow from current-head CI and current-head
-   Codex review evidence. Treat the label as an audit aid, not as a
-   substitute for branch protection or merge queue checks.
-   - **P1 findings**: fix in the PR, or justify in-thread with a short
-     write-up of why the finding doesn't apply. No silent skipping.
-   - **P2 findings**: fix in the PR, or open a follow-up issue and link
-     it in the PR thread before merging.
-3. **`mergeable` must be `CLEAN`** in the GitHub API — no merge
-   conflicts, no requested-changes review still outstanding, no missing
-   required status check.
+1. **Local CI must be green for the exact merge candidate SHA.** Run
+   `python3 scripts/local_ci.py run <PR|sha|main>` in its isolated worktree,
+   then require `python3 scripts/local_ci.py status <40sha>` to pass. The
+   latest same-machine receipt and its log hashes must match that SHA, and every
+   tier must pass. The full tier includes frontend, lint/types, SQLite tests,
+   disposable PostgreSQL parity/migrations, package, Docker vulnerability,
+   Helm/kind, and native Swift checks. Missing tools are red, not skipped.
+   A different machine's receipt is not authoritative.
+2. **Owner/coordinator diff review is required.** Review the current candidate
+   diff and address findings. Hosted CI and `🤖 codex` labels are not required
+   merge dependencies and are not a substitute for this review.
+3. **`mergeable=MERGEABLE` and `mergeStateStatus=CLEAN`** in the GitHub API and no requested-changes
+   review may remain outstanding. Hosted status checks are not a merge gate.
+   After merging, run `python3 scripts/local_ci.py run main` and retain the
+   exact merged-SHA receipt. A red result remains red; it is not waived by
+   being pre-existing.
 4. **OpenSpec change folder for behavior changes** (see
    [Workflow: OpenSpec-first](#workflow-openspec-first)). Pure
    refactors, docs-only edits, dev-tool changes, and test stabilization
@@ -310,8 +305,8 @@ To keep the project unblocked if the owner is unavailable, the following
 self-merge escape hatch applies:
 
 - If a collaborator's PR has been waiting on a maintainer merge for
-  **more than 14 days** with **all merge gates met** (CI green,
-  `@codex review` clean or findings addressed, `mergeable=CLEAN`, no
+  **more than 14 days** with **all merge gates met** (exact-SHA local CI green,
+  owner/coordinator review, `mergeable=CLEAN`, no
   outstanding requested-changes review, no objection from any other
   active collaborator in the thread), the PR author may self-merge.
 - Self-merge under this clause **must** include a comment on the PR
@@ -325,8 +320,8 @@ self-merge escape hatch applies:
 
 These rules are intentionally lightweight. They don't require:
 
-- A second human reviewer in addition to `@codex review` for every PR.
-  Codex review + the PR author + a maintainer merge is the baseline.
+- A hosted bot review or hosted CI check. The local receipt and
+  owner/coordinator diff review are the baseline.
 - Squash-merge commit message rewriting beyond the Conventional Commits
   title. The PR description ends up in the body; that's enough.
 - A formal escalation process for disagreements. If a P1 finding is

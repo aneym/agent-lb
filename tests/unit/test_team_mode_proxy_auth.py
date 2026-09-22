@@ -16,7 +16,6 @@ from starlette.requests import HTTPConnection
 
 import app.core.config.settings as settings_module
 import app.core.request_locality as request_locality
-
 from app.core.auth import dependencies as auth_dependencies
 from app.core.exceptions import ProxyAuthError
 from app.modules.api_keys.service import ApiKeyData

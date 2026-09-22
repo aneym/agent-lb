@@ -51,7 +51,9 @@ def test_record_lag_logs_and_increments_counter_when_over_threshold(
 _RATE_LIMIT_SECONDS = lag_monitor._WARNING_RATE_LIMIT_SECONDS
 
 
-def test_record_lag_rate_limits_repeated_warnings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def test_record_lag_rate_limits_repeated_warnings(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     gauge = MagicMock()
     counter = MagicMock()
     monkeypatch.setattr(lag_monitor.metrics, "event_loop_lag_seconds", gauge)
