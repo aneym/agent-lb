@@ -29,9 +29,9 @@ _OK_HEADROOM_PERCENT = 25.0
 _LOW_HEADROOM_PERCENT = 5.0
 
 # Rows that cannot answer a request now and will not without operator action.
-# Rate-limited and quota-exceeded accounts stay in: their remaining percent is
-# already ~0, which is exactly the signal the pool should carry, and they
-# recover on their own at the window reset.
+# Rate-limited and quota-exceeded accounts stay in the aggregate: they recover
+# on their own at the window reset. They contribute zero until then and do not
+# count as eligible.
 _UNROUTABLE_STATUSES = frozenset(
     {
         AccountStatus.PAUSED.value,
@@ -39,6 +39,7 @@ _UNROUTABLE_STATUSES = frozenset(
         AccountStatus.DEACTIVATED.value,
     }
 )
+_LIMITED_STATUSES = frozenset({AccountStatus.RATE_LIMITED.value, AccountStatus.QUOTA_EXCEEDED.value})
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,18 @@ def _primary_remaining(summary: AccountSummary) -> float:
     return 100.0 if remaining is None else float(remaining)
 
 
+def _available_now(summary: AccountSummary, window_remaining: float) -> float:
+    """What this account can serve on the next request, not only this week.
+
+    The account is blocked by whichever window is lower, and a limited status
+    (an upstream 429 cooldown or a spent window) blocks it whatever the
+    windows say.
+    """
+    if summary.status in _LIMITED_STATUSES:
+        return 0.0
+    return min(window_remaining, _primary_remaining(summary))
+
+
 def _by_provider(summaries: list[AccountSummary], provider: str) -> list[AccountSummary]:
     return [summary for summary in summaries if normalize_provider_name(summary.provider) == provider]
 
@@ -106,7 +119,11 @@ def _pool(
         provider=provider,
         kind=kind,
         accounts=accounts,
-        eligible_accounts=len(candidates) if eligible_accounts is None else eligible_accounts,
+        eligible_accounts=(
+            sum(1 for candidate in candidates if candidate.remaining_percent > 0.0)
+            if eligible_accounts is None
+            else eligible_accounts
+        ),
         headroom_percent=headroom_percent,
         aggregate_remaining_percent=aggregate,
         reset_at=best.reset_at if best is not None else None,
@@ -135,15 +152,25 @@ def _fable_pool(anthropic: list[AccountSummary]) -> PoolSummary:
         if marker is not None and marker.fresh:
             candidates.append(
                 _Candidate(
-                    remaining_percent=max(0.0, 100.0 - float(marker.used_percent)),
+                    remaining_percent=_available_now(summary, max(0.0, 100.0 - float(marker.used_percent))),
                     reset_at=marker.reset_at or summary.reset_at_secondary,
                 )
             )
             continue
         candidates.append(
-            _Candidate(remaining_percent=_secondary_remaining(summary), reset_at=summary.reset_at_secondary)
+            _Candidate(
+                remaining_percent=_available_now(summary, _secondary_remaining(summary)),
+                reset_at=summary.reset_at_secondary,
+            )
         )
-    eligible_accounts = sum(1 for summary in anthropic if is_pool_usable(summary) and summary.fable_eligible is True)
+    eligible_accounts = sum(
+        1
+        for summary in anthropic
+        if is_pool_usable(summary)
+        and summary.fable_eligible is True
+        and summary.status not in _LIMITED_STATUSES
+        and _primary_remaining(summary) > 0.0
+    )
     return _pool(
         pool_id="anthropic-fable",
         provider=ANTHROPIC_PROVIDER_NAME,
@@ -162,7 +189,10 @@ def _weekly_pool(
     provider: str,
 ) -> PoolSummary:
     candidates = [
-        _Candidate(remaining_percent=_secondary_remaining(summary), reset_at=summary.reset_at_secondary)
+        _Candidate(
+            remaining_percent=_available_now(summary, _secondary_remaining(summary)),
+            reset_at=summary.reset_at_secondary,
+        )
         for summary in summaries
         if is_pool_usable(summary)
     ]
@@ -182,7 +212,10 @@ def _primary_window_pool(
     provider: str,
 ) -> PoolSummary:
     candidates = [
-        _Candidate(remaining_percent=_primary_remaining(summary), reset_at=summary.reset_at_primary)
+        _Candidate(
+            remaining_percent=_available_now(summary, _primary_remaining(summary)),
+            reset_at=summary.reset_at_primary,
+        )
         for summary in summaries
         if is_pool_usable(summary)
     ]

@@ -253,6 +253,14 @@ def test_pools_falls_back_to_the_accounts_endpoint_when_the_pools_endpoint_is_mi
                     "resetAtSecondary": "2026-09-20T11:00:00Z",
                 },
                 {
+                    # 5-hour window spent: blocked now whatever the week says.
+                    "provider": "anthropic",
+                    "status": "active",
+                    "fableEligible": False,
+                    "usage": {"primaryRemainingPercent": 0.0, "secondaryRemainingPercent": 95.0},
+                    "resetAtSecondary": "2026-09-20T12:00:00Z",
+                },
+                {
                     "provider": "openai",
                     "status": "active",
                     "usage": {"secondaryRemainingPercent": 90.0},
@@ -270,10 +278,10 @@ def test_pools_falls_back_to_the_accounts_endpoint_when_the_pools_endpoint_is_mi
     pools = {pool["id"]: pool for pool in document["pools"]}
     assert pools["anthropic-fable"]["kind"] == "fable_scoped"
     assert pools["anthropic-fable"]["headroomPercent"] == 80.0
-    assert pools["anthropic-general"]["accounts"] == 3
+    assert pools["anthropic-general"]["accounts"] == 4
     assert pools["anthropic-general"]["eligibleAccounts"] == 2
     assert pools["anthropic-general"]["headroomPercent"] == 80.0
-    assert pools["anthropic-general"]["aggregateRemainingPercent"] == 50.0
+    assert pools["anthropic-general"]["aggregateRemainingPercent"] == 25.0
     assert pools["anthropic-general"]["resetAt"] == "2026-09-21T11:00:00Z"
     assert pools["anthropic-general"]["status"] == "ok"
     assert pools["openai-codex"]["status"] == "ok"

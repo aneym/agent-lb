@@ -255,12 +255,23 @@ def pool_status(headroom: float) -> str:
     return "exhausted"
 
 
-def _remaining(account: dict[str, Any]) -> float:
-    usage = account.get("usage")
-    value = usage.get("secondaryRemainingPercent") if isinstance(usage, dict) else None
+def _window(usage: Any, key: str, missing: float) -> float:
+    value = usage.get(key) if isinstance(usage, dict) else None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
+        return missing
     return float(value)
+
+
+def _remaining(account: dict[str, Any]) -> float:
+    """What the account can serve now: the lower of its 5-hour and weekly windows."""
+    if account.get("status") != "active":
+        return 0.0
+    usage = account.get("usage")
+    # No 5-hour window reported is an unmetered provider, not a spent one.
+    return min(_window(usage, "secondaryRemainingPercent", 0.0), _window(usage, "primaryRemainingPercent", 100.0))
+
+
+_ROUTABLE_STATUSES = frozenset({"active", "rate_limited", "quota_exceeded"})
 
 
 def _pool_ids(account: dict[str, Any]) -> list[str]:
@@ -291,10 +302,11 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
 
     pools = []
     for pool_id, members in sorted(grouped.items()):
-        usable = [account for account in members if account.get("status") == "active"]
-        remaining = [_remaining(account) for account in usable]
-        headroom = max(remaining) if remaining else 0.0
-        aggregate = statistics.fmean(remaining) if remaining else 0.0
+        # Limited accounts stay in the aggregate at zero, as /api/pools counts them.
+        routable = [account for account in members if account.get("status") in _ROUTABLE_STATUSES]
+        usable = [account for account in routable if _remaining(account) > 0.0]
+        headroom = max((_remaining(account) for account in usable), default=0.0)
+        aggregate = statistics.fmean(_remaining(account) for account in routable) if routable else 0.0
         resets = sorted(
             value
             for value in (account.get("resetAtSecondary") for account in (usable or members))

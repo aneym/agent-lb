@@ -203,7 +203,7 @@ def test_rate_limited_account_stays_in_and_reads_exhausted() -> None:
 
     pool = _pool(build_pools(summaries), "anthropic-general")
 
-    assert pool.eligible_accounts == 1
+    assert pool.eligible_accounts == 0
     assert pool.headroom_percent == 0.0
     assert pool.status == "exhausted"
 
@@ -304,3 +304,22 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
         "status",
         "source",
     }
+
+
+def test_blocked_accounts_do_not_inflate_usable_count_or_headroom() -> None:
+    """Live 2026-09-22: `route pools` read 100% headroom while 4 of 6 Anthropic
+    accounts could not take a request. A spent 5-hour window or a limited status
+    blocks the account now, whatever its weekly window says."""
+    summaries = [
+        _summary("weekly-low", primary_remaining=98.0, secondary_remaining=31.0),
+        _summary("fresh", primary_remaining=90.0, secondary_remaining=100.0),
+        _summary("weekly-spent", status="quota_exceeded", primary_remaining=100.0, secondary_remaining=0.0),
+        _summary("five-hour-spent", status="rate_limited", primary_remaining=0.0, secondary_remaining=73.0),
+        _summary("cooling", status="rate_limited", primary_remaining=40.0, secondary_remaining=100.0),
+    ]
+
+    pool = _pool(build_pools(summaries), "anthropic-general")
+
+    assert pool.eligible_accounts == 2
+    assert pool.headroom_percent == 90.0
+    assert pool.aggregate_remaining_percent == 24.2
