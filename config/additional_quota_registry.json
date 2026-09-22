@@ -123,24 +123,38 @@
       "z-ai/glm-5.3",
       "z-ai/glm-5.3-20260816"
     ],
-    "limit_name_aliases": ["openrouter_credits"],
-    "metered_feature_aliases": ["openrouter_completions"]
+    "limit_name_aliases": [
+      "openrouter_credits"
+    ],
+    "metered_feature_aliases": [
+      "openrouter_completions"
+    ]
   },
   {
     "quota_key": "anthropic_catalog",
     "usage_source": "primary",
     "display_label": "Anthropic catalog",
     "routing_policy": "normal",
-    "model_ids": ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5"],
-    "limit_name_aliases": ["anthropic_catalog"]
+    "model_ids": [
+      "claude-fable-5-1",
+      "claude-opus-5"
+    ],
+    "limit_name_aliases": [
+      "anthropic_catalog"
+    ]
   },
   {
     "quota_key": "openai_subscription",
     "usage_source": "primary",
     "display_label": "OpenAI subscription",
     "routing_policy": "normal",
-    "model_ids": ["gpt-6-astra", "gpt-5.6-luna"],
-    "limit_name_aliases": ["openai_subscription"]
+    "model_ids": [
+      "gpt-6-astra",
+      "gpt-5.6-luna"
+    ],
+    "limit_name_aliases": [
+      "openai_subscription"
+    ]
   },
   {
     "quota_key": "kimi_coding",
