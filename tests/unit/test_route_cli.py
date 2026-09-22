@@ -636,11 +636,13 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
 
     assert plan.returncode == 0, plan.stderr
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
-    # No pool data skips the pace-gated Opus entry and no Terra or Cursor model is
-    # served: nothing is routable, rather than a wildcard or an unpaced Opus.
-    assert implement.returncode == 2
-    assert "pace unknown" in implement.stderr
-    assert "no non-retired terra model is served" in implement.stderr
+    # No pool data skips the pace-gated Opus entry; implement falls to Codex Sol,
+    # whose auditor is Opus.
+    assert implement.returncode == 0, implement.stderr
+    picked = json.loads(implement.stdout)
+    assert (picked["seat"], picked["model"]) == ("codex-sol", "gpt-6-sol")
+    assert "pace unknown" in picked["reason"]
+    assert picked["audit"]["alias"] == "opus-latest"
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
 
@@ -675,6 +677,7 @@ def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligi
                     "eligibleAccounts": eligible,
                     "aggregateRemainingPercent": remaining,
                     "resetAt": reset,
+                    "weeklyPacePercent": remaining - hours_to_reset / 168 * 100,
                 }
             ]
         },
@@ -685,9 +688,9 @@ def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligi
     ("remaining", "hours", "eligible", "expected_seat", "why"),
     [
         (60.0, 84.0, 3, "opus-seat", "admitted: pool anthropic-general pace +10.0"),
-        (20.0, 84.0, 3, "cursor-seat", "behind pace: -30.0 < -10"),
-        (60.0, 84.0, 1, "cursor-seat", "critical: 1 eligible account(s)"),
-        (60.0, 84.0, 2, "cursor-seat", "low: 2 eligible account(s)"),
+        (20.0, 84.0, 3, "codex-sol", "behind pace: -30.0 < -10"),
+        (60.0, 84.0, 1, "codex-sol", "critical: 1 eligible account(s)"),
+        (60.0, 84.0, 2, "codex-sol", "low: 2 eligible account(s)"),
     ],
 )
 def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
@@ -775,9 +778,11 @@ def test_report_groups_closeouts_under_the_dispatched_model_and_sums_tokens(home
     assert "claude-opus-5-5" not in result.stdout
 
 
-def test_pace_reads_the_weekly_figures_not_the_five_hour_capped_aggregate(tmp_path: Path) -> None:
+def test_an_lb_without_weekly_pace_is_paced_from_its_accounts(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
-    reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(timezone.utc)
+    reset = (now + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # An older /api/pools: no weeklyPacePercent, and a five-hour-capped aggregate.
     write_fixture(
         fixtures,
         "api_pools.json",
@@ -786,21 +791,30 @@ def test_pace_reads_the_weekly_figures_not_the_five_hour_capped_aggregate(tmp_pa
                 {
                     "id": "anthropic-general",
                     "status": "ok",
-                    "eligibleAccounts": 4,
+                    "eligibleAccounts": 3,
                     "aggregateRemainingPercent": 10.0,
                     "resetAt": reset,
-                    "weeklyRemainingPercent": 80.0,
-                    "weeklyResetAt": reset,
                 }
             ]
         },
     )
+    accounts = [
+        {
+            "provider": "anthropic",
+            "status": "active",
+            "resetAtSecondary": reset,
+            "usage": {"primaryRemainingPercent": 10.0, "secondaryRemainingPercent": 80.0},
+        }
+        for _ in range(3)
+    ]
+    write_fixture(fixtures, "api_accounts.json", {"accounts": accounts})
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
     result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["seat"] == "opus-seat"
-    assert "pace +30.0" in json.loads(result.stdout)["reason"]
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "opus-seat"
+    assert "pace +30.0" in picked["reason"]
 
 
 def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:
@@ -813,10 +827,8 @@ def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:
         "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
     }
     result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
-    assert result.returncode == 0, result.stderr
-    picked = json.loads(result.stdout)
-    assert picked["seat"] == "cursor-seat"
-    assert "its auditor sol-latest is unavailable" in picked["reason"]
+    assert result.returncode == 2
+    assert "its auditor sol-latest is unavailable" in result.stderr
 
 
 def test_report_counts_repeated_records_as_one_task_with_rework(tmp_path: Path) -> None:
@@ -921,5 +933,5 @@ def test_pace_prefers_the_lbs_per_account_weekly_pace(tmp_path: Path) -> None:
     result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert result.returncode == 0, result.stderr
     picked = json.loads(result.stdout)
-    assert picked["seat"] == "cursor-seat"
+    assert picked["seat"] == "codex-sol"
     assert "behind pace: -25.0 < -10" in picked["reason"]

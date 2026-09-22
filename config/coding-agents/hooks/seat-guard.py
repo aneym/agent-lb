@@ -89,7 +89,7 @@ def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
 # remove it; use --model X" is still an instruction to use X.
 REMOVAL_CONTEXT = re.compile(
     r"\b(?:remove|removes|removing|replace|replaces|replacing|retire|drop|delete|strip|"
-    r"instead of|no longer|never|used to)\b[^.;:!?\n]{0,40}$",
+    r"instead of|no longer|never|used to|avoid|avoids|forbid|forbids|ban|bans)\b[^.;:!?\n]{0,40}$",
     re.IGNORECASE,
 )
 PROHIBITION = re.compile(r"(?:\b(?:do not|don't|dont|never|must not|should not|avoid)\s+use)\s*$", re.IGNORECASE)

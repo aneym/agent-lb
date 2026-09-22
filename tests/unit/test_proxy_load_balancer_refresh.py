@@ -39,7 +39,9 @@ from app.modules.proxy.sticky_repository import StickySessionsRepository
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import AdditionalUsageRepository, UsageRepository
 
-pytestmark = pytest.mark.unit
+# Some concurrency tests here can wait forever on a lock that never frees when they
+# fail; a per-test timeout turns that into a failure so suite wall times stay honest.
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
 _UNSET = object()
 

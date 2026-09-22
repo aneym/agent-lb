@@ -28,15 +28,18 @@ model in that class by default if possible"; "NO CODEX ASTRA. codex sol".
   tests, ledgers and pricing.
 - **Classes.** Orchestrate, plan and drive: `opus-latest`, with `sol-latest`
   as the Codex-side alternative. Review and judgment: `opus-latest`.
-  Implement: Opus first while the Anthropic general pool is on weekly pace
-  or ahead and in the ok band (owner, 2026-09-22: "as usage looks healthy,
-  opus should be doing a lot of the work"; the entry carries `min_pace` -10,
-  a low or critical pool skips it per rule 1, and an entry whose auditor
-  cannot resolve is skipped), then cheaper seats (`grok-latest` on Cursor,
-  `terra-latest` on Codex when one is served). GLM and Kimi are out of the
-  chains until a seat can run them: Cursor serves neither. `route record` logs each implement outcome
-  (seat, model, tokens, wall time, audit verdict, rework rounds) and `route
-  report --implement` compares them per model. Every closeout is audited
+  Implement means correctness-sensitive core code (balancer, routing,
+  state, auth, money paths): Opus while the Anthropic general pool is on
+  weekly pace in the ok band (`min_pace` -10; a low or critical pool skips
+  it per rule 1, and an entry whose auditor is unavailable is skipped), else
+  Codex Sol (`codex-sol`, `sol-latest`), then `terra-latest` when one is
+  served. Mechanical means bounded edits with a tight spec: `grok-latest` on
+  Cursor. The first A/B (2026-09-22: Opus 1/2 audit passes, Grok 0/2, both
+  missing things a cross-vendor audit caught) set this split; it is re-read
+  from `route report --implement` once each arm has ten or more tasks. GLM
+  and Kimi are out of the chains until a seat can run them: Cursor serves
+  neither. `route record` logs each implement outcome (seat, model, tokens,
+  wall time, audit verdict, rework rounds). Every closeout is audited
   by the other vendor's stronger model before acceptance: `opus-latest` when
   Codex, Cursor, GLM or Kimi wrote it, `sol-latest` (`codex-verifier`, xhigh)
   when Anthropic wrote it; `route pick implement` prints the auditor.
