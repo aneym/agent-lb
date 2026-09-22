@@ -1209,6 +1209,8 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
                 "ok": 0,
                 "durations": [],
                 "sessions": set(),
+                "tokens_in": 0,
+                "tokens_out": 0,
             },
         )
 
@@ -1229,8 +1231,12 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
         merged = dict(record)
         if origin is not None:
             merged.setdefault("task_class", origin.get("task_class"))
-            merged.setdefault("model", origin.get("model"))
             merged.setdefault("subagent_type", origin.get("subagent_type"))
+        # Group a closeout under the model its dispatch asked for, like the dispatch
+        # row itself; since 2026-09-22 the closeout's own `model` is what answered.
+        requested = merged.get("dispatch_model") or (origin or {}).get("model")
+        if requested or "dispatch_model" in merged:
+            merged["model"] = requested
         row = row_for(merged)
         row["closeouts"] += 1
         if merged.get("ok") is True:
@@ -1240,6 +1246,10 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
             row["durations"].append(float(duration))
         if merged.get("session_id"):
             row["sessions"].add(merged["session_id"])
+        for field in ("tokens_in", "tokens_out"):
+            value = merged.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                row[field] += value
     return rows
 
 
@@ -1278,8 +1288,11 @@ def command_report(args: argparse.Namespace) -> int:
 
     print(f"# route report — {args.days} day(s) to {now_iso()}\n")
     print(f"Ledger: `{ledger_path()}` · {len(dispatches)} dispatches · {len(closeouts)} closeouts\n")
-    print("| class | seat | model | dispatches | denied | closeouts | ok-rate | median s | sessions | session cost |")
-    print("|---|---|---|---|---:|---:|---:|---:|---:|---:|")
+    print(
+        "| class | seat | model | dispatches | denied | closeouts | ok-rate | median s | tokens in | tokens out "
+        "| sessions | session cost |"
+    )
+    print("|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for key in sorted(rows):
         row = rows[key]
         rate = ok_rate(row)
@@ -1289,7 +1302,7 @@ def command_report(args: argparse.Namespace) -> int:
         print(
             f"| {row['class']} | {row['seat']} | {row['model']} | {row['dispatches']} | {row['denied']} | "
             f"{row['closeouts']} | {'-' if rate is None else f'{rate:.0%}'} | {median} | "
-            f"{len(row['sessions'])} | {cost_text} |"
+            f"{row['tokens_in']:,} | {row['tokens_out']:,} | {len(row['sessions'])} | {cost_text} |"
         )
     if costs:
         print("\nSession cost is the whole LB session's spend; a session shared by several rows is counted in each.")

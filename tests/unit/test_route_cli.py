@@ -744,3 +744,31 @@ def test_record_and_report_compare_implement_seats_per_model(tmp_path: Path) -> 
     assert report.returncode == 0, report.stderr
     assert "| opus-seat | opus | 1 | 1/1 | 0.0 | 30 | 1,000 | 100 | 1,100 |" in report.stdout
     assert "| cursor-seat | grok-4.7-medium-fast | 1 | 0/1 | 2.0 | 30 | 1,000 | 100 | 1,100 |" in report.stdout
+
+
+def test_report_groups_closeouts_under_the_dispatched_model_and_sums_tokens(home: Path) -> None:
+    path = home / ".claude" / "logs" / "dispatch.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc) - timedelta(hours=1)
+    base = {"session_id": "s-1", "subagent_type": "opus-seat", "name": "ab-1", "task_class": "implement"}
+    rows = [
+        {**base, "ts": stamp.isoformat().replace("+00:00", "Z"), "event": "dispatch", "model": "opus"},
+        {
+            **base,
+            "ts": (stamp + timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+            "event": "closeout",
+            "model": "claude-opus-5-5",
+            "dispatch_model": "opus",
+            "tokens_in": 1200,
+            "tokens_out": 300,
+            "duration_s": 120,
+            "ok": True,
+        },
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    result = run("report", "--days", "1", home=home)
+
+    assert result.returncode == 0, result.stderr
+    assert "| implement | opus-seat | opus | 1 | 0 | 1 | 100% | 120 | 1,200 | 300 |" in result.stdout
+    assert "claude-opus-5-5" not in result.stdout

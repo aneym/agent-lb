@@ -89,6 +89,12 @@ MANAGED_AGENTS = (
         Path("agents/verifier.md"),
     ),
     (
+        Path(".claude/hooks/subagent-closeout.py"),
+        Path(".agent-lb/managed/coding-agents/subagent-closeout"),
+        "agent-lb:subagent-closeout:v1\n",
+        Path("hooks/subagent-closeout.py"),
+    ),
+    (
         Path(".claude/hooks/seat-guard.py"),
         Path(".agent-lb/managed/coding-agents/seat-guard"),
         "agent-lb:seat-guard:v1\n",
