@@ -130,8 +130,8 @@ percentage, zero capacity, or missing telemetry.
 
 The macOS menu-bar All view MUST default to ascending remaining usage percentage,
 independently of the provider-scoped sort preference. The comparison MUST use
-weekly (secondary) remaining percentage when known, otherwise monthly, otherwise
-five-hour (primary). Unknown values MUST sort last and known zero MUST remain
+weekly (secondary) remaining percentage exclusively, without monthly or
+five-hour fallbacks. Unknown weekly values MUST sort last and known zero MUST remain
 zero. Equal values MUST sort by case-insensitive display name then account ID.
 Explicit alternative sort selections MUST remain available and persist separately
 for All and provider-scoped views.
@@ -153,7 +153,7 @@ for All and provider-scoped views.
 - **GIVEN** an account has 10 percent weekly remaining and 100 percent five-hour remaining
 - **WHEN** sorting by remaining usage
 - **THEN** its comparison value is 10 percent
-- **AND** an account without weekly telemetry uses monthly then five-hour telemetry if available
+- **AND** an account without weekly telemetry sorts last even if monthly or five-hour telemetry is available
 
 #### Scenario: Provider sort preference survives All-view selection
 

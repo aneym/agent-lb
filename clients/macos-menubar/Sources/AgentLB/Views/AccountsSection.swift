@@ -114,8 +114,8 @@ struct AccountsSection: View {
           }
         }
       )) {
-        Text("Usage remaining (lowest)").tag(AccountFilter.Sort.remainingAsc)
-        Text("Usage remaining (highest)").tag(AccountFilter.Sort.remainingDesc)
+        Text("Weekly remaining (lowest)").tag(AccountFilter.Sort.remainingAsc)
+        Text("Weekly remaining (highest)").tag(AccountFilter.Sort.remainingDesc)
         Text("Reset (soonest)").tag(AccountFilter.Sort.resetSoonest)
         Text("Reset (latest)").tag(AccountFilter.Sort.resetLatest)
         Text("Name A-Z").tag(AccountFilter.Sort.nameAsc)

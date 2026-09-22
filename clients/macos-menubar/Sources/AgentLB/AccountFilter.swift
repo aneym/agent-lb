@@ -129,9 +129,8 @@ struct AccountFilter: Equatable, Sendable {
     }
   }
 
-  /// Cross-provider usage ordering favors the weekly/secondary window, then
-  /// monthly, then primary. A zero is a known depleted value; only nil is
-  /// unknown and always belongs after known values.
+  /// Weekly usage only: missing weekly telemetry sorts last even when
+  /// monthly or primary telemetry is known. Zero is a known depleted value.
   private func byRemaining(_ lhs: Account, _ rhs: Account, ascending: Bool) -> Bool {
     switch (remainingPercent(of: lhs), remainingPercent(of: rhs)) {
     case (nil, nil): return byName(lhs, rhs, ascending: true)
@@ -145,8 +144,6 @@ struct AccountFilter: Equatable, Sendable {
 
   private func remainingPercent(of account: Account) -> Double? {
     account.usage.secondaryRemainingPercent
-      ?? account.usage.monthlyRemainingPercent
-      ?? account.usage.primaryRemainingPercent
   }
 
   // Plain lowercased comparison (not localized collation) so ordering is

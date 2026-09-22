@@ -272,7 +272,7 @@ final class AccountFilterTests: XCTestCase {
     XCTAssertEqual(desc.last?.displayName, "a.neyman17@gmail.com")
   }
 
-  func testSortRemainingLowestUsesWeeklyThenMonthlyThenPrimaryAcrossProviders() {
+  func testSortRemainingUsesOnlyWeeklyAcrossProviders() {
     let weekly = makeAccount(
       id: "weekly", provider: "openai", displayName: "weekly@example.com",
       primaryRemainingPercent: 1, secondaryRemainingPercent: 40
@@ -285,9 +285,19 @@ final class AccountFilterTests: XCTestCase {
       id: "primary", provider: "anthropic", displayName: "primary@example.com",
       primaryRemainingPercent: 30
     )
-    let result = AccountFilter(sort: .remainingAsc).apply(to: [weekly, monthly, primary], now: now)
-
-    XCTAssertEqual(result.map(\.accountId), ["monthly", "primary", "weekly"])
+    let lowerWeekly = makeAccount(
+      id: "lower-weekly", provider: "anthropic", displayName: "lower@example.com",
+      primaryRemainingPercent: 100, secondaryRemainingPercent: 9
+    )
+    let input = [weekly, monthly, primary, lowerWeekly]
+    XCTAssertEqual(
+      AccountFilter(sort: .remainingAsc).apply(to: input, now: now).map(\.accountId),
+      ["lower-weekly", "weekly", "monthly", "primary"]
+    )
+    XCTAssertEqual(
+      AccountFilter(sort: .remainingDesc).apply(to: input, now: now).map(\.accountId),
+      ["weekly", "lower-weekly", "monthly", "primary"]
+    )
   }
 
   func testSortRemainingTreatsZeroAsKnownAndUnknownAsLast() {
