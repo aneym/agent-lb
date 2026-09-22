@@ -797,8 +797,14 @@ def command_pick(args: argparse.Namespace) -> int:
                 continue
             audit_pool = pool_for_model(table, audit_entry["model"])
             audit_seat = str(audit_entry.get("seat") or "")
-            if audit_pool and pools.get(audit_pool, {}).get("status") == "exhausted":
+            audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
+            if audit_pool_doc.get("status") == "exhausted":
                 skipped.append(f"{seat} (its auditor's pool {audit_pool} is exhausted)")
+                continue
+            audit_eligible = audit_pool_doc.get("eligibleAccounts")
+            if isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
+                # A critical pool starts nothing new (rule 1), audits included.
+                skipped.append(f"{seat} (its auditor's pool {audit_pool} is critical: {audit_eligible} eligible)")
                 continue
             if audit_seat and not seat_is_up(seats, audit_seat):
                 skipped.append(f"{seat} (its auditor seat {audit_seat} is down per routing-state.json)")

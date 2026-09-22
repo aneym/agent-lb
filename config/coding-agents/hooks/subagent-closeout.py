@@ -242,6 +242,9 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
         if record.get("event") == "dispatch" and not record.get("denied"):
             open_dispatches.append(record)
         elif record.get("event") == "closeout":
+            if record.get("match") == "prompt_hash_ambiguous":
+                # It claimed no dispatch, so replaying it must not close one either.
+                continue
             closed, _ = resolve(
                 open_dispatches,
                 [str(record.get("prompt_sha256") or "")],
@@ -278,6 +281,11 @@ def main() -> None:
     digests = prompt_digests(payload)
     cost = transcript_cost(transcript_path(payload))
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
+    shared = None
+    if how == "prompt_hash_ambiguous":
+        # Siblings with one prompt share class, seat and model, but which of them
+        # stopped is unknown: keep those shared facts and attribute to none of them.
+        shared, dispatch = dispatch, None
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
         "ts": stamp(now()),
@@ -287,14 +295,14 @@ def main() -> None:
         # dispatch had one. The seat, model and class are the dispatch's own, so
         # S3's `route report` can group closeouts by seat at all.
         "agent_type": agent_type or None,
-        "subagent_type": (dispatch or {}).get("subagent_type") or agent_type.lower() or None,
+        "subagent_type": (dispatch or shared or {}).get("subagent_type") or agent_type.lower() or None,
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
-        "task_class": (dispatch or {}).get("task_class"),
+        "task_class": (dispatch or shared or {}).get("task_class"),
         # `model` is what actually answered, read off the transcript; the
         # dispatch's requested model (often an alias) is kept beside it.
         "model": cost["model"],
-        "dispatch_model": (dispatch or {}).get("model"),
+        "dispatch_model": (dispatch or shared or {}).get("model"),
         # The hash of the dispatch this closeout was ATTRIBUTED to, so replaying
         # the ledger resolves it back to the same row. A digest that matched
         # nothing is kept separately rather than written here as if it had.

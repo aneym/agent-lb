@@ -174,6 +174,14 @@ def test_identical_unnamed_prompts_are_marked_ambiguous(interpreter: str, tmp_pa
     # ROUTE_LEDGER alone must be honoured, as seat-guard honours it.
     env["ROUTE_LEDGER"] = str(ledger)
     subprocess.run([interpreter, str(HOOK)], input=json.dumps(payload), text=True, check=True, env=env)
-    closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
-    assert closeout["event"] == "closeout"
-    assert closeout["match"] == "prompt_hash_ambiguous"
+    subprocess.run([interpreter, str(HOOK)], input=json.dumps(payload), text=True, check=True, env=env)
+    closeouts = [json.loads(line) for line in ledger.read_text().splitlines() if '"closeout"' in line]
+    assert len(closeouts) == 2
+    for closeout in closeouts:
+        # Neither sibling's stop is pinned on a particular dispatch, and the first
+        # ambiguous closeout does not consume one on replay.
+        assert closeout["match"] == "prompt_hash_ambiguous"
+        assert closeout["matched"] is False
+        assert closeout["prompt_sha256"] is None
+        assert closeout["subagent_type"] == "opus-seat"
+        assert closeout["tokens_out"] == 100
