@@ -152,3 +152,28 @@ def test_identical_prompts_are_told_apart_by_name(interpreter: str, tmp_path: Pa
     closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
     assert closeout["event"] == "closeout"
     assert closeout["name"] == "arm-older"
+
+
+@pytest.mark.parametrize("interpreter", INTERPRETERS)
+def test_identical_unnamed_prompts_are_marked_ambiguous(interpreter: str, tmp_path: Path) -> None:
+    ledger = tmp_path / "custom.jsonl"
+    digest = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
+    base = {"event": "dispatch", "session_id": SESSION, "subagent_type": "opus-seat", "prompt_sha256": digest}
+    ledger.write_text("".join(json.dumps({**base, "ts": f"2026-09-22T10:00:0{i}Z"}) + "\n" for i in range(2)))
+    transcript = tmp_path / "subagents" / "agent-1.jsonl"
+    transcript.parent.mkdir()
+    _write_transcript(transcript)
+    payload = {
+        "session_id": SESSION,
+        "agent_id": "agent-x",
+        "agent_type": "opus-seat",
+        "agent_transcript_path": str(transcript),
+        "last_assistant_message": "Done.",
+    }
+    env = {key: value for key, value in os.environ.items() if key != "DISPATCH_LEDGER"}
+    # ROUTE_LEDGER alone must be honoured, as seat-guard honours it.
+    env["ROUTE_LEDGER"] = str(ledger)
+    subprocess.run([interpreter, str(HOOK)], input=json.dumps(payload), text=True, check=True, env=env)
+    closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
+    assert closeout["event"] == "closeout"
+    assert closeout["match"] == "prompt_hash_ambiguous"

@@ -677,6 +677,7 @@ def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligi
                     "eligibleAccounts": eligible,
                     "aggregateRemainingPercent": remaining,
                     "resetAt": reset,
+                    "weeklyPacePercent": remaining - hours_to_reset / 168 * 100,
                 }
             ]
         },
@@ -777,9 +778,11 @@ def test_report_groups_closeouts_under_the_dispatched_model_and_sums_tokens(home
     assert "claude-opus-5-5" not in result.stdout
 
 
-def test_pace_reads_the_weekly_figures_not_the_five_hour_capped_aggregate(tmp_path: Path) -> None:
+def test_an_lb_without_weekly_pace_is_paced_from_its_accounts(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
-    reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(timezone.utc)
+    reset = (now + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # An older /api/pools: no weeklyPacePercent, and a five-hour-capped aggregate.
     write_fixture(
         fixtures,
         "api_pools.json",
@@ -788,21 +791,30 @@ def test_pace_reads_the_weekly_figures_not_the_five_hour_capped_aggregate(tmp_pa
                 {
                     "id": "anthropic-general",
                     "status": "ok",
-                    "eligibleAccounts": 4,
+                    "eligibleAccounts": 3,
                     "aggregateRemainingPercent": 10.0,
                     "resetAt": reset,
-                    "weeklyRemainingPercent": 80.0,
-                    "weeklyResetAt": reset,
                 }
             ]
         },
     )
+    accounts = [
+        {
+            "provider": "anthropic",
+            "status": "active",
+            "resetAtSecondary": reset,
+            "usage": {"primaryRemainingPercent": 10.0, "secondaryRemainingPercent": 80.0},
+        }
+        for _ in range(3)
+    ]
+    write_fixture(fixtures, "api_accounts.json", {"accounts": accounts})
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
     result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["seat"] == "opus-seat"
-    assert "pace +30.0" in json.loads(result.stdout)["reason"]
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "opus-seat"
+    assert "pace +30.0" in picked["reason"]
 
 
 def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:

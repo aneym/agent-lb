@@ -391,19 +391,25 @@ def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
     Positive means the pool has more left than time left (spend it), negative means it is
     being spent faster than the cycle allows.
     """
-    # The LB's per-account weekly pace when it sends one (each account against its
-    # own reset); otherwise the weekly figures; the aggregate is capped by the
-    # five-hour window and would read a short burst as the week running out.
+    # Only the per-account weekly pace (each account against its own reset) is
+    # trusted: a pool-level mean remaining paired with one reset lets an early
+    # reset lift a pool that is behind, and the aggregate is capped by the
+    # five-hour window. An LB without the field gets the /api/accounts figure.
     pace = pool.get("weeklyPacePercent")
     if isinstance(pace, (int, float)) and not isinstance(pace, bool):
         return float(pace)
-    weekly = pool.get("weeklyRemainingPercent")
-    remaining = weekly if weekly is not None else pool.get("aggregateRemainingPercent")
-    reset_at = _parse_ts(pool.get("weeklyResetAt") if weekly is not None else pool.get("resetAt"))
-    if isinstance(remaining, bool) or not isinstance(remaining, (int, float)) or reset_at is None:
+    return None
+
+
+def accounts_pace(pool_id: str) -> float | None:
+    """Per-account weekly pace for one pool, computed from /api/accounts."""
+    result = http_get("/api/accounts", timeout=3.0)
+    if not result.ok or result.body is None:
         return None
-    hours_left = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
-    return float(remaining) - min(100.0, hours_left / cycle_hours * 100)
+    for pool in pools_from_accounts(result.body).get("pools", []):
+        if pool.get("id") == pool_id:
+            return pool_pace(pool, WEEKLY_CYCLE_HOURS)
+    return None
 
 
 def _percent(value: Any) -> str:
@@ -760,6 +766,8 @@ def command_pick(args: argparse.Namespace) -> int:
             # Pace-gated entries (Opus on implement) only take work while their pool can
             # afford it; with no pool data they are skipped rather than assumed healthy.
             pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
+            if pace is None and pool_doc and pool:
+                pace = accounts_pace(pool)
             if pace is None:
                 skipped.append(f"{seat} (pool {pool} pace unknown)")
                 continue

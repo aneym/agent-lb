@@ -27,7 +27,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-LEDGER = Path(os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
+# Same precedence as seat-guard, so both halves of a dispatch land in one ledger.
+LEDGER = Path(
+    os.environ.get("ROUTE_LEDGER")
+    or os.environ.get("DISPATCH_LEDGER")
+    or Path.home() / ".claude" / "logs" / "dispatch.jsonl"
+)
 TAIL_LINES = 4000
 FAILURE = re.compile(
     r"\b(fabrication|cross-vendor-violation|verdict:?\s*fail|blocked|i (?:cannot|can't|was unable)"
@@ -204,9 +209,13 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
             if digest and record.get("prompt_sha256") == digest and str(record.get("name") or "").lower() in wanted:
                 return record, "prompt_hash"
     for digest in digests:
-        for record in reversed(open_dispatches):
-            if digest and record.get("prompt_sha256") == digest:
-                return record, "prompt_hash"
+        candidates = [
+            record for record in reversed(open_dispatches) if digest and record.get("prompt_sha256") == digest
+        ]
+        if candidates:
+            # Several open dispatches with one prompt and no telling name: any pick
+            # may be the sibling's, so say so rather than claim an exact join.
+            return candidates[0], "prompt_hash" if len(candidates) == 1 else "prompt_hash_ambiguous"
     for name in names:
         for record in reversed(open_dispatches):
             if name and str(record.get("name") or "").lower() == name.lower():
