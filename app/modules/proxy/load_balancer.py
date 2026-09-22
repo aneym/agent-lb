@@ -2252,6 +2252,8 @@ def _state_from_account(
         inflight_streams=runtime.inflight_streams,
         leased_tokens=runtime.leased_tokens,
         routing_policy=routing_policy,
+        raw_used_percent=used_percent,
+        raw_secondary_used_percent=secondary_used,
     )
 
 
