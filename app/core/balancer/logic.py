@@ -135,6 +135,9 @@ class AccountState:
     leased_tokens: float = 0.0
     routing_policy: str = ROUTING_POLICY_NORMAL
     ignore_standard_quota: bool = False
+    # Upstream usage before in-flight/lease pressure; exhaustion is decided from these.
+    raw_used_percent: float | None = None
+    raw_secondary_used_percent: float | None = None
 
 
 @dataclass
@@ -497,6 +500,7 @@ def select_account(
             if state.reset_at and current >= state.reset_at:
                 state.status = AccountStatus.ACTIVE
                 state.used_percent = 0.0
+                state.raw_used_percent = 0.0
                 state.error_count = 0
                 state.reset_at = None
             elif not bypass_standard_quota:
@@ -506,6 +510,8 @@ def select_account(
                 state.status = AccountStatus.ACTIVE
                 state.used_percent = 0.0
                 state.secondary_used_percent = 0.0
+                state.raw_used_percent = 0.0
+                state.raw_secondary_used_percent = 0.0
                 state.reset_at = None
             elif not bypass_standard_quota:
                 continue
@@ -960,8 +966,14 @@ def _configured_capacity_credits(state: AccountState) -> float:
 
 
 def _usage_exhausted(state: AccountState) -> bool:
-    primary_used = state.used_percent if state.used_percent is not None else 0.0
-    secondary_used = state.secondary_used_percent if state.secondary_used_percent is not None else primary_used
+    primary_raw = state.raw_used_percent if state.raw_used_percent is not None else state.used_percent
+    secondary_raw = (
+        state.raw_secondary_used_percent
+        if state.raw_secondary_used_percent is not None
+        else state.secondary_used_percent
+    )
+    primary_used = primary_raw if primary_raw is not None else 0.0
+    secondary_used = secondary_raw if secondary_raw is not None else primary_used
     return primary_used >= 100.0 or secondary_used >= 100.0
 
 
@@ -1104,6 +1116,7 @@ def _format_retry_hint(wait_seconds: float) -> str:
 def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
     state.status = AccountStatus.QUOTA_EXCEEDED
     state.used_percent = 100.0
+    state.raw_used_percent = 100.0
     state.blocked_at = time.time()
     state.cooldown_until = time.time() + QUOTA_EXCEEDED_COOLDOWN_SECONDS
 
