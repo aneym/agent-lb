@@ -12,6 +12,10 @@ falls back to the newest open dispatch for the seat, recorded as
 ``"match": "fallback"``. ``ok`` is read off the last message, the only outcome
 signal the payload has.
 
+The same transcript supplies the cost: the model that answered, input and
+output token totals, the cache-read share of input, and wall-clock seconds from
+first to last entry. All of these are null when the transcript is unreadable.
+
 Appends one C2 ``closeout`` line. Fail-open: it never blocks a subagent.
 """
 
@@ -86,6 +90,84 @@ def first_prompt(path: str):
     return None
 
 
+def transcript_path(payload: dict) -> str:
+    path = str(payload.get("agent_transcript_path") or "")
+    if not path:
+        # Only the subagent's own transcript will do; the session transcript
+        # opens with the user's prompt, not the Agent tool's.
+        candidate = str(payload.get("transcript_path") or "")
+        path = candidate if "/subagents/" in candidate else ""
+    return path
+
+
+def usage_count(usage: dict, key: str) -> int:
+    value = usage.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def transcript_cost(path: str) -> dict:
+    """Model, token totals and wall-clock span of a subagent transcript.
+
+    A streamed reply is written as several rows sharing one `message.id`, each
+    with the usage so far, so only the last row per id is counted. Rows with no
+    id count on their own. Every field is null when the file cannot be read.
+    """
+    cost = {"model": None, "tokens_in": None, "tokens_out": None, "cache_read_tokens": None, "wall_s": None}
+    if not path:
+        return cost
+    try:
+        by_id: dict = {}
+        anonymous: list = []
+        model = None
+        first_ts = last_ts = None
+        stamps = 0
+        with open(path) as handle:
+            for line in handle:
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    moment = datetime.fromisoformat(str(entry.get("timestamp")).replace("Z", "+00:00"))
+                except Exception:
+                    moment = None
+                if moment is not None:
+                    first_ts = first_ts or moment
+                    last_ts = moment
+                    stamps += 1
+                message = entry.get("message")
+                if entry.get("type") != "assistant" and not (
+                    isinstance(message, dict) and message.get("role") == "assistant"
+                ):
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                if message.get("model"):
+                    model = str(message.get("model"))
+                usage = message.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                if message.get("id"):
+                    by_id[message["id"]] = usage
+                else:
+                    anonymous.append(usage)
+        usages = list(by_id.values()) + anonymous
+        cache_read = sum(usage_count(u, "cache_read_input_tokens") for u in usages)
+        cost["model"] = model
+        cost["tokens_in"] = cache_read + sum(
+            usage_count(u, "input_tokens") + usage_count(u, "cache_creation_input_tokens") for u in usages
+        )
+        cost["tokens_out"] = sum(usage_count(u, "output_tokens") for u in usages)
+        cost["cache_read_tokens"] = cache_read
+        if stamps >= 2:
+            cost["wall_s"] = round((last_ts - first_ts).total_seconds(), 1)
+    except Exception:
+        return {key: None for key in cost}
+    return cost
+
+
 def prompt_digests(payload: dict) -> list:
     """Candidate sha256s of the prompt this subagent was launched with.
 
@@ -95,12 +177,7 @@ def prompt_digests(payload: dict) -> list:
     1f07ce8e…, which is what seat-guard recorded). An unnamed dispatch stores
     the prompt bare. Hash both readings and let the ledger say which was real.
     """
-    path = str(payload.get("agent_transcript_path") or "")
-    if not path:
-        # Only the subagent's own transcript will do; the session transcript
-        # opens with the user's prompt, not the Agent tool's.
-        candidate = str(payload.get("transcript_path") or "")
-        path = candidate if "/subagents/" in candidate else ""
+    path = transcript_path(payload)
     content = first_prompt(path) if path else None
     if not content:
         return []
@@ -183,6 +260,7 @@ def main() -> None:
     last = str(payload.get("last_assistant_message") or "")
 
     digests = prompt_digests(payload)
+    cost = transcript_cost(transcript_path(payload))
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
@@ -197,13 +275,20 @@ def main() -> None:
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
         "task_class": (dispatch or {}).get("task_class"),
-        "model": (dispatch or {}).get("model"),
+        # `model` is what actually answered, read off the transcript; the
+        # dispatch's requested model (often an alias) is kept beside it.
+        "model": cost["model"],
+        "dispatch_model": (dispatch or {}).get("model"),
         # The hash of the dispatch this closeout was ATTRIBUTED to, so replaying
         # the ledger resolves it back to the same row. A digest that matched
         # nothing is kept separately rather than written here as if it had.
         "prompt_sha256": (dispatch or {}).get("prompt_sha256"),
         "digest_seen": None if how == "prompt_hash" else (digests[0] if digests else None),
         "duration_s": duration(dispatch),
+        "wall_s": cost["wall_s"],
+        "tokens_in": cost["tokens_in"],
+        "tokens_out": cost["tokens_out"],
+        "cache_read_tokens": cost["cache_read_tokens"],
         "ok": ok,
         "error": None if ok else (last.strip()[:300] or "no final message"),
         "matched": bool(dispatch),
