@@ -10,9 +10,9 @@ from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, AsyncContextManager
+from typing import Any, cast, AsyncContextManager
 from urllib.parse import urljoin
 
 import aiohttp
@@ -26,6 +26,7 @@ from app.core.anthropic.models import (
     merge_usage_values,
 )
 from app.core.anthropic.parsing import parse_sse_event
+from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.types import UpstreamError
 from app.core.clients.http import lease_http_session
@@ -33,7 +34,11 @@ from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME
+from app.core.providers import (
+    ANTHROPIC_PROVIDER_NAME,
+    get_anthropic_compat_profile,
+    provider_name_for_anthropic_model,
+)
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, StickySessionKind
@@ -42,8 +47,6 @@ from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     OPENROUTER_CREDITS_QUOTA_KEY,
     OPENROUTER_PROVIDER_NAME,
-    OPENROUTER_UPSTREAM_BASE_URL,
-    SUPPORTS_UPSTREAM_COUNT_TOKENS,
     credits_exhausted,
     window_from_usage,
 )
@@ -89,6 +92,9 @@ _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 # probe-marker fallback apply instead (usage refreshes far more often than
 # this, so staleness signals a refresh gap, not just normal cadence).
 _FABLE_SCOPED_FRESH_SECONDS = 21600  # 6 hours
+_ANTHROPIC_PLANNER_MODEL_ALIAS = "claude-planner"
+_ANTHROPIC_PLANNER_PRIMARY_MODEL = "claude-fable-5-1"
+_ANTHROPIC_PLANNER_FALLBACK_MODEL = "claude-opus-5-5"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
@@ -155,6 +161,20 @@ class AnthropicProxyStream:
 
 
 @dataclass(frozen=True, slots=True)
+class AnthropicResolvedMessageRequest:
+    payload: AnthropicMessageRequest
+    provider_name: str
+    quota_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnthropicResolvedCountTokensRequest:
+    body: Mapping[str, Any]
+    model: str
+    provider_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class AnthropicCountTokensResult:
     status_code: int
     body: bytes
@@ -174,6 +194,10 @@ class _AnthropicQuotaEligibility:
     # already been bypassed, with a weekly reset days out quoted as its end.
     cooldown_blocked_count: int = 0
     cooldown_reset_at: int | None = None
+    # True only when every otherwise-routable account is excluded by a fresh,
+    # future-reset Fable-scoped quota marker. This is the sole planner alias
+    # fallback signal; generic account/quota failures must not set it.
+    fable_scoped_pool_exhausted: bool = False
     # Exact IDs allowed to bypass a persisted primary-window RATE_LIMITED
     # status for this request. This is intentionally narrower than account_ids:
     # only the paid last-resort branch may populate it.
@@ -192,13 +216,6 @@ class _AnthropicErrorDetails:
     # `thread_not_found` out of it to replay a stateful thread instead of
     # failing the turn — so the proxy must carry it through untouched.
     details: Any | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class AnthropicResolvedMessageRequest:
-    payload: AnthropicMessageRequest
-    provider_name: str
-    quota_key: str
 
 
 class AnthropicProxyError(Exception):
@@ -233,13 +250,16 @@ class AnthropicProxyService:
         api_key: ApiKeyData | None = None,
         api_key_reservation: ApiKeyUsageReservationData | None = None,
     ) -> AnthropicProxyStream:
+        resolved_request = await self.resolve_message_request(payload)
+        payload = resolved_request.payload
+        provider_name = resolved_request.provider_name
+        quota_key = resolved_request.quota_key
+
         request_id = ensure_request_id(_request_id_from_headers(inbound_headers))
         started_at = time.monotonic()
         selected_account_ids: set[str] = set()
         auth_retried_account_ids: set[str] = set()
         media_type = "text/event-stream" if payload.stream else "application/json"
-        provider_name = _messages_provider_name(payload)
-        quota_key = _messages_quota_key(payload, provider_name=provider_name)
         affinity_quota_key = _messages_affinity_quota_key(payload, provider_name=provider_name)
         session_id = _anthropic_request_session_id(payload, inbound_headers)
         useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
@@ -603,7 +623,7 @@ class AnthropicProxyService:
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
                 # Upstream 429s above recorded cooldowns, so eligibility now knows the
                 # earliest reset; surface it so clients can schedule a retry.
-                eligibility = await self._provider_quota_eligibility(provider_name, quota_key)
+                eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=payload.model)
                 # A budget exhausted on 529s is an upstream overload, not a
                 # local pool problem: surface the vendor-native type so
                 # clients apply their own overload retry policy.
@@ -639,12 +659,26 @@ class AnthropicProxyService:
 
         return AnthropicProxyStream(body=body(), media_type=media_type)
 
-    async def resolve_message_request(self, payload: AnthropicMessageRequest) -> AnthropicResolvedMessageRequest:
+    async def resolve_message_request(
+        self,
+        payload: AnthropicMessageRequest,
+    ) -> AnthropicResolvedMessageRequest:
+        requested_model = payload.model
         provider_name = _messages_provider_name(payload)
+        quota_key = _messages_quota_key(payload, provider_name=provider_name)
+        effective_model = await self._resolve_planner_model(
+            requested_model,
+            provider_name=provider_name,
+            quota_key=quota_key,
+        )
+        if effective_model != requested_model:
+            payload = payload.model_copy(update={"model": effective_model})
+            provider_name = _messages_provider_name(payload)
+            quota_key = _messages_quota_key(payload, provider_name=provider_name)
         return AnthropicResolvedMessageRequest(
             payload=payload,
             provider_name=provider_name,
-            quota_key=_messages_quota_key(payload, provider_name=provider_name),
+            quota_key=quota_key,
         )
 
     async def count_tokens(
@@ -654,8 +688,11 @@ class AnthropicProxyService:
         *,
         model: str,
     ) -> AnthropicCountTokensResult:
-        provider_name = _provider_name_for_model(model)
-        if provider_name == OPENROUTER_PROVIDER_NAME and not SUPPORTS_UPSTREAM_COUNT_TOKENS:
+        resolved_request = await self.resolve_count_tokens_request(body, model=model)
+        body = resolved_request.body
+        model = resolved_request.model
+        provider_name = resolved_request.provider_name
+        if not get_anthropic_compat_profile(provider_name).supports_upstream_count_tokens:
             estimated = estimate_claude_input_tokens(body)
             return AnthropicCountTokensResult(
                 status_code=200,
@@ -694,6 +731,64 @@ class AnthropicProxyService:
                 f"{_provider_label(provider_name)} count_tokens upstream request failed: {exc}",
                 code="upstream_error",
             ) from exc
+
+    async def resolve_count_tokens_request(
+        self,
+        body: Mapping[str, Any],
+        *,
+        model: str,
+    ) -> AnthropicResolvedCountTokensRequest:
+        provider_name = _provider_name_for_model(model)
+        effective_model = await self._resolve_planner_model(
+            model,
+            provider_name=provider_name,
+            quota_key=_count_tokens_quota_key(provider_name),
+        )
+        if effective_model != model:
+            model = effective_model
+            provider_name = _provider_name_for_model(model)
+            body = {**body, "model": model}
+        return AnthropicResolvedCountTokensRequest(
+            body=body,
+            model=model,
+            provider_name=provider_name,
+        )
+
+    async def _resolve_planner_model(
+        self,
+        model: str,
+        *,
+        provider_name: str,
+        quota_key: str,
+    ) -> str:
+        if model.strip().lower() != _ANTHROPIC_PLANNER_MODEL_ALIAS:
+            return model
+        if provider_name != ANTHROPIC_PROVIDER_NAME:
+            return _ANTHROPIC_PLANNER_PRIMARY_MODEL
+
+        fable_eligibility = await self._provider_quota_eligibility(
+            provider_name,
+            quota_key,
+            model=_ANTHROPIC_PLANNER_PRIMARY_MODEL,
+        )
+        if not fable_eligibility.fable_scoped_pool_exhausted:
+            return _ANTHROPIC_PLANNER_PRIMARY_MODEL
+
+        opus_eligibility = await self._provider_quota_eligibility(
+            provider_name,
+            quota_key,
+            model=_ANTHROPIC_PLANNER_FALLBACK_MODEL,
+        )
+        if not opus_eligibility.account_ids:
+            return _ANTHROPIC_PLANNER_PRIMARY_MODEL
+
+        logger.warning(
+            "Planner routing switched from %s to %s because all otherwise-routable "
+            "Anthropic accounts exhausted the fresh Fable-scoped quota",
+            _ANTHROPIC_PLANNER_PRIMARY_MODEL,
+            _ANTHROPIC_PLANNER_FALLBACK_MODEL,
+        )
+        return _ANTHROPIC_PLANNER_FALLBACK_MODEL
 
     def _open_upstream_response(
         self,
@@ -736,10 +831,12 @@ class AnthropicProxyService:
         sticky_key: str | None,
         quota_key: str,
     ) -> Account:
+        if provider_name == ANTHROPIC_PROVIDER_NAME:
+            quota_key = model_quota_key(model, quota_key)
         eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=model)
         if not eligibility.account_ids and eligibility.blocked_count > 0:
             reset_suffix = (
-                f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at).isoformat()}."
+                f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at, tz=timezone.utc).isoformat()}."
                 if eligibility.next_reset_at is not None
                 else ""
             )
@@ -890,6 +987,8 @@ class AnthropicProxyService:
         *,
         model: str | None = None,
     ) -> _AnthropicQuotaEligibility:
+        if provider_name == ANTHROPIC_PROVIDER_NAME:
+            quota_key = model_quota_key(model, quota_key)
         if provider_name == OPENROUTER_PROVIDER_NAME:
             return await self._openrouter_credit_eligibility()
         now = int(time.time())
@@ -1108,9 +1207,7 @@ class AnthropicProxyService:
                     # for this account, even when primary has a known reset.
                     if secondary_reset_at is not None:
                         blocked_reset_by_account_id[account_id] = max(
-                            reset_at
-                            for reset_at in (primary_reset_at, secondary_reset_at)
-                            if reset_at is not None
+                            reset_at for reset_at in (primary_reset_at, secondary_reset_at) if reset_at is not None
                         )
                 elif primary_reset_at is not None:
                     blocked_reset_by_account_id[account_id] = primary_reset_at
@@ -1213,6 +1310,7 @@ class AnthropicProxyService:
 
         burn_first_account_ids: frozenset[str] = frozenset()
         if fable_routing and not fable_request and eligible_account_ids:
+
             def _is_over_fable_threshold(account_id: str) -> bool:
                 scoped_percent = _fresh_scoped_percent(account_id)
                 if scoped_percent is not None:
@@ -1220,9 +1318,7 @@ class AnthropicProxyService:
                 return _weekly_used(account_id) >= threshold
 
             burn_first_account_ids = frozenset(
-                account_id
-                for account_id in eligible_account_ids
-                if _is_over_fable_threshold(account_id)
+                account_id for account_id in eligible_account_ids if _is_over_fable_threshold(account_id)
             )
 
         if not eligible_account_ids and hard_excluded_fable_account_ids:
@@ -1240,6 +1336,9 @@ class AnthropicProxyService:
             for account_id in cooling_account_ids
             if account_id in blocked_reset_by_account_id
         ]
+        fable_scoped_pool_exhausted = (
+            fable_request and bool(account_ids) and len(hard_excluded_fable_account_ids) == len(account_ids)
+        )
         return _AnthropicQuotaEligibility(
             account_ids=eligible_account_ids,
             blocked_count=blocked_count,
@@ -1248,6 +1347,7 @@ class AnthropicProxyService:
             cooldown_reset_at=min(cooldown_resets) if cooldown_resets else None,
             paid_fallback_account_ids=paid_fallback_account_ids,
             burn_first_account_ids=burn_first_account_ids,
+            fable_scoped_pool_exhausted=fable_scoped_pool_exhausted,
         )
 
     async def _record_quota_cooldown(self, account: Account, *, quota_key: str, error: UpstreamError) -> None:
@@ -1451,9 +1551,7 @@ def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
     model = payload.model.lower()
     if "haiku" in model:
         return "anthropic_standard"
-    if payload.thinking:
-        return "anthropic_top_thinking"
-    return "anthropic_top"
+    return model_quota_key(payload.model, "anthropic_top_thinking" if payload.thinking else "anthropic_top")
 
 
 def _is_fable_model(model: str | None) -> bool:
@@ -1465,45 +1563,46 @@ def _messages_provider_name(payload: AnthropicMessageRequest) -> str:
 
 
 def _provider_name_for_model(model: str) -> str:
-    normalized = model.strip().lower()
-    if normalized.startswith("glm-"):
-        return GLM_PROVIDER_NAME
     definition = get_additional_quota_definition_for_model(model)
     if definition is not None and definition.quota_key == OPENROUTER_CREDITS_QUOTA_KEY:
         return OPENROUTER_PROVIDER_NAME
-    return ANTHROPIC_PROVIDER_NAME
+    return provider_name_for_anthropic_model(model)
 
 
 def _count_tokens_quota_key(provider_name: str) -> str:
     # Dedicated key with no recorded cooldowns: count_tokens is quota-free
     # upstream, so message-quota cooldowns must not exclude accounts from it.
-    return "glm_count_tokens" if provider_name == GLM_PROVIDER_NAME else "anthropic_count_tokens"
+    return get_anthropic_compat_profile(provider_name).count_tokens_quota_key
 
 
 def _upstream_base_url(provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return get_settings().glm_anthropic_upstream_base_url
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return OPENROUTER_UPSTREAM_BASE_URL
-    return get_settings().anthropic_upstream_base_url
+    profile = get_anthropic_compat_profile(provider_name)
+    if profile.upstream_base_url is not None:
+        return profile.upstream_base_url
+    assert profile.upstream_settings_attr is not None
+    return str(getattr(get_settings(), profile.upstream_settings_attr))
 
 
 def _messages_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "glm_coding_thinking" if payload.thinking else "glm_coding"
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return OPENROUTER_CREDITS_QUOTA_KEY
+    profile = get_anthropic_compat_profile(provider_name)
+    profile_quota_key = profile.quota_key(is_thinking=bool(payload.thinking))
+    if profile_quota_key is not None:
+        return profile_quota_key
     if _anthropic_fast_mode_requested(payload):
         return _ANTHROPIC_FAST_QUOTA_KEY
     return _anthropic_quota_key(payload)
 
 
 def _messages_affinity_quota_key(payload: AnthropicMessageRequest, *, provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "glm_coding_thinking" if payload.thinking else "glm_coding"
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return OPENROUTER_CREDITS_QUOTA_KEY
+    profile = get_anthropic_compat_profile(provider_name)
+    profile_quota_key = profile.quota_key(is_thinking=bool(payload.thinking))
+    if profile_quota_key is not None:
+        return profile_quota_key
     base = _anthropic_quota_key(payload)
+    if base == "anthropic_opus":
+        base = "anthropic_top"
+    elif base == "anthropic_opus_thinking":
+        base = "anthropic_top_thinking"
     # Fable-class traffic gets its own affinity family so a session that
     # interleaves Fable and non-Fable requests holds two independent sticky
     # pins instead of ping-ponging one pin between an under-threshold (Fable)
@@ -1549,43 +1648,23 @@ def _anthropic_sticky_key(
 
 
 def _sticky_prefix(provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "glm"
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return "openrouter"
-    return "claude"
+    return get_anthropic_compat_profile(provider_name).sticky_prefix
 
 
 def _provider_label(provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "GLM"
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return "OpenRouter"
-    return "Anthropic"
+    return get_anthropic_compat_profile(provider_name).label
 
 
 def _no_available_accounts_code(provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "no_available_glm_accounts"
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return "no_available_openrouter_accounts"
-    return "no_available_anthropic_accounts"
+    return get_anthropic_compat_profile(provider_name).no_available_accounts_code
 
 
 def _quota_cooldown_code(provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "glm_quota_cooldown"
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return "openrouter_quota_cooldown"
-    return "anthropic_quota_cooldown"
+    return get_anthropic_compat_profile(provider_name).quota_cooldown_code
 
 
 def _other_provider_routing_message(provider_name: str) -> str:
-    if provider_name == GLM_PROVIDER_NAME:
-        return "OpenAI and Anthropic accounts are not eligible for GLM routing."
-    if provider_name == OPENROUTER_PROVIDER_NAME:
-        return "Subscription accounts are not eligible for OpenRouter routing."
-    return "OpenAI accounts are not eligible for Claude routing."
+    return get_anthropic_compat_profile(provider_name).other_provider_routing_message
 
 
 def _anthropic_request_session_id(
@@ -1661,7 +1740,7 @@ def _anthropic_content_text(content: object) -> str | None:
             parts.append(text)
             continue
         if isinstance(item, Mapping):
-            value = item.get("text")
+            value = cast(Mapping[str, object], item).get("text")
             if isinstance(value, str):
                 parts.append(value)
     return "".join(parts) if parts else None
@@ -1795,8 +1874,9 @@ def _collect_usage_from_chunk(
             error_event = event
             continue
         event_usage = getattr(event, "usage", None)
-        if event_usage is None and getattr(event, "message", None) is not None:
-            event_usage = event.message.usage
+        message = getattr(event, "message", None)
+        if event_usage is None and message is not None:
+            event_usage = message.usage
         usage = merge_usage_values(usage, event_usage)
     return normalized, usage, error_event
 
