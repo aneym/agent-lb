@@ -41,8 +41,9 @@ def test_implementation_is_cheap_and_audited_by_the_other_vendor() -> None:
     assert 'route resolve terra-latest)" --effort medium --write' in (agents / "implementer.md").read_text()
     for name in ("codex-verifier", "codex-test-runner", "computer-use", "codex-sol"):
         assert 'route resolve sol-latest)"' in (agents / f"{name}.md").read_text()
-    implement = [entry["model"] for entry in table["classes"]["implement"]["chain"]]
-    assert implement[:2] == ["terra-latest", "grok-latest"]
+    chain = table["classes"]["implement"]["chain"]
+    assert [entry["model"] for entry in chain[:2]] == ["opus-latest", "grok-latest"]
+    assert chain[0]["min_pace"] == table["policy"]["pace"]["behind_lt"]
     audit = table["classes"]["implement"]["audit"]["by_author_vendor"]
     assert audit["anthropic"]["model"] == "sol-latest"
     assert {audit[vendor]["model"] for vendor in ("openai", "cursor", "glm", "kimi")} == {"opus-latest"}

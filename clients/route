@@ -10,6 +10,7 @@
 #   route doctor [--write]                       probe seats and pools; write routing-state.json
 #   route report [--days N]                      dispatch ledger joined with LB session cost
 #   route learn  [--apply]                       propose (or write) chain demotions from outcomes
+#   route record --class C --seat S --model M ...  log one implement outcome (tokens, time, audit)
 #   route resolve <alias> [<alias> ...]          newest served model for the first resolvable family alias
 #   route models [--json]                        every family alias with what it resolves to now
 #
@@ -360,6 +361,20 @@ def pools_by_id(document: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     return {pool["id"]: pool for pool in pools if isinstance(pool, dict) and isinstance(pool.get("id"), str)}
 
 
+def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
+    """ROUTING.md rule 1: remaining% minus the share of the cycle still ahead of the reset.
+
+    Positive means the pool has more left than time left (spend it), negative means it is
+    being spent faster than the cycle allows.
+    """
+    remaining = pool.get("aggregateRemainingPercent")
+    reset_at = _parse_ts(pool.get("resetAt"))
+    if isinstance(remaining, bool) or not isinstance(remaining, (int, float)) or reset_at is None:
+        return None
+    hours_left = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
+    return float(remaining) - min(100.0, hours_left / cycle_hours * 100)
+
+
 def _percent(value: Any) -> str:
     """C1 allows a null percent when a pool has no usable account; print it as such."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -677,6 +692,9 @@ def command_pick(args: argparse.Namespace) -> int:
     skipped: list[str] = []
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     served: list[str] | None = None
+    paced: list[str] = []
+    pace_policy = (table.get("policy") or {}).get("pace") if isinstance(table.get("policy"), dict) else None
+    cycle_hours = float((pace_policy or {}).get("cycle_hours") or 168)
     for entry in ordered:
         seat = entry.get("seat")
         alias = entry.get("model")
@@ -696,10 +714,26 @@ def command_pick(args: argparse.Namespace) -> int:
         if not seat_is_up(seats, seat):
             skipped.append(f"{seat} (seat down per routing-state.json)")
             continue
-        status = pools.get(pool, {}).get("status") if pool else None
+        pool_doc = pools.get(pool, {}) if pool else {}
+        status = pool_doc.get("status")
         if status == "exhausted":
             skipped.append(f"{seat} (pool {pool} exhausted)")
             continue
+        min_pace = entry.get("min_pace")
+        if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
+            # Pace-gated entries (Opus on implement) only take work while their pool can
+            # afford it; with no pool data they are skipped rather than assumed healthy.
+            pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
+            if pace is None:
+                skipped.append(f"{seat} (pool {pool} pace unknown)")
+                continue
+            if pool_doc.get("eligibleAccounts") is not None and pool_doc["eligibleAccounts"] <= 1:
+                skipped.append(f"{seat} (pool {pool} critical: {pool_doc['eligibleAccounts']} eligible account)")
+                continue
+            if pace < min_pace:
+                skipped.append(f"{seat} (pool {pool} behind pace: {pace:+.1f} < {min_pace:+g})")
+                continue
+            paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
         routable.append(
             {"seat": seat, "model": model, "alias": alias, "pool": pool, "vendor": vendor, "poolStatus": status}
         )
@@ -717,6 +751,8 @@ def command_pick(args: argparse.Namespace) -> int:
         reasons.append(
             f"ignored routing-state.json: {age and round(age)}s old, over the {STATE_MAX_AGE_SECONDS}s limit"
         )
+    if paced:
+        reasons.extend(paced)
     if skipped:
         reasons.append("skipped " + "; ".join(skipped))
     if pools_error:
@@ -1217,8 +1253,12 @@ def command_report(args: argparse.Namespace) -> int:
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
     dispatches, closeouts = read_ledger(since)
     rows = aggregate(dispatches, closeouts)
+    if getattr(args, "implement", False):
+        print_implement_report(since, args.days)
+        return EXIT_OK
     if not rows:
         print(f"No dispatches in {ledger_path()} within {args.days} day(s).")
+        print_implement_report(since, args.days)
         return EXIT_OK
     every_session: set[str] = set()
     for row in rows.values():
@@ -1244,7 +1284,82 @@ def command_report(args: argparse.Namespace) -> int:
         print("\nSession cost is the whole LB session's spend; a session shared by several rows is counted in each.")
     elif every_session:
         print("\nSession cost unavailable: the LB session analytics endpoint did not answer.")
+    print_implement_report(since, args.days)
     return EXIT_OK
+
+
+IMPLEMENT_EVENT = "implement_result"
+AUDIT_VERDICTS = ("pass", "fix-needed")
+
+
+def command_record(args: argparse.Namespace) -> int:
+    """Append one implement outcome so seats can be compared on quality, tokens and time."""
+    record = {
+        "ts": now_iso(),
+        "event": IMPLEMENT_EVENT,
+        "class": args.task_class,
+        "task": args.task,
+        "seat": args.seat,
+        "model": args.model,
+        "tokens_in": args.tokens_in,
+        "tokens_out": args.tokens_out,
+        "wall_s": args.wall_s,
+        "audit": args.audit,
+        "rework": args.rework,
+        "tests": args.tests,
+        "notes": args.notes,
+    }
+    path = ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    print(f"recorded {args.task_class}/{args.seat}/{args.model} in {path}")
+    return EXIT_OK
+
+
+def implement_results(since: datetime) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = ledger_path().read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError):
+        return rows
+    for line in lines:
+        if IMPLEMENT_EVENT not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        stamp = _parse_ts(record.get("ts"))
+        if record.get("event") == IMPLEMENT_EVENT and stamp is not None and stamp >= since:
+            rows.append(record)
+    return rows
+
+
+def print_implement_report(since: datetime, days: int) -> None:
+    results = implement_results(since)
+    print(f"\n## Implement comparison — {days} day(s)\n")
+    if not results:
+        print("No implement_result rows yet (`route record` writes them).")
+        return
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for record in results:
+        groups.setdefault((str(record.get("seat")), str(record.get("model"))), []).append(record)
+    print("| seat | model | tasks | audit pass | mean rework | median wall s | tokens in | tokens out | tokens/task |")
+    print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
+    for (seat, model), records in sorted(groups.items()):
+        passes = sum(1 for r in records if r.get("audit") == "pass")
+        rework = [r["rework"] for r in records if isinstance(r.get("rework"), int)]
+        walls = [r["wall_s"] for r in records if isinstance(r.get("wall_s"), (int, float))]
+        tin = sum(r["tokens_in"] for r in records if isinstance(r.get("tokens_in"), int))
+        tout = sum(r["tokens_out"] for r in records if isinstance(r.get("tokens_out"), int))
+        per_task = f"{(tin + tout) / len(records):,.0f}" if (tin or tout) else "-"
+        mean_rework = f"{statistics.mean(rework):.1f}" if rework else "-"
+        median_wall = f"{statistics.median(walls):.0f}" if walls else "-"
+        print(
+            f"| {seat} | {model} | {len(records)} | {passes}/{len(records)} | {mean_rework} | "
+            f"{median_wall} | {tin:,} | {tout:,} | {per_task} |"
+        )
 
 
 def proposals(rows: dict[RowKey, dict[str, Any]], *, minimum: int, floor: float) -> list[dict[str, Any]]:
@@ -1341,7 +1456,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     report = sub.add_parser("report", help="dispatch ledger joined with LB session cost")
     report.add_argument("--days", type=int, default=7)
+    report.add_argument("--implement", action="store_true", help="only the implement comparison per seat/model")
     report.set_defaults(handler=command_report)
+
+    record = sub.add_parser("record", help="log one implement outcome for the seat comparison")
+    record.add_argument("--class", dest="task_class", default="implement")
+    record.add_argument("--task", required=True, help="short task id shared by the A/B arms")
+    record.add_argument("--seat", required=True)
+    record.add_argument("--model", required=True)
+    record.add_argument("--tokens-in", dest="tokens_in", type=int, default=None)
+    record.add_argument("--tokens-out", dest="tokens_out", type=int, default=None)
+    record.add_argument("--wall-s", dest="wall_s", type=float, default=None)
+    record.add_argument("--audit", choices=AUDIT_VERDICTS, required=True)
+    record.add_argument("--rework", type=int, default=0, help="audit-fix rounds before acceptance")
+    record.add_argument("--tests", default=None, help="e.g. '12 passed' or 'fail: 2'")
+    record.add_argument("--notes", default=None)
+    record.set_defaults(handler=command_record)
 
     resolve = sub.add_parser("resolve", help="newest served model for the first resolvable family alias")
     resolve.add_argument("aliases", nargs="+", metavar="alias")

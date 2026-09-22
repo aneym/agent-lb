@@ -636,11 +636,13 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
 
     assert plan.returncode == 0, plan.stderr
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
-    # No non-retired Terra and no Cursor list: implement falls to the GLM wildcard, audited by Opus.
+    # No pool data, so the pace-gated Opus entry is skipped; no Terra and no Cursor list
+    # either, so implement falls to the GLM wildcard, audited by Opus.
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
     assert picked["model"] == "glm-*"
     assert picked["audit"]["model"] == "opus-latest"
+    assert "pace unknown" in picked["reason"]
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
 
@@ -660,3 +662,84 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
     assert (sol.returncode, sol.stdout.strip()) == (0, "gpt-6-sol")
     assert terra.returncode == 2 and "no non-retired terra" in terra.stderr
     assert retired.returncode == 2 and "retired" in retired.stderr
+
+
+def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligible: int = 3) -> None:
+    reset = (datetime.now(timezone.utc) + timedelta(hours=hours_to_reset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_fixture(
+        directory,
+        "api_pools.json",
+        {
+            "pools": [
+                {
+                    "id": "anthropic-general",
+                    "status": "ok",
+                    "eligibleAccounts": eligible,
+                    "aggregateRemainingPercent": remaining,
+                    "resetAt": reset,
+                }
+            ]
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("remaining", "hours", "eligible", "expected_seat", "why"),
+    [
+        (60.0, 84.0, 3, "opus-seat", "admitted: pool anthropic-general pace +10.0"),
+        (20.0, 84.0, 3, "cursor-seat", "behind pace: -30.0 < -10"),
+        (60.0, 84.0, 1, "cursor-seat", "critical: 1 eligible account"),
+    ],
+)
+def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
+    tmp_path: Path, remaining: float, hours: float, eligible: int, expected_seat: str, why: str
+) -> None:
+    fixtures = tmp_path / "fixtures"
+    _paced_pools(fixtures, remaining, hours, eligible)
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    extra = {
+        "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
+        "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok 4.7 Medium Fast\\n'",
+    }
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert result.returncode == 0, result.stderr
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == expected_seat
+    assert why in picked["reason"]
+    auditor = picked["audit"]["model"]
+    assert auditor == ("sol-latest" if expected_seat == "opus-seat" else "opus-latest")
+
+
+def test_record_and_report_compare_implement_seats_per_model(tmp_path: Path) -> None:
+    ledger = tmp_path / "dispatch.jsonl"
+    extra = {"ROUTE_LEDGER": str(ledger)}
+    for seat, model, audit, rework in (
+        ("opus-seat", "opus", "pass", "0"),
+        ("cursor-seat", "grok-4.7-medium-fast", "fix-needed", "2"),
+    ):
+        recorded = run(
+            "record",
+            "--task",
+            "ab-1",
+            "--seat",
+            seat,
+            "--model",
+            model,
+            "--tokens-in",
+            "1000",
+            "--tokens-out",
+            "100",
+            "--wall-s",
+            "30",
+            "--audit",
+            audit,
+            "--rework",
+            rework,
+            home=tmp_path,
+            extra=extra,
+        )
+        assert recorded.returncode == 0, recorded.stderr
+    report = run("report", "--implement", home=tmp_path, extra=extra)
+    assert report.returncode == 0, report.stderr
+    assert "| opus-seat | opus | 1 | 1/1 | 0.0 | 30 | 1,000 | 100 | 1,100 |" in report.stdout
+    assert "| cursor-seat | grok-4.7-medium-fast | 1 | 0/1 | 2.0 | 30 | 1,000 | 100 | 1,100 |" in report.stdout

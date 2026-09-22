@@ -28,8 +28,13 @@ model in that class by default if possible"; "NO CODEX ASTRA. codex sol".
   tests, ledgers and pricing.
 - **Classes.** Orchestrate, plan and drive: `opus-latest`, with `sol-latest`
   as the Codex-side alternative. Review and judgment: `opus-latest`.
-  Implement: cheaper seats (`terra-latest` on Codex when one is served,
-  `grok-latest` on Cursor, then GLM and Kimi), and every closeout is audited
+  Implement: Opus first while the Anthropic general pool is on pace or ahead
+  (owner, 2026-09-22: "as usage looks healthy, opus should be doing a lot of
+  the work"; the entry carries `min_pace` -10 and a critical pool skips it),
+  then cheaper seats (`grok-latest` on Cursor, `terra-latest` on Codex when
+  one is served, GLM, Kimi). `route record` logs each implement outcome
+  (seat, model, tokens, wall time, audit verdict, rework rounds) and `route
+  report --implement` compares them per model. Every closeout is audited
   by the other vendor's stronger model before acceptance: `opus-latest` when
   Codex, Cursor, GLM or Kimi wrote it, `sol-latest` (`codex-verifier`, xhigh)
   when Anthropic wrote it; `route pick implement` prints the auditor.

@@ -146,8 +146,10 @@ check(
 )
 for name in ("implement", "mechanical"):
     spec = classes.get(name, {})
-    models = [entry.get("model") for entry in spec.get("chain", [])]
-    check("opus-latest" not in models, f"{name} runs on cheaper seats, never Opus")
+    unpaced_opus = [
+        entry for entry in spec.get("chain", []) if entry.get("model") == "opus-latest" and "min_pace" not in entry
+    ]
+    check(not unpaced_opus, f"{name} puts Opus only behind a pace gate (min_pace), else on cheaper seats")
     audit = spec.get("audit", {})
     by_vendor = audit.get("by_author_vendor", {})
     check(
