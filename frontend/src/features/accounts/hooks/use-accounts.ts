@@ -3,6 +3,7 @@ import { toast } from "sonner";
 
 import {
   checkAccountSubscription,
+  consumeAccountResetCredit,
   deleteAccount,
   exportAccountAuth,
   getAccountTrends,
@@ -106,6 +107,37 @@ export function useAccountMutations() {
     },
   });
 
+  /**
+   * Spends one banked reset credit on an account. The upstream `code` decides
+   * the verdict, not the HTTP status: `nothing_to_reset` leaves the credit
+   * banked, and `no_credit` means the bank was already empty.
+   */
+  const resetCreditMutation = useMutation({
+    mutationFn: ({ accountId, creditId }: { accountId: string; creditId?: string }) =>
+      consumeAccountResetCredit(accountId, creditId),
+    onSuccess: (data, variables) => {
+      if (data.status !== "redeemed") {
+        if (data.code === "nothing_to_reset") {
+          toast.info("Nothing to reset — credit stays banked");
+        } else if (data.code === "no_credit") {
+          toast.error("No banked reset credit on this account");
+        } else {
+          toast.error("Reset credit was not redeemed (" + data.code + ")");
+        }
+      } else if (data.windowsReset > 0) {
+        toast.success(
+          `Rate limits reset (${data.windowsReset} window${data.windowsReset === 1 ? "" : "s"})`,
+        );
+      } else {
+        toast.success("Reset credit redeemed");
+      }
+      invalidateAccountRelatedQueries(queryClient, variables.accountId);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Reset-credit redemption failed");
+    },
+  });
+
   const limitWarmupMutation = useMutation({
     mutationFn: ({ accountId, enabled }: { accountId: string; enabled: boolean }) =>
       updateAccountLimitWarmup(accountId, enabled),
@@ -189,6 +221,7 @@ export function useAccountMutations() {
     setAliasMutation,
     deleteMutation,
     probeMutation,
+    resetCreditMutation,
     exportAuthMutation,
     limitWarmupMutation,
     routingPolicyMutation,

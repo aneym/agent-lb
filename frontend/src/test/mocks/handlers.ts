@@ -632,6 +632,66 @@ export const handlers = [
     });
   }),
 
+  http.get("/api/accounts/:accountId/rate-limit-reset-credits", ({ params }) => {
+    const accountId = String(params.accountId);
+    const account = findAccount(accountId);
+    if (!account) {
+      return HttpResponse.json(
+        { error: { code: "account_not_found", message: "Account not found" } },
+        { status: 404 },
+      );
+    }
+    const availableCount = account.resetCreditsAvailable ?? 0;
+    return HttpResponse.json({
+      accountId,
+      availableCount,
+      credits: Array.from({ length: availableCount }, (_unused, index) => ({
+        id: `RateLimitResetCredit_${accountId}_${index}`,
+        resetType: "codex_rate_limits",
+        status: "available",
+        grantedAt: new Date().toISOString(),
+        expiresAt: null,
+        title: "Full reset",
+        description: null,
+      })),
+    });
+  }),
+
+  http.post(
+    "/api/accounts/:accountId/rate-limit-reset-credits/consume",
+    ({ params }) => {
+      const accountId = String(params.accountId);
+      const account = findAccount(accountId);
+      if (!account) {
+        return HttpResponse.json(
+          { error: { code: "account_not_found", message: "Account not found" } },
+          { status: 404 },
+        );
+      }
+      const banked = account.resetCreditsAvailable ?? 0;
+      if (banked < 1) {
+        return HttpResponse.json({
+          status: "not_redeemed",
+          accountId,
+          code: "no_credit",
+          windowsReset: 0,
+        });
+      }
+      account.resetCreditsAvailable = banked - 1;
+      account.status = "active";
+      return HttpResponse.json({
+        status: "redeemed",
+        accountId,
+        code: "reset",
+        windowsReset: 1,
+        primaryUsedPercentBefore: 100,
+        primaryUsedPercentAfter: 0,
+        secondaryUsedPercentBefore: 100,
+        secondaryUsedPercentAfter: 0,
+      });
+    },
+  ),
+
   http.post("/api/accounts/:accountId/subscription/check", ({ params }) => {
     const accountId = String(params.accountId);
     const account = findAccount(accountId);

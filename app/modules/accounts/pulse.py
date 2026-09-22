@@ -16,7 +16,7 @@ from typing import Protocol, cast
 from app.core.audit.service import AuditService
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.crypto import TokenEncryptor
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME, normalize_provider_name
+from app.core.providers import ANTHROPIC_COMPAT_PROFILES, ANTHROPIC_PROVIDER_NAME, normalize_provider_name
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
@@ -34,7 +34,7 @@ from app.modules.usage.repository import AdditionalUsageRepository, UsageReposit
 
 logger = logging.getLogger(__name__)
 
-_FABLE_PROBE_MODEL = "claude-fable-5"
+_FABLE_PROBE_MODEL = "claude-fable-5-1"
 # Mirrored in anthropic_service.py's _provider_quota_eligibility read side —
 # both must agree on the quota_key/window identifying this marker.
 ANTHROPIC_FABLE_ACCESS_QUOTA_KEY = "anthropic_fable_access"
@@ -42,7 +42,7 @@ _ANTHROPIC_FABLE_PROBE_FEATURE = "anthropic_fable_probe"
 _ANTHROPIC_FABLE_PROBE_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
-_ANTHROPIC_FABLE_QUOTA_KEYS = ("anthropic_top", "anthropic_top_thinking")
+_ANTHROPIC_FABLE_QUOTA_KEYS = ("anthropic_top", "anthropic_top_thinking", "anthropic_opus", "anthropic_opus_thinking")
 
 
 class FableProbeVerdict(str, Enum):
@@ -603,17 +603,14 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
 
     settings = get_settings()
     provider = normalize_provider_name(account.provider)
-    if provider == ANTHROPIC_PROVIDER_NAME:
+    compat_profiles = {profile.provider_name: profile for profile in ANTHROPIC_COMPAT_PROFILES}
+    compat_profile = compat_profiles.get(provider)
+    if compat_profile is not None:
+        base_url = str(getattr(settings, compat_profile.upstream_settings_attr))
         return await probes.send_messages_probe(
             access_token=access_token,
-            base_url=settings.anthropic_upstream_base_url,
-            model=probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
-        )
-    if provider == GLM_PROVIDER_NAME:
-        return await probes.send_messages_probe(
-            access_token=access_token,
-            base_url=settings.glm_anthropic_upstream_base_url,
-            model=probes.DEFAULT_GLM_PROBE_MODEL,
+            base_url=base_url,
+            model=compat_profile.default_probe_model,
         )
     status = await probes.send_openai_probe(
         access_token=access_token,
@@ -649,15 +646,15 @@ async def _default_quota_cooldown_probe_sender(
     settings = get_settings()
     thinking: probes.AdaptiveThinking | None = None
     max_tokens = 4
-    if quota_key == "anthropic_top_thinking":
+    if quota_key in ("anthropic_top_thinking", "anthropic_opus_thinking"):
         thinking = {"type": "adaptive"}
         max_tokens = 32
-    elif quota_key != "anthropic_top":
+    elif quota_key not in ("anthropic_top", "anthropic_opus"):
         raise ValueError(f"Unsupported Anthropic cooldown quota key: {quota_key}")
     return await probes.send_messages_probe(
         access_token=access_token,
         base_url=settings.anthropic_upstream_base_url,
-        model=_FABLE_PROBE_MODEL,
+        model="claude-opus-5-5" if quota_key.startswith("anthropic_opus") else _FABLE_PROBE_MODEL,
         max_tokens=max_tokens,
         thinking=thinking,
     )

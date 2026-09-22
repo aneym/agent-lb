@@ -222,3 +222,13 @@ def test_anthropic_usage_extra_usage_balance_never_goes_negative() -> None:
     assert usage.credits.has_credits is True
     assert usage.credits.balance is not None
     assert float(usage.credits.balance) == 0.0
+
+
+def test_banked_reset_count_is_independent_of_current_redemption_eligibility():
+    payload = AnthropicOAuthUsagePayload.model_validate({
+        "cedar_ember": {
+            "eligible": False, "ineligible_reason": "tenure", "at_limit": False,
+            "grants": [{"id": "launch", "resets_left": 2, "usable_now": False}],
+        },
+    })
+    assert _usage_payload_from_anthropic(payload).reset_credits_available == 2

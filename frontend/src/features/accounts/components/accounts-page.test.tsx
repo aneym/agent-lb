@@ -78,6 +78,7 @@ function mockAccounts(accounts: AccountSummary[]) {
     pauseMutation: idleMutation(),
     resumeMutation: idleMutation(),
     probeMutation: idleMutation(),
+    resetCreditMutation: idleMutation(),
     deleteMutation: idleMutation(),
     exportAuthMutation: idleMutation(),
     setAliasMutation: idleMutation(),

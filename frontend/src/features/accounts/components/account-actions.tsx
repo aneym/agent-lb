@@ -4,6 +4,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -27,6 +28,7 @@ export type AccountActionsProps = {
   onPause: (accountId: string) => void;
   onResume: (accountId: string) => void;
   onProbe: (accountId: string) => void;
+  onRedeemResetCredit?: (accountId: string) => void;
   onDelete: (accountId: string) => void;
   onReauth: () => void;
   onExportAuth: (accountId: string) => void;
@@ -47,6 +49,7 @@ export function AccountActions({
   onPause,
   onResume,
   onProbe,
+  onRedeemResetCredit,
   onDelete,
   onReauth,
   onExportAuth,
@@ -57,6 +60,24 @@ export function AccountActions({
     account.status === "reauth_required" || account.status === "deactivated";
   const probeDisabled =
     busy || account.status === "paused" || showOperatorRecoveryAction;
+  // The accounts inventory is refreshed on its normal cadence. A missing
+  // value is therefore unknown, not an empty bank; do not turn it into zero.
+  const supportsBankedResetCredits = ["openai", "anthropic"].includes(
+    account.provider?.toLowerCase() ?? "",
+  );
+  const bankedResetCredits = account.resetCreditsAvailable;
+  const hasBankedResetCredits =
+    bankedResetCredits !== null &&
+    bankedResetCredits !== undefined &&
+    bankedResetCredits > 0;
+  const canRedeemResetCredit =
+    !!onRedeemResetCredit &&
+    supportsBankedResetCredits &&
+    !showOperatorRecoveryAction &&
+    account.subscription?.status !== "canceled" &&
+    account.status !== "paused" &&
+    (account.status === "rate_limited" || account.status === "quota_exceeded") &&
+    hasBankedResetCredits;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -110,6 +131,30 @@ export function AccountActions({
         <Activity className="h-3.5 w-3.5" />
         Force probe
       </Button>
+
+      {supportsBankedResetCredits ? (
+        <span
+          className="rounded-md border px-2 py-1 text-xs tabular-nums text-muted-foreground"
+          title="Banked rate-limit reset credits from the latest account inventory"
+        >
+          Banked resets: {bankedResetCredits ?? "unknown"}
+        </span>
+      ) : null}
+
+      {canRedeemResetCredit ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => onRedeemResetCredit?.(account.accountId)}
+          disabled={busy}
+          title="Spend one banked credit to reset this account's rate limits now"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Reset limits ({bankedResetCredits})
+        </Button>
+      ) : null}
 
       <Button
         type="button"

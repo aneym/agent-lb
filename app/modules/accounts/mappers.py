@@ -325,7 +325,7 @@ def _account_to_summary(
         credits=credits_window_model,
         reset_credits_available=(
             reset_credit_cache.get_count(account.id)
-            if normalize_provider_name(account.provider) == OPENAI_PROVIDER_NAME
+            if normalize_provider_name(account.provider) in (OPENAI_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME)
             else None
         ),
         subscription=_account_subscription_ledger(account),

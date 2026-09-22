@@ -29,6 +29,7 @@ from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
+from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.identity_mismatch import (
@@ -479,6 +480,11 @@ class UsageUpdater:
             )
             return AccountRefreshResult(usage_written=False, fetch_succeeded=False)
 
+        if account.provider == ANTHROPIC_PROVIDER_NAME:
+            if payload.reset_credits_available is None:
+                reset_credit_cache.clear(account.id)
+            else:
+                reset_credit_cache.record_count(account.id, payload.reset_credits_available)
         now_epoch = _now_epoch()
         if self._additional_usage_repo is not None:
             if payload.additional_rate_limits:
