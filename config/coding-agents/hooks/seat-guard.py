@@ -5,6 +5,8 @@ This hook never controls admission: model and capacity state are surfaced as
 status so the caller can choose deliberately.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os

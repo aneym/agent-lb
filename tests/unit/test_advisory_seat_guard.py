@@ -104,3 +104,28 @@ def test_telemetry_write_failure_is_never_a_permission_denial(tmp_path: Path) ->
     assert "permissionDecision" not in output
     assert "could not record routing telemetry" in output["additionalContext"]
     assert record is None
+
+
+# settings.json runs this hook as `/usr/bin/python3` (3.9 on macOS). A PEP 604
+# annotation evaluated at import crashed it there, so every dispatch after
+# 2026-09-21 went unrecorded behind "routing telemetry unavailable".
+SYSTEM_PYTHON = Path("/usr/bin/python3")
+
+
+@pytest.mark.skipif(not SYSTEM_PYTHON.exists(), reason="no system python on this host")
+def test_dispatch_is_recorded_under_the_interpreter_the_hook_is_installed_with(tmp_path: Path) -> None:
+    ledger = tmp_path / "dispatch.jsonl"
+    snapshot_path = tmp_path / "snapshot.json"
+    snapshot_path.write_text(json.dumps(valid_snapshot()))
+    payload = {"tool_name": "Agent", "tool_input": {"subagent_type": "opus-seat", "prompt": "[class:verify] x"}}
+    result = subprocess.run(
+        [str(SYSTEM_PYTHON), str(HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        env=os.environ | {"LIMIT_WATCH_SNAPSHOT": str(snapshot_path), "DISPATCH_LEDGER": str(ledger)},
+    )
+    assert result.returncode == 0, result.stderr
+    record = json.loads(ledger.read_text())
+    assert record["event"] == "dispatch"
+    assert record["task_class"] == "verify"
