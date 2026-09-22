@@ -1,0 +1,486 @@
+#!/usr/bin/env python3
+"""Run Codex through one user-scoped, aggregate bandwidth-limiting proxy."""
+
+from __future__ import annotations
+
+import base64
+import collections
+import fcntl
+import json
+import math
+import os
+import secrets
+import select
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+DEFAULT_RATE_MBPS = 40.0
+DEFAULT_BURST_SECONDS = 0.05
+IO_QUANTUM_BYTES = 16 * 1024
+MAX_HEADER_BYTES = 64 * 1024
+STATE_VERSION = 1
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+class FairTokenBucket:
+    """A bounded token bucket with FIFO admission across all proxy streams."""
+
+    def __init__(self, rate_bytes_per_second: float, burst_seconds: float) -> None:
+        self.rate = rate_bytes_per_second
+        self.capacity = max(IO_QUANTUM_BYTES, rate_bytes_per_second * burst_seconds)
+        self.tokens = self.capacity
+        self.updated = time.monotonic()
+        self.condition = threading.Condition()
+        self.waiters: collections.deque[object] = collections.deque()
+
+    def acquire(self, nbytes: int) -> None:
+        if nbytes <= 0:
+            return
+        if nbytes > self.capacity:
+            raise ValueError("acquisition exceeds token-bucket capacity")
+        waiter = object()
+        with self.condition:
+            self.waiters.append(waiter)
+            while True:
+                now = time.monotonic()
+                self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate)
+                self.updated = now
+                if self.waiters[0] is waiter and self.tokens >= nbytes:
+                    self.tokens -= nbytes
+                    self.waiters.popleft()
+                    self.condition.notify_all()
+                    return
+                missing = max(0.0, nbytes - self.tokens)
+                self.condition.wait(min(0.05, max(0.001, missing / self.rate)))
+
+    def send(self, destination: socket.socket, data: bytes | memoryview) -> None:
+        view = memoryview(data)
+        while view:
+            part = view[:IO_QUANTUM_BYTES]
+            self.acquire(len(part))
+            destination.sendall(part)
+            view = view[len(part) :]
+
+
+def tunnel_config_from_env() -> tuple[float | None, float]:
+    rate_mbps = _env_float("CODEX_LB_TUNNEL_RATE_MBPS", DEFAULT_RATE_MBPS)
+    if not math.isfinite(rate_mbps) or rate_mbps <= 0:
+        return None, 0.0
+    burst_seconds = _env_float("CODEX_LB_TUNNEL_BURST_SECONDS", DEFAULT_BURST_SECONDS)
+    if not math.isfinite(burst_seconds) or burst_seconds <= 0:
+        burst_seconds = DEFAULT_BURST_SECONDS
+    return rate_mbps, burst_seconds
+
+
+def tunnel_bucket_from_env() -> FairTokenBucket | None:
+    rate_mbps, burst_seconds = tunnel_config_from_env()
+    if rate_mbps is None:
+        return None
+    return FairTokenBucket(rate_mbps * 125_000.0, burst_seconds)
+
+
+def _valid_connect_target(target: str) -> tuple[str, int] | None:
+    host, separator, port_text = target.rpartition(":")
+    if not separator or not host or not port_text.isdigit():
+        return None
+    port = int(port_text)
+    host = host.strip("[]")
+    if port < 1 or port > 65535 or not host or any(char.isspace() for char in host):
+        return None
+    return host, port
+
+
+def _send(destination: socket.socket, data: bytes, bucket: FairTokenBucket | None) -> None:
+    if bucket is None:
+        destination.sendall(data)
+    else:
+        bucket.send(destination, data)
+
+
+def _half_close(destination: socket.socket) -> None:
+    try:
+        destination.shutdown(socket.SHUT_WR)
+    except OSError:
+        pass
+
+
+def _splice(
+    a: socket.socket,
+    b: socket.socket,
+    bucket: FairTokenBucket | None,
+    *,
+    close_when_eof: socket.socket | None = None,
+) -> None:
+    """Copy both directions until both inputs close, preserving TCP half-closes."""
+    peers = {a: b, b: a}
+    readers = set(peers)
+    try:
+        while readers:
+            readable, _, errored = select.select(readers, [], readers, 300)
+            if errored:
+                return
+            for source in readable:
+                try:
+                    chunk = source.recv(64 * 1024)
+                except OSError:
+                    return
+                if not chunk:
+                    if source is close_when_eof:
+                        return
+                    readers.remove(source)
+                    _half_close(peers[source])
+                    continue
+                try:
+                    _send(peers[source], chunk, bucket)
+                except OSError:
+                    return
+    finally:
+        for endpoint in peers:
+            try:
+                endpoint.close()
+            except OSError:
+                pass
+
+
+def _read_head(connection: socket.socket) -> tuple[bytes, bytes]:
+    connection.settimeout(10)
+    data = bytearray()
+    try:
+        while b"\r\n\r\n" not in data:
+            chunk = connection.recv(min(8192, MAX_HEADER_BYTES + 1 - len(data)))
+            if not chunk:
+                raise ValueError("connection closed before request headers")
+            data.extend(chunk)
+            if len(data) > MAX_HEADER_BYTES:
+                raise ValueError("request headers are too large")
+    finally:
+        connection.settimeout(None)
+    head, body = bytes(data).split(b"\r\n\r\n", 1)
+    return head, body
+
+
+def _parse_head(head: bytes) -> tuple[str, str, str, list[tuple[str, str]]]:
+    try:
+        lines = head.decode("iso-8859-1").split("\r\n")
+        method, target, version = lines[0].split(" ", 2)
+        headers = []
+        for line in lines[1:]:
+            name, separator, value = line.partition(":")
+            if not separator or not name.strip():
+                raise ValueError
+            headers.append((name.strip(), value.strip()))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("malformed HTTP request") from None
+    if not version.startswith("HTTP/1."):
+        raise ValueError("unsupported HTTP version")
+    return method, target, version, headers
+
+
+def _header_value(headers: list[tuple[str, str]], wanted: str) -> str | None:
+    wanted = wanted.lower()
+    return next((value for name, value in headers if name.lower() == wanted), None)
+
+
+def _error(connection: socket.socket, status: int, reason: str) -> None:
+    body = f"{status} {reason}\n".encode("ascii", "replace")
+    connection.sendall(
+        f"HTTP/1.1 {status} {reason}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode(
+            "ascii"
+        )
+        + body
+    )
+
+
+class ProxyState:
+    def __init__(self, bucket: FairTokenBucket | None, token: str) -> None:
+        self.bucket = bucket
+        self.token = token
+        self.active = 0
+        self.lock = threading.Lock()
+
+    def begin(self) -> None:
+        with self.lock:
+            self.active += 1
+
+    def end(self) -> None:
+        with self.lock:
+            self.active -= 1
+
+
+class _ProxyHandler(socketserver.BaseRequestHandler):
+    server: "_ProxyServer"
+
+    def handle(self) -> None:
+        self.server.proxy_state.begin()
+        try:
+            self._handle_request()
+        except (OSError, ValueError):
+            try:
+                _error(self.request, 400, "Bad Request")
+            except OSError:
+                pass
+        finally:
+            self.server.proxy_state.end()
+
+    def _handle_request(self) -> None:
+        head, buffered = _read_head(self.request)
+        method, target, version, headers = _parse_head(head)
+        expected = "Basic " + base64.b64encode(
+            f"codex:{self.server.proxy_state.token}".encode()
+        ).decode()
+        if _header_value(headers, "Proxy-Authorization") != expected:
+            _error(self.request, 407, "Proxy Authentication Required")
+            return
+        if method == "GET" and target == "/__codex_lb_health":
+            self.request.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+            return
+        if method == "CONNECT":
+            destination = _valid_connect_target(target)
+            if destination is None:
+                _error(self.request, 400, "Bad CONNECT Target")
+                return
+            upstream = socket.create_connection(destination, timeout=10)
+            upstream.settimeout(None)
+            self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            if buffered:
+                _send(upstream, buffered, self.server.proxy_state.bucket)
+            _splice(self.request, upstream, self.server.proxy_state.bucket)
+            return
+        self._forward_http(method, target, version, headers, buffered)
+
+    def _forward_http(
+        self,
+        method: str,
+        target: str,
+        version: str,
+        headers: list[tuple[str, str]],
+        buffered: bytes,
+    ) -> None:
+        parsed = urlsplit(target)
+        if parsed.scheme.lower() != "http" or not parsed.hostname or parsed.username or parsed.password:
+            _error(self.request, 400, "Absolute HTTP URL Required")
+            return
+        port = parsed.port or 80
+        origin_target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        forwarded = [f"{method} {origin_target} {version}"]
+        for name, value in headers:
+            if name.lower() not in {"proxy-authorization", "proxy-connection", "connection"}:
+                forwarded.append(f"{name}: {value}")
+        forwarded.extend(("Connection: close", "", ""))
+        upstream = socket.create_connection((parsed.hostname, port), timeout=10)
+        upstream.settimeout(None)
+        _send(
+            upstream,
+            "\r\n".join(forwarded).encode("iso-8859-1"),
+            self.server.proxy_state.bucket,
+        )
+        if buffered:
+            _send(upstream, buffered, self.server.proxy_state.bucket)
+        _splice(
+            self.request,
+            upstream,
+            self.server.proxy_state.bucket,
+            close_when_eof=upstream,
+        )
+
+
+class _ProxyServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = False
+
+    def __init__(self, address: tuple[str, int], proxy_state: ProxyState) -> None:
+        self.proxy_state = proxy_state
+        super().__init__(address, _ProxyHandler)
+
+
+def _write_state(path: Path, state: dict[str, object]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def run_proxy_daemon(state_path: Path) -> None:
+    token = secrets.token_hex(24)
+    rate_mbps, burst_seconds = tunnel_config_from_env()
+    bucket = (
+        None
+        if rate_mbps is None
+        else FairTokenBucket(rate_mbps * 125_000.0, burst_seconds)
+    )
+    state = ProxyState(bucket, token)
+    server = _ProxyServer(("127.0.0.1", 0), state)
+    daemon_state = {
+        "version": STATE_VERSION,
+        "pid": os.getpid(),
+        "port": server.server_address[1],
+        "token": token,
+        "rate_mbps": rate_mbps,
+        "burst_seconds": burst_seconds,
+    }
+    _write_state(state_path, daemon_state)
+
+    try:
+        server.serve_forever(poll_interval=0.25)
+    finally:
+        server.server_close()
+        try:
+            current = json.loads(state_path.read_text(encoding="utf-8"))
+            if current.get("pid") == os.getpid() and current.get("token") == token:
+                state_path.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass
+
+
+def _runtime_dir() -> Path:
+    path = Path(
+        os.environ.get("CODEX_LB_RUNTIME_DIR", "~/.agent-lb/codex-network-cap")
+    ).expanduser()
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
+def _read_state(path: Path) -> dict[str, object] | None:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            state.get("version") != STATE_VERSION
+            or not isinstance(state.get("pid"), int)
+            or not isinstance(state.get("port"), int)
+            or not isinstance(state.get("token"), str)
+            or not (
+                state.get("rate_mbps") is None
+                or isinstance(state.get("rate_mbps"), (int, float))
+            )
+            or not isinstance(state.get("burst_seconds"), (int, float))
+        ):
+            return None
+        return state
+    except (OSError, ValueError):
+        return None
+
+
+def _proxy_pid_is_alive(state: dict[str, object]) -> bool:
+    try:
+        pid = int(state["pid"])
+        os.kill(pid, 0)
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _proxy_accepts_authenticated_connection(state: dict[str, object]) -> bool:
+    try:
+        port = int(state["port"])
+        token = str(state["token"])
+        authorization = base64.b64encode(f"codex:{token}".encode()).decode()
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5) as connection:
+            connection.sendall(
+                b"GET /__codex_lb_health HTTP/1.1\r\nHost: localhost\r\n"
+                + f"Proxy-Authorization: Basic {authorization}\r\nConnection: close\r\n\r\n".encode()
+            )
+            return connection.recv(64).startswith(b"HTTP/1.1 204")
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _state_proxy_url(state: dict[str, object]) -> str:
+    return f"http://codex:{state['token']}@127.0.0.1:{state['port']}"
+
+
+def _public_status(state: dict[str, object]) -> dict[str, object]:
+    return {
+        "pid": state["pid"],
+        "port": state["port"],
+        "rate_mbps": state["rate_mbps"],
+        "burst_seconds": state["burst_seconds"],
+        "healthy": _proxy_accepts_authenticated_connection(state),
+    }
+
+
+def _ensure_proxy() -> tuple[str, int]:
+    runtime_dir = _runtime_dir()
+    state_path = runtime_dir / "proxy.json"
+    lock_path = runtime_dir / "startup.lock"
+    with lock_path.open("a+b") as lock_file:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        state = _read_state(state_path)
+        if state is not None and _proxy_pid_is_alive(state):
+            if not _proxy_accepts_authenticated_connection(state):
+                raise RuntimeError("shared Codex bandwidth proxy is alive but unavailable")
+            return _state_proxy_url(state), int(state["pid"])
+        if state is not None:
+            state_path.unlink(missing_ok=True)
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--proxy-daemon",
+                str(state_path),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            state = _read_state(state_path)
+            if state is not None and _proxy_accepts_authenticated_connection(state):
+                return _state_proxy_url(state), int(state["pid"])
+            time.sleep(0.01)
+    raise RuntimeError("shared Codex bandwidth proxy did not start")
+
+
+def _append_no_proxy(hosts: tuple[str, ...]) -> None:
+    for name in ("NO_PROXY", "no_proxy"):
+        entries = [entry.strip() for entry in os.environ.get(name, "").split(",") if entry.strip()]
+        for host in hosts:
+            if host not in entries:
+                entries.append(host)
+        os.environ[name] = ",".join(entries)
+
+
+def main(argv: list[str]) -> None:
+    if len(argv) == 2 and argv[0] == "--proxy-daemon":
+        run_proxy_daemon(Path(argv[1]))
+        return
+    if argv == ["--proxy-status"]:
+        state = _read_state(_runtime_dir() / "proxy.json")
+        if state is None:
+            raise SystemExit("shared Codex bandwidth proxy is not running")
+        print(json.dumps(_public_status(state), sort_keys=True))
+        return
+    if argv == ["--proxy-start"]:
+        _ensure_proxy()
+        state = _read_state(_runtime_dir() / "proxy.json")
+        if state is None:
+            raise RuntimeError("shared Codex bandwidth proxy state is unavailable")
+        print(json.dumps(_public_status(state), sort_keys=True))
+        return
+    proxy_names = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+    if any(os.environ.get(name) for name in proxy_names):
+        raise SystemExit("codex-lb-launch refuses to replace an existing proxy configuration")
+    proxy_url, _pid = _ensure_proxy()
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+        os.environ[name] = proxy_url
+    _append_no_proxy(("127.0.0.1", "localhost", "::1"))
+    os.execvp("codex", ["codex", *argv])
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
