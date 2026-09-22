@@ -1,0 +1,6 @@
+{
+  "accounts": [
+    {"accountId": "openai-a", "provider": "openai", "status": "active", "rateLimitResetAt": "2026-01-01T00:00:00Z", "resetAtPrimary": null, "resetAtSecondary": "2026-09-28T00:00:00Z", "usage": {"primaryRemainingPercent": null, "secondaryRemainingPercent": 65}},
+    {"accountId": "anthropic-a", "provider": "anthropic", "status": "active", "usage": {"primaryRemainingPercent": 45, "secondaryRemainingPercent": 74}}
+  ]
+}

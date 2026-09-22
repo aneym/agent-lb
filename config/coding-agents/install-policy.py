@@ -15,6 +15,11 @@ START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
 MODEL = "fable"
 EFFORT_LEVEL = "high"
+SEAT_GUARD_COMMAND = (
+    '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
+    '{ printf %s \'{"hookSpecificOutput":{"hookEventName":"PreToolUse",'
+    '"permissionDecision":"deny","permissionDecisionReason":"seat-guard crashed; failing closed"}}\'; }'
+)
 MANAGED_AGENTS = (
     (
         Path(".claude/agents/frontend-designer.md"),
@@ -35,6 +40,19 @@ MANAGED_AGENTS = (
         Path("agents/plan-reviewer.md"),
     ),
 )
+# Runtime sources live beside this installer, not in the destination home.
+MANAGED_AGENTS += tuple(
+    (Path(destination), Path(f".agent-lb/managed/coding-agents/{marker}"),
+     f"agent-lb:{marker}:v1\n", Path(source))
+    for destination, marker, source in (
+        (".agent-lb/bin/route", "route-cli", "route"),
+        (".agent-lb/bin/route_jev.py", "route-jev", "route_jev.py"),
+        (".agent-lb/managed/coding-agents/routing-table.json", "route-table", "routing-table.json"),
+        (".claude/hooks/routing-pulse.py", "routing-pulse", "routing-pulse.py"),
+        (".claude/hooks/seat-guard.py", "seat-guard", "seat-guard.py"),
+    )
+)
+
 LEGACY_HEADINGS = (
     "Coding-agent routing",
     "Orchestration — Fable architects, the fleet executes",
@@ -105,7 +123,10 @@ def uninstall_adapter(text: str, path: Path) -> str:
 
 
 def is_owned_hook(command: Any) -> bool:
-    return isinstance(command, str) and "ccdex-gpt-only.sh" in command
+    return isinstance(command, str) and (
+        "ccdex-gpt-only.sh" in command
+        or "$HOME/.claude/hooks/seat-guard.py" in command
+    )
 
 
 def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, Any]:
@@ -129,6 +150,11 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
     if not uninstall:
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL
+        hooks = updated.setdefault("hooks", {})
+        hooks.setdefault("PreToolUse", []).append({
+            "matcher": "Agent",
+            "hooks": [{"type": "command", "command": SEAT_GUARD_COMMAND}],
+        })
     return updated
 
 
@@ -241,6 +267,8 @@ def main() -> int:
             print(f"removed {path}")
         else:
             write_atomic(path, content)
+            if path == args.home / ".agent-lb/bin/route":
+                path.chmod(0o755)
             print(f"updated {path}")
     for reason, path in preserved_agents:
         print(f"preserved {reason} {path}")
