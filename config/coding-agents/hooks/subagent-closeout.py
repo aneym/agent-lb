@@ -212,11 +212,8 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
         candidates = [
             record for record in reversed(open_dispatches) if digest and record.get("prompt_sha256") == digest
         ]
-        same_seat = [
-            record for record in candidates if seat and str(record.get("subagent_type") or "").lower() == seat.lower()
-        ]
-        if same_seat:
-            candidates = same_seat
+        # No narrowing by the payload's agent_type: it may be a caller name that
+        # happens to equal a sibling's seat, which would fake an exact join.
         if len(candidates) == 1:
             return candidates[0], "prompt_hash"
         if candidates:

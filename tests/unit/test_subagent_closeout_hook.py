@@ -279,3 +279,53 @@ def test_replay_honours_a_historical_ambiguous_closeout_that_claimed_a_dispatch(
     # One sibling is still open, so this stop joins it exactly.
     assert closeout["match"] == "prompt_hash"
     assert closeout["matched"] is True
+
+
+@pytest.mark.parametrize("interpreter", INTERPRETERS)
+def test_an_agent_type_equal_to_a_siblings_seat_does_not_fake_an_exact_join(interpreter: str, tmp_path: Path) -> None:
+    ledger = tmp_path / "dispatch.jsonl"
+    digest = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
+    rows = [
+        {
+            "event": "dispatch",
+            "session_id": SESSION,
+            "ts": "2026-09-22T10:00:00Z",
+            "subagent_type": "opus-seat",
+            "task_class": "implement",
+            "model": "opus",
+            "prompt_sha256": digest,
+        },
+        {
+            "event": "dispatch",
+            "session_id": SESSION,
+            "ts": "2026-09-22T10:00:01Z",
+            "subagent_type": "cursor-seat",
+            "task_class": "mechanical",
+            "model": "grok",
+            "prompt_sha256": digest,
+        },
+    ]
+    ledger.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    transcript = tmp_path / "subagents" / "agent-1.jsonl"
+    transcript.parent.mkdir()
+    _write_transcript(transcript)
+    # agent_type is a caller name that happens to spell the other sibling's seat.
+    payload = {
+        "session_id": SESSION,
+        "agent_id": "z",
+        "agent_type": "cursor-seat",
+        "agent_transcript_path": str(transcript),
+        "last_assistant_message": "Done.",
+    }
+    subprocess.run(
+        [interpreter, str(HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        check=True,
+        env={**os.environ, "DISPATCH_LEDGER": str(ledger)},
+    )
+    closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
+    assert closeout["match"] == "prompt_hash_ambiguous"
+    assert closeout["matched"] is False
+    assert closeout["task_class"] is None
+    assert closeout["subagent_type"] is None
