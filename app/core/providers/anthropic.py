@@ -54,6 +54,7 @@ class AnthropicProvider:
             refresh_token,
             token_url=oauth_config.token_url,
             client_id=oauth_config.client_id,
+            scope=get_settings().anthropic_oauth_refresh_scope,
             session=session,
         )
 
