@@ -689,7 +689,6 @@ def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligi
     [
         (60.0, 84.0, 3, "opus-seat", "admitted: pool anthropic-general pace +10.0"),
         (20.0, 84.0, 3, "codex-sol", "behind pace: -30.0 < -10"),
-        (60.0, 84.0, 1, "codex-sol", "critical: 1 eligible account(s)"),
         (60.0, 84.0, 2, "codex-sol", "low: 2 eligible account(s)"),
     ],
 )
@@ -935,3 +934,14 @@ def test_pace_prefers_the_lbs_per_account_weekly_pace(tmp_path: Path) -> None:
     picked = json.loads(result.stdout)
     assert picked["seat"] == "codex-sol"
     assert "behind pace: -25.0 < -10" in picked["reason"]
+
+
+def test_a_fallback_whose_auditor_pool_is_critical_is_skipped(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    _paced_pools(fixtures, 60.0, 84.0, 1)
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    # Opus is critical, so it neither implements nor audits Codex Sol's work.
+    assert result.returncode == 2
+    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result.stderr
