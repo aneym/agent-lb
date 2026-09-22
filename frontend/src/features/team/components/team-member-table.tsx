@@ -51,7 +51,7 @@ export function TeamMemberTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border">
-      <Table className="table-fixed">
+      <Table className="min-w-5xl table-fixed">
         <TableHeader>
           <TableRow>
             <TableHead className="w-[18%] min-w-[11rem] pl-4 text-xs font-medium text-muted-foreground">
