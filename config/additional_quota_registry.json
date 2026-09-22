@@ -88,7 +88,7 @@
     "quota_key": "anthropic_catalog",
     "display_label": "Anthropic catalog",
     "routing_policy": "normal",
-    "model_ids": ["claude-fable-5-1", "claude-opus-5"],
+    "model_ids": ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5"],
     "limit_name_aliases": ["anthropic_catalog"]
   },
   {

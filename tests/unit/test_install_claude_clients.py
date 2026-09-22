@@ -121,7 +121,7 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
         },
     )
     assert "--autocompact 1m" in dry_run.stdout
-    assert "--model claude-opus-5" not in dry_run.stdout
+    assert "--model claude-opus-5-5[1m]" in dry_run.stdout
 
     subprocess.run([str(INSTALLER), "--uninstall"], check=True, env=env, capture_output=True, text=True)
     for name in ("cc", "fable", "opus", "claude-lb-launch", "agent-defs-doctor"):

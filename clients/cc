@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cc: canonical Claude Code harness with Fable 5 as the driver."""
+"""cc: canonical Claude Code harness with Opus 5.5 as the driver (owner, 2026-09-22)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 def main() -> None:
-    fable = Path(__file__).resolve().with_name("fable")
-    os.execv(fable, [str(fable), *sys.argv[1:]])
+    opus = Path(__file__).resolve().with_name("opus")
+    os.execv(opus, [str(opus), *sys.argv[1:]])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""opus: explicit Claude Code harness with Opus 5 and genuine 1M context."""
+"""opus: Claude Code harness on the newest Opus (5.5) with genuine 1M context."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-MODEL = "claude-opus-5[1m]"
+MODEL = "claude-opus-5-5[1m]"
 
 
 def main() -> None:

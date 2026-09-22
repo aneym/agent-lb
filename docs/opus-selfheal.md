@@ -13,7 +13,7 @@
   routing change, start a new Claude Code session; an existing session does not
   reload the repaired registry.
 - Set a nonempty `AGENT_LB_OPUS_MODEL` to override the canonical Opus model. The
-  default is `claude-opus-5`.
+  default is `claude-opus-5-5`.
 
 A passing receipt proves that the tested route worked at that time. It does not
 guarantee future provider capacity.

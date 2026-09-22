@@ -57,7 +57,7 @@ def test_defaults_fable_driver_and_canonical_opus_seat(monkeypatch: pytest.Monke
 
     assert environment["ANTHROPIC_MODEL"] == "claude-fable-5[1m]"
     assert environment["ANTHROPIC_DEFAULT_FABLE_MODEL"] == "claude-fable-5[1m]"
-    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5"
+    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5-5"
     assert command == [str(ROOT / "clients" / "claude-lb-launch"), "--autocompact", "1m", "-p", "hello"]
 
 
@@ -78,7 +78,7 @@ def test_inherited_fable_poison_cannot_capture_opus_slot(monkeypatch: pytest.Mon
 
     _, environment = run_fable(monkeypatch, [])
 
-    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5"
+    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5-5"
 
 
 def test_seat_slots_are_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,3 +107,14 @@ def test_explicit_cli_model_is_preserved(monkeypatch: pytest.MonkeyPatch) -> Non
         "-p",
         "hello",
     ]
+
+
+def test_launch_defaults_never_pin_an_older_opus() -> None:
+    """A superseded Opus id as a launch default silently downgrades every cc session."""
+    newest = "claude-opus-5-5"
+    clients = ROOT / "clients"
+    assert f'MODEL = "{newest}[1m]"' in (clients / "opus").read_text()
+    assert f'DEFAULT_OPUS_MODEL = "{newest}"' in (clients / "fable").read_text()
+    assert f'DEFAULT_CLAUDE_MODEL = "{newest}[1m]"' in (clients / "claude-lb-launch").read_text()
+    assert f'EXPECTED_MODEL_DEFAULT = "{newest}"' in (clients / "opus-runtime-doctor").read_text()
+    assert 'with_name("opus")' in (clients / "cc").read_text()

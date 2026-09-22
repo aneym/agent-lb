@@ -24,7 +24,7 @@ from typing import Any
 
 PROBE_INTERVAL_SECONDS = 6 * 60 * 60
 PROBE_TIMEOUT_SECONDS = 180
-EXPECTED_MODEL_DEFAULT = "claude-opus-5"
+EXPECTED_MODEL_DEFAULT = "claude-opus-5-5"
 SAFE_MODEL = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,100}$")
 SAFE_METADATA = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 TARGET_FD_SOFT_LIMIT = 8192

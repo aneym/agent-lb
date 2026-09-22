@@ -18,7 +18,7 @@ def test_canonical_claude_native_routes_use_opus_5_high_with_fable_first_planner
     verifier = VERIFIER.read_text()
 
     assert "| Driver (main loop)" in routing
-    assert "| `claude-opus-5`" in routing
+    assert "| `claude-opus-5-5`" in routing
     assert "| high" in routing
     assert "| Frontend designer" in routing
     assert "| Planner (lane lead)" in routing
@@ -32,10 +32,10 @@ def test_canonical_claude_native_routes_use_opus_5_high_with_fable_first_planner
             if any(route in line for route in ("Driver (main loop)", "Frontend designer"))
         )
         assert legacy not in adapter
-    assert 'settings.get("model") == "fable"' in verifier
+    assert 'settings.get("model") == "opus"' in verifier
     assert 'settings.get("effortLevel") == "high"' in verifier
     assert "model: claude-planner" in verifier
-    assert "claude-opus-5" in verifier
+    assert "claude-opus-5-5" in verifier
 
 
 def test_gpt_sol_routes_remain_fixed() -> None:
