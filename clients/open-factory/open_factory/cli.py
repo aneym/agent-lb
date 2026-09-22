@@ -1,3 +1,4 @@
+# ruff: noqa: E501  (long lines are prompt text the CLI writes verbatim)
 from __future__ import annotations
 
 import argparse
@@ -6,7 +7,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -265,7 +265,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     goal = args.goal or f"Ship work in {project.name}"
     root = scaffold(project, goal=goal, name=args.name)
     print(f"initialized {root}")
-    print(f"  factory.json  state.json  ledger.jsonl  dispatch/")
+    print("  factory.json  state.json  ledger.jsonl  dispatch/")
     print(f"  start with: open-factory start --path {project}")
     return 0
 
@@ -508,7 +508,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     elif args.goal:
         cmd.append(f"Open Factory start. Goal: {args.goal}. Read .open-factory/FACTORY.md and begin.")
 
-    print(f"open-factory start")
+    print("open-factory start")
     print(f"  project   {project}")
     print(f"  driver    {driver}")
     print(f"  launcher  {launcher}")
@@ -550,7 +550,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         for k, v in sorted(seats_used.items(), key=lambda x: -x[1]):
             print(f"  {k}: {v}")
     print(f"\ncatalog: {CATALOG_PATH}")
-    print(f"doctor tip: open-factory doctor")
+    print("doctor tip: open-factory doctor")
     print(f"start tip: open-factory start --path {project}")
     return 0
 

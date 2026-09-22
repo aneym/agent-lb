@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, cast, AsyncContextManager
+from typing import Any, AsyncContextManager, cast
 from urllib.parse import urljoin
 
 import aiohttp
