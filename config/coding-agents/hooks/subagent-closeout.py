@@ -312,7 +312,13 @@ def main() -> None:
         # dispatch had one. The seat, model and class are the dispatch's own, so
         # S3's `route report` can group closeouts by seat at all.
         "agent_type": agent_type or None,
-        "subagent_type": (dispatch or shared or {}).get("subagent_type") or agent_type.lower() or None,
+        # An ambiguous join reports only the seat its candidates share (none when they
+        # differ); the payload's agent_type may be a caller name, not a seat.
+        "subagent_type": (
+            shared.get("subagent_type")
+            if shared is not None
+            else (dispatch or {}).get("subagent_type") or agent_type.lower() or None
+        ),
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
         "task_class": (dispatch or shared or {}).get("task_class"),

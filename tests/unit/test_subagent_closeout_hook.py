@@ -234,7 +234,7 @@ def test_ambiguous_siblings_on_different_seats_share_no_seat(interpreter: str, t
     assert closeout["match"] == "prompt_hash_ambiguous"
     assert closeout["task_class"] == "implement"
     assert closeout["dispatch_model"] is None
-    assert closeout["subagent_type"] == "unrecorded-name"
+    assert closeout["subagent_type"] is None
 
 
 @pytest.mark.parametrize("interpreter", INTERPRETERS)
