@@ -485,6 +485,14 @@ class UsageUpdater:
                 reset_credit_cache.clear(account.id)
             else:
                 reset_credit_cache.record_count(account.id, payload.reset_credits_available)
+        elif account.provider == OPENAI_PROVIDER_NAME:
+            # /wham/usage carries the banked-credit count on every poll, so the
+            # dashboard count stays fresh between hourly expiry sweeps and is
+            # known within one poll of a restart. An absent summary keeps the
+            # last listed count.
+            reset_summary = payload.rate_limit_reset_credits
+            if reset_summary is not None and reset_summary.available_count is not None:
+                reset_credit_cache.record_count(account.id, reset_summary.available_count)
         now_epoch = _now_epoch()
         if self._additional_usage_repo is not None:
             if payload.additional_rate_limits:

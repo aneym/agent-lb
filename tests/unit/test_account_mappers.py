@@ -180,10 +180,10 @@ def test_account_to_summary_surfaces_owner_instance(monkeypatch: pytest.MonkeyPa
     mirrored.owner_instance = "other-instance"
 
     owned_summary = mappers._account_to_summary(
-        owned, None, None, None, None, None, None, encryptor, include_auth=False
+        owned, None, None, None, None, None, None, None, encryptor, include_auth=False
     )
     mirrored_summary = mappers._account_to_summary(
-        mirrored, None, None, None, None, None, None, encryptor, include_auth=False
+        mirrored, None, None, None, None, None, None, None, encryptor, include_auth=False
     )
 
     assert owned_summary.owner_instance is None
@@ -192,31 +192,40 @@ def test_account_to_summary_surfaces_owner_instance(monkeypatch: pytest.MonkeyPa
     assert mirrored_summary.is_locally_owned is False
 
 
-def test_account_to_summary_exposes_cached_reset_credits_for_openai_only() -> None:
+def test_account_to_summary_exposes_cached_reset_credits_for_openai_and_anthropic() -> None:
     encryptor = TokenEncryptor()
     openai = _account(AccountStatus.ACTIVE)
     openai.provider = "OpenAI"
     anthropic = _account(AccountStatus.ACTIVE)
     anthropic.id = "account-2"
     anthropic.provider = "anthropic"
+    glm = _account(AccountStatus.ACTIVE)
+    glm.id = "account-3"
+    glm.provider = "glm"
     reset_credit_cache.reset()
     reset_credit_cache.record_count(openai.id, 2)
     reset_credit_cache.record_count(anthropic.id, 4)
+    reset_credit_cache.record_count(glm.id, 1)
     try:
         openai_summary = mappers._account_to_summary(
-            openai, None, None, None, None, None, None, encryptor, include_auth=False
+            openai, None, None, None, None, None, None, None, encryptor, include_auth=False
         )
         anthropic_summary = mappers._account_to_summary(
-            anthropic, None, None, None, None, None, None, encryptor, include_auth=False
+            anthropic, None, None, None, None, None, None, None, encryptor, include_auth=False
         )
 
         assert openai_summary.reset_credits_available == 2
         assert openai_summary.model_dump(by_alias=True)["resetCreditsAvailable"] == 2
-        assert anthropic_summary.reset_credits_available is None
+        glm_summary = mappers._account_to_summary(
+            glm, None, None, None, None, None, None, None, encryptor, include_auth=False
+        )
+
+        assert anthropic_summary.reset_credits_available == 4
+        assert glm_summary.reset_credits_available is None
 
         reset_credit_cache.clear(openai.id)
         unknown_summary = mappers._account_to_summary(
-            openai, None, None, None, None, None, None, encryptor, include_auth=False
+            openai, None, None, None, None, None, None, None, encryptor, include_auth=False
         )
         assert unknown_summary.reset_credits_available is None
     finally:
@@ -229,7 +238,9 @@ def test_account_to_summary_openai_without_primary_usage_has_no_primary_gauge() 
     encryptor = TokenEncryptor()
     openai = _account(AccountStatus.ACTIVE)
     openai.provider = "openai"
-    summary = mappers._account_to_summary(openai, None, None, None, None, None, None, encryptor, include_auth=False)
+    summary = mappers._account_to_summary(
+        openai, None, None, None, None, None, None, None, encryptor, include_auth=False
+    )
     assert summary.usage.primary_remaining_percent is None
     assert summary.usage.secondary_remaining_percent is None
 
