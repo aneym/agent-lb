@@ -55,9 +55,9 @@ def test_defaults_fable_driver_and_canonical_opus_seat(monkeypatch: pytest.Monke
 
     command, environment = run_fable(monkeypatch, ["-p", "hello"])
 
-    assert environment["ANTHROPIC_MODEL"] == "claude-fable-5[1m]"
-    assert environment["ANTHROPIC_DEFAULT_FABLE_MODEL"] == "claude-fable-5[1m]"
-    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5"
+    assert environment["ANTHROPIC_MODEL"] == "fable"
+    assert environment["ANTHROPIC_DEFAULT_FABLE_MODEL"] == "fable"
+    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "opus"
     assert command == [str(ROOT / "clients" / "claude-lb-launch"), "--autocompact", "1m", "-p", "hello"]
 
 
@@ -78,7 +78,7 @@ def test_inherited_fable_poison_cannot_capture_opus_slot(monkeypatch: pytest.Mon
 
     _, environment = run_fable(monkeypatch, [])
 
-    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5"
+    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "opus"
 
 
 def test_seat_slots_are_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
