@@ -179,16 +179,12 @@ def test_installed_commands_and_uninstall_work_without_source_checkout(tmp_path:
     assert (tmp_path / "policy" / "coding-agents" / "ROUTING.md").read_bytes() == (
         ROOT / "config" / "coding-agents" / "ROUTING.md"
     ).read_bytes()
-    subprocess.run(
-        [str(current / "scripts" / INSTALLER.name), "--print"], check=True, env=env, capture_output=True
-    )
+    subprocess.run([str(current / "scripts" / INSTALLER.name), "--print"], check=True, env=env, capture_output=True)
 
     replacement = tmp_path / "bin" / "opus"
     replacement.unlink()
     replacement.write_text("local replacement\n")
-    subprocess.run(
-        [str(current / "scripts" / INSTALLER.name), "--uninstall"], check=True, env=env, capture_output=True
-    )
+    subprocess.run([str(current / "scripts" / INSTALLER.name), "--uninstall"], check=True, env=env, capture_output=True)
     assert replacement.read_text() == "local replacement\n"
     assert not (tmp_path / "bin" / "cc").is_symlink()
     assert not (tmp_path / "policy" / "coding-agents").is_symlink()
@@ -295,7 +291,9 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
         for group in settings["hooks"]["PreToolUse"]
         for hook_config in group["hooks"]
     ]
-    assert commands == [("Bash", "keep-safety-hook")]
+    assert commands[0] == ("Bash", "keep-safety-hook")
+    assert [matcher for matcher, command in commands[1:]] == ["Agent"]
+    assert "hooks/seat-guard.py" in commands[1][1]
 
 
 def test_policy_installer_preflight_failure_does_not_mutate_any_target(tmp_path: Path) -> None:
@@ -407,9 +405,7 @@ def test_policy_installer_previews_and_checkpoints_designer_replacement(tmp_path
     )
     checkpoint = Path(
         next(
-            line.removeprefix("checkpoint ")
-            for line in installed.stdout.splitlines()
-            if line.startswith("checkpoint ")
+            line.removeprefix("checkpoint ") for line in installed.stdout.splitlines() if line.startswith("checkpoint ")
         )
     )
 
@@ -542,9 +538,7 @@ def test_policy_installer_previews_and_checkpoints_planner_replacement(tmp_path:
     )
     checkpoint = Path(
         next(
-            line.removeprefix("checkpoint ")
-            for line in installed.stdout.splitlines()
-            if line.startswith("checkpoint ")
+            line.removeprefix("checkpoint ") for line in installed.stdout.splitlines() if line.startswith("checkpoint ")
         )
     )
 
@@ -593,3 +587,42 @@ def test_policy_installer_uninstall_preserves_identical_unmanaged_planner(tmp_pa
 
     assert f"preserved unmanaged {planner}" in result.stdout
     assert planner.read_bytes() == MANAGED_PLANNER.read_bytes()
+
+
+def test_policy_installer_registers_the_seat_guard_once(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    settings_path = home / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {"matcher": "Agent", "hooks": [{"type": "command", "command": "keep-load-governor"}]}
+                    ]
+                }
+            }
+        )
+    )
+
+    for _ in range(2):
+        subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+
+    groups = json.loads(settings_path.read_text())["hooks"]["PreToolUse"]
+    commands = [hook["command"] for group in groups if group["matcher"] == "Agent" for hook in group["hooks"]]
+    assert sum("hooks/seat-guard.py" in command for command in commands) == 1
+    assert "keep-load-governor" in commands
+
+
+def test_policy_installer_replaces_a_symlinked_policy_dir_with_a_full_copy(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    policy = home / ".agents" / "policy" / "coding-agents"
+    policy.parent.mkdir(parents=True)
+    policy.symlink_to(POLICY_INSTALLER.parent)
+
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+
+    assert policy.is_dir() and not policy.is_symlink()
+    for name in ("ROUTING.md", "routing-table.json", "claude-adapter.md", "verify-routing"):
+        assert (policy / name).read_bytes() == (POLICY_INSTALLER.parent / name).read_bytes()
+    assert (policy / "agents" / "planner.md").exists()

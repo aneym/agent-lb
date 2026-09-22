@@ -188,6 +188,22 @@ def is_owned_hook(command: Any) -> bool:
     return isinstance(command, str) and "ccdex-gpt-only.sh" in command
 
 
+SEAT_GUARD_HOOK = {
+    "type": "command",
+    "command": (
+        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || { printf %s '
+        '\'{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":'
+        '"seat-guard advisory: routing telemetry unavailable; dispatch was not blocked. Check agent-lb status."}}\'; }'
+    ),
+    "timeout": 5,
+    "statusMessage": "Seat guard",
+}
+
+
+def is_seat_guard_hook(command: Any) -> bool:
+    return isinstance(command, str) and "hooks/seat-guard.py" in command
+
+
 def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
@@ -209,6 +225,21 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
     if not uninstall:
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL
+        # The seat guard only enforces the lineup if Claude Code runs it on every
+        # Agent dispatch; register it unless some Agent hook already runs it.
+        pre_tool_use = updated.setdefault("hooks", {}).setdefault("PreToolUse", [])
+        registered = any(
+            is_seat_guard_hook(hook.get("command"))
+            for group in pre_tool_use
+            if group.get("matcher") == "Agent"
+            for hook in group.get("hooks", [])
+        )
+        if not registered:
+            agent_group = next((group for group in pre_tool_use if group.get("matcher") == "Agent"), None)
+            if agent_group is None:
+                pre_tool_use.append({"matcher": "Agent", "hooks": [dict(SEAT_GUARD_HOOK)]})
+            else:
+                agent_group.setdefault("hooks", []).insert(0, dict(SEAT_GUARD_HOOK))
     return updated
 
 
@@ -322,7 +353,7 @@ def main() -> int:
                 changes[route_owner] = "agent-lb:route-cli:v1\n"
         # The canonical path must hold exactly what was installed, so a symlink into
         # a checkout (whose working tree can drift) is replaced by a real copy.
-        replace_policy_link = policy_dir.is_symlink() and policy_dir.resolve() != source
+        replace_policy_link = policy_dir.is_symlink()
         if replace_policy_link:
             policy_link_target = os.readlink(policy_dir)
         if replace_policy_link or policy_dir.resolve() != source:
@@ -331,7 +362,9 @@ def main() -> int:
             policy_sources += [path.relative_to(source) for path in sorted((source / "hooks").glob("*.py"))]
             for relative in policy_sources:
                 wanted = (source / relative).read_text()
-                if read_text(policy_dir / relative) != wanted:
+                # Behind a symlink every file must be written: the link is replaced
+                # by an empty directory before the copies land.
+                if replace_policy_link or read_text(policy_dir / relative) != wanted:
                     changes[policy_dir / relative] = wanted
 
     action = (

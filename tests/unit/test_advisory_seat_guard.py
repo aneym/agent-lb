@@ -133,6 +133,21 @@ def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) ->
     assert record and "denied" not in record
 
 
+@pytest.mark.parametrize(
+    "brief",
+    [
+        "Remove the `--model gpt-5.6-sol` pin from codex-verifier.md.",
+        "Replace model: gpt-6-astra with route resolve sol-latest.",
+        "The seat used to run --model gpt-5.6-terra; it no longer does.",
+    ],
+)
+def test_brief_that_asks_to_remove_a_retired_pin_is_admitted(tmp_path: Path, brief: str) -> None:
+    payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": "cursor-seat", "prompt": brief}})
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
+    assert "permissionDecision" not in output
+    assert record and "denied" not in record
+
+
 def test_opus_dispatch_is_admitted(tmp_path: Path) -> None:
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="opus")
     assert "permissionDecision" not in output

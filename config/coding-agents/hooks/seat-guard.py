@@ -83,12 +83,24 @@ def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
     return bool(bare) and any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
 
 
+# Words just before a pin that make it a reference to drop, not an instruction to use.
+REMOVAL_CONTEXT = re.compile(
+    r"\b(?:remove|removes|removing|replace|replaces|replacing|retire|retired|drop|delete|strip|"
+    r"instead of|no longer|never|not|was|were|from|used to|old|stale)\b[^\n]{0,40}$",
+    re.IGNORECASE,
+)
+
+
 def retired_pins(prompt: str, patterns: tuple) -> list:
     found = []
     for match in MODEL_PIN.finditer(prompt):
         candidate = match.group(1).rstrip(".,;:)")
-        if forbidden_model(candidate, patterns) and candidate not in found:
-            found.append(candidate)
+        if not forbidden_model(candidate, patterns) or candidate in found:
+            continue
+        line_start = prompt.rfind("\n", 0, match.start()) + 1
+        if REMOVAL_CONTEXT.search(prompt[line_start : match.start()]):
+            continue
+        found.append(candidate)
     return found
 
 

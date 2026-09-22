@@ -190,10 +190,11 @@ for alias, spec in aliases.items():
 
 def stale_reason(model):
     bare = model.strip("`'\"").lower().split("[", 1)[0]
+    # Retirement first: a wildcard pin such as gpt-5.6* is as retired as the ids it covers.
+    if any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare) for pattern in retired):
+        return "retired"
     if bare in aliases or bare in ("opus", "sonnet", "haiku", "inherit") or "*" in bare:
         return None
-    if any(fnmatch.fnmatchcase(bare, pattern) for pattern in retired):
-        return "retired"
     match = GPT_ID.match(bare)
     if match and match.group(2) in newest_by_family and newest_by_family[match.group(2)] != bare:
         return f"older than {newest_by_family[match.group(2)]}"

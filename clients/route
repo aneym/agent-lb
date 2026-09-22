@@ -505,6 +505,10 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
     if not isinstance(spec, dict):
         if is_retired(name, retired):
             return None, f"{name} is retired"
+        if "*" in name or "?" in name:
+            # A wildcard is not a model a seat can be sent; it needs a family alias
+            # with a served-model source before it can route.
+            return None, f"{name} is a wildcard, not a served model"
         return name, "not an alias"
     harness = spec.get("harness")
     if isinstance(harness, str) and harness:
@@ -760,7 +764,13 @@ def command_pick(args: argparse.Namespace) -> int:
     audit = spec.get("audit")
     auditor = None
     if isinstance(audit, dict) and isinstance(audit.get("by_author_vendor"), dict):
-        auditor = audit["by_author_vendor"].get(chosen["vendor"])
+        entry = audit["by_author_vendor"].get(chosen["vendor"])
+        if isinstance(entry, dict) and isinstance(entry.get("model"), str):
+            # Return a dispatchable model next to the alias, resolved like the seat was.
+            if entry["model"] in aliases and served is None:
+                served, _ = served_models()
+            resolved, why = resolve_alias(table, entry["model"], served or [])
+            auditor = {**entry, "alias": entry["model"], "model": resolved, "reason": why}
     result = {
         "class": args.task_class,
         "state_age_s": None if age is None else round(age, 1),
@@ -796,7 +806,8 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
     print(f"fallbacks {fallbacks}")
     auditor = result.get("audit")
     if isinstance(auditor, dict):
-        print(f"audit     {auditor.get('seat')}/{auditor.get('model')} audits this seat's closeout before acceptance")
+        shown = auditor.get("model") or f"unresolved {auditor.get('alias')}: {auditor.get('reason')}"
+        print(f"audit     {auditor.get('seat')}/{shown} audits this seat's closeout before acceptance")
 
 
 # --- doctor ------------------------------------------------------------------

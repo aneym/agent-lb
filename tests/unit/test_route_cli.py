@@ -636,13 +636,11 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
 
     assert plan.returncode == 0, plan.stderr
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
-    # No pool data, so the pace-gated Opus entry is skipped; no Terra and no Cursor list
-    # either, so implement falls to the GLM wildcard, audited by Opus.
-    assert implement.returncode == 0, implement.stderr
-    picked = json.loads(implement.stdout)
-    assert picked["model"] == "glm-*"
-    assert picked["audit"]["model"] == "opus-latest"
-    assert "pace unknown" in picked["reason"]
+    # No pool data skips the pace-gated Opus entry, no Terra or Cursor list is served,
+    # and wildcards are not models: nothing is routable rather than a literal "glm-*".
+    assert implement.returncode == 2
+    assert "pace unknown" in implement.stderr
+    assert "glm-* is a wildcard, not a served model" in implement.stderr
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
 
@@ -706,8 +704,11 @@ def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
     picked = json.loads(result.stdout)
     assert picked["seat"] == expected_seat
     assert why in picked["reason"]
-    auditor = picked["audit"]["model"]
-    assert auditor == ("sol-latest" if expected_seat == "opus-seat" else "opus-latest")
+    auditor = picked["audit"]
+    if expected_seat == "opus-seat":
+        assert (auditor["alias"], auditor["model"]) == ("sol-latest", "gpt-6-sol")
+    else:
+        assert (auditor["alias"], auditor["model"]) == ("opus-latest", "opus")
 
 
 def test_record_and_report_compare_implement_seats_per_model(tmp_path: Path) -> None:
