@@ -612,6 +612,9 @@ def test_policy_installer_registers_the_seat_guard_once(tmp_path: Path) -> None:
     commands = [hook["command"] for group in groups if group["matcher"] == "Agent" for hook in group["hooks"]]
     assert sum("hooks/seat-guard.py" in command for command in commands) == 1
     assert "keep-load-governor" in commands
+    stop = json.loads(settings_path.read_text())["hooks"]["SubagentStop"]
+    stop_commands = [hook["command"] for group in stop for hook in group["hooks"]]
+    assert sum("hooks/subagent-closeout.py" in command for command in stop_commands) == 1
 
 
 def test_policy_installer_replaces_a_symlinked_policy_dir_with_a_full_copy(tmp_path: Path) -> None:
@@ -644,6 +647,7 @@ def test_symlink_migration_checkpoints_every_file_the_link_exposed(tmp_path: Pat
         next(line.removeprefix("checkpoint ") for line in result.stdout.splitlines() if line.startswith("checkpoint "))
     )
     assert (checkpoint / "policy-link-target" / "notes-only-here.md").read_text() == "custom\n"
+    assert (policy / "notes-only-here.md").read_text() == "custom\n"
     assert (policy / "ROUTING.md").read_bytes() == (POLICY_INSTALLER.parent / "ROUTING.md").read_bytes()
 
 
@@ -656,3 +660,4 @@ def test_uninstall_removes_the_seat_guard_registration(tmp_path: Path) -> None:
     settings = json.loads((home / ".claude" / "settings.json").read_text())
     commands = [h["command"] for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
     assert not any("hooks/seat-guard.py" in command for command in commands)
+    assert not settings.get("hooks", {}).get("SubagentStop")

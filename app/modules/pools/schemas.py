@@ -38,6 +38,9 @@ class PoolSummary(DashboardModel):
     # `route pick` paces spend against the weekly cycle with these.
     weekly_remaining_percent: float | None = None
     weekly_reset_at: datetime | None = None
+    # Mean per-account weekly pace: remaining% minus the share of the 168 h cycle
+    # still ahead of that account's own reset. Positive = more budget than time.
+    weekly_pace_percent: float | None = None
 
 
 class PoolsResponse(DashboardModel):

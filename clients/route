@@ -280,6 +280,17 @@ def _remaining(account: dict[str, Any]) -> float:
 
 
 _ROUTABLE_STATUSES = frozenset({"active", "rate_limited", "quota_exceeded"})
+WEEKLY_CYCLE_HOURS = 168.0
+
+
+def _account_weekly_pace(account: dict[str, Any]) -> float:
+    """Weekly remaining minus the share of the cycle ahead of this account's own reset."""
+    remaining = _window(account.get("usage"), "secondaryRemainingPercent", 100.0)
+    reset_at = _parse_ts(account.get("resetAtSecondary"))
+    hours_left = WEEKLY_CYCLE_HOURS
+    if reset_at is not None:
+        hours_left = max(0.0, (reset_at - datetime.now(timezone.utc)).total_seconds() / 3600)
+    return remaining - min(100.0, hours_left / WEEKLY_CYCLE_HOURS * 100)
 
 
 def _pool_ids(account: dict[str, Any]) -> list[str]:
@@ -321,6 +332,8 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
             if isinstance(value, str) and value
         )
         provider = members[0].get("provider") if members else None
+        weekly_members = [account for account in routable if account.get("status") in _ROUTABLE_STATUSES]
+        weekly_paces = [_account_weekly_pace(account) for account in weekly_members]
         pools.append(
             {
                 "id": pool_id,
@@ -333,6 +346,17 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
                 "resetAt": resets[0] if resets else None,
                 "status": pool_status(headroom),
                 "source": "accounts_fallback",
+                "weeklyRemainingPercent": (
+                    round(
+                        statistics.fmean(
+                            _window(a.get("usage"), "secondaryRemainingPercent", 100.0) for a in weekly_members
+                        ),
+                        1,
+                    )
+                    if weekly_members
+                    else None
+                ),
+                "weeklyPacePercent": round(statistics.fmean(weekly_paces), 1) if weekly_paces else None,
             }
         )
     return {"generatedAt": now_iso(), "pools": pools, "source": "accounts_fallback"}
@@ -367,8 +391,12 @@ def pool_pace(pool: dict[str, Any], cycle_hours: float) -> float | None:
     Positive means the pool has more left than time left (spend it), negative means it is
     being spent faster than the cycle allows.
     """
-    # The weekly figures when the LB sends them: the aggregate is capped by the
+    # The LB's per-account weekly pace when it sends one (each account against its
+    # own reset); otherwise the weekly figures; the aggregate is capped by the
     # five-hour window and would read a short burst as the week running out.
+    pace = pool.get("weeklyPacePercent")
+    if isinstance(pace, (int, float)) and not isinstance(pace, bool):
+        return float(pace)
     weekly = pool.get("weeklyRemainingPercent")
     remaining = weekly if weekly is not None else pool.get("aggregateRemainingPercent")
     reset_at = _parse_ts(pool.get("weeklyResetAt") if weekly is not None else pool.get("resetAt"))
@@ -758,6 +786,14 @@ def command_pick(args: argparse.Namespace) -> int:
             if audit_model is None:
                 # Work nobody can audit is not accepted work; route to a seat that can be.
                 skipped.append(f"{seat} (its auditor {audit_entry['model']} is unavailable: {audit_why})")
+                continue
+            audit_pool = pool_for_model(table, audit_entry["model"])
+            audit_seat = str(audit_entry.get("seat") or "")
+            if audit_pool and pools.get(audit_pool, {}).get("status") == "exhausted":
+                skipped.append(f"{seat} (its auditor's pool {audit_pool} is exhausted)")
+                continue
+            if audit_seat and not seat_is_up(seats, audit_seat):
+                skipped.append(f"{seat} (its auditor seat {audit_seat} is down per routing-state.json)")
                 continue
             auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
         routable.append(

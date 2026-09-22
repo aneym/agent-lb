@@ -860,3 +860,66 @@ def test_report_counts_repeated_records_as_one_task_with_rework(tmp_path: Path) 
     )
     report = run("report", "--implement", home=tmp_path, extra=extra)
     assert "| cursor-seat | grok | 1 | 1/1 | 1.0 | 40 | 200 | 20 | 220 |" in report.stdout
+
+
+def test_an_entry_whose_auditor_pool_is_exhausted_is_skipped(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_fixture(
+        fixtures,
+        "api_pools.json",
+        {
+            "pools": [
+                {
+                    "id": "anthropic-general",
+                    "status": "exhausted",
+                    "eligibleAccounts": 0,
+                    "aggregateRemainingPercent": 0.0,
+                    "resetAt": reset,
+                },
+                {"id": "cursor", "status": "ok", "eligibleAccounts": 1, "aggregateRemainingPercent": 100.0},
+            ]
+        },
+    )
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    extra = {
+        "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
+        "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
+    }
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    # Opus's pool is exhausted and Grok's auditor is Opus, so nothing can be both built and audited.
+    assert result.returncode == 2
+    assert "its auditor's pool anthropic-general is exhausted" in result.stderr
+
+
+def test_pace_prefers_the_lbs_per_account_weekly_pace(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_fixture(
+        fixtures,
+        "api_pools.json",
+        {
+            "pools": [
+                {
+                    "id": "anthropic-general",
+                    "status": "ok",
+                    "eligibleAccounts": 4,
+                    "aggregateRemainingPercent": 90.0,
+                    "resetAt": reset,
+                    "weeklyRemainingPercent": 90.0,
+                    "weeklyResetAt": reset,
+                    "weeklyPacePercent": -25.0,
+                }
+            ]
+        },
+    )
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    extra = {
+        "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
+        "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
+    }
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert result.returncode == 0, result.stderr
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "cursor-seat"
+    assert "behind pace: -25.0 < -10" in picked["reason"]

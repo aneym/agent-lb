@@ -206,6 +206,18 @@ SEAT_GUARD_HOOK = {
 }
 
 
+CLOSEOUT_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/subagent-closeout.py" 2>/dev/null || true',
+    "timeout": 5,
+    "statusMessage": "Dispatch closeout",
+}
+
+
+def is_closeout_hook(command: Any) -> bool:
+    return isinstance(command, str) and "hooks/subagent-closeout.py" in command
+
+
 def is_seat_guard_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/seat-guard.py" in command
 
@@ -222,6 +234,16 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
             group_copy["hooks"] = remaining
             cleaned.append(group_copy)
     if uninstall:
+        stop_groups = hooks.get("SubagentStop", [])
+        kept_stop = [
+            {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_closeout_hook(hook.get("command"))]}
+            for group in stop_groups
+        ]
+        kept_stop = [group for group in kept_stop if group["hooks"]]
+        if kept_stop:
+            hooks["SubagentStop"] = kept_stop
+        else:
+            hooks.pop("SubagentStop", None)
         # The managed guard file goes away on uninstall; so does its registration.
         cleaned = [
             {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_seat_guard_hook(hook.get("command"))]}
@@ -253,6 +275,10 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
                 pre_tool_use.append({"matcher": "Agent", "hooks": [dict(SEAT_GUARD_HOOK)]})
             else:
                 agent_group.setdefault("hooks", []).insert(0, dict(SEAT_GUARD_HOOK))
+        # The closeout hook writes the outcome/tokens side of the dispatch ledger.
+        subagent_stop = updated["hooks"].setdefault("SubagentStop", [])
+        if not any(is_closeout_hook(hook.get("command")) for group in subagent_stop for hook in group.get("hooks", [])):
+            subagent_stop.append({"hooks": [dict(CLOSEOUT_HOOK)]})
     return updated
 
 
@@ -423,7 +449,9 @@ def main() -> int:
     if replace_policy_link:
         policy_dir = args.home / POLICY_DIR
         policy_dir.unlink()
-        policy_dir.mkdir(parents=True)
+        # Start from everything the link exposed, so unmanaged files stay at their
+        # path; the managed files written below then replace their old copies.
+        shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
         print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
     print(f"checkpoint {checkpoint}")
     for path, content in changes.items():

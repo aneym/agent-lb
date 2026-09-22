@@ -305,6 +305,7 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
         "source",
         "weeklyRemainingPercent",
         "weeklyResetAt",
+        "weeklyPacePercent",
     }
 
 
@@ -340,3 +341,22 @@ def test_weekly_pool_reports_weekly_remaining_uncapped_by_the_five_hour_window()
     assert pool.aggregate_remaining_percent == 35.0
     assert pool.weekly_remaining_percent == 70.0
     assert pool.weekly_reset_at == _RESET
+
+
+def test_weekly_pace_is_per_account_so_one_early_reset_cannot_lift_the_pool() -> None:
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    summaries = [
+        # Resets in a day with 50% left: well ahead (50 - 14.3).
+        _summary("soon", secondary_remaining=50.0, reset_at_secondary=now + timedelta(hours=24)),
+        # Two accounts with a week nearly ahead and little left: far behind.
+        _summary("late-1", secondary_remaining=20.0, reset_at_secondary=now + timedelta(hours=144)),
+        _summary("late-2", secondary_remaining=20.0, reset_at_secondary=now + timedelta(hours=144)),
+    ]
+
+    pool = _pool(build_pools(summaries), "anthropic-general")
+
+    expected = ((50 - 24 / 168 * 100) + 2 * (20 - 144 / 168 * 100)) / 3
+    assert abs(pool.weekly_pace_percent - expected) < 0.05
+    assert pool.weekly_pace_percent < -10

@@ -139,6 +139,8 @@ def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) ->
         "Remove the `--model gpt-5.6-sol` pin from codex-verifier.md.",
         "Replace model: gpt-6-astra with route resolve sol-latest.",
         "The seat used to run --model gpt-5.6-terra; it no longer does.",
+        "Do not use `--model gpt-5.6-sol`; resolve sol-latest instead.",
+        "Never use model: gpt-6-astra for this seat.",
     ],
 )
 def test_brief_that_asks_to_remove_a_retired_pin_is_admitted(tmp_path: Path, brief: str) -> None:

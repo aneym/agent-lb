@@ -120,3 +120,35 @@ def test_missing_transcript_writes_null_cost(interpreter: str, tmp_path: Path) -
     for field in ("model", "tokens_in", "tokens_out", "cache_read_tokens", "wall_s"):
         assert closeout[field] is None
     assert closeout["matched"] is True
+
+
+@pytest.mark.parametrize("interpreter", INTERPRETERS)
+def test_identical_prompts_are_told_apart_by_name(interpreter: str, tmp_path: Path) -> None:
+    ledger = tmp_path / "dispatch.jsonl"
+    digest = hashlib.sha256(PROMPT.encode("utf-8")).hexdigest()
+    base = {"event": "dispatch", "session_id": SESSION, "subagent_type": "opus-seat", "prompt_sha256": digest}
+    rows = [
+        {**base, "ts": "2026-09-22T10:00:00Z", "name": "arm-older"},
+        {**base, "ts": "2026-09-22T10:00:05Z", "name": "arm-newer"},
+    ]
+    ledger.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    transcript = tmp_path / "subagents" / "agent-1.jsonl"
+    transcript.parent.mkdir()
+    _write_transcript(transcript)
+    payload = {
+        "session_id": SESSION,
+        "agent_id": "agent-older",
+        "agent_type": "arm-older",
+        "agent_transcript_path": str(transcript),
+        "last_assistant_message": "Done.",
+    }
+    subprocess.run(
+        [interpreter, str(HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        check=True,
+        env={**os.environ, "DISPATCH_LEDGER": str(ledger)},
+    )
+    closeout = [json.loads(line) for line in ledger.read_text().splitlines()][-1]
+    assert closeout["event"] == "closeout"
+    assert closeout["name"] == "arm-older"

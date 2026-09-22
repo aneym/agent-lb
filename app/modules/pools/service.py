@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.utils.time import utcnow
@@ -207,12 +207,31 @@ def _weekly_pool(
     if not usable:
         return pool
     resets = [summary.reset_at_secondary for summary in usable if summary.reset_at_secondary is not None]
+    now = datetime.now(timezone.utc)
+    paces = [_weekly_pace(summary, now) for summary in usable]
     return pool.model_copy(
         update={
             "weekly_remaining_percent": sum(_secondary_remaining(summary) for summary in usable) / len(usable),
             "weekly_reset_at": min(resets) if resets else None,
+            "weekly_pace_percent": sum(paces) / len(paces),
         }
     )
+
+
+_WEEKLY_CYCLE_HOURS = 168.0
+
+
+def _weekly_pace(summary: AccountSummary, now: datetime) -> float:
+    """Each account against its own reset, so one early reset cannot lift the pool."""
+    reset_at = summary.reset_at_secondary
+    if reset_at is None:
+        # No weekly sample yet: a fresh window, all of the cycle still ahead.
+        hours_left = _WEEKLY_CYCLE_HOURS
+    else:
+        if reset_at.tzinfo is None:
+            reset_at = reset_at.replace(tzinfo=timezone.utc)
+        hours_left = max(0.0, (reset_at - now).total_seconds() / 3600)
+    return _secondary_remaining(summary) - min(100.0, hours_left / _WEEKLY_CYCLE_HOURS * 100.0)
 
 
 def _primary_window_pool(

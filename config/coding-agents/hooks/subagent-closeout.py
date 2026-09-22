@@ -196,6 +196,13 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
     `agent_type` is tried as both (verified live: `agent_type` arrived as
     "opus-liveness-probe" for a dispatch whose subagent_type was "opus-seat").
     """
+    # Identical prompts dispatched concurrently share a hash; the caller-given name
+    # tells them apart, so a hash match that also carries the name wins.
+    wanted = [name.lower() for name in names if name]
+    for digest in digests:
+        for record in reversed(open_dispatches):
+            if digest and record.get("prompt_sha256") == digest and str(record.get("name") or "").lower() in wanted:
+                return record, "prompt_hash"
     for digest in digests:
         for record in reversed(open_dispatches):
             if digest and record.get("prompt_sha256") == digest:

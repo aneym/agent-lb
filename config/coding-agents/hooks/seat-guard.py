@@ -92,6 +92,7 @@ REMOVAL_CONTEXT = re.compile(
     r"instead of|no longer|never|used to)\b[^.;:!?\n]{0,40}$",
     re.IGNORECASE,
 )
+PROHIBITION = re.compile(r"(?:\b(?:do not|don't|dont|never|must not|should not|avoid)\s+use)\s*$", re.IGNORECASE)
 CLAUSE_BREAK = re.compile(r"[.;:!?\n]|\b(?:use|set|pass|switch to|then)\b", re.IGNORECASE)
 
 
@@ -105,6 +106,9 @@ def retired_pins(prompt: str, patterns: tuple) -> list:
         breaks = list(CLAUSE_BREAK.finditer(before))
         clause = before[breaks[-1].end() :] if breaks else before
         if REMOVAL_CONTEXT.search(clause):
+            continue
+        # "Do not use --model X" / "never use" / "avoid" prohibit the pin rather than ask for it.
+        if breaks and PROHIBITION.search(before[: breaks[-1].end()]):
             continue
         found.append(candidate)
     return found
