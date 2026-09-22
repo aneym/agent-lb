@@ -1,0 +1,170 @@
+--- a/plugins/codex/scripts/app-server-broker.mjs
++++ b/plugins/codex/scripts/app-server-broker.mjs
+@@ -63,13 +63,32 @@
+   const endpoint = String(options.endpoint);
+   const listenTarget = parseBrokerEndpoint(endpoint);
+   const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
++  const idleTimeoutMs = Number(process.env.CODEX_COMPANION_BROKER_IDLE_TIMEOUT_MS ?? 600_000);
++  if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs <= 0 || idleTimeoutMs > 2_147_483_647) {
++    throw new Error("CODEX_COMPANION_BROKER_IDLE_TIMEOUT_MS must be an integer from 1 to 2147483647.");
++  }
+   writePidFile(pidFile);
+ 
+-  const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
++  const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true, brokerProcessGroup: true });
+   let activeRequestSocket = null;
+   let activeStreamSocket = null;
+   let activeStreamThreadIds = null;
+   const sockets = new Set();
++  let idleTimer = null;
++  let shutdownPromise = null;
++
++  function armIdleTimer() {
++    if (shutdownPromise || sockets.size !== 0 || idleTimer !== null) {
++      return;
++    }
++    idleTimer = setTimeout(async () => {
++      idleTimer = null;
++      if (sockets.size === 0) {
++        await shutdown(server);
++        process.exit(0);
++      }
++    }, idleTimeoutMs);
++  }
+ 
+   function clearSocketOwnership(socket) {
+     if (activeRequestSocket === socket) {
+@@ -99,23 +118,38 @@
+     }
+   }
+ 
+-  async function shutdown(server) {
+-    for (const socket of sockets) {
+-      socket.end();
+-    }
+-    await appClient.close().catch(() => {});
+-    await new Promise((resolve) => server.close(resolve));
+-    if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
+-      fs.unlinkSync(listenTarget.path);
+-    }
+-    if (pidFile && fs.existsSync(pidFile)) {
+-      fs.unlinkSync(pidFile);
+-    }
++  function shutdown(server) {
++    if (!shutdownPromise) {
++      clearTimeout(idleTimer);
++      idleTimer = null;
++      shutdownPromise = (async () => {
++        const serverClosed = new Promise((resolve) => server.close(resolve));
++        for (const socket of sockets) {
++          socket.end();
++          socket.destroySoon();
++        }
++        await appClient.close();
++        await serverClosed;
++        if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
++          fs.unlinkSync(listenTarget.path);
++        }
++        if (pidFile && fs.existsSync(pidFile)) {
++          fs.unlinkSync(pidFile);
++        }
++      })();
++    }
++    return shutdownPromise;
+   }
+ 
+   appClient.setNotificationHandler(routeNotification);
+ 
+   const server = net.createServer((socket) => {
++    if (shutdownPromise) {
++      socket.destroy();
++      return;
++    }
++    clearTimeout(idleTimer);
++    idleTimer = null;
+     sockets.add(socket);
+     socket.setEncoding("utf8");
+     let buffer = "";
+@@ -225,11 +259,13 @@
+     socket.on("close", () => {
+       sockets.delete(socket);
+       clearSocketOwnership(socket);
++      armIdleTimer();
+     });
+ 
+     socket.on("error", () => {
+       sockets.delete(socket);
+       clearSocketOwnership(socket);
++      armIdleTimer();
+     });
+   });
+ 
+@@ -243,7 +279,7 @@
+     process.exit(0);
+   });
+ 
+-  server.listen(listenTarget.path);
++  server.listen(listenTarget.path, armIdleTimer);
+ }
+ 
+ main().catch((error) => {
+--- a/plugins/codex/scripts/lib/app-server.mjs
++++ b/plugins/codex/scripts/lib/app-server.mjs
+@@ -192,6 +192,7 @@
+       env: this.options.env ?? process.env,
+       stdio: ["pipe", "pipe", "pipe"],
+       shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
++      detached: this.options.brokerProcessGroup === true && process.platform !== "win32",
+       windowsHide: true
+     });
+ 
+@@ -230,6 +231,11 @@
+   }
+ 
+   async close() {
++    if (this.options.brokerProcessGroup === true && process.platform !== "win32") {
++      this.closePromise ??= this.closeProcessGroup();
++      return this.closePromise;
++    }
++
+     if (this.closed) {
+       await this.exitPromise;
+       return;
+@@ -265,6 +271,37 @@
+     await this.exitPromise;
+   }
+ 
++  async closeProcessGroup() {
++    this.closed = true;
++    this.readline?.close();
++    const pid = this.proc?.pid;
++    if (pid) {
++      // The private group outlives its leader when MCP children retain pipes.
++      // Never use proc.killed or exitPromise to decide whether it needs KILL.
++      terminateProcessTree(pid);
++      this.proc.stdin.end();
++      const deadline = Date.now() + 3_000;
++      while (true) {
++        try {
++          process.kill(-pid, 0);
++        } catch (error) {
++          if (error.code === "ESRCH") break;
++          throw error;
++        }
++        if (Date.now() >= deadline) {
++          try {
++            process.kill(-pid, "SIGKILL");
++          } catch (error) {
++            if (error.code !== "ESRCH") throw error;
++          }
++          break;
++        }
++        await new Promise((resolve) => setTimeout(resolve, 50));
++      }
++    }
++    await this.exitPromise;
++  }
++
+   sendMessage(message) {
+     const line = `${JSON.stringify(message)}\n`;
+     const stdin = this.proc?.stdin;
