@@ -33,6 +33,20 @@ final class ResetCreditRedeemTests: XCTestCase {
     XCTAssertFalse(codex(status: "quota_exceeded", credits: nil).canRedeemResetCredit)
   }
 
+  func testQuotaExceededClaudeAccountWithBankedResetCanRedeem() {
+    let account = makeTestAccount(
+      provider: "anthropic",
+      status: "quota_exceeded",
+      resetCreditsAvailable: 1
+    )
+    XCTAssertTrue(account.canRedeemResetCredit)
+  }
+
+  func testProviderWithoutBankedResetsCannotRedeem() {
+    let account = makeTestAccount(provider: "glm", status: "quota_exceeded", resetCreditsAvailable: 1)
+    XCTAssertFalse(account.canRedeemResetCredit)
+  }
+
   func testPausedAccountCannotRedeem() {
     XCTAssertFalse(codex(status: "paused", credits: 2).canRedeemResetCredit)
   }

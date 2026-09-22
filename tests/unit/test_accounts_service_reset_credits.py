@@ -113,8 +113,8 @@ async def test_list_reset_credits_returns_none_for_missing_account():
 
 
 @pytest.mark.asyncio
-async def test_list_reset_credits_rejects_non_openai_provider():
-    service = _build_service(account=_make_account(provider="anthropic"))
+async def test_list_reset_credits_rejects_unsupported_provider():
+    service = _build_service(account=_make_account(provider="glm"))
     with pytest.raises(AccountResetCreditsUnavailableError):
         await service.list_rate_limit_reset_credits(_ACCOUNT_ID)
 
