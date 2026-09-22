@@ -6,6 +6,17 @@ account can still serve, credits stay banked. The scheduler encodes that rule
 deterministically; redemption itself reuses
 ``AccountsService.redeem_rate_limit_reset_credit`` so the post-redeem usage
 refresh and selection-cache invalidation apply.
+
+Automatic exhaustion redemptions also draw on a daily allowance
+(``reset_credit_auto_redeem_max_per_day``, default 2): one reset per rolling
+24h as the baseline, plus one more if the pool hits the limit again the same
+day. The count comes from the durable attempt ledger, so a restart cannot lift
+it, and ``reset_credit_auto_redeem_cooldown_seconds`` is the minimum spacing
+between two automatic redemptions — without it a single exhaustion episode
+read through a stale usage snapshot could burn the whole allowance at once.
+The expiry sweep is exempt — a credit inside its expiry window is
+use-it-or-lose-it — and so are operator-initiated redemptions from the
+dashboard and menubar.
 """
 
 from __future__ import annotations
@@ -85,6 +96,7 @@ class ResetCreditAutoRedeemScheduler:
     interval_seconds: int
     cooldown_seconds: int
     enabled: bool
+    max_per_day: int = 2
     expiry_enabled: bool = False
     expiry_window_hours: int = 24
     expiry_sweep_interval_seconds: int = 3600
@@ -126,6 +138,17 @@ class ResetCreditAutoRedeemScheduler:
             return False
         return (utcnow() - self._last_redeemed_at).total_seconds() < self.cooldown_seconds
 
+    async def _daily_allowance_exhausted(self, attempts: ResetCreditAttemptsRepository) -> bool:
+        """True when the rolling-24h automatic allowance is already spent.
+
+        ``max_per_day <= 0`` disables automatic exhaustion redemption outright,
+        matching the ``enabled`` kill switch.
+        """
+        if self.max_per_day <= 0:
+            return True
+        used = await attempts.count_applied_since(utcnow() - timedelta(days=1))
+        return used >= self.max_per_day
+
     def _expiry_sweep_due(self) -> bool:
         if not self.expiry_enabled:
             return False
@@ -157,6 +180,8 @@ class ResetCreditAutoRedeemScheduler:
             if applied_at is not None:
                 self._last_redeemed_at = to_utc_naive(applied_at)
                 exhaustion_eligible = self.enabled and not self._cooldown_active()
+            if exhaustion_eligible and await self._daily_allowance_exhausted(attempts):
+                exhaustion_eligible = False
             accounts = list(await repo.list_accounts())
             if exhaustion_eligible:
                 candidates = exhausted_pool_or_none(accounts)
@@ -413,6 +438,7 @@ def build_reset_credit_auto_redeem_scheduler() -> ResetCreditAutoRedeemScheduler
         interval_seconds=settings.reset_credit_auto_redeem_interval_seconds,
         cooldown_seconds=settings.reset_credit_auto_redeem_cooldown_seconds,
         enabled=settings.reset_credit_auto_redeem_enabled,
+        max_per_day=settings.reset_credit_auto_redeem_max_per_day,
         expiry_enabled=settings.reset_credit_expiry_redeem_enabled,
         expiry_window_hours=settings.reset_credit_expiry_redeem_window_hours,
         expiry_sweep_interval_seconds=settings.reset_credit_expiry_sweep_interval_seconds,

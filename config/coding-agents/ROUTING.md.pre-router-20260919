@@ -1,0 +1,22 @@
+# Coding-agent configuration
+
+Alex retired the historical mandatory routing and per-turn procedure rules on September 10, 2026. Use judgment about direct work and delegation within the requested scope.
+
+Shared working and delivery preferences: `~/.agents/shared/PREFERENCES.md`. Machine registry: `~/.agents/shared/MACHINES.md`.
+
+Existing launcher, provider, authentication, permission and model-cost settings remain in force. Do not infer a new model route or bypass a guard from this document. Agent definitions describe available specialist capabilities, not a required itinerary. Preserve an actual job/thread identifier for background work and report its observed outcome.
+
+## Fable driver mode
+
+Configured routes, retained as technical reference rather than delegation requirements. Runtime definitions are authoritative.
+
+| Role | Definition | Model | Effort |
+| --- | --- | --- | --- |
+| Driver (main loop)     | —                                       | `claude-fable-5-1[1m]` | high              |
+| Explore / scouts       | `~/.claude/agents/Explore.md`           | `sonnet` (Claude Sonnet 5; was gpt-5.6-sol-medium until 2026-09-18) | medium, fast tier |
+| Implementer            | `~/.claude/agents/implementer.md`       | Codex `gpt-6-astra` via plugin | medium |
+| Computer use           | `~/.claude/agents/computer-use.md`       | Codex `gpt-6-astra` via plugin | medium, read-only probe |
+| Verifier (adversarial) | `~/.claude/agents/verifier.md`          | `gpt-5.6-sol-xhigh`  | xhigh, fast tier  |
+| Frontend designer      | `~/.claude/agents/frontend-designer.md` | `fable`              | inherit high      |
+| Planner (lane lead)    | `~/.claude/agents/planner.md`           | `claude-planner`     | high; Fable 5 primary, Opus 5 on scoped exhaustion |
+| Plan reviewer          | `~/.claude/agents/plan-reviewer.md`     | `claude-planner`       | high; Fable 5 primary, Opus 5 on scoped exhaustion |

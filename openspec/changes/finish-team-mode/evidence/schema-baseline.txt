@@ -1,0 +1,3 @@
+schema_drift_detected
+('remove_index', Index('idx_logs_session_time', Column('session_id', VARCHAR(), table=<request_logs>), Column('requested_at', DATETIME(), table=<request_logs>, nullable=False, server_default=DefaultClause(<sqlalchemy.sql.elements.TextClause object at 0x10939f770>, for_update=False))))
+('add_index', Index('idx_logs_session_time', Column('session_id', String(), table=<request_logs>), <alembic.util.sqla_compat._textual_index_element object at 0x10929afd0>))

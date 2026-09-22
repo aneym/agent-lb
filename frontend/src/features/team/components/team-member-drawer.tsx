@@ -80,8 +80,12 @@ function parseCap(raw: string): number | null {
   if (trimmed === "") {
     return null;
   }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  return Number(trimmed);
+}
+
+function validCap(raw: string, wholeTokens: boolean): boolean {
+  const cap = parseCap(raw);
+  return cap === null || (Number.isFinite(cap) && cap > 0 && (!wholeTokens || Number.isSafeInteger(cap)));
 }
 
 export type TeamMemberDrawerProps = {
@@ -112,7 +116,10 @@ export function TeamMemberDrawer({
   }
 
   const editing = member !== null;
-  const canSubmit = form.name.trim().length > 0 && !busy;
+  const invalidCaps = [...COST_CAPS, ...TOKEN_CAPS].filter(
+    ({ key }) => !validCap(form.caps[key], key.startsWith("token")),
+  );
+  const canSubmit = form.name.trim().length > 0 && invalidCaps.length === 0 && !busy;
 
   const submit = async () => {
     if (!canSubmit) {
@@ -183,6 +190,8 @@ export function TeamMemberDrawer({
                   step="0.01"
                   inputMode="decimal"
                   value={form.caps[cap.key]}
+                  aria-invalid={!validCap(form.caps[cap.key], false)}
+                  aria-describedby={invalidCaps.length > 0 ? "team-cap-error" : undefined}
                   disabled={busy}
                   onChange={(event) => setCap(cap.key, event.target.value)}
                 />
@@ -203,12 +212,20 @@ export function TeamMemberDrawer({
                   step="1"
                   inputMode="numeric"
                   value={form.caps[cap.key]}
+                  aria-invalid={!validCap(form.caps[cap.key], true)}
+                  aria-describedby={invalidCaps.length > 0 ? "team-cap-error" : undefined}
                   disabled={busy}
                   onChange={(event) => setCap(cap.key, event.target.value)}
                 />
               </div>
             ))}
           </div>
+
+          {invalidCaps.length > 0 ? (
+            <p id="team-cap-error" role="alert" className="text-sm text-destructive">
+              Caps must be greater than zero. Token caps must be whole numbers. Leave a field blank for no cap.
+            </p>
+          ) : null}
 
           <div className="space-y-1.5">
             <Label>Allowed models</Label>

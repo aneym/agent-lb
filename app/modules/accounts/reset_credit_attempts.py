@@ -34,6 +34,24 @@ class ResetCreditAttemptsRepository:
         )
         return result.scalar_one()
 
+    async def count_applied_since(self, since: datetime) -> int:
+        """Automatic redemptions applied since ``since`` (the daily allowance).
+
+        Counts ``trigger="auto"`` rows only: expiry-sweep redemptions are
+        use-it-or-lose-it and operator-initiated ones are a human decision, so
+        neither spends the automatic allowance.
+        """
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(ResetCreditAttempt)
+            .where(
+                ResetCreditAttempt.trigger == "auto",
+                ResetCreditAttempt.applied_at.is_not(None),
+                ResetCreditAttempt.applied_at >= since,
+            )
+        )
+        return int(result.scalar_one() or 0)
+
     async def create(self, account_id: str, credit_id: str | None, trigger: str) -> ResetCreditAttempt | None:
         now = utcnow()
         row = ResetCreditAttempt(

@@ -48,7 +48,7 @@ def test_installer_preview_is_non_mutating(tmp_path: Path) -> None:
     assert f"link {bin_dir}/claude-lb-launch -> {current}/clients/claude-lb-launch" in result.stdout
     assert f"link {bin_dir}/agent-defs-doctor -> {current}/clients/agent-defs-doctor" in result.stdout
     assert f"link {policy_dir}/coding-agents -> {current}/config/coding-agents" in result.stdout
-    assert f"would converge managed routing configuration in {user_home}/.claude/CLAUDE.md" in result.stdout
+    assert f"would converge managed routing configuration in {user_home}/.claude/CLAUDE.md" not in result.stdout
     assert "remove retired ccdex artifacts (clients, hook, MCP registration)" in result.stdout
     assert f"link {bin_dir}/ccdex" not in result.stdout
 
@@ -99,8 +99,7 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
     assert not hook.exists()
     assert (policy_dir / "coding-agents").is_symlink()
     assert (policy_dir / "coding-agents").resolve() == first_version / "config" / "coding-agents"
-    claude_doc_text = (user_home / ".claude" / "CLAUDE.md").read_text()
-    assert claude_doc_text.count("agent-lb:coding-agent-routing:start") == 1
+    assert not (user_home / ".claude" / "CLAUDE.md").exists()
     codex_text = codex_doc.read_text()
     assert "keep-codex" in codex_text
     assert "agent-lb:coding-agent-routing" not in codex_text
@@ -279,7 +278,7 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
     assert {path: path.read_bytes() for path in first} == first
     assert "keep-before" in claude_doc.read_text() and "keep-after" in claude_doc.read_text()
     assert "legacy sonnet routing" not in claude_doc.read_text()
-    assert claude_doc.read_text().count("agent-lb:coding-agent-routing:start") == 1
+    assert "agent-lb:coding-agent-routing:start" not in claude_doc.read_text()
     codex_text = codex_doc.read_text()
     assert "keep-codex" in codex_text and "keep-safety" in codex_text
     assert "agent-lb:coding-agent-routing" not in codex_text

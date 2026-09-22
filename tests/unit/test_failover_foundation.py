@@ -108,6 +108,19 @@ class TestClassifyUpstreamFailure:
         )
         assert result["failure_class"] == "retryable_transient"
 
+    def test_server_is_overloaded_error(self) -> None:
+        # The OpenAI Codex backend spells the same shed condition
+        # code=server_is_overloaded (streamed error envelope, no 5xx status).
+        # It must classify as retryable_transient so failover engages instead
+        # of surfacing the raw error to the client on the first attempt.
+        result = classify_upstream_failure(
+            error_code="server_is_overloaded",
+            error=UpstreamError(message="Our servers are currently overloaded. Please try again later."),
+            http_status=None,
+            phase="first_event",
+        )
+        assert result["failure_class"] == "retryable_transient"
+
     def test_non_retryable_bad_request(self) -> None:
         result = classify_upstream_failure(
             error_code="invalid_request",

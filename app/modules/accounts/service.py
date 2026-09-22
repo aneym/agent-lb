@@ -23,24 +23,17 @@ from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import (
+    ANTHROPIC_COMPAT_PROFILES,
     ANTHROPIC_PROVIDER_NAME,
-    GLM_DEFAULT_PLAN,
-    GLM_PROVIDER_NAME,
     OPENAI_PROVIDER_NAME,
+    get_anthropic_compat_profile,
     get_provider,
     normalize_provider_name,
 )
-from app.core.providers.openrouter import OPENROUTER_DEFAULT_PLAN, OPENROUTER_PROVIDER_NAME
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.modules.accounts import probes, reset_credit_cache
 from app.modules.accounts.auth_manager import AuthManager
-from app.modules.accounts.credits import (
-    CREDITS_USAGE_WINDOW,
-    credits_exhausted,
-    fetch_openrouter_credits,
-    window_from_parts,
-)
 from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
@@ -94,6 +87,7 @@ _DETAIL_BUCKET_SECONDS = 3600  # 1h → 168 points
 DEFAULT_PROBE_MODEL = probes.DEFAULT_PROBE_MODEL
 DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL
 DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
+DEFAULT_KIMI_PROBE_MODEL = probes.DEFAULT_KIMI_PROBE_MODEL
 PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
 PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
@@ -192,9 +186,6 @@ class AccountsService:
         primary_usage = await self._usage_repo.latest_by_account(window="primary") if self._usage_repo else {}
         secondary_usage = await self._usage_repo.latest_by_account(window="secondary") if self._usage_repo else {}
         monthly_usage = await self._usage_repo.latest_by_account(window="monthly") if self._usage_repo else {}
-        credits_usage = (
-            await self._usage_repo.latest_by_account(window=CREDITS_USAGE_WINDOW) if self._usage_repo else {}
-        )
         limit_warmups_by_account = (
             await self._limit_warmup_repo.latest_by_account(account_ids) if self._limit_warmup_repo else {}
         )
@@ -213,7 +204,6 @@ class AccountsService:
             primary_usage=primary_usage,
             secondary_usage=secondary_usage,
             monthly_usage=monthly_usage,
-            credits_usage=credits_usage,
             request_usage_by_account=request_usage_by_account,
             additional_quotas_by_account=additional_quotas_by_account,
             limit_warmups_by_account=limit_warmups_by_account,
@@ -460,41 +450,29 @@ class AccountsService:
 
     async def import_api_key_account(self, payload: AccountApiKeyImportRequest) -> AccountImportResponse:
         provider_name = normalize_provider_name(payload.provider)
-        if provider_name not in (GLM_PROVIDER_NAME, OPENROUTER_PROVIDER_NAME):
+        try:
+            profile = get_anthropic_compat_profile(provider_name)
+        except ValueError as exc:
+            raise ValueError(f"Provider {provider_name} does not support API-key account import") from exc
+        defaults = profile.import_defaults
+        if defaults is None:
             raise ValueError(f"Provider {provider_name} does not support API-key account import")
         provider = get_provider(provider_name)
         api_key = payload.api_key.get_secret_value().strip()
         if not api_key:
             raise ValueError("apiKey is required")
-        email = payload.email.strip().lower()
-        alias = payload.alias
-        plan_type_raw = payload.plan_type
-        raw_account_id = (payload.account_id or "").strip()
-        credits_window = None
-        if provider_name == OPENROUTER_PROVIDER_NAME:
-            if email == "glm@z.ai":
-                email = "openrouter@openrouter.ai"
-            if alias == "GLM Coding Plan":
-                alias = "OpenRouter"
-            if plan_type_raw == GLM_DEFAULT_PLAN:
-                plan_type_raw = OPENROUTER_DEFAULT_PLAN
-            if not raw_account_id:
-                raw_account_id = OPENROUTER_PROVIDER_NAME
-            credits_window = window_from_parts(
-                balance=payload.credits_balance,
-                cap=payload.credits_cap,
-                spent=payload.credits_spent,
-            )
-            if credits_window is None:
-                credits_window = await fetch_openrouter_credits(api_key)
-        elif not raw_account_id:
-            raw_account_id = "zai_glm_coding"
+        if payload.refresh_token is None:
+            refresh_material = api_key
+        else:
+            if not profile.supports_oauth_bundle_import:
+                raise ValueError(f"Provider {provider_name} does not accept refreshToken on API-key import")
+            refresh_material = payload.refresh_token.get_secret_value().strip()
+            if not refresh_material:
+                raise ValueError("refreshToken must not be blank")
+        email = (payload.email or defaults.email).strip().lower()
+        raw_account_id = (payload.account_id or defaults.account_id_seed).strip()
         account_id = generate_unique_account_id(raw_account_id, email)
-        default_plan = OPENROUTER_DEFAULT_PLAN if provider_name == OPENROUTER_PROVIDER_NAME else GLM_DEFAULT_PLAN
-        plan_type = coerce_account_plan_type(plan_type_raw, default_plan)
-        status = AccountStatus.ACTIVE
-        if credits_window is not None and credits_exhausted(credits_window):
-            status = AccountStatus.QUOTA_EXCEEDED
+        plan_type = coerce_account_plan_type(payload.plan_type, defaults.plan_type)
 
         account = Account(
             id=account_id,
@@ -506,36 +484,22 @@ class AccountsService:
             seat_type=None,
             plan_type=plan_type,
             access_token_encrypted=self._encryptor.encrypt(api_key),
-            refresh_token_encrypted=self._encryptor.encrypt(api_key),
+            refresh_token_encrypted=self._encryptor.encrypt(refresh_material),
             id_token_encrypted=None,
             last_refresh=utcnow(),
-            status=status,
+            status=AccountStatus.ACTIVE,
             deactivation_reason=None,
         )
 
         saved = await self._repo.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
-        if alias is not None:
-            stored_alias = alias.strip() or None
-            await self._repo.update_alias(saved.id, stored_alias)
-            saved.alias = stored_alias
-        if credits_window is not None and self._usage_repo is not None:
-            await self._usage_repo.add_entry(
-                saved.id,
-                0.0,
-                provider=provider.name,
-                window=CREDITS_USAGE_WINDOW,
-                credits_has=True,
-                credits_unlimited=False,
-                credits_balance=credits_window.balance,
-                credits_cap=credits_window.cap,
-                credits_spent=credits_window.spent,
-            )
-        logger.info(
-            "api_key_account_imported provider=%s account_id=%s exhausted=%s",
-            provider.name,
-            saved.id,
-            credits_window is not None and credits_exhausted(credits_window),
-        )
+        # An omitted alias takes the provider default; an explicitly null alias
+        # leaves the stored alias untouched, matching the pre-generalization
+        # contract where the default lived on the schema field.
+        alias_source = payload.alias if "alias" in payload.model_fields_set else defaults.alias
+        if alias_source is not None:
+            alias = alias_source.strip() or None
+            await self._repo.update_alias(saved.id, alias)
+            saved.alias = alias
         get_account_selection_cache().invalidate()
         return AccountImportResponse(
             account_id=saved.id,
@@ -776,17 +740,14 @@ class AccountsService:
         access_token = self._encryptor.decrypt(probe_account.access_token_encrypted)
         probe_model = model or DEFAULT_PROBE_MODEL
         provider = normalize_provider_name(probe_account.provider)
-        if provider == GLM_PROVIDER_NAME:
+        compat_profiles = {profile.provider_name: profile for profile in ANTHROPIC_COMPAT_PROFILES}
+        compat_profile = compat_profiles.get(provider)
+        if compat_profile is not None:
+            base_url = str(getattr(get_settings(), compat_profile.upstream_settings_attr))
             probe_status, _ = await self._send_messages_probe_request(
                 access_token=access_token,
-                base_url=get_settings().glm_anthropic_upstream_base_url,
-                model=model or DEFAULT_GLM_PROBE_MODEL,
-            )
-        elif provider == ANTHROPIC_PROVIDER_NAME:
-            probe_status, _ = await self._send_messages_probe_request(
-                access_token=access_token,
-                base_url=get_settings().anthropic_upstream_base_url,
-                model=model or DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
+                base_url=base_url,
+                model=model or compat_profile.default_probe_model,
             )
         else:
             probe_status = await self._send_probe_request(
@@ -795,7 +756,7 @@ class AccountsService:
                 model=probe_model,
             )
 
-        if self._usage_repo and self._usage_updater and provider != GLM_PROVIDER_NAME:
+        if self._usage_repo and self._usage_updater and provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}:
             await self._usage_updater.force_refresh(probe_account)
             get_account_selection_cache().invalidate()
 

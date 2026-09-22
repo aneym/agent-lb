@@ -4,6 +4,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -27,6 +28,7 @@ export type AccountActionsProps = {
   onPause: (accountId: string) => void;
   onResume: (accountId: string) => void;
   onProbe: (accountId: string) => void;
+  onRedeemResetCredit?: (accountId: string) => void;
   onDelete: (accountId: string) => void;
   onReauth: () => void;
   onExportAuth: (accountId: string) => void;
@@ -47,6 +49,7 @@ export function AccountActions({
   onPause,
   onResume,
   onProbe,
+  onRedeemResetCredit,
   onDelete,
   onReauth,
   onExportAuth,
@@ -57,6 +60,15 @@ export function AccountActions({
     account.status === "reauth_required" || account.status === "deactivated";
   const probeDisabled =
     busy || account.status === "paused" || showOperatorRecoveryAction;
+  // Banked reset credits are an OpenAI/Codex feature; the count comes from
+  // the accounts payload (null until the service has listed it upstream).
+  const bankedResetCredits = account.resetCreditsAvailable ?? 0;
+  const showResetLimits =
+    !!onRedeemResetCredit &&
+    account.provider === "openai" &&
+    !showOperatorRecoveryAction &&
+    account.status !== "paused";
+  const resetLimitsDisabled = busy || bankedResetCredits < 1;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -110,6 +122,25 @@ export function AccountActions({
         <Activity className="h-3.5 w-3.5" />
         Force probe
       </Button>
+
+      {showResetLimits ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => onRedeemResetCredit?.(account.accountId)}
+          disabled={resetLimitsDisabled}
+          title={
+            bankedResetCredits < 1
+              ? "No banked reset credits on this account"
+              : "Spend one banked credit to reset this account's rate limits now"
+          }
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Reset limits ({bankedResetCredits})
+        </Button>
+      ) : null}
 
       <Button
         type="button"

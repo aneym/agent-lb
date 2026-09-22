@@ -44,6 +44,7 @@ export function AccountsPage() {
     resumeMutation,
     setAliasMutation,
     probeMutation,
+    resetCreditMutation,
     limitWarmupMutation,
     updateMutation,
     deleteMutation,
@@ -59,6 +60,7 @@ export function AccountsPage() {
   const importDialog = useDialogState();
   const oauthDialog = useDialogState<{ provider: AccountProvider }>();
   const deleteDialog = useDialogState<string>();
+  const resetCreditDialog = useDialogState<string>();
   const exportDialog = useDialogState<AccountAuthExportResponse>();
   const [deleteHistory, setDeleteHistory] = useState(false);
 
@@ -146,6 +148,7 @@ export function AccountsPage() {
     resumeMutation.isPending ||
     setAliasMutation.isPending ||
     probeMutation.isPending ||
+    resetCreditMutation.isPending ||
     limitWarmupMutation.isPending ||
     deleteMutation.isPending ||
     routingPolicyMutation.isPending ||
@@ -161,6 +164,7 @@ export function AccountsPage() {
     getErrorMessageOrNull(resumeMutation.error) ||
     getErrorMessageOrNull(setAliasMutation.error) ||
     getErrorMessageOrNull(probeMutation.error) ||
+    getErrorMessageOrNull(resetCreditMutation.error) ||
     getErrorMessageOrNull(limitWarmupMutation.error) ||
     getErrorMessageOrNull(deleteMutation.error) ||
     getErrorMessageOrNull(routingPolicyMutation.error) ||
@@ -210,6 +214,9 @@ export function AccountsPage() {
             onResume={(accountId) => void resumeMutation.mutateAsync(accountId)}
             onProbe={(accountId) =>
               void probeMutation.mutateAsync({ accountId })
+            }
+            onRedeemResetCredit={(accountId) =>
+              resetCreditDialog.show(accountId)
             }
             onSetAlias={(accountId, alias) =>
               setAliasMutation.mutateAsync({ accountId, alias })
@@ -293,6 +300,24 @@ export function AccountsPage() {
         open={exportDialog.open}
         exportData={exportDialog.data}
         onOpenChange={exportDialog.onOpenChange}
+      />
+
+      <ConfirmDialog
+        open={resetCreditDialog.open}
+        title="Reset rate limits"
+        description="Spends one banked reset credit on this account and immediately clears its exhausted usage windows. Credits are scarce and cannot be refunded."
+        confirmLabel="Reset limits"
+        cancelLabel="Cancel"
+        onOpenChange={resetCreditDialog.onOpenChange}
+        onConfirm={() => {
+          if (!resetCreditDialog.data) {
+            return;
+          }
+          void resetCreditMutation
+            .mutateAsync({ accountId: resetCreditDialog.data })
+            .catch(() => null)
+            .finally(() => resetCreditDialog.hide());
+        }}
       />
 
       <ConfirmDialog

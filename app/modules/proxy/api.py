@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from json import JSONDecodeError
-from typing import Any, Final, Literal, cast
+from typing import Final, Literal, cast
 
 from fastapi import (
     APIRouter,
@@ -75,6 +75,7 @@ from app.core.openai.models import (
 from app.core.openai.parsing import parse_response_payload
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning, ResponsesRequest
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
+from app.core.providers import get_anthropic_compat_profile
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
@@ -283,7 +284,7 @@ async def claim_anthropic_session_route(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
 ) -> dict[str, str | None] | JSONResponse:
     session_id = (payload.get("sessionId") or "").strip()
-    model = (payload.get("model") or "claude-fable-5").strip()
+    model = (payload.get("model") or "claude-opus-5-5").strip()
     quota_key = (payload.get("quotaKey") or "anthropic_top_thinking").strip()
     affinity_quota_key = (payload.get("affinityQuotaKey") or "").strip()
     if not affinity_quota_key:
@@ -849,7 +850,15 @@ async def v1_messages_count_tokens(
         locked_model, _ = CCGPT_MODEL_ALIASES[model]
         validate_model_access(api_key, locked_model)
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
+    resolved_request = await context.service.resolve_count_tokens_request(payload, model=model)
+    payload = dict(resolved_request.body)
+    model = resolved_request.model
     validate_model_access(api_key, model)
+    profile = get_anthropic_compat_profile(resolved_request.provider_name)
+    if not profile.supports_upstream_count_tokens:
+        # This vendor answers count_tokens with a non-Anthropic 404, so serve
+        # the local estimate rather than forwarding a broken envelope.
+        return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
     # Token counting is quota-free upstream, so this route never creates an
     # api-key reservation, settles usage, or writes response-driven account
     # error-health; the raw body is forwarded and the envelope returned
@@ -3614,22 +3623,15 @@ def _anthropic_error_response(
     message: str,
     *,
     retry_at: int | None = None,
-    details: Any | None = None,
 ) -> JSONResponse:
-    error: dict[str, Any] = {
-        "type": error_type,
-        "message": message,
-    }
-    # Upstream's structured `details` is what clients classify on. Claude Code
-    # reads `thread_not_found` out of it to replay a stateful thread; without
-    # it the client sees a bare 404 and reports the selected model as missing.
-    if details is not None:
-        error["details"] = details
     return JSONResponse(
         status_code=status_code,
         content={
             "type": "error",
-            "error": error,
+            "error": {
+                "type": error_type,
+                "message": message,
+            },
         },
         headers=_retry_headers(retry_at),
     )
@@ -3650,7 +3652,7 @@ def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
     # reset time or ride out short waits with its own retry loop.
     if exc.retry_at is not None or exc.status_code == 429:
         return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
-    return _anthropic_error_response(exc.status_code, exc.code, exc.message, details=exc.details)
+    return _anthropic_error_response(exc.status_code, exc.code, exc.message)
 
 
 async def _collect_anthropic_body(body: AsyncIterator[bytes]) -> bytes:
@@ -3673,11 +3675,8 @@ async def _anthropic_stream_error_guard(
     except AnthropicProxyError as exc:
         await _release_reservation(api_key_reservation)
         error_type = "rate_limit_error" if (exc.retry_at is not None or exc.status_code == 429) else exc.code
-        error_body: dict[str, Any] = {"type": error_type, "message": exc.message}
-        if exc.details is not None:
-            error_body["details"] = exc.details
         envelope = json.dumps(
-            {"type": "error", "error": error_body},
+            {"type": "error", "error": {"type": error_type, "message": exc.message}},
             ensure_ascii=False,
         )
         if streaming:

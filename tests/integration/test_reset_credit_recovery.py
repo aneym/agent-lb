@@ -198,3 +198,84 @@ async def test_scheduler_restores_auto_cooldown_after_restart(db_setup, monkeypa
     await scheduler._tick()
     assert scheduler._cooldown_active()
     redeem.assert_not_awaited()
+
+
+async def _applied_auto_attempt(credit_id: str, *, applied_ago: timedelta) -> None:
+    async with SessionLocal() as session:
+        journal = ResetCreditAttemptsRepository(session)
+        attempt = await journal.create("recovery-account", credit_id, "auto")
+        await journal.applied(attempt, "reset", 2)
+        await journal.settle(attempt, "reset")
+        await session.execute(
+            update(ResetCreditAttempt)
+            .where(ResetCreditAttempt.id == attempt.id)
+            .values(applied_at=utcnow() - applied_ago)
+        )
+        await session.commit()
+
+
+async def test_daily_allowance_counts_only_applied_auto_redemptions(db_setup):
+    """The rolling-24h allowance is read from the durable ledger."""
+    await _account()
+    await _applied_auto_attempt("credit-1", applied_ago=timedelta(hours=2))
+    await _applied_auto_attempt("credit-2", applied_ago=timedelta(hours=30))
+    async with SessionLocal() as session:
+        journal = ResetCreditAttemptsRepository(session)
+        attempt = await journal.create("recovery-account", "credit-3", "expiring")
+        await journal.applied(attempt, "reset", 1)
+        await journal.settle(attempt, "reset")
+        pending = await journal.create("recovery-account", "credit-4", "auto")
+        await journal.settle(pending, "nothing_to_reset")
+
+    async with SessionLocal() as session:
+        journal = ResetCreditAttemptsRepository(session)
+        # Yesterday's redemption, the expiry sweep and the no-op all fall out:
+        # only the one applied auto redemption inside the window counts.
+        assert await journal.count_applied_since(utcnow() - timedelta(days=1)) == 1
+
+
+async def test_scheduler_stops_after_the_daily_allowance_is_spent(db_setup, monkeypatch):
+    await _account()
+    await _applied_auto_attempt("credit-1", applied_ago=timedelta(hours=20))
+    await _applied_auto_attempt("credit-2", applied_ago=timedelta(hours=2))
+    leader = AsyncMock()
+    leader.try_acquire.return_value = True
+    monkeypatch.setattr(scheduler_module, "_get_leader_election", lambda: leader)
+
+    @asynccontextmanager
+    async def session_context():
+        async with SessionLocal() as session:
+            yield session
+
+    monkeypatch.setattr(scheduler_module, "get_background_session", session_context)
+    redeem = AsyncMock()
+    monkeypatch.setattr(ResetCreditAutoRedeemScheduler, "_redeem_first_available", redeem)
+    scheduler = ResetCreditAutoRedeemScheduler(
+        interval_seconds=60, cooldown_seconds=900, enabled=True, max_per_day=2
+    )
+    await scheduler._tick()
+    redeem.assert_not_awaited()
+
+
+async def test_scheduler_grants_the_relimit_reset_within_the_same_day(db_setup, monkeypatch):
+    """One reset already spent today must not block the same-day second."""
+    await _account()
+    await _applied_auto_attempt("credit-1", applied_ago=timedelta(hours=6))
+    leader = AsyncMock()
+    leader.try_acquire.return_value = True
+    monkeypatch.setattr(scheduler_module, "_get_leader_election", lambda: leader)
+
+    @asynccontextmanager
+    async def session_context():
+        async with SessionLocal() as session:
+            yield session
+
+    monkeypatch.setattr(scheduler_module, "get_background_session", session_context)
+    monkeypatch.setattr(scheduler_module, "refresh_standard_capacity", AsyncMock(return_value=False))
+    redeem = AsyncMock()
+    monkeypatch.setattr(ResetCreditAutoRedeemScheduler, "_redeem_first_available", redeem)
+    scheduler = ResetCreditAutoRedeemScheduler(
+        interval_seconds=60, cooldown_seconds=900, enabled=True, max_per_day=2
+    )
+    await scheduler._tick()
+    redeem.assert_awaited_once()
