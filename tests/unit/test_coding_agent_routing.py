@@ -64,5 +64,6 @@ def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> Non
 
     assert 'FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"' in launcher
     assert '"claude-fable-5": AnthropicModelPrice(' in pricing
-    assert 'calls[0]["model"] == "claude-fable-5"' in pulse_test
+    # The pulse probes the current Fable (5.1); the 5.0 price and fixtures stay.
+    assert 'calls[0]["model"] == "claude-fable-5-1"' in pulse_test
     assert '"model":"claude-fable-5"' in fixture
