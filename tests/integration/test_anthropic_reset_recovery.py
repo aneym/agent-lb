@@ -1,0 +1,133 @@
+from datetime import timedelta
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy import update
+
+from app.core.clients import anthropic_resets
+from app.core.crypto import TokenEncryptor
+from app.core.utils.time import utcnow
+from app.db.models import Account, AccountStatus, ResetCreditAttempt
+from app.db.session import SessionLocal
+from app.modules.accounts import service as service_module
+from app.modules.accounts.repository import AccountsRepository
+from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
+from app.modules.accounts.service import AccountResetCreditsUnavailableError, AccountsService
+from app.modules.usage.repository import UsageRepository
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+async def seed():
+    enc = TokenEncryptor()
+    async with SessionLocal() as session:
+        session.add(
+            Account(
+                id="claude-reset",
+                email="reset@example.invalid",
+                provider="anthropic",
+                plan_type="claude",
+                status=AccountStatus.QUOTA_EXCEEDED,
+                access_token_encrypted=enc.encrypt("test-access"),
+                refresh_token_encrypted=enc.encrypt("test-refresh"),
+                id_token_encrypted=enc.encrypt("test-id"),
+                last_refresh=utcnow(),
+            )
+        )
+        await session.commit()
+
+
+def service(session):
+    result = AccountsService(AccountsRepository(session), UsageRepository(session))
+    result._usage_updater = AsyncMock()
+    return result
+
+
+@pytest.fixture
+def reset_upstream(monkeypatch):
+    inventory = anthropic_resets.ResetStatus.model_validate(
+        {
+            "eligible": True,
+            "at_limit": True,
+            "exhausted": ["seven_day"],
+            "next_grant_id": "launch",
+            "grants": [{"id": "launch", "resets_left": 1, "usable_now": True, "clears": ["seven_day"]}],
+        }
+    )
+    fetch = AsyncMock(return_value=inventory)
+    redeem = AsyncMock(return_value=anthropic_resets.ResetResult(result="reset", cleared=["seven_day"]))
+    monkeypatch.setattr(anthropic_resets, "fetch_status", fetch)
+    monkeypatch.setattr(anthropic_resets, "redeem", redeem)
+    monkeypatch.setattr(service_module, "refresh_standard_capacity", AsyncMock(return_value=True))
+    return fetch, redeem
+
+
+async def expire():
+    async with SessionLocal() as session:
+        await session.execute(update(ResetCreditAttempt).values(lease_until=utcnow() - timedelta(seconds=1)))
+        await session.commit()
+
+
+async def test_claude_unknown_redemption_never_spends_a_second_credit(db_setup, reset_upstream):
+    await seed()
+    _, redeem = reset_upstream
+    redeem.side_effect = TimeoutError("response lost")
+    async with SessionLocal() as session:
+        with pytest.raises(TimeoutError):
+            await service(session).redeem_rate_limit_reset_credit("claude-reset")
+    await expire()
+    async with SessionLocal() as session:
+        with pytest.raises(AccountResetCreditsUnavailableError, match="unresolved"):
+            await service(session).redeem_rate_limit_reset_credit("claude-reset")
+        assert (await ResetCreditAttemptsRepository(session).active()).state == "pending"
+    assert redeem.await_count == 1
+
+
+async def test_claude_reset_survives_refresh_failure_without_second_redemption(db_setup, reset_upstream, monkeypatch):
+    await seed()
+    _, redeem = reset_upstream
+    monkeypatch.setattr(service_module, "refresh_standard_capacity", AsyncMock(side_effect=RuntimeError("refresh")))
+    async with SessionLocal() as session:
+        with pytest.raises(RuntimeError, match="refresh"):
+            await service(session).redeem_rate_limit_reset_credit("claude-reset")
+    await expire()
+    monkeypatch.setattr(service_module, "refresh_standard_capacity", AsyncMock(return_value=True))
+    async with SessionLocal() as session:
+        result = await service(session).redeem_rate_limit_reset_credit("claude-reset")
+        assert result.status == "redeemed"
+        assert await ResetCreditAttemptsRepository(session).active() is None
+    assert redeem.await_count == 1
+
+
+async def test_claude_daily_reset_cap_includes_manual_redemptions(db_setup, reset_upstream):
+    await seed()
+    _, redeem = reset_upstream
+    async with SessionLocal() as session:
+        assert (await service(session).redeem_rate_limit_reset_credit("claude-reset")).status == "redeemed"
+        with pytest.raises(AccountResetCreditsUnavailableError, match="last 24 hours"):
+            await service(session).redeem_rate_limit_reset_credit("claude-reset")
+    assert redeem.await_count == 1
+
+
+async def test_claude_already_used_is_not_reported_as_our_success(db_setup, reset_upstream):
+    await seed()
+    _, redeem = reset_upstream
+    redeem.return_value = anthropic_resets.ResetResult(result="already_used")
+    async with SessionLocal() as session:
+        result = await service(session).redeem_rate_limit_reset_credit("claude-reset")
+        assert result.status == "not_redeemed"
+        assert result.code == "already_used"
+
+
+async def test_failed_claude_inventory_clears_previous_known_count(db_setup, reset_upstream):
+    from app.core.clients.rate_limit_resets import ResetCreditsError
+    from app.modules.accounts import reset_credit_cache
+
+    await seed()
+    fetch, _ = reset_upstream
+    reset_credit_cache.record_count("claude-reset", 2)
+    fetch.side_effect = ResetCreditsError(502, "malformed timestamp")
+    async with SessionLocal() as session:
+        with pytest.raises(ResetCreditsError):
+            await service(session).list_rate_limit_reset_credits("claude-reset")
+    assert reset_credit_cache.get_count("claude-reset") is None

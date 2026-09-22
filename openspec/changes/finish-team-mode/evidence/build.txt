@@ -1,0 +1,30 @@
+
+> frontend@1.20.0-beta.3 build
+> tsc -b && vite build
+
+vite v8.0.16 building client environment for production...
+(node:28036) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[2Ktransforming...✓ 3984 modules transformed.
+rendering chunks...
+computing gzip size...
+../app/static/index.html                                  1.13 kB │ gzip:   0.49 kB
+../app/static/assets/index-cbXwYEvN.css                  83.64 kB │ gzip:  14.05 kB
+../app/static/assets/rolldown-runtime-QTnfLwEv.js         0.69 kB │ gzip:   0.42 kB
+../app/static/assets/api-key-create-dialog-B0k8myFU.js    5.17 kB │ gzip:   1.70 kB
+../app/static/assets/totp-settings-DDjvOHvx.js            5.50 kB │ gzip:   1.74 kB
+../app/static/assets/api-key-edit-dialog-wi482mEC.js      7.97 kB │ gzip:   2.59 kB
+../app/static/assets/oauth-dialog-B0BzbNIh.js            11.43 kB │ gzip:   3.11 kB
+../app/static/assets/vendor-query-QFcgrTqn.js            29.45 kB │ gzip:   9.15 kB
+../app/static/assets/dialog-CMLXhXZ1.js                  98.29 kB │ gzip:  30.61 kB
+../app/static/assets/limit-rules-editor-B7o4xK9t.js     105.65 kB │ gzip:  26.73 kB
+../app/static/assets/vendor-react-58z2Rmb8.js           178.32 kB │ gzip:  56.34 kB
+../app/static/assets/vendor-charts-rzfyySsd.js          399.61 kB │ gzip: 114.76 kB
+../app/static/assets/index-D8lg6OGA.js                  625.51 kB │ gzip: 165.74 kB
+
+✓ built in 264ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 600 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.

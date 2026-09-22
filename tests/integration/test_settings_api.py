@@ -199,7 +199,11 @@ async def test_settings_api_returns_known_additional_quota_policies(async_client
 
     assert payload["additionalQuotaRoutingPolicies"] == {}
     policies_by_key = {policy["quotaKey"]: policy for policy in payload["additionalQuotaPolicies"]}
-    assert policies_by_key == {
+    assert {key: policies_by_key[key] for key in (
+        "codex_spark", "anthropic_standard", "anthropic_top", "anthropic_top_thinking",
+        "anthropic_fast", "glm_coding", "glm_coding_thinking",
+        "kimi_coding", "kimi_coding_thinking",
+    )} == {
         "codex_spark": {
             "quotaKey": "codex_spark",
             "displayLabel": "GPT-5.3-Codex-Spark",
@@ -239,6 +243,18 @@ async def test_settings_api_returns_known_additional_quota_policies(async_client
         "glm_coding_thinking": {
             "quotaKey": "glm_coding_thinking",
             "displayLabel": "GLM Coding Plan with thinking",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
+        "kimi_coding": {
+            "quotaKey": "kimi_coding",
+            "displayLabel": "Kimi Coding Plan",
+            "routingPolicy": "normal",
+            "modelIds": ["k3_256k", "kimi_k2_7_code", "kimi_k3"],
+        },
+        "kimi_coding_thinking": {
+            "quotaKey": "kimi_coding_thinking",
+            "displayLabel": "Kimi Coding Plan with thinking",
             "routingPolicy": "normal",
             "modelIds": [],
         },

@@ -284,25 +284,29 @@ async def get_team_member_onboarding(
 
 def _build_snippets(base_url: str) -> TeamOnboardingSnippets:
     openai_base_url = f"{base_url}/v1"
+    powershell_base_url = "'" + base_url.replace("'", "''") + "'"
+    powershell_openai_url = "'" + openai_base_url.replace("'", "''") + "'"
+    zsh_base_url = "'" + base_url.replace("'", "'\"'\"'") + "'"
+    zsh_openai_url = "'" + openai_base_url.replace("'", "'\"'\"'") + "'"
     windows_powershell = "\n".join(
         (
             "# Claude Code",
-            f'$env:ANTHROPIC_BASE_URL = "{base_url}"',
+            f"$env:ANTHROPIC_BASE_URL = {powershell_base_url}",
             '$env:ANTHROPIC_AUTH_TOKEN = "<key>"',
             "",
             "# Codex",
-            f'$env:OPENAI_BASE_URL = "{openai_base_url}"',
+            f"$env:OPENAI_BASE_URL = {powershell_openai_url}",
             '$env:OPENAI_API_KEY = "<key>"',
         )
     )
     macos_zsh = "\n".join(
         (
             "# Claude Code",
-            f'export ANTHROPIC_BASE_URL="{base_url}"',
+            f"export ANTHROPIC_BASE_URL={zsh_base_url}",
             'export ANTHROPIC_AUTH_TOKEN="<key>"',
             "",
             "# Codex",
-            f'export OPENAI_BASE_URL="{openai_base_url}"',
+            f"export OPENAI_BASE_URL={zsh_openai_url}",
             'export OPENAI_API_KEY="<key>"',
         )
     )

@@ -49,3 +49,4 @@ class UsagePayload(BaseModel):
     # limits[] kind="weekly_scoped" for the Fable model), when present.
     # Unset for OpenAI/GLM payloads.
     fable_scoped_weekly: UsageWindow | None = None
+    reset_credits_available: int | None = None

@@ -142,13 +142,13 @@ final class ModelDecodingTests: XCTestCase {
     )
 
     XCTAssertEqual(anthropicAvailable.fableRemainingPercent, 16.0)
-    XCTAssertEqual(anthropicAvailable.fableAvailabilityLabel, "FABLE 16%")
-    XCTAssertEqual(anthropicAvailable.fableAvailabilityHelp, "Fable usage available (16% remaining)")
+    XCTAssertEqual(anthropicAvailable.fableAvailabilityLabel, "FABLE WK 16%")
+    XCTAssertEqual(anthropicAvailable.fableAvailabilityHelp, "Fable weekly usage available (16% remaining)")
     XCTAssertEqual(anthropicOut.fableRemainingPercent, 0.0)
-    XCTAssertEqual(anthropicOut.fableAvailabilityLabel, "FABLE OUT 0%")
-    XCTAssertEqual(anthropicOut.fableAvailabilityHelp, "Out of Fable usage (0% remaining)")
+    XCTAssertEqual(anthropicOut.fableAvailabilityLabel, "FABLE WK OUT 0%")
+    XCTAssertEqual(anthropicOut.fableAvailabilityHelp, "Fable weekly usage exhausted (0% remaining); Opus availability is separate")
     XCTAssertNil(anthropicFallback.fableRemainingPercent)
-    XCTAssertEqual(anthropicFallback.fableAvailabilityLabel, "FABLE")
+    XCTAssertEqual(anthropicFallback.fableAvailabilityLabel, "FABLE WK")
     XCTAssertNil(openAIWithScopedQuota.fableRemainingPercent)
     XCTAssertNil(openAIWithScopedQuota.fableAvailabilityLabel)
   }

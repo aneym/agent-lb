@@ -27,6 +27,7 @@ describe("getSeatLabel", () => {
     ["gpt-5.6-sol", "xhigh", "Verifier"],
     ["claude-sonnet-5", null, "Explore"],
     ["claude-fable-5", null, "Driver"],
+    ["claude-opus-5", "high", "Driver"],
     ["custom-model", "high", "custom-model"],
   ])("maps %s and %s to %s", (model, effort, expected) => {
     expect(getSeatLabel(model, effort)).toBe(expected);

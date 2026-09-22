@@ -1,0 +1,12 @@
+Would reformat: app/cli.py
+Would reformat: app/modules/accounts/reset_credit_scheduler.py
+Would reformat: app/modules/accounts/service.py
+Would reformat: app/modules/federation/peer_client.py
+Would reformat: app/modules/federation/repository.py
+Would reformat: app/modules/federation/service.py
+Would reformat: app/modules/proxy/anthropic_service.py
+Would reformat: app/modules/request_logs/repository.py
+Would reformat: app/modules/sessions/repository.py
+Would reformat: app/modules/sessions/service.py
+Would reformat: app/modules/usage/repository.py
+11 files would be reformatted, 450 files already formatted

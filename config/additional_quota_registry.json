@@ -3,57 +3,98 @@
     "quota_key": "codex_spark",
     "display_label": "GPT-5.3-Codex-Spark",
     "routing_policy": "burn_first",
-    "model_ids": ["gpt-5.3-codex-spark"],
-    "applies_to_plans": ["pro", "prolite", "team", "business", "enterprise"],
-    "limit_name_aliases": ["codex_other", "GPT-5.3-Codex-Spark", "gpt-5.3-codex-spark"],
-    "metered_feature_aliases": ["codex_bengalfox"]
+    "model_ids": [
+      "gpt-5.3-codex-spark"
+    ],
+    "applies_to_plans": [
+      "pro",
+      "prolite",
+      "team",
+      "business",
+      "enterprise"
+    ],
+    "limit_name_aliases": [
+      "codex_other",
+      "GPT-5.3-Codex-Spark",
+      "gpt-5.3-codex-spark"
+    ],
+    "metered_feature_aliases": [
+      "codex_bengalfox"
+    ]
   },
   {
     "quota_key": "anthropic_standard",
     "display_label": "Claude standard models",
     "routing_policy": "normal",
-    "limit_name_aliases": ["anthropic_standard"]
+    "limit_name_aliases": [
+      "anthropic_standard"
+    ]
   },
   {
     "quota_key": "anthropic_top",
     "display_label": "Claude top models",
     "routing_policy": "normal",
-    "limit_name_aliases": ["anthropic_top"]
+    "limit_name_aliases": [
+      "anthropic_top"
+    ]
   },
   {
     "quota_key": "anthropic_top_thinking",
     "display_label": "Claude top models with thinking",
     "routing_policy": "normal",
-    "limit_name_aliases": ["anthropic_top_thinking"]
+    "limit_name_aliases": [
+      "anthropic_top_thinking"
+    ]
   },
   {
     "quota_key": "anthropic_fast",
     "display_label": "Claude fast mode",
     "routing_policy": "normal",
-    "limit_name_aliases": ["anthropic_fast"],
-    "metered_feature_aliases": ["anthropic_fast", "anthropic_fast_mode"]
+    "limit_name_aliases": [
+      "anthropic_fast"
+    ],
+    "metered_feature_aliases": [
+      "anthropic_fast",
+      "anthropic_fast_mode"
+    ]
   },
   {
     "quota_key": "glm_coding",
     "display_label": "GLM Coding Plan",
     "routing_policy": "normal",
-    "model_ids": ["glm-5.2", "glm-5.2[1m]", "glm-4.5-air"],
-    "applies_to_plans": ["glm-coding"],
-    "limit_name_aliases": ["glm_coding"]
+    "model_ids": [
+      "glm-5.2",
+      "glm-5.2[1m]",
+      "glm-4.5-air"
+    ],
+    "applies_to_plans": [
+      "glm-coding"
+    ],
+    "limit_name_aliases": [
+      "glm_coding"
+    ]
   },
   {
     "quota_key": "glm_coding_thinking",
     "display_label": "GLM Coding Plan with thinking",
     "routing_policy": "normal",
-    "applies_to_plans": ["glm-coding"],
-    "limit_name_aliases": ["glm_coding_thinking"]
+    "applies_to_plans": [
+      "glm-coding"
+    ],
+    "limit_name_aliases": [
+      "glm_coding_thinking"
+    ]
   },
   {
     "quota_key": "anthropic_fable_scoped_weekly",
     "display_label": "Fable weekly (scoped)",
     "routing_policy": "inherit",
-    "limit_name_aliases": ["anthropic_fable_scoped_weekly"],
-    "metered_feature_aliases": ["anthropic_fable_scoped_weekly"]
+    "limit_name_aliases": [
+      "anthropic_fable_scoped_weekly"
+    ],
+    "metered_feature_aliases": [
+      "anthropic_fable_scoped_weekly"
+    ]
   },
   {
     "quota_key": "openrouter_credits",
@@ -97,5 +138,48 @@
     "routing_policy": "normal",
     "model_ids": ["gpt-6-astra", "gpt-5.6-luna"],
     "limit_name_aliases": ["openai_subscription"]
+  },
+  {
+    "quota_key": "kimi_coding",
+    "display_label": "Kimi Coding Plan",
+    "routing_policy": "normal",
+    "model_ids": [
+      "k3-256k",
+      "kimi-k3",
+      "kimi-k2.7-code"
+    ],
+    "applies_to_plans": [
+      "kimi-coding"
+    ],
+    "limit_name_aliases": [
+      "kimi_coding"
+    ]
+  },
+  {
+    "quota_key": "kimi_coding_thinking",
+    "display_label": "Kimi Coding Plan with thinking",
+    "routing_policy": "normal",
+    "applies_to_plans": [
+      "kimi-coding"
+    ],
+    "limit_name_aliases": [
+      "kimi_coding_thinking"
+    ]
+  },
+  {
+    "quota_key": "anthropic_opus",
+    "display_label": "Opus models",
+    "routing_policy": "normal",
+    "limit_name_aliases": [
+      "anthropic_opus"
+    ]
+  },
+  {
+    "quota_key": "anthropic_opus_thinking",
+    "display_label": "Opus models with thinking",
+    "routing_policy": "normal",
+    "limit_name_aliases": [
+      "anthropic_opus_thinking"
+    ]
   }
 ]

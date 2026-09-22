@@ -209,12 +209,13 @@ class AccountImportResponse(DashboardModel):
 
 
 class AccountApiKeyImportRequest(DashboardModel):
-    provider: str = Field(default="glm", pattern=r"^(glm|openrouter)$")
+    provider: str = Field(default="glm", pattern=r"^(glm|kimi|openrouter)$")
     api_key: SecretStr = Field(min_length=1)
-    email: str = Field(default="glm@z.ai", min_length=3, max_length=320)
+    refresh_token: SecretStr | None = Field(default=None, min_length=1)
+    email: str | None = Field(default=None, min_length=3, max_length=320)
     account_id: str | None = Field(default=None, min_length=1, max_length=128)
-    alias: str | None = Field(default="GLM Coding Plan", max_length=200)
-    plan_type: str = Field(default="glm-coding", min_length=1, max_length=64)
+    alias: str | None = Field(default=None, max_length=200)
+    plan_type: str | None = Field(default=None, min_length=1, max_length=64)
     credits_balance: float | None = None
     credits_cap: float | None = None
     credits_spent: float | None = None

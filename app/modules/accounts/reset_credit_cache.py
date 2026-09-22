@@ -1,10 +1,13 @@
-"""In-memory reset-credit counts, repopulated by the immediate expiry sweep after boot."""
+"""Short-lived inventory snapshots; an expired count is unknown, not zero."""
 
-_counts: dict[str, int] = {}
+from time import monotonic
+
+_COUNTS_TTL_SECONDS = 300
+_counts: dict[str, tuple[int, float]] = {}
 
 
 def record_count(account_id: str, available_count: int) -> None:
-    _counts[account_id] = available_count
+    _counts[account_id] = (available_count, monotonic())
 
 
 def clear(account_id: str) -> None:
@@ -12,7 +15,13 @@ def clear(account_id: str) -> None:
 
 
 def get_count(account_id: str) -> int | None:
-    return _counts.get(account_id)
+    cached = _counts.get(account_id)
+    if cached is None:
+        return None
+    count, recorded = cached
+    if monotonic() - recorded >= _COUNTS_TTL_SECONDS:
+        return None
+    return count
 
 
 def reset() -> None:

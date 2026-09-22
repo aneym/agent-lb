@@ -192,9 +192,15 @@ class Settings(BaseSettings):
     anthropic_oauth_scope: str = (
         "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
     )
+    anthropic_oauth_refresh_scope: str = (
+        "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+    )
     anthropic_oauth_redirect_uri: str = "https://platform.claude.com/oauth/code/callback"
     anthropic_version: str = "2023-06-01"
     glm_anthropic_upstream_base_url: str = "https://api.z.ai/api/anthropic"
+    kimi_anthropic_upstream_base_url: str = "https://api.kimi.com/coding"
+    kimi_oauth_token_url: str = "https://auth.kimi.com/api/oauth/token"
+    kimi_oauth_client_id: str = "17e5f671-d194-4dfb-9706-5516cb48c098"
     token_refresh_timeout_seconds: float = 8.0
     auth_guardian_enabled: bool = False
     auth_guardian_interval_seconds: int = Field(default=21600, gt=0)
@@ -251,6 +257,15 @@ class Settings(BaseSettings):
     usage_refresh_interval_seconds: int = Field(default=60, gt=0)
     reset_credit_auto_redeem_enabled: bool = True
     reset_credit_auto_redeem_interval_seconds: int = Field(default=60, gt=0)
+    # Daily allowance for automatic exhaustion redemptions: banked credits are
+    # scarce, so one reset per rolling 24h is the baseline, plus one more if the
+    # pool hits the limit again the same day (operator rule, 2026-09-10). The
+    # count is read from the durable attempt ledger (trigger=auto only), so a
+    # restart cannot lift it, and the cooldown below is the minimum spacing
+    # between two of them — it stops one exhaustion episode, read through a
+    # stale usage snapshot, from burning the whole allowance back-to-back.
+    # Expiry-sweep and operator-initiated redemptions are exempt from both.
+    reset_credit_auto_redeem_max_per_day: int = Field(default=2, ge=0)
     reset_credit_auto_redeem_cooldown_seconds: int = Field(default=900, ge=0)
     reset_credit_expiry_redeem_enabled: bool = True
     reset_credit_expiry_redeem_window_hours: int = Field(default=24, gt=0)

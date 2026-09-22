@@ -224,12 +224,12 @@ async def test_onboarding_payload_uses_configured_base_url(async_client, db_setu
 
     zsh = payload["snippets"]["macosZsh"]
     powershell = payload["snippets"]["windowsPowershell"]
-    assert 'export ANTHROPIC_BASE_URL="https://lb.example.com"' in zsh
+    assert "export ANTHROPIC_BASE_URL='https://lb.example.com'" in zsh
     assert 'export ANTHROPIC_AUTH_TOKEN="<key>"' in zsh
-    assert 'export OPENAI_BASE_URL="https://lb.example.com/v1"' in zsh
+    assert "export OPENAI_BASE_URL='https://lb.example.com/v1'" in zsh
     assert 'export OPENAI_API_KEY="<key>"' in zsh
-    assert '$env:ANTHROPIC_BASE_URL = "https://lb.example.com"' in powershell
-    assert '$env:OPENAI_BASE_URL = "https://lb.example.com/v1"' in powershell
+    assert "$env:ANTHROPIC_BASE_URL = 'https://lb.example.com'" in powershell
+    assert "$env:OPENAI_BASE_URL = 'https://lb.example.com/v1'" in powershell
     assert "sk-clb-" not in zsh and "sk-clb-" not in powershell
 
     missing = await async_client.get("/api/team/members/does-not-exist/onboarding")

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin
 
 import aiohttp
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.core.clients.anthropic_resets import ResetStatus, _utc
 from app.core.clients.http import lease_retry_client
+from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.clients.usage import UsageFetchError, _extract_error_code, _extract_error_message, _retry_options
 from app.core.config.settings import get_settings
 from app.core.usage.models import CreditsPayload, RateLimitPayload, UsagePayload, UsageWindow
@@ -74,6 +76,7 @@ class AnthropicOAuthUsagePayload(BaseModel):
     seven_day: AnthropicUsageWindow | None = None
     extra_usage: AnthropicExtraUsage | None = None
     limits: list[AnthropicLimitEntry] | None = None
+    cedar_ember: dict[str, Any] | None = None
 
 
 async def fetch_anthropic_usage(
@@ -86,7 +89,7 @@ async def fetch_anthropic_usage(
 ) -> UsagePayload:
     settings = get_settings()
     usage_base = base_url or settings.anthropic_upstream_base_url
-    url = urljoin(usage_base.rstrip("/") + "/", "api/oauth/usage")
+    url = urljoin(usage_base.rstrip("/") + "/", "api/oauth/usage?cedar_ember=1")
     timeout = aiohttp.ClientTimeout(total=timeout_seconds or settings.usage_fetch_timeout_seconds)
     retries = max_retries if max_retries is not None else settings.usage_fetch_max_retries
     headers = _anthropic_usage_headers(access_token)
@@ -113,6 +116,7 @@ async def fetch_anthropic_usage(
 def _usage_payload_from_anthropic(payload: AnthropicOAuthUsagePayload) -> UsagePayload:
     return UsagePayload(
         plan_type="claude",
+        reset_credits_available=_reset_count(payload.cedar_ember),
         rate_limit=RateLimitPayload(
             primary_window=_usage_window(payload.five_hour, limit_window_seconds=_FIVE_HOUR_SECONDS),
             secondary_window=_usage_window(payload.seven_day, limit_window_seconds=_SEVEN_DAY_SECONDS),
@@ -120,6 +124,24 @@ def _usage_payload_from_anthropic(payload: AnthropicOAuthUsagePayload) -> UsageP
         credits=_credits_from_extra_usage(payload.extra_usage),
         fable_scoped_weekly=_fable_scoped_weekly_window(_fable_scoped_weekly_entry(payload.limits)),
     )
+
+
+def _reset_count(raw: dict[str, Any] | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        status = ResetStatus.model_validate(raw)
+        now = datetime.now(timezone.utc)
+        return sum(
+            grant.resets_left
+            for grant in status.grants
+            if grant.resets_left > 0
+            and (grant.ends_at is None or _utc(grant.ends_at) > now)
+            and (grant.starts_at is None or _utc(grant.starts_at) <= now)
+        )
+    except (ValidationError, ResetCreditsError):
+        # Optional grant data must not suppress ordinary usage refreshes.
+        return None
 
 
 def _fable_scoped_weekly_entry(limits: list[AnthropicLimitEntry] | None) -> AnthropicLimitEntry | None:
@@ -193,7 +215,7 @@ def _anthropic_usage_headers(access_token: str) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json",
-        "User-Agent": "claude-cli/2.1.170",
+        "User-Agent": "claude-cli/2.1.280 (external, cli)",
     }
     request_id = get_request_id()
     if request_id:
