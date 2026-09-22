@@ -55,8 +55,8 @@ def test_defaults_fable_driver_and_canonical_opus_seat(monkeypatch: pytest.Monke
 
     command, environment = run_fable(monkeypatch, ["-p", "hello"])
 
-    assert environment["ANTHROPIC_MODEL"] == "claude-fable-5[1m]"
-    assert environment["ANTHROPIC_DEFAULT_FABLE_MODEL"] == "claude-fable-5[1m]"
+    assert environment["ANTHROPIC_MODEL"] == "claude-fable-5-1[1m]"
+    assert environment["ANTHROPIC_DEFAULT_FABLE_MODEL"] == "claude-fable-5-1[1m]"
     assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-5-5"
     assert command == [str(ROOT / "clients" / "claude-lb-launch"), "--autocompact", "1m", "-p", "hello"]
 
