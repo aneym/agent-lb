@@ -80,9 +80,10 @@
           "min_pace": -10
         },
         {
-          "seat": "cursor-seat",
-          "model": "grok-latest",
-          "vendor": "cursor"
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
         },
         {
           "seat": "implementer",
@@ -122,7 +123,8 @@
             "effort": "xhigh"
           }
         }
-      }
+      },
+      "note": "Correctness-sensitive core code (balancer, routing, state, auth, money paths). Opus while its pool is on weekly pace in the ok band, else Codex Sol; Grok is not used here."
     },
     "mechanical": {
       "chain": [
@@ -163,7 +165,8 @@
             "effort": "xhigh"
           }
         }
-      }
+      },
+      "note": "Bounded mechanical edits with a tight spec: Grok on Cursor."
     },
     "verify": {
       "cross_vendor": true,
@@ -453,7 +456,7 @@
         "sol-latest"
       ],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
-      "implementation": "opus-latest first while anthropic-general is on pace or ahead (min_pace -10), else grok-latest on Cursor, terra-latest when served, GLM, Kimi; each closeout audited by the other vendor: sol-latest for Anthropic authors, opus-latest otherwise"
+      "implementation": "implement (core: balancer, routing, state, auth, money paths): opus-latest while anthropic-general is on weekly pace in the ok band, else sol-latest via codex-sol, terra-latest when served; mechanical (tight-spec edits): grok-latest. Every closeout audited by the other vendor: sol-latest for Anthropic authors, opus-latest otherwise."
     }
   },
   "notes": [
@@ -461,7 +464,8 @@
     "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus orchestrates; cheaper seats implement; the other vendor's stronger model audits (classes.*.audit).",
     "2026-09-22: gpt-6-terra is not in the upstream model catalog for these accounts (the LB answers 503 no available accounts), so terra-latest resolves to nothing and implement falls through to grok-latest.",
     "2026-09-22 (owner): while the Anthropic general pool is on pace or ahead, Opus takes implement first (min_pace -10, the policy's behind threshold) with Cursor Grok as the fallback; Opus-written code is audited by sol-latest. `route record` logs each implement outcome and `route report --implement` compares seats per model.",
-    "2026-09-22: glm-*/kimi-* chain entries removed: cursor-agent serves neither (cursor-agent --list-models) and no other seat dispatches them, so they could only ever resolve to a literal wildcard. Re-add them behind a family alias once a seat can run GLM or Kimi."
+    "2026-09-22: glm-*/kimi-* chain entries removed: cursor-agent serves neither (cursor-agent --list-models) and no other seat dispatches them, so they could only ever resolve to a literal wildcard. Re-add them behind a family alias once a seat can run GLM or Kimi.",
+    "2026-09-22 (orchestrator, after the first A/B: Opus 1/2 audit pass, Grok 0/2): implement is correctness-sensitive core work on Opus (pace-gated) with Codex Sol as the fallback; Grok takes only the mechanical class. Both keep the cross-vendor audit; rerun `route report --implement` once each arm has n >= 10."
   ],
   "aliases": {
     "opus-latest": {
