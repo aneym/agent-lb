@@ -1,0 +1,213 @@
+Evidence directory: /private/tmp/broker-reap-dGJr92
+Patched: /private/tmp/broker-reap-dGJr92/plugin
+Drift rejection (expected nonzero=1):
+error: patch failed: plugins/codex/scripts/app-server-broker.mjs:63
+error: plugins/codex/scripts/app-server-broker.mjs: patch does not apply
+ERROR: codex-plugin-cc patch is incompatible in /private/tmp/broker-reap-dGJr92/plugin; file/hunk diagnostics above. No files changed. Rebase the repo-owned patch on the updated plugin.
+PASS checked application, idempotence, atomic drift rejection
+PASS invalid idle windows rejected before app-server spawn
+C-resistant-leader before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 71240,
+    "ppid": 71064,
+    "pgid": 71240,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 71268,
+    "ppid": 71240,
+    "pgid": 71268,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 71295,
+    "ppid": 71268,
+    "pgid": 71268,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+C-resistant-leader after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+C-resistant-leader TERM recipients: 71295, 71268, 71268, 71295
+PASS C-resistant-leader: broker=71240 app-server=71268, total=5176ms; all observed PIDs absent
+D-exited-leader before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 71803,
+    "ppid": 71064,
+    "pgid": 71803,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 71830,
+    "ppid": 71803,
+    "pgid": 71830,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 71895,
+    "ppid": 71830,
+    "pgid": 71830,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+D-exited-leader after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+D-exited-leader TERM recipients: 71895, 71895
+PASS D-exited-leader: broker=71803 app-server=71830, total=5083ms; all observed PIDs absent
+E-shutdown-rpc still alive after 3337ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 72378,
+    "ppid": 71064,
+    "pgid": 72378,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 72435,
+    "ppid": 72378,
+    "pgid": 72435,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 72465,
+    "ppid": 72435,
+    "pgid": 72435,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+E-shutdown-rpc before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 72378,
+    "ppid": 71064,
+    "pgid": 72378,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 72435,
+    "ppid": 72378,
+    "pgid": 72435,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 72465,
+    "ppid": 72435,
+    "pgid": 72435,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+E-shutdown-rpc after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+E-shutdown-rpc TERM recipients: 72435, 72465, 72435, 72465
+PASS E-shutdown-rpc: broker=72378 app-server=72435, total=11450ms; all observed PIDs absent
+F-signal-shutdown still alive after 3342ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 73183,
+    "ppid": 71064,
+    "pgid": 73183,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 73214,
+    "ppid": 73183,
+    "pgid": 73214,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 73245,
+    "ppid": 73214,
+    "pgid": 73214,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+F-signal-shutdown before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 73183,
+    "ppid": 71064,
+    "pgid": 73183,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 73214,
+    "ppid": 73183,
+    "pgid": 73214,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 73245,
+    "ppid": 73214,
+    "pgid": 73214,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+F-signal-shutdown after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+F-signal-shutdown TERM recipients: 73245, 73245
+PASS F-signal-shutdown: broker=73183 app-server=73214, total=11368ms; all observed PIDs absent
+G-unrecorded-group-member unrecorded orphan 74070: ppid=1 pgid=74010, shares group with recorded app-server
+G-unrecorded-group-member before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 73980,
+    "ppid": 71064,
+    "pgid": 73980,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 74010,
+    "ppid": 73980,
+    "pgid": 74010,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 74058,
+    "ppid": 74010,
+    "pgid": 74010,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 74070,
+    "ppid": 1,
+    "pgid": 74010,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+G-unrecorded-group-member after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+G-unrecorded-group-member TERM recipients: 74058, 74070, 74058
+AssertionError [ERR_ASSERTION]: 74070 is not ours to kill and must survive
+    at runCase (file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:325:7)
+    at async file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:359:3 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}

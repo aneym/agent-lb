@@ -22,6 +22,14 @@ On POSIX the broker's app-server SHALL run in a private process group. Shutdown 
 - **WHEN** shutdown begins and an app-server descendant leads a process group other than the app-server's
 - **THEN** that descendant and its children SHALL no longer be running after the broker exits
 
+#### Scenario: A process outside the record shares a recorded group
+- **WHEN** a process that was not recorded as a descendant, or whose pid now has a different start time, is in a recorded process group
+- **THEN** shutdown SHALL NOT signal it, directly or through its group
+
+#### Scenario: ps is unavailable
+- **WHEN** the process table cannot be read at shutdown
+- **THEN** shutdown SHALL signal only the app-server child through its process handle and SHALL NOT signal any process group
+
 #### Scenario: A descendant ignores TERM
 - **WHEN** shutdown begins and an app-server descendant in its process group ignores TERM
 - **THEN** shutdown SHALL escalate to SIGKILL and the descendant SHALL no longer be running

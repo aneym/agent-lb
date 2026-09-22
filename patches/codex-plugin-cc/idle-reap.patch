@@ -110,7 +110,7 @@ index 1954274..4515f88 100644
  
  main().catch((error) => {
 diff --git a/plugins/codex/scripts/lib/app-server.mjs b/plugins/codex/scripts/lib/app-server.mjs
-index 72b30a7..8ba5138 100644
+index 72b30a7..8b61160 100644
 --- a/plugins/codex/scripts/lib/app-server.mjs
 +++ b/plugins/codex/scripts/lib/app-server.mjs
 @@ -10,7 +10,7 @@
@@ -142,7 +142,7 @@ index 72b30a7..8ba5138 100644
      if (this.closed) {
        await this.exitPromise;
        return;
-@@ -265,6 +271,27 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
+@@ -265,6 +271,28 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
      await this.exitPromise;
    }
  
@@ -152,17 +152,18 @@ index 72b30a7..8ba5138 100644
 +    const pid = this.proc?.pid;
 +    if (pid) {
 +      // Codex starts MCP servers in their own process groups, so the app-server
-+      // group alone misses them. Record the whole tree before signalling:
-+      // descendants re-parented to init stay reachable through the record.
-+      const tree = collectProcessTree(pid);
-+      signalTree(tree, "SIGTERM");
++      // group alone misses them. Record the tree by pid, start time and group
++      // before signalling, and revalidate it before every signal: descendants
++      // re-parented to init stay reachable, and reused ids never match.
++      const tree = recordProcessTree(this.proc);
++      signalTree(tree, this.proc, "SIGTERM");
 +      this.proc.stdin.end();
 +      const deadline = Date.now() + 3_000;
 +      // Never use proc.killed or exitPromise to decide whether KILL is needed.
-+      while (Date.now() < deadline && signalTree(tree, 0)) {
++      while (Date.now() < deadline && signalTree(tree, this.proc, 0)) {
 +        await new Promise((resolve) => setTimeout(resolve, 50));
 +      }
-+      signalTree(tree, "SIGKILL");
++      signalTree(tree, this.proc, "SIGKILL");
 +    }
 +    await this.exitPromise;
 +  }
@@ -170,40 +171,87 @@ index 72b30a7..8ba5138 100644
    sendMessage(message) {
      const line = `${JSON.stringify(message)}\n`;
      const stdin = this.proc?.stdin;
-@@ -332,6 +359,58 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
+@@ -332,6 +360,131 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
    }
  }
  
++// One ps pass keyed by pid. A process is identified by pid, start time and
++// group together, so a reused pid or group id never matches its predecessor.
 +function readProcessTable() {
-+  const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid="], { encoding: "utf8" });
-+  if (result.status !== 0) {
++  const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], {
++    encoding: "utf8",
++    env: { ...process.env, LC_ALL: "C" }
++  });
++  if (result.error || result.status !== 0) {
 +    return null;
 +  }
-+  return result.stdout
-+    .trim()
-+    .split("\n")
-+    .map((line) => line.trim().split(/\s+/).map(Number))
-+    .filter(([pid, ppid, pgid]) => pid > 1 && ppid >= 0 && pgid > 1);
-+}
-+
-+// Walks descendants of root until a ps pass finds nothing new. Records each
-+// member's group, and treats a group as owned only when a member leads it, so
-+// a descendant that joined a foreign group never gets that group signalled.
-+// Without ps the tree degrades to the root's private group.
-+function collectProcessTree(root) {
-+  const members = new Map([[root, root]]);
-+  for (let pass = 0; pass < 20; pass++) {
-+    const before = members.size;
-+    for (const [pid, ppid, pgid] of readProcessTable() ?? []) {
-+      if (members.has(ppid) && !members.has(pid)) members.set(pid, pgid);
++  const rows = new Map();
++  for (const line of result.stdout.trim().split("\n")) {
++    const [pid, ppid, pgid, stat, ...start] = line.trim().split(/\s+/);
++    const row = { pid: Number(pid), ppid: Number(ppid), pgid: Number(pgid), stat, start: start.join(" ") };
++    if (row.pid > 1 && row.pgid > 1 && start.length > 0) {
++      rows.set(row.pid, row);
 +    }
-+    if (members.size === before) break;
 +  }
-+  const groups = new Set([...members.values()].filter((pgid) => members.has(pgid) && pgid !== process.pid));
-+  return { members, groups };
++  return rows;
 +}
 +
-+function signalTarget(target, signal) {
++function isZombie(row) {
++  return row.stat.startsWith("Z");
++}
++
++function matchesRecord(recorded, row) {
++  return Boolean(row) && row.start === recorded.start && row.pgid === recorded.pgid && !isZombie(row);
++}
++
++function childAlive(proc) {
++  return proc.exitCode === null && proc.signalCode === null;
++}
++
++// Records every process whose parent is a recorded member that still matches.
++// The root is seeded only while Node has not reaped the child: until then the
++// kernel cannot hand its pid to another process.
++function extendTree(tree, rows, proc) {
++  if (tree.members.size === 0) {
++    if (!childAlive(proc)) {
++      return;
++    }
++    const root = rows.get(proc.pid);
++    if (!root || isZombie(root)) {
++      return;
++    }
++    tree.members.set(proc.pid, { start: root.start, pgid: root.pgid });
++  }
++  for (let grew = true; grew; ) {
++    grew = false;
++    for (const row of rows.values()) {
++      const parent = tree.members.get(row.ppid);
++      if (!tree.members.has(row.pid) && !isZombie(row) && parent && matchesRecord(parent, rows.get(row.ppid))) {
++        tree.members.set(row.pid, { start: row.start, pgid: row.pgid });
++        grew = true;
++      }
++    }
++  }
++}
++
++// Repeats ps until a pass records nothing new.
++function recordProcessTree(proc) {
++  const tree = { members: new Map() };
++  for (let pass = 0; pass < 20; pass++) {
++    const rows = readProcessTable();
++    if (!rows) {
++      break;
++    }
++    const before = tree.members.size;
++    extendTree(tree, rows, proc);
++    if (tree.members.size === before) {
++      break;
++    }
++  }
++  return tree;
++}
++
++function sendSignal(target, signal) {
 +  try {
 +    process.kill(target, signal);
 +    return true;
@@ -213,17 +261,43 @@ index 72b30a7..8ba5138 100644
 +  }
 +}
 +
-+// Signals every recorded group and member; returns whether any target existed.
-+// A recorded pid is signalled only while it still sits in its recorded group,
-+// which guards against a reused pid during the grace period.
-+function signalTree(tree, signal) {
-+  let alive = false;
-+  for (const group of tree.groups) alive = signalTarget(-group, signal) || alive;
-+  const current = new Map((readProcessTable() ?? []).map(([pid, , pgid]) => [pid, pgid]));
-+  for (const [pid, pgid] of tree.members) {
-+    if (current.get(pid) === pgid) alive = signalTarget(pid, signal) || alive;
++// Revalidates the record against a fresh ps pass, then signals what still
++// matches; returns whether anything recorded is alive. A group is signalled
++// only when every current member is a matching recorded process, so nothing
++// outside the record shares a group signal; other members are signalled one
++// by one. Without ps only the app-server child is signalled, through its
++// handle: the kernel keeps an unreaped child's pid and Node drops the handle
++// when it reaps, so the handle cannot reach a reused pid. No group is signalled.
++function signalTree(tree, proc, signal) {
++  const rows = readProcessTable();
++  if (!rows) {
++    const alive = childAlive(proc);
++    if (alive && signal !== 0) {
++      proc.kill(signal);
++    }
++    return alive;
 +  }
-+  return alive;
++  extendTree(tree, rows, proc);
++  const live = [...tree.members].filter(([pid, recorded]) => matchesRecord(recorded, rows.get(pid)));
++  if (signal === 0 || live.length === 0) {
++    return live.length > 0;
++  }
++  const livePids = new Set(live.map(([pid]) => pid));
++  const ownGroup = rows.get(process.pid)?.pgid;
++  const signalled = new Set();
++  for (const group of new Set(live.map(([, recorded]) => recorded.pgid))) {
++    const current = [...rows.values()].filter((row) => row.pgid === group);
++    const owned = group !== ownGroup && current.every((row) => livePids.has(row.pid) || isZombie(row));
++    if (owned && sendSignal(-group, signal)) {
++      for (const row of current) signalled.add(row.pid);
++    }
++  }
++  for (const pid of livePids) {
++    if (!signalled.has(pid)) {
++      sendSignal(pid, signal);
++    }
++  }
++  return true;
 +}
 +
  export class CodexAppServerClient {

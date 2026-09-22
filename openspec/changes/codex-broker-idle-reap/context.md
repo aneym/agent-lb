@@ -44,20 +44,27 @@ The timer starts when the broker listens and when the final socket closes.
 Every connection cancels it. Shutdown stops new connections, flushes/closes
 existing sockets, reaps the app-server's process tree, and removes the
 socket/pid file. Before signalling, the broker walks the app-server's
-descendants with `ps -axo pid=,ppid=,pgid=` until a pass finds nothing new,
-and records every member PID and every group led by a member. It sends TERM
-to each group and member, waits up to three seconds, then sends KILL to
-whatever recorded target still exists, including members re-parented to init.
-A recorded PID is signalled only while it still has its recorded group, which
-guards against PID reuse. Ordinary direct app-server clients and Windows tree
-cleanup are unchanged.
+descendants with `ps -axo pid=,ppid=,pgid=,stat=,lstart=` until a pass finds
+nothing new, recording each process as (pid, start time, pgid). Before every
+signal (the TERM, each liveness poll, the final KILL) it re-reads ps and acts
+only on processes whose pid, start time and pgid all still match the record,
+so a reused pid or group id is skipped. A group is signalled only when every
+current member matches a recorded process; otherwise matching members are
+signalled one by one and unrecorded members of that group are left alone.
+KILL follows after three seconds, including for members re-parented to init.
+If ps is unavailable, only the app-server child is signalled through Node's
+child handle, which the kernel keeps bound to that process until Node reaps
+it; no group is signalled. Ordinary direct app-server clients and Windows
+tree cleanup are unchanged.
 
 Codex 0.155.1 starts each MCP server in its own process group (observed
 2026-09-22), so signalling the app-server group alone left MCP descendants
 running. The real-Codex test asserts an MCP fixture sits outside the
 app-server group and that every recorded descendant is gone after exit. A
 descendant that forks after the walk and leaves every recorded group is not
-reaped. If `ps` is unavailable the tree degrades to the app-server's group.
+reaped, and neither is an unrecorded process that shares a recorded group.
+Real pid or group reuse cannot be forced in a test; case I simulates it with
+a ps stub that reports a new start time for a recorded pid.
 
 Applying the patch affects newly launched brokers only. It cannot repair
 already running Node processes. Do not kill existing brokers as part of this

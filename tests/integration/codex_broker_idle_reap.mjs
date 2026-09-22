@@ -107,9 +107,14 @@ import {spawn} from 'node:child_process';
 const mode = process.argv[2];
 if (mode === 'leaf') {
   process.on('SIGTERM', () => fs.appendFileSync(process.env.TERM_LOG, process.pid+'\\n'));
-  fs.appendFileSync(process.env.PID_LOG, process.pid+'\\n');
+  fs.appendFileSync(process.env.ORPHAN ? process.env.ORPHAN_LOG : process.env.PID_LOG, process.pid+'\\n');
   setInterval(() => {}, 1000);
+} else if (mode === 'middle') {
+  // Exits at once so its leaf is re-parented to init but stays in this group.
+  spawn(process.execPath, [import.meta.filename, 'leaf'], {stdio:'ignore', env:{...process.env, ORPHAN:'1'}});
+  process.exit(0);
 } else {
+  if (mode === 'orphan') spawn(process.execPath, [import.meta.filename, 'middle'], {stdio:'ignore', env:process.env});
   spawn(process.execPath, [import.meta.filename, 'leaf'], {stdio:'ignore', env:process.env});
   fs.appendFileSync(process.env.PID_LOG, process.pid+'\\n');
   if (mode === 'stubborn') process.on('SIGTERM', () => fs.appendFileSync(process.env.TERM_LOG, process.pid+'\\n'));
@@ -130,7 +135,31 @@ function safeGroupKill(pgid, signal) {
   assert(!preexisting.has(pgid), `Refusing pre-existing PGID ${pgid}`);
   try { process.kill(-pgid, signal); } catch (e) { if (e.code !== 'ESRCH') throw e; }
 }
-async function runCase(label, { binary, mode, connected = false, mcp = false, shutdownRpc = false, signal = false }) {
+// A ps stub on the broker's PATH. 'fail' exits nonzero. 'mutate' answers the
+// first call truthfully, then reports a new start time for the pid in
+// mutate.pid: to the broker that pid now belongs to a different process, as
+// after pid reuse. Simulated, because real pid or group reuse is not forceable.
+function writePsStub(bin, dir, kind) {
+  const stub = kind === 'fail' ? '#!/bin/sh\nexit 1\n' : `#!${process.execPath}
+import fs from 'node:fs';
+import {spawnSync} from 'node:child_process';
+const count = path => { const n = (fs.existsSync(path) ? +fs.readFileSync(path, 'utf8') : 0) + 1; fs.writeFileSync(path, String(n)); return n; };
+const r = spawnSync('/bin/ps', process.argv.slice(2), {encoding:'utf8', env:process.env});
+let out = r.stdout;
+const target = ${JSON.stringify(path.join(dir, 'mutate.pid'))};
+if (fs.existsSync(target) && count(${JSON.stringify(path.join(dir, 'ps.calls'))}) >= 2) {
+  // lstart is space padded; match up to end of line.
+  const pid = fs.readFileSync(target, 'utf8').trim();
+  out = out.split('\\n').map(l => l.trim().split(/\\s+/)[0] === pid ? l.replace(/[A-Z][a-z]{2} [A-Z][a-z]{2} +\\d+ [\\d:]+ \\d{4}\\s*$/, 'Thu Jan  1 00:00:00 1970') : l).join('\\n');
+}
+process.stdout.write(out); process.stderr.write(r.stderr); process.exit(r.status ?? 1);
+`;
+  fs.writeFileSync(path.join(bin, 'ps'), stub, { mode: 0o755 });
+}
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { if (e.code === 'ESRCH') return false; throw e; }
+}
+async function runCase(label, { binary, mode, connected = false, mcp = false, shutdownRpc = false, signal = false, psStub = null }) {
   const dir = path.join(root, label);
   fs.mkdirSync(dir);
   const home = path.join(dir, 'home');
@@ -141,8 +170,10 @@ async function runCase(label, { binary, mode, connected = false, mcp = false, sh
     const launcher = `#!/bin/sh\nexec '${process.execPath}' '${fixture}' '${mode}'\n`;
     fs.writeFileSync(path.join(bin, 'codex'), launcher, { mode: 0o755 });
   }
+  if (psStub) writePsStub(bin, dir, psStub);
   const pidLog = path.join(dir, 'tree.pids');
   const termLog = path.join(dir, 'term.pids');
+  const orphanLog = path.join(dir, 'orphan.pids');
   if (mcp) fs.writeFileSync(path.join(home, 'config.toml'), `
 [mcp_servers.idle_reap_test]
 command = ${JSON.stringify(process.execPath)}
@@ -157,7 +188,7 @@ TERM_LOG = ${JSON.stringify(termLog)}
   const env = {
     PATH: `${bin}:/opt/homebrew/bin:/usr/bin:/bin`, HOME: home, CODEX_HOME: home,
     TMPDIR: root, CODEX_COMPANION_BROKER_IDLE_TIMEOUT_MS: String(idle),
-    PID_LOG: pidLog, TERM_LOG: termLog,
+    PID_LOG: pidLog, TERM_LOG: termLog, ORPHAN_LOG: orphanLog,
   };
   const broker = spawn(process.execPath, [brokerFile, 'serve', '--endpoint', `unix:${endpoint}`, '--cwd', dir, '--pid-file', pidFile], {
     cwd: dir, env, stdio: ['ignore', log, log], detached: true,
@@ -173,6 +204,7 @@ TERM_LOG = ${JSON.stringify(termLog)}
   const sockets = [];
   let appPid;
   let observed = [];
+  let survivors = [];
   const start = Date.now();
   try {
     await until(() => {
@@ -241,13 +273,29 @@ TERM_LOG = ${JSON.stringify(termLog)}
     } else if (!binary) {
       await until(() => fs.existsSync(pidLog) && fs.readFileSync(pidLog, 'utf8').trim().split('\n').length >= 2);
     }
+    const leaf = () => fs.readFileSync(pidLog, 'utf8').trim().split('\n').map(Number).find(pid => pid !== appPid);
+    if (mode === 'orphan') {
+      await until(() => fs.existsSync(orphanLog) && table().find(p => p.pid === +fs.readFileSync(orphanLog, 'utf8'))?.ppid === 1);
+      const orphan = +fs.readFileSync(orphanLog, 'utf8');
+      const row = table().find(p => p.pid === orphan);
+      assert.equal(row.pgid, appPid, 'Orphan must share the app-server group');
+      survivors = [orphan];
+      console.log(`${label} unrecorded orphan ${orphan}: ppid=${row.ppid} pgid=${row.pgid}, shares group with recorded app-server`);
+    } else if (psStub === 'fail') {
+      survivors = [leaf()];
+      console.log(`${label} ps stub fails; group member ${survivors[0]} must not get a group signal`);
+    } else if (psStub === 'mutate') {
+      survivors = [leaf()];
+      fs.writeFileSync(path.join(dir, 'mutate.pid'), String(survivors[0]));
+      console.log(`${label} ps stub reports a new start time for ${survivors[0]} after the first call (simulated pid reuse)`);
+    }
     // Codex puts MCP servers in their own groups, so the broker's tree, not
     // one group, is what shutdown must reap.
-    observed = snapshot(`${label} before shutdown`, descendants(broker.pid), [appPid]).map(p => p.pid);
+    observed = snapshot(`${label} before shutdown`, descendants(broker.pid), [appPid]).map(p => p.pid).filter(pid => !survivors.includes(pid));
     if (fs.existsSync(pidLog)) {
       const fixturePids = fs.readFileSync(pidLog, 'utf8').trim().split('\n').map(Number);
       for (const pid of fixturePids) {
-        assert(observed.includes(pid), `Fixture PID ${pid} is not a broker descendant; test setup is wrong`);
+        assert(observed.includes(pid) || survivors.includes(pid), `Fixture PID ${pid} is not a broker descendant; test setup is wrong`);
       }
       if (mcp) {
         const groups = new Set(table().filter(p => fixturePids.includes(p.pid)).map(p => p.pgid));
@@ -263,7 +311,7 @@ TERM_LOG = ${JSON.stringify(termLog)}
     assert.deepEqual(await exit, { code: 0, sig: null });
     if (!connected) assert(Date.now() - ready >= idle - 150, 'No-client timer fired early');
     else if (!shutdownRpc && !signal) assert(Date.now()-lastDisconnect >= idle - 100, 'Disconnect timer fired early');
-    await until(() => !table().some(p => observed.includes(p.pid) || p.pgid === appPid), 5000);
+    await until(() => !table().some(p => !survivors.includes(p.pid) && (observed.includes(p.pid) || p.pgid === appPid)), 5000);
     assert(!fs.existsSync(endpoint), 'Socket must be removed');
     assert(!fs.existsSync(pidFile), 'PID file must be removed');
     snapshot(`${label} after exit`, observed, [appPid]);
@@ -272,9 +320,19 @@ TERM_LOG = ${JSON.stringify(termLog)}
       console.log(`${label} TERM recipients: ${fs.readFileSync(termLog, 'utf8').trim().replaceAll('\n', ', ')}`);
       assert(Date.now()-lastDisconnect >= 2800, 'KILL escalation must allow TERM grace');
     }
+    const termed = fs.existsSync(termLog) ? fs.readFileSync(termLog, 'utf8').trim().split('\n').map(Number) : [];
+    for (const pid of survivors) {
+      assert(alive(pid), `${pid} is not ours to kill and must survive`);
+      assert(!termed.includes(pid), `${pid} is not ours to signal and must not get TERM`);
+      console.log(`${label} survivor ${pid} alive, never signalled`);
+    }
     console.log(`PASS ${label}: broker=${broker.pid} app-server=${appPid}, total=${Date.now()-start}ms; all observed PIDs absent`);
   } finally {
     for (const s of sockets) s.destroy();
+    for (const pid of survivors) {
+      assert(pid > 1 && !preexisting.has(pid));
+      try { process.kill(pid, 'SIGKILL'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
+    }
     // Kill only groups created by this test, never discover-and-kill by name.
     if (appPid) safeGroupKill(appPid, 'SIGKILL');
     if (fs.existsSync(pidLog)) {
@@ -298,6 +356,9 @@ try {
   await runCase('D-exited-leader', { mode: 'normal' });
   await runCase('E-shutdown-rpc', { mode: 'stubborn', connected: true, shutdownRpc: true });
   await runCase('F-signal-shutdown', { mode: 'normal', connected: true, signal: true });
+  await runCase('G-unrecorded-group-member', { mode: 'orphan' });
+  await runCase('H-ps-unavailable', { mode: 'stubborn', psStub: 'fail' });
+  await runCase('I-simulated-pid-reuse', { mode: 'stubborn', psStub: 'mutate' });
   console.log('PASS all broker idle-reap integration cases');
 } catch (error) {
   console.error(error);

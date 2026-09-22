@@ -1,0 +1,379 @@
+Evidence directory: /private/tmp/broker-reap-8njNtL
+Patched: /private/tmp/broker-reap-8njNtL/plugin
+Drift rejection (expected nonzero=1):
+error: patch failed: plugins/codex/scripts/app-server-broker.mjs:63
+error: plugins/codex/scripts/app-server-broker.mjs: patch does not apply
+ERROR: codex-plugin-cc patch is incompatible in /private/tmp/broker-reap-8njNtL/plugin; file/hunk diagnostics above. No files changed. Rebase the repo-owned patch on the updated plugin.
+PASS checked application, idempotence, atomic drift rejection
+PASS invalid idle windows rejected before app-server spawn
+Real Codex: /Users/aneyman/.codex/packages/standalone/releases/0.155.1-aarch64-apple-darwin/bin/codex
+codex-cli 0.155.1
+A-real-zero-clients before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 65372,
+    "ppid": 65167,
+    "pgid": 65372,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 65429,
+    "ppid": 65372,
+    "pgid": 65429,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 65463,
+    "ppid": 65429,
+    "pgid": 65429,
+    "stat": "Z",
+    "comm": "<defunct>"
+  }
+]
+A-real-zero-clients after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+PASS A-real-zero-clients: broker=65372 app-server=65429, total=2178ms; all observed PIDs absent
+B-real-connected still alive after 3446ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 65729,
+    "ppid": 65167,
+    "pgid": 65729,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 65758,
+    "ppid": 65729,
+    "pgid": 65758,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 66021,
+    "ppid": 65758,
+    "pgid": 65758,
+    "stat": "R",
+    "comm": "/Library/Developer/CommandLineTools/usr/bin/git"
+  }
+]
+B-real-connected before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 65729,
+    "ppid": 65167,
+    "pgid": 65729,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 65758,
+    "ppid": 65729,
+    "pgid": 65758,
+    "stat": "Ss",
+    "comm": "codex"
+  },
+  {
+    "pid": 65875,
+    "ppid": 65758,
+    "pgid": 65875,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 65922,
+    "ppid": 65875,
+    "pgid": 65875,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+B-real-connected fixture groups outside app-server group: 65875
+B-real-connected after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+PASS B-real-connected: broker=65729 app-server=65758, total=13042ms; all observed PIDs absent
+C-resistant-leader before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 66641,
+    "ppid": 65167,
+    "pgid": 66641,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 66668,
+    "ppid": 66641,
+    "pgid": 66668,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 66725,
+    "ppid": 66668,
+    "pgid": 66668,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+C-resistant-leader after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+C-resistant-leader TERM recipients: 66668, 66725
+PASS C-resistant-leader: broker=66641 app-server=66668, total=5212ms; all observed PIDs absent
+D-exited-leader before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 67210,
+    "ppid": 65167,
+    "pgid": 67210,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 67239,
+    "ppid": 67210,
+    "pgid": 67239,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 67314,
+    "ppid": 67239,
+    "pgid": 67239,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+D-exited-leader after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+D-exited-leader TERM recipients: 67314
+PASS D-exited-leader: broker=67210 app-server=67239, total=5150ms; all observed PIDs absent
+E-shutdown-rpc still alive after 3341ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 67797,
+    "ppid": 65167,
+    "pgid": 67797,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 67827,
+    "ppid": 67797,
+    "pgid": 67827,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 67885,
+    "ppid": 67827,
+    "pgid": 67827,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+E-shutdown-rpc before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 67797,
+    "ppid": 65167,
+    "pgid": 67797,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 67827,
+    "ppid": 67797,
+    "pgid": 67827,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 67885,
+    "ppid": 67827,
+    "pgid": 67827,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+E-shutdown-rpc after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+E-shutdown-rpc TERM recipients: 67885, 67827
+PASS E-shutdown-rpc: broker=67797 app-server=67827, total=11436ms; all observed PIDs absent
+F-signal-shutdown still alive after 3353ms connected (idle=1500): ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 68608,
+    "ppid": 65167,
+    "pgid": 68608,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 68635,
+    "ppid": 68608,
+    "pgid": 68635,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 68665,
+    "ppid": 68635,
+    "pgid": 68635,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+F-signal-shutdown before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 68608,
+    "ppid": 65167,
+    "pgid": 68608,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 68635,
+    "ppid": 68608,
+    "pgid": 68635,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 68665,
+    "ppid": 68635,
+    "pgid": 68635,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+F-signal-shutdown after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[]
+F-signal-shutdown TERM recipients: 68665
+PASS F-signal-shutdown: broker=68608 app-server=68635, total=11385ms; all observed PIDs absent
+G-unrecorded-group-member unrecorded orphan 69516: ppid=1 pgid=69460, shares group with recorded app-server
+G-unrecorded-group-member before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 69433,
+    "ppid": 65167,
+    "pgid": 69433,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 69460,
+    "ppid": 69433,
+    "pgid": 69460,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 69488,
+    "ppid": 69460,
+    "pgid": 69460,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 69516,
+    "ppid": 1,
+    "pgid": 69460,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+G-unrecorded-group-member after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 69516,
+    "ppid": 1,
+    "pgid": 69460,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+G-unrecorded-group-member TERM recipients: 69488
+G-unrecorded-group-member survivor 69516 alive, never signalled
+PASS G-unrecorded-group-member: broker=69433 app-server=69460, total=5068ms; all observed PIDs absent
+H-ps-unavailable ps stub fails; group member 70162 must not get a group signal
+H-ps-unavailable before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 70078,
+    "ppid": 65167,
+    "pgid": 70078,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 70105,
+    "ppid": 70078,
+    "pgid": 70105,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 70162,
+    "ppid": 70105,
+    "pgid": 70105,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+H-ps-unavailable after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 70162,
+    "ppid": 1,
+    "pgid": 70105,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+H-ps-unavailable TERM recipients: 70105
+H-ps-unavailable survivor 70162 alive, never signalled
+PASS H-ps-unavailable: broker=70078 app-server=70105, total=5149ms; all observed PIDs absent
+I-simulated-pid-reuse ps stub reports a new start time for 70616 after the first call (simulated pid reuse)
+I-simulated-pid-reuse before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 70556,
+    "ppid": 65167,
+    "pgid": 70556,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 70584,
+    "ppid": 70556,
+    "pgid": 70584,
+    "stat": "Ss",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  },
+  {
+    "pid": 70616,
+    "ppid": 70584,
+    "pgid": 70584,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+I-simulated-pid-reuse after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
+[
+  {
+    "pid": 70616,
+    "ppid": 1,
+    "pgid": 70584,
+    "stat": "S",
+    "comm": "/opt/homebrew/Cellar/node/26.9.0/bin/node"
+  }
+]
+I-simulated-pid-reuse TERM recipients: 70584
+I-simulated-pid-reuse survivor 70616 alive, never signalled
+PASS I-simulated-pid-reuse: broker=70556 app-server=70584, total=5319ms; all observed PIDs absent
+PASS all broker idle-reap integration cases
+node tests/integration/codex_broker_idle_reap.mjs  6.15s user 14.13s system 31% cpu 1:04.60 total
