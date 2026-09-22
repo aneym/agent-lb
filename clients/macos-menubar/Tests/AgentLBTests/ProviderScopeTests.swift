@@ -345,6 +345,14 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertTrue(ResetDisplay.isKnownFull(full))
     XCTAssertFalse(ResetDisplay.isKnownFull(fractionalDeficit))
     XCTAssertFalse(ResetDisplay.isKnownFull(unknown))
+    XCTAssertTrue(ResetDisplay.isKnownFull(UsageWindow(
+      remainingPercent: 100, capacityCredits: nil, remainingCredits: nil,
+      resetAt: full.resetAt, windowMinutes: 300
+    )))
+    XCTAssertFalse(ResetDisplay.isKnownFull(UsageWindow(
+      remainingPercent: 100, capacityCredits: 0, remainingCredits: nil,
+      resetAt: full.resetAt, windowMinutes: 300
+    )))
     XCTAssertEqual(
       ResetDisplay.resetText(
         resetAt: full.resetAt, knownFull: ResetDisplay.isKnownFull(full), recoveredCredits: nil, now: now

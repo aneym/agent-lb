@@ -4,6 +4,7 @@ import Foundation
 /// window boundary, not a promise that more allowance will become available.
 enum ResetDisplay {
   static func isKnownFull(_ window: UsageWindow) -> Bool {
+    if let capacity = window.capacityCredits, capacity <= 0 { return false }
     if let remaining = window.remainingCredits, let capacity = window.capacityCredits {
       return capacity > 0 && remaining >= capacity
     }
@@ -23,6 +24,7 @@ enum ResetDisplay {
       account.usage.secondaryRemainingPercent
     )
     }
+    if let capacity = values.capacity, capacity <= 0 { return false }
     if let remaining = values.remaining, let capacity = values.capacity {
       return capacity > 0 && remaining >= capacity
     }
