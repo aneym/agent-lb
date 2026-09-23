@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import re
+import time
+from collections import OrderedDict
 from collections.abc import Mapping
+from threading import Lock
 from typing import Any
 
 # Anthropic OAuth (Bearer) credentials are only honored when the first system
@@ -10,6 +14,12 @@ from typing import Any
 # proxy used to record as a real quota cooldown, burning one account per
 # attempt until the pool read as exhausted.
 CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+_BILLING_SESSION_TTL_SECONDS = 24 * 60 * 60
+_BILLING_SESSION_MAX_ENTRIES = 4096
+_billing_session_values: OrderedDict[str, tuple[float, str, str]] = OrderedDict()
+_billing_session_lock = Lock()
+_CCH_VALUE = re.compile(r"\bcch=([^;]*)")
+_PROMPT_ID_VALUE = re.compile(r"\bcc_prompt_id=([^;]*)")
 
 
 def _identity_block() -> dict[str, Any]:
@@ -94,3 +104,47 @@ def move_volatile_billing_block_after_cache_prefix(body: Mapping[str, Any]) -> d
         *system[last_cache_index + 1 :],
     ]
     return {**body, "system": reordered}
+
+
+def stabilize_billing_marker_for_session(body: Mapping[str, Any], session_id: str | None) -> dict[str, Any]:
+    """Pin only the billing marker's volatile values for a Claude session."""
+    if not session_id:
+        return dict(body)
+    system = body.get("system")
+    if not isinstance(system, list):
+        return dict(body)
+    for index, block in enumerate(system):
+        if not isinstance(block, Mapping):
+            continue
+        marker = block.get("text")
+        if not isinstance(marker, str) or not marker.startswith("x-anthropic-billing-header: "):
+            continue
+        cch = _CCH_VALUE.search(marker)
+        prompt_id = _PROMPT_ID_VALUE.search(marker)
+        if cch is None or prompt_id is None:
+            break
+        now = time.monotonic()
+        with _billing_session_lock:
+            while _billing_session_values:
+                oldest = next(iter(_billing_session_values))
+                if _billing_session_values[oldest][0] > now:
+                    break
+                _billing_session_values.popitem(last=False)
+            stored = _billing_session_values.get(session_id)
+            if stored is None:
+                values = (cch.group(1), prompt_id.group(1))
+            else:
+                values = stored[1:]
+            _billing_session_values[session_id] = (now + _BILLING_SESSION_TTL_SECONDS, *values)
+            _billing_session_values.move_to_end(session_id)
+            if len(_billing_session_values) > _BILLING_SESSION_MAX_ENTRIES:
+                _billing_session_values.popitem(last=False)
+        stable_marker = _CCH_VALUE.sub(lambda match: match.group(0)[:4] + values[0], marker, count=1)
+        stable_marker = _PROMPT_ID_VALUE.sub(
+            lambda match: match.group(0)[:13] + values[1], stable_marker, count=1
+        )
+        if stable_marker == marker:
+            return dict(body)
+        stable_block = {**block, "text": stable_marker}
+        return {**body, "system": [*system[:index], stable_block, *system[index + 1 :]]}
+    return dict(body)

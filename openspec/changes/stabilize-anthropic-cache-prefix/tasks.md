@@ -2,3 +2,5 @@
 - [x] Demonstrate cold/cold versus cold/read behavior with a spare-port live upstream probe.
 - [x] Add a failing `/v1/messages` regression test, then implement the reorder.
 - [x] Validate targeted tests, OpenSpec, and a spare-port repeated-call cache read.
+- [x] Add a failing two-turn message-prefix regression and stabilize session billing values.
+- [ ] Validate a resumed real Claude session and live trailing-ten-minute request logs.

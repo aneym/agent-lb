@@ -4654,6 +4654,65 @@ async def test_anthropic_messages_keep_volatile_billing_marker_after_cache_break
 
 
 @pytest.mark.asyncio
+async def test_anthropic_messages_reuse_message_prefix_across_session_turns(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-cache-session",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="cache-session@example.com",
+    )
+    forwarded = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        forwarded.append(json_body)
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService, "_open_upstream_response", fake_open_upstream_response
+    )
+    for prompt_id, messages in (
+        ("first", [{"role": "user", "content": "say a", "cache_control": {"type": "ephemeral"}}]),
+        (
+            "second",
+            [
+                {"role": "user", "content": "say a", "cache_control": {"type": "ephemeral"}},
+                {"role": "assistant", "content": "a"},
+                {"role": "user", "content": "say b", "cache_control": {"type": "ephemeral"}},
+            ],
+        ),
+    ):
+        async with async_client.stream(
+            "POST",
+            "/v1/messages",
+            json={
+                "model": "claude-sonnet-5",
+                "max_tokens": 32,
+                "stream": True,
+                "metadata": {"user_id": json.dumps({"session_id": "billing-cache-two-turn-test"})},
+                "system": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"x-anthropic-billing-header: cc_version=2.1.280; cch={prompt_id}; "
+                            f"cc_prompt_id={prompt_id}; cc_turn_origin=sdk;"
+                        ),
+                    },
+                    {"type": "text", "text": "Stable prompt", "cache_control": {"type": "ephemeral"}},
+                ],
+                "messages": messages,
+            },
+        ) as response:
+            assert response.status_code == 200
+            await response.aread()
+
+    assert len(forwarded) == 2
+    assert forwarded[0]["system"] == forwarded[1]["system"]
+    assert forwarded[0]["messages"] == forwarded[1]["messages"][:1]
+    assert "cch=first; cc_prompt_id=first;" in forwarded[1]["system"][-1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_windows(async_client, monkeypatch):
     """The cooldown clause must speak only for accounts a cooldown is holding
     out, dated by that cooldown. Reporting every blocked account as a cooldown
