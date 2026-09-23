@@ -1,14 +1,15 @@
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.core.clients import anthropic_resets
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, ResetCreditAttempt
 from app.db.session import SessionLocal
+from app.modules.accounts import api as accounts_api
 from app.modules.accounts import service as service_module
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
@@ -78,7 +79,7 @@ async def test_claude_unknown_redemption_never_spends_a_second_credit(db_setup, 
     await expire()
     async with SessionLocal() as session:
         with pytest.raises(AccountResetCreditsUnavailableError, match="unresolved"):
-            await service(session).redeem_rate_limit_reset_credit("claude-reset")
+            await service(session).redeem_rate_limit_reset_credit("claude-reset", override_daily_limit=True)
         assert (await ResetCreditAttemptsRepository(session).active()).state == "pending"
     assert redeem.await_count == 1
 
@@ -107,6 +108,67 @@ async def test_claude_daily_reset_cap_includes_manual_redemptions(db_setup, rese
         with pytest.raises(AccountResetCreditsUnavailableError, match="last 24 hours"):
             await service(session).redeem_rate_limit_reset_credit("claude-reset")
     assert redeem.await_count == 1
+
+
+async def test_manual_override_records_trigger_and_spends_after_daily_cap(db_setup, reset_upstream):
+    await seed()
+    _, redeem = reset_upstream
+    async with SessionLocal() as session:
+        assert (await service(session).redeem_rate_limit_reset_credit("claude-reset")).status == "redeemed"
+        result = await service(session).redeem_rate_limit_reset_credit("claude-reset", override_daily_limit=True)
+        assert result.status == "redeemed"
+        rows = await session.execute(select(ResetCreditAttempt.trigger).order_by(ResetCreditAttempt.created_at))
+        triggers = rows.scalars().all()
+    assert triggers == ["manual", "manual_override"]
+    assert redeem.await_count == 2
+
+
+async def test_auto_cannot_request_override_and_remains_capped(db_setup, reset_upstream):
+    await seed()
+    _, redeem = reset_upstream
+    async with SessionLocal() as session:
+        assert (await service(session).redeem_rate_limit_reset_credit("claude-reset")).status == "redeemed"
+        with pytest.raises(AccountResetCreditsUnavailableError, match="Only manual"):
+            await service(session).redeem_rate_limit_reset_credit(
+                "claude-reset", trigger="auto", override_daily_limit=True
+            )
+        with pytest.raises(AccountResetCreditsUnavailableError, match="last 24 hours"):
+            await service(session).redeem_rate_limit_reset_credit("claude-reset", trigger="auto")
+    assert redeem.await_count == 1
+
+
+async def test_manual_override_does_not_spend_ineligible_grant(db_setup, reset_upstream):
+    await seed()
+    fetch, redeem = reset_upstream
+    fetch.return_value = anthropic_resets.ResetStatus.model_validate(
+        {"eligible": True, "at_limit": False, "grants": [{"id": "launch", "resets_left": 1, "usable_now": True}]}
+    )
+    async with SessionLocal() as session:
+        result = await service(session).redeem_rate_limit_reset_credit("claude-reset", override_daily_limit=True)
+        attempts = (await session.execute(select(ResetCreditAttempt))).scalars().all()
+    assert result.code == "not_eligible"
+    assert attempts == []
+    redeem.assert_not_awaited()
+
+
+async def test_claude_consume_api_requires_explicit_override_and_audits_it(async_client, reset_upstream, monkeypatch):
+    await seed()
+    _, redeem = reset_upstream
+    audit = Mock()
+    monkeypatch.setattr(accounts_api.AuditService, "log_async", audit)
+    path = "/api/accounts/claude-reset/rate-limit-reset-credits/consume"
+
+    first = await async_client.post(path)
+    blocked = await async_client.post(path)
+    overridden = await async_client.post(path, json={"overrideDailyLimit": True})
+
+    assert first.status_code == 200, first.text
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["error"]["code"] == "account_reset_credits_unavailable"
+    assert overridden.status_code == 200, overridden.text
+    assert overridden.json()["code"] == "reset"
+    assert redeem.await_count == 2
+    assert [call.kwargs["details"]["override_daily_limit"] for call in audit.call_args_list] == [False, True]
 
 
 async def test_claude_already_used_is_not_reported_as_our_success(db_setup, reset_upstream):

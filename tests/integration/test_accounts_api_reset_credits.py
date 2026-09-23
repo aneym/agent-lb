@@ -180,3 +180,23 @@ async def test_consume_reset_credit_upstream_error_returns_409(async_client, mon
     body = response.json()
     assert body["error"]["code"] == "account_reset_credits_upstream_error"
     assert "not eligible" in body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_openai_consume_rejects_claude_daily_override(async_client, monkeypatch):
+    consume = AsyncMock()
+    monkeypatch.setattr(rate_limit_resets, "consume_reset_credit", consume)
+    account_id = await _import_test_account(
+        async_client,
+        email="reset-openai-override@example.com",
+        account_id="acc_reset_openai_override",
+    )
+
+    response = await async_client.post(
+        f"/api/accounts/{account_id}/rate-limit-reset-credits/consume",
+        json={"overrideDailyLimit": True},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "account_reset_credits_unavailable"
+    consume.assert_not_awaited()

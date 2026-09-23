@@ -39,5 +39,31 @@ The service MUST preserve Anthropic server-tool streaming and non-streaming resp
 ### Requirement: Authentication recovery is bounded and does not misclassify permission failures
 On an Anthropic Messages HTTP 401, the proxy SHALL attempt credential recovery once per account before failing over. If another request already replaced the rejected access token, it SHALL reuse the newer token without forcing another refresh. HTTP 403 and repeated access-token rejection SHALL NOT alone permanently disable OAuth credentials. Permanent refresh failures remain authoritative.
 
+#### Scenario: Rejected access token is recovered once
+
+- **WHEN** an Anthropic account returns HTTP 401 and no newer token exists
+- **THEN** the proxy attempts credential recovery once before failing over
+- **AND** a repeated access-token rejection alone does not permanently disable OAuth credentials
+
+#### Scenario: Concurrent refresh already replaced the token
+
+- **WHEN** an Anthropic account returns HTTP 401 after another request has replaced its rejected token
+- **THEN** the proxy reuses the newer token without forcing another refresh
+
+#### Scenario: Permission failure is not an authentication failure
+
+- **WHEN** Anthropic returns HTTP 403
+- **THEN** the proxy does not permanently disable OAuth credentials on that response alone
+
 ### Requirement: Exhausted pools return errors by default
 Streaming requests to an exhausted Anthropic pool SHALL return a structured error with available reset timing by default. Holding a stream open for quota recovery SHALL require explicit operator opt-in through `anthropic_pool_exhausted_wait_enabled`.
+
+#### Scenario: Exhausted pool without wait opt-in
+
+- **WHEN** a streaming request reaches an exhausted Anthropic pool with `anthropic_pool_exhausted_wait_enabled` disabled
+- **THEN** the proxy returns a structured error with available reset timing instead of holding the stream open
+
+#### Scenario: Operator enables waiting
+
+- **WHEN** a streaming request reaches an exhausted Anthropic pool with `anthropic_pool_exhausted_wait_enabled` enabled
+- **THEN** the proxy may hold the stream open for quota recovery

@@ -871,6 +871,7 @@ class AccountsService:
         credit_id: str | None = None,
         *,
         trigger: str = "manual",
+        override_daily_limit: bool = False,
     ) -> AccountResetCreditConsumeResponse | None:
         """Consume one banked upstream reset credit and refresh usage state.
 
@@ -880,9 +881,15 @@ class AccountsService:
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return None
+        if override_daily_limit and trigger != "manual":
+            raise AccountResetCreditsUnavailableError("Only manual redemption may override the Claude daily limit")
+        if override_daily_limit and normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
+            raise AccountResetCreditsUnavailableError("Daily-limit override is available only for Claude resets")
         credit_account = await self._reset_credit_account(account)
         if normalize_provider_name(credit_account.provider) == ANTHROPIC_PROVIDER_NAME:
-            return await self._redeem_anthropic_reset(credit_account, credit_id, trigger=trigger)
+            return await self._redeem_anthropic_reset(
+                credit_account, credit_id, trigger=trigger, override_daily_limit=override_daily_limit
+            )
 
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
         access_token = self._encryptor.decrypt(credit_account.access_token_encrypted)
@@ -1012,6 +1019,7 @@ class AccountsService:
         credit_id: str | None,
         *,
         trigger: str,
+        override_daily_limit: bool,
     ) -> AccountResetCreditConsumeResponse:
         account_id = account.id
         token = self._encryptor.decrypt(account.access_token_encrypted)
@@ -1047,10 +1055,11 @@ class AccountsService:
                 )
             # The globally unique active slot serializes manual and automatic
             # requests before checking the rolling daily spend allowance.
-            attempt = await attempts.create(account_id, grant.id, trigger)
+            attempt_trigger = "manual_override" if override_daily_limit else trigger
+            attempt = await attempts.create(account_id, grant.id, attempt_trigger)
             if attempt is None:
                 raise AccountResetCreditsUnavailableError("Another reset attempt is already running")
-            if await attempts.anthropic_applied_since(utcnow() - timedelta(days=1)):
+            if not override_daily_limit and await attempts.anthropic_applied_since(utcnow() - timedelta(days=1)):
                 await attempts.settle(attempt, "daily_limit")
                 raise AccountResetCreditsUnavailableError("One Claude reset was already used in the last 24 hours")
             result = await anthropic_resets.redeem(access_token=token, grant_id=grant.id, request_id=attempt.id)

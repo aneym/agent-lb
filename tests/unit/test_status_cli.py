@@ -79,6 +79,36 @@ def test_status_uses_only_read_only_endpoints_and_redacts_account_identity(servi
     assert "Secret Operator" not in json.dumps(payload)
 
 
+def test_reset_credits_are_account_specific_nullable_and_use_existing_request(service, capsys):
+    _set_routes(
+        [
+            _account(accountId="positive", resetCreditsAvailable=3),
+            _account(accountId="zero", resetCreditsAvailable=0),
+            _account(accountId="unknown", resetCreditsAvailable=None),
+            _account(accountId="missing"),
+            _account(accountId="invalid", resetCreditsAvailable=True),
+        ]
+    )
+
+    cli.main(["status", "--json", "--base-url", service])
+
+    accounts = json.loads(capsys.readouterr().out)["accounts"]
+    assert {item["account_id"]: item["reset_credits_available"] for item in accounts} == {
+        "positive": 3,
+        "zero": 0,
+        "unknown": None,
+        "missing": None,
+        "invalid": None,
+    }
+    assert _Handler.requests == ["/health/ready", "/api/accounts"]
+
+    cli.main(["status", "--base-url", service])
+    output = capsys.readouterr().out
+    assert "positive [active/usable]: primary 53%; weekly 37%; banked resets 3" in output
+    assert "zero [active/usable]: primary 53%; weekly 37%; banked resets 0" in output
+    assert "unknown [active/usable]: primary 53%; weekly 37%; banked resets unknown" in output
+
+
 def test_exhausted_quota_is_a_successful_snapshot(service, capsys):
     reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     _set_routes(
@@ -127,6 +157,31 @@ def test_model_fable_reports_observed_exhaustion_and_policy_as_distinct(service,
     assert payload["model"]["status"] == "blocked"
     assert "observed Fable scoped weekly quota is exhausted until its reset" in payload["model"]["reasons"]
     assert payload["accounts"][0]["fable"]["routing_policy_eligible"] is False
+
+
+def test_fable_telemetry_is_labeled_only_for_fable_human_assessment(service, capsys):
+    _set_routes([_account(fableScopedWeekly={"usedPercent": 50, "fresh": True})])
+
+    cli.main(["status", "--model", "claude-opus-5-5", "--thinking", "--base-url", service])
+    assert "Fable scoped weekly" not in capsys.readouterr().out
+
+    cli.main(["status", "--base-url", service])
+    assert "Fable scoped weekly" not in capsys.readouterr().out
+
+    cli.main(["status", "--model", "claude-fable-5", "--base-url", service])
+    assert "Fable scoped weekly 50%" in capsys.readouterr().out
+
+    cli.main(["status", "--json", "--model", "claude-opus-5-5", "--base-url", service])
+    assert "fable" in json.loads(capsys.readouterr().out)["accounts"][0]
+
+
+@pytest.mark.parametrize("alias", ["opus", "sonnet"])
+def test_anthropic_model_aliases_are_recognized(service, capsys, alias):
+    _set_routes([_account(additionalQuotas=[{"quotaKey": "anthropic_top", "primaryWindow": {"usedPercent": 10}}])])
+
+    cli.main(["status", "--json", "--model", alias, "--base-url", service])
+
+    assert json.loads(capsys.readouterr().out)["model"]["status"] == "usable"
 
 
 def test_numeric_quota_reset_and_runtime_fable_telemetry_are_projected(service, capsys):

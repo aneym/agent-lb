@@ -372,6 +372,10 @@ class AccountResetCreditConsumeRequest(DashboardModel):
         default=None,
         description="Optional reset-credit id to redeem. Upstream picks the next available credit when omitted.",
     )
+    override_daily_limit: bool = Field(
+        default=False,
+        description="Explicit manual Claude override of the local rolling 24-hour reset limit.",
+    )
 
 
 class AccountResetCreditConsumeResponse(DashboardModel):

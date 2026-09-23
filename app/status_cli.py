@@ -160,6 +160,7 @@ def _project_account(account: dict[str, Any]) -> dict[str, Any]:
         "weekly": _window_from_remaining(usage.get("secondaryRemainingPercent"), account.get("resetAtSecondary")),
         "quota_cooldowns": _quota_cooldowns(projected_quotas),
         "rate_limit_reset_at": _optional_text(account.get("rateLimitResetAt")),
+        "reset_credits_available": _reset_credits_available(account.get("resetCreditsAvailable")),
         "fable": fable,
         "quota_windows": projected_quotas,
     }
@@ -350,7 +351,7 @@ def _subscription_usable(status: str | None) -> bool:
 
 def _model_provider(model: str) -> str | None:
     normalized = model.casefold()
-    if "fable" in normalized or "claude" in normalized:
+    if "fable" in normalized or "claude" in normalized or normalized in {"opus", "sonnet"}:
         return "anthropic"
     if normalized.startswith(("gpt", "o1", "o3", "o4", "codex")):
         return "openai"
@@ -401,10 +402,15 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
     for provider in payload["providers"]:
         print(f"{provider['provider']}: {provider['usable']}/{provider['accounts']} usable")
     for account in payload["accounts"]:
+        fable = (
+            f"; Fable scoped weekly {_format_window(account['fable']['scoped_weekly'])}"
+            if "fable" in payload.get("model", {}).get("name", "").casefold()
+            else ""
+        )
         print(
             f"  {account['account_id']} [{account['status']}/{account['usable']}]: "
             f"primary {_format_window(account['primary'])}; weekly {_format_window(account['weekly'])}; "
-            f"Fable {_format_window(account['fable']['scoped_weekly'])}"
+            f"banked resets {_format_reset_credits(account['reset_credits_available'])}{fable}"
         )
     if model := payload.get("model"):
         print(f"model {model['name']}: {model['status']}")
@@ -422,6 +428,14 @@ def _number(value: Any) -> float | None:
         return None
     numeric = float(value)
     return numeric if math.isfinite(numeric) and 0 <= numeric <= 100 else None
+
+
+def _reset_credits_available(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _format_reset_credits(value: int | None) -> str:
+    return "unknown" if value is None else str(value)
 
 
 def _format_window(window: dict[str, Any] | None) -> str:

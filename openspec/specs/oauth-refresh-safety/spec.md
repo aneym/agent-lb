@@ -38,5 +38,20 @@ The system MUST NOT persist pending stale account mutations when a conditional t
 ### Requirement: Delayed refresh callers do not replay rotated tokens
 The system SHALL reload stored credentials before a refresh exchange. If another caller already rotated the refresh token, the delayed caller SHALL use the stored credentials without exchanging the stale token again.
 
+#### Scenario: Delayed caller sees a rotated token
+
+- **WHEN** a delayed refresh caller reloads credentials after another caller rotated the refresh token
+- **THEN** it uses the current stored credentials without exchanging the stale token again
+
 ### Requirement: Proxy refresh failures preserve conditional auth decisions
 The Messages proxy SHALL NOT repeat an unconditional account-status write after AuthManager has handled a permanent refresh failure. Detached refresh tasks SHALL own their database session so cancellation of a requesting client cannot interrupt token persistence.
+
+#### Scenario: AuthManager handles a permanent failure
+
+- **WHEN** AuthManager handles a permanent refresh failure for a Messages proxy request
+- **THEN** the proxy does not repeat an unconditional account-status write
+
+#### Scenario: Requesting client disconnects during detached refresh
+
+- **WHEN** a requesting client disconnects while a detached refresh task is running
+- **THEN** that task retains its own database session through token persistence
