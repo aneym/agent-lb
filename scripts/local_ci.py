@@ -418,7 +418,7 @@ def run(ref: str) -> int:
                 receipt_path,
                 "postgres_setup",
                 "postgres-ready",
-                ["docker", "exec", pg_name, "sh", "-c", "until pg_isready -U agent_lb; do sleep 1; done"],
+                ["docker", "exec", pg_name, "sh", "-c", "until pg_isready -h 127.0.0.1 -U agent_lb; do sleep 1; done"],
                 worktree,
                 env,
                 logs / "postgres-ready.log",
