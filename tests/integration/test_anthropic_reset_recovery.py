@@ -151,6 +151,47 @@ async def test_manual_override_does_not_spend_ineligible_grant(db_setup, reset_u
     redeem.assert_not_awaited()
 
 
+async def test_claude_inventory_distinguishes_banked_credit_from_usable_reset(db_setup, reset_upstream):
+    await seed()
+    fetch, _ = reset_upstream
+    fetch.return_value = anthropic_resets.ResetStatus.model_validate(
+        {
+            "eligible": True,
+            "at_limit": False,
+            "next_grant_id": "launch",
+            "grants": [{"id": "launch", "resets_left": 1, "usable_now": False}],
+        }
+    )
+    async with SessionLocal() as session:
+        inventory = await service(session).list_rate_limit_reset_credits("claude-reset")
+    assert inventory is not None
+    assert inventory.available_count == 1
+    assert inventory.redeemable_now is False
+    assert inventory.ineligible_reason == "not_at_limit"
+
+
+async def test_provider_early_use_grant_redeems_before_limit(db_setup, reset_upstream):
+    await seed()
+    fetch, redeem = reset_upstream
+    fetch.return_value = anthropic_resets.ResetStatus.model_validate(
+        {
+            "eligible": True,
+            "at_limit": False,
+            "exhausted": [],
+            "next_grant_id": "launch",
+            "grants": [
+                {"id": "launch", "resets_left": 1, "usable_now": True, "use_requires_limit": False}
+            ],
+        }
+    )
+    async with SessionLocal() as session:
+        inventory = await service(session).list_rate_limit_reset_credits("claude-reset")
+        result = await service(session).redeem_rate_limit_reset_credit("claude-reset")
+    assert inventory is not None and inventory.redeemable_now is True
+    assert result.status == "redeemed"
+    redeem.assert_awaited_once()
+
+
 async def test_claude_consume_api_requires_explicit_override_and_audits_it(async_client, reset_upstream, monkeypatch):
     await seed()
     _, redeem = reset_upstream

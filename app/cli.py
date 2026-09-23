@@ -56,6 +56,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--timeout", type=float, default=3.0, metavar="SECONDS", help="Per-request timeout (default: 3)."
     )
 
+    resets = subparsers.add_parser("resets", help="Inspect or redeem account reset credits.")
+    resets_commands = resets.add_subparsers(dest="resets_command", required=True)
+    for name in ("list", "redeem"):
+        reset_command = resets_commands.add_parser(name, formatter_class=_CliHelpFormatter)
+        reset_command.add_argument("--account", required=True, metavar="EMAIL-OR-ID")
+        reset_command.add_argument("--base-url", default=None, metavar="URL")
+        reset_command.add_argument("--timeout", type=float, default=30.0, metavar="SECONDS")
+        if name == "redeem":
+            reset_command.add_argument("--credit-id", metavar="ID")
+            reset_command.add_argument("--yes", action="store_true", help="Confirm redemption without a prompt.")
+
     throttle = subparsers.add_parser(
         "throttle",
         help="Upstream upload cap (gaming mode): on, off or status. Takes effect within a second, no restart.",
@@ -140,6 +151,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         if not math.isfinite(args.timeout) or args.timeout <= 0:
             raise SystemExit("--timeout must be finite and greater than zero.")
         from app.status_cli import run
+
+        run(args)
+        return
+
+    if args.command == "resets":
+        if not math.isfinite(args.timeout) or args.timeout <= 0:
+            raise SystemExit("--timeout must be finite and greater than zero.")
+        from app.reset_cli import run
 
         run(args)
         return

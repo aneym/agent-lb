@@ -33,6 +33,12 @@ def test_exhausted_account_can_use_provider_selected_grant():
     assert grant is not None and grant.id == "launch"
 
 
+def test_provider_early_use_grant_can_reset_before_limit():
+    inventory = status(at_limit=False, exhausted=[])
+    inventory.grants[0].use_requires_limit = False
+    assert inventory.usable_grant(NOW).id == "launch"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

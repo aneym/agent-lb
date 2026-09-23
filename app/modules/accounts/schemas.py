@@ -365,6 +365,8 @@ class AccountResetCreditsResponse(DashboardModel):
     account_id: str
     available_count: int
     credits: list[AccountResetCredit] = Field(default_factory=list)
+    redeemable_now: bool | None = None
+    ineligible_reason: str | None = None
 
 
 class AccountResetCreditConsumeRequest(DashboardModel):

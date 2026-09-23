@@ -40,26 +40,39 @@ class ResetStatus(BaseModel):
     next_grant_id: str | None = None
     cooldown_until: AwareDatetime | None = None
 
-    def usable_grant(self, now: datetime, credit_id: str | None = None) -> ResetGrant | None:
-        # The operator permits resetting exhausted accounts only, even if the
-        # provider allows early use. Unknown exhaustion is not permission.
-        if not self.eligible or not self.at_limit or not self.exhausted:
-            return None
+    def redemption_blocker(self, now: datetime, credit_id: str | None = None) -> str | None:
+        if not self.eligible:
+            return "provider_ineligible"
         if self.cooldown_until is not None and _utc(self.cooldown_until) > now:
+            return "provider_cooldown"
+        grant_id = credit_id or self.next_grant_id
+        if grant_id != self.next_grant_id or not grant_id:
+            return "no_selected_grant"
+        for grant in self.grants:
+            if grant.id != grant_id:
+                continue
+            if grant.use_requires_limit and (not self.at_limit or not self.exhausted):
+                return "not_at_limit"
+            if not grant.usable_now or grant.paused or grant.resets_left < 1:
+                return "grant_unavailable"
+            if grant.starts_at is not None and _utc(grant.starts_at) > now:
+                return "grant_not_started"
+            if grant.ends_at is not None and _utc(grant.ends_at) <= now:
+                return "grant_expired"
+            if grant.use_requires_limit and not set(self.exhausted).issubset(grant.clears):
+                return "grant_cannot_clear_limit"
+            return None
+        return "no_selected_grant"
+
+    def usable_grant(self, now: datetime, credit_id: str | None = None) -> ResetGrant | None:
+        # Early use is permitted only when this specific grant says a limit is
+        # not required; ordinary grants still need recoverable exhaustion.
+        if self.redemption_blocker(now, credit_id) is not None:
             return None
         grant_id = credit_id or self.next_grant_id
-        if grant_id != self.next_grant_id:
-            return None
         for grant in self.grants:
-            if grant.id != grant_id or not grant.usable_now or grant.paused or grant.resets_left < 1:
-                continue
-            if grant.starts_at is not None and _utc(grant.starts_at) > now:
-                continue
-            if grant.ends_at is not None and _utc(grant.ends_at) <= now:
-                continue
-            if not set(self.exhausted).issubset(grant.clears):
-                continue
-            return grant
+            if grant.id == grant_id:
+                return grant
         return None
 
 

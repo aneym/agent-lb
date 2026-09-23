@@ -850,7 +850,14 @@ class AccountsService:
                 grant.resets_left for grant, credit in zip(inventory.grants, credits) if credit.status == "available"
             )
             reset_credit_cache.record_count(account_id, available_count)
-            return AccountResetCreditsResponse(account_id=account_id, available_count=available_count, credits=credits)
+            redeemable_now = inventory.usable_grant(now) is not None
+            return AccountResetCreditsResponse(
+                account_id=account_id,
+                available_count=available_count,
+                credits=credits,
+                redeemable_now=redeemable_now,
+                ineligible_reason=None if redeemable_now else inventory.redemption_blocker(now),
+            )
         payload = await rate_limit_resets.fetch_reset_credits(
             access_token=access_token,
             chatgpt_account_id=credit_account.chatgpt_account_id,
