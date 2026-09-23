@@ -56,6 +56,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--timeout", type=float, default=3.0, metavar="SECONDS", help="Per-request timeout (default: 3)."
     )
 
+    throttle = subparsers.add_parser(
+        "throttle",
+        help="Upstream upload cap (gaming mode): on, off or status. Takes effect within a second, no restart.",
+        formatter_class=_CliHelpFormatter,
+    )
+    throttle.add_argument("mode", choices=("on", "off", "status"), nargs="?", default="status")
+    throttle.add_argument(
+        "--rate-mbps", type=float, default=None, help="Cap in megabytes per second when turning it on (default 1.5)."
+    )
+
     codex_sessions = subparsers.add_parser(
         "codex-sessions",
         help="Manage local Codex session metadata.",
@@ -115,6 +125,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     os.environ.setdefault("AGENT_LB_PROCESS_STARTED_NS", str(_PROCESS_STARTED_NS))
     args = _parse_args(argv)
+
+    if args.command == "throttle":
+        _run_throttle(args)
+        return
 
     if args.command == "codex-sessions":
         if args.codex_sessions_command == "retag":
@@ -204,6 +218,22 @@ def _parse_server_timeout_graceful_shutdown(raw_timeout: str) -> int:
             f"--timeout-graceful-shutdown/UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN must be an integer, got {raw_timeout!r}."
         )
         raise SystemExit(message) from exc
+
+
+def _run_throttle(args: argparse.Namespace) -> None:
+    from app.core import upload_throttle
+
+    if args.mode in {"on", "off"}:
+        rate = None
+        if args.rate_mbps is not None:
+            if not math.isfinite(args.rate_mbps) or args.rate_mbps <= 0:
+                raise SystemExit("--rate-mbps must be finite and greater than zero.")
+            rate = args.rate_mbps * 1_000_000
+        upload_throttle.write_state(enabled=args.mode == "on", bytes_per_sec=rate)
+    enabled, rate = upload_throttle.read_state()
+    state = "on" if enabled else "off"
+    print(f"upload throttle {state}: {rate / 1_000_000:.2f} MB/s ({rate * 8 / 1_000_000:.1f} Mbps) cap")
+    print(f"state file {upload_throttle.state_path()} (the running service re-reads it within a second)")
 
 
 def _run_codex_sessions_retag(args: argparse.Namespace) -> None:

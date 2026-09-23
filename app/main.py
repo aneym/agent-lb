@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
+from app.core import upload_throttle
 from app.core.auth.guardian import build_auth_guardian_scheduler
 from app.core.bootstrap import ensure_auto_bootstrap_token, log_bootstrap_token
 from app.core.clients.http import close_http_client, init_http_client
@@ -375,6 +376,8 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # Pace every upstream upload before any client session opens a connection.
+    upload_throttle.install()
     settings = get_settings()
     register_stack_dump_signal()
     configure_memory_monitor(
