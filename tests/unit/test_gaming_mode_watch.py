@@ -91,3 +91,18 @@ def test_ssh_failure_keeps_the_last_state(tmp_path: Path) -> None:
     for _ in range(3):
         _poll(env)
     assert _throttle(env) is True
+
+
+def test_a_failed_poll_restarts_the_idle_count(tmp_path: Path) -> None:
+    env = _setup(tmp_path, CSV_IDLE)
+    state = Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "state" / "upload-throttle.json"
+    state.write_text('{"enabled": true}')
+    _poll(env)  # idle 1
+    good_ssh = (tmp_path / "ssh").read_text()
+    (tmp_path / "ssh").write_text("#!/bin/sh\nexit 255\n")
+    _poll(env)  # failed poll
+    (tmp_path / "ssh").write_text(good_ssh)
+    _poll(env)  # idle 1 again, not 2
+    assert _throttle(env) is True
+    _poll(env)  # idle 2
+    assert _throttle(env) is False

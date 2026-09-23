@@ -134,7 +134,9 @@ def main() -> int:
     misses = int(state.get("misses", 0))
     images = running_images()
     if images is None:
-        # ssh failed or timed out: keep the last known state untouched.
+        # ssh failed or timed out: keep the throttle as it is, and restart the
+        # idle count so only two consecutive successful idle polls release it.
+        state["misses"] = 0
         state["last_poll"] = now()
         state["last_poll_ok"] = False
         save_state(state)

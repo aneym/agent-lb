@@ -29,6 +29,7 @@ import collections
 import contextvars
 import json
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -41,6 +42,9 @@ DEFAULT_BYTES_PER_SEC = 1_500_000
 # uplink queue, large enough to keep per-write overhead negligible.
 BURST_BYTES = 64 * 1024
 STATE_REFRESH_SECONDS = 1.0
+# Accepted cap range; anything outside it (or not finite) falls back to the default.
+MIN_BYTES_PER_SEC = 64 * 1024
+MAX_BYTES_PER_SEC = 1_000_000_000
 # Flow control: past HIGH queued bytes the protocol is paused, so aiohttp's
 # drain() waits instead of piling a whole upload into memory; it resumes once
 # the queue is back under LOW.
@@ -61,13 +65,22 @@ def state_path() -> Path:
     return Path.home() / ".agent-lb" / "state" / "upload-throttle.json"
 
 
+def valid_rate(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and MIN_BYTES_PER_SEC <= value <= MAX_BYTES_PER_SEC
+    )
+
+
 def default_rate() -> float:
     raw = (os.environ.get("AGENT_LB_UPSTREAM_UPLOAD_BYTES_PER_SEC") or "").strip()
     try:
         value = float(raw) if raw else float(DEFAULT_BYTES_PER_SEC)
     except ValueError:
         value = float(DEFAULT_BYTES_PER_SEC)
-    return value if value > 0 else float(DEFAULT_BYTES_PER_SEC)
+    return value if valid_rate(value) else float(DEFAULT_BYTES_PER_SEC)
 
 
 def read_state() -> tuple[bool, float]:
@@ -80,12 +93,14 @@ def read_state() -> tuple[bool, float]:
         return True, default_rate()
     enabled = data.get("enabled", True) is not False
     rate = data.get("bytes_per_sec")
-    if isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0:
+    if not valid_rate(rate):
         rate = default_rate()
     return enabled, float(rate)
 
 
 def write_state(*, enabled: bool, bytes_per_sec: float | None = None) -> dict[str, Any]:
+    if bytes_per_sec is not None and not valid_rate(bytes_per_sec):
+        raise ValueError(f"rate must be between {MIN_BYTES_PER_SEC} and {MAX_BYTES_PER_SEC} bytes/s")
     current_enabled, current_rate = read_state()
     state = {"enabled": enabled, "bytes_per_sec": float(bytes_per_sec or current_rate)}
     path = state_path()
@@ -151,7 +166,10 @@ class ThrottledTransport(asyncio.Transport):
         self._scheduled: asyncio.TimerHandle | asyncio.Handle | None = None
         self._close_after_drain = False
         self._eof_after_drain = False
-        self._paused_protocol = False
+        try:
+            self._install_flow_control()
+        except Exception:  # pragma: no cover
+            logger.debug("upload_throttle could not hook flow control", exc_info=True)
 
     # --- writes -----------------------------------------------------------
     def write(self, data: bytes | bytearray | memoryview) -> None:
@@ -171,36 +189,60 @@ class ThrottledTransport(asyncio.Transport):
         self._maybe_pause()
         self._schedule(0.0)
 
-    def _protocol(self) -> Any:
+    def _install_flow_control(self) -> None:
+        """Merge the real transport's pause state with the queue's.
+
+        uvloop pauses the aiohttp protocol when its socket buffer fills, and
+        the queue pauses it when too much is waiting here. Both go through
+        instance-level hooks so the protocol is paused while either wants it
+        and resumed only when neither does; it is never paused twice.
+        """
+        protocol = self._transport.get_protocol()
+        pause = getattr(protocol, "pause_writing", None)
+        resume = getattr(protocol, "resume_writing", None)
+        if pause is None or resume is None:
+            return
+        self._flow_protocol = protocol
+        self._protocol_pause = pause
+        self._protocol_resume = resume
+        self._real_paused = False
+        self._queue_paused = False
+        self._applied_pause = False
+
+        def real_pause() -> None:
+            self._real_paused = True
+            self._apply_flow()
+
+        def real_resume() -> None:
+            self._real_paused = False
+            self._apply_flow()
+
+        protocol.pause_writing = real_pause
+        protocol.resume_writing = real_resume
+
+    def _apply_flow(self) -> None:
+        if not hasattr(self, "_flow_protocol"):
+            return
+        wanted = self._real_paused or self._queue_paused
         try:
-            return self._transport.get_protocol()
-        except Exception:
-            return None
+            if wanted and not self._applied_pause:
+                self._applied_pause = True
+                self._protocol_pause()
+            elif not wanted and self._applied_pause:
+                self._applied_pause = False
+                self._protocol_resume()
+        except Exception:  # pragma: no cover - pacing must never break a connection
+            logger.debug("upload_throttle flow control failed", exc_info=True)
 
     def _maybe_pause(self) -> None:
-        if self._paused_protocol or self._pending_size < PAUSE_HIGH_BYTES:
-            return
-        protocol = self._protocol()
-        # Only pause a protocol that is not already paused by the real transport.
-        if protocol is None or getattr(protocol, "_paused", False):
-            return
-        try:
-            protocol.pause_writing()
-            self._paused_protocol = True
-        except Exception:  # pragma: no cover - pacing must never break a connection
-            logger.debug("upload_throttle pause_writing failed", exc_info=True)
+        if hasattr(self, "_flow_protocol") and not self._queue_paused and self._pending_size >= PAUSE_HIGH_BYTES:
+            self._queue_paused = True
+            self._apply_flow()
 
     def _maybe_resume(self) -> None:
-        if not self._paused_protocol or self._pending_size > PAUSE_LOW_BYTES:
-            return
-        self._paused_protocol = False
-        protocol = self._protocol()
-        if protocol is None or not getattr(protocol, "_paused", False):
-            return
-        try:
-            protocol.resume_writing()
-        except Exception:  # pragma: no cover
-            logger.debug("upload_throttle resume_writing failed", exc_info=True)
+        if hasattr(self, "_flow_protocol") and self._queue_paused and self._pending_size <= PAUSE_LOW_BYTES:
+            self._queue_paused = False
+            self._apply_flow()
 
     def writelines(self, list_of_data: Any) -> None:
         for data in list_of_data:
@@ -219,6 +261,9 @@ class ThrottledTransport(asyncio.Transport):
     def _schedule(self, delay: float) -> None:
         if self._scheduled is not None:
             return
+        # Wake at least once per state refresh, so turning the cap off (or up)
+        # applies to an upload already waiting.
+        delay = min(delay, STATE_REFRESH_SECONDS)
         if delay <= 0:
             self._scheduled = self._loop.call_soon(self._drain)
         else:
@@ -231,7 +276,7 @@ class ThrottledTransport(asyncio.Transport):
                 if self._transport.is_closing():
                     self._pending.clear()
                     self._pending_size = 0
-                    self._paused_protocol = False
+                    self._maybe_resume()
                     return
                 head = self._pending[0]
                 allowed, delay = bucket().take(len(head))
@@ -265,6 +310,7 @@ class ThrottledTransport(asyncio.Transport):
     def abort(self) -> None:
         self._pending.clear()
         self._pending_size = 0
+        self._maybe_resume()
         if self._scheduled is not None:
             self._scheduled.cancel()
             self._scheduled = None
@@ -326,12 +372,20 @@ def install() -> None:
     original = aiohttp_connector.TCPConnector._wrap_create_connection
     original_proxy = aiohttp_connector.TCPConnector._create_proxy_connection
 
-    async def _create_proxy_connection(self: Any, *args: Any, **kwargs: Any) -> Any:
+    async def _create_proxy_connection(self: Any, req: Any, *args: Any, **kwargs: Any) -> Any:
         token = _IN_PROXY_CONNECTION.set(True)
         try:
-            return await original_proxy(self, *args, **kwargs)
+            transport, protocol = await original_proxy(self, req, *args, **kwargs)
         finally:
             _IN_PROXY_CONNECTION.reset(token)
+        # The leg to the proxy stays raw through start_tls; the finished connection
+        # (plain or TLS inside the tunnel) is paced like a direct one.
+        host = str(getattr(req, "host", "") or "").strip("[]").lower()
+        if host in _LOCAL_HOSTS:
+            return transport, protocol
+        throttled = ThrottledTransport(transport, asyncio.get_running_loop())
+        protocol.transport = throttled
+        return throttled, protocol
 
     async def _wrap_create_connection(self: Any, *args: Any, req: Any, **kwargs: Any) -> Any:
         transport, protocol = await original(self, *args, req=req, **kwargs)

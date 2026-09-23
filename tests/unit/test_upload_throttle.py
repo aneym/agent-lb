@@ -46,6 +46,9 @@ class _FakeTransport(asyncio.Transport):
     def close(self) -> None:
         self.closed = True
 
+    def abort(self) -> None:
+        self.closed = True
+
     def get_write_buffer_size(self) -> int:
         return 0
 
@@ -169,3 +172,42 @@ async def test_connections_built_for_an_upstream_proxy_are_left_raw(monkeypatch:
         await runner.cleanup()
     # Paced at 0.2 MB/s this would take 2 s; the proxy leg is not wrapped.
     assert elapsed < 1.0
+
+
+@pytest.mark.asyncio
+async def test_real_and_queue_pauses_merge_into_one_pause_and_one_resume() -> None:
+    upload_throttle.write_state(enabled=True, bytes_per_sec=2_000_000)
+    fake = _FakeTransport()
+    protocol = _FakeProtocol()
+    fake.get_protocol = lambda: protocol  # type: ignore[method-assign]
+    transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
+    protocol.pause_writing()  # the real transport's socket buffer fills
+    transport.write(b"x" * 600_000)  # the queue also wants a pause
+    assert protocol.events == ["pause"]
+    while transport.get_write_buffer_size() > upload_throttle.PAUSE_LOW_BYTES:
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
+    assert protocol.events == ["pause"]  # the socket is still full: no resume yet
+    protocol.resume_writing()  # the real transport drains
+    assert protocol.events == ["pause", "resume"]
+    transport.abort()
+
+
+def test_non_finite_or_out_of_range_rates_fall_back_to_the_default(_state: Path) -> None:
+    for bad in ("NaN", "Infinity", "1", "1e308"):
+        _state.write_text('{"enabled": true, "bytes_per_sec": %s}' % bad)
+        assert upload_throttle.read_state() == (True, float(upload_throttle.DEFAULT_BYTES_PER_SEC))
+    with pytest.raises(ValueError):
+        upload_throttle.write_state(enabled=True, bytes_per_sec=float("inf"))
+
+
+def test_a_waiting_upload_wakes_within_a_state_refresh() -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        transport = upload_throttle.ThrottledTransport(_FakeTransport(), loop)
+        transport._schedule(3600.0)
+        assert transport._scheduled is not None
+        assert transport._scheduled.when() - loop.time() <= upload_throttle.STATE_REFRESH_SECONDS + 0.01
+        transport._scheduled.cancel()
+    finally:
+        loop.close()

@@ -226,9 +226,9 @@ def _run_throttle(args: argparse.Namespace) -> None:
     if args.mode in {"on", "off"}:
         rate = None
         if args.rate_mbps is not None:
-            if not math.isfinite(args.rate_mbps) or args.rate_mbps <= 0:
-                raise SystemExit("--rate-mbps must be finite and greater than zero.")
             rate = args.rate_mbps * 1_000_000
+            if not upload_throttle.valid_rate(rate):
+                raise SystemExit("--rate-mbps must be between 0.065 and 1000.")
         upload_throttle.write_state(enabled=args.mode == "on", bytes_per_sec=rate)
     enabled, rate = upload_throttle.read_state()
     state = "on" if enabled else "off"
