@@ -5,11 +5,13 @@ import contextlib
 import importlib
 import logging
 from dataclasses import dataclass, field
+from datetime import timezone
 from typing import AsyncIterator, Protocol, cast
 
 from app.core.config.settings import get_settings
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
+from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts.repository import AccountsRepository
@@ -108,38 +110,88 @@ class UsageRefreshScheduler:
                     before_secondary = await usage_repo.latest_by_account(window="secondary")
                     accounts = _usage_refresh_accounts(await accounts_repo.list_accounts())
                     updater = UsageUpdater(usage_repo, accounts_repo, additional_usage_repo)
-                    usage_written = await updater.refresh_accounts(accounts, before_primary)
-                    if usage_written:
-                        after_primary = await usage_repo.latest_by_account(window="primary")
-                        after_secondary = await usage_repo.latest_by_account(window="secondary")
-                        refreshed_accounts = _usage_refresh_accounts(
-                            await accounts_repo.list_accounts(refresh_existing=True),
+                    now_epoch = utcnow().replace(tzinfo=timezone.utc).timestamp()
+                    near_anthropic_reset = any(
+                        account.provider == ANTHROPIC_PROVIDER_NAME
+                        and account.limit_warmup_enabled
+                        and account.status in {AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED}
+                        and (entry := before_primary.get(account.id)) is not None
+                        and entry.reset_at is not None
+                        and now_epoch - 60 <= entry.reset_at <= now_epoch + 180
+                        for account in accounts
+                    )
+                    for account in accounts:
+                        entry = before_primary.get(account.id)
+                        if (
+                            account.provider == ANTHROPIC_PROVIDER_NAME
+                            and entry is not None
+                            and entry.reset_at is not None
+                            and entry.reset_at + 3 <= now_epoch
+                            and entry.recorded_at.replace(tzinfo=timezone.utc).timestamp() < entry.reset_at + 3
+                        ):
+                            await updater.force_refresh(account)
+                    # Give the reset's one-minute deadline priority over the
+                    # ordinary sequential refresh of every other account.
+                    ordinary_usage_written = False
+                    if not near_anthropic_reset:
+                        ordinary_usage_written = await updater.refresh_accounts(
+                            accounts, await usage_repo.latest_by_account(window="primary")
                         )
-                        warmup_accounts = _warmup_eligible_accounts(refreshed_accounts)
-                        if warmup_accounts:
-                            dashboard_settings = await settings_repo.get_or_create()
-                            planner_settings = await QuotaPlannerRepository(session).get_settings()
-                            warmup_service = LimitWarmupService(
-                                warmup_repo,
-                                request_logs_repo,
-                                sender=StreamingLimitWarmupSender(
-                                    accounts_repo,
-                                    accounts_repo_factory=_background_accounts_repo,
-                                ),
-                            )
-                            await warmup_service.run_after_usage_refresh(
-                                accounts=warmup_accounts,
-                                settings=dashboard_settings,
-                                before_primary=before_primary,
-                                before_secondary=before_secondary,
-                                after_primary=after_primary,
-                                after_secondary=after_secondary,
-                                planner_settings=planner_settings,
-                            )
-                        await reconcile_recoverable_account_statuses(
-                            accounts_repo=accounts_repo,
-                            usage_repo=usage_repo,
-                            accounts=refreshed_accounts,
+                    after_primary = await usage_repo.latest_by_account(window="primary")
+                    after_secondary = await usage_repo.latest_by_account(window="secondary")
+                    anthropic_standard = await additional_usage_repo.latest_by_account(
+                        "anthropic_standard", "primary"
+                    )
+                    refreshed_accounts = _usage_refresh_accounts(
+                        await accounts_repo.list_accounts(refresh_existing=True),
+                    )
+                    await reconcile_recoverable_account_statuses(
+                        accounts_repo=accounts_repo,
+                        usage_repo=usage_repo,
+                        accounts=refreshed_accounts,
+                    )
+                    refreshed_accounts = _usage_refresh_accounts(
+                        await accounts_repo.list_accounts(refresh_existing=True),
+                    )
+                    warmup_accounts = _warmup_eligible_accounts(refreshed_accounts)
+                    if not ordinary_usage_written:
+                        warmup_accounts = [
+                            account for account in warmup_accounts if account.provider == ANTHROPIC_PROVIDER_NAME
+                        ]
+                    if warmup_accounts:
+                        dashboard_settings = await settings_repo.get_or_create()
+                        planner_settings = await QuotaPlannerRepository(session).get_settings()
+                        accounts_by_id = {account.id: account for account in refreshed_accounts}
+
+                        async def confirm_anthropic_prime(account_id: str, reset_at: int) -> bool:
+                            account = accounts_by_id[account_id]
+                            for _ in range(3):
+                                await updater.force_refresh(account)
+                                observed = await usage_repo.latest_entry_for_account(account_id, window="primary")
+                                if observed is not None and observed.reset_at is not None:
+                                    if reset_at + 4 * 3600 <= observed.reset_at <= reset_at + 6 * 3600:
+                                        return True
+                                await asyncio.sleep(2)
+                            return False
+
+                        warmup_service = LimitWarmupService(
+                            warmup_repo,
+                            request_logs_repo,
+                            sender=StreamingLimitWarmupSender(
+                                accounts_repo,
+                                accounts_repo_factory=_background_accounts_repo,
+                            ),
+                            confirm_anthropic_prime=confirm_anthropic_prime,
+                        )
+                        await warmup_service.run_after_usage_refresh(
+                            accounts=warmup_accounts,
+                            settings=dashboard_settings,
+                            before_primary=before_primary,
+                            before_secondary=before_secondary,
+                            after_primary=after_primary,
+                            after_secondary=after_secondary,
+                            anthropic_standard=anthropic_standard,
+                            planner_settings=planner_settings,
                         )
                     await get_rate_limit_headers_cache().invalidate()
                     get_account_selection_cache().invalidate()
@@ -150,7 +202,7 @@ class UsageRefreshScheduler:
 def build_usage_refresh_scheduler() -> UsageRefreshScheduler:
     settings = get_settings()
     return UsageRefreshScheduler(
-        interval_seconds=settings.usage_refresh_interval_seconds,
+        interval_seconds=min(settings.usage_refresh_interval_seconds, 10),
         enabled=settings.usage_refresh_enabled,
     )
 

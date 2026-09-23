@@ -199,6 +199,9 @@ class AccountsService:
         limit_warmups_by_account = (
             await self._limit_warmup_repo.latest_by_account(account_ids) if self._limit_warmup_repo else {}
         )
+        last_primed_by_account = (
+            await self._limit_warmup_repo.last_primed_by_account(account_ids) if self._limit_warmup_repo else {}
+        )
         # request-usage is an expensive dedup aggregation over the full request_logs
         # history and is consumed only by the dashboard token/cost columns — not the cc
         # banner or menubar. Keep it off the hot path: compute (cached) only when asked
@@ -218,6 +221,7 @@ class AccountsService:
             request_usage_by_account=request_usage_by_account,
             additional_quotas_by_account=additional_quotas_by_account,
             limit_warmups_by_account=limit_warmups_by_account,
+            last_primed_by_account=last_primed_by_account,
             fable_scoped_weekly_by_account=fable_scoped_weekly_by_account,
             encryptor=self._encryptor,
         )

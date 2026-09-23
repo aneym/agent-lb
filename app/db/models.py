@@ -378,6 +378,7 @@ class AccountLimitWarmup(Base):
     reset_at: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
     attempted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
