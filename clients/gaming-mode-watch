@@ -1,0 +1,149 @@
+#!/usr/bin/python3
+"""Automatic gaming mode: throttle agent-lb uploads while a game runs on the PC.
+
+Run once a minute by launchd (com.aneyman.agent-lb-gaming-mode). Each run:
+  1. `ssh pc tasklist` (read-only; the only thing ever sent to the PC), with the
+     OpenSSH post-quantum warning lines stripped. A timeout or failure keeps
+     the last known state.
+  2. If any process in the game list is running, turn the Studio upload
+     throttle ON. When no game has been seen for 2 consecutive polls, turn it
+     OFF.
+  3. Log every transition with a UTC timestamp.
+
+Game list: ~/.agent-lb/state/gaming-games.txt (one executable name per line,
+case-insensitive), else the defaults below. State: ~/.agent-lb/state/
+gaming-mode.json. Log: ~/.agent-lb/logs/gaming-mode.log.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+HOME = Path.home()
+STATE = HOME / ".agent-lb" / "state" / "gaming-mode.json"
+GAMES_FILE = HOME / ".agent-lb" / "state" / "gaming-games.txt"
+LOG = HOME / ".agent-lb" / "logs" / "gaming-mode.log"
+THROTTLE = HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb"
+DEFAULT_GAMES = (
+    "League of Legends.exe",
+    "LeagueClient.exe",
+    "VALORANT-Win64-Shipping.exe",
+    "cs2.exe",
+    "dota2.exe",
+)
+MISSES_TO_RELEASE = 2
+SSH_TIMEOUT_SECONDS = 25
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def log(message: str) -> None:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as handle:
+        handle.write(f"{now()} {message}\n")
+
+
+def games() -> list:
+    try:
+        names = [line.strip() for line in GAMES_FILE.read_text().splitlines()]
+        names = [name for name in names if name and not name.startswith("#")]
+        if names:
+            return names
+    except OSError:
+        pass
+    return list(DEFAULT_GAMES)
+
+
+def load_state() -> dict:
+    try:
+        state = json.loads(STATE.read_text())
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    temp = STATE.with_suffix(".tmp")
+    temp.write_text(json.dumps(state) + "\n")
+    os.replace(temp, STATE)
+
+
+def running_images():
+    """Set of lowercased image names on the PC, or None when the poll failed."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc", "tasklist"],
+            capture_output=True,
+            text=True,
+            timeout=SSH_TIMEOUT_SECONDS,
+            stdin=subprocess.DEVNULL,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    images = set()
+    for line in result.stdout.splitlines():
+        if line.startswith("**") or not line.strip():
+            continue  # OpenSSH post-quantum warning, blank lines
+        if line.startswith("Image Name") or line.startswith("====="):
+            continue
+        # tasklist columns are fixed-width; the image name is the first 25 characters.
+        name = line[:25].strip().lower()
+        if name:
+            images.add(name)
+    return images or None
+
+
+def set_throttle(on: bool) -> bool:
+    try:
+        result = subprocess.run(
+            [str(THROTTLE), "throttle", "on" if on else "off"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as error:
+        log(f"ERROR throttle {'on' if on else 'off'} failed: {error}")
+        return False
+    if result.returncode != 0:
+        log(f"ERROR throttle {'on' if on else 'off'} exit {result.returncode}: {result.stderr.strip()[:200]}")
+        return False
+    return True
+
+
+def main() -> int:
+    state = load_state()
+    gaming = bool(state.get("gaming", False))
+    misses = int(state.get("misses", 0))
+    images = running_images()
+    if images is None:
+        # ssh failed or timed out: keep the last known state untouched.
+        state["last_poll"] = now()
+        state["last_poll_ok"] = False
+        save_state(state)
+        return 0
+    wanted = [name for name in games() if name.lower() in images]
+    if wanted:
+        misses = 0
+        if not gaming and set_throttle(True):
+            gaming = True
+            log(f"ON  game running: {', '.join(wanted)} -> agent-lb upload throttle on")
+    else:
+        misses += 1
+        if gaming and misses >= MISSES_TO_RELEASE and set_throttle(False):
+            gaming = False
+            log(f"OFF no game for {misses} consecutive polls -> agent-lb upload throttle off")
+    state.update({"gaming": gaming, "misses": misses, "last_poll": now(), "last_poll_ok": True, "seen": wanted})
+    save_state(state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
