@@ -49,6 +49,31 @@ class RequestLogsRepository:
         )
         return list(result.scalars().all())
 
+    async def anthropic_cache_tokens_since(self, since: datetime, until: datetime) -> tuple[int, int, int, int, int]:
+        """Return count, incomplete count, and disjoint Anthropic input-token totals."""
+        complete = and_(
+            RequestLog.input_tokens.is_not(None),
+            RequestLog.cache_creation_tokens.is_not(None),
+            RequestLog.cache_read_tokens.is_not(None),
+        )
+        result = await self._session.execute(
+            select(
+                func.count(),
+                func.coalesce(func.sum(case((complete, 0), else_=1)), 0),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0),
+                func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0),
+                func.coalesce(func.sum(RequestLog.cache_read_tokens), 0),
+            ).where(
+                RequestLog.provider == "anthropic",
+                RequestLog.status == "success",
+                RequestLog.requested_at >= since,
+                RequestLog.requested_at <= until,
+                self._exclude_warmup_clause(),
+            )
+        )
+        count, incomplete, uncached, creation, read = result.one()
+        return int(count), int(incomplete), int(uncached), int(creation), int(read)
+
     async def find_latest_account_id_for_response_id(
         self,
         *,
@@ -254,9 +279,9 @@ class RequestLogsRepository:
 
         overall_stmt = select(
             func.count().label("request_count"),
-            func.coalesce(
-                func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)), 0
-            ).label("error_count"),
+            func.coalesce(func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)), 0).label(
+                "error_count"
+            ),
             func.coalesce(func.sum(tokens_expr), 0).label("tokens_sum"),
             func.coalesce(func.sum(cached_expr), 0).label("cached_tokens_sum"),
         ).where(and_(*conditions))
