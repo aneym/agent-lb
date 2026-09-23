@@ -12,6 +12,10 @@ falls back to the newest open dispatch for the seat, recorded as
 ``"match": "fallback"``. ``ok`` is read off the last message, the only outcome
 signal the payload has.
 
+The same transcript supplies the cost: the model that answered, input and
+output token totals, the cache-read share of input, and wall-clock seconds from
+first to last entry. All of these are null when the transcript is unreadable.
+
 Appends one C2 ``closeout`` line. Fail-open: it never blocks a subagent.
 """
 
@@ -23,7 +27,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-LEDGER = Path(os.environ.get("DISPATCH_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl")
+# Same precedence as seat-guard, so both halves of a dispatch land in one ledger.
+LEDGER = Path(
+    os.environ.get("ROUTE_LEDGER")
+    or os.environ.get("DISPATCH_LEDGER")
+    or Path.home() / ".claude" / "logs" / "dispatch.jsonl"
+)
 TAIL_LINES = 4000
 FAILURE = re.compile(
     r"\b(fabrication|cross-vendor-violation|verdict:?\s*fail|blocked|i (?:cannot|can't|was unable)"
@@ -86,6 +95,84 @@ def first_prompt(path: str):
     return None
 
 
+def transcript_path(payload: dict) -> str:
+    path = str(payload.get("agent_transcript_path") or "")
+    if not path:
+        # Only the subagent's own transcript will do; the session transcript
+        # opens with the user's prompt, not the Agent tool's.
+        candidate = str(payload.get("transcript_path") or "")
+        path = candidate if "/subagents/" in candidate else ""
+    return path
+
+
+def usage_count(usage: dict, key: str) -> int:
+    value = usage.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def transcript_cost(path: str) -> dict:
+    """Model, token totals and wall-clock span of a subagent transcript.
+
+    A streamed reply is written as several rows sharing one `message.id`, each
+    with the usage so far, so only the last row per id is counted. Rows with no
+    id count on their own. Every field is null when the file cannot be read.
+    """
+    cost = {"model": None, "tokens_in": None, "tokens_out": None, "cache_read_tokens": None, "wall_s": None}
+    if not path:
+        return cost
+    try:
+        by_id: dict = {}
+        anonymous: list = []
+        model = None
+        first_ts = last_ts = None
+        stamps = 0
+        with open(path) as handle:
+            for line in handle:
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    moment = datetime.fromisoformat(str(entry.get("timestamp")).replace("Z", "+00:00"))
+                except Exception:
+                    moment = None
+                if moment is not None:
+                    first_ts = first_ts or moment
+                    last_ts = moment
+                    stamps += 1
+                message = entry.get("message")
+                if entry.get("type") != "assistant" and not (
+                    isinstance(message, dict) and message.get("role") == "assistant"
+                ):
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                if message.get("model"):
+                    model = str(message.get("model"))
+                usage = message.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                if message.get("id"):
+                    by_id[message["id"]] = usage
+                else:
+                    anonymous.append(usage)
+        usages = list(by_id.values()) + anonymous
+        cache_read = sum(usage_count(u, "cache_read_input_tokens") for u in usages)
+        cost["model"] = model
+        cost["tokens_in"] = cache_read + sum(
+            usage_count(u, "input_tokens") + usage_count(u, "cache_creation_input_tokens") for u in usages
+        )
+        cost["tokens_out"] = sum(usage_count(u, "output_tokens") for u in usages)
+        cost["cache_read_tokens"] = cache_read
+        if stamps >= 2:
+            cost["wall_s"] = round((last_ts - first_ts).total_seconds(), 1)
+    except Exception:
+        return {key: None for key in cost}
+    return cost
+
+
 def prompt_digests(payload: dict) -> list:
     """Candidate sha256s of the prompt this subagent was launched with.
 
@@ -95,12 +182,7 @@ def prompt_digests(payload: dict) -> list:
     1f07ce8e…, which is what seat-guard recorded). An unnamed dispatch stores
     the prompt bare. Hash both readings and let the ledger say which was real.
     """
-    path = str(payload.get("agent_transcript_path") or "")
-    if not path:
-        # Only the subagent's own transcript will do; the session transcript
-        # opens with the user's prompt, not the Agent tool's.
-        candidate = str(payload.get("transcript_path") or "")
-        path = candidate if "/subagents/" in candidate else ""
+    path = transcript_path(payload)
     content = first_prompt(path) if path else None
     if not content:
         return []
@@ -119,10 +201,32 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
     `agent_type` is tried as both (verified live: `agent_type` arrived as
     "opus-liveness-probe" for a dispatch whose subagent_type was "opus-seat").
     """
+    # Identical prompts dispatched concurrently share a hash; the caller-given name
+    # tells them apart, so a hash match that also carries the name wins.
+    wanted = [name.lower() for name in names if name]
     for digest in digests:
         for record in reversed(open_dispatches):
-            if digest and record.get("prompt_sha256") == digest:
+            if digest and record.get("prompt_sha256") == digest and str(record.get("name") or "").lower() in wanted:
                 return record, "prompt_hash"
+    for digest in digests:
+        candidates = [
+            record for record in reversed(open_dispatches) if digest and record.get("prompt_sha256") == digest
+        ]
+        # No narrowing by the payload's agent_type: it may be a caller name that
+        # happens to equal a sibling's seat, which would fake an exact join.
+        if len(candidates) == 1:
+            return candidates[0], "prompt_hash"
+        if candidates:
+            # Several open dispatches with one prompt and no telling name or seat:
+            # any pick may be the sibling's. Return only the facts they all share
+            # (the newest is kept aside for replaying ledgers written before this).
+            shared = {
+                key: candidates[0].get(key)
+                for key in ("task_class", "subagent_type", "model")
+                if all(record.get(key) == candidates[0].get(key) for record in candidates)
+            }
+            shared["_newest"] = candidates[0]
+            return shared, "prompt_hash_ambiguous"
     for name in names:
         for record in reversed(open_dispatches):
             if name and str(record.get("name") or "").lower() == name.lower():
@@ -131,6 +235,28 @@ def resolve(open_dispatches: list, digests: list, names: list, seat: str):
         if seat and str(record.get("subagent_type") or "").lower() == seat.lower():
             return record, "seat"
     return None, "none"
+
+
+def replayed_dispatch(open_dispatches: list, closeout: dict):
+    """The open dispatch a PAST closeout claimed, identified by what it recorded.
+
+    A past closeout stores its dispatch's own hash, seat and name, so replay may
+    narrow by all three (unlike a live stop, whose agent_type can be a caller
+    name). Among exact equals the newest wins, as the hook that wrote it chose.
+    """
+    digest = str(closeout.get("prompt_sha256") or "")
+    seat = str(closeout.get("subagent_type") or "").lower()
+    name = str(closeout.get("name") or "").lower()
+    if digest:
+        candidates = [record for record in reversed(open_dispatches) if record.get("prompt_sha256") == digest]
+        for key, wanted in (("subagent_type", seat), ("name", name)):
+            narrowed = [record for record in candidates if wanted and str(record.get(key) or "").lower() == wanted]
+            if narrowed:
+                candidates = narrowed
+        if candidates:
+            return candidates[0]
+    closed, how = resolve(open_dispatches, [""], [name], seat)
+    return None if how == "prompt_hash_ambiguous" else closed
 
 
 def match(records: list, session_id, agent_type: str, agent_name: str, digests: list):
@@ -149,12 +275,10 @@ def match(records: list, session_id, agent_type: str, agent_name: str, digests: 
         if record.get("event") == "dispatch" and not record.get("denied"):
             open_dispatches.append(record)
         elif record.get("event") == "closeout":
-            closed, _ = resolve(
-                open_dispatches,
-                [str(record.get("prompt_sha256") or "")],
-                [str(record.get("name") or "")],
-                str(record.get("subagent_type") or record.get("agent_type") or ""),
-            )
+            if record.get("match") == "prompt_hash_ambiguous" and not record.get("matched"):
+                # It claimed no dispatch, so replaying it must not close one either.
+                continue
+            closed = replayed_dispatch(open_dispatches, record)
             if closed is not None:
                 open_dispatches.remove(closed)
     return resolve(open_dispatches, digests, [agent_name, agent_type], agent_type)
@@ -183,7 +307,13 @@ def main() -> None:
     last = str(payload.get("last_assistant_message") or "")
 
     digests = prompt_digests(payload)
+    cost = transcript_cost(transcript_path(payload))
     dispatch, how = match(tail(), session_id, agent_type, agent_name, digests)
+    shared = None
+    if how == "prompt_hash_ambiguous":
+        # Siblings with one prompt share class, seat and model, but which of them
+        # stopped is unknown: keep those shared facts and attribute to none of them.
+        shared, dispatch = {k: v for k, v in dispatch.items() if k != "_newest"}, None
     ok = bool(last.strip()) and not FAILURE.search(last)
     record = {
         "ts": stamp(now()),
@@ -193,17 +323,30 @@ def main() -> None:
         # dispatch had one. The seat, model and class are the dispatch's own, so
         # S3's `route report` can group closeouts by seat at all.
         "agent_type": agent_type or None,
-        "subagent_type": (dispatch or {}).get("subagent_type") or agent_type.lower() or None,
+        # An ambiguous join reports only the seat its candidates share (none when they
+        # differ); the payload's agent_type may be a caller name, not a seat.
+        "subagent_type": (
+            shared.get("subagent_type")
+            if shared is not None
+            else (dispatch or {}).get("subagent_type") or agent_type.lower() or None
+        ),
         "name": (dispatch or {}).get("name") or agent_name or None,
         "agent_id": payload.get("agent_id"),
-        "task_class": (dispatch or {}).get("task_class"),
-        "model": (dispatch or {}).get("model"),
+        "task_class": (dispatch or shared or {}).get("task_class"),
+        # `model` is what actually answered, read off the transcript; the
+        # dispatch's requested model (often an alias) is kept beside it.
+        "model": cost["model"],
+        "dispatch_model": (dispatch or shared or {}).get("model"),
         # The hash of the dispatch this closeout was ATTRIBUTED to, so replaying
         # the ledger resolves it back to the same row. A digest that matched
         # nothing is kept separately rather than written here as if it had.
         "prompt_sha256": (dispatch or {}).get("prompt_sha256"),
         "digest_seen": None if how == "prompt_hash" else (digests[0] if digests else None),
         "duration_s": duration(dispatch),
+        "wall_s": cost["wall_s"],
+        "tokens_in": cost["tokens_in"],
+        "tokens_out": cost["tokens_out"],
+        "cache_read_tokens": cost["cache_read_tokens"],
         "ok": ok,
         "error": None if ok else (last.strip()[:300] or "no final message"),
         "matched": bool(dispatch),
