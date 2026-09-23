@@ -1,5 +1,24 @@
 # Usage Refresh Policy Context
 
+## Anthropic five-hour window priming
+
+Anthropic priming reuses the limit-warmup sender and durable attempt table, but
+does not use the optional OpenAI warmup switch or working-hours planner. The
+scheduler observes a known primary reset, refreshes usage shortly after it,
+and sends a one-token Haiku Messages request only when the account remains
+active and opted in and fresh primary, weekly, and Haiku-standard quota show
+free capacity. The attempt is keyed by account and the expired reset time.
+Explicit failures back off; an uncertain in-flight or successful-but-unconfirmed
+send is retained without an automatic duplicate. A fresh usage read after a
+successful send must move the primary reset roughly five hours forward before
+the attempt is marked confirmed. `agent-lb status` shows the last confirmed
+prime time, or `never` when no confirmed continuous prime exists.
+
+For example, if an account's primary reset is 20:00 UTC and weekly capacity is
+available, a cold usage sample at 20:00:10 permits one Haiku primer. A later
+sample with a reset near 01:00 UTC confirms that the next five-hour window is
+running. A weekly-capped account is skipped even if its primary window reset.
+
 ## Purpose
 
 This context explains how agent-lb derives an account's usage and status, and

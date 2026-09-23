@@ -10,12 +10,30 @@ import pytest
 from app.core.clients.proxy import UpstreamProxyRouteTrace
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute, UpstreamProxyRouteError
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, DashboardSettings, UsageHistory
+from app.db.models import (
+    Account,
+    AccountLimitWarmup,
+    AccountStatus,
+    AdditionalUsageHistory,
+    DashboardSettings,
+    UsageHistory,
+)
 from app.modules.limit_warmup import service as limit_warmup_service
+from app.modules.limit_warmup.anthropic_primer import _collect_usage
 from app.modules.limit_warmup.service import LimitWarmupSendResult, LimitWarmupService, StreamingLimitWarmupSender
 from app.modules.quota_planner.logic import PlannerSettings
 
 pytestmark = pytest.mark.unit
+
+
+def test_anthropic_primer_stream_distinguishes_completion_from_in_band_error() -> None:
+    completed = b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+    _, _, error, stopped = _collect_usage("", completed, None)
+    assert error is None and stopped is True
+
+    failed = b'event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n'
+    _, _, error, stopped = _collect_usage("", failed, None)
+    assert error == "overloaded_error" and stopped is False
 
 
 def _account(
@@ -92,6 +110,17 @@ class FakeWarmupRepo:
                 if current is None or row.attempted_at > current.attempted_at:
                     result[row.account_id] = row
         return result
+
+    async def claim_continuous_attempt(
+        self, *, account_id: str, reset_at: int, model: str, now: datetime
+    ) -> AccountLimitWarmup | None:
+        return await self.try_create_attempt(
+            account_id=account_id,
+            window="anthropic_primary_continuous",
+            reset_at=reset_at,
+            model=model,
+            attempted_at=now,
+        )
 
     async def try_create_attempt(
         self,
@@ -769,6 +798,106 @@ async def test_disabled_or_account_opt_out_does_not_send() -> None:
 
     assert sender.calls == []
     assert repo.rows == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_primes_after_known_reset_without_prior_exhaustion() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    async def confirm(account_id: str, reset_at: int) -> bool:
+        return account_id == account.id and reset_at == expected_reset
+
+    account = _anthropic_account()
+    expected_reset = int(datetime(2026, 9, 23, 20, 0, tzinfo=timezone.utc).timestamp())
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender, confirm_anthropic_prime=confirm)
+    reset_at = expected_reset
+    current = datetime(2026, 9, 23, 20, 0, 10, tzinfo=timezone.utc)
+    primary_before = _usage(account.id, used_percent=26, reset_at=reset_at)
+    primary_after = _usage(account.id, used_percent=0, reset_at=reset_at)
+    primary_after.recorded_at = current
+    weekly = _usage(account.id, used_percent=34, reset_at=reset_at + 604800, window="secondary")
+    weekly.recorded_at = current
+    standard = AdditionalUsageHistory(
+        account_id=account.id,
+        quota_key="anthropic_standard",
+        limit_name="anthropic_standard",
+        metered_feature="",
+        window="primary",
+        used_percent=0,
+        recorded_at=current,
+    )
+
+    await service.run_after_usage_refresh(
+        accounts=[account],
+        settings=_settings(limit_warmup_enabled=True),
+        before_primary={account.id: primary_before},
+        before_secondary={account.id: weekly},
+        after_primary={account.id: primary_after},
+        after_secondary={account.id: weekly},
+        anthropic_standard={account.id: standard},
+        planner_settings=_planner(),
+        now=current,
+    )
+
+    assert sender.calls == [(account.id, "claude-haiku-4-5")]
+    assert repo.rows[0].status == "succeeded"
+    assert repo.rows[0].reset_at == reset_at
+
+
+@pytest.mark.asyncio
+async def test_anthropic_does_not_prime_without_fresh_free_haiku_and_weekly_quota() -> None:
+    repo = FakeWarmupRepo()
+    sender = FakeSender()
+    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+    account = _anthropic_account()
+    reset_at = int(datetime(2026, 9, 23, 20, 0, tzinfo=timezone.utc).timestamp())
+    current = datetime(2026, 9, 23, 20, 0, 10, tzinfo=timezone.utc)
+    primary = _usage(account.id, used_percent=0, reset_at=reset_at)
+    primary.recorded_at = current
+    weekly = _usage(account.id, used_percent=100, reset_at=reset_at + 604800, window="secondary")
+    weekly.recorded_at = current
+    standard = AdditionalUsageHistory(
+        account_id=account.id,
+        quota_key="anthropic_standard",
+        limit_name="anthropic_standard",
+        metered_feature="",
+        window="primary",
+        used_percent=0,
+        recorded_at=current,
+    )
+
+    async def evaluate() -> None:
+        await service.run_after_usage_refresh(
+            accounts=[account],
+            settings=_settings(limit_warmup_enabled=False),
+            before_primary={account.id: primary},
+            before_secondary={account.id: weekly},
+            after_primary={account.id: primary},
+            after_secondary={account.id: weekly},
+            anthropic_standard={account.id: standard},
+            now=current,
+        )
+
+    await evaluate()
+    assert sender.calls == []
+    weekly.used_percent = 20
+    standard.used_percent = 100
+    await evaluate()
+    assert sender.calls == []
+    standard.used_percent = 0
+    standard.recorded_at = datetime(2026, 9, 23, 19, 59, tzinfo=timezone.utc)
+    await evaluate()
+    assert sender.calls == []
+    standard.recorded_at = current
+    await evaluate()
+    await evaluate()
+    assert sender.calls == [(account.id, "claude-haiku-4-5")]
+    assert repo.rows[0].status == "sent_unconfirmed"
+    primary.reset_at = reset_at + 5 * 3600
+    primary.recorded_at = current + timedelta(seconds=10)
+    await evaluate()
+    assert repo.rows[0].status == "succeeded"
+    assert sender.calls == [(account.id, "claude-haiku-4-5")]
 
 
 @pytest.mark.asyncio

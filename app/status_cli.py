@@ -161,6 +161,7 @@ def _project_account(account: dict[str, Any]) -> dict[str, Any]:
         "quota_cooldowns": _quota_cooldowns(projected_quotas),
         "rate_limit_reset_at": _optional_text(account.get("rateLimitResetAt")),
         "reset_credits_available": _reset_credits_available(account.get("resetCreditsAvailable")),
+        "last_primed_at": _optional_text(account.get("lastPrimedAt")),
         "fable": fable,
         "quota_windows": projected_quotas,
     }
@@ -410,7 +411,8 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
         print(
             f"  {account['account_id']} [{account['status']}/{account['usable']}]: "
             f"primary {_format_window(account['primary'])}; weekly {_format_window(account['weekly'])}; "
-            f"banked resets {_format_reset_credits(account['reset_credits_available'])}{fable}"
+            f"banked resets {_format_reset_credits(account['reset_credits_available'])}; "
+            f"last primed {account['last_primed_at'] or 'never'}{fable}"
         )
     if model := payload.get("model"):
         print(f"model {model['name']}: {model['status']}")

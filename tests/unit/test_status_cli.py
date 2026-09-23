@@ -109,6 +109,18 @@ def test_reset_credits_are_account_specific_nullable_and_use_existing_request(se
     assert "unknown [active/usable]: primary 53%; weekly 37%; banked resets unknown" in output
 
 
+def test_status_reports_last_confirmed_anthropic_prime(service, capsys):
+    primed_at = "2026-09-23T20:00:12Z"
+    _set_routes([_account(lastPrimedAt=primed_at)])
+
+    cli.main(["status", "--json", "--base-url", service])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["accounts"][0]["last_primed_at"] == primed_at
+
+    cli.main(["status", "--base-url", service])
+    assert f"last primed {primed_at}" in capsys.readouterr().out
+
+
 def test_exhausted_quota_is_a_successful_snapshot(service, capsys):
     reset = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     _set_routes(

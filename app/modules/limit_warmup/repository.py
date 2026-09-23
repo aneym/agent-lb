@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +38,20 @@ class LimitWarmupRepository:
         result = await self._session.execute(stmt)
         return {entry.account_id: entry for entry in result.scalars().all()}
 
+    async def last_primed_by_account(self, account_ids: list[str]) -> dict[str, datetime]:
+        if not account_ids:
+            return {}
+        stmt = (
+            select(AccountLimitWarmup.account_id, func.max(AccountLimitWarmup.completed_at))
+            .where(
+                AccountLimitWarmup.account_id.in_(account_ids),
+                AccountLimitWarmup.window == "anthropic_primary_continuous",
+                AccountLimitWarmup.status == "succeeded",
+            )
+            .group_by(AccountLimitWarmup.account_id)
+        )
+        return {account_id: completed_at for account_id, completed_at in (await self._session.execute(stmt)).all()}
+
     async def latest_attempt_for_account(self, account_id: str) -> AccountLimitWarmup | None:
         stmt = (
             select(AccountLimitWarmup)
@@ -47,6 +61,45 @@ class LimitWarmupRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def claim_continuous_attempt(
+        self, *, account_id: str, reset_at: int, model: str, now: datetime
+    ) -> AccountLimitWarmup | None:
+        """Claim a reset or retry its failed send after a bounded backoff.
+
+        The unique (account, window, reset) key survives process restarts. A
+        pending send is never retried automatically: its upstream outcome is
+        uncertain after a crash, so a duplicate could spend credits.
+        """
+        window = "anthropic_primary_continuous"
+        existing = await self._existing_attempt(account_id=account_id, window=window, reset_at=reset_at)
+        if existing is None:
+            return await self.try_create_attempt(
+                account_id=account_id, window=window, reset_at=reset_at, model=model, attempted_at=now
+            )
+        delay = min(30 * 2 ** min(existing.retry_count, 5), 900)
+        if existing.status != "failed" or now - existing.attempted_at < timedelta(seconds=delay):
+            return None
+        stmt = (
+            update(AccountLimitWarmup)
+            .where(AccountLimitWarmup.id == existing.id, AccountLimitWarmup.status == "failed")
+            .values(
+                status="pending",
+                attempted_at=now,
+                completed_at=None,
+                error_code=None,
+                error_message=None,
+                retry_count=AccountLimitWarmup.retry_count + 1,
+            )
+            .returning(AccountLimitWarmup.id)
+        )
+        async with sqlite_writer_section():
+            result = await self._session.execute(stmt)
+            await self._session.commit()
+        if result.scalar_one_or_none() is None:
+            return None
+        await self._session.refresh(existing)
+        return existing
 
     async def try_create_attempt(
         self,

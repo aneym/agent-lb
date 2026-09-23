@@ -54,6 +54,60 @@ async def test_import_and_list_accounts(async_client):
 
 
 @pytest.mark.asyncio
+async def test_list_accounts_exposes_last_confirmed_continuous_prime(async_client):
+    from datetime import timedelta
+
+    from app.core.utils.time import utcnow
+    from app.db.models import AccountLimitWarmup
+
+    now = utcnow()
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="anthropic-prime-status",
+        provider="anthropic",
+        chatgpt_account_id="anthropic-prime-status",
+        email="anthropic-prime-status@example.com",
+        plan_type="pro",
+        access_token_encrypted=encryptor.encrypt("access"),
+        refresh_token_encrypted=encryptor.encrypt("refresh"),
+        id_token_encrypted=encryptor.encrypt("id"),
+        last_refresh=now,
+        status=AccountStatus.ACTIVE,
+    )
+    async with SessionLocal() as session:
+        session.add(account)
+        session.add_all(
+            [
+                AccountLimitWarmup(
+                    account_id=account.id,
+                    window="anthropic_primary_continuous",
+                    reset_at=1_790_193_600,
+                    status="succeeded",
+                    model="claude-haiku-4-5",
+                    attempted_at=now - timedelta(minutes=2),
+                    completed_at=now - timedelta(minutes=1),
+                ),
+                AccountLimitWarmup(
+                    account_id=account.id,
+                    window="anthropic_primary_continuous",
+                    reset_at=1_790_211_600,
+                    status="failed",
+                    model="claude-haiku-4-5",
+                    attempted_at=now,
+                    completed_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await async_client.get("/api/accounts")
+    assert response.status_code == 200
+    row = next(item for item in response.json()["accounts"] if item["accountId"] == account.id)
+    assert row["limitWarmup"]["status"] == "failed"
+    assert row["lastPrimedAt"] == (now - timedelta(minutes=1)).isoformat() + "Z"
+
+
+@pytest.mark.asyncio
 async def test_import_glm_api_key_account(async_client):
     response = await async_client.post(
         "/api/accounts/import/api-key",

@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from app.core.anthropic.identity import CLAUDE_CODE_IDENTITY
-from app.core.anthropic.models import AnthropicUsage, merge_usage_values
+from app.core.anthropic.models import AnthropicErrorEvent, AnthropicMessageStopEvent, AnthropicUsage, merge_usage_values
 from app.core.anthropic.oauth import ANTHROPIC_OAUTH_BETA
 from app.core.anthropic.parsing import parse_sse_event
 from app.core.clients.http import lease_http_session
@@ -15,7 +15,7 @@ from app.core.config.settings import get_settings
 _PRIMER_CHUNK_SIZE = 8192
 _PRIMER_CONNECT_TIMEOUT_SECONDS = 5.0
 _PRIMER_TOTAL_TIMEOUT_SECONDS = 30.0
-_DEFAULT_ANTHROPIC_PRIMER_PROMPT = "Reply with OK only."
+_DEFAULT_ANTHROPIC_PRIMER_PROMPT = "OK"
 _ERROR_MESSAGE_LIMIT = 1000
 
 # Anthropic OAuth (Bearer) credentials are only honored when the first system
@@ -61,7 +61,7 @@ async def send_anthropic_primer(
     }
     body = {
         "model": model,
-        "max_tokens": 4,
+        "max_tokens": 1,
         "system": [{"type": "text", "text": CLAUDE_CODE_IDENTITY}],
         "messages": [{"role": "user", "content": prompt or _DEFAULT_ANTHROPIC_PRIMER_PROMPT}],
         "stream": True,
@@ -73,6 +73,8 @@ async def send_anthropic_primer(
 
     usage: AnthropicUsage | None = None
     text_buffer = ""
+    stream_error: str | None = None
+    stopped = False
     async with lease_http_session() as session:
         async with session.post(url, json=body, headers=headers, timeout=timeout) as resp:
             if resp.status >= 400:
@@ -84,7 +86,16 @@ async def send_anthropic_primer(
             async for chunk in resp.content.iter_chunked(_PRIMER_CHUNK_SIZE):
                 if not chunk:
                     continue
-                text_buffer, usage = _collect_usage(text_buffer, bytes(chunk), usage)
+                text_buffer, usage, chunk_error, chunk_stopped = _collect_usage(text_buffer, bytes(chunk), usage)
+                stream_error = stream_error or chunk_error
+                stopped = stopped or chunk_stopped
+
+    if stream_error is not None or not stopped:
+        return AnthropicPrimerResult(
+            success=False,
+            error_code=stream_error or "stream_incomplete",
+            error_message="Anthropic primer stream did not complete successfully",
+        )
 
     return AnthropicPrimerResult(
         success=True,
@@ -98,7 +109,9 @@ def _collect_usage(
     text_buffer: str,
     chunk: bytes,
     usage: AnthropicUsage | None,
-) -> tuple[str, AnthropicUsage | None]:
+) -> tuple[str, AnthropicUsage | None, str | None, bool]:
+    error_code: str | None = None
+    stopped = False
     text_buffer += chunk.decode("utf-8", errors="replace")
     normalized = text_buffer.replace("\r\n", "\n")
     while "\n\n" in normalized:
@@ -106,13 +119,18 @@ def _collect_usage(
         event = parse_sse_event(block)
         if event is None:
             continue
+        if isinstance(event, AnthropicErrorEvent):
+            error_code = event.error.type or "upstream_stream_error"
+            continue
+        if isinstance(event, AnthropicMessageStopEvent):
+            stopped = True
         event_usage = getattr(event, "usage", None)
         if event_usage is None:
             message = getattr(event, "message", None)
             if message is not None:
                 event_usage = getattr(message, "usage", None)
         usage = merge_usage_values(usage, event_usage)
-    return normalized, usage
+    return normalized, usage, error_code, stopped
 
 
 async def _read_primer_error(resp: aiohttp.ClientResponse) -> str:

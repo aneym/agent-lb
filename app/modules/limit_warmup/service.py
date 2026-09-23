@@ -5,9 +5,9 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from datetime import time as dt_time
-from typing import AsyncContextManager, Callable, Protocol
+from typing import AsyncContextManager, Awaitable, Callable, Protocol
 
 from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
@@ -22,7 +22,14 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.usage.pricing import get_pricing_for_model
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountLimitWarmup, AccountStatus, DashboardSettings, UsageHistory
+from app.db.models import (
+    Account,
+    AccountLimitWarmup,
+    AccountStatus,
+    AdditionalUsageHistory,
+    DashboardSettings,
+    UsageHistory,
+)
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
@@ -44,6 +51,9 @@ _DEFAULT_WORKING_HOURS_END = dt_time(18, 0)
 _TERMINAL_ERROR_EVENTS = {"response.failed", "response.incomplete", "error"}
 _QUOTA_ERROR_CODES = {"insufficient_quota", "quota_exceeded", "rate_limit_exceeded", "usage_limit_reached"}
 _MAX_CONCURRENT_WARMUP_SENDS = 4
+_ANTHROPIC_CONTINUOUS_WINDOW = "anthropic_primary_continuous"
+_ANTHROPIC_PRIMER_PROMPT = "OK"
+_ANTHROPIC_RESET_GRACE_SECONDS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +89,10 @@ class LimitWarmupSender(Protocol):
 
 class LimitWarmupAttemptsRepository(Protocol):
     async def latest_by_account(self, account_ids: list[str]) -> dict[str, AccountLimitWarmup]: ...
+
+    async def claim_continuous_attempt(
+        self, *, account_id: str, reset_at: int, model: str, now: datetime
+    ) -> AccountLimitWarmup | None: ...
 
     async def try_create_attempt(
         self,
@@ -355,10 +369,12 @@ class LimitWarmupService:
         request_logs_repo: LimitWarmupRequestLogRepository,
         *,
         sender: LimitWarmupSender | None = None,
+        confirm_anthropic_prime: Callable[[str, int], Awaitable[bool]] | None = None,
     ) -> None:
         self._warmup_repo = warmup_repo
         self._request_logs_repo = request_logs_repo
         self._sender = sender
+        self._confirm_anthropic_prime = confirm_anthropic_prime
 
     async def run_after_usage_refresh(
         self,
@@ -369,16 +385,17 @@ class LimitWarmupService:
         before_secondary: dict[str, UsageHistory],
         after_primary: dict[str, UsageHistory],
         after_secondary: dict[str, UsageHistory],
+        anthropic_standard: dict[str, AdditionalUsageHistory] | None = None,
         planner_settings: PlannerSettings | None = None,
         now: datetime | None = None,
     ) -> None:
-        if not settings.limit_warmup_enabled:
-            return
         selected_windows = _selected_windows(settings.limit_warmup_windows)
         # The clock-aware seed path (Behavior 1) only needs a working-hours
         # schedule, so it can run even when no reactive HOLD windows are
         # selected. Without a schedule the service keeps its legacy behavior.
-        if not selected_windows and planner_settings is None:
+        if not selected_windows and planner_settings is None and not any(
+            account.provider == ANTHROPIC_PROVIDER_NAME for account in accounts
+        ):
             return
         current = now or utcnow()
 
@@ -396,6 +413,50 @@ class LimitWarmupService:
             if not account.limit_warmup_enabled:
                 continue
             latest_attempt = latest_attempts.get(account.id)
+            if account.provider == ANTHROPIC_PROVIDER_NAME:
+                observed = after_primary.get(account.id)
+                if (
+                    latest_attempt is not None
+                    and latest_attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW
+                    and latest_attempt.status == "sent_unconfirmed"
+                    and observed is not None
+                    and observed.reset_at is not None
+                    and latest_attempt.reset_at + 4 * 3600 <= observed.reset_at <= latest_attempt.reset_at + 6 * 3600
+                    and _as_utc(observed.recorded_at) > _as_utc(latest_attempt.attempted_at)
+                ):
+                    await self._warmup_repo.complete_attempt(
+                        latest_attempt.id, status="succeeded", completed_at=utcnow()
+                    )
+                    logger.info(
+                        "Anthropic primer result account_id=%s reset_at=%s status=succeeded confirmation=delayed",
+                        account.id,
+                        latest_attempt.reset_at,
+                    )
+                    continue
+                reset_at = _anthropic_due_reset(
+                    before_primary.get(account.id),
+                    after_primary.get(account.id),
+                    after_secondary.get(account.id),
+                    anthropic_standard.get(account.id) if anthropic_standard else None,
+                    latest_attempt,
+                    current,
+                )
+                if reset_at is not None:
+                    enqueued = await self._enqueue_warmup_send(
+                        account=account,
+                        window=_ANTHROPIC_CONTINUOUS_WINDOW,
+                        reset_at=reset_at,
+                        settings=settings,
+                        sender=sender,
+                        semaphore=send_semaphore,
+                        latest_attempts=latest_attempts,
+                    )
+                    if enqueued is not None:
+                        send_task, attempt = enqueued
+                        send_tasks[send_task] = attempt
+                continue
+            if not settings.limit_warmup_enabled:
+                continue
             if _in_cooldown(
                 latest_attempt,
                 cooldown_seconds=settings.limit_warmup_cooldown_seconds,
@@ -523,7 +584,12 @@ class LimitWarmupService:
         semaphore: asyncio.Semaphore,
         latest_attempts: dict[str, AccountLimitWarmup],
     ) -> tuple[asyncio.Task[LimitWarmupSendOutcome], AccountLimitWarmup] | None:
-        model = self._resolve_model(settings.limit_warmup_model, account)
+        continuous = window == _ANTHROPIC_CONTINUOUS_WINDOW
+        model = (
+            _DEFAULT_ANTHROPIC_WARMUP_MODEL
+            if continuous
+            else self._resolve_model(settings.limit_warmup_model, account)
+        )
         if model is None:
             skipped = await self._warmup_repo.try_create_attempt(
                 account_id=account.id,
@@ -543,22 +609,26 @@ class LimitWarmupService:
                 latest_attempts[account.id] = completed or skipped
             return None
 
-        attempt = await self._warmup_repo.try_create_attempt(
-            account_id=account.id,
-            window=window,
-            reset_at=reset_at,
-            model=model,
-            attempted_at=utcnow(),
-        )
+        if continuous:
+            attempt = await self._warmup_repo.claim_continuous_attempt(
+                account_id=account.id, reset_at=reset_at, model=model, now=utcnow()
+            )
+        else:
+            attempt = await self._warmup_repo.try_create_attempt(
+                account_id=account.id, window=window, reset_at=reset_at, model=model, attempted_at=utcnow()
+            )
         if attempt is None:
             return None
+
+        if continuous:
+            logger.info("Anthropic primer attempt account_id=%s reset_at=%s", account.id, reset_at)
 
         send_task = asyncio.create_task(
             self._send_warmup(
                 attempt,
                 account=account,
                 model=model,
-                prompt=settings.limit_warmup_prompt,
+                prompt=_ANTHROPIC_PRIMER_PROMPT if continuous else settings.limit_warmup_prompt,
                 sender=sender,
                 semaphore=semaphore,
             ),
@@ -608,20 +678,29 @@ class LimitWarmupService:
             async with semaphore:
                 result = await sender.send(account, model=model, prompt=prompt)
         except Exception as exc:
-            logger.warning(
-                "Limit warm-up send failed account_id=%s window=%s", account.id, attempt.window, exc_info=True
-            )
+            if attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
+                logger.warning(
+                    "Anthropic primer send exception account_id=%s error_type=%s",
+                    account.id,
+                    type(exc).__name__,
+                )
+            else:
+                logger.warning(
+                    "Limit warm-up send failed account_id=%s window=%s", account.id, attempt.window, exc_info=True
+                )
             return LimitWarmupSendOutcome(
                 attempt=attempt,
                 account=account,
                 model=model,
                 result=None,
-                error_message=str(exc),
+                error_message=type(exc).__name__ if attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW else str(exc),
             )
 
         return LimitWarmupSendOutcome(attempt=attempt, account=account, model=model, result=result)
 
     async def _complete_warmup(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
+        if outcome.attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
+            return await self._complete_continuous_anthropic(outcome)
         if outcome.result is None:
             return await self._warmup_repo.complete_attempt(
                 outcome.attempt.id,
@@ -648,6 +727,67 @@ class LimitWarmupService:
             error_code=error_code,
             error_message=_truncate(result.error_message),
         )
+
+    async def _complete_continuous_anthropic(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
+        result = outcome.result
+        if result is None:
+            logger.warning(
+                "Anthropic primer result account_id=%s reset_at=%s status=failed error_code=warmup_send_failed",
+                outcome.account.id,
+                outcome.attempt.reset_at,
+            )
+            return await self._warmup_repo.complete_attempt(
+                outcome.attempt.id,
+                status="failed",
+                completed_at=utcnow(),
+                error_code="warmup_send_failed",
+                error_message=_truncate(outcome.error_message),
+            )
+
+        # Persist the upstream outcome first. A request-log or confirmation
+        # failure after a 2xx must never turn a sent primer into a retry.
+        status = "sent_unconfirmed" if result.success else "failed"
+        completed = await self._warmup_repo.complete_attempt(
+            outcome.attempt.id,
+            status=status,
+            completed_at=utcnow(),
+            error_code=None if result.success else result.error_code,
+            error_message=None if result.success else _truncate(result.error_message),
+        )
+        try:
+            await self._record_request_log(account=outcome.account, model=outcome.model, result=result)
+        except Exception as exc:
+            logger.warning(
+                "Anthropic primer request log failed account_id=%s error_type=%s",
+                outcome.account.id,
+                type(exc).__name__,
+            )
+        if result.success and self._confirm_anthropic_prime is not None:
+            try:
+                if await self._confirm_anthropic_prime(outcome.account.id, outcome.attempt.reset_at):
+                    confirmed_row = await self._warmup_repo.complete_attempt(
+                        outcome.attempt.id,
+                        status="succeeded",
+                        completed_at=utcnow(),
+                    )
+                    completed = confirmed_row or completed
+                    status = "succeeded"
+            except Exception as exc:
+                logger.warning(
+                    "Anthropic primer confirmation failed account_id=%s reset_at=%s error_type=%s",
+                    outcome.account.id,
+                    outcome.attempt.reset_at,
+                    type(exc).__name__,
+                )
+        logger.log(
+            logging.INFO if result.success else logging.WARNING,
+            "Anthropic primer result account_id=%s reset_at=%s status=%s error_code=%s",
+            outcome.account.id,
+            outcome.attempt.reset_at,
+            status,
+            result.error_code,
+        )
+        return completed
 
     async def _mark_aborted_warmup(
         self,
@@ -750,6 +890,43 @@ def _in_cooldown(attempt: AccountLimitWarmup | None, *, cooldown_seconds: int) -
     if attempt is None:
         return False
     return utcnow() - attempt.attempted_at < timedelta(seconds=cooldown_seconds)
+
+
+def _anthropic_due_reset(
+    before: UsageHistory | None,
+    after: UsageHistory | None,
+    weekly: UsageHistory | None,
+    standard: AdditionalUsageHistory | None,
+    latest_attempt: AccountLimitWarmup | None,
+    now: datetime,
+) -> int | None:
+    """Use the known reset, but require fresh free-quota telemetry before sending."""
+    now_epoch = _as_utc(now).timestamp()
+    if after is None or weekly is None or standard is None:
+        return None
+    if after.used_percent != 0 or weekly.used_percent >= 100 or standard.used_percent >= 100:
+        return None
+    reset_at = before.reset_at if before is not None else None
+    if reset_at is None or reset_at > now_epoch:
+        reset_at = after.reset_at
+    if (reset_at is None or reset_at > now_epoch) and latest_attempt is not None:
+        if latest_attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
+            reset_at = latest_attempt.reset_at
+    if reset_at is None or now_epoch < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
+        return None
+    if after.reset_at is not None and after.reset_at > now_epoch:
+        return None  # Real traffic already opened the next window.
+    if _as_utc(after.recorded_at).timestamp() < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
+        return None
+    if _as_utc(weekly.recorded_at).timestamp() < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
+        return None
+    if _as_utc(standard.recorded_at).timestamp() < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
+        return None
+    return int(reset_at)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def _primary_window_minutes(account: Account, primary_entry: UsageHistory | None) -> int:
