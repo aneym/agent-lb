@@ -107,3 +107,65 @@ async def test_installed_client_upload_is_paced_end_to_end(monkeypatch: pytest.M
     assert received == [400_000]
     # 400 KB at 0.5 MB/s: well over half a second when paced (unpaced loopback is ~ms).
     assert elapsed >= 0.6
+
+
+class _FakeProtocol:
+    def __init__(self) -> None:
+        self._paused = False
+        self.events: list[str] = []
+
+    def pause_writing(self) -> None:
+        assert not self._paused
+        self._paused = True
+        self.events.append("pause")
+
+    def resume_writing(self) -> None:
+        assert self._paused
+        self._paused = False
+        self.events.append("resume")
+
+
+@pytest.mark.asyncio
+async def test_a_large_queue_pauses_the_protocol_until_it_drains() -> None:
+    upload_throttle.write_state(enabled=True, bytes_per_sec=2_000_000)
+    fake = _FakeTransport()
+    protocol = _FakeProtocol()
+    fake.get_protocol = lambda: protocol  # type: ignore[method-assign]
+    transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
+    transport.write(b"x" * 600_000)
+    assert protocol.events == ["pause"]
+    transport.close()
+    while not fake.closed:
+        await asyncio.sleep(0.01)
+    assert protocol.events == ["pause", "resume"]
+
+
+@pytest.mark.asyncio
+async def test_connections_built_for_an_upstream_proxy_are_left_raw(monkeypatch: pytest.MonkeyPatch) -> None:
+    upload_throttle.write_state(enabled=True, bytes_per_sec=200_000)
+    monkeypatch.setattr(upload_throttle, "_LOCAL_HOSTS", frozenset())
+    upload_throttle.install()
+
+    async def handler(request: web.Request) -> web.Response:
+        await request.read()
+        return web.Response(text="ok")
+
+    app = web.Application(client_max_size=10_000_000)
+    app.router.add_post("/", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    token = upload_throttle._IN_PROXY_CONNECTION.set(True)
+    try:
+        async with aiohttp.ClientSession() as session:
+            started = time.monotonic()
+            async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
+                assert await response.text() == "ok"
+            elapsed = time.monotonic() - started
+    finally:
+        upload_throttle._IN_PROXY_CONNECTION.reset(token)
+        await runner.cleanup()
+    # Paced at 0.2 MB/s this would take 2 s; the proxy leg is not wrapped.
+    assert elapsed < 1.0

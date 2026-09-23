@@ -15,6 +15,8 @@ case-insensitive), else the defaults below. State: ~/.agent-lb/state/
 gaming-mode.json. Log: ~/.agent-lb/logs/gaming-mode.log.
 """
 
+import csv
+import io
 import json
 import os
 import subprocess
@@ -22,11 +24,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-HOME = Path.home()
+HOME = Path(os.environ.get("GAMING_MODE_HOME") or Path.home())
 STATE = HOME / ".agent-lb" / "state" / "gaming-mode.json"
 GAMES_FILE = HOME / ".agent-lb" / "state" / "gaming-games.txt"
 LOG = HOME / ".agent-lb" / "logs" / "gaming-mode.log"
-THROTTLE = HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb"
+THROTTLE = Path(os.environ.get("GAMING_MODE_THROTTLE_CMD") or HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb")
+SSH = os.environ.get("GAMING_MODE_SSH") or "/usr/bin/ssh"
 DEFAULT_GAMES = (
     "League of Legends.exe",
     "LeagueClient.exe",
@@ -78,7 +81,7 @@ def running_images():
     """Set of lowercased image names on the PC, or None when the poll failed."""
     try:
         result = subprocess.run(
-            ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc", "tasklist"],
+            [SSH, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "pc", "tasklist /FO CSV /NH"],
             capture_output=True,
             text=True,
             timeout=SSH_TIMEOUT_SECONDS,
@@ -89,15 +92,12 @@ def running_images():
     if result.returncode != 0:
         return None
     images = set()
-    for line in result.stdout.splitlines():
-        if line.startswith("**") or not line.strip():
-            continue  # OpenSSH post-quantum warning, blank lines
-        if line.startswith("Image Name") or line.startswith("====="):
-            continue
-        # tasklist columns are fixed-width; the image name is the first 25 characters.
-        name = line[:25].strip().lower()
-        if name:
-            images.add(name)
+    lines = [line for line in result.stdout.splitlines() if line.strip() and not line.startswith("**")]
+    for row in csv.reader(io.StringIO("\n".join(lines))):
+        # CSV rows carry the full image name; the default table format cuts it at
+        # 25 characters (VALORANT-Win64-Shipping.exe is 27).
+        if row and row[0].strip():
+            images.add(row[0].strip().lower())
     return images or None
 
 
@@ -118,9 +118,19 @@ def set_throttle(on: bool) -> bool:
     return True
 
 
+def throttle_enabled() -> bool:
+    """The throttle's actual state, so the watcher reconciles instead of trusting its memory."""
+    path = HOME / ".agent-lb" / "state" / "upload-throttle.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return True  # the service's default when no state file exists
+    return not (isinstance(data, dict) and data.get("enabled") is False)
+
+
 def main() -> int:
     state = load_state()
-    gaming = bool(state.get("gaming", False))
+    gaming = throttle_enabled()
     misses = int(state.get("misses", 0))
     images = running_images()
     if images is None:
@@ -129,7 +139,7 @@ def main() -> int:
         state["last_poll_ok"] = False
         save_state(state)
         return 0
-    wanted = [name for name in games() if name.lower() in images]
+    wanted = [name for name in games() if name.lower() in images or name.lower()[:25] in images]
     if wanted:
         misses = 0
         if not gaming and set_throttle(True):
@@ -140,7 +150,7 @@ def main() -> int:
         if gaming and misses >= MISSES_TO_RELEASE and set_throttle(False):
             gaming = False
             log(f"OFF no game for {misses} consecutive polls -> agent-lb upload throttle off")
-    state.update({"gaming": gaming, "misses": misses, "last_poll": now(), "last_poll_ok": True, "seen": wanted})
+    state.update({"gaming": gaming, "note": "gaming mirrors the throttle state; the watcher owns the toggle", "misses": misses, "last_poll": now(), "last_poll_ok": True, "seen": wanted})
     save_state(state)
     return 0
 

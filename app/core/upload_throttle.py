@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextvars
 import json
 import logging
 import os
@@ -40,6 +41,16 @@ DEFAULT_BYTES_PER_SEC = 1_500_000
 # uplink queue, large enough to keep per-write overhead negligible.
 BURST_BYTES = 64 * 1024
 STATE_REFRESH_SECONDS = 1.0
+# Flow control: past HIGH queued bytes the protocol is paused, so aiohttp's
+# drain() waits instead of piling a whole upload into memory; it resumes once
+# the queue is back under LOW.
+PAUSE_HIGH_BYTES = 256 * 1024
+PAUSE_LOW_BYTES = 64 * 1024
+# Set while aiohttp builds a proxy connection: that leg is upgraded in place
+# with start_tls, which needs the loop's own transport.
+_IN_PROXY_CONNECTION: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "agent_lb_upload_throttle_in_proxy", default=False
+)
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
 
 
@@ -140,6 +151,7 @@ class ThrottledTransport(asyncio.Transport):
         self._scheduled: asyncio.TimerHandle | asyncio.Handle | None = None
         self._close_after_drain = False
         self._eof_after_drain = False
+        self._paused_protocol = False
 
     # --- writes -----------------------------------------------------------
     def write(self, data: bytes | bytearray | memoryview) -> None:
@@ -156,7 +168,39 @@ class ThrottledTransport(asyncio.Transport):
             chunk = chunk[sent:]
         self._pending.append(chunk)
         self._pending_size += len(chunk)
+        self._maybe_pause()
         self._schedule(0.0)
+
+    def _protocol(self) -> Any:
+        try:
+            return self._transport.get_protocol()
+        except Exception:
+            return None
+
+    def _maybe_pause(self) -> None:
+        if self._paused_protocol or self._pending_size < PAUSE_HIGH_BYTES:
+            return
+        protocol = self._protocol()
+        # Only pause a protocol that is not already paused by the real transport.
+        if protocol is None or getattr(protocol, "_paused", False):
+            return
+        try:
+            protocol.pause_writing()
+            self._paused_protocol = True
+        except Exception:  # pragma: no cover - pacing must never break a connection
+            logger.debug("upload_throttle pause_writing failed", exc_info=True)
+
+    def _maybe_resume(self) -> None:
+        if not self._paused_protocol or self._pending_size > PAUSE_LOW_BYTES:
+            return
+        self._paused_protocol = False
+        protocol = self._protocol()
+        if protocol is None or not getattr(protocol, "_paused", False):
+            return
+        try:
+            protocol.resume_writing()
+        except Exception:  # pragma: no cover
+            logger.debug("upload_throttle resume_writing failed", exc_info=True)
 
     def writelines(self, list_of_data: Any) -> None:
         for data in list_of_data:
@@ -187,6 +231,7 @@ class ThrottledTransport(asyncio.Transport):
                 if self._transport.is_closing():
                     self._pending.clear()
                     self._pending_size = 0
+                    self._paused_protocol = False
                     return
                 head = self._pending[0]
                 allowed, delay = bucket().take(len(head))
@@ -199,6 +244,7 @@ class ThrottledTransport(asyncio.Transport):
                     self._pending.popleft()
                 else:
                     self._pending[0] = head[allowed:]
+                self._maybe_resume()
             if self._eof_after_drain and self._transport.can_write_eof():
                 self._transport.write_eof()
             if self._close_after_drain:
@@ -278,9 +324,19 @@ def install() -> None:
     from aiohttp import connector as aiohttp_connector
 
     original = aiohttp_connector.TCPConnector._wrap_create_connection
+    original_proxy = aiohttp_connector.TCPConnector._create_proxy_connection
+
+    async def _create_proxy_connection(self: Any, *args: Any, **kwargs: Any) -> Any:
+        token = _IN_PROXY_CONNECTION.set(True)
+        try:
+            return await original_proxy(self, *args, **kwargs)
+        finally:
+            _IN_PROXY_CONNECTION.reset(token)
 
     async def _wrap_create_connection(self: Any, *args: Any, req: Any, **kwargs: Any) -> Any:
         transport, protocol = await original(self, *args, req=req, **kwargs)
+        if _IN_PROXY_CONNECTION.get():
+            return transport, protocol
         host = str(getattr(req, "host", "") or "").strip("[]").lower()
         # Loopback is never shaped, and a CONNECT to an upstream proxy is left raw
         # because start_tls upgrades that transport in place.
@@ -292,6 +348,7 @@ def install() -> None:
         return throttled, protocol
 
     aiohttp_connector.TCPConnector._wrap_create_connection = _wrap_create_connection  # type: ignore[method-assign]
+    aiohttp_connector.TCPConnector._create_proxy_connection = _create_proxy_connection  # type: ignore[method-assign]
     _INSTALLED = True
     enabled, rate = read_state()
     logger.info("upload_throttle installed enabled=%s bytes_per_sec=%.0f state=%s", enabled, rate, state_path())
