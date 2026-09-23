@@ -18,7 +18,7 @@ from urllib.parse import urljoin
 import aiohttp
 from pydantic import ValidationError
 
-from app.core.anthropic.identity import ensure_claude_code_identity_body
+from app.core.anthropic.identity import ensure_claude_code_identity_body, move_volatile_billing_block_after_cache_prefix
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
@@ -443,6 +443,7 @@ class AnthropicProxyService:
                             # which reads as a pool-wide quota wall. Claude
                             # Code sends it, a plain API client does not.
                             body_payload = ensure_claude_code_identity_body(body_payload)
+                            body_payload = move_volatile_billing_block_after_cache_prefix(body_payload)
 
                         async with lease_http_session() as session:
                             async with _ConnectRetryingResponse(

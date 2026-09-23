@@ -4601,6 +4601,59 @@ async def test_anthropic_messages_keeps_claude_code_identity_payload_untouched(a
 
 
 @pytest.mark.asyncio
+async def test_anthropic_messages_keep_volatile_billing_marker_after_cache_breakpoints(async_client, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+    forwarded = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        forwarded.append(dict(json_body))
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService, "_open_upstream_response", fake_open_upstream_response
+    )
+    stable = {"type": "text", "text": "Stable cached prompt", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+    for prompt_id in ("first", "second"):
+        billing = {
+            "type": "text",
+            "text": (
+                f"x-anthropic-billing-header: cc_version=2.1.280; cch={prompt_id}; "
+                f"cc_prompt_id={prompt_id}; cc_turn_origin=sdk;"
+            ),
+        }
+        async with async_client.stream(
+            "POST",
+            "/v1/messages",
+            json={
+                "model": "claude-sonnet-5",
+                "max_tokens": 32,
+                "stream": True,
+                "system": [billing, stable],
+                "messages": [{"role": "user", "content": "reply ok"}],
+            },
+        ) as response:
+            assert response.status_code == 200
+            await response.aread()
+
+    assert [body["system"][:2] for body in forwarded] == [
+        [
+            {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
+            stable,
+        ]
+    ] * 2
+    assert [body["system"][2]["text"] for body in forwarded] == [
+        "x-anthropic-billing-header: cc_version=2.1.280; cch=first; cc_prompt_id=first; cc_turn_origin=sdk;",
+        "x-anthropic-billing-header: cc_version=2.1.280; cch=second; cc_prompt_id=second; cc_turn_origin=sdk;",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_windows(async_client, monkeypatch):
     """The cooldown clause must speak only for accounts a cooldown is holding
     out, dated by that cooldown. Reporting every blocked account as a cooldown

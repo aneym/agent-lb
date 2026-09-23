@@ -59,3 +59,38 @@ def ensure_claude_code_identity_body(body: Mapping[str, Any]) -> dict[str, Any]:
     if ensured is system:
         return dict(body)
     return {**body, "system": ensured}
+
+
+def move_volatile_billing_block_after_cache_prefix(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep Claude Code's per-turn billing marker outside cached system prefixes."""
+    system = body.get("system")
+    if not isinstance(system, list):
+        return dict(body)
+    billing_index = next(
+        (
+            index
+            for index, block in enumerate(system)
+            if isinstance(block, Mapping)
+            and isinstance(block.get("text"), str)
+            and block["text"].startswith("x-anthropic-billing-header: ")
+            and "cc_prompt_id=" in block["text"]
+        ),
+        None,
+    )
+    if billing_index is None:
+        return dict(body)
+    cache_indexes = [
+        index
+        for index, block in enumerate(system)
+        if index > billing_index and isinstance(block, Mapping) and block.get("cache_control")
+    ]
+    if not cache_indexes:
+        return dict(body)
+    last_cache_index = cache_indexes[-1]
+    reordered = [
+        *system[:billing_index],
+        *system[billing_index + 1 : last_cache_index + 1],
+        system[billing_index],
+        *system[last_cache_index + 1 :],
+    ]
+    return {**body, "system": reordered}

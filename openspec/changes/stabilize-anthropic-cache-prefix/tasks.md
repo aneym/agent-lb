@@ -1,0 +1,4 @@
+- [x] Capture the changing prefix without logging prompt bodies or credentials.
+- [x] Demonstrate cold/cold versus cold/read behavior with a spare-port live upstream probe.
+- [x] Add a failing `/v1/messages` regression test, then implement the reorder.
+- [x] Validate targeted tests, OpenSpec, and a spare-port repeated-call cache read.
