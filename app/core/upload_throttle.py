@@ -43,7 +43,7 @@ DEFAULT_BYTES_PER_SEC = 1_500_000
 BURST_BYTES = 64 * 1024
 STATE_REFRESH_SECONDS = 1.0
 # Accepted cap range; anything outside it (or not finite) falls back to the default.
-MIN_BYTES_PER_SEC = 64 * 1024
+MIN_BYTES_PER_SEC = 65_000
 MAX_BYTES_PER_SEC = 1_000_000_000
 # Flow control: past HIGH queued bytes the protocol is paused, so aiohttp's
 # drain() waits instead of piling a whole upload into memory; it resumes once
@@ -66,12 +66,13 @@ def state_path() -> Path:
 
 
 def valid_rate(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and MIN_BYTES_PER_SEC <= value <= MAX_BYTES_PER_SEC
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        # A huge JSON integer cannot become a float; treat it as out of range.
+        return math.isfinite(float(value)) and MIN_BYTES_PER_SEC <= value <= MAX_BYTES_PER_SEC
+    except (OverflowError, ValueError):
+        return False
 
 
 def default_rate() -> float:

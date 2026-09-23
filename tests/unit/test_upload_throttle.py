@@ -194,7 +194,7 @@ async def test_real_and_queue_pauses_merge_into_one_pause_and_one_resume() -> No
 
 
 def test_non_finite_or_out_of_range_rates_fall_back_to_the_default(_state: Path) -> None:
-    for bad in ("NaN", "Infinity", "1", "1e308"):
+    for bad in ("NaN", "Infinity", "1", "1e308", "1" + "0" * 400):
         _state.write_text('{"enabled": true, "bytes_per_sec": %s}' % bad)
         assert upload_throttle.read_state() == (True, float(upload_throttle.DEFAULT_BYTES_PER_SEC))
     with pytest.raises(ValueError):
@@ -211,3 +211,9 @@ def test_a_waiting_upload_wakes_within_a_state_refresh() -> None:
         transport._scheduled.cancel()
     finally:
         loop.close()
+
+
+
+def test_the_documented_minimum_rate_is_accepted() -> None:
+    assert upload_throttle.valid_rate(0.065 * 1_000_000)
+    assert not upload_throttle.valid_rate(0.064 * 1_000_000)
