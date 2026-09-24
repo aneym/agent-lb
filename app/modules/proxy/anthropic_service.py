@@ -69,13 +69,6 @@ _MAX_SELECTION_ATTEMPTS = 4
 _ANTHROPIC_COOLDOWN_WINDOW = "primary"
 _ANTHROPIC_COOLDOWN_FEATURE = "anthropic_messages"
 _ANTHROPIC_DEFAULT_COOLDOWN_SECONDS = 60
-# Pool-wide last-resort horizon for requested-quota cooldowns. Upstream
-# request-rate 429s often arrive with no reset headers and get the 60s
-# default cooldown above; with a small pool those overlap into a permanent
-# pool-wide 429 even while every usage window reports headroom. A cooldown
-# resetting within this horizon is treated as transient (bypassable when the
-# whole pool is blocked); longer, header-derived resets stay authoritative.
-_ANTHROPIC_TRANSIENT_COOLDOWN_BYPASS_HORIZON_SECONDS = 120
 _ANTHROPIC_FAST_QUOTA_KEY = "anthropic_fast"
 # Dedicated marker for a successful response that Anthropic served from paid
 # extra usage after rejecting the subscription window. Keeping this distinct
@@ -392,9 +385,12 @@ class AnthropicProxyService:
                     last_error_status = None
                     last_error_message = None
                 try:
-                    # _MAX_SELECTION_ATTEMPTS bounds one wake; every hold
-                    # re-arms the full budget once the pool may have reset.
-                    for attempt in range(_MAX_SELECTION_ATTEMPTS):
+                    # Try every eligible account once before declaring the pool
+                    # exhausted; a healthy account can be fifth in a large pool.
+                    wake_eligibility = await self._provider_quota_eligibility(
+                        provider_name, quota_key, model=payload.model
+                    )
+                    for attempt in range(max(_MAX_SELECTION_ATTEMPTS, len(wake_eligibility.account_ids))):
                         if account_override is not None:
                             account = account_override
                             account_override = None
@@ -500,11 +496,13 @@ class AnthropicProxyService:
                                     continue
                                 if resp.status == 429:
                                     error_message = await _read_error_message(resp)
+                                    rate_limit_error = _rate_limit_error_from_response(resp, error_message)
                                     await self._record_quota_cooldown(
                                         account,
                                         quota_key=quota_key,
-                                        error=_rate_limit_error_from_response(resp, error_message),
+                                        error=rate_limit_error,
                                     )
+                                    await self._load_balancer.mark_rate_limit(account, rate_limit_error)
                                     await self._persist_request_log(
                                         account=account,
                                         provider_name=provider_name,
@@ -639,7 +637,18 @@ class AnthropicProxyService:
                                         stream_error_type,
                                         stream_error.error.message,
                                     )
-                                    await self._load_balancer.record_error(account)
+                                    if stream_error_type in (
+                                        "rate_limit_error", "rate_limit_exceeded", "usage_limit_reached"
+                                    ):
+                                        await self._load_balancer.mark_rate_limit(
+                                            account, UpstreamError(message=stream_error.error.message)
+                                        )
+                                    elif stream_error_type in ("insufficient_quota", "quota_exceeded"):
+                                        await self._load_balancer.mark_quota_exceeded(
+                                            account, UpstreamError(message=stream_error.error.message)
+                                        )
+                                    else:
+                                        await self._load_balancer.record_error(account)
                                     await self._persist_request_log(
                                         account=account,
                                         provider_name=provider_name,
@@ -927,7 +936,7 @@ class AnthropicProxyService:
             raise AnthropicProxyError(
                 429,
                 (
-                    f"All {_provider_label(provider_name)} accounts are cooling down "
+                    f"No {_provider_label(provider_name)} accounts are currently eligible "
                     f"for quota '{quota_key}'.{reset_suffix}"
                 ),
                 code=_quota_cooldown_code(provider_name),
@@ -1101,7 +1110,9 @@ class AnthropicProxyService:
                 account_ids=account_ids,
             )
             request_quota_cooldowns = {
-                account_id: (float(entry.used_percent), entry.reset_at)
+                account_id: (
+                    float(entry.used_percent), entry.reset_at, naive_utc_to_epoch(entry.recorded_at)
+                )
                 for account_id, entry in request_quota_latest.items()
             }
             extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None, int]] = {}
@@ -1237,17 +1248,8 @@ class AnthropicProxyService:
             preferred_ids: set[str] = set()
             for account_id in account_ids:
                 scoped_percent = _fresh_scoped_percent(account_id)
-                scoped_marker = fable_scoped_markers.get(account_id)
-                scoped_reset_at = scoped_marker[1] if scoped_marker is not None else None
-                if (
-                    scoped_percent is not None
-                    and scoped_percent >= scoped_threshold
-                    and scoped_reset_at is not None
-                    and int(scoped_reset_at) > now
-                ):
-                    hard_excluded_fable_account_ids.add(account_id)
-                    hard_excluded_fable_reset_by_account_id[account_id] = int(scoped_reset_at)
-                    continue
+                # A Fable-scoped usage marker is advisory, including at 100%.
+                # An actual upstream refusal is handled by account backoff.
                 model_scope_account_ids.append(account_id)
                 if (
                     scoped_percent is not None
@@ -1270,32 +1272,22 @@ class AnthropicProxyService:
             return recovered_at is None or recovered_at <= tripwire[2]
 
         for account_id in model_scope_account_ids:
-            request_quota_cooldown = request_quota_cooldowns.get(account_id)
-            if request_quota_cooldown is not None and _anthropic_cooldown_is_active(
-                request_quota_cooldown[0], request_quota_cooldown[1], now=now
+            # A response-written requested-quota cooldown remains a real
+            # refusal, but its retry is bounded even if the header reset is
+            # days away. New failures also persist account-level backoff.
+            request_cooldown = request_quota_cooldowns.get(account_id)
+            if (
+                request_cooldown is not None
+                and _anthropic_cooldown_is_active(request_cooldown[0], request_cooldown[1], now=now)
+                and request_cooldown[2] + 60 > now
             ):
                 blocked_count += 1
                 request_quota_blocked_account_ids.add(account_id)
-                if request_quota_cooldown[1] is not None:
-                    blocked_reset_by_account_id[account_id] = int(request_quota_cooldown[1])
+                blocked_reset_by_account_id[account_id] = min(
+                    int(request_cooldown[1]), request_cooldown[2] + 60
+                )
                 continue
-            primary_reset_at = primary_exhaustion.get(account_id)
-            secondary_is_exhausted = account_id in secondary_exhaustion
-            if primary_reset_at is not None or secondary_is_exhausted:
-                blocked_count += 1
-                if secondary_is_exhausted:
-                    secondary_reset_at = secondary_exhaustion[account_id]
-                    # An account cannot serve subscription or paid traffic
-                    # until every active quota window is available. Unknown
-                    # weekly reset time means there is no bounded retry time
-                    # for this account, even when primary has a known reset.
-                    if secondary_reset_at is not None:
-                        blocked_reset_by_account_id[account_id] = max(
-                            reset_at for reset_at in (primary_reset_at, secondary_reset_at) if reset_at is not None
-                        )
-                elif primary_reset_at is not None:
-                    blocked_reset_by_account_id[account_id] = primary_reset_at
-                continue
+            # Primary and secondary usage snapshots are ranking only.
             tripwire_cooldown = extra_usage_tripwire_cooldowns.get(account_id)
             if tripwire_cooldown is not None and _active_extra_usage_tripwire_blocks(account_id):
                 blocked_count += 1
@@ -1351,46 +1343,6 @@ class AnthropicProxyService:
             blocked_count -= len(eligible_account_ids)
             for account_id in eligible_account_ids:
                 blocked_reset_by_account_id.pop(account_id, None)
-
-        if not eligible_account_ids and request_quota_blocked_account_ids:
-            # Last resort for transient rate-limit cooldowns: when every
-            # remaining candidate is blocked only by a requested-quota
-            # cooldown that resets within the near-term horizon, re-admit
-            # those candidates and let upstream be the authority — a genuine
-            # limit answers 429 and rewrites a fresh bounded cooldown. All
-            # transient candidates are re-admitted (not just the earliest
-            # reset) so the caller's failover loop can exclude an account
-            # that just 429'd and still try the next one. Accounts with
-            # active primary/secondary exhaustion, an extra-usage tripwire,
-            # or a reset beyond the horizon stay blocked.
-            horizon = now + _ANTHROPIC_TRANSIENT_COOLDOWN_BYPASS_HORIZON_SECONDS
-
-            def _is_transient_cooldown_only(account_id: str) -> bool:
-                if account_id in primary_exhaustion or account_id in secondary_exhaustion:
-                    return False
-                if _active_extra_usage_tripwire_blocks(account_id):
-                    return False
-                cooldown = request_quota_cooldowns.get(account_id)
-                if cooldown is None or cooldown[1] is None:
-                    return False
-                return int(cooldown[1]) <= horizon
-
-            transient_account_ids = [
-                account_id
-                for account_id in model_scope_account_ids
-                if account_id in request_quota_blocked_account_ids and _is_transient_cooldown_only(account_id)
-            ]
-            if transient_account_ids:
-                logger.warning(
-                    "anthropic_transient_cooldown_bypass quota_key=%s readmitted=%d blocked=%d",
-                    quota_key,
-                    len(transient_account_ids),
-                    len(request_quota_blocked_account_ids),
-                )
-                eligible_account_ids = transient_account_ids
-                blocked_count -= len(transient_account_ids)
-                for account_id in transient_account_ids:
-                    blocked_reset_by_account_id.pop(account_id, None)
 
         burn_first_account_ids: frozenset[str] = frozenset()
         if fable_routing and not fable_request and eligible_account_ids:

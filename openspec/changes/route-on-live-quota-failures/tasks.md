@@ -1,0 +1,4 @@
+- [x] Make standard and additional usage snapshots rank accounts without excluding them.
+- [x] Make Anthropic quota prefilter honor only real response cooldowns, not usage snapshots.
+- [x] Recover persisted real rate/quota failures on a bounded retry schedule, including after restart.
+- [x] Compile/import changed modules; live routing validation is owned by incident coordinator.
