@@ -10,7 +10,6 @@ from typing import Collection, Iterable, Literal
 
 from app.core.balancer.types import FailureClass, UpstreamError
 from app.core.usage import PLAN_CAPACITY_CREDITS_SECONDARY
-from app.core.utils.retry import backoff_seconds, parse_retry_after
 from app.db.models import AccountStatus
 
 PERMANENT_FAILURE_CODES = {
@@ -499,29 +498,23 @@ def select_account(
         if state.status == AccountStatus.RATE_LIMITED:
             if state.reset_at and current >= state.reset_at:
                 state.status = AccountStatus.ACTIVE
-                state.used_percent = 0.0
-                state.raw_used_percent = 0.0
-                state.error_count = 0
                 state.reset_at = None
             elif not bypass_standard_quota:
                 continue
         if state.status == AccountStatus.QUOTA_EXCEEDED:
             if state.reset_at and current >= state.reset_at:
                 state.status = AccountStatus.ACTIVE
-                state.used_percent = 0.0
-                state.secondary_used_percent = 0.0
-                state.raw_used_percent = 0.0
-                state.raw_secondary_used_percent = 0.0
                 state.reset_at = None
             elif not bypass_standard_quota:
                 continue
         if state.cooldown_until and current >= state.cooldown_until:
             state.cooldown_until = None
             state.last_error_at = None
-            state.error_count = 0
+            if state.blocked_at is None:
+                state.error_count = 0
         if state.cooldown_until and current < state.cooldown_until:
             continue
-        if state.error_count >= 3:
+        if state.error_count >= 3 and state.blocked_at is None:
             backoff = min(300, 30 * (2 ** (state.error_count - 3)))
             if state.last_error_at and current - state.last_error_at < backoff:
                 in_error_backoff.append(state)
@@ -1078,20 +1071,14 @@ def _select_fill_first(available: list[AccountState]) -> AccountState:
 
 
 def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
+    now = time.time()
     state.status = AccountStatus.RATE_LIMITED
     state.error_count += 1
-    state.last_error_at = time.time()
-    state.blocked_at = time.time()
-
-    reset_at = _extract_reset_at(error)
-    if reset_at is not None:
-        state.reset_at = reset_at
-
-    message = error.get("message")
-    delay = parse_retry_after(message) if message else None
-    if delay is None:
-        delay = backoff_seconds(state.error_count)
-    state.cooldown_until = time.time() + delay
+    state.last_error_at = now
+    state.blocked_at = now
+    retry_at = _live_quota_retry_at(error, state.error_count, now=now)
+    state.reset_at = retry_at
+    state.cooldown_until = retry_at
 
 
 QUOTA_EXCEEDED_COOLDOWN_SECONDS = 120.0
@@ -1114,17 +1101,27 @@ def _format_retry_hint(wait_seconds: float) -> str:
 
 
 def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:
+    now = time.time()
     state.status = AccountStatus.QUOTA_EXCEEDED
+    state.error_count += 1
+    state.last_error_at = now
     state.used_percent = 100.0
     state.raw_used_percent = 100.0
-    state.blocked_at = time.time()
-    state.cooldown_until = time.time() + QUOTA_EXCEEDED_COOLDOWN_SECONDS
+    state.blocked_at = now
+    retry_at = _live_quota_retry_at(error, state.error_count, now=now)
+    state.reset_at = retry_at
+    state.cooldown_until = retry_at
 
-    reset_at = _extract_reset_at(error)
-    if reset_at is not None:
-        state.reset_at = reset_at
-    else:
-        state.reset_at = int(time.time() + 3600)
+
+def _live_quota_retry_at(error: UpstreamError, failures: int, *, now: float) -> float:
+    # The upstream reset is a ceiling for the retry, not an indefinite local
+    # quarantine: a real request gets another chance after bounded backoff.
+    delays = (60, 300, 900, 3600)
+    delay = delays[min(max(failures, 1) - 1, len(delays) - 1)]
+    provider_reset = _extract_reset_at(error)
+    if provider_reset is not None and provider_reset > now:
+        delay = min(delay, provider_reset - now)
+    return now + delay
 
 
 def canonical_permanent_failure_code(error_code: str) -> str:

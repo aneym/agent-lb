@@ -55,7 +55,6 @@ from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, no
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
-from app.core.usage.quota import apply_usage_quota
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
@@ -2113,65 +2112,25 @@ def _state_from_account(
     )
     effective_runtime_reset = db_reset_at or runtime.reset_at
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at
-
     if (
-        account.status == AccountStatus.QUOTA_EXCEEDED
-        and effective_runtime_reset is not None
-        and effective_runtime_reset > time.time()
-        and effective_blocked_at is None
-        and effective_secondary_entry is not None
-        and _usage_entry_is_recent_enough(effective_secondary_entry.recorded_at)
-        and effective_secondary_entry.used_percent is not None
-        and float(effective_secondary_entry.used_percent) < 100.0
-        and effective_secondary_entry.reset_at is not None
-        and float(effective_secondary_entry.reset_at) > effective_runtime_reset
+        account.status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
+        and effective_blocked_at is not None
     ):
-        effective_runtime_reset = None
+        legacy_retry_at = effective_blocked_at + 60.0
+        if effective_runtime_reset is None or effective_runtime_reset > effective_blocked_at + 3600.0:
+            effective_runtime_reset = legacy_retry_at
 
-    # Clear the runtime reset guard only when a post-block refresh has been
-    # observed and the debounce period is over.
-    #
-    # QUOTA_EXCEEDED uses a persisted blocked_at marker so recovery survives
-    # process restarts. RATE_LIMITED keeps the narrower runtime-only behavior,
-    # because its cooldown duration is not persisted today.
-    cooldown_ready = False
-    if account.status == AccountStatus.QUOTA_EXCEEDED:
-        cooldown_ready = (
-            effective_blocked_at is not None and time.time() >= effective_blocked_at + QUOTA_EXCEEDED_COOLDOWN_SECONDS
-        )
-    elif (
-        runtime.cooldown_until is not None and runtime.cooldown_until <= time.time() and runtime.blocked_at is not None
-    ):
-        cooldown_ready = True
-
-    if cooldown_ready and effective_blocked_at is not None:
-        if account.status == AccountStatus.QUOTA_EXCEEDED:
-            freshness_entry = effective_secondary_entry
-        elif account.status == AccountStatus.RATE_LIMITED:
-            freshness_entry = _rate_limited_freshness_entry(
-                account=account,
-                primary_entry=primary_entry,
-                long_window_entry=effective_secondary_entry,
-            )
-        else:
-            freshness_entry = None
-        if freshness_entry and freshness_entry.recorded_at is not None:
-            recorded_epoch = freshness_entry.recorded_at.replace(tzinfo=timezone.utc).timestamp()
-            if recorded_epoch > effective_blocked_at:
-                effective_runtime_reset = None
-
-    status, used_percent, reset_at = apply_usage_quota(
-        status=status_seed,
-        primary_used=primary_used,
-        primary_reset=primary_reset,
-        primary_window_minutes=primary_window_minutes,
-        runtime_reset=effective_runtime_reset,
-        secondary_used=secondary_used,
-        secondary_reset=secondary_reset,
-        credits_has=credits_has,
-        credits_unlimited=credits_unlimited,
-        credits_balance=credits_balance,
-    )
+    # Usage is a ranking signal, not evidence that an upstream request failed.
+    # Older quota statuses with no failure marker were inferred from snapshots.
+    # Real failures carry blocked_at and get a bounded retry even if the next
+    # usage refresh still reports an exhausted window.
+    status = status_seed
+    reset_at = effective_runtime_reset
+    used_percent = primary_used
+    if status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED):
+        if effective_blocked_at is None or reset_at is None or reset_at <= time.time():
+            status = AccountStatus.ACTIVE
+            reset_at = None
 
     if status == AccountStatus.QUOTA_EXCEEDED:
         next_blocked_at = effective_blocked_at
@@ -2548,25 +2507,8 @@ def _additional_quota_eligibility(
     fresh_primary: dict[str, AdditionalUsageHistory],
     fresh_secondary: dict[str, AdditionalUsageHistory],
 ) -> str:
-    latest_primary_entry = latest_primary.get(account_id)
-    latest_secondary_entry = latest_secondary.get(account_id)
-    primary_entry = fresh_primary.get(account_id)
-    secondary_entry = fresh_secondary.get(account_id)
-
-    if not explicit_limit and not _additional_quota_applies_to_plan(quota_key=quota_key, plan_type=account_plan_type):
-        return "eligible"
-
-    if latest_primary_entry is None and latest_secondary_entry is None:
-        return "data_unavailable"
-    if latest_primary_entry is not None and primary_entry is None:
-        return "data_unavailable"
-    if latest_secondary_entry is not None and secondary_entry is None:
-        return "data_unavailable"
-
-    if primary_entry is not None and _additional_usage_is_exhausted(primary_entry):
-        return "quota_exhausted"
-    if secondary_entry is not None and _additional_usage_is_exhausted(secondary_entry):
-        return "quota_exhausted"
+    # Missing, stale, and exhausted additional-usage snapshots do not prove a
+    # live request will fail. Model/plan compatibility is checked separately.
     return "eligible"
 
 
