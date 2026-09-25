@@ -58,6 +58,7 @@ _SUCCESS_TEMPLATE = Path(__file__).resolve().parent / "templates" / "oauth_succe
 _TERMINAL_OAUTH_STATUSES = {"error", "success"}
 _MAX_RETAINED_TERMINAL_OAUTH_FLOWS = 16
 _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS = 15 * 60
+_CALLBACK_PORT_RELEASE_GRACE_SECONDS = 1.0
 _ACCOUNT_IDENTITY_CONFLICT_MESSAGE = (
     "Multiple accounts match the authenticated identity. Remove duplicate accounts and retry OAuth."
 )
@@ -90,6 +91,7 @@ class OAuthState:
     interval_seconds: int | None = None
     expires_at: float | None = None
     finished_at: float | None = None
+    started_at: float | None = None
     callback_server: "OAuthCallbackServer | None" = None
     poll_task: asyncio.Task[None] | None = None
 
@@ -102,6 +104,13 @@ class OAuthStateStore:
         self._state_token_index: dict[str, str] = {}
         self._callback_server: OAuthCallbackServer | None = None
         self._callback_server_stop_task: asyncio.Task[None] | None = None
+        # Held while one flow binds the callback port, so a second flow never trusts a
+        # server that is not listening yet. _callback_server is set only after a bind.
+        self._callback_server_start_lock = asyncio.Lock()
+        self._callback_server_bound_at: float | None = None
+        # Strong references to shielded bind tasks, so a cancelled request's bind is not
+        # garbage-collected before it registers the server.
+        self._callback_server_bind_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -148,6 +157,7 @@ class OAuthStateStore:
             interval_seconds=flow.interval_seconds,
             expires_at=flow.expires_at,
             finished_at=flow.finished_at,
+            started_at=flow.started_at,
             poll_task=flow.poll_task,
         )
 
@@ -158,6 +168,24 @@ class OAuthStateStore:
         self.set_latest_flow_locked(flow)
         if status in _TERMINAL_OAUTH_STATUSES:
             self.prune_terminal_flows_locked()
+
+    def pending_flow_ages_locked(self) -> list[float]:
+        """Seconds since each still-pending sign-in started. Ages only: no ids, state or codes.
+
+        While this process still holds the callback port with no live flow (an expired or
+        finished flow whose port release is pending), that counts as one pending sign-in:
+        a swap in that window would send the other process's callback here.
+        """
+        self.prune_expired_pending_browser_flows_locked()
+        now = time.time()
+        ages = sorted(
+            round(now - (flow.started_at or now), 1)
+            for flow in self._flows.values()
+            if flow.status == "pending" and (flow.expires_at is None or flow.expires_at > now)
+        )
+        if not ages and (self._callback_server is not None or self._callback_server_stop_task is not None):
+            ages = [round(now - (self._callback_server_bound_at or now), 1)]
+        return ages
 
     def has_pending_browser_flows_locked(self) -> bool:
         self.prune_expired_pending_browser_flows_locked()
@@ -179,6 +207,7 @@ class OAuthStateStore:
         server = self._callback_server
         if clear_callback_server:
             self._callback_server = None
+            self._callback_server_bound_at = None
         self._flows.clear()
         self._state_token_index.clear()
         return server
@@ -272,6 +301,12 @@ class OAuthCallbackServer:
 _OAUTH_STORE = OAuthStateStore()
 
 
+async def pending_oauth_flow_ages() -> list[float]:
+    # Flows live only in this process, so lb-restart asks before it swaps processes.
+    async with _OAUTH_STORE.lock:
+        return _OAUTH_STORE.pending_flow_ages_locked()
+
+
 class OauthService:
     def __init__(
         self,
@@ -363,8 +398,6 @@ class OauthService:
             return OauthCompleteResponse(status="pending")
 
     async def _start_browser_flow(self, provider_name: str = OPENAI_PROVIDER_NAME) -> OauthStartResponse:
-        await self._wait_for_callback_server_stop()
-
         flow_id = secrets.token_urlsafe(12)
         code_verifier, code_challenge = generate_pkce_pair()
         provider = get_provider(provider_name)
@@ -391,9 +424,6 @@ class OauthService:
                 scope=oauth_config.scope,
                 extra_params=oauth_config.authorization_extra_params,
             )
-        settings = get_settings()
-        callback_server: OAuthCallbackServer | None = None
-
         async with self._store.lock:
             self._store.remember_flow_locked(
                 OAuthState(
@@ -403,24 +433,23 @@ class OauthService:
                     provider=provider.name,
                     state_token=state_token,
                     code_verifier=code_verifier,
+                    started_at=time.time(),
                     expires_at=time.time() + _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS,
                 )
             )
-            if self._store._callback_server is None:
-                callback_server = OAuthCallbackServer(
-                    self._handle_callback,
-                    host=settings.oauth_callback_host,
-                    port=settings.oauth_callback_port,
-                )
-                self._store._callback_server = callback_server
-
-        if callback_server is not None:
-            try:
-                await callback_server.start()
-            except OSError:
-                async with self._store.lock:
-                    if self._store._callback_server is callback_server:
-                        self._store._callback_server = None
+            # An abandoned flow must not keep the callback port: after a blue/green swap
+            # the other process needs it for its own sign-ins. Scheduled with the flow so
+            # a cancelled request cannot skip it.
+            asyncio.get_running_loop().call_later(
+                _PENDING_BROWSER_OAUTH_FLOW_TTL_SECONDS + _CALLBACK_PORT_RELEASE_GRACE_SECONDS,
+                lambda: asyncio.ensure_future(self._stop_callback_server_if_idle()),
+            )
+        # Shielded: a request cancelled mid-bind must still register (or stop) the server
+        # it bound, or the port would stay held with nothing tracking it.
+        bind_task = asyncio.ensure_future(self._ensure_callback_server(flow_id))
+        self._store._callback_server_bind_tasks.add(bind_task)
+        bind_task.add_done_callback(self._store._callback_server_bind_tasks.discard)
+        await asyncio.shield(bind_task)
 
         return OauthStartResponse(
             flow_id=flow_id,
@@ -428,6 +457,49 @@ class OauthService:
             authorization_url=authorization_url,
             callback_url=oauth_config.redirect_uri,
         )
+
+    async def _ensure_callback_server(self, flow_id: str) -> None:
+        settings = get_settings()
+        callback_server: OAuthCallbackServer | None = None
+        # The flow is pending now, so no later idle check stops the server; a stop that
+        # began before it (a finished or expired flow) must end before we reuse or rebind.
+        async with self._store._callback_server_start_lock:
+            while True:
+                await self._wait_for_callback_server_stop()
+                async with self._store.lock:
+                    if self._store._callback_server_stop_task is not None:
+                        continue
+                    if self._store._callback_server is None:
+                        callback_server = OAuthCallbackServer(
+                            self._handle_callback,
+                            host=settings.oauth_callback_host,
+                            port=settings.oauth_callback_port,
+                        )
+                    break
+
+            if callback_server is not None:
+                try:
+                    await callback_server.start()
+                except OSError:
+                    # Another process (the other blue/green instance) holds the port, so the
+                    # browser redirect for this flow will reach that process instead of this one.
+                    logger.warning(
+                        "OAuth callback port %s is busy; this sign-in can finish only by pasting the callback URL",
+                        settings.oauth_callback_port,
+                    )
+                except Exception:
+                    # The request may already be gone, so fail the flow here rather than
+                    # leave it pending with no listener until it expires.
+                    await callback_server.stop()
+                    await self._set_error("Could not open the OAuth callback listener.", flow_id)
+                    raise
+                else:
+                    async with self._store.lock:
+                        self._store._callback_server = callback_server
+                        self._store._callback_server_bound_at = time.time()
+        if callback_server is not None:
+            # The flow may have finished or failed while the port was binding.
+            await self._stop_callback_server_if_idle()
 
     async def manual_callback(self, callback_url: str, flow_id: str | None = None) -> ManualCallbackResponse:
         """Process an OAuth callback URL pasted manually by the user.
@@ -514,6 +586,7 @@ class OauthService:
                 device_auth_id=device.device_auth_id,
                 user_code=device.user_code,
                 interval_seconds=device.interval_seconds,
+                started_at=time.time(),
                 expires_at=time.time() + device.expires_in_seconds,
             )
             self._store.remove_pending_device_flows_locked()
@@ -546,6 +619,14 @@ class OauthService:
 
         if not code or not state or flow is None or not verifier:
             await self._set_error("Invalid OAuth callback state.", flow_id=flow.flow_id if flow is not None else None)
+            if flow is None:
+                logger.warning("OAuth callback for a sign-in this process did not start")
+                return self._html_response(
+                    _error_html(
+                        "This sign-in was not started by the agent-lb instance that received it "
+                        "(it may have restarted). Start the sign-in again from the dashboard."
+                    )
+                )
             return self._html_response(_error_html("Invalid OAuth callback."))
 
         try:
@@ -722,6 +803,13 @@ class OauthService:
             self._store.set_flow_status_locked(flow, status="success", error_message=None)
 
     async def _set_error(self, message: str, flow_id: str | None = None) -> None:
+        await self._record_error(message, flow_id)
+        # A failed flow is no longer pending; release the callback port so the other
+        # blue/green instance can bind it. A task, because this can run inside the
+        # callback server's own handler.
+        asyncio.create_task(self._stop_callback_server_if_idle())
+
+    async def _record_error(self, message: str, flow_id: str | None) -> None:
         async with self._store.lock:
             if flow_id is None and self._store.state.flow_id is not None:
                 return
@@ -753,6 +841,7 @@ class OauthService:
             async with self._store.lock:
                 if self._store._callback_server is server:
                     self._store._callback_server = None
+                    self._store._callback_server_bound_at = None
                 if self._store._callback_server_stop_task is stop_task:
                     self._store._callback_server_stop_task = None
 

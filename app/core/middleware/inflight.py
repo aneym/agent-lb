@@ -11,6 +11,7 @@ _DRAIN_ALLOWED_HTTP_PATHS = frozenset(
         "/internal/drain/start",
         "/internal/drain/stop",
         "/internal/drain/status",
+        "/internal/oauth/pending",
         "/internal/bridge/responses",
     }
 )
@@ -23,6 +24,7 @@ _IN_FLIGHT_EXCLUDED_HTTP_PATHS = frozenset(
         "/internal/drain/start",
         "/internal/drain/stop",
         "/internal/drain/status",
+        "/internal/oauth/pending",
     }
 )
 

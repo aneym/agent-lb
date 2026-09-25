@@ -10,10 +10,22 @@ supported way to restart it or deploy files into the runtime:
     lb-restart --reason "why" --backup <dir>                   # files already copied; roll back from <dir> on failure
     lb-restart --reason "why" --reload-plist                   # also re-read the launchd plist
     lb-restart --reason "why" --check                          # boot + health-gate the code on disk, touch nothing
+    lb-restart --reason "why" --force                          # do not wait for sign-ins in progress
 
 What it does, in order:
 
 1. Takes a machine-wide lock (one restart at a time; others wait, up to --lock-wait).
+   OAuth sign-ins live only in the memory of the process that started them, so
+   before each move of the front, and again after it before that instance is
+   stopped, it waits (up to --oauth-wait in total) while the instance it moves
+   away from has a sign-in in progress or still holds the callback port (1455).
+   --force skips the wait. A sign-in can still be lost, and the browser then shows
+   "start the sign-in again", when:
+   - it starts in the moment between the last check and a front move or SIGTERM
+     (closing that fully would need a stop-the-world handoff);
+   - the primary is unhealthy (the watchdog path): a broken primary is replaced
+     at once and its sign-ins are not waited for;
+   - --force is given or --oauth-wait is used up.
 2. Optionally backs up and copies --files from --from into the runtime.
 3. Boots a standby instance of the new code on the standby port (2459) and
    health-gates it. If the gate fails, the files are rolled back and the live
@@ -118,6 +130,46 @@ def in_flight(port: int) -> int | None:
         return int(json.loads(body)["checks"]["in_flight"])
     except (ValueError, KeyError, TypeError):
         return None
+
+
+OAUTH_POLL_S = 2.0
+
+
+def oauth_pending(port: int) -> tuple[int, list[float]] | None:
+    """(count, ages in seconds) of sign-ins in progress on port; None if it cannot say."""
+    code, body = http_get(port, "/internal/oauth/pending", timeout=2.0)
+    if code != 200:
+        return None
+    try:
+        data = json.loads(body)
+        return int(data["pending"]), [float(age) for age in data.get("ages_seconds", [])]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def wait_for_oauth_flows(port: int, bound: float) -> float:
+    """Hold the swap while port has a sign-in in progress, up to bound seconds. Returns seconds waited."""
+    start = time.monotonic()
+    announced: int | None = None
+    while True:
+        waited = time.monotonic() - start
+        status = oauth_pending(port)
+        if status is None or status[0] == 0:
+            if announced:
+                sync_log(f"lb-restart oauth flow(s) on :{port} finished after {waited:.0f}s; continuing")
+            return waited
+        count, ages = status
+        if count != announced:
+            announced = count
+            msg = f"lb-restart waiting on {count} oauth flow(s) on :{port} (ages {ages}s, bound {bound:.0f}s)"
+            say(msg)
+            sync_log(msg)
+        if waited >= bound:
+            msg = f"lb-restart proceeding with {count} oauth flow(s) still pending on :{port} after {waited:.0f}s"
+            say(msg)
+            sync_log(msg)
+            return waited
+        time.sleep(OAUTH_POLL_S)
 
 
 def established(port: int) -> int:
@@ -367,7 +419,7 @@ def stop_pid_gracefully(pid: int, port: int, bound: float) -> tuple[float, bool]
     return time.monotonic() - start, forced
 
 
-def stop_leftover_standby(drain_seconds: int) -> None:
+def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None) -> None:
     pid = listener_pid(STANDBY_PORT)
     if pid is None:
         STANDBY_PIDFILE.unlink(missing_ok=True)
@@ -375,6 +427,7 @@ def stop_leftover_standby(drain_seconds: int) -> None:
     say(f"found a standby still on :{STANDBY_PORT} (pid {pid}) from an earlier run")
     if not healthy(PRIMARY_PORT):
         raise SystemExit("primary unhealthy and a standby is serving; fix by hand before restarting")
+    hold_for_oauth(STANDBY_PORT)
     set_preferred(PRIMARY_PORT)
     front_routes_to(PRIMARY_PORT)
     try:
@@ -490,8 +543,14 @@ def main() -> int:
     p.add_argument(
         "--check", action="store_true", help="Only boot and health-gate a standby on the code on disk, then stop it."
     )
+    p.add_argument("--force", action="store_true", help="Swap without waiting for OAuth sign-ins in progress.")
+    p.add_argument(
+        "--oauth-wait", type=float, default=600, help="Seconds to wait in total for sign-ins in progress (default 600)."
+    )
     p.add_argument("--lock-wait", type=float, default=900, help="Seconds to wait for another restart (default 900).")
-    p.add_argument("--boot-timeout", type=float, default=90, help="Seconds for an instance to pass health (default 90).")
+    p.add_argument(
+        "--boot-timeout", type=float, default=90, help="Seconds for an instance to pass health (default 90)."
+    )
     args = p.parse_args()
     if args.files and not args.src:
         p.error("--files needs --from")
@@ -525,17 +584,27 @@ def run(args) -> int:
     files = Files(label="lb-restart")
     stats: dict[str, object] = {"reason": args.reason}
     say(f"reason: {args.reason}; drain bound {drain}s")
+    oauth_waited = 0.0
+
+    def hold_for_oauth(port: int) -> None:
+        nonlocal oauth_waited
+        if args.force or args.check or (oauth_waited > 0 and oauth_waited >= args.oauth_wait):
+            return  # skipped, or the bound is spent and already logged
+        oauth_waited += wait_for_oauth_flows(port, max(0.0, args.oauth_wait - oauth_waited))
+        stats["oauth_wait_s"] = round(oauth_waited, 1)
 
     if not front_understands_preference():
         say("the running front does not support blue/green (old build or not running); refusing")
         say(f"install the front from scripts/agent-lb-front.mjs and kickstart {FRONT_LABEL} in a quiet moment first")
         return 3
 
-    stop_leftover_standby(drain)
+    stop_leftover_standby(drain, hold_for_oauth)
     set_preferred(PRIMARY_PORT)
     old_pid = launchd_pid(LABEL)
     if not healthy(PRIMARY_PORT):
         say("primary is not healthy before the restart; continuing (the standby will carry traffic)")
+    else:
+        hold_for_oauth(PRIMARY_PORT)
 
     if args.files:
         files.deploy(args.src, args.files)
@@ -567,6 +636,8 @@ def run(args) -> int:
         return 0
 
     # 2. front -> standby, then drain and restart the primary
+    if healthy(PRIMARY_PORT):  # an unhealthy primary (watchdog restart) is not kept for sign-ins
+        hold_for_oauth(PRIMARY_PORT)  # a sign-in may have started while the standby booted
     set_preferred(STANDBY_PORT)
     if not front_routes_to(STANDBY_PORT):
         say("front did not pick up the standby preference; aborting before touching the primary")
@@ -574,6 +645,8 @@ def run(args) -> int:
         set_preferred(PRIMARY_PORT)
         return 4
     time.sleep(0.5)
+    if healthy(PRIMARY_PORT):
+        hold_for_oauth(PRIMARY_PORT)  # one that started between the check and the move
     stats["primary_in_flight_at_cutover"] = in_flight(PRIMARY_PORT)
     stats["primary_conns_at_cutover"] = established(PRIMARY_PORT)
     say(
@@ -619,9 +692,11 @@ def run(args) -> int:
     say(f"new primary healthy on :{PRIMARY_PORT} (pid {launchd_pid(LABEL)}) {stats['primary_boot_s']}s after exit")
 
     # 3. front -> primary, drain and stop the standby
+    hold_for_oauth(STANDBY_PORT)
     set_preferred(PRIMARY_PORT)
     front_routes_to(PRIMARY_PORT)
     time.sleep(0.5)
+    hold_for_oauth(STANDBY_PORT)  # one that started between the check and the move
     stats["standby_in_flight_at_cutover"] = in_flight(STANDBY_PORT)
     # SIGTERM closes the standby's listener at once, so the port is free for
     # the next restart; the process finishes its in-flight streams on its own

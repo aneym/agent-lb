@@ -157,6 +157,20 @@ async def internal_drain_status(request: Request) -> HealthCheckResponse:
     )
 
 
+@router.get("/internal/oauth/pending", include_in_schema=False)
+async def internal_oauth_pending(request: Request) -> dict[str, object]:
+    """How many sign-ins this process holds in memory, for lb-restart. Count and ages only."""
+    client_host = request.client.host if request.client is not None else None
+    if not _is_internal_client_host(client_host):
+        raise HTTPException(status_code=403, detail="Internal access required")
+    await _require_trusted_drain_client(request)
+
+    from app.modules.oauth.service import pending_oauth_flow_ages
+
+    ages = await pending_oauth_flow_ages()
+    return {"pending": len(ages), "ages_seconds": ages}
+
+
 def _bridge_readiness_failure_detail(bridge_ring: BridgeRingInfo) -> str | None:
     import app.core.startup as startup_module
 
