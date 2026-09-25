@@ -77,6 +77,9 @@ class _Repo:
     async def get_by_id(self, account_id: str) -> Account | None:
         return self._accounts.get(account_id)
 
+    async def reload_by_id(self, account_id: str) -> Account | None:
+        return self._accounts.get(account_id)
+
     async def update_status(self, *args: Any, **kwargs: Any) -> bool:
         return True
 
