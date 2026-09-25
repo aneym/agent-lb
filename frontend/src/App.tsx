@@ -17,6 +17,10 @@ import { useTimeFormatStore } from "@/hooks/use-time-format";
 import { AppShell } from "@/lb/kit/app-shell";
 import { EmptyState } from "@/lb/kit/primitives";
 import { ProvidersPage } from "@/lb/pages/providers/providers-page";
+import { RoutingLayout } from "@/lb/pages/routing/routing-layout";
+import { PipelineTab } from "@/lb/pages/routing/pipeline-tab";
+import { DecisionsTab } from "@/lb/pages/routing/decisions-tab";
+import { PolicyPlaceholder, EvalsPlaceholder } from "@/lb/pages/routing/policy-placeholder";
 
 function LegacyLayout() {
   const logout = useAuthStore((state) => state.logout);
@@ -55,7 +59,12 @@ export default function App() {
               path="/providers/:accountId"
               element={<EmptyState title="Coming in the next slice" />}
             />
-            <Route path="/routing" element={<SettingsPage />} />
+            <Route path="/routing" element={<RoutingLayout />}>
+              <Route index element={<PipelineTab />} />
+              <Route path="decisions" element={<DecisionsTab />} />
+              <Route path="policy" element={<PolicyPlaceholder />} />
+              <Route path="evals" element={<EvalsPlaceholder />} />
+            </Route>
             <Route path="/usage" element={<ReportsPage />} />
             <Route path="/keys" element={<ApisPage />} />
           </Route>
