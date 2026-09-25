@@ -46,3 +46,22 @@ The first seat on a class's menu (the head of its routing-table chain) SHALL be 
 
 - **WHEN** the decider picks another menu seat and rates the default's fit below `default_min_fit`
 - **THEN** the decider's pick is dispatched after the usual fresh-menu recheck
+
+### Requirement: Artificial Analysis benchmarks are evidence, not routing
+
+`open-factory aa-sync` SHALL fetch Artificial Analysis model data at most once per 24 hours unless `--force` is given. It SHALL write each fetch as a timestamped snapshot plus `latest.json`, and map AA slugs to seat aliases only through the checked-in `aa_map.json`, listing any other slug as unmapped. The API key SHALL be read from `ARTIFICIAL_ANALYSIS_API_KEY` only and SHALL never appear in output or snapshots. Evidence older than 8 days SHALL be withheld. The command SHALL NOT change any routing decision.
+
+#### Scenario: A second sync the same day
+
+- **WHEN** a snapshot under 24 hours old exists and `aa-sync` runs without `--force`
+- **THEN** no request is made and the result reports `skipped`
+
+#### Scenario: No key
+
+- **WHEN** `ARTIFICIAL_ANALYSIS_API_KEY` is unset and a fetch is due
+- **THEN** the command fails with "ARTIFICIAL_ANALYSIS_API_KEY is not set" before any request
+
+#### Scenario: Dry run
+
+- **WHEN** `aa-sync --dry-run` runs
+- **THEN** it summarizes the saved fixture without a key and writes nothing

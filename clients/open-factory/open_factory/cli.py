@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from . import aa
 from .common import PKG, resolve_bin, utc_now
 from .decide import DECIDERS, decide, ledger_path, load_policy, read_decisions, run_route
 
@@ -316,6 +317,33 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_aa_sync(args: argparse.Namespace) -> int:
+    try:
+        result = aa.sync(dry_run=args.dry_run, fixture=Path(args.fixture) if args.fixture else None, force=args.force)
+    except (OSError, ValueError) as error:
+        # Only locally defined errors are safe to print; network exceptions are sanitized in aa.fetch_models.
+        raise SystemExit(f"open-factory aa-sync: {error}") from None
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    print(f"snapshot  {result['snapshot_path']}")
+    age = result["age_seconds"]
+    print(f"age       {age / 3600:.1f}h" if age is not None else "age       dry run: fixture numbers, not AA data")
+    if result["skipped"]:
+        print("fetch     skipped (snapshot under 24h old)")
+    print("alias         variant   intelligence  coding  $/1M  tokens/s  slug")
+    for alias in aa._mapping():
+        for row in result[alias]:
+            print(
+                f"{alias:<13} {row['variant']:<9} {str(row['intelligence_index']):<13} "
+                f"{str(row['coding_index']):<7} {str(row['price_blended_usd_per_1m']):<5} "
+                f"{str(row['output_tokens_per_s']):<9} {row['slug']}"
+            )
+    print(f"unmapped  {', '.join(result['unmapped']) or '-'}")
+    print("source    Artificial Analysis (https://artificialanalysis.ai/)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="open-factory",
@@ -360,6 +388,13 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--init-if-missing", action="store_true")
     start.add_argument("--print", dest="print", default=None, help="Non-interactive -p prompt")
     start.set_defaults(func=cmd_start)
+
+    aa_sync = sub.add_parser("aa-sync", help="Fetch Artificial Analysis benchmarks as routing evidence")
+    aa_sync.add_argument("--force", action="store_true", help="fetch even if the snapshot is under 24h old")
+    aa_sync.add_argument("--dry-run", action="store_true", help="read a fixture without a key or disk writes")
+    aa_sync.add_argument("--fixture", default=None, help="fixture path for --dry-run")
+    aa_sync.add_argument("--json", action="store_true")
+    aa_sync.set_defaults(func=cmd_aa_sync)
 
     rep = sub.add_parser("report", help="Summarize routing decisions from the dispatch ledger")
     rep.add_argument("--path", default=None, help="only decisions made under this directory")

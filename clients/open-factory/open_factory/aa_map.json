@@ -1,0 +1,38 @@
+{
+  "opus": [
+    {"slug": "claude-opus-5-5-low", "variant": "low"},
+    {"slug": "claude-opus-5-5-medium", "variant": "medium"},
+    {"slug": "claude-opus-5-5-high", "variant": "high"},
+    {"slug": "claude-opus-5-5-xhigh", "variant": "xhigh"},
+    {"slug": "claude-opus-5-5", "variant": "default"}
+  ],
+  "sonnet": [
+    {"slug": "claude-sonnet-5-low", "variant": "low"},
+    {"slug": "claude-sonnet-5-medium", "variant": "medium"},
+    {"slug": "claude-sonnet-5-high", "variant": "high"},
+    {"slug": "claude-sonnet-5-xhigh", "variant": "xhigh"},
+    {"slug": "claude-sonnet-5", "variant": "default"},
+    {"slug": "claude-sonnet-5-non-reasoning", "variant": "non-reasoning"}
+  ],
+  "sol-latest": [
+    {"slug": "gpt-6-sol-low", "variant": "low"},
+    {"slug": "gpt-6-sol-medium", "variant": "medium"},
+    {"slug": "gpt-6-sol-high", "variant": "high"},
+    {"slug": "gpt-6-sol-xhigh", "variant": "xhigh"},
+    {"slug": "gpt-6-sol", "variant": "default"},
+    {"slug": "gpt-6-sol-non-reasoning", "variant": "non-reasoning"}
+  ],
+  "luna-latest": [
+    {"slug": "gpt-6-luna-low", "variant": "low"},
+    {"slug": "gpt-6-luna-medium", "variant": "medium"},
+    {"slug": "gpt-6-luna-high", "variant": "high"},
+    {"slug": "gpt-6-luna-xhigh", "variant": "xhigh"},
+    {"slug": "gpt-6-luna", "variant": "default"},
+    {"slug": "gpt-6-luna-non-reasoning", "variant": "non-reasoning"}
+  ],
+  "grok-latest": [
+    {"slug": "grok-4-7", "variant": "default"},
+    {"slug": "grok-4-7-high", "variant": "high"}
+  ],
+  "swe-latest": []
+}

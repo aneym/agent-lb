@@ -1,0 +1,96 @@
+{
+ "_fixture": "Hand-built to AA's documented v2 models shape; the numbers are not AA's.",
+ "data": [
+  {
+   "id": "anthropic-opus-55",
+   "slug": "claude-opus-5-5-high",
+   "name": "Claude Opus 5.5 (high)",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": 82.1,
+    "artificial_analysis_coding_index": 77.2
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": 12.5
+   },
+   "median_output_tokens_per_second": 75.6
+  },
+  {
+   "id": "anthropic-sonnet-5",
+   "slug": "claude-sonnet-5-medium",
+   "name": "Claude Sonnet 5 (medium)",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": 70.4,
+    "artificial_analysis_coding_index": 72.1
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": 5.0
+   },
+   "median_output_tokens_per_second": 115.1
+  },
+  {
+   "id": "openai-sol-6",
+   "slug": "gpt-6-sol-high",
+   "name": "GPT-6 Sol (high)",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": 85.2,
+    "artificial_analysis_coding_index": 81.3
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": 3.0
+   },
+   "median_output_tokens_per_second": 95.0
+  },
+  {
+   "id": "openai-luna-6",
+   "slug": "gpt-6-luna-medium",
+   "name": "GPT-6 Luna (medium)",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": 65.8,
+    "artificial_analysis_coding_index": 68.0
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": 0.8
+   },
+   "median_output_tokens_per_second": 180.3
+  },
+  {
+   "id": "xai-grok-47",
+   "slug": "grok-4-7",
+   "name": "Grok 4.7",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": 62.2,
+    "artificial_analysis_coding_index": 59.5
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": 2.0
+   },
+   "median_output_tokens_per_second": 132.4
+  },
+  {
+   "id": "other-llm",
+   "slug": "unmapped-example-model",
+   "name": "Example Model",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": null,
+    "artificial_analysis_coding_index": null
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": null
+   },
+   "median_output_tokens_per_second": null
+  },
+  {
+   "id": "example-2",
+   "slug": "example-open-model-2",
+   "name": "Example Open Model 2",
+   "evaluations": {
+    "artificial_analysis_intelligence_index": 40.0,
+    "artificial_analysis_coding_index": 35.0
+   },
+   "pricing": {
+    "price_1m_blended_3_to_1": 0.5
+   },
+   "median_output_tokens_per_second": 200.0
+  }
+ ]
+}
