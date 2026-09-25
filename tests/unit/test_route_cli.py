@@ -673,12 +673,10 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
 
     assert plan.returncode == 0, plan.stderr
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
-    # No pool data skips the pace-gated Opus entry; implement falls to Codex Sol,
-    # whose auditor is Opus.
+    # Implement leads with gpt-implementer on the newest Sol, whose auditor is Opus.
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
-    assert (picked["seat"], picked["model"]) == ("codex-sol", "gpt-6-sol")
-    assert "pace unknown" in picked["reason"]
+    assert (picked["seat"], picked["model"]) == ("gpt-implementer", "gpt-6-sol")
     assert picked["audit"]["alias"] == "opus-latest"
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
@@ -699,6 +697,23 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
     assert (sol.returncode, sol.stdout.strip()) == (0, "gpt-6-sol")
     assert terra.returncode == 2 and "no non-retired terra" in terra.stderr
     assert retired.returncode == 2 and "retired" in retired.stderr
+
+
+def _pace_gated_table(tmp_path: Path) -> Path:
+    """The canonical table with a pace-gated Opus ahead of Codex Sol: the chain the pace and audit rules act on."""
+    table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    table["classes"]["implement"]["chain"] = [
+        {
+            "seat": "opus-seat",
+            "model": "opus-latest",
+            "vendor": "anthropic",
+            "min_pace": table["policy"]["pace"]["behind_lt"],
+        },
+        {"seat": "codex-sol", "model": "sol-latest", "vendor": "openai", "effort": "medium"},
+    ]
+    path = tmp_path / "pace-gated-table.json"
+    path.write_text(json.dumps(table), encoding="utf-8")
+    return path
 
 
 def _paced_pools(directory: Path, remaining: float, hours_to_reset: float, eligible: int = 3) -> None:
@@ -739,7 +754,9 @@ def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
         "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
         "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok 4.7 Medium Fast\\n'",
     }
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    result = run(
+        "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
+    )
     assert result.returncode == 0, result.stderr
     picked = json.loads(result.stdout)
     assert picked["seat"] == expected_seat
@@ -846,7 +863,9 @@ def test_an_lb_without_weekly_pace_is_paced_from_its_accounts(tmp_path: Path) ->
     write_fixture(fixtures, "api_accounts.json", {"accounts": accounts})
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    result = run(
+        "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
+    )
     assert result.returncode == 0, result.stderr
     picked = json.loads(result.stdout)
     assert picked["seat"] == "opus-seat"
@@ -862,7 +881,9 @@ def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:
         "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
         "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
     }
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    result = run(
+        "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
+    )
     assert result.returncode == 2
     assert "its auditor sol-latest is unavailable" in result.stderr
 
@@ -934,8 +955,10 @@ def test_an_entry_whose_auditor_pool_is_exhausted_is_skipped(tmp_path: Path) -> 
         "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
         "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
     }
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
-    # Opus's pool is exhausted and Grok's auditor is Opus, so nothing can be both built and audited.
+    result = run(
+        "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
+    )
+    # Opus's pool is exhausted and Codex Sol's auditor is Opus, so nothing can be both built and audited.
     assert result.returncode == 2
     assert "its auditor's pool anthropic-general is exhausted" in result.stderr
 
@@ -966,7 +989,9 @@ def test_pace_prefers_the_lbs_per_account_weekly_pace(tmp_path: Path) -> None:
         "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
         "ROUTE_CURSOR_MODELS_CMD": "printf 'grok-4.7-medium-fast - Grok\\n'",
     }
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    result = run(
+        "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
+    )
     assert result.returncode == 0, result.stderr
     picked = json.loads(result.stdout)
     assert picked["seat"] == "codex-sol"
@@ -978,7 +1003,9 @@ def test_a_fallback_whose_auditor_pool_is_critical_is_skipped(tmp_path: Path) ->
     _paced_pools(fixtures, 60.0, 84.0, 1)
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    result = run(
+        "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
+    )
     # Opus is critical, so it neither implements nor audits Codex Sol's work.
     assert result.returncode == 2
     assert "its auditor's pool anthropic-general is critical: 1 eligible" in result.stderr

@@ -105,6 +105,33 @@ def transcript_path(payload: dict) -> str:
     return path
 
 
+def structured_result(path: str) -> str:
+    """The StructuredOutput payload of a schema-bound subagent, or "".
+
+    A Workflow agent() with a schema ends by calling StructuredOutput, so its
+    last assistant message has no text. Without this, every such agent was
+    logged as "no final message" and route learn demoted a working seat.
+    """
+    if not path:
+        return ""
+    found = ""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                if '"StructuredOutput"' not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                for block in (row.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "StructuredOutput":
+                        found = json.dumps(block.get("input"))[:300]
+    except OSError:
+        return ""
+    return found
+
+
 def usage_count(usage: dict, key: str) -> int:
     value = usage.get(key)
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
@@ -305,6 +332,8 @@ def main() -> None:
     agent_type = str(payload.get("agent_type") or payload.get("subagent_type") or "").strip()
     agent_name = str(payload.get("agent_name") or payload.get("name") or "").strip()
     last = str(payload.get("last_assistant_message") or "")
+    if not last.strip():
+        last = structured_result(transcript_path(payload))
 
     digests = prompt_digests(payload)
     cost = transcript_cost(transcript_path(payload))

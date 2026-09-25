@@ -19,7 +19,9 @@
 #   cursor  auth=login    the CLI's own login (`cursor-agent login`, macOS keychain). One per Mac:
 #                         a second login replaces the first, so extra accounts use api-key.
 #           auth=api-key  a Cursor user API key read from a 0600 key file into CURSOR_API_KEY,
-#                         with its own CURSOR_CONFIG_DIR so the default login is untouched.
+#                         with its own CURSOR_CONFIG_DIR and AGENT_CLI_CREDENTIAL_STORE=memory.
+#                         Without the memory store the CLI saves the key's tokens to the keychain
+#                         and replaces the login account (cursor-agent 2026.09.23).
 #   devin   auth=data-dir credentials.toml under XDG_DATA_HOME (default ~/.local/share).
 #                         Log an extra account in with
 #                         `XDG_DATA_HOME=<dir> devin auth login --force-manual-token-flow`.
@@ -191,8 +193,10 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
         config_dir = seat_home() / "cursor" / account["id"]
         config_dir.mkdir(parents=True, exist_ok=True)
         env["CURSOR_CONFIG_DIR"] = str(config_dir)
+        env["AGENT_CLI_CREDENTIAL_STORE"] = "memory"
     elif vendor == "cursor":
         env.pop("CURSOR_API_KEY", None)
+        env.pop("AGENT_CLI_CREDENTIAL_STORE", None)
     elif vendor == "devin":
         data_dir = expand(account.get("data_dir"))
         if data_dir is not None:

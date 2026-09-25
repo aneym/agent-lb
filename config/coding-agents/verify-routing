@@ -30,7 +30,6 @@ FORBIDDEN = ("fable", "claude-planner", "astra")
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 GPT_ID = re.compile(r"^gpt-(\d+(?:\.\d+)*)-([a-z]+)$")
 MANAGED = (
-    ("implementer", ".claude/agents/implementer.md", "agents/implementer.md"),
     ("computer-use", ".claude/agents/computer-use.md", "agents/computer-use.md"),
     ("frontend-designer", ".claude/agents/frontend-designer.md", "agents/frontend-designer.md"),
     ("planner", ".claude/agents/planner.md", "agents/planner.md"),
@@ -110,7 +109,9 @@ for name, installed, source in MANAGED:
     owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
     check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
 
-check(not (HOME / ".claude" / "agents" / "astra.md").exists(), "the retired astra seat is not installed")
+for retired_seat in ("astra", "implementer"):
+    installed = (HOME / ".claude" / "agents" / f"{retired_seat}.md").exists()
+    check(not installed, f"the retired {retired_seat} seat is not installed")
 
 # No subagent type runs on Fable or Astra, managed or not.
 for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
@@ -119,10 +120,6 @@ for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
 for name in ("planner", "plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
-check(
-    'route resolve terra-latest)" --effort medium' in read(SOURCE / "agents" / "implementer.md"),
-    "implementer forwards to the newest Terra at medium",
-)
 check(
     'route resolve sol-latest)" --effort xhigh' in read(SOURCE / "agents" / "codex-verifier.md"),
     "codex-verifier forwards to the newest Sol at xhigh",
@@ -142,6 +139,15 @@ classes = source_table.get("classes", {})
 chain_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
 check(bool(chain_models) and not any(forbidden(m) for m in chain_models), "no routing-table class runs on Fable")
 check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
+# Every seat the router can name has a definition here; the ccgpt seats
+# (gpt-implementer, luna-implementer, ...) are local and unmanaged.
+chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])})
+missing_seats = [seat for seat in chain_seats if not (HOME / ".claude" / "agents" / f"{seat}.md").is_file()]
+check(
+    not missing_seats,
+    "every routing-table seat has a definition in ~/.claude/agents"
+    + (f": missing {missing_seats}" if missing_seats else ""),
+)
 plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
 check(
     plan_chain[:1] in (["opus-latest"], ["sol-latest"]), f"plan leads with opus-latest or sol-latest ({plan_chain[:1]})"
@@ -255,6 +261,8 @@ with tempfile.TemporaryDirectory() as scratch:
             env=env,
             timeout=30,
         )
+        if result.returncode == 0 and not result.stdout.strip():
+            return None  # admitted with nothing to report
         try:
             return json.loads(result.stdout)["hookSpecificOutput"].get("permissionDecision")
         except (json.JSONDecodeError, KeyError):
@@ -262,7 +270,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     check(decision({"subagent_type": "opus-seat", "model": "fable"}) == "deny", "seat guard denies model=fable")
     check(decision({"subagent_type": "legacy-fable"}) == "deny", "seat guard denies a Fable-defined subagent type")
-    check(decision({"subagent_type": "implementer", "model": "sonnet"}) is None, "seat guard admits a cheap seat")
+    check(decision({"subagent_type": "gpt-implementer"}) is None, "seat guard admits a cheap seat")
 
 # The installed router returns a live, non-retired seat for every class.
 route_bin = HOME / ".agent-lb" / "bin" / "route"

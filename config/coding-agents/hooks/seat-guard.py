@@ -21,7 +21,20 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-FORWARDER_SEATS = {"astra", "implementer", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat"}
+# Seats that bill a non-Anthropic pool (Codex, Cursor, Devin, or GPT through the
+# ccgpt bridge), so the Anthropic capacity snapshot does not apply to them.
+FORWARDER_SEATS = {
+    "codex-sol",
+    "codex-verifier",
+    "codex-test-runner",
+    "computer-use",
+    "cursor-seat",
+    "devin-seat",
+    "gpt-implementer",
+    "luna-implementer",
+    "gpt-explorer",
+    "sol-consult",
+}
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
 SNAPSHOT_MAX_FUTURE_SECONDS = 60
@@ -59,7 +72,7 @@ def emit_deny(reason: str) -> None:
                     "permissionDecisionReason": (
                         "seat-guard: " + reason + ". No seat or subagent runs on Fable or a retired model "
                         "(owner lineup 2026-09-22). Name a family alias instead: `opus`/`sonnet` for Claude "
-                        "seats, `route resolve sol-latest|astra-latest|terra-latest|luna-latest` for Codex; "
+                        "seats, `route resolve sol-latest|luna-latest` for Codex; "
                         "`route pick <class>` picks the seat. Canon: ~/.agents/policy/coding-agents/ROUTING.md."
                     ),
                 }

@@ -74,22 +74,21 @@
     "implement": {
       "chain": [
         {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic",
-          "min_pace": -10
-        },
-        {
-          "seat": "codex-sol",
+          "seat": "gpt-implementer",
           "model": "sol-latest",
           "vendor": "openai",
           "effort": "medium"
         },
         {
-          "seat": "implementer",
-          "model": "terra-latest",
-          "vendor": "openai",
-          "effort": "medium"
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic"
+        },
+        {
+          "seat": "opus-seat",
+          "model": "opus-latest",
+          "vendor": "anthropic",
+          "min_pace": -10
         }
       ],
       "audit": {
@@ -129,10 +128,16 @@
           }
         }
       },
-      "note": "Correctness-sensitive core code (balancer, routing, state, auth, money paths). Opus while its pool is on weekly pace in the ok band, else Codex Sol; Grok is not used here."
+      "note": "Code to a spec with a check command. gpt-implementer (newest Sol, medium, Claude Code subagent through the agent-lb ccgpt bridge), then sonnet-implementer, then Opus behind the pace gate. The ladder is ~/.claude/rules/models.md; climb a rung when a piece still fails its check after two tries."
     },
     "mechanical": {
       "chain": [
+        {
+          "seat": "luna-implementer",
+          "model": "luna-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
         {
           "seat": "cursor-seat",
           "model": "grok-latest",
@@ -181,7 +186,7 @@
           }
         }
       },
-      "note": "Bounded mechanical edits with a tight spec: Grok on Cursor, then SWE-2 on Devin. Both run through `seat run`, which picks a healthy account and fails over on limits."
+      "note": "Grunt work with a tight spec and a check: luna-implementer (newest Luna, medium, ccgpt bridge) first, then Grok on Cursor and SWE-2 on Devin through `seat run`, which picks a healthy account and fails over on limits."
     },
     "verify": {
       "cross_vendor": true,
@@ -233,7 +238,6 @@
     "opus-latest": "anthropic-general",
     "sonnet-latest": "anthropic-general",
     "sol-latest": "openai-codex",
-    "terra-latest": "openai-codex",
     "luna-latest": "openai-codex",
     "grok-latest": "cursor",
     "grok-latest-low": "cursor",
@@ -473,17 +477,15 @@
         "sol-latest"
       ],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
-      "implementation": "implement (core: balancer, routing, state, auth, money paths): opus-latest while anthropic-general is on weekly pace in the ok band, else sol-latest via codex-sol, terra-latest when served; mechanical (tight-spec edits): grok-latest. Every closeout audited by the other vendor: sol-latest for Anthropic authors, opus-latest otherwise."
+      "implementation": "~/.claude/rules/models.md is the local source (2026-09-25): Opus plans, specs, designs and verifies; implement goes gpt-implementer (sol-latest, medium) > sonnet-implementer > opus-latest (pace-gated); mechanical goes luna-implementer (luna-latest, medium) > cursor-seat (grok-latest) > devin-seat (swe-latest)."
     }
   },
   "notes": [
     "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
     "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus orchestrates; cheaper seats implement; the other vendor's stronger model audits (classes.*.audit).",
-    "2026-09-22: gpt-6-terra is not in the upstream model catalog for these accounts (the LB answers 503 no available accounts), so terra-latest resolves to nothing and implement falls through to grok-latest.",
-    "2026-09-22 (owner): while the Anthropic general pool is on pace or ahead, Opus takes implement first (min_pace -10, the policy's behind threshold) with Cursor Grok as the fallback; Opus-written code is audited by sol-latest. `route record` logs each implement outcome and `route report --implement` compares seats per model.",
     "2026-09-22: glm-*/kimi-* chain entries removed: cursor-agent serves neither (cursor-agent --list-models) and no other seat dispatches them, so they could only ever resolve to a literal wildcard. Re-add them behind a family alias once a seat can run GLM or Kimi.",
-    "2026-09-22 (orchestrator, after the first A/B: Opus 1/2 audit pass, Grok 0/2): implement is correctness-sensitive core work on Opus (pace-gated) with Codex Sol as the fallback; Grok takes only the mechanical class. Both keep the cross-vendor audit; rerun `route report --implement` once each arm has n >= 10.",
-    "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
+    "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB.",
+    "2026-09-25: the `implementer` seat (a Sonnet forwarder to Codex terra-latest) is retired. terra-latest is unserved (gpt-6-terra is not in the upstream catalog, gpt-5.6-terra is retired) and no seat uses it. Implementation runs on the ccgpt-bridge seats gpt-implementer and luna-implementer, local unmanaged definitions in ~/.claude/agents."
   ],
   "aliases": {
     "opus-latest": {
@@ -504,12 +506,12 @@
     "terra-latest": {
       "vendor": "openai",
       "family": "terra",
-      "note": "newest non-retired gpt-*-terra the LB serves; none today (gpt-6-terra is not in the upstream catalog, gpt-5.6-terra is retired), so it is skipped until one ships"
+      "note": "unserved as of 2026-09-25 (gpt-6-terra is not in the upstream catalog, gpt-5.6-terra is retired); no seat uses it"
     },
     "luna-latest": {
       "vendor": "openai",
       "family": "luna",
-      "note": "newest non-retired gpt-*-luna the LB serves (Codex-native delegation only)"
+      "note": "newest non-retired gpt-*-luna the LB serves"
     },
     "grok-latest": {
       "vendor": "cursor",

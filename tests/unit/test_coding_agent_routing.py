@@ -38,18 +38,21 @@ def test_implementation_is_cheap_and_audited_by_the_other_vendor() -> None:
     agents = ROOT / "config" / "coding-agents" / "agents"
     table = json.loads((ROOT / "config" / "coding-agents" / "routing-table.json").read_text())
 
-    assert 'route resolve terra-latest)" --effort medium --write' in (agents / "implementer.md").read_text()
+    assert not (agents / "implementer.md").exists()
     for name in ("codex-verifier", "codex-test-runner", "computer-use", "codex-sol"):
         assert 'route resolve sol-latest)"' in (agents / f"{name}.md").read_text()
     chain = table["classes"]["implement"]["chain"]
-    assert [entry["model"] for entry in chain[:2]] == ["opus-latest", "sol-latest"]
-    # Mechanical work runs on Cursor's Grok first, Devin's free SWE model when Cursor is out.
-    mechanical = table["classes"]["mechanical"]["chain"]
-    assert [(entry["seat"], entry["model"]) for entry in mechanical] == [
+    assert [(entry["seat"], entry["model"]) for entry in chain] == [
+        ("gpt-implementer", "sol-latest"),
+        ("sonnet-implementer", "sonnet-latest"),
+        ("opus-seat", "opus-latest"),
+    ]
+    assert [(entry["seat"], entry["model"]) for entry in table["classes"]["mechanical"]["chain"]] == [
+        ("luna-implementer", "luna-latest"),
         ("cursor-seat", "grok-latest"),
         ("devin-seat", "swe-latest"),
     ]
-    assert chain[0]["min_pace"] == table["policy"]["pace"]["behind_lt"]
+    assert chain[-1]["min_pace"] == table["policy"]["pace"]["behind_lt"]
     audit = table["classes"]["implement"]["audit"]["by_author_vendor"]
     assert audit["anthropic"]["model"] == "sol-latest"
     assert {audit[vendor]["model"] for vendor in ("openai", "cursor", "glm", "kimi")} == {"opus-latest"}
