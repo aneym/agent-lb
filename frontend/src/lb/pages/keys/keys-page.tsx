@@ -2,6 +2,13 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Copy, Play, Plus, UserRound } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -46,6 +53,7 @@ const dateLabel = (date: string) =>
   new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(date));
 const money = (amount: number) =>
   `$${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(amount)}`;
+const keyCount = (count: number) => `${count} ${count === 1 ? "key" : "keys"}`;
 const runKey = (key: KeyWithOwner) =>
   /^of-/i.test(key.name) ||
   (key.expiresAt !== null &&
@@ -62,13 +70,17 @@ function Meter({ value, max }: { value: number; max: number }) {
 function ConnectClient() {
   const [client, setClient] = useState("claude");
   const address = useConnectAddress();
-  const base = address.data?.connectAddress;
+  const configuredAddress = address.data?.connectAddress;
+  const base =
+    configuredAddress && !configuredAddress.includes("<agent-lb-ip-or-dns>")
+      ? configuredAddress.replace(/\/$/, "")
+      : window.location.origin;
   const snippet =
     client === "claude"
-      ? `# from any machine on your private network\nexport ANTHROPIC_BASE_URL=${base ?? "<connect address unavailable>"}\nexport ANTHROPIC_API_KEY=${placeholder}`
+      ? `# from any machine on your private network\nexport ANTHROPIC_BASE_URL=${base}\nexport ANTHROPIC_API_KEY=${placeholder}`
       : client === "codex"
-        ? `# from any machine on your private network\nexport OPENAI_BASE_URL=${base ?? "<connect address unavailable>"}/v1\nexport OPENAI_API_KEY=${placeholder}`
-        : `# OpenAI SDK\nexport OPENAI_BASE_URL=${base ?? "<connect address unavailable>"}/v1\nexport OPENAI_API_KEY=${placeholder}`;
+        ? `# from any machine on your private network\nexport OPENAI_BASE_URL=${base}/v1\nexport OPENAI_API_KEY=${placeholder}`
+        : `# OpenAI SDK\nexport OPENAI_BASE_URL=${base}/v1\nexport OPENAI_API_KEY=${placeholder}`;
   return (
     <section className="connect keys-connect">
       <div className="top2">
@@ -89,7 +101,6 @@ function ConnectClient() {
           type="button"
           className="btn ghost sm icon"
           aria-label="Copy connection snippet"
-          disabled={!base}
           onClick={() =>
             void navigator.clipboard.writeText(snippet).then(
               () => toast.success("Snippet copied"),
@@ -100,7 +111,11 @@ function ConnectClient() {
           <Copy size={16} />
         </button>
       </div>
-      {address.isError && <span role="alert">Connect address unavailable. Try again later.</span>}
+      {(!configuredAddress || configuredAddress.includes("<agent-lb-ip-or-dns>")) && (
+        <span className="muted">
+          Using this page's address; use your private-network address from other machines.
+        </span>
+      )}
     </section>
   );
 }
@@ -170,7 +185,11 @@ function KeyRow({
         {apiKey.lastUsedAt ? relative(apiKey.lastUsedAt) : "never"}
       </span>
       <span className="c-exp muted">
-        {expires === null ? "never" : expires <= 0 ? "expired" : `in ${duration(expires)}`}
+        {expires === null
+          ? "never"
+          : expires <= 0
+            ? `expired ${dateLabel(apiKey.expiresAt!)}`
+            : `in ${duration(expires)}`}
       </span>
       <div className="c-more">
         <RowMenu
@@ -178,7 +197,11 @@ function KeyRow({
           items={[
             { label: "Edit limits", onSelect: () => onEdit(apiKey) },
             { label: "Regenerate", onSelect: () => onRegenerate(apiKey) },
-            { label: "Revoke", onSelect: () => onRevoke(apiKey), hidden: !apiKey.isActive },
+            {
+              label: "Revoke",
+              onSelect: () => onRevoke(apiKey),
+              hidden: !apiKey.isActive,
+            },
           ]}
         />
       </div>
@@ -220,9 +243,17 @@ function OwnerGroup({
   const cap =
     member &&
     (member.costCapWeekUsd != null
-      ? { limit: member.costCapWeekUsd, value: member.usage.week.costUsd, reset: "Mon" }
+      ? {
+          limit: member.costCapWeekUsd,
+          value: member.usage.week.costUsd,
+          reset: "Mon",
+        }
       : member.costCapDayUsd != null
-        ? { limit: member.costCapDayUsd, value: member.usage.day.costUsd, reset: "tomorrow" }
+        ? {
+            limit: member.costCapDayUsd,
+            value: member.usage.day.costUsd,
+            reset: "tomorrow",
+          }
         : member.costCapMonthUsd != null
           ? {
               limit: member.costCapMonthUsd,
@@ -251,7 +282,10 @@ function OwnerGroup({
               label={`Manage ${member.name}`}
               items={[
                 { label: "Issue key", onSelect: () => onIssueKey(member) },
-                { label: "Edit caps and details", onSelect: () => onEditMember(member) },
+                {
+                  label: "Edit caps and details",
+                  onSelect: () => onEditMember(member),
+                },
                 {
                   label: member.status === "active" ? "Suspend" : "Reactivate",
                   onSelect: () => onSuspend(member),
@@ -301,7 +335,9 @@ export function KeysPage() {
     queryFn: () => get("/api/api-keys/", z.array(KeyWithOwnerSchema)),
   });
   const [owner, setOwner] = useState("");
+  const [choosingOwner, setChoosingOwner] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [showRevoked, setShowRevoked] = useState(false);
   const [created, setCreated] = useState<string | null>(null);
   const [editing, setEditing] = useState<ApiKey | null>(null);
   const [revoke, setRevoke] = useState<KeyWithOwner | null>(null);
@@ -311,8 +347,11 @@ export function KeysPage() {
   const [suspend, setSuspend] = useState<TeamMember | null>(null);
   const [onboarding, setOnboarding] = useState<TeamMember | null>(null);
   const members = membersQuery.data ?? [];
+  const revoked = (ownerKeys.data ?? apiKeysQuery.data ?? []).filter((key) => !key.isActive);
   const { personal, byMember, runs } = useMemo(() => {
-    const keys: KeyWithOwner[] = ownerKeys.data ?? apiKeysQuery.data ?? [];
+    const keys: KeyWithOwner[] = (ownerKeys.data ?? apiKeysQuery.data ?? []).filter(
+      (key) => key.isActive,
+    );
     const personal: KeyWithOwner[] = [];
     const byMember = new Map<string, KeyWithOwner[]>();
     const runs: KeyWithOwner[] = [];
@@ -326,7 +365,14 @@ export function KeysPage() {
   }, [ownerKeys.data, apiKeysQuery.data]);
   const refresh = () => void queryClient.invalidateQueries({ queryKey: keysQueryKey });
   const createKey = async (payload: ApiKeyCreateRequest) => {
-    if (owner) {
+    if (owner === "run") {
+      payload = {
+        ...payload,
+        name: /^of-/i.test(payload.name) ? payload.name : `of-${payload.name}`,
+        expiresAt: payload.expiresAt ?? new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      };
+    }
+    if (owner && owner !== "run") {
       const result = await issueKeyMutation.mutateAsync({
         memberId: owner,
         payload: { name: payload.name, expiresAt: payload.expiresAt },
@@ -344,7 +390,10 @@ export function KeysPage() {
             value !== undefined && value !== null && value !== false && value !== "foreground",
         )
       ) {
-        await updateMutation.mutateAsync({ keyId: result.id, payload: restrictions });
+        await updateMutation.mutateAsync({
+          keyId: result.id,
+          payload: restrictions,
+        });
       }
     } else {
       const result = await createMutation.mutateAsync(payload);
@@ -382,7 +431,9 @@ export function KeysPage() {
   };
   const issueKey = async (member: TeamMember) => {
     try {
-      const result = await issueKeyMutation.mutateAsync({ memberId: member.id });
+      const result = await issueKeyMutation.mutateAsync({
+        memberId: member.id,
+      });
       setCreated(result.key);
       refresh();
     } catch {
@@ -421,21 +472,10 @@ export function KeysPage() {
       <PageHead
         title="Keys"
         action={
-          <div className="keys-create">
-            <label htmlFor="key-owner">Owner</label>
-            <select id="key-owner" value={owner} onChange={(event) => setOwner(event.target.value)}>
-              <option value="">You</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {member.name}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="btn primary" onClick={() => setCreating(true)}>
-              <Plus size={16} />
-              New key
-            </button>
-          </div>
+          <button type="button" className="btn primary" onClick={() => setChoosingOwner(true)}>
+            <Plus size={16} />
+            New key
+          </button>
         }
       >
         Every client that talks to agent-lb uses a key. Spend caps, account limits and usage attach
@@ -457,12 +497,12 @@ export function KeysPage() {
             <span>Expires</span>
             <span />
           </div>
-          <OwnerGroup name="You" detail={`${personal.length} keys`} keys={personal} {...actions} />
+          <OwnerGroup name="You" detail={keyCount(personal.length)} keys={personal} {...actions} />
           {members.map((member) => (
             <OwnerGroup
               key={member.id}
               name={member.name}
-              detail={`team member · ${byMember.get(member.id)?.length ?? 0} keys${member.status === "suspended" ? " · suspended" : ""}`}
+              detail={`team member · ${keyCount(byMember.get(member.id)?.length ?? 0)}${member.status === "suspended" ? " · suspended" : ""}`}
               keys={byMember.get(member.id) ?? []}
               member={member}
               {...actions}
@@ -470,11 +510,31 @@ export function KeysPage() {
           ))}
           <OwnerGroup
             name="Run keys"
-            detail={`expiry within 7 days or of- name · ${runs.filter((key) => key.isActive).length} live`}
+            detail={`expiry within 7 days or of- name · ${keyCount(runs.length)} live`}
             keys={runs}
-            onRevokeAll={() => setRevokeRuns(true)}
+            onRevokeAll={runs.length > 0 ? () => setRevokeRuns(true) : undefined}
             {...actions}
           />
+          {revoked.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="keys-revoked-toggle"
+                aria-expanded={showRevoked}
+                onClick={() => setShowRevoked((shown) => !shown)}
+              >
+                {showRevoked ? "Hide" : "Show"} {keyCount(revoked.length)} revoked
+              </button>
+              {showRevoked && (
+                <OwnerGroup
+                  name="Revoked keys"
+                  detail={keyCount(revoked.length)}
+                  keys={revoked}
+                  {...actions}
+                />
+              )}
+            </>
+          )}
         </div>
         <button
           type="button"
@@ -487,15 +547,61 @@ export function KeysPage() {
         <div className="qline">
           <span>Run keys from a script:</span>
           <code>
-            POST {typeof window === "undefined" ? "" : window.location.origin}/api/api-keys{" "}
+            POST {typeof window === "undefined" ? "" : window.location.origin}
+            /api/api-keys{" "}
             {JSON.stringify({
               name: "of-eval · arm-d",
               expires_at: "2026-09-26T14:00Z",
-              limits: [{ limit_type: "cost_usd", limit_window: "weekly", max_value: 40 }],
+              limits: [
+                {
+                  limit_type: "cost_usd",
+                  limit_window: "weekly",
+                  max_value: 40,
+                },
+              ],
             })}
           </code>
         </div>
       </Section>
+      <Dialog open={choosingOwner} onOpenChange={setChoosingOwner}>
+        <DialogContent className="keys-owner-dialog">
+          <DialogHeader>
+            <DialogTitle>Who is this key for?</DialogTitle>
+            <DialogDescription>
+              Choose an owner before setting the key's restrictions.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="keys-owner-options">
+            {[
+              { id: "", label: "You", detail: "A personal key" },
+              ...members.map((member) => ({
+                id: member.id,
+                label: member.name,
+                detail: "Team member",
+              })),
+              {
+                id: "run",
+                label: "Run key",
+                detail: "A short-lived key for scripts",
+              },
+            ].map((choice) => (
+              <button
+                key={choice.id}
+                type="button"
+                className="keys-owner-option"
+                onClick={() => {
+                  setOwner(choice.id);
+                  setChoosingOwner(false);
+                  setCreating(true);
+                }}
+              >
+                <strong>{choice.label}</strong>
+                <span>{choice.detail}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
       <ApiKeyCreateDialog
         open={creating}
         busy={createMutation.isPending || issueKeyMutation.isPending}
@@ -583,7 +689,9 @@ export function KeysPage() {
             void updateMember
               .mutateAsync({
                 memberId: suspend.id,
-                payload: { status: suspend.status === "active" ? "suspended" : "active" },
+                payload: {
+                  status: suspend.status === "active" ? "suspended" : "active",
+                },
               })
               .then(() => setSuspend(null));
         }}
