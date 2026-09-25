@@ -381,9 +381,58 @@ def stop_leftover_standby(drain_seconds: int) -> None:
         os.kill(pid, signal.SIGTERM)
     except OSError:
         pass
+    spawn_reaper(pid, drain_seconds)
     wait_until(lambda: listener_pid(STANDBY_PORT) is None, 15)
     say("leftover standby stopped listening; it drains in the background")
     STANDBY_PIDFILE.unlink(missing_ok=True)
+
+
+# A standby that got SIGTERM must exit within its drain bound. On 2026-09-25 two
+# stopped standbys hung in lifespan shutdown for 10+ minutes, still running
+# their schedulers and holding ~250 upstream sockets each. launchd bounds the
+# primary with ExitTimeOut; this reaper is the same bound for the standby.
+REAP_MARGIN_S = 90  # app drain (shutdown_drain_timeout_seconds 30) plus slack
+
+
+def is_standby(pid: int) -> bool:
+    out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+    return "agent-lb" in out and f"--port {STANDBY_PORT}" in out
+
+
+def spawn_reaper(pid: int, drain_seconds: int) -> None:
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "--reap", str(pid), str(drain_seconds + REAP_MARGIN_S)],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def reap(pid: int, deadline_s: float) -> int:
+    """Wait for a stopped standby to exit; past the deadline dump its stacks and SIGKILL it."""
+    end = time.monotonic() + deadline_s
+    while time.monotonic() < end:
+        if not pid_alive(pid) or not is_standby(pid):
+            return 0
+        time.sleep(2)
+    if not pid_alive(pid) or not is_standby(pid):
+        return 0
+    try:
+        os.kill(pid, signal.SIGUSR2)  # app.core.forensics: all-thread stack dump
+        time.sleep(2)
+    except OSError:
+        pass
+    for kill in (lambda: os.killpg(os.getpgid(pid), signal.SIGKILL), lambda: os.kill(pid, signal.SIGKILL)):
+        try:
+            kill()
+        except OSError:
+            pass
+    sync_log(
+        f"lb-restart reaper: standby pid {pid} still alive {int(deadline_s)}s after SIGTERM; "
+        "stack dump requested (SIGUSR2, forensics log), then SIGKILL"
+    )
+    return 1
 
 
 # ---------------------------------------------------------------- primary
@@ -430,6 +479,8 @@ def exit_timeout() -> int:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--reap"]:
+        return reap(int(sys.argv[2]), float(sys.argv[3]))
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--reason", required=True, help="Why; goes into sync.log.")
     p.add_argument("--from", dest="src", type=Path, help="Source root (a worktree) for --files.")
@@ -569,11 +620,12 @@ def run(args) -> int:
     stats["standby_in_flight_at_cutover"] = in_flight(STANDBY_PORT)
     # SIGTERM closes the standby's listener at once, so the port is free for
     # the next restart; the process finishes its in-flight streams on its own
-    # (uvicorn graceful bound) and exits. Nobody needs to wait for that.
+    # (uvicorn graceful bound) and exits; a detached reaper kills it if it hangs.
     try:
         os.killpg(standby.pid, signal.SIGTERM)
     except OSError:
         pass
+    spawn_reaper(standby.pid, drain)
     wait_until(lambda: listener_pid(STANDBY_PORT) is None, 10)
     STANDBY_PIDFILE.unlink(missing_ok=True)
     stats["total_s"] = round(time.monotonic() - T0, 1)
