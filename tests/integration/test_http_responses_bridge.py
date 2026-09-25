@@ -9766,3 +9766,48 @@ async def test_backend_responses_http_bridge_leaves_nonempty_completed_output_un
     assert len(completed_events) == 1
     completed_output = completed_events[0]["response"]["output"]
     assert [item.get("id") for item in completed_output] == ["cmp_from_upstream"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rejection", ["upstream_403", "refresh_needs_reauth"])
+async def test_ccgpt_turn_moves_to_another_account_when_its_account_rejects_it(async_client, monkeypatch, rejection):
+    # Claude Code answers a 401/403 with "run /login" and stops. When the account a
+    # bridged turn lands on rejects it (an upstream 403, or a token refresh that
+    # needs reauth) and another account is usable, the turn must run there instead.
+    _install_bridge_settings(monkeypatch, enabled=True)
+    await _import_account(async_client, "acc_ccgpt_reject_a", "ccgpt-reject-a@example.com")
+    await _import_account(async_client, "acc_ccgpt_reject_b", "ccgpt-reject-b@example.com")
+    fake_upstream = _FakeBridgeUpstreamWebSocket()
+    attempts: list[str] = []
+
+    async def fake_ensure_fresh_with_budget(self, target, *, force=False, timeout_seconds):
+        del self, force, timeout_seconds
+        attempts.append(target.chatgpt_account_id)
+        if rejection == "refresh_needs_reauth" and len(attempts) == 1:
+            raise proxy_module.RefreshError("refresh_token_invalidated", "reauth required", True)
+        return target
+
+    async def fake_connect_responses_websocket(
+        headers, access_token, account_id_header, *, base_url=None, session=None
+    ):
+        del headers, access_token, base_url, session
+        if rejection == "upstream_403" and account_id_header == attempts[0]:
+            raise proxy_module.ProxyResponseError(403, proxy_module.openai_error("forbidden", "Forbidden"))
+        return fake_upstream
+
+    monkeypatch.setattr(proxy_module.ProxyService, "_ensure_fresh_with_budget", fake_ensure_fresh_with_budget)
+    monkeypatch.setattr(proxy_module, "connect_responses_websocket", fake_connect_responses_websocket)
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "gpt-6-sol",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}],
+            "metadata": {"user_id": json.dumps({"session_id": "ccgpt-reject-session"})},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["content"][0]["text"] == "OK"
+    assert len(attempts) == 2 and attempts[0] != attempts[1]

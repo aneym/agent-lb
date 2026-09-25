@@ -202,10 +202,10 @@ def estimate_claude_input_tokens(payload: Mapping[str, JsonValue]) -> int:
 
 
 async def responses_to_claude_events(
-    source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL
+    source: AsyncIterator[bytes | str], model: str = CCGPT_MODEL, input_tokens_estimate: int = 0
 ) -> AsyncIterator[JsonObject]:
     """Translate an upstream Responses SSE byte stream into Anthropic Messages events."""
-    state = _ClaudeStreamState(actual_model=model)
+    state = _ClaudeStreamState(actual_model=model, input_tokens_estimate=input_tokens_estimate)
     buffer = ""
     async for chunk in source:
         buffer += chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
@@ -549,6 +549,10 @@ class _ClaudeStreamState:
     emitted_text: bool = False
     emitted_tool: bool = False
     actual_model: str = CCGPT_MODEL
+    # Upstream usage arrives only with response.completed, but Claude Code can
+    # record a turn's content blocks with message_start's usage before
+    # message_delta lands; a 0/0 start shows up as "0 tok".
+    input_tokens_estimate: int = 0
 
     def consume(self, event: JsonObject) -> list[JsonObject]:
         event_type = event.get("type")
@@ -673,7 +677,7 @@ class _ClaudeStreamState:
                     "content": [],
                     "stop_reason": None,
                     "stop_sequence": None,
-                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                    "usage": {"input_tokens": self.input_tokens_estimate, "output_tokens": 0},
                 },
             }
         ]
@@ -714,9 +718,14 @@ class _ClaudeStreamState:
             if isinstance(details, dict):
                 cache_tokens = _int_value(details.get("cached_tokens"))
         stop_reason = "tool_use" if self.emitted_tool else "end_turn"
-        message_usage: JsonObject = {"input_tokens": input_tokens, "output_tokens": output_tokens}
-        if cache_tokens:
-            message_usage["cache_read_input_tokens"] = cache_tokens
+        # OpenAI's input_tokens include the cached ones; Anthropic's exclude cache
+        # reads. OpenAI does not report cache writes.
+        message_usage: JsonObject = {
+            "input_tokens": max(0, input_tokens - cache_tokens),
+            "cache_read_input_tokens": cache_tokens,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": output_tokens,
+        }
         output.extend(
             [
                 {

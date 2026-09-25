@@ -444,6 +444,10 @@ async def test_proxy_codex_session_id_pins_responses_and_compact_without_sticky_
 
 @pytest.mark.asyncio
 async def test_proxy_codex_session_id_reallocates_when_pinned_budget_exhausted(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_OPENAI_STICKY_HOLD_UNTIL_EXHAUSTED", "false")
+    get_settings.cache_clear()
     await _set_routing_settings(async_client, sticky_threads_enabled=False)
     acc_a_id = await _import_account(async_client, "acc_sid_budget_a", "sid_budget_a@example.com")
     acc_b_id = await _import_account(async_client, "acc_sid_budget_b", "sid_budget_b@example.com")

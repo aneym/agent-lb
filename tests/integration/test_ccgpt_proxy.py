@@ -306,6 +306,80 @@ async def test_ccgpt_non_overflow_error_stays_api_error(async_client, monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_ccgpt_account_rejection_is_retryable_not_a_login_prompt(
+    async_client, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    # Every Codex account rejected the turn. The caller's own key is fine, so the
+    # client must get a retryable error, not the 401/403 that makes Claude Code
+    # stop and ask for /login.
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        return proxy_api._stream_startup_error_response(
+            request,
+            ProxyResponseError(status, {"error": {"code": "forbidden", "message": "Forbidden"}}),
+            headers={},
+        )
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+
+    response = await async_client.post(
+        "/v1/ccgpt/messages",
+        json={
+            "model": "claude-opus-4-6",
+            "max_tokens": 1024,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "api_error"
+
+
+@pytest.mark.asyncio
+async def test_ccgpt_stream_reports_usage_the_way_anthropic_does(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Claude Code can record a turn's content blocks before message_delta arrives,
+    # with message_start's usage; a 0/0 start shows as "0 tok". The final usage
+    # splits OpenAI's input (which includes cached tokens) into uncached input and
+    # cache reads, as Anthropic reports them.
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        async def source():
+            yield 'data: {"type":"response.created","response":{"id":"resp_usage","model":"gpt-6-sol"}}\n\n'
+            yield 'data: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+            yield (
+                'data: {"type":"response.completed","response":{"usage":{"input_tokens":8258,'
+                '"output_tokens":363,"input_tokens_details":{"cached_tokens":7424}}}}\n\n'
+            )
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+
+    async with async_client.stream(
+        "POST",
+        "/v1/ccgpt/messages",
+        json={
+            "model": "claude-opus-4-6",
+            "max_tokens": 1024,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello " * 400}],
+        },
+    ) as response:
+        body = (await response.aread()).decode()
+
+    events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
+    start = next(event for event in events if event["type"] == "message_start")
+    delta = next(event for event in events if event["type"] == "message_delta")
+    assert start["message"]["usage"]["input_tokens"] > 400
+    assert delta["usage"] == {
+        "input_tokens": 834,
+        "cache_read_input_tokens": 7424,
+        "cache_creation_input_tokens": 0,
+        "output_tokens": 363,
+    }
+
+
+@pytest.mark.asyncio
 async def test_ccgpt_count_tokens_is_local_and_native(async_client) -> None:
     response = await async_client.post(
         "/v1/ccgpt/messages/count_tokens",

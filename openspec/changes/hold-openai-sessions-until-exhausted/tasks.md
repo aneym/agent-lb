@@ -1,0 +1,6 @@
+- [x] Add `openai_sticky_hold_until_exhausted` (default on): no budget-pressure move, no headroom reallocation, no burn-first drain for pinned OpenAI sessions; a rate-limited or quota-exceeded pin's failover persists.
+- [x] Integration test: a prompt-cache pin at 85% over an 80% threshold stays; after an upstream 429 it fails over, and it stays on the new account after the old one recovers. Fails on the old code.
+- [ ] Live: after deploy, trailing-day OpenAI `sticky_session_rebound` reasons contain no `budget_pressure` or `burn_first_drain`, and bridged GPT conversations show one account each in `request_log_query.py --session`.
+- [x] Bridge: a 401/403 or permanent refresh failure on the chosen account excludes it and retries the turn on another account; the ccgpt route maps a leftover 401/403 to a retryable 503. Integration tests fail on the old code.
+- [x] Bridge stream usage: `message_start` carries the input estimate; `message_delta` carries input excluding cache reads, cache read, cache creation and output. Integration test fails on the old code.
+- [ ] Live: a fresh gpt-implementer transcript has nonzero usage on every assistant message.

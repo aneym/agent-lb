@@ -1,0 +1,9 @@
+{
+  "note": "of-work arms (PROGRAM.md D5). Full model ids; agent-lb serves every call. Agents come from clients/open-factory/harbor/agents.py.",
+  "arms": {
+    "A1-cc-opus":   {"agent": "agents:PrebakedClaudeCode", "model": "claude-opus-5-5"},
+    "A2-cc-sonnet": {"agent": "agents:PrebakedClaudeCode", "model": "claude-sonnet-5"},
+    "A4-codex-sol": {"agent": "agents:PrebakedCodex", "model": "gpt-6-sol"},
+    "A4l-codex-luna": {"agent": "agents:PrebakedCodex", "model": "gpt-6-luna"}
+  }
+}

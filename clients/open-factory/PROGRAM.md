@@ -222,8 +222,10 @@ D7. **Datasets.** (1) `of-work`, our own Harbor dataset built from real agent-ra
     environment, an instruction written from the PR's intent (not its diff), and
     tests from the PR plus the touched module's suite as the verifier. Classes:
     small/medium implement, bug fix with regression test, mechanical sweep, and
-    planted-bug review with a checkable finding. Dev split lives in git
-    (`clients/open-factory/evals/of-work/dev/`); the held-out split is written by a
+    planted-bug review with a checkable finding. The generator, calibrator and runner
+    live in git (`clients/open-factory/evals/of-work/`); the task dirs do not, because
+    agent-rails is private and this repo is public (amended 2026-09-25): dev tasks are
+    built to `~/.agent-lb/of/dataset/v0/tasks/` from the sealed `dev.json`. The held-out split is written by a
     separate agent into `~/.agent-lb/of/heldout/`, only its sha256 manifest is
     committed, and the orchestrator does not read it before the final run.
     (2) One public Harbor-hub dataset (Terminal-Bench style) for comparability with
@@ -284,8 +286,8 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 | 1 | Orient, plan (this section) | done 2026-09-25 |
 | 2 | One router: `route menu` (menu builder with live headroom and resets), OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | done 2026-09-25 (`jev pick` added in the jev repo, e6f17bf) |
 | 3 | Harbor gate (D6): container -> agent-lb auth for claude-code and codex, smoke trials | done 2026-09-25 |
-| 4 | `of-work` v0: 10 dev tasks from real PRs as Harbor tasks + sealed held-out manifest | next |
-| 5 | Eval v0: arms A1, A2, A4 on dev, k=3, CIs, receipts | |
+| 4 | `of-work` v0: 10 dev tasks from real PRs as Harbor tasks + sealed held-out manifest | done 2026-09-25: 33 calibrated dev tasks, oracle 33/33, 25 sealed held-out |
+| 5 | Eval v0: arms A1, A2, A4 on dev, k=3, CIs, receipts | next |
 | 6 | A3 (cc + OF routing) as a Harbor agent; Jev sub-arm with re-check/abstain/fallback; policy replay | |
 | 7 | A5/A6 arms, GPT-inside-Claude-Code after the bridge fix, public dataset subset | |
 | 8 | Held-out run, report (pretty-doc on tailnet), Alex review, publish on approval | |
@@ -344,3 +346,11 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 - 2026-09-25: `route --class implement` picked sonnet-implementer while Codex had room. The menu was right, with gpt-implementer at its head. The cause was the capability blurbs: Jev rated GPT Sol's fit at 0.60-0.69 for plain implementation tasks ("strong coding" versus Sonnet's "lower cost").
   - Fix (decider policy v3): the blurbs now state the seat ladder from models.md, and the chain head is the house default, which the host keeps whenever the decider's fit for it is ≥ 0.8.
   - Live eval `clients/open-factory/evals/decider/` (10 cases: 6 implement, 4 mechanical). Before: 4/10. After: 10/10 in 3 runs, where Jev picked directly in 6-8 of 10 and abstained to the chain head in the rest.
+- 2026-09-25: M4 done. `of-work` v0 dev = 33 Harbor tasks (34 frozen; agent-lb-ba15f0a0 dropped because no test fails without its fix inside the image). Pipeline in `evals/of-work/`:
+  - `build_tasks.py` writes each task from `dev.json`: the base commit via `of-checkout` on a pinned base image, egress allowlisted to agent-lb, the fix's test diff applied at grading, and reward 1 only if every required test passes.
+  - `calibrate.py` re-derives FAIL_TO_PASS/PASS_TO_PASS inside the image from one oracle and one nop pass, SWE-bench style. The miner's host lists did not all hold in the image (host python paths in parametrized ids, tests that need host tools). One task was dropped; three had their lists narrowed.
+  - `prebuild.py` builds each task image once under a content-hashed tag. Harbor otherwise rebuilt and deleted it on every trial. Median env setup fell from about 25 s to 7 s, max from 124 s to 41 s.
+  - Oracle on the calibrated, prebuilt set: 33/33 at reward 1.0 in 6.5 min (-n 4). Egress sidecars were up during the run.
+  - `run_arms.py` + `arms.json` run the M5 arms. `summarize.py` reports cluster-bootstrap CIs, paired differences and agent-lb receipts joined per trial by session id.
+  - Egress: Harbor allowlist to host.docker.internal, which the agents narrow to :2455, with web tools off. Probe trials show GitHub, PyPI, git ls-remote and other host ports blocked. `harbor/scan_trials.py` is the second layer.
+  - Base images: of-work/agent-lb-base:328b33b849ec and agent-rails-base:7adf4749e52f. They are never deleted or retagged, because a mid-run rebuild that deleted the pinned tags voided the first calibration.

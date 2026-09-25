@@ -1001,6 +1001,15 @@ async def _ccgpt_messages_response(
     if not isinstance(upstream, StreamingResponse):
         body = getattr(upstream, "body", b"")
         body_bytes = body if isinstance(body, bytes) else str(body).encode()
+        if upstream.status_code in (401, 403):
+            # The caller's key passed validation above, so this is a Codex account
+            # rejecting us after failover ran out of accounts. Claude Code answers
+            # a 401/403 with "run /login" and stops; a 503 makes it retry.
+            return _anthropic_error_response(
+                503,
+                "api_error",
+                f"No Codex account accepted the request (upstream HTTP {upstream.status_code}); retry shortly.",
+            )
         error = anthropic_error_from_response(upstream.status_code, body_bytes)
         return JSONResponse(content=error, status_code=upstream.status_code)
 
@@ -1010,7 +1019,11 @@ async def _ccgpt_messages_response(
     # (Claude Code only reactive-compacts on a failed HTTP request received before
     # it creates the assistant turn), while a failure after content stays in-band.
     startup_error, events = await split_startup_error(
-        responses_to_claude_events(upstream.body_iterator, model=locked_model)
+        responses_to_claude_events(
+            upstream.body_iterator,
+            model=locked_model,
+            input_tokens_estimate=estimate_claude_input_tokens(payload.model_dump(mode="json", exclude_none=True)),
+        )
     )
     if startup_error is not None:
         return JSONResponse(content=startup_error, status_code=anthropic_status_for_error(startup_error))

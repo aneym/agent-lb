@@ -1898,6 +1898,10 @@ class _HTTPBridgeMixin(
         retry_same_account_once = preferred_account_id is not None
         preferred_candidate_id = preferred_account_id
         selected_account_lease: AccountLease | None = None
+        # An account-level rejection (403, or a refresh that needs reauth) moves the
+        # connect to another account; it reaches the client only when no account
+        # is left. Claude Code reads a 401/403 as "run /login".
+        account_rejection: ProxyResponseError | None = None
         while True:
             select_kwargs = {
                 "request_id": request_state.request_log_id or request_state.request_id,
@@ -1921,6 +1925,8 @@ class _HTTPBridgeMixin(
             selection = await self._select_account_with_budget_for_stream(deadline, **select_kwargs)
             selected_account_lease = selection.lease
             account = selection.account
+            if account is not None and account_rejection is not None and account.id in excluded_account_ids:
+                account = None
             if account is None:
                 await self._load_balancer.release_account_lease(selected_account_lease)
                 selected_account_lease = None
@@ -1928,6 +1934,8 @@ class _HTTPBridgeMixin(
                     preferred_account_id=preferred_account_id,
                     selected_account_id=None,
                 )
+                if account_rejection is not None:
+                    raise account_rejection
                 status_code = 429 if _is_local_account_cap_code(selection.error_code) else 503
                 error_type = "rate_limit_error" if status_code == 429 else "server_error"
                 raise ProxyResponseError(
@@ -1978,6 +1986,18 @@ class _HTTPBridgeMixin(
                 )
                 break
             except ProxyResponseError as exc:
+                if (
+                    exc.status_code == 403
+                    and _remaining_budget_seconds(deadline) > 0
+                    and not (require_preferred_account and selected_is_preferred)
+                ):
+                    await self._handle_proxy_error(account, exc)
+                    account_rejection = exc
+                    excluded_account_ids.add(account.id)
+                    preferred_candidate_id = None
+                    await self._load_balancer.release_account_lease(selected_account_lease)
+                    selected_account_lease = None
+                    continue
                 if exc.status_code != 401 or _remaining_budget_seconds(deadline) <= 0:
                     await self._load_balancer.release_account_lease(selected_account_lease)
                     selected_account_lease = None
@@ -2055,14 +2075,20 @@ class _HTTPBridgeMixin(
                 if exc.is_permanent:
                     await self._load_balancer.release_account_lease(selected_account_lease)
                     selected_account_lease = None
-                    raise ProxyResponseError(
+                    rejection = ProxyResponseError(
                         401,
                         openai_error(
                             "invalid_api_key",
                             exc.message,
                             error_type="authentication_error",
                         ),
-                    ) from exc
+                    )
+                    if _remaining_budget_seconds(deadline) <= 0:
+                        raise rejection from exc
+                    account_rejection = rejection
+                    excluded_account_ids.add(account.id)
+                    preferred_candidate_id = None
+                    continue
                 if request_stage == "first_turn":
                     _record_bridge_first_turn_timeout()
                 await self._load_balancer.release_account_lease(selected_account_lease)
