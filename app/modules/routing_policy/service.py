@@ -29,10 +29,18 @@ def _live_paths() -> tuple[Path, Path]:
     installed = launcher.resolve().parents[1] / "open_factory/decider.json" if launcher.exists() else None
     decider = (
         installed
-        if installed and installed.is_file()
+        if installed and _readable(installed)
         else _REPO_ROOT / "clients/open-factory/open_factory/decider.json"
     )
     return table, decider
+
+
+def _readable(path: Path) -> bool:
+    # launchd services may be denied /Volumes; treat that like a missing file.
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _serialize(value: dict[str, Any]) -> str:
@@ -108,7 +116,7 @@ def detail(row: RoutingPolicyVersion, active: RoutingPolicyVersion | None) -> Po
 async def observe(repo: RoutingPolicyRepository) -> RoutingPolicyVersion:
     table_path, decider_path = _live_paths()
     table = _serialize(json.loads(table_path.read_text()))
-    decider = _serialize(json.loads(decider_path.read_text() if decider_path.is_file() else "{}"))
+    decider = _serialize(json.loads(decider_path.read_text() if _readable(decider_path) else "{}"))
     digest = _digest(table, decider)
     active = await repo.active()
     if active is not None and active.content_sha256 == digest:
