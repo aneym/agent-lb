@@ -102,6 +102,31 @@ def _status_for(headroom_percent: float | None) -> str:
     return POOL_STATUS_EXHAUSTED
 
 
+def _five_hour_fields(summaries: list[AccountSummary]) -> tuple[float | None, datetime | None]:
+    now = datetime.now(timezone.utc)
+    readings = [
+        summary
+        for summary in summaries
+        if summary.status == AccountStatus.ACTIVE.value
+        and is_pool_usable(summary)
+        and summary.window_minutes_primary == 300
+        and summary.usage is not None
+        and summary.usage.primary_remaining_percent is not None
+    ]
+    resets = [
+        reset
+        for summary in readings
+        if (reset := summary.reset_at_primary) is not None
+        and (reset if reset.tzinfo else reset.replace(tzinfo=timezone.utc)) > now
+    ]
+    return (
+        max((float(summary.usage.primary_remaining_percent) for summary in readings), default=None),
+        min(resets, key=lambda reset: reset if reset.tzinfo else reset.replace(tzinfo=timezone.utc))
+        if resets
+        else None,
+    )
+
+
 def _pool(
     *,
     pool_id: str,
@@ -172,7 +197,7 @@ def _fable_pool(anthropic: list[AccountSummary]) -> PoolSummary:
         and summary.status not in _LIMITED_STATUSES
         and _primary_remaining(summary) > 0.0
     )
-    return _pool(
+    pool = _pool(
         pool_id="anthropic-fable",
         provider=ANTHROPIC_PROVIDER_NAME,
         kind="fable_scoped",
@@ -180,6 +205,10 @@ def _fable_pool(anthropic: list[AccountSummary]) -> PoolSummary:
         candidates=candidates,
         eligible_accounts=eligible_accounts,
         source=POOL_SOURCE_SCOPED_MARKER if saw_fresh_marker else POOL_SOURCE_WEEKLY_HEURISTIC,
+    )
+    remaining, reset = _five_hour_fields(anthropic)
+    return pool.model_copy(
+        update={"five_hour_remaining_percent": remaining, "five_hour_reset_at": reset, "window_label": "week"}
     )
 
 
@@ -203,6 +232,10 @@ def _weekly_pool(
         kind="weekly",
         accounts=len(summaries),
         candidates=candidates,
+    )
+    remaining, reset = _five_hour_fields(summaries) if provider == ANTHROPIC_PROVIDER_NAME else (None, None)
+    pool = pool.model_copy(
+        update={"five_hour_remaining_percent": remaining, "five_hour_reset_at": reset, "window_label": "week"}
     )
     usable = [summary for summary in summaries if is_pool_usable(summary)]
     if not usable:
@@ -249,13 +282,16 @@ def _primary_window_pool(
         for summary in summaries
         if is_pool_usable(summary)
     ]
-    return _pool(
+    pool = _pool(
         pool_id=pool_id,
         provider=provider,
         kind="weekly",
         accounts=len(summaries),
         candidates=candidates,
     )
+    # Kimi and GLM have one short window and no weekly cap; report it as five-hour only when it is one.
+    remaining, reset = _five_hour_fields(summaries)
+    return pool.model_copy(update={"five_hour_remaining_percent": remaining, "five_hour_reset_at": reset})
 
 
 def build_pools(summaries: list[AccountSummary], *, generated_at: datetime | None = None) -> PoolsResponse:
@@ -299,4 +335,7 @@ class PoolsService:
         summaries = await self._accounts_service.list_accounts()
         response = build_pools(summaries)
         # Cursor and Devin never pass through the LB; their pools come from the seat CLI's state.
-        return response.model_copy(update={"pools": [*response.pools, *cli_seat_pools(read_seat_accounts())]})
+        seat_pools = [
+            pool.model_copy(update={"window_label": "month"}) for pool in cli_seat_pools(read_seat_accounts())
+        ]
+        return response.model_copy(update={"pools": [*response.pools, *seat_pools]})

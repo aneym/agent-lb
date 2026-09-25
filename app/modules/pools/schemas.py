@@ -30,6 +30,9 @@ class PoolSummary(DashboardModel):
     aggregate_remaining_percent: float | None = None
     # Reset of the window belonging to the account that supplies the headroom.
     reset_at: datetime | None = None
+    five_hour_remaining_percent: float | None = None
+    five_hour_reset_at: datetime | None = None
+    window_label: str | None = Field(default=None, pattern=r"^(week|month)$")
     status: str = Field(pattern=r"^(ok|low|exhausted)$")
     # Fable pool only: which signal the numbers came from.
     source: str | None = None

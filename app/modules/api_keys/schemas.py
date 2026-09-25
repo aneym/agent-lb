@@ -64,6 +64,8 @@ class ApiKeyUsageSummaryResponse(DashboardModel):
 class ApiKeyResponse(DashboardModel):
     id: str
     name: str
+    member_id: str | None = None
+    member_name: str | None = None
     key_prefix: str
     allowed_models: list[str] | None
     apply_to_codex_model: bool = False

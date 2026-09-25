@@ -17,7 +17,7 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.openai.model_registry import ReasoningLevel, UpstreamModel, get_model_registry
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, ApiKeyUsageReservation, LimitWindow, RequestLog, UsageHistory
+from app.db.models import Account, AccountStatus, ApiKey, ApiKeyUsageReservation, LimitWindow, RequestLog, TeamMember, UsageHistory
 from app.db.session import SessionLocal
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.api_keys.service import ApiKeyCreateData, ApiKeysService, LimitRuleInput
@@ -111,6 +111,12 @@ async def test_api_keys_crud_and_regenerate(async_client):
     key_id = payload["id"]
     first_key = payload["key"]
 
+    async with SessionLocal() as session:
+        session.add(TeamMember(id="member-owner", name="Owner One"))
+        await session.commit()
+        await session.execute(update(ApiKey).where(ApiKey.id == key_id).values(member_id="member-owner"))
+        await session.commit()
+
     listed = await async_client.get("/api/api-keys/")
     assert listed.status_code == 200
     rows = listed.json()
@@ -120,6 +126,7 @@ async def test_api_keys_crud_and_regenerate(async_client):
     assert rows[0]["accountAssignmentScopeEnabled"] is False
     assert rows[0]["assignedAccountIds"] == []
     assert len(rows[0]["limits"]) == 1
+    assert (rows[0]["memberId"], rows[0]["memberName"]) == ("member-owner", "Owner One")
 
     updated = await async_client.patch(
         f"/api/api-keys/{key_id}",

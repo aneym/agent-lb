@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -9,6 +9,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, UsageHistory
 from app.db.session import SessionLocal
+from app.modules.pools.cli_seats import SeatAccount, SeatAccountsResponse
 
 pytestmark = pytest.mark.integration
 
@@ -37,6 +38,18 @@ def _weekly_usage(account_id: str, provider: str, used_percent: float) -> UsageH
         window="secondary",
         used_percent=used_percent,
         window_minutes=10080,
+        recorded_at=utcnow(),
+    )
+
+
+def _five_hour_usage(account_id: str, used_percent: float, reset_at: int) -> UsageHistory:
+    return UsageHistory(
+        account_id=account_id,
+        provider="anthropic",
+        window="primary",
+        used_percent=used_percent,
+        reset_at=reset_at,
+        window_minutes=300,
         recorded_at=utcnow(),
     )
 
@@ -82,21 +95,36 @@ async def test_pools_reports_every_contract_pool_with_no_accounts(async_client, 
 
 
 @pytest.mark.asyncio
-async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_client, db_setup) -> None:
+async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_client, db_setup, monkeypatch) -> None:
     del db_setup
     encryptor = TokenEncryptor()
     now = utcnow()
+    early_reset = int((now + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    late_reset = int((now + timedelta(hours=4)).replace(tzinfo=timezone.utc).timestamp())
 
     async with SessionLocal() as session:
         # Fable-scoped marker fresh and nearly spent, weekly window healthy:
         # the two Anthropic pools must disagree.
         session.add(_account("acc-fable-hot", "anthropic", encryptor))
         session.add(_weekly_usage("acc-fable-hot", "anthropic", 30.0))
+        session.add(_five_hour_usage("acc-fable-hot", 45.0, late_reset))
         session.add(_fable_scoped_weekly("acc-fable-hot", 87.0, now))
 
         session.add(_account("acc-fable-cool", "anthropic", encryptor))
         session.add(_weekly_usage("acc-fable-cool", "anthropic", 40.0))
+        session.add(_five_hour_usage("acc-fable-cool", 20.0, early_reset))
         session.add(_fable_scoped_weekly("acc-fable-cool", 6.0, now))
+
+        paused = _account("acc-paused", "anthropic", encryptor)
+        paused.status = AccountStatus.PAUSED
+        session.add(paused)
+        session.add(_five_hour_usage("acc-paused", 0.0, early_reset - 600))
+
+        limited = _account("acc-limited", "anthropic", encryptor)
+        limited.status = AccountStatus.RATE_LIMITED
+        limited.reset_at = int((now + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
+        session.add(limited)
+        session.add(_five_hour_usage("acc-limited", 0.0, early_reset - 300))
 
         session.add(_account("acc-codex", "openai", encryptor))
         session.add(_weekly_usage("acc-codex", "openai", 55.0))
@@ -105,6 +133,10 @@ async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_cl
 
         await session.commit()
 
+    monkeypatch.setattr(
+        "app.modules.pools.service.read_seat_accounts",
+        lambda: SeatAccountsResponse(source="seat_state", accounts=[SeatAccount(id="cursor-1", vendor="cursor")]),
+    )
     response = await async_client.get("/api/pools")
 
     assert response.status_code == 200
@@ -114,20 +146,33 @@ async def test_pools_aggregates_live_windows_and_marks_the_fable_source(async_cl
     assert fable["provider"] == "anthropic"
     assert fable["kind"] == "fable_scoped"
     assert fable["source"] == "scoped_marker"
-    assert fable["accounts"] == 2
+    assert fable["accounts"] == 4
     assert fable["eligibleAccounts"] == 2
-    assert fable["headroomPercent"] == pytest.approx(94.0)
-    assert fable["aggregateRemainingPercent"] == pytest.approx(53.5)
+    assert fable["headroomPercent"] == pytest.approx(80.0)
+    assert fable["aggregateRemainingPercent"] == pytest.approx(31.0)
     assert fable["status"] == "ok"
 
     general = pools["anthropic-general"]
     assert general["kind"] == "weekly"
-    assert general["headroomPercent"] == pytest.approx(70.0)
+    assert general["headroomPercent"] == pytest.approx(60.0)
     assert general["source"] is None
 
+    for pool in (fable, general):
+        assert pool["fiveHourRemainingPercent"] == pytest.approx(80.0)
+        assert pool["fiveHourResetAt"] == datetime.fromtimestamp(early_reset, timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        assert pool["windowLabel"] == "week"
+    assert pools["openai-codex"]["fiveHourRemainingPercent"] is None
+    assert pools["openai-codex"]["fiveHourResetAt"] is None
+    assert pools["openai-codex"]["windowLabel"] == "week"
     assert pools["openai-codex"]["headroomPercent"] == pytest.approx(45.0)
     assert pools["glm"]["headroomPercent"] == pytest.approx(100.0)
     assert pools["kimi"]["accounts"] == 0
+    assert pools["cursor"]["kind"] == "cli_seat"
+    assert pools["cursor"]["windowLabel"] == "month"
+    assert pools["cursor"]["fiveHourRemainingPercent"] is None
+    assert pools["cursor"]["fiveHourResetAt"] is None
 
 
 @pytest.mark.asyncio

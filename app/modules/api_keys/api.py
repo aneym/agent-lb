@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, Request, Response
+from sqlalchemy import select
 
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
+from app.db.models import TeamMember
 from app.dependencies import ApiKeysContext, get_api_keys_context
 from app.modules.api_keys.schemas import (
     ApiKeyAccountCostResponse,
@@ -33,10 +35,12 @@ router = APIRouter(
 )
 
 
-def _to_response(row: ApiKeyData) -> ApiKeyResponse:
+def _to_response(row: ApiKeyData, *, member_name: str | None = None) -> ApiKeyResponse:
     return ApiKeyResponse(
         id=row.id,
         name=row.name,
+        member_id=row.member_id,
+        member_name=member_name,
         key_prefix=row.key_prefix,
         allowed_models=row.allowed_models,
         apply_to_codex_model=row.apply_to_codex_model,
@@ -78,6 +82,12 @@ def _to_response(row: ApiKeyData) -> ApiKeyResponse:
         ),
         pooled_capacity_credits_primary=(row.pooled_credits.capacity_credits_primary if row.pooled_credits else 0.0),
     )
+
+
+async def _member_name(row: ApiKeyData, context: ApiKeysContext) -> str | None:
+    if row.member_id is None:
+        return None
+    return await context.session.scalar(select(TeamMember.name).where(TeamMember.id == row.member_id))
 
 
 def _build_limit_inputs(payload: ApiKeyCreateRequest | ApiKeyUpdateRequest) -> list[LimitRuleInput]:
@@ -135,7 +145,7 @@ async def create_api_key(
         )
     except ApiKeyValidationError as exc:
         raise DashboardBadRequestError(str(exc), code="invalid_api_key_payload") from exc
-    resp = _to_response(created)
+    resp = _to_response(created, member_name=await _member_name(created, context))
     AuditService.log_async(
         "api_key_created",
         actor_ip=request.client.host if request.client else None,
@@ -152,7 +162,14 @@ async def list_api_keys(
     context: ApiKeysContext = Depends(get_api_keys_context),
 ) -> list[ApiKeyResponse]:
     rows = await context.service.list_keys()
-    return [_to_response(row) for row in rows]
+    member_ids = {row.member_id for row in rows if row.member_id is not None}
+    names: dict[str, str] = {}
+    if member_ids:
+        result = await context.session.execute(
+            select(TeamMember.id, TeamMember.name).where(TeamMember.id.in_(member_ids))
+        )
+        names = dict(result.all())
+    return [_to_response(row, member_name=names.get(row.member_id)) for row in rows]
 
 
 @router.patch("/{key_id}", response_model=ApiKeyResponse)
@@ -204,7 +221,7 @@ async def update_api_key(
             actor_ip=request.client.host if request.client else None,
             details={"key_id": row.id},
         )
-    return _to_response(row)
+    return _to_response(row, member_name=await _member_name(row, context))
 
 
 @router.delete("/{key_id}")
@@ -234,7 +251,7 @@ async def regenerate_api_key(
         row = await context.service.regenerate_key(key_id)
     except ApiKeyNotFoundError as exc:
         raise DashboardNotFoundError(str(exc)) from exc
-    resp = _to_response(row)
+    resp = _to_response(row, member_name=await _member_name(row, context))
     return ApiKeyCreateResponse(
         **resp.model_dump(),
         key=row.key,
