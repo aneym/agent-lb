@@ -46,6 +46,8 @@ from app.core.resilience.event_loop_lag_monitor import build_event_loop_lag_moni
 from app.core.resilience.memory_monitor import configure as configure_memory_monitor
 from app.core.usage.refresh_scheduler import build_usage_refresh_scheduler
 from app.db.session import SessionLocal, close_db, init_background_db, init_db
+from app.modules.account_schedule import api as account_schedule_api
+from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
 from app.modules.accounts.pulse import build_account_pulse_scheduler
 from app.modules.accounts.reset_credit_scheduler import build_reset_credit_auto_redeem_scheduler
@@ -172,6 +174,7 @@ async def lifespan(app: FastAPI):
         quota_planner_scheduler = build_quota_planner_scheduler()
         auth_guardian_scheduler = build_auth_guardian_scheduler()
         account_pulse_scheduler = build_account_pulse_scheduler()
+        account_resume_scheduler = build_account_resume_scheduler()
         reset_credit_auto_redeem_scheduler = build_reset_credit_auto_redeem_scheduler()
         federation_mirror_scheduler = build_federation_mirror_scheduler()
         app.state.federation_mirror_scheduler = federation_mirror_scheduler
@@ -185,6 +188,7 @@ async def lifespan(app: FastAPI):
         await quota_planner_scheduler.start()
         await auth_guardian_scheduler.start()
         await account_pulse_scheduler.start()
+        await account_resume_scheduler.start()
         await reset_credit_auto_redeem_scheduler.start()
         await federation_mirror_scheduler.start()
         await event_loop_lag_monitor.start()
@@ -353,6 +357,7 @@ async def lifespan(app: FastAPI):
         await event_loop_lag_monitor.stop()
         await federation_mirror_scheduler.stop()
         await account_pulse_scheduler.stop()
+        await account_resume_scheduler.stop()
         await reset_credit_auto_redeem_scheduler.stop()
         await quota_planner_scheduler.stop()
         await auth_guardian_scheduler.stop()
@@ -435,6 +440,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_api.router)
     app.include_router(accounts_api.router)
     app.include_router(accounts_api.availability_router)
+    app.include_router(account_schedule_api.router)
     app.include_router(dashboard_api.router)
     app.include_router(usage_api.router)
     app.include_router(public_usage_api.router)
