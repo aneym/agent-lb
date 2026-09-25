@@ -141,7 +141,7 @@ async def test_proxy_compact_strips_tool_fields_before_upstream(async_client, mo
 
 
 @pytest.mark.asyncio
-async def test_proxy_compact_surfaces_additional_quota_exhausted(async_client):
+async def test_proxy_compact_surfaces_additional_quota_exhausted(async_client, monkeypatch):
     email = "compact-gated@example.com"
     raw_account_id = "acc_compact_gated"
     auth_json = _make_auth_json(raw_account_id, email, plan_type="pro")
@@ -175,11 +175,19 @@ async def test_proxy_compact_surfaces_additional_quota_exhausted(async_client):
             recorded_at=now,
         )
 
+    attempted_accounts: list[str | None] = []
+
+    async def fake_compact(payload, headers, access_token, account_id):
+        del payload, headers, access_token
+        attempted_accounts.append(account_id)
+        return CompactResponsePayload.model_validate({"object": "response.compaction", "output": []})
+
+    monkeypatch.setattr(proxy_module, "core_compact_responses", fake_compact)
     payload = {"model": "gpt-5.3-codex-spark", "instructions": "hi", "input": []}
     response = await async_client.post("/backend-api/codex/responses/compact", json=payload)
-    assert response.status_code == 503
-    error = response.json()["error"]
-    assert error["code"] == "quota_exhausted"
+    # 82ed714b: exhausted additional usage does not deny a live compact attempt.
+    assert response.status_code == 200
+    assert attempted_accounts == [raw_account_id]
 
 
 @pytest.mark.asyncio
