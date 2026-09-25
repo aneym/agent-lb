@@ -42,14 +42,14 @@ export function AppShell() {
       <header className="top">
         <div className="top-in">
           <Link className="brand" to="/">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              aria-hidden="true"
-            >
-              <path d="M4 17V7l8-4 8 4v10l-8 4zM4 7l8 5 8-5m-8 5v9" />
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <path
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2.4"
+                d="M8.5 16h5m0 0 8.5-5.75M13.5 16l8.5 5.75M13.5 16H22M30.758 16c0 8.15-6.607 14.758-14.758 14.758-8.15 0-14.758-6.607-14.758-14.758C1.242 7.85 7.85 1.242 16 1.242c8.15 0 14.758 6.608 14.758 14.758Z"
+              />
             </svg>
             agent-lb
           </Link>
