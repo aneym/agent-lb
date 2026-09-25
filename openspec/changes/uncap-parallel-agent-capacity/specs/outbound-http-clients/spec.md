@@ -32,8 +32,11 @@ When an upstream Responses websocket handshake is refused with HTTP 403 and the
 body is not an OpenAI error payload, the client MUST retry the handshake with
 jittered exponential backoff, for up to three minutes after the first refusal,
 with no single wait longer than 30 seconds. If the handshake is still refused when
-that window ends, the 403 MUST be surfaced as before. A 403 that carries an OpenAI error
-payload MUST be surfaced on the first answer, without a retry.
+that window ends, or when the request's own time budget would run out first, the 403
+MUST be surfaced as before. A 403 that carries an OpenAI error payload MUST be
+surfaced on the first answer, without a retry. This holds on both direct websocket
+paths: the Codex websocket and HTTP bridge connection, and a streamed Responses
+request sent upstream over websocket.
 
 #### Scenario: A burst limit clears
 
@@ -52,3 +55,9 @@ payload MUST be surfaced on the first answer, without a retry.
 - **GIVEN** the upstream refuses the handshake with 403 and a JSON error payload
 - **WHEN** a Responses websocket is opened
 - **THEN** the caller gets that error after one handshake
+
+#### Scenario: A streamed Responses request meets a burst limit
+
+- **GIVEN** the upstream stream transport is websocket and the edge refuses the first eight handshakes with a bare 403
+- **WHEN** a Responses request is streamed
+- **THEN** the ninth handshake succeeds, and the stream completes without a failure event

@@ -12,6 +12,7 @@ from typing import Any, Iterator, Protocol, Self, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
+import aiohttp.web
 import anyio
 import pytest
 from aiohttp.client_exceptions import ClientConnectorCertificateError
@@ -4965,6 +4966,7 @@ async def test_stream_responses_auto_transport_does_not_hide_forbidden_websocket
     async def fake_open_upstream_websocket(**kwargs):
         raise proxy_module.aiohttp.WSServerHandshakeError(request_info, (), status=403, message="Forbidden")
 
+    _shrink_edge_rejection_retry(monkeypatch)
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
     monkeypatch.setattr(proxy_module, "get_model_registry", lambda: registry)
     monkeypatch.setattr(proxy_module, "_open_upstream_websocket", fake_open_upstream_websocket)
@@ -5080,6 +5082,7 @@ async def test_stream_responses_forced_websocket_does_not_fallback_on_handshake_
     async def fake_open_upstream_websocket(**kwargs):
         raise proxy_module.aiohttp.WSServerHandshakeError(request_info, (), status=403, message="Forbidden")
 
+    _shrink_edge_rejection_retry(monkeypatch)
     monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
     monkeypatch.setattr(proxy_module, "_open_upstream_websocket", fake_open_upstream_websocket)
     monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
@@ -5104,6 +5107,94 @@ async def test_stream_responses_forced_websocket_does_not_fallback_on_handshake_
     assert not session.calls
     event = json.loads(events[0].split("data: ", 1)[1])
     assert event["response"]["error"]["code"] == "upstream_error"
+
+
+def _shrink_edge_rejection_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A bare 403 is retried for up to three minutes in production.
+    monkeypatch.setattr(proxy_module, "_EDGE_REJECT_FIRST_BACKOFF_SECONDS", 0.01)
+    monkeypatch.setattr(proxy_module, "_EDGE_REJECT_MAX_BACKOFF_SECONDS", 0.02)
+    monkeypatch.setattr(proxy_module, "_EDGE_REJECT_RETRY_WINDOW_SECONDS", 0.3)
+
+
+_EDGE_403_ANSWER = (403, "<html><body>Forbidden</body></html>", "text/html")
+_ACCOUNT_403_ANSWER = (
+    403,
+    '{"error":{"message":"account deactivated","type":"permission_error","code":"account_deactivated"}}',
+    "application/json",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answers", "expected_attempts", "expected_type", "expected_code"),
+    [
+        # The edge refused eight handshakes in a row at 200 parallel agents; the
+        # ninth connects and the agent never sees the refusals.
+        ([_EDGE_403_ANSWER] * 8, 9, "response.completed", None),
+        # A 403 with an OpenAI error body is about the account: no retry.
+        ([_ACCOUNT_403_ANSWER], 1, "response.failed", "account_deactivated"),
+    ],
+)
+async def test_stream_responses_websocket_retries_only_bare_edge_handshake_rejections(
+    monkeypatch, answers, expected_attempts, expected_type, expected_code
+):
+    attempts: list[int] = []
+
+    async def upstream(request: aiohttp.web.Request) -> aiohttp.web.StreamResponse:
+        attempts.append(1)
+        if len(attempts) <= len(answers):
+            status, body, content_type = answers[len(attempts) - 1]
+            return aiohttp.web.Response(status=status, text=body, content_type=content_type)
+        websocket = aiohttp.web.WebSocketResponse()
+        await websocket.prepare(request)
+        await websocket.receive()
+        await websocket.send_str(json.dumps({"type": "response.completed", "response": {"id": "resp_ws"}}))
+        await websocket.close()
+        return websocket
+
+    app = aiohttp.web.Application()
+    app.router.add_get("/backend-api/codex/responses", upstream)
+    runner = aiohttp.web.AppRunner(app)
+    await runner.setup()
+    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = runner.addresses[0][1]
+
+    class Settings:
+        upstream_base_url = f"http://127.0.0.1:{port}/backend-api"
+        upstream_stream_transport = "websocket"
+        upstream_connect_timeout_seconds = 8.0
+        stream_idle_timeout_seconds = 45.0
+        max_sse_event_bytes = 1024
+        image_inline_fetch_enabled = False
+        log_upstream_request_payload = False
+        log_upstream_request_summary = False
+        proxy_request_budget_seconds = 75.0
+
+    _shrink_edge_rejection_retry(monkeypatch)
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_start", lambda **kwargs: None)
+    monkeypatch.setattr(proxy_module, "_maybe_log_upstream_request_complete", lambda **kwargs: None)
+    payload = ResponsesRequest.model_validate(
+        {"model": "gpt-5.4", "instructions": "hi", "input": [{"role": "user", "content": "hi"}]}
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            events = [
+                event
+                async for event in proxy_module.stream_responses(
+                    payload, headers={}, access_token="token", account_id=None, session=session
+                )
+            ]
+    finally:
+        await runner.cleanup()
+
+    assert len(attempts) == expected_attempts
+    event = parse_sse_data_json(events[-1])
+    assert event is not None
+    assert event["type"] == expected_type
+    if expected_code is not None:
+        assert event["response"]["error"]["code"] == expected_code
 
 
 @pytest.mark.asyncio

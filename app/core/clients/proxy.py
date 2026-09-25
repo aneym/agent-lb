@@ -9,6 +9,7 @@ import ipaddress
 import json
 import logging
 import os
+import random
 import socket
 import time
 from contextlib import asynccontextmanager
@@ -178,6 +179,20 @@ _WEBSOCKET_HANDSHAKE_ERROR_HINTS = (
 )
 
 logger = logging.getLogger(__name__)
+
+# The upstream edge answers a burst of websocket handshakes from one address with
+# a bare 403 (no JSON error body), on every account at once: 127 of 200 parallel
+# Codex requests on 2026-09-25, and all of a follow-up burst for about a minute.
+# It limits the rate of new connections, not how many stay open: 210 held-open
+# sockets opened 70 at a time drew no rejection, while one burst of 200 kept 30
+# rejected past 30 s of retries. So the handshake is retried with jittered
+# exponential backoff for up to three minutes instead of failing the agent; the
+# 30 s cap keeps rejected retries from eating the budget as it refills.
+# A 403 with an OpenAI error body is about the account and is never retried.
+_EDGE_REJECT_RETRY_WINDOW_SECONDS = 180.0
+_EDGE_REJECT_FIRST_BACKOFF_SECONDS = 1.0
+_EDGE_REJECT_MAX_BACKOFF_SECONDS = 30.0
+
 _STREAM_CONNECT_TIMEOUT_OVERRIDE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "stream_connect_timeout_override",
     default=None,
@@ -609,6 +624,29 @@ def _infer_websocket_handshake_error_code(status: int | None, message: str) -> s
     if status == 429:
         return "rate_limit_exceeded"
     return "upstream_error"
+
+
+def edge_rejection_retry_delay(attempt: int, rejected_for: float, *, budget: float | None = None) -> float | None:
+    """Seconds to wait before retrying a handshake the edge refused, or None to give up.
+
+    ``attempt`` counts refused handshakes so far and ``rejected_for`` is the time since
+    the first refusal. The retry stops at the edge window or at ``budget``, whichever
+    is shorter.
+    """
+    ceiling = min(_EDGE_REJECT_MAX_BACKOFF_SECONDS, _EDGE_REJECT_FIRST_BACKOFF_SECONDS * 2 ** (attempt - 1))
+    delay = random.uniform(ceiling / 2, ceiling)
+    limit = _EDGE_REJECT_RETRY_WINDOW_SECONDS if budget is None else min(_EDGE_REJECT_RETRY_WINDOW_SECONDS, budget)
+    if rejected_for + delay > limit:
+        return None
+    return delay
+
+
+def _is_bare_edge_rejection(exc: aiohttp.WSServerHandshakeError) -> bool:
+    """A 403 without an OpenAI error body: the edge refusing the handshake, not the account."""
+    if exc.status != 403:
+        return False
+    extracted = _extract_json_object_from_text(exc.message or "")
+    return extracted is None or parse_error_payload(extracted) is None
 
 
 def _error_payload_from_websocket_handshake_error(exc: aiohttp.WSServerHandshakeError) -> OpenAIErrorEnvelope:
@@ -1530,15 +1568,41 @@ async def _stream_responses_via_websocket(
                 await active_codex_client.close()
             raise
     else:
-        websocket_cm, websocket = await _open_upstream_websocket(
-            session=client_session,
-            url=websocket_url,
-            headers=headers,
-            connect_timeout_seconds=connect_timeout_seconds,
-            max_msg_size=max_event_bytes,
-            account_id=account_id,
-            hold_half_open_probe=True,
-        )
+        refused = 0
+        first_refused_at: float | None = None
+        while True:
+            try:
+                websocket_cm, websocket = await _open_upstream_websocket(
+                    session=client_session,
+                    url=websocket_url,
+                    headers=headers,
+                    connect_timeout_seconds=connect_timeout_seconds,
+                    max_msg_size=max_event_bytes,
+                    account_id=account_id,
+                    hold_half_open_probe=True,
+                )
+                break
+            except aiohttp.WSServerHandshakeError as exc:
+                if not _is_bare_edge_rejection(exc):
+                    raise
+                now = time.monotonic()
+                refused += 1
+                if first_refused_at is None:
+                    first_refused_at = now
+                delay = edge_rejection_retry_delay(
+                    refused,
+                    now - first_refused_at,
+                    budget=effective_total_timeout - (now - request_started_at),
+                )
+                if delay is None:
+                    raise
+                logger.warning(
+                    "upstream_websocket_edge_rejected attempt=%d retry_in=%.2fs cf_ray=%s",
+                    refused,
+                    delay,
+                    "present" if exc.headers and exc.headers.get("cf-ray") else "absent",
+                )
+                await asyncio.sleep(delay)
 
     try:
         send_json = getattr(websocket, "send_json", None)

@@ -64,24 +64,44 @@ def classify_probe_result(status: int, message: str | None) -> ProbeVerdict:
     return ProbeVerdict.INCONCLUSIVE
 
 
+def _openai_backend_base() -> str:
+    base = get_settings().upstream_base_url.rstrip("/")
+    if "/backend-api" not in base:
+        base = f"{base}/backend-api"
+    return base
+
+
+def _openai_auth_headers(access_token: str, chatgpt_account_id: str | None, *, accept: str) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": accept}
+    if chatgpt_account_id and not chatgpt_account_id.startswith(("email_", "local_")):
+        headers["chatgpt-account-id"] = chatgpt_account_id
+    return headers
+
+
 async def send_openai_probe(
     *,
     access_token: str,
     chatgpt_account_id: str | None,
     model: str,
 ) -> int:
-    settings = get_settings()
-    base = settings.upstream_base_url.rstrip("/")
-    if "/backend-api" not in base:
-        base = f"{base}/backend-api"
-    url = f"{base}/codex/responses"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "text/event-stream",
-        "Content-Type": "application/json",
-    }
-    if chatgpt_account_id and not chatgpt_account_id.startswith(("email_", "local_")):
-        headers["chatgpt-account-id"] = chatgpt_account_id
+    status, _code = await send_openai_probe_with_error_code(
+        access_token=access_token,
+        chatgpt_account_id=chatgpt_account_id,
+        model=model,
+    )
+    return status
+
+
+async def send_openai_probe_with_error_code(
+    *,
+    access_token: str,
+    chatgpt_account_id: str | None,
+    model: str,
+) -> tuple[int, str | None]:
+    """POST a one-token codex/responses; returns (status, upstream error code on a 4xx/5xx)."""
+    url = f"{_openai_backend_base()}/codex/responses"
+    headers = _openai_auth_headers(access_token, chatgpt_account_id, accept="text/event-stream")
+    headers["Content-Type"] = "application/json"
     body = {
         "model": model,
         "instructions": "Respond with a single dot.",
@@ -104,11 +124,38 @@ async def send_openai_probe(
         async with lease_http_session() as session:
             async with session.post(url, headers=headers, json=body, timeout=timeout) as resp:
                 # Initiating the request is enough to wake the upstream
-                # rate-limiter; we do not consume the SSE body.
-                return resp.status
+                # rate-limiter; we do not consume a successful SSE body.
+                if resp.status >= 400:
+                    return resp.status, await read_probe_error_code(resp)
+                return resp.status, None
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.warning(
             "Probe upstream request failed account=%s error=%s",
+            chatgpt_account_id,
+            exc,
+        )
+        return PROBE_NETWORK_FAILURE_STATUS, None
+
+
+async def send_openai_auth_check(*, access_token: str, chatgpt_account_id: str | None) -> int:
+    """GET /wham/usage: an auth-only call that proves whether the token itself is accepted.
+
+    Used to confirm a codex/responses 401 before an account is marked disconnected,
+    since that endpoint can reject every account at once for upstream reasons.
+    """
+    url = f"{_openai_backend_base()}/wham/usage"
+    headers = _openai_auth_headers(access_token, chatgpt_account_id, accept="application/json")
+    timeout = aiohttp.ClientTimeout(
+        total=PROBE_REQUEST_TIMEOUT_SECONDS,
+        sock_connect=PROBE_CONNECT_TIMEOUT_SECONDS,
+    )
+    try:
+        async with lease_http_session() as session:
+            async with session.get(url, headers=headers, timeout=timeout) as resp:
+                return resp.status
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        logger.warning(
+            "Probe auth check failed account=%s error=%s",
             chatgpt_account_id,
             exc,
         )
@@ -154,6 +201,21 @@ async def send_messages_probe(
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.warning("Anthropic subscription check failed error=%s", exc)
         return PROBE_NETWORK_FAILURE_STATUS, str(exc)
+
+
+async def read_probe_error_code(resp: aiohttp.ClientResponse) -> str | None:
+    """The upstream ``error.code`` (or ``error.type``), never the message: OpenAI's
+    messages can echo part of a key."""
+    try:
+        raw = await resp.read()
+        parsed = json.loads(raw) if raw else None
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return None
+    error = parsed.get("error") if isinstance(parsed, dict) else None
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code") or error.get("type")
+    return str(code)[:80] if code is not None else None
 
 
 async def read_probe_error(resp: aiohttp.ClientResponse) -> str:

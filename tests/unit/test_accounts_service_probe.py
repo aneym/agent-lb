@@ -267,3 +267,82 @@ async def test_send_probe_request_uses_shared_http_client(monkeypatch):
     assert captured["timeout"].total == 30.0
     assert captured["timeout"].connect is None
     assert captured["timeout"].sock_connect == 10.0
+
+
+class _ErrorResponse:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    async def read(self) -> bytes:
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _RecordingLease:
+    def __init__(self, response: _ErrorResponse, captured: dict[str, Any]) -> None:
+        self._response = response
+        self._captured = captured
+
+    async def __aenter__(self):
+        response, captured = self._response, self._captured
+
+        class _Session:
+            def post(self, url: str, **kwargs: Any):
+                captured.update(method="POST", url=url, **kwargs)
+                return response
+
+            def get(self, url: str, **kwargs: Any):
+                captured.update(method="GET", url=url, **kwargs)
+                return response
+
+        return _Session()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_returns_the_upstream_error_code_but_never_the_message(monkeypatch):
+    from app.modules.accounts import probes
+
+    body = (
+        b'{"error": {"message": "Incorrect API key provided: sk-svcac***fvMA", '
+        b'"type": "invalid_request_error", "code": "invalid_api_key"}}'
+    )
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.modules.accounts.probes.lease_http_session", lambda: _RecordingLease(_ErrorResponse(401, body), captured)
+    )
+
+    status, code = await probes.send_openai_probe_with_error_code(
+        access_token=_PROBE_TOKEN_PLAINTEXT, chatgpt_account_id=_CHATGPT_ACCOUNT_ID, model="gpt-5.5"
+    )
+
+    assert (status, code) == (401, "invalid_api_key")
+    assert captured["url"].endswith("/backend-api/codex/responses")
+
+
+@pytest.mark.asyncio
+async def test_openai_auth_check_calls_wham_usage_with_the_account_token(monkeypatch):
+    from app.modules.accounts import probes
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "app.modules.accounts.probes.lease_http_session", lambda: _RecordingLease(_ErrorResponse(200, b"{}"), captured)
+    )
+
+    status = await probes.send_openai_auth_check(
+        access_token=_PROBE_TOKEN_PLAINTEXT, chatgpt_account_id=_CHATGPT_ACCOUNT_ID
+    )
+
+    assert status == 200
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/backend-api/wham/usage")
+    assert captured["headers"]["Authorization"] == f"Bearer {_PROBE_TOKEN_PLAINTEXT}"
+    assert captured["headers"]["chatgpt-account-id"] == _CHATGPT_ACCOUNT_ID

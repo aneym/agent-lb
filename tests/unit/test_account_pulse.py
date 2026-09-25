@@ -119,6 +119,8 @@ def _build_scheduler(
     probe_results: dict[str, tuple[int, str | None]],
     auth_failures: dict[str, RefreshError] | None = None,
     probe_calls: list[str] | None = None,
+    auth_check_results: dict[str, int] | None = None,
+    auth_check_calls: list[str] | None = None,
     interval_seconds: int = 3600,
     recovery_interval_seconds: int = 900,
     failure_backoff_base_seconds: float = 600.0,
@@ -142,6 +144,14 @@ def _build_scheduler(
         if probe_calls is not None:
             probe_calls.append(account.id)
         return probe_results[account.id]
+
+    # An OpenAI probe 401 is confirmed with an auth-only call; unless a test says
+    # otherwise the token is rejected there too (the pre-confirmation behavior).
+    async def openai_auth_check_sender(account: Account, access_token: str) -> int:
+        del access_token
+        if auth_check_calls is not None:
+            auth_check_calls.append(account.id)
+        return (auth_check_results or {}).get(account.id, 401)
 
     # Fable-probe fakes never touch the DB: weekly_usage defaults to "no
     # weekly data" so existing tests that don't opt in stay isolated and
@@ -196,6 +206,7 @@ def _build_scheduler(
         repo_factory=repo_factory,  # type: ignore[arg-type]
         auth_manager_factory=lambda _repo: _AuthManager(auth_failures),
         probe_sender=probe_sender,
+        openai_auth_check_sender=openai_auth_check_sender,
         weekly_usage_lookup=weekly_usage_lookup,
         fable_probe_sender=fable_probe_sender,
         fable_marker_writer=fable_marker_writer,
@@ -369,6 +380,97 @@ async def test_pulse_marks_reauth_required_on_credential_rejection() -> None:
         (account.id, AccountStatus.REAUTH_REQUIRED, "Account pulse: authentication rejected (HTTP 401)")
     ]
     assert repo.ledger_updates == []
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_401_with_a_working_token_is_inconclusive(caplog: pytest.LogCaptureFixture) -> None:
+    # 2026-09-25 22:42Z: codex/responses answered 401 invalid_api_key for every OpenAI
+    # account while their tokens still worked on /wham/usage; nothing is disconnected.
+    accounts = [_account(f"acc_openai_{n}", provider="openai") for n in range(3)]
+    repo = _Repo(accounts)
+    auth_check_calls: list[str] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (401, "invalid_api_key") for account in accounts},
+        auth_check_results={account.id: 200 for account in accounts},
+        auth_check_calls=auth_check_calls,
+    )
+    caplog.set_level("WARNING", logger="app.modules.accounts.pulse")
+
+    await scheduler.pulse_once()
+
+    assert repo.status_updates == []
+    assert sorted(auth_check_calls) == sorted(account.id for account in accounts)
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 3
+    assert all("HTTP 401 code=invalid_api_key" in message for message in warnings)
+
+
+@pytest.mark.asyncio
+async def test_openai_probe_401_confirmed_by_the_auth_check_marks_reauth_required() -> None:
+    account = _account(provider="openai")
+    repo = _Repo([account])
+    scheduler = _build_scheduler(
+        repo, probe_results={account.id: (401, "token_expired")}, auth_check_results={account.id: 401}
+    )
+
+    await scheduler.pulse_once()
+
+    assert repo.status_updates == [
+        (account.id, AccountStatus.REAUTH_REQUIRED, "Account pulse: authentication rejected (HTTP 401)")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check_status", [probes.PROBE_NETWORK_FAILURE_STATUS, 403, 429, 503])
+async def test_openai_probe_401_with_an_unclear_auth_check_changes_nothing(check_status: int) -> None:
+    account = _account(provider="openai")
+    repo = _Repo([account])
+    scheduler = _build_scheduler(
+        repo, probe_results={account.id: (401, None)}, auth_check_results={account.id: check_status}
+    )
+
+    await scheduler.pulse_once()
+
+    assert repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_non_openai_probe_401_needs_no_auth_check() -> None:
+    account = _account(provider="anthropic")
+    repo = _Repo([account])
+    auth_check_calls: list[str] = []
+    scheduler = _build_scheduler(
+        repo,
+        probe_results={account.id: (401, None)},
+        auth_check_results={account.id: 200},
+        auth_check_calls=auth_check_calls,
+    )
+
+    await scheduler.pulse_once()
+
+    assert auth_check_calls == []
+    assert repo.status_updates == [
+        (account.id, AccountStatus.REAUTH_REQUIRED, "Account pulse: authentication rejected (HTTP 401)")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_recovery_lane_restores_openai_account_only_once_the_probe_passes() -> None:
+    # The accounts wrongly disconnected at 22:42Z come back through the recovery lane,
+    # not a manual DB flip: held while codex/responses still 401s, restored on a 2xx.
+    account = _account(status=AccountStatus.REAUTH_REQUIRED, provider="openai")
+    repo = _Repo([account])
+    during_outage = _build_scheduler(
+        repo, probe_results={account.id: (401, "invalid_api_key")}, auth_check_results={account.id: 200}
+    )
+
+    await during_outage.recovery_pulse_once()
+    assert repo.status_updates == []
+
+    after_outage = _build_scheduler(repo, probe_results={account.id: (200, None)})
+    await after_outage.recovery_pulse_once()
+    assert repo.status_updates == [(account.id, AccountStatus.ACTIVE, None)]
 
 
 @pytest.mark.asyncio
