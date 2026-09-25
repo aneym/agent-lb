@@ -24,6 +24,9 @@ def _live_paths() -> tuple[Path, Path]:
     )
     if os.environ.get("OF_DECIDER_JSON"):
         return table, Path(os.environ["OF_DECIDER_JSON"]).expanduser()
+    managed_decider = managed.with_name("decider.json")
+    if _readable(managed_decider):
+        return table, managed_decider
     # The runtime copy has no clients/open-factory; follow the installed launcher to the checkout it runs from.
     launcher = Path.home() / ".local/bin/open-factory"
     installed = launcher.resolve().parents[1] / "open_factory/decider.json" if launcher.exists() else None
