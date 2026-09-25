@@ -242,6 +242,33 @@ D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
     `CCGPT_MODEL_ALIASES` in `app/modules/proxy/api.py` is requested from the fixer via
     INBOX, since it sits beside the bridge work.
 
+D12. **Startup cost is a seat dimension.** A Workflow agent or subagent starts at about
+    65-100k tokens of context before doing work; built-in Explore starts near 15k. Each
+    trial and each dispatched seat records its first-turn input tokens (cached and
+    uncached) and the report prices a seat as startup + work, so a cheap model with a
+    heavy start does not win on paper. Where Harbor's claude-code arm can use a trimmed
+    agent definition, the lean variant is its own arm.
+
+### Open questions the eval answers (not Alex)
+
+Alex (2026-09-25, via the fixer): "i dont know the answers to your routing questions, so
+that needs to be part of the evals that OF runs." Routing policy is never asked of Alex;
+each question below is an arm or hypothesis with a default that runs until the measured
+result replaces it. Alex's gates stay: publishing numbers, product direction.
+
+| # | Question | Default until measured | How the eval decides |
+|---|----------|------------------------|----------------------|
+| Q1 | Which model per task class (Opus, Sonnet, Haiku, Sol, Luna, Grok, Kimi, GLM)? | routing table as is | (task, seat) outcome matrix; per-class pass rate and cost CIs |
+| Q2 | Reasoning effort per class (low/medium/high/xhigh)? | high for Opus driver, table effort for Codex | effort as a seat dimension on a subset (Opus, Sol) |
+| Q3 | When does GPT/Grok/Cursor beat Opus at equal or better pass rate? | Opus for core implement while on pace | paired bootstrap per class, A1 vs A4/A5 |
+| Q4 | Harness: stock claude-code vs cc+OF vs codex vs cursor-cli vs others? | cc + OF | Harbor arms A1-A6 (D5) |
+| Q5 | Delegation shape: inline, subagent, teammate or Workflow? | subagent for volume, inline for small | A3 variants on the same tasks; includes startup cost (D12) |
+| Q6 | Decider: static table vs Jev vs CLM vs hindsight bound? | Jev with host fallback | policy replay on the matrix + A3 live subset (D9) |
+| Q7 | Jev thresholds (confidence 0.35, fit 0.8) and capability blurbs? | keel's values, decider.json v1 | replay sweeps on dev only; held-out confirms |
+| Q8 | Fallback order when a pick fails re-check or a pool runs dry? | `route pick` chain, then driver | fallback rate and success of fallen-back runs |
+| Q9 | Pace gates (Opus `min_pace` -10, low band = 2 eligible accounts)? | table values | replay with gates on/off vs pool burn per window |
+| Q10 | Cross-vendor audit on implement: worth its cost? | optional (ROUTING.md 2026-09-25) | A3 with/without audit: defects caught vs tokens and time |
+
 ### Milestones (status)
 
 | # | Milestone | Status |
@@ -259,6 +286,7 @@ D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
 
 - 2026-09-25: plan written. Keel/Jev digest at `~/.agent-lb/of/keel-jev-digest.md`.
 - 2026-09-25: eval moved onto Harbor (D5-D9) at Alex's request via the fixer.
+- 2026-09-25: routing questions become eval arms (Q1-Q10); startup token cost added (D12).
 - 2026-09-25: milestone 2 landed. `open-factory route` measured live: Jev 370-750 ms,
   ~$0.00005 per pick. Observation for the eval: the routing table still puts `codex-sol`
   first for explore/research although ROUTING.md (dfe1ea2d) made Claude the default
