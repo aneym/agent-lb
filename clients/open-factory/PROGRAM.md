@@ -333,8 +333,14 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
   ~$0.00005 per pick. Observation for the eval: the routing table still puts `codex-sol`
   first for explore/research although ROUTING.md (dfe1ea2d) made Claude the default
   worker; A3's static sub-arm uses the table as it is, and the eval decides.
-- 2026-09-25: of-work v0 mined. 45 verified FAIL_TO_PASS tasks (26 agent-lb, 19 agent-rails).
-  - Dev: 24, at `~/.agent-lb/of/mine/dev-candidates.json`. agent-lb is 12 bugfix and 2 feature. agent-rails is 4 bugfix, 5 feature and 1 mechanical.
-  - Held-out: 21 tasks, sealed, never read by the orchestrator. `heldout/candidates.json` sha256 `321863ba1db8b85465553efffde596f84188d368293178ad4e39c51a3fc50706`. `heldout/MANIFEST.sha256` sha256 `dd6e757a8b694ef61c0612f47b452bd5440e08bd9f108cb5375f4743cce6136d`. A different hash at the final run means the seal was broken.
+- 2026-09-25: of-work v0 frozen. 59 verified FAIL_TO_PASS tasks.
+  - Dev: 34, at `~/.agent-lb/of/dataset/v0/dev.json`, read-only, sha256 `8268fdd59dca2cf0f21c246e21ea0ea7acc43cdb40f898defdf1c7e9f35fa0e0`. agent-lb has 21: 15 bugfix, 5 feature, 1 mechanical. agent-rails has 13: 5 bugfix, 8 feature. Difficulty 1:3, 2:15, 3:12, 4:4.
+  - Held-out: 25, sealed in `~/.agent-lb/of/heldout/frozen-v0/` and never read by the orchestrator. `candidates.json` sha256 `9cf074686834cacb843b426c73e35d3538de2f008f2317b8344290ce5e2bbcef`. `MANIFEST.sha256` sha256 `4fdaed5431dedbe9f470b16dc2f0b524402caf1a2a308da422e44aa05d286fd0`. A different hash at M8 means the seal was broken. These supersede the b5ac6019 hashes, which were taken while mining lanes were still racing.
+  - Checks: split rule holds on both sides, no overlap, complete schema.
+  - Verification is uneven: the miner re-ran only 2 of 59 end-to-end and the rest rest on logged subagent runs. So M4's oracle stage re-verifies every dev task in its container (no solution means FAIL_TO_PASS fails; the fix makes all pass), and M8 does the same for held-out through a sealed seat before scoring.
   - No refactor class survived verification. Q1's per-class answers cover bugfix/feature only in v0.
   - Leak rule: agent-lb (and codex-lb) is PUBLIC on GitHub. A trial with open egress could fetch the fix. Trials get egress only to agent-lb, or else every trial's agent log is scanned for fetches of the repo, and a hit marks that trial contaminated and excludes it from scoring.
+  - Process note: the miner fanned out to forks, which inherit the whole brief. Several acted as the whole task and raced on shared files. Future fan-outs use fresh subagents with a slice-only brief and a private output path, never forks.
+- 2026-09-25: `route --class implement` picked sonnet-implementer while Codex had room. The menu was right, with gpt-implementer at its head. The cause was the capability blurbs: Jev rated GPT Sol's fit at 0.60-0.69 for plain implementation tasks ("strong coding" versus Sonnet's "lower cost").
+  - Fix (decider policy v3): the blurbs now state the seat ladder from models.md, and the chain head is the house default, which the host keeps whenever the decider's fit for it is ≥ 0.8.
+  - Live eval `clients/open-factory/evals/decider/` (10 cases: 6 implement, 4 mechanical). Before: 4/10. After: 10/10 in 3 runs, where Jev picked directly in 6-8 of 10 and abstained to the chain head in the rest.

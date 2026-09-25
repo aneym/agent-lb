@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# of-checkout <sha> [repo-dir]
+#
+# Pin a repo baked into an of-work/*-base image to <sha> and erase every commit
+# that is not an ancestor of it, so an agent cannot `git log --all`, read a
+# reflog, or `git cat-file` its way to the future fix. Run it in the per-task
+# Dockerfile: `FROM of-work/agent-lb-base` + `RUN of-checkout <sha>`.
+#
+# The objects are removed from the task layer; the base layer's pack files are
+# whited out and are not visible inside the container.
+set -euo pipefail
+
+sha="${1:?usage: of-checkout <sha> [repo-dir]}"
+repo="${2:-/app}"
+cd "$repo"
+
+git checkout -q --detach --force "$sha"
+# Keep the synced venv, node_modules and caches; drop every other untracked or ignored file
+# (e.g. __pycache__ or build output produced from newer sources).
+git clean -q -fdx -e .venv -e node_modules
+
+# Every ref, stash, reflog and remote goes; HEAD is the only root left.
+git for-each-ref --format='delete %(refname)' | git update-ref --stdin
+git remote | xargs -r -n1 git remote remove
+git reflog expire --expire=now --all
+rm -rf .git/logs .git/FETCH_HEAD .git/ORIG_HEAD .git/MERGE_HEAD
+# Name the pinned commit `main` so tools that expect a branch still work.
+git checkout -q -B main
+git reflog expire --expire=now --all
+git repack -q -a -d
+git prune --expire=now
+
+# Verify: every commit object left in the repo is HEAD or one of its ancestors.
+reachable="$(git rev-list HEAD | wc -l)"
+present="$(git cat-file --batch-all-objects --batch-check='%(objecttype)' | grep -c '^commit$' || true)"
+if [ "$reachable" != "$present" ]; then
+  echo "of-checkout: $present commit objects present but only $reachable reachable from $sha" >&2
+  exit 1
+fi
+refs="$(git for-each-ref --format='%(refname)')"
+if [ "$refs" != "refs/heads/main" ]; then
+  echo "of-checkout: unexpected refs left: $refs" >&2
+  exit 1
+fi
+
+# Repo-specific dependency sync baked into each base image (of-sync).
+of-sync
+echo "of-checkout: $(git rev-parse HEAD) with $reachable commits, no descendants"

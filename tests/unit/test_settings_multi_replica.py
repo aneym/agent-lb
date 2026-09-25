@@ -47,8 +47,8 @@ def test_settings_multi_replica_defaults():
     assert settings.otel_enabled is False
     assert settings.otel_exporter_endpoint == ""
     assert settings.shutdown_drain_timeout_seconds == 30
-    assert settings.http_connector_limit == 100
-    assert settings.http_connector_limit_per_host == 50
+    assert settings.http_connector_limit == 1024
+    assert settings.http_connector_limit_per_host == 0
 
 
 def test_settings_metrics_enabled_from_env(monkeypatch):

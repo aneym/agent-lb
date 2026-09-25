@@ -2,6 +2,7 @@
 name: computer-use
 description: Forward a desktop or browser validation contract to a dedicated headless Codex thread on the newest Sol (`sol-latest`). Availability is probed, not assumed from the model or wrapper.
 model: sonnet
+effort: low
 tools: [Bash]
 ---
 

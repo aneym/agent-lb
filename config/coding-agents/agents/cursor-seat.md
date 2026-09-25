@@ -2,6 +2,7 @@
 name: cursor-seat
 description: Forward a scoped contract to the Cursor CLI on Cursor's own quota. Does not do the work in Claude Code. Use for mechanical and volume work (sweeps, renames, format/pattern edits, scripted fixes) and for read-only exploration when the Claude pools are tight. The brief names a model family alias; the default is `grok-latest` (the newest Grok on Cursor, medium-fast).
 model: sonnet
+effort: low
 tools: [Bash]
 ---
 

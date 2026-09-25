@@ -1,17 +1,18 @@
 {
-  "version": 1,
-  "note": "Decider policy for `open-factory route`. Any change here is a policy change: replay it against the eval before adopting it (PROGRAM.md D9).",
+  "version": 3,
+  "note": "Decider policy for `open-factory route`. Any change here is a policy change: replay it against the eval before adopting it (PROGRAM.md D9). The first menu seat (the class chain's head) is the house default; a decider pick elsewhere is kept only when the default's fit is below default_min_fit.",
   "decider": "jev",
   "jev_timeout_s": 5,
   "pick_ttl_s": 45,
   "max_candidates": 16,
+  "default_min_fit": 0.8,
   "capability": {
     "opus-latest": "Claude Opus, newest. Strongest reasoning and judgment; for ambiguous, correctness-critical or multi-file work.",
-    "sonnet-latest": "Claude Sonnet, newest. Strong everyday coding and codebase research at lower cost than Opus.",
-    "sol-latest": "OpenAI GPT Sol via Codex. Strong coding and long agentic runs.",
-    "terra-latest": "OpenAI GPT Terra via Codex. Implementation-focused coding model.",
-    "luna-latest": "OpenAI GPT Luna. Fast and cheap; for small, well-specified work.",
+    "sonnet-latest": "Claude Sonnet, newest. Strong coding and codebase research; the Claude fallback implementer when Codex is tight.",
+    "sol-latest": "OpenAI GPT Sol via Codex. The house implementer: feature code, bug fixes and their tests written to a spec, multi-file edits, long agentic runs.",
+    "luna-latest": "OpenAI GPT Luna. Fast and cheap; mechanical edits, boilerplate, renames and tests written to a given contract.",
     "grok-latest": "xAI Grok medium-fast via Cursor. Fast mechanical edits against a tight spec.",
-    "grok-latest-low": "xAI Grok low-fast via Cursor. Quick scouting and lookups."
+    "grok-latest-low": "xAI Grok low-fast via Cursor. Quick scouting and lookups.",
+    "swe-latest": "Cognition SWE via Devin. Free on the Devin subscription; mechanical and volume work as the fallback behind Cursor."
   }
 }

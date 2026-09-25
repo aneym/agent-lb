@@ -145,6 +145,8 @@ def decide(task: str, task_class: str, *, decider: str, context: str | None = No
     }
 
     chosen: str | None = None
+    default = candidates[0]["id"] if candidates else None
+    receipt.update(default=default, decider_pick=None, default_fit=None, kept_default=False)
     if not candidates:
         receipt["abstain"] = "empty_menu"
     elif decider == "jev":
@@ -161,9 +163,18 @@ def decide(task: str, task_class: str, *, decider: str, context: str | None = No
                 abstain=answer.get("abstain"),
             )
             chosen = answer.get("pick")
+            receipt["decider_pick"] = chosen
             if chosen is not None and chosen not in {c["id"] for c in candidates}:
                 receipt["validation"] = "unknown_id"
                 chosen = None
+            elif chosen is not None and chosen != default:
+                # The class chain's head is the house default (quota split and the owner's
+                # steer live in its order). The decider may leave it only when it does not fit.
+                default_fit = (answer.get("fits") or {}).get(default)
+                receipt["default_fit"] = default_fit
+                if isinstance(default_fit, (int, float)) and default_fit >= float(policy.get("default_min_fit", 0.8)):
+                    chosen = default
+                    receipt["kept_default"] = True
     else:
         receipt["abstain"] = "static_decider"
 

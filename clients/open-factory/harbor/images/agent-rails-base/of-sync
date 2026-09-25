@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Sync agent-rails test dependencies for the checked-out commit, as its CI unit job does.
+set -euo pipefail
+cd "${1:-/app}"
+uv sync --frozen --extra dev
+uv pip install --python .venv/bin/python -r .ci/requirements.txt pytest-xdist==3.8.0
+# npm ci deletes and rewrites node_modules (~2 GB, minutes), so a per-task checkout
+# reinstalls only when package-lock.json differs from the one last installed.
+stamp=node_modules/.of-package-lock.sha256
+lock_sum="$(sha256sum package-lock.json | cut -d' ' -f1)"
+if [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
+  # Old commits can carry a lockfile npm ci rejects (a workspace missing from it). The graded
+  # tests are pytest, so keep the base image's node_modules and go on.
+  if npm ci --ignore-scripts --no-audit --no-fund; then
+    echo "$lock_sum" > "$stamp"
+  else
+    echo "of-sync: npm ci failed at $(git rev-parse --short HEAD); keeping the base node_modules" >&2
+  fi
+fi

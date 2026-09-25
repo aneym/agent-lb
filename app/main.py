@@ -49,6 +49,7 @@ from app.db.session import SessionLocal, close_db, init_background_db, init_db
 from app.modules.account_schedule import api as account_schedule_api
 from app.modules.account_schedule.scheduler import build_account_resume_scheduler
 from app.modules.accounts import api as accounts_api
+from app.modules.accounts.cache_warmer import build_accounts_cache_warmer
 from app.modules.accounts.pulse import build_account_pulse_scheduler
 from app.modules.accounts.reset_credit_scheduler import build_reset_credit_auto_redeem_scheduler
 from app.modules.api_keys import api as api_keys_api
@@ -298,6 +299,12 @@ async def lifespan(app: FastAPI):
         set_cache_invalidation_poller(cache_poller)
         await cache_poller.start()
 
+    # Fill the accounts read caches before uvicorn binds, so the first request after
+    # a blue/green swap does not pay for a cold load (bounded by a startup timeout).
+    async with startup_recorder.phase("accounts_cache_warm"):
+        accounts_cache_warmer = build_accounts_cache_warmer()
+        await accounts_cache_warmer.start()
+
     ring_service: RingMembershipService | None = None
     instance_id: str | None = None
     heartbeat_task: asyncio.Task[None] | None = None
@@ -357,6 +364,7 @@ async def lifespan(app: FastAPI):
             metrics_server.should_exit = True
 
         await cache_poller.stop()
+        await accounts_cache_warmer.stop()
         await event_loop_lag_monitor.stop()
         await federation_mirror_scheduler.stop()
         await account_pulse_scheduler.stop()

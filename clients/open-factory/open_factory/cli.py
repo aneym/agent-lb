@@ -238,9 +238,10 @@ Before each subagent or Workflow agent, get the seat from the host router:
     open-factory route --class <explore|research|implement|mechanical|review|verify|plan> "<one-paragraph task>"
 
 It returns a seat and model and records the decision in the dispatch ledger. Dispatch to
-exactly that seat: Claude models as `Agent`/`agent()` with that `model`; Codex and Cursor
-seats through their forwarder agents (`codex-sol`, `implementer`, `cursor-seat`). If it
-returns `driver`, do the work in this session. Never pick a seat the router did not return.
+exactly that seat: Claude models as `Agent`/`agent()` with that `model`; GPT seats as `gpt-implementer`
+(sol-latest), `luna-implementer` (luna-latest), `gpt-explorer` or `codex-sol`; Cursor and
+Devin through `cursor-seat` and `devin-seat`. If it returns `driver`, do the work in this
+session. Never pick a seat the router did not return.
 
 Seats runnable at launch ({utc_now()}; the router re-checks live):
 {menu}

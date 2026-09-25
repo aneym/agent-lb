@@ -333,6 +333,9 @@ class Settings(BaseSettings):
     federation_usage_window_days: int = Field(default=7, gt=0)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
     http_responses_session_bridge_advertise_base_url: str | None = None
+    accounts_cache_warmer_enabled: bool = True
+    accounts_cache_warmer_interval_seconds: float = Field(default=10.0, gt=0)
+    accounts_cache_warmer_startup_timeout_seconds: float = Field(default=30.0, gt=0)
     sticky_session_cleanup_enabled: bool = True
     sticky_session_cleanup_interval_seconds: int = Field(default=300, gt=0)
     quota_planner_scheduler_enabled: bool = True
@@ -443,9 +446,13 @@ class Settings(BaseSettings):
     # Shutdown drain
     shutdown_drain_timeout_seconds: int = 30
 
-    # HTTP connector limits
-    http_connector_limit: int = 100
-    http_connector_limit_per_host: int = 50
+    # HTTP connector limits. Every Anthropic and OpenAI HTTP stream shares one
+    # pool, and all of a provider's streams go to one host, so a per-host cap is
+    # a cap on parallel agents: the pool wait counts against the connect timeout.
+    # The total limit stays as a file-descriptor guard (the launchd soft limit
+    # is 4096 and inbound sockets need their share); 0 per host means no cap.
+    http_connector_limit: int = 1024
+    http_connector_limit_per_host: int = 0
 
     @field_validator("data_dir", mode="before")
     @classmethod

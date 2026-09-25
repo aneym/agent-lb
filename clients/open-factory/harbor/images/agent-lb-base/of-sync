@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Sync agent-lb dev dependencies for the checked-out commit (CI: uv sync --dev --frozen).
+set -euo pipefail
+cd "${1:-/app}"
+uv sync --frozen --dev
