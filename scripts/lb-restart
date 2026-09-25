@@ -498,6 +498,11 @@ def main() -> int:
     if not RUNTIME.is_dir() or not PLIST.is_file():
         p.error(f"runtime {RUNTIME} or plist {PLIST} missing")
 
+    if shutil.which("launchctl") != "/bin/launchctl":
+        # A test harness with a launchctl shim on PATH once ran this against the
+        # live agent-lb: the standby took traffic and the fake kickstart left it there.
+        p.error(f"launchctl resolves to {shutil.which('launchctl')}, not /bin/launchctl; refusing to touch the live LB")
+
     with Lock(args.reason, args.lock_wait):
         try:
             return run(args)

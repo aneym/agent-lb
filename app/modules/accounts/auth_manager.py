@@ -4,11 +4,13 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta
 from hashlib import sha256
 from typing import Any, Protocol, TypeAlias
+
+from sqlalchemy import text
 
 from app.core.auth import DEFAULT_PLAN, token_expiry_epoch_ms
 from app.core.auth.refresh import (
@@ -188,6 +190,46 @@ class _RefreshSingleflight:
 _REFRESH_SINGLEFLIGHT = _RefreshSingleflight()
 
 
+REFRESH_LOCK_TIMEOUT_SECONDS = 30
+
+
+def _refresh_lock_key(account_id: str) -> int:
+    digest = sha256(f"account-refresh:{account_id}".encode()).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+@asynccontextmanager
+async def _cross_process_refresh_lock(account_id: str) -> AsyncIterator[None]:
+    """Serialize one account's token refresh across agent-lb processes.
+
+    The singleflight above only sees its own process. A blue/green restart runs
+    a standby and a draining primary against one database, and OpenAI refresh
+    tokens are single use: two processes presenting the same token gets the
+    second one refresh_token_reused, which marks the account reauth_required.
+    The lock is transaction scoped, so a dropped connection or a cancelled
+    caller releases it; the holder's refresh is written before it lets go, and
+    the waiter's reload then sees the rotated token and skips the provider.
+    """
+    async with get_background_session() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            yield
+            return
+        async with session.begin():
+            await session.execute(text(f"SET LOCAL lock_timeout = '{REFRESH_LOCK_TIMEOUT_SECONDS}s'"))
+            try:
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"), {"key": _refresh_lock_key(account_id)}
+                )
+            except Exception as exc:
+                raise RefreshError(
+                    "refresh_lock_timeout",
+                    f"Another process held the refresh lock for {account_id} over {REFRESH_LOCK_TIMEOUT_SECONDS}s",
+                    False,
+                    transport_error=True,
+                ) from exc
+            yield
+
+
 class AuthManager:
     def __init__(
         self,
@@ -254,7 +296,10 @@ class AuthManager:
             provider = get_provider(account.provider)
         except ProviderLookupError as exc:
             raise RefreshError("unsupported_provider", str(exc), True) from exc
+        async with _cross_process_refresh_lock(account.id):
+            return await self._refresh_account_locked(account, provider)
 
+    async def _refresh_account_locked(self, account: Account, provider: Provider) -> Account:
         expected_refresh_token_encrypted = account.refresh_token_encrypted
         latest = await self._repo.reload_by_id(account.id)
         if latest is not None and _refresh_token_material_changed(

@@ -38,7 +38,13 @@ def _run_watchdog(
 ) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    for name, body in (("launchctl", LAUNCHCTL_SHIM), ("curl", CURL_SHIM), ("ps", PS_SHIM)):
+    # lb-restart shim: the real one would blue/green the live agent-lb (it did, 2026-09-25).
+    for name, body in (
+        ("launchctl", LAUNCHCTL_SHIM),
+        ("curl", CURL_SHIM),
+        ("ps", PS_SHIM),
+        ("lb-restart", '#!/bin/bash\necho "lb-restart $*" >> "$SHIM_CALL_LOG"\nexit 1\n'),
+    ):
         shim = bin_dir / name
         shim.write_text(body)
         shim.chmod(0o755)
@@ -70,6 +76,8 @@ def _run_watchdog(
             "AGENT_LB_WATCHDOG_LOG": str(tmp_path / "watchdog.log"),
             "AGENT_LB_WATCHDOG_SERVICE_LOG_FILES": service_logs,
             "AGENT_LB_WATCHDOG_SERVICE_LOG_MAX_MB": log_max_mb,
+            "AGENT_LB_RESTART_BIN": str(bin_dir / "lb-restart"),
+            "AGENT_LB_FORENSICS_DIR": str(tmp_path / "forensics"),
         }
     )
     subprocess.run(["bash", str(SCRIPT)], env=env, check=True, capture_output=True)
@@ -150,6 +158,8 @@ def test_kick_fires_when_process_older_than_boot_grace(tmp_path: Path) -> None:
             etime="02:10:00",
         )
 
+    # lb-restart (blue/green) goes first; its failure falls back to one raw kickstart.
+    assert [c for c in call_log.read_text().splitlines() if c.startswith("lb-restart")] != []
     kicks = _kickstart_calls(call_log)
     assert len(kicks) == 1
     assert "com.aneyman.agent-lb" in kicks[0]
