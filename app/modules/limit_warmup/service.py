@@ -21,7 +21,7 @@ from app.core.plan_types import account_plan_matches_allowed
 from app.core.providers import ANTHROPIC_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.usage.pricing import get_pricing_for_model
-from app.core.utils.time import utcnow
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import (
     Account,
     AccountLimitWarmup,
@@ -54,6 +54,11 @@ _MAX_CONCURRENT_WARMUP_SENDS = 4
 _ANTHROPIC_CONTINUOUS_WINDOW = "anthropic_primary_continuous"
 _ANTHROPIC_PRIMER_PROMPT = "OK"
 _ANTHROPIC_RESET_GRACE_SECONDS = 3
+# Usage telemetry older than this cannot prove the primary window is closed.
+_ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS = 600
+# Anthropic starts a window at the request time floored to ten minutes, so a
+# primed window can reset up to ten minutes short of a full window length.
+_ANTHROPIC_PRIME_SPACING_SLACK = 900
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,8 +398,10 @@ class LimitWarmupService:
         # The clock-aware seed path (Behavior 1) only needs a working-hours
         # schedule, so it can run even when no reactive HOLD windows are
         # selected. Without a schedule the service keeps its legacy behavior.
-        if not selected_windows and planner_settings is None and not any(
-            account.provider == ANTHROPIC_PROVIDER_NAME for account in accounts
+        if (
+            not selected_windows
+            and planner_settings is None
+            and not any(account.provider == ANTHROPIC_PROVIDER_NAME for account in accounts)
         ):
             return
         current = now or utcnow()
@@ -421,7 +428,7 @@ class LimitWarmupService:
                     and latest_attempt.status == "sent_unconfirmed"
                     and observed is not None
                     and observed.reset_at is not None
-                    and latest_attempt.reset_at + 4 * 3600 <= observed.reset_at <= latest_attempt.reset_at + 6 * 3600
+                    and _opened_by_prime(latest_attempt, observed.reset_at)
                     and _as_utc(observed.recorded_at) > _as_utc(latest_attempt.attempted_at)
                 ):
                     await self._warmup_repo.complete_attempt(
@@ -433,23 +440,23 @@ class LimitWarmupService:
                         latest_attempt.reset_at,
                     )
                     continue
-                reset_at = _anthropic_due_reset(
-                    before_primary.get(account.id),
+                prime_key = _anthropic_prime_key(
                     after_primary.get(account.id),
                     after_secondary.get(account.id),
                     anthropic_standard.get(account.id) if anthropic_standard else None,
                     latest_attempt,
                     current,
                 )
-                if reset_at is not None:
+                if prime_key is not None:
                     enqueued = await self._enqueue_warmup_send(
                         account=account,
                         window=_ANTHROPIC_CONTINUOUS_WINDOW,
-                        reset_at=reset_at,
+                        reset_at=prime_key,
                         settings=settings,
                         sender=sender,
                         semaphore=send_semaphore,
                         latest_attempts=latest_attempts,
+                        now=current,
                     )
                     if enqueued is not None:
                         send_task, attempt = enqueued
@@ -583,12 +590,11 @@ class LimitWarmupService:
         sender: LimitWarmupSender,
         semaphore: asyncio.Semaphore,
         latest_attempts: dict[str, AccountLimitWarmup],
+        now: datetime | None = None,
     ) -> tuple[asyncio.Task[LimitWarmupSendOutcome], AccountLimitWarmup] | None:
         continuous = window == _ANTHROPIC_CONTINUOUS_WINDOW
         model = (
-            _DEFAULT_ANTHROPIC_WARMUP_MODEL
-            if continuous
-            else self._resolve_model(settings.limit_warmup_model, account)
+            _DEFAULT_ANTHROPIC_WARMUP_MODEL if continuous else self._resolve_model(settings.limit_warmup_model, account)
         )
         if model is None:
             skipped = await self._warmup_repo.try_create_attempt(
@@ -611,7 +617,10 @@ class LimitWarmupService:
 
         if continuous:
             attempt = await self._warmup_repo.claim_continuous_attempt(
-                account_id=account.id, reset_at=reset_at, model=model, now=utcnow()
+                account_id=account.id,
+                reset_at=reset_at,
+                model=model,
+                now=to_utc_naive(now) if now is not None else utcnow(),
             )
         else:
             attempt = await self._warmup_repo.try_create_attempt(
@@ -764,7 +773,8 @@ class LimitWarmupService:
             )
         if result.success and self._confirm_anthropic_prime is not None:
             try:
-                if await self._confirm_anthropic_prime(outcome.account.id, outcome.attempt.reset_at):
+                sent_at = int(_as_utc(outcome.attempt.attempted_at).timestamp())
+                if await self._confirm_anthropic_prime(outcome.account.id, sent_at):
                     confirmed_row = await self._warmup_repo.complete_attempt(
                         outcome.attempt.id,
                         status="succeeded",
@@ -892,37 +902,57 @@ def _in_cooldown(attempt: AccountLimitWarmup | None, *, cooldown_seconds: int) -
     return utcnow() - attempt.attempted_at < timedelta(seconds=cooldown_seconds)
 
 
-def _anthropic_due_reset(
-    before: UsageHistory | None,
-    after: UsageHistory | None,
+def _anthropic_prime_key(
+    primary: UsageHistory | None,
     weekly: UsageHistory | None,
     standard: AdditionalUsageHistory | None,
     latest_attempt: AccountLimitWarmup | None,
     now: datetime,
 ) -> int | None:
-    """Use the known reset, but require fresh free-quota telemetry before sending."""
+    """Return the dedup key for priming a closed primary window, or None.
+
+    Priming is decided from the current state, not from observing the reset
+    edge: after a five-hour reset the usage endpoint reports the primary window
+    with ``used_percent == 0`` and no ``reset_at`` until the next request opens
+    it, and that closed state can last for hours. The key is the start of the
+    fixed window-length bucket containing ``now``. Anthropic floors a window's
+    start to ten minutes and buckets are ten-minute aligned, so a window opened
+    in one bucket resets in a later one, and each closed period gets one key.
+    A primer that was sent but did not visibly open a window blocks another for
+    most of a window length, so a bucket boundary cannot cause a second send.
+    The weekly window rolls on a fixed per-account schedule, so it needs no
+    primer of its own.
+    """
+    if primary is None or weekly is None:
+        return None
     now_epoch = _as_utc(now).timestamp()
-    if after is None or weekly is None or standard is None:
+    primary_recorded = _as_utc(primary.recorded_at).timestamp()
+    if now_epoch - primary_recorded > _ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS:
         return None
-    if after.used_percent != 0 or weekly.used_percent >= 100 or standard.used_percent >= 100:
+    if now_epoch - _as_utc(weekly.recorded_at).timestamp() > _ANTHROPIC_TELEMETRY_MAX_AGE_SECONDS:
         return None
-    reset_at = before.reset_at if before is not None else None
-    if reset_at is None or reset_at > now_epoch:
-        reset_at = after.reset_at
-    if (reset_at is None or reset_at > now_epoch) and latest_attempt is not None:
-        if latest_attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
-            reset_at = latest_attempt.reset_at
-    if reset_at is None or now_epoch < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
+    if primary.used_percent != 0 or weekly.used_percent >= 100:
         return None
-    if after.reset_at is not None and after.reset_at > now_epoch:
-        return None  # Real traffic already opened the next window.
-    if _as_utc(after.recorded_at).timestamp() < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
-        return None
-    if _as_utc(weekly.recorded_at).timestamp() < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
-        return None
-    if _as_utc(standard.recorded_at).timestamp() < reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
-        return None
-    return int(reset_at)
+    if primary.reset_at is not None and primary_recorded < primary.reset_at + _ANTHROPIC_RESET_GRACE_SECONDS:
+        return None  # The window is open, or the sample predates its reset.
+    if standard is not None and standard.used_percent >= 100:
+        if standard.reset_at is None or standard.reset_at > now_epoch:
+            return None
+    window_seconds = (primary.window_minutes or _DEFAULT_PRIMARY_WINDOW_MINUTES) * 60
+    if (
+        latest_attempt is not None
+        and latest_attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW
+        and latest_attempt.status != "failed"
+    ):
+        since_prime = now_epoch - _as_utc(latest_attempt.attempted_at).timestamp()
+        if since_prime < window_seconds - _ANTHROPIC_PRIME_SPACING_SLACK:
+            return None
+    return int(now_epoch // window_seconds) * window_seconds
+
+
+def _opened_by_prime(attempt: AccountLimitWarmup, reset_at: int) -> bool:
+    sent_at = _as_utc(attempt.attempted_at).timestamp()
+    return sent_at + 4 * 3600 <= reset_at <= sent_at + 6 * 3600
 
 
 def _as_utc(value: datetime) -> datetime:

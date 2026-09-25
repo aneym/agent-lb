@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import AccountLimitWarmup
 from app.db.session import sqlite_writer_section
 
+# Failed primers for one window bucket stop retrying after this many retries.
+_MAX_CONTINUOUS_RETRIES = 5
+
 
 class LimitWarmupRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -65,7 +68,7 @@ class LimitWarmupRepository:
     async def claim_continuous_attempt(
         self, *, account_id: str, reset_at: int, model: str, now: datetime
     ) -> AccountLimitWarmup | None:
-        """Claim a reset or retry its failed send after a bounded backoff.
+        """Claim a window bucket or retry its failed send after a bounded backoff.
 
         The unique (account, window, reset) key survives process restarts. A
         pending send is never retried automatically: its upstream outcome is
@@ -77,6 +80,8 @@ class LimitWarmupRepository:
             return await self.try_create_attempt(
                 account_id=account_id, window=window, reset_at=reset_at, model=model, attempted_at=now
             )
+        if existing.retry_count >= _MAX_CONTINUOUS_RETRIES:
+            return None
         delay = min(30 * 2 ** min(existing.retry_count, 5), 900)
         if existing.status != "failed" or now - existing.attempted_at < timedelta(seconds=delay):
             return None

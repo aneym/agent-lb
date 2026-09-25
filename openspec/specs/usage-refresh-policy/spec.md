@@ -224,24 +224,29 @@ The system SHALL support an optional OpenAI limit warm-up mechanism that is disa
 
 ### Requirement: Continuous Anthropic primary-window priming
 
-The scheduler MUST evaluate each known Anthropic account primary reset shortly after its timestamp, regardless of the legacy warmup working-hours band, global OpenAI warmup setting, or the previous window's used percent. It MUST send at most one successful one-token Haiku Messages primer for an account and reset, using the existing per-account warmup opt-out and durable attempts table.
+The scheduler MUST prime each active, opted-in Anthropic account whose five-hour primary window is closed, regardless of the legacy warmup working-hours band or the global OpenAI warmup setting. A window is closed when fresh usage (at most ten minutes old) shows `used_percent == 0` and either no `reset_at` or a `reset_at` the sample was recorded after. The primer is one one-token Haiku Messages request. Attempts are keyed by the start of the fixed window-length bucket containing the decision time, in the durable attempts table, so at most one primer per account and bucket is sent. The weekly window rolls on a fixed per-account schedule and is never primed.
 
-#### Scenario: A partially used five-hour window resets
+#### Scenario: An idle account's five-hour window has closed
 
-- **GIVEN** an active, opted-in Anthropic account with a known primary reset and a nonexhausted weekly window
-- **WHEN** the reset time passes and fresh usage shows free primary, weekly, and Haiku quota with no already-opened next primary window
-- **THEN** the scheduler sends one minimal primer for that account and reset
-- **AND** a subsequent usage refresh confirms that the primary reset moved approximately five hours forward
-- **AND** later scheduler passes and process restarts MUST NOT send a duplicate for that reset
+- **GIVEN** an active, opted-in Anthropic account with a nonexhausted weekly window
+- **WHEN** fresh usage shows the primary window closed, even hours after the reset and without any Haiku quota sample
+- **THEN** the scheduler sends one minimal primer
+- **AND** a later usage refresh that shows a primary reset four to six hours after the send confirms it
+- **AND** later scheduler passes and process restarts MUST NOT send a duplicate while the window is reported closed
+
+#### Scenario: A primer did not visibly open a window
+
+- **WHEN** usage recorded after a sent primer still shows the primary window closed
+- **THEN** the scheduler MUST NOT send another primer until nearly a full window length after the previous send, even across a bucket boundary
 
 #### Scenario: A send explicitly fails
 
 - **WHEN** an Anthropic primer returns an upstream error or transport failure
-- **THEN** the failed attempt is retained and retried only after backoff, with one in-flight claimant
+- **THEN** the failed attempt is retained and retried only after backoff, with one in-flight claimant and at most five retries per bucket
 
 #### Scenario: Priming would risk overage
 
-- **WHEN** the account is disabled, quota-exceeded, weekly-capped, unsubscribed, or fresh primary, weekly, or Haiku free-quota evidence is missing
+- **WHEN** the account is disabled, quota-exceeded, weekly-capped, unsubscribed, its Haiku quota sample is exhausted, or fresh primary or weekly usage is missing
 - **THEN** the scheduler MUST NOT send a primer or enter the extra-usage credit-billing path
 
 #### Scenario: Operator observes primer state

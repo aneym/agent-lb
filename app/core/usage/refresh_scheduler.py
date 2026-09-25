@@ -139,9 +139,7 @@ class UsageRefreshScheduler:
                         )
                     after_primary = await usage_repo.latest_by_account(window="primary")
                     after_secondary = await usage_repo.latest_by_account(window="secondary")
-                    anthropic_standard = await additional_usage_repo.latest_by_account(
-                        "anthropic_standard", "primary"
-                    )
+                    anthropic_standard = await additional_usage_repo.latest_by_account("anthropic_standard", "primary")
                     refreshed_accounts = _usage_refresh_accounts(
                         await accounts_repo.list_accounts(refresh_existing=True),
                     )
@@ -163,13 +161,13 @@ class UsageRefreshScheduler:
                         planner_settings = await QuotaPlannerRepository(session).get_settings()
                         accounts_by_id = {account.id: account for account in refreshed_accounts}
 
-                        async def confirm_anthropic_prime(account_id: str, reset_at: int) -> bool:
+                        async def confirm_anthropic_prime(account_id: str, sent_at: int) -> bool:
                             account = accounts_by_id[account_id]
                             for _ in range(3):
                                 await updater.force_refresh(account)
                                 observed = await usage_repo.latest_entry_for_account(account_id, window="primary")
                                 if observed is not None and observed.reset_at is not None:
-                                    if reset_at + 4 * 3600 <= observed.reset_at <= reset_at + 6 * 3600:
+                                    if sent_at + 4 * 3600 <= observed.reset_at <= sent_at + 6 * 3600:
                                         return True
                                 await asyncio.sleep(2)
                             return False

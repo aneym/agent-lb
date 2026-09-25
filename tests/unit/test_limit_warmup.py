@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.clients.proxy import UpstreamProxyRouteTrace
 from app.core.upstream_proxy import ResolvedProxyEndpoint, ResolvedUpstreamRoute, UpstreamProxyRouteError
@@ -15,11 +16,13 @@ from app.db.models import (
     AccountLimitWarmup,
     AccountStatus,
     AdditionalUsageHistory,
+    Base,
     DashboardSettings,
     UsageHistory,
 )
 from app.modules.limit_warmup import service as limit_warmup_service
 from app.modules.limit_warmup.anthropic_primer import _collect_usage
+from app.modules.limit_warmup.repository import LimitWarmupRepository
 from app.modules.limit_warmup.service import LimitWarmupSendResult, LimitWarmupService, StreamingLimitWarmupSender
 from app.modules.quota_planner.logic import PlannerSettings
 
@@ -800,62 +803,84 @@ async def test_disabled_or_account_opt_out_does_not_send() -> None:
     assert repo.rows == []
 
 
+def _anthropic_sample(
+    account_id: str, *, used_percent: float, reset_at: int | None, recorded_at: datetime, window: str = "primary"
+) -> UsageHistory:
+    sample = _usage(account_id, used_percent=used_percent, reset_at=0, window=window)
+    sample.reset_at = reset_at
+    sample.recorded_at = recorded_at
+    return sample
+
+
 @pytest.mark.asyncio
-async def test_anthropic_primes_after_known_reset_without_prior_exhaustion() -> None:
-    repo = FakeWarmupRepo()
+async def test_anthropic_cold_primary_window_is_primed_once_per_window_across_restarts() -> None:
+    # Real telemetry after a five-hour reset: used_percent 0 and no reset_at
+    # until a request opens the next window, and usually no anthropic_standard
+    # sample for an idle account. The primer used to wait for a reset edge plus
+    # a fresh standard sample, so idle accounts were never primed.
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
     sender = FakeSender()
-    async def confirm(account_id: str, reset_at: int) -> bool:
-        return account_id == account.id and reset_at == expected_reset
-
     account = _anthropic_account()
-    expected_reset = int(datetime(2026, 9, 23, 20, 0, tzinfo=timezone.utc).timestamp())
-    service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender, confirm_anthropic_prime=confirm)
-    reset_at = expected_reset
-    current = datetime(2026, 9, 23, 20, 0, 10, tzinfo=timezone.utc)
-    primary_before = _usage(account.id, used_percent=26, reset_at=reset_at)
-    primary_after = _usage(account.id, used_percent=0, reset_at=reset_at)
-    primary_after.recorded_at = current
-    weekly = _usage(account.id, used_percent=34, reset_at=reset_at + 604800, window="secondary")
-    weekly.recorded_at = current
-    standard = AdditionalUsageHistory(
-        account_id=account.id,
-        quota_key="anthropic_standard",
-        limit_name="anthropic_standard",
-        metered_feature="",
-        window="primary",
-        used_percent=0,
-        recorded_at=current,
-    )
+    weekly_reset = int(datetime(2026, 9, 30, 11, 0, tzinfo=timezone.utc).timestamp())
 
-    await service.run_after_usage_refresh(
-        accounts=[account],
-        settings=_settings(limit_warmup_enabled=True),
-        before_primary={account.id: primary_before},
-        before_secondary={account.id: weekly},
-        after_primary={account.id: primary_after},
-        after_secondary={account.id: weekly},
-        anthropic_standard={account.id: standard},
-        planner_settings=_planner(),
-        now=current,
-    )
+    async def tick(now: datetime, primary_reset_at: int | None, *, recorded_at: datetime | None = None) -> str:
+        seen = recorded_at or now
+        primary = _anthropic_sample(account.id, used_percent=0, reset_at=primary_reset_at, recorded_at=seen)
+        weekly = _anthropic_sample(
+            account.id, used_percent=40, reset_at=weekly_reset, recorded_at=seen, window="secondary"
+        )
+        async with sessions() as session:  # a fresh service per tick, as after a restart
+            repo = LimitWarmupRepository(session)
+            service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
+            await service.run_after_usage_refresh(
+                accounts=[account],
+                settings=_settings(limit_warmup_enabled=False),
+                before_primary={account.id: primary},
+                before_secondary={account.id: weekly},
+                after_primary={account.id: primary},
+                after_secondary={account.id: weekly},
+                anthropic_standard={},
+                now=now,
+            )
+            latest = (await repo.latest_by_account([account.id])).get(account.id)
+            return latest.status if latest is not None else "none"
 
-    assert sender.calls == [(account.id, "claude-haiku-4-5")]
-    assert repo.rows[0].status == "succeeded"
-    assert repo.rows[0].reset_at == reset_at
+    try:
+        cold_at = datetime(2026, 9, 25, 10, 59, 5, tzinfo=timezone.utc)  # a minute before a 5h bucket boundary
+        assert await tick(cold_at, None, recorded_at=cold_at - timedelta(minutes=11)) == "none"  # stale sample
+        assert await tick(cold_at, None) == "sent_unconfirmed"
+        assert sender.calls == [(account.id, "claude-haiku-4-5")]
+        for seconds in (30, 85, 600):  # still reported closed, across the boundary: no second primer
+            await tick(cold_at + timedelta(seconds=seconds), None)
+        assert len(sender.calls) == 1
+
+        # Anthropic floors the window start to ten minutes: 10:59 opens a window ending 15:50.
+        opened_reset = int(datetime(2026, 9, 25, 15, 50, tzinfo=timezone.utc).timestamp())
+        assert await tick(cold_at + timedelta(minutes=12), opened_reset) == "succeeded"
+        assert len(sender.calls) == 1
+
+        next_cold = datetime.fromtimestamp(opened_reset + 5, tz=timezone.utc)
+        assert await tick(next_cold, opened_reset) == "sent_unconfirmed"  # sampled after the reset, reset_at kept
+        await tick(next_cold + timedelta(minutes=2), None)
+        assert len(sender.calls) == 2
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_anthropic_does_not_prime_without_fresh_free_haiku_and_weekly_quota() -> None:
+async def test_anthropic_does_not_prime_open_window_or_exhausted_weekly_or_haiku_quota() -> None:
     repo = FakeWarmupRepo()
     sender = FakeSender()
     service = LimitWarmupService(repo, FakeRequestLogsRepo(), sender=sender)
     account = _anthropic_account()
-    reset_at = int(datetime(2026, 9, 23, 20, 0, tzinfo=timezone.utc).timestamp())
     current = datetime(2026, 9, 23, 20, 0, 10, tzinfo=timezone.utc)
-    primary = _usage(account.id, used_percent=0, reset_at=reset_at)
-    primary.recorded_at = current
-    weekly = _usage(account.id, used_percent=100, reset_at=reset_at + 604800, window="secondary")
-    weekly.recorded_at = current
+    primary = _anthropic_sample(account.id, used_percent=0, reset_at=None, recorded_at=current)
+    weekly = _anthropic_sample(
+        account.id, used_percent=100, reset_at=1_790_700_000, recorded_at=current, window="secondary"
+    )
     standard = AdditionalUsageHistory(
         account_id=account.id,
         quota_key="anthropic_standard",
@@ -885,18 +910,11 @@ async def test_anthropic_does_not_prime_without_fresh_free_haiku_and_weekly_quot
     await evaluate()
     assert sender.calls == []
     standard.used_percent = 0
-    standard.recorded_at = datetime(2026, 9, 23, 19, 59, tzinfo=timezone.utc)
+    primary.reset_at = int((current + timedelta(hours=3)).timestamp())  # opened by real traffic
     await evaluate()
     assert sender.calls == []
-    standard.recorded_at = current
+    primary.reset_at = None
     await evaluate()
-    await evaluate()
-    assert sender.calls == [(account.id, "claude-haiku-4-5")]
-    assert repo.rows[0].status == "sent_unconfirmed"
-    primary.reset_at = reset_at + 5 * 3600
-    primary.recorded_at = current + timedelta(seconds=10)
-    await evaluate()
-    assert repo.rows[0].status == "succeeded"
     assert sender.calls == [(account.id, "claude-haiku-4-5")]
 
 

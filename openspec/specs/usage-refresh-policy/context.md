@@ -3,21 +3,34 @@
 ## Anthropic five-hour window priming
 
 Anthropic priming reuses the limit-warmup sender and durable attempt table, but
-does not use the optional OpenAI warmup switch or working-hours planner. The
-scheduler observes a known primary reset, refreshes usage shortly after it,
-and sends a one-token Haiku Messages request only when the account remains
-active and opted in and fresh primary, weekly, and Haiku-standard quota show
-free capacity. The attempt is keyed by account and the expired reset time.
-Explicit failures back off; an uncertain in-flight or successful-but-unconfirmed
-send is retained without an automatic duplicate. A fresh usage read after a
-successful send must move the primary reset roughly five hours forward before
-the attempt is marked confirmed. `agent-lb status` shows the last confirmed
-prime time, or `never` when no confirmed continuous prime exists.
+does not use the optional OpenAI warmup switch or working-hours planner. After
+a five-hour reset, Anthropic's usage endpoint reports the primary window with
+0% used and no reset time until the next request opens it; that closed state
+can last for hours on an idle account. The scheduler primes from that state,
+not from seeing the reset happen: when fresh primary and weekly usage (at most
+ten minutes old) show the window closed and weekly capacity free, it sends a
+one-token Haiku Messages request. A Haiku-standard sample blocks priming only
+when it shows that quota exhausted; idle accounts usually have none.
 
-For example, if an account's primary reset is 20:00 UTC and weekly capacity is
-available, a cold usage sample at 20:00:10 permits one Haiku primer. A later
-sample with a reset near 01:00 UTC confirms that the next five-hour window is
-running. A weekly-capped account is skipped even if its primary window reset.
+The attempt is keyed by account and the start of the fixed five-hour bucket
+(from the Unix epoch) holding the decision time. Anthropic starts a window at
+the request time floored to ten minutes, so a window a primer opens resets in
+a later bucket and each closed period gets one primer. A primer that was sent
+but did not visibly open a window blocks another for 4h45m, which covers a
+bucket boundary right after a send. Explicit failures back off, at most five
+retries per bucket; an uncertain in-flight or successful-but-unconfirmed send is
+retained without an automatic duplicate. A usage read showing a primary reset
+four to six hours after the send marks the attempt confirmed. `agent-lb status`
+shows the last confirmed prime time, or `never` when none exists.
+
+The weekly window is not primed. Its reset stays on a fixed per-account weekly
+schedule (for example every Friday 18:00 UTC for one account since July) and
+rolls over at that time with or without traffic, so a request cannot move it.
+
+For example, if an account's primary window reset at 20:00 UTC and nobody used
+it, a usage sample at 20:00:10 showing 0% and no reset time permits one Haiku
+primer, and a sample at 23:00 in the same state does not. A later sample with a
+reset near 01:00 UTC confirms the new window. A weekly-capped account is skipped.
 
 ## Purpose
 
