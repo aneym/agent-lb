@@ -2,6 +2,7 @@
 name: codex-verifier
 description: Cross-vendor verification. Forwards a verification contract to Codex on the newest Sol (`sol-latest`, xhigh effort) in read-only mode and returns its verdict. Use whenever the diff under review was authored by an Anthropic model, so the verifier does not share a vendor with the author.
 model: sonnet
+effort: low
 tools: [Bash]
 ---
 
