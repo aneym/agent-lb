@@ -9,7 +9,19 @@ import {
   useStickySessions,
   type Pool,
 } from "../../api";
-import { duration, money } from "../../format";
+import { money } from "../../format";
+
+function durationWords(milliseconds: number) {
+  const minutes = Math.max(0, Math.ceil(milliseconds / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return [
+    hours && `${hours} ${hours === 1 ? "hour" : "hours"}`,
+    (rest || !hours) && `${rest} ${rest === 1 ? "minute" : "minutes"}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 import { ProviderMark } from "../../kit/provider-mark";
 import { providerMark } from "../../kit/provider-mark-helpers";
 import {
@@ -45,14 +57,19 @@ const poolModels: Record<string, string> = {
   cursor: "Cursor seat",
   devin: "Devin seat",
 };
-const accountName = (a: Account) => a.alias || `${a.planType} · ${a.email.split("@")[0]}`;
-function PoolRow({ pool }: { pool: Pool }) {
-  const has5h = pool.fiveHourRemainingPercent != null;
-  const long = pool.windowLabel
-    ? (pool.weeklyRemainingPercent ?? pool.aggregateRemainingPercent)
-    : null;
+const accountName = (a: Account) =>
+  a.alias ||
+  `${a.planType.charAt(0).toUpperCase()}${a.planType.slice(1)} · ${a.email.split("@")[0]}`;
+function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
+  const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(pool.provider);
+  const isSeat = pool.kind === "cli_seat" || ["cursor", "devin"].includes(pool.provider);
+  const long = isSeat
+    ? null
+    : (pool.weeklyRemainingPercent ?? (pool.windowLabel ? pool.aggregateRemainingPercent : null));
   const reset = pool.weeklyResetAt || pool.resetAt;
   const longLabel = pool.windowLabel === "month" ? "mo" : "wk";
+  const paceTick =
+    pool.weeklyPacePercent != null && long != null ? long - pool.weeklyPacePercent : undefined;
   return (
     <div className="row link">
       <div className="c-who who">
@@ -67,25 +84,23 @@ function PoolRow({ pool }: { pool: Pool }) {
       <div className="c-st">
         <PoolState status={pool.status} ready={pool.eligibleAccounts} total={pool.accounts} />
       </div>
-      <div className={`c-h5 ${has5h ? "" : "none"}`}>
-        <LimitMeter
-          remaining={pool.fiveHourRemainingPercent}
-          resetAt={pool.fiveHourResetAt}
-          empty="No 5-hour window"
-          label="5h"
-        />
-      </div>
       <div className="c-wk">
         <LimitMeter
           remaining={long}
           resetAt={reset}
-          paceTick={
-            pool.weeklyPacePercent != null && long != null
-              ? long + pool.weeklyPacePercent
-              : undefined
-          }
-          empty={pool.windowLabel === "month" ? "No monthly cap" : "No weekly cap"}
-          label={longLabel}
+          paceTick={paceTick}
+          paceDelta={pool.weeklyPacePercent}
+          empty={["glm", "kimi"].includes(pool.provider) ? "No cap" : "No reading"}
+          unit={longLabel}
+        />
+      </div>
+      <div className={`c-h5 ${no5h ? "none" : ""}`}>
+        <LimitMeter
+          remaining={pool.fiveHourRemainingPercent}
+          resetAt={pool.fiveHourResetAt}
+          detail={bestAccount ? `on ${bestAccount}` : undefined}
+          noWindow={no5h}
+          unit="5h"
         />
       </div>
       <div className={`c-pace ${pool.weeklyPacePercent == null ? "none" : ""}`}>
@@ -106,8 +121,8 @@ function AccountRow({
   const navigate = useNavigate();
   const [pauseOpen, setPauseOpen] = useState(false);
   const { resumeMutation, probeMutation } = useAccounts();
-  const isOpenai = a.provider === "openai";
-  const has5h = !isOpenai && a.windowMinutesPrimary === 300;
+  const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(a.provider || "");
+  const has5h = !no5h && a.windowMinutesPrimary === 300;
   const secondary = a.usage?.secondaryRemainingPercent;
   const reset = a.resetAtSecondary;
   const [now] = useState(() => Date.now());
@@ -149,21 +164,23 @@ function AccountRow({
           sub={a.status === "active" && sessions ? `holding ${sessions} sessions` : undefined}
         />
       </div>
-      <div className="c-h5">
+      <div className="c-wk">
+        <LimitMeter
+          remaining={a.status === "reauth_required" ? null : secondary}
+          resetAt={reset}
+          paceTick={secondary != null ? expected : undefined}
+          paceDelta={secondary != null && expected != null ? secondary - expected : undefined}
+          empty={["glm", "kimi"].includes(a.provider || "") ? "No cap" : "No reading"}
+          unit={a.windowMinutesSecondary && a.windowMinutesSecondary > 20160 ? "mo" : "wk"}
+        />
+      </div>
+      <div className={`c-h5 ${no5h ? "none" : ""}`}>
         <LimitMeter
           remaining={has5h ? a.usage?.primaryRemainingPercent : null}
           resetAt={has5h ? a.resetAtPrimary : null}
-          empty={has5h ? "No reading" : "No 5-hour window"}
-          label="5h"
-        />
-      </div>
-      <div className="c-wk">
-        <LimitMeter
-          remaining={secondary}
-          resetAt={reset}
-          paceTick={expected}
-          empty="No weekly cap"
-          label="wk"
+          noWindow={no5h}
+          notStarted={has5h && a.usage?.primaryRemainingPercent === 100 && !a.resetAtPrimary}
+          unit="5h"
         />
       </div>
       <div className="c-today today">
@@ -225,7 +242,6 @@ export function ProvidersPage() {
   const activePools = pools.data?.pools.filter((p) => p.kind !== "fable_scoped") || [];
   const accounts = accountsQuery.data || [];
   const paused = accounts.filter((a) => a.status === "paused").length;
-  const disconnected = accounts.filter((a) => a.status === "reauth_required").length;
   const soon = accounts
     .filter(
       (a) =>
@@ -239,11 +255,17 @@ export function ProvidersPage() {
   const ready = activePools.filter(
     (p) => !["exhausted", "unavailable"].includes(p.status) && p.eligibleAccounts > 0,
   ).length;
+  const bestAccountForPool = (pool: Pool) => {
+    if (!pool.fiveHourResetAt) return undefined;
+    const match = accounts.find(
+      (a) => a.provider === pool.provider && a.resetAtPrimary === pool.fiveHourResetAt,
+    );
+    return match ? accountName(match) : undefined;
+  };
   const filtered = accounts
     .filter(
       (a) =>
-        (filter === "all" ||
-          (filter === "paused" ? a.status === "paused" : a.status === "reauth_required")) &&
+        (filter === "all" || a.status === "paused") &&
         `${a.alias} ${a.email} ${a.planType}`.toLowerCase().includes(search.toLowerCase()),
     )
     .sort((a, b) =>
@@ -283,7 +305,7 @@ export function ProvidersPage() {
         }
       >
         {pools.data
-          ? `${ready} of ${activePools.length} pools can take work. ${soon?.resetAtPrimary ? `Next 5-hour reset in ${duration(new Date(soon.resetAtPrimary).getTime() - now)} (${accountName(soon)}).` : "No upcoming 5-hour reset."}`
+          ? `${ready} of ${activePools.length} pools can take work. ${soon?.resetAtPrimary ? `Next 5-hour reset in ${durationWords(new Date(soon.resetAtPrimary).getTime() - now)} (${accountName(soon)}).` : "No upcoming 5-hour reset."}`
           : "See which providers can take work."}
       </PageHead>
       <section>
@@ -294,9 +316,9 @@ export function ProvidersPage() {
         <div className="rows pools">
           <div className="row hd">
             <span>Pool</span>
-            <span>Status · Ready</span>
+            <span>Status</span>
+            <span>Limit</span>
             <span>5-hour</span>
-            <span>Week or month</span>
             <span className="r">Pace</span>
           </div>
           {pools.isPending ? (
@@ -308,7 +330,9 @@ export function ProvidersPage() {
           ) : pools.isError ? (
             <EmptyState title="Pools could not load" description="Try refreshing this page." />
           ) : activePools.length ? (
-            activePools.map((p) => <PoolRow key={p.id} pool={p} />)
+            activePools.map((p) => (
+              <PoolRow key={p.id} pool={p} bestAccount={bestAccountForPool(p)} />
+            ))
           ) : (
             <EmptyState title="No pools yet" />
           )}
@@ -327,7 +351,6 @@ export function ProvidersPage() {
                   count: accounts.length + (seat.data?.accounts.length || 0),
                 },
                 { label: "Paused", value: "paused", count: paused },
-                { label: "Disconnected", value: "disconnected", count: disconnected },
               ]}
               value={filter}
               onChange={setFilter}
@@ -349,8 +372,8 @@ export function ProvidersPage() {
           <div className="row hd">
             <span>Account</span>
             <span>State</span>
-            <span>5-hour left</span>
-            <span>Week left</span>
+            <span>Limit</span>
+            <span>5-hour</span>
             <span className="r">Today</span>
             <span />
           </div>
@@ -395,7 +418,7 @@ export function ProvidersPage() {
               ).length ? (
                 <div>
                   <div className="grp">
-                    <span className="gn">CLI seats</span>
+                    <span className="gn">CLI logins</span>
                     <span className="gs">· {seat.data.accounts.length} accounts</span>
                   </div>
                   {seat.data.accounts
@@ -432,11 +455,11 @@ export function ProvidersPage() {
                             }
                           />
                         </div>
-                        <div className="c-h5">
-                          <LimitMeter empty="No 5-hour window" />
-                        </div>
                         <div className="c-wk">
-                          <LimitMeter empty="No monthly cap" />
+                          <LimitMeter empty="No reading" />
+                        </div>
+                        <div className="c-h5 none">
+                          <LimitMeter noWindow />
                         </div>
                         <div className="c-today today">—</div>
                       </div>

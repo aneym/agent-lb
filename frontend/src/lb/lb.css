@@ -1161,7 +1161,12 @@ html.dark .lb {
   gap: 10px;
   line-height: 20px;
   font-size: 12.5px;
-  white-space: nowrap;
+  min-width: 0;
+}
+.lb .lim .lt .r {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 .lb .lim .v {
   font-family: var(--mono);
@@ -1170,6 +1175,10 @@ html.dark .lb {
 }
 .lb .lim .v.warn {
   font-weight: 600;
+}
+.lb .lim .v svg {
+  vertical-align: -1px;
+  margin-right: 4px;
 }
 .lb .lim .u {
   font-family: var(--sans);
@@ -1194,7 +1203,11 @@ html.dark .lb {
 }
 .lb .lim .w {
   color: var(--ink-2);
-  font-size: 12.5px;
+  font: 400 12.5px/20px var(--sans);
+}
+.lb .lb-half-circle {
+  fill: currentColor;
+  clip-path: inset(0 50% 0 0);
 }
 .lb .sr {
   position: absolute;
@@ -1241,7 +1254,15 @@ html.dark .lb {
   justify-items: start;
 }
 .lb .qs .st {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
   line-height: 20px;
+  flex-wrap: wrap;
+}
+.lb .qs .st svg {
+  align-self: center;
+  flex: none;
 }
 .lb .qs .st .rd {
   color: var(--ink-2);
