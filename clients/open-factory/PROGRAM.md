@@ -333,3 +333,8 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
   ~$0.00005 per pick. Observation for the eval: the routing table still puts `codex-sol`
   first for explore/research although ROUTING.md (dfe1ea2d) made Claude the default
   worker; A3's static sub-arm uses the table as it is, and the eval decides.
+- 2026-09-25: of-work v0 mined. 45 verified FAIL_TO_PASS tasks (26 agent-lb, 19 agent-rails).
+  - Dev: 24, at `~/.agent-lb/of/mine/dev-candidates.json`. agent-lb is 12 bugfix and 2 feature. agent-rails is 4 bugfix, 5 feature and 1 mechanical.
+  - Held-out: 21 tasks, sealed, never read by the orchestrator. `heldout/candidates.json` sha256 `321863ba1db8b85465553efffde596f84188d368293178ad4e39c51a3fc50706`. `heldout/MANIFEST.sha256` sha256 `dd6e757a8b694ef61c0612f47b452bd5440e08bd9f108cb5375f4743cce6136d`. A different hash at the final run means the seal was broken.
+  - No refactor class survived verification. Q1's per-class answers cover bugfix/feature only in v0.
+  - Leak rule: agent-lb (and codex-lb) is PUBLIC on GitHub. A trial with open egress could fetch the fix. Trials get egress only to agent-lb, or else every trial's agent log is scanned for fetches of the repo, and a hit marks that trial contaminated and excludes it from scoring.
