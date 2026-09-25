@@ -132,6 +132,16 @@ def clear_account_caches() -> None:
     _additional_quotas_cache.clear()
 
 
+def invalidate_additional_quotas_cache() -> None:
+    """Drop cached additional-quota windows; the next read reloads them.
+
+    Each window carries its routingPolicy from dashboard settings, so a settings
+    write must invalidate it rather than serve the old policy until the TTL.
+    Clearing also discards any background refresh already in flight.
+    """
+    _additional_quotas_cache.clear()
+
+
 async def cancel_account_cache_refreshes() -> None:
     """Stop background cache refreshes so none holds a DB session past shutdown."""
     await _request_usage_cache.cancel_refresh()

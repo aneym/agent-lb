@@ -15,6 +15,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.exceptions import DashboardBadRequestError
 from app.db.models import Account, AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.dependencies import SettingsContext, get_settings_context
+from app.modules.accounts.service import invalidate_additional_quotas_cache
 from app.modules.settings.schemas import (
     AccountProxyBindingRequest,
     AccountProxyBindingResponse,
@@ -599,6 +600,9 @@ async def update_settings(
         )
         if getattr(current, field_name) != getattr(updated, field_name)
     ]
+    if "additional_quota_routing_policies" in changed_fields:
+        # /api/accounts serves routingPolicy from its own read cache.
+        invalidate_additional_quotas_cache()
     AuditService.log_async(
         "settings_changed",
         actor_ip=request.client.host if request.client else None,

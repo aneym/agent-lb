@@ -75,9 +75,7 @@ async def test_anthropic_messages_returns_error_when_no_accounts_available(async
         "type": "error",
         "error": {
             "type": "no_available_anthropic_accounts",
-            "message": (
-                "No available Anthropic accounts"
-            ),
+            "message": ("No available Anthropic accounts"),
         },
     }
 
@@ -378,6 +376,17 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
             status=AccountStatus.RATE_LIMITED,
         )
 
+    # 82ed714b: a status without a failure marker is legacy and routable, so
+    # mark these as live provider failures inside their bounded retry.
+    blocked_at = int(time.time())
+    retry_at = blocked_at + 60
+    async with SessionLocal() as session:
+        for index in range(3):
+            account = await session.get(Account, f"anthropic-rate-limited-{index}")
+            account.blocked_at = blocked_at
+            account.reset_at = retry_at
+        await session.commit()
+
     response = await async_client.post(
         "/api/anthropic/session-route",
         json={
@@ -388,17 +397,17 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
     )
 
     assert response.status_code == 503
-    assert response.json() == {
-        "error": {
-            "message": (
-                "3 Anthropic accounts exist, but none are selectable for "
-                "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
-                "OpenAI accounts are not eligible for Claude routing."
-            ),
-            "type": "server_error",
-            "code": "no_available_anthropic_accounts",
-        }
-    }
+    error = response.json()["error"]
+    assert error["message"] == (
+        "3 Anthropic accounts exist, but none are selectable for "
+        "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
+        "OpenAI accounts are not eligible for Claude routing. "
+        f"Limits reset at {datetime.fromtimestamp(retry_at).isoformat()}."
+    )
+    assert error["type"] == "server_error"
+    assert error["code"] == "no_available_anthropic_accounts"
+    assert error["retryAt"] == datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    assert 0 < error["retryAfterSeconds"] <= 60
 
 
 def _disable_pool_exhausted_wait(monkeypatch) -> None:
@@ -486,8 +495,11 @@ async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async
     assert body["type"] == "error"
     assert body["error"]["type"] == "rate_limit_error"
     assert "cooling down" in body["error"]["message"]
-    assert f"Reset at {datetime.fromtimestamp(reset_at, tz=timezone.utc).isoformat()}." in body["error"]["message"]
-    assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
+    # 82ed714b: the live cooldown is retried after a bounded minute, not at the snapshot reset.
+    retry_at = int(response.headers["anthropic-ratelimit-unified-reset"])
+    assert f"Reset at {datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat()}." in body["error"]["message"]
+    assert reset_at - retry_at >= 5 * 60
+    assert 0 < retry_at - int(time.time()) <= 60
     assert 0 < int(response.headers["retry-after"]) <= 7 * 60
 
 
@@ -518,8 +530,11 @@ async def test_anthropic_session_route_includes_retry_metadata(async_client):
     assert response.status_code == 429
     error = response.json()["error"]
     assert error["code"] == "anthropic_quota_cooldown"
-    assert error["retryAt"] == datetime.fromtimestamp(reset_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
-    assert 0 < error["retryAfterSeconds"] <= 7 * 60
+    # 82ed714b: retry metadata reflects bounded live cooldown, not usage-window reset.
+    assert error["retryAt"] == datetime.fromtimestamp(
+        int(time.time()) + error["retryAfterSeconds"], tz=timezone.utc
+    ).isoformat().replace("+00:00", "Z")
+    assert 0 < error["retryAfterSeconds"] <= 60
     assert response.headers["retry-after"] == str(error["retryAfterSeconds"])
 
 
@@ -635,7 +650,9 @@ async def test_anthropic_session_route_explains_active_account_blocked_by_model_
     assert "statuses: active=1, quota_exceeded=1" in error["message"]
     assert "Model quota: anthropic_top cooldown excluded 1 account" in error["message"]
     assert "1 account remained after the anthropic_top prefilter" in error["message"]
-    assert error["retryAt"] == datetime.fromtimestamp(reset_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    # 82ed714b: retry metadata follows the bounded live cooldown, not the snapshot.
+    retry_at = datetime.fromisoformat(error["retryAt"].replace("Z", "+00:00")).timestamp()
+    assert 0 < retry_at - time.time() <= 60
     assert 0 < error["retryAfterSeconds"] <= 4 * 60
 
 
@@ -692,7 +709,8 @@ async def test_anthropic_messages_all_routable_accounts_cooling_returns_429_desp
     assert body["type"] == "error"
     assert body["error"]["type"] == "rate_limit_error"
     assert "cooling down" in body["error"]["message"]
-    assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
+    # 82ed714b: a real cooldown excludes, but only for the bounded retry.
+    assert 0 < int(response.headers["anthropic-ratelimit-unified-reset"]) - time.time() <= 60
     assert 0 < int(response.headers["retry-after"]) <= 6 * 60
 
 
@@ -1585,7 +1603,7 @@ async def test_anthropic_messages_fails_over_when_refresh_invalid_grant_before_u
 
 
 @pytest.mark.asyncio
-async def test_anthropic_429_records_quota_cooldown_and_fails_over_without_global_rate_limit(
+async def test_anthropic_429_records_quota_cooldown_and_bounded_account_backoff_then_fails_over(
     async_client,
     monkeypatch,
 ):
@@ -1695,7 +1713,13 @@ async def test_anthropic_429_records_quota_cooldown_and_fails_over_without_globa
             )
         ).scalar_one()
 
-    assert accounts["anthropic-a"].status == AccountStatus.ACTIVE
+    # 82ed714b: a live 429 now also persists account-level backoff (the spec's
+    # "exclude that account for a bounded retry interval"), so the old
+    # "without global rate limit" name no longer held. The backoff is bounded
+    # to a minute even though the upstream reset is ten minutes out.
+    assert accounts["anthropic-a"].status == AccountStatus.RATE_LIMITED
+    assert accounts["anthropic-a"].blocked_at is not None
+    assert 0 < accounts["anthropic-a"].reset_at - accounts["anthropic-a"].blocked_at <= 60
     assert accounts["anthropic-b"].status == AccountStatus.ACTIVE
     by_account = {entry.account_id: entry for entry in cooldowns}
     assert by_account["anthropic-a"].used_percent == 100.0
@@ -1969,9 +1993,7 @@ async def _insert_weekly_usage(
 ) -> None:
     from app.db.models import UsageHistory
 
-    effective_reset_at = reset_at or int(
-        (utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp()
-    )
+    effective_reset_at = reset_at or int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
     async with SessionLocal() as session:
         session.add(
             UsageHistory(
@@ -2177,7 +2199,9 @@ async def test_mixed_model_session_holds_separate_pins(async_client, fable_burn_
 
 
 @pytest.mark.asyncio
-async def test_non_fable_sticky_session_drains_to_over_threshold_account(async_client, monkeypatch, fable_burn_first_enabled):
+async def test_non_fable_sticky_session_drains_to_over_threshold_account(
+    async_client, monkeypatch, fable_burn_first_enabled
+):
     from app.core.config.settings import get_settings
 
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_STICKY_HOLD_UNTIL_EXHAUSTED", "false")
@@ -2637,69 +2661,15 @@ async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_c
 
 
 @pytest.mark.asyncio
-async def test_planner_messages_use_fable_while_scoped_capacity_remains(
+async def test_planner_messages_resolve_to_opus(
     async_client,
     monkeypatch,
 ):
     await _insert_account(
-        account_id="anthropic-fable-capacity",
+        account_id="anthropic-planner-messages",
         provider="anthropic",
-        access_token="anthropic-access-fable-capacity",
-        email="fable-capacity@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-fable-capacity",
-        used_percent=20.0,
-        reset_at=scoped_reset_at,
-    )
-    captured: dict[str, Any] = {}
-
-    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
-        del self, session, provider_name, headers
-        captured["model"] = json_body["model"]
-        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
-
-    monkeypatch.setattr(
-        anthropic_proxy_module.AnthropicProxyService,
-        "_open_upstream_response",
-        fake_open_upstream_response,
-    )
-
-    async with async_client.stream(
-        "POST",
-        "/v1/messages",
-        json={
-            "model": "claude-planner",
-            "max_tokens": 32,
-            "stream": True,
-            "messages": [{"role": "user", "content": "hello"}],
-            "thinking": {"type": "adaptive"},
-        },
-        headers={"anthropic-beta": "oauth-2025-04-20"},
-    ) as response:
-        assert response.status_code == 200
-        await response.aread()
-
-    assert captured["model"] == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_messages_use_opus_5_when_all_scoped_fable_capacity_is_exhausted(
-    async_client,
-    monkeypatch,
-):
-    await _insert_account(
-        account_id="anthropic-fable-exhausted",
-        provider="anthropic",
-        access_token="anthropic-access-fable-exhausted",
-        email="fable-exhausted@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-fable-exhausted",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
+        access_token="anthropic-access-planner-messages",
+        email="planner-messages@example.com",
     )
     captured: dict[str, Any] = {}
 
@@ -2747,60 +2717,12 @@ async def test_planner_messages_use_opus_5_when_all_scoped_fable_capacity_is_exh
 
 
 @pytest.mark.asyncio
-async def test_planner_api_key_allows_effective_fable_primary(async_client, app_instance, monkeypatch):
-    await _insert_account(
-        account_id="anthropic-planner-key-fable",
-        provider="anthropic",
-        access_token="anthropic-access-planner-key-fable",
-        email="planner-key-fable@example.com",
-    )
-    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-fable-5-1"])
-    captured: dict[str, Any] = {}
-
-    async def fake_enforce_request_limits(*args, **kwargs):
-        del args, kwargs
-        return None
-
-    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
-        del self, session, provider_name, headers
-        captured["model"] = json_body["model"]
-        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
-
-    monkeypatch.setattr(
-        anthropic_proxy_module.AnthropicProxyService,
-        "_open_upstream_response",
-        fake_open_upstream_response,
-    )
-    monkeypatch.setattr(proxy_api_module, "_enforce_request_limits", fake_enforce_request_limits)
-
-    response = await async_client.post(
-        "/v1/messages",
-        json={
-            "model": "claude-planner",
-            "max_tokens": 32,
-            "messages": [{"role": "user", "content": "hello"}],
-            "thinking": {"type": "adaptive"},
-        },
-        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
-    )
-
-    assert response.status_code == 200
-    assert captured["model"] == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_api_key_allows_effective_opus_fallback(async_client, app_instance, monkeypatch):
+async def test_planner_api_key_allows_effective_opus(async_client, app_instance, monkeypatch):
     await _insert_account(
         account_id="anthropic-planner-key-opus",
         provider="anthropic",
         access_token="anthropic-access-planner-key-opus",
         email="planner-key-opus@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-key-opus",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
     )
     api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5-5"])
     captured: dict[str, Any] = {}
@@ -2844,7 +2766,7 @@ async def test_planner_api_key_rejects_disallowed_effective_model(async_client, 
         access_token="anthropic-access-planner-key-disallowed",
         email="planner-key-disallowed@example.com",
     )
-    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5-5"])
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-fable-5-1"])
 
     response = await async_client.post(
         "/v1/messages",
@@ -2859,7 +2781,7 @@ async def test_planner_api_key_rejects_disallowed_effective_model(async_client, 
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "model_not_allowed"
-    assert "claude-fable-5" in response.json()["error"]["message"]
+    assert "claude-opus-5-5" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -2873,12 +2795,6 @@ async def test_planner_api_key_reservation_and_settlement_use_effective_model(
         provider="anthropic",
         access_token="anthropic-access-planner-key-reservation",
         email="planner-key-reservation@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-key-reservation",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
     )
     api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5-5"])
     captured: dict[str, Any] = {}
@@ -2926,6 +2842,8 @@ async def test_planner_api_key_reservation_and_settlement_use_effective_model(
     )
 
     assert response.status_code == 200
+    # The reservation is taken on the effective model, not the requested alias,
+    # and the same model reaches upstream and settles.
     assert captured == {
         "reserved_model": "claude-opus-5-5",
         "upstream_model": "claude-opus-5-5",
@@ -2935,7 +2853,7 @@ async def test_planner_api_key_reservation_and_settlement_use_effective_model(
 
 
 @pytest.mark.asyncio
-async def test_planner_count_tokens_api_key_allows_effective_opus_fallback(
+async def test_planner_count_tokens_api_key_allows_effective_opus(
     async_client,
     app_instance,
     monkeypatch,
@@ -2945,12 +2863,6 @@ async def test_planner_count_tokens_api_key_allows_effective_opus_fallback(
         provider="anthropic",
         access_token="anthropic-access-planner-count-key-opus",
         email="planner-count-key-opus@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-count-key-opus",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
     )
     api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5-5"])
     captured: dict[str, Any] = {}
@@ -2980,17 +2892,17 @@ async def test_planner_count_tokens_api_key_allows_effective_opus_fallback(
 
 
 @pytest.mark.asyncio
-async def test_planner_count_tokens_api_key_rejects_disallowed_effective_fable(
+async def test_planner_count_tokens_api_key_rejects_disallowed_effective_model(
     async_client,
     app_instance,
 ):
     await _insert_account(
-        account_id="anthropic-planner-count-key-fable",
+        account_id="anthropic-planner-count-key-disallowed",
         provider="anthropic",
         access_token="anthropic-access-planner-count-key-fable",
-        email="planner-count-key-fable@example.com",
+        email="planner-count-key-disallowed@example.com",
     )
-    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5-5"])
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-fable-5-1"])
 
     response = await async_client.post(
         "/v1/messages/count_tokens",
@@ -3000,162 +2912,19 @@ async def test_planner_count_tokens_api_key_rejects_disallowed_effective_fable(
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "model_not_allowed"
-    assert "claude-fable-5" in response.json()["error"]["message"]
+    assert "claude-opus-5-5" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
-async def test_planner_model_does_not_fall_back_when_scoped_exhaustion_is_partial():
-    await _insert_account(
-        account_id="anthropic-planner-partial-exhausted",
-        provider="anthropic",
-        access_token="anthropic-access-planner-partial-exhausted",
-        email="planner-partial-exhausted@example.com",
-    )
-    await _insert_account(
-        account_id="anthropic-planner-partial-available",
-        provider="anthropic",
-        access_token="anthropic-access-planner-partial-available",
-        email="planner-partial-available@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-partial-exhausted",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
-    )
-
-    model = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._resolve_planner_model(
-        "claude-planner",
-        provider_name="anthropic",
-        quota_key="anthropic_top_thinking",
-    )
-
-    assert model == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_model_does_not_fall_back_for_soft_weekly_threshold():
-    await _insert_account(
-        account_id="anthropic-planner-soft-weekly",
-        provider="anthropic",
-        access_token="anthropic-access-planner-soft-weekly",
-        email="planner-soft-weekly@example.com",
-    )
-    await _insert_weekly_usage(account_id="anthropic-planner-soft-weekly", used_percent=90.0)
-
-    model = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._resolve_planner_model(
-        "claude-planner",
-        provider_name="anthropic",
-        quota_key="anthropic_top_thinking",
-    )
-
-    assert model == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_model_does_not_fall_back_for_stale_scoped_marker():
-    await _insert_account(
-        account_id="anthropic-planner-stale-scoped",
-        provider="anthropic",
-        access_token="anthropic-access-planner-stale-scoped",
-        email="planner-stale-scoped@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-stale-scoped",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
-        recorded_at=utcnow() - timedelta(hours=7),
-    )
-
-    model = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._resolve_planner_model(
-        "claude-planner",
-        provider_name="anthropic",
-        quota_key="anthropic_top_thinking",
-    )
-
-    assert model == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_model_does_not_fall_back_for_generic_request_cooldown():
-    await _insert_account(
-        account_id="anthropic-planner-request-cooldown",
-        provider="anthropic",
-        access_token="anthropic-access-planner-request-cooldown",
-        email="planner-request-cooldown@example.com",
-    )
-    reset_at = int((utcnow() + timedelta(minutes=10)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_quota_cooldown(
-        account_id="anthropic-planner-request-cooldown",
-        quota_key="anthropic_top_thinking",
-        reset_at=reset_at,
-    )
-
-    model = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._resolve_planner_model(
-        "claude-planner",
-        provider_name="anthropic",
-        quota_key="anthropic_top_thinking",
-    )
-
-    assert model == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_model_does_not_fall_back_when_total_anthropic_quota_is_exhausted():
-    await _insert_account(
-        account_id="anthropic-planner-total-exhausted",
-        provider="anthropic",
-        access_token="anthropic-access-planner-total-exhausted",
-        email="planner-total-exhausted@example.com",
-    )
-    reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-total-exhausted",
-        used_percent=100.0,
-        reset_at=reset_at,
-    )
-    await _insert_primary_usage(
-        account_id="anthropic-planner-total-exhausted",
-        used_percent=100.0,
-        reset_at=reset_at,
-    )
-
-    model = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._resolve_planner_model(
-        "claude-planner",
-        provider_name="anthropic",
-        quota_key="anthropic_top_thinking",
-    )
-
-    assert model == "claude-fable-5-1"
-
-
-@pytest.mark.asyncio
-async def test_planner_count_tokens_uses_same_scoped_exhaustion_resolution(
+async def test_planner_count_tokens_resolves_to_opus(
     async_client,
     monkeypatch,
 ):
     await _insert_account(
-        account_id="anthropic-planner-count-exhausted",
+        account_id="anthropic-planner-count",
         provider="anthropic",
         access_token="anthropic-access-planner-count-exhausted",
-        email="planner-count-exhausted@example.com",
-    )
-    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-planner-count-exhausted",
-        used_percent=100.0,
-        reset_at=scoped_reset_at,
+        email="planner-count@example.com",
     )
     captured: dict[str, Any] = {}
 
@@ -3244,9 +3013,7 @@ async def test_fable_scoped_exhaustion_with_elapsed_reset_remains_in_model_scope
         reset_at=paid_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3269,7 +3036,7 @@ async def test_fable_scoped_exhaustion_with_elapsed_reset_remains_in_model_scope
 
 
 @pytest.mark.asyncio
-async def test_all_active_fable_scoped_exhaustions_return_earliest_reset(
+async def test_all_fable_scoped_snapshot_exhaustions_still_attempt_upstream(
     async_client,
     monkeypatch,
 ):
@@ -3299,16 +3066,15 @@ async def test_all_active_fable_scoped_exhaustions_return_earliest_reset(
             reset_at=reset_at,
         )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
     )
-    assert eligibility.account_ids == []
-    assert eligibility.blocked_count == 2
-    assert eligibility.next_reset_at == earliest_reset
+    # 82ed714b: even 100% scoped snapshots are advisory until upstream refuses.
+    assert eligibility.account_ids == ["anthropic-fable-hard-excluded-a", "anthropic-fable-hard-excluded-b"]
+    assert eligibility.blocked_count == 0
+    assert eligibility.next_reset_at is None
     assert eligibility.paid_fallback_account_ids == frozenset()
 
     upstream_calls: list[str] = []
@@ -3335,9 +3101,8 @@ async def test_all_active_fable_scoped_exhaustions_return_earliest_reset(
         headers={"anthropic-beta": "oauth-2025-04-20"},
     )
 
-    assert response.status_code == 429
-    assert response.headers["anthropic-ratelimit-unified-reset"] == str(earliest_reset)
-    assert upstream_calls == []
+    assert response.status_code == 200
+    assert len(upstream_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -3566,10 +3331,11 @@ async def test_exhausted_primary_window_account_is_not_selected_when_alternative
 
 
 @pytest.mark.asyncio
-async def test_pool_of_exhausted_windows_returns_rate_limit_envelope_by_default(async_client, monkeypatch):
-    """ANTHROPIC_ROUTE_TO_EXTRA_USAGE defaults to false: pool-wide primary
-    exhaustion surfaces the 429 + earliest reset envelope and no request is
-    forwarded to a credit-billing account."""
+async def test_pool_of_exhausted_window_snapshots_still_attempts_upstream_by_default(async_client, monkeypatch):
+    """With ANTHROPIC_ROUTE_TO_EXTRA_USAGE at its default (false), pool-wide
+    primary-exhaustion snapshots used to return a 429 envelope without an
+    upstream call. Since 82ed714b snapshots only rank, so the router still
+    makes one real attempt and lets upstream decide."""
     await _insert_account(
         account_id="anthropic-exhausted-a",
         provider="anthropic",
@@ -3625,11 +3391,9 @@ async def test_pool_of_exhausted_windows_returns_rate_limit_envelope_by_default(
         headers={"anthropic-beta": "oauth-2025-04-20"},
     )
 
-    assert response.status_code == 429
-    body = response.json()
-    assert body["error"]["type"] == "rate_limit_error"
-    assert response.headers["anthropic-ratelimit-unified-reset"] == str(earliest_reset)
-    assert upstream_calls == []
+    # 82ed714b: snapshots alone cannot suppress an upstream attempt.
+    assert response.status_code == 200
+    assert len(upstream_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -3689,9 +3453,7 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(
         reset_at=blocked_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3730,7 +3492,7 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(
 
 
 @pytest.mark.asyncio
-async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_bypass(
+async def test_fable_extra_usage_tripwire_excludes_paid_rows_while_headroom_routes(
     async_client,
     monkeypatch,
 ):
@@ -3764,9 +3526,9 @@ async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_by
         status=AccountStatus.RATE_LIMITED,
     )
     await _insert_account(
-        account_id="anthropic-fable-exhausted-no-credits",
+        account_id="anthropic-planner-messages-no-credits",
         provider="anthropic",
-        access_token="anthropic-access-fable-exhausted-no-credits",
+        access_token="anthropic-access-planner-messages-no-credits",
         email="fable-exhausted-no-credits@example.com",
     )
     paid_reset_at = int((utcnow() + timedelta(hours=1)).replace(tzinfo=timezone.utc).timestamp())
@@ -3779,7 +3541,7 @@ async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_by
         credits_balance=250.0,
     )
     await _insert_primary_usage(
-        account_id="anthropic-fable-exhausted-no-credits",
+        account_id="anthropic-planner-messages-no-credits",
         used_percent=100.0,
         reset_at=no_credit_reset_at,
         credits_has=False,
@@ -3787,7 +3549,7 @@ async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_by
     )
     for account_id, reset_at in (
         ("anthropic-fable-paid", paid_reset_at),
-        ("anthropic-fable-exhausted-no-credits", no_credit_reset_at),
+        ("anthropic-planner-messages-no-credits", no_credit_reset_at),
     ):
         await _insert_weekly_usage(account_id=account_id, used_percent=20.0)
         await _insert_fable_scoped_weekly(account_id=account_id, used_percent=20.0)
@@ -3797,17 +3559,17 @@ async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_by
             reset_at=reset_at,
         )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
     )
-    assert eligibility.account_ids == ["anthropic-fable-paid"]
-    assert eligibility.paid_fallback_account_ids == frozenset({"anthropic-fable-paid"})
-    assert eligibility.blocked_count == 1
-    assert eligibility.next_reset_at == no_credit_reset_at
+    # 82ed714b: scoped snapshots and primary exhaustion no longer exclude healthy accounts.
+    assert eligibility.account_ids == headroom_ids
+    # The response-written extra-usage tripwire still excludes the paid rows.
+    assert eligibility.paid_fallback_account_ids == frozenset()
+    assert eligibility.blocked_count == 2
+    assert eligibility.next_reset_at == paid_reset_at
 
     response = await async_client.post(
         "/api/anthropic/session-route",
@@ -3819,7 +3581,7 @@ async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_by
     )
 
     assert response.status_code == 200
-    assert response.json()["accountId"] == "anthropic-fable-paid"
+    assert response.json()["accountId"] in headroom_ids
     async with SessionLocal() as session:
         paid_account = await session.get(Account, "anthropic-fable-paid")
         assert paid_account is not None
@@ -3864,9 +3626,7 @@ async def test_fable_soft_headroom_blocks_paid_fallback(async_client, monkeypatc
     await _insert_primary_usage(account_id="anthropic-fable-soft-headroom", used_percent=10.0)
     await _insert_weekly_usage(account_id="anthropic-fable-soft-headroom", used_percent=80.0)
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3885,78 +3645,6 @@ async def test_fable_soft_headroom_blocks_paid_fallback(async_client, monkeypatc
 
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-fable-soft-headroom"
-
-
-@pytest.mark.asyncio
-async def test_fable_secondary_exhausted_preference_does_not_hide_soft_headroom(
-    async_client,
-    monkeypatch,
-):
-    from app.core.config.settings import get_settings
-
-    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
-    get_settings.cache_clear()
-
-    await _insert_account(
-        account_id="anthropic-fable-preferred-weekly-exhausted",
-        provider="anthropic",
-        access_token="anthropic-access-fable-preferred-weekly-exhausted",
-        email="fable-preferred-weekly-exhausted@example.com",
-    )
-    await _insert_account(
-        account_id="anthropic-fable-soft-weekly-headroom",
-        provider="anthropic",
-        access_token="anthropic-access-fable-soft-weekly-headroom",
-        email="fable-soft-weekly-headroom@example.com",
-    )
-    weekly_reset_at = int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
-    await _insert_primary_usage(
-        account_id="anthropic-fable-preferred-weekly-exhausted",
-        used_percent=10.0,
-    )
-    await _insert_weekly_usage(
-        account_id="anthropic-fable-preferred-weekly-exhausted",
-        used_percent=100.0,
-        reset_at=weekly_reset_at,
-    )
-    await _insert_fable_scoped_weekly(
-        account_id="anthropic-fable-preferred-weekly-exhausted",
-        used_percent=20.0,
-        reset_at=weekly_reset_at,
-    )
-    await _insert_primary_usage(
-        account_id="anthropic-fable-soft-weekly-headroom",
-        used_percent=10.0,
-    )
-    await _insert_weekly_usage(
-        account_id="anthropic-fable-soft-weekly-headroom",
-        used_percent=80.0,
-        reset_at=weekly_reset_at,
-    )
-
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
-        "anthropic",
-        "anthropic_top_thinking",
-        model="claude-fable-5",
-    )
-    assert eligibility.account_ids == ["anthropic-fable-soft-weekly-headroom"]
-    assert eligibility.blocked_count == 1
-    assert eligibility.next_reset_at == weekly_reset_at
-    assert eligibility.paid_fallback_account_ids == frozenset()
-
-    response = await async_client.post(
-        "/api/anthropic/session-route",
-        json={
-            "sessionId": "session-fable-soft-weekly-headroom",
-            "model": "claude-fable-5",
-            "quotaKey": "anthropic_top_thinking",
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["accountId"] == "anthropic-fable-soft-weekly-headroom"
 
 
 @pytest.mark.asyncio
@@ -3986,9 +3674,7 @@ async def test_route_to_extra_usage_paid_only_eligibility_has_no_blocked_reset(a
         reset_at=reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -4118,16 +3804,15 @@ async def test_route_to_extra_usage_does_not_bypass_secondary_exhaustion(async_c
         reset_at=primary_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
     )
     assert eligibility.account_ids == []
     assert eligibility.paid_fallback_account_ids == frozenset()
-    assert eligibility.next_reset_at == secondary_reset_at
+    # 82ed714b: the live extra-usage tripwire, not the weekly snapshot, sets retry.
+    assert eligibility.next_reset_at == primary_reset_at
 
     upstream_calls: list[str] = []
 
@@ -4154,7 +3839,7 @@ async def test_route_to_extra_usage_does_not_bypass_secondary_exhaustion(async_c
     )
 
     assert response.status_code == 429
-    assert response.headers["anthropic-ratelimit-unified-reset"] == str(secondary_reset_at)
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(primary_reset_at)
     assert upstream_calls == []
 
 
@@ -4462,7 +4147,8 @@ async def test_pool_exhausted_wait_defaults_to_immediate_envelope(async_client, 
     assert response.status_code == 429
     body = response.json()
     assert body["error"]["type"] == "rate_limit_error"
-    assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
+    # 82ed714b: the envelope advertises the bounded live cooldown retry.
+    assert 0 < int(response.headers["anthropic-ratelimit-unified-reset"]) - time.time() <= 60
 
 
 _OVERLOADED_529_BODY = b'{"error":{"type":"overloaded_error","message":"Overloaded"}}'
@@ -4755,14 +4441,19 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
         access_token="anthropic-access-cooling",
         email="cooling@example.com",
     )
-    cooldown_reset_at = int((utcnow() + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
+    cooldown_recorded_at = utcnow().replace(microsecond=0)
+    cooldown_reset_at = int((cooldown_recorded_at + timedelta(minutes=6)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_quota_cooldown(
         account_id="anthropic-cooling",
         # Opus requests are held out by Opus-scoped cooldowns only; a legacy
         # anthropic_top marker belongs to Fable and no longer blocks Opus.
         quota_key="anthropic_opus",
         reset_at=cooldown_reset_at,
+        recorded_at=cooldown_recorded_at,
     )
+    # 82ed714b: a live cooldown excludes for a bounded minute after the 429,
+    # even though its header reset is six minutes out.
+    bounded_retry_at = int(cooldown_recorded_at.replace(tzinfo=timezone.utc).timestamp()) + 60
     await _insert_account(
         account_id="anthropic-weekly-spent",
         provider="anthropic",
@@ -4805,30 +4496,46 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     message = response.json()["error"]["message"]
     quota_sentence = message.split("Model quota: ", 1)[1].split(". ", 1)[0]
     clauses = [clause.strip() for clause in quota_sentence.split(";")]
-    assert clauses[0] == (
-        f"anthropic_opus cooldown excluded 1 account until {datetime.fromtimestamp(cooldown_reset_at).isoformat()}"
-    )
-    assert "1 account out of window or capped" in clauses
-    assert datetime.fromtimestamp(weekly_reset_at).isoformat() not in clauses[0]
+    # 82ed714b: the weekly-spent account is ranked, not blocked, so only the
+    # live cooldown is reported, dated by its bounded retry.
+    assert clauses == [
+        f"anthropic_opus cooldown excluded 1 account until {datetime.fromtimestamp(bounded_retry_at).isoformat()}",
+        "2 accounts remained after the anthropic_opus prefilter",
+    ]
+    assert 0 < bounded_retry_at - time.time() <= 60
+    assert datetime.fromtimestamp(weekly_reset_at).isoformat() not in message
 
 
 @pytest.mark.asyncio
 async def test_opus_routes_when_fable_weekly_and_legacy_cooldown_are_exhausted(async_client):
     account_id = "opus-not-fable"
     await _insert_account(
-        account_id=account_id, provider="anthropic", access_token="test-opus", email="opus@example.invalid",
+        account_id=account_id,
+        provider="anthropic",
+        access_token="test-opus",
+        email="opus@example.invalid",
     )
     reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_quota_cooldown(account_id=account_id, quota_key="anthropic_top_thinking", reset_at=reset_at)
     await _insert_fable_scoped_weekly(account_id=account_id, used_percent=100.0, reset_at=reset_at)
-    response = await async_client.post("/api/anthropic/session-route", json={
-        "sessionId": "opus-independent", "model": "claude-opus-5-5", "quotaKey": "anthropic_top_thinking",
-    })
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "opus-independent",
+            "model": "claude-opus-5-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
     assert response.status_code == 200, response.text
     assert response.json()["accountId"] == account_id
-    blocked = await async_client.post("/api/anthropic/session-route", json={
-        "sessionId": "fable-blocked", "model": "claude-fable-5-1", "quotaKey": "anthropic_top_thinking",
-    })
+    blocked = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "fable-blocked",
+            "model": "claude-fable-5-1",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
     assert blocked.status_code == 429
 
 
@@ -4836,16 +4543,23 @@ async def test_opus_routes_when_fable_weekly_and_legacy_cooldown_are_exhausted(a
 async def test_opus_specific_cooldown_remains_a_real_blocker(async_client):
     account_id = "opus-cooling"
     await _insert_account(
-        account_id=account_id, provider="anthropic", access_token="test-opus", email="opus@example.invalid",
+        account_id=account_id,
+        provider="anthropic",
+        access_token="test-opus",
+        email="opus@example.invalid",
     )
     reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
     await _insert_quota_cooldown(account_id=account_id, quota_key="anthropic_opus_thinking", reset_at=reset_at)
-    response = await async_client.post("/api/anthropic/session-route", json={
-        "sessionId": "opus-real-limit", "model": "claude-opus-5-5", "quotaKey": "anthropic_top_thinking",
-    })
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={
+            "sessionId": "opus-real-limit",
+            "model": "claude-opus-5-5",
+            "quotaKey": "anthropic_top_thinking",
+        },
+    )
     assert response.status_code == 429
     assert response.json()["error"]["retryAt"].endswith("Z")
-
 
 
 class _FailingConnectContext:

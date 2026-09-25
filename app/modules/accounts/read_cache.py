@@ -28,6 +28,9 @@ class StaleWhileRevalidate(Generic[T]):
         self._value: T | None = None
         self._loaded_at = 0.0
         self._generation = 0
+        # Bumped only by clear(), so a load that straddles an invalidation
+        # (a settings write) cannot re-cache what it read before it.
+        self._clear_epoch = 0
         self._refresh_task: asyncio.Task[None] | None = None
 
     async def get(
@@ -45,8 +48,12 @@ class StaleWhileRevalidate(Generic[T]):
 
     async def refresh_now(self, key: Hashable, load: Callable[[], Awaitable[T]]) -> T:
         started_at = time.monotonic()
+        clear_epoch = self._clear_epoch
         value = await load()
-        self._store(key, value, started_at)
+        # A clear during the load may postdate what the load read: hand the
+        # value to this caller, but leave the slot empty for the next reader.
+        if self._clear_epoch == clear_epoch:
+            self._store(key, value, started_at)
         return value
 
     async def cancel_refresh(self) -> None:
@@ -63,6 +70,7 @@ class StaleWhileRevalidate(Generic[T]):
         self._value = None
         self._loaded_at = 0.0
         self._generation += 1
+        self._clear_epoch += 1
         self._refresh_task = None
 
     def _store(self, key: Hashable, value: T, started_at: float) -> None:

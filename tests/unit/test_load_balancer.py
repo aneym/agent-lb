@@ -1532,6 +1532,7 @@ async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monk
         "get_settings",
         lambda: SimpleNamespace(
             anthropic_fable_routing_enabled=True,
+            anthropic_fable_burn_first_enabled=False,
             anthropic_fable_weekly_max_used_percent=50.0,
             anthropic_fable_scoped_max_used_percent=100.0,
         ),
@@ -1544,12 +1545,14 @@ async def test_anthropic_fable_eligibility_snapshots_usage_before_repo_exit(monk
         model="claude-fable-5",
     )
 
+    # 82ed714b: snapshots remain eligible; Fable preference still favors fresh capacity.
     assert eligibility.account_ids == [fresh_account.id]
 
 
 def _anthropic_eligibility_settings() -> SimpleNamespace:
     return SimpleNamespace(
         anthropic_fable_routing_enabled=False,
+        anthropic_fable_burn_first_enabled=False,
         anthropic_route_to_extra_usage=False,
     )
 
@@ -1607,9 +1610,7 @@ async def test_anthropic_eligibility_readmits_primary_window_with_none_reset(mon
             self.usage = SimpleNamespace(
                 latest_by_account=AsyncMock(
                     side_effect=lambda *, window, account_ids: (
-                        {account.id: SimpleNamespace(used_percent=100.0, reset_at=None)}
-                        if window == "primary"
-                        else {}
+                        {account.id: SimpleNamespace(used_percent=100.0, reset_at=None)} if window == "primary" else {}
                     )
                 )
             )
@@ -1738,15 +1739,17 @@ def _quota_scoped_additional_usage(quota_key: str, entries: dict) -> AsyncMock:
 
 @pytest.mark.asyncio
 async def test_anthropic_eligibility_pool_wide_transient_cooldowns_readmit_accounts(monkeypatch):
-    """When every candidate is blocked only by a near-reset requested-quota
-    cooldown (the 60s default written for header-less upstream 429s), the pool
-    must re-admit those candidates instead of returning a pool-wide 429
-    (regression: 2-account pools permanently 'cooling down for quota')."""
+    """When every candidate is blocked only by requested-quota cooldowns, the
+    pool must re-admit them once the bounded live retry has passed, even while
+    the stored header reset is still in the future, instead of returning a
+    pool-wide 429 (regression: 2-account pools permanently 'cooling down for
+    quota'). 82ed714b replaced the old near-reset bypass with this bound."""
     first = _make_test_account(account_id="anthropic-transient-1")
     first.provider = "anthropic"
     second = _make_test_account(account_id="anthropic-transient-2")
     second.provider = "anthropic"
-    near_reset = int(time.time()) + 60
+    reset_at = int(time.time()) + 3600
+    recorded_past_retry = _epoch_to_naive_utc(time.time() - 61)
 
     class _RepoBundle:
         def __init__(self) -> None:
@@ -1755,8 +1758,12 @@ async def test_anthropic_eligibility_pool_wide_transient_cooldowns_readmit_accou
                 latest_by_account=_quota_scoped_additional_usage(
                     "anthropic_top_thinking",
                     {
-                        first.id: SimpleNamespace(used_percent=100.0, reset_at=near_reset),
-                        second.id: SimpleNamespace(used_percent=100.0, reset_at=near_reset + 30),
+                        first.id: SimpleNamespace(
+                            used_percent=100.0, reset_at=reset_at, recorded_at=recorded_past_retry
+                        ),
+                        second.id: SimpleNamespace(
+                            used_percent=100.0, reset_at=reset_at + 30, recorded_at=recorded_past_retry
+                        ),
                     },
                 )
             )
@@ -1775,6 +1782,8 @@ async def test_anthropic_eligibility_pool_wide_transient_cooldowns_readmit_accou
 
     assert sorted(eligibility.account_ids) == [first.id, second.id]
     assert eligibility.blocked_count == 0
+    assert eligibility.cooldown_blocked_count == 0
+    assert eligibility.next_reset_at is None
 
 
 @pytest.mark.asyncio
@@ -1792,7 +1801,13 @@ async def test_anthropic_eligibility_transient_bypass_prefers_healthy_accounts(m
             self.additional_usage = SimpleNamespace(
                 latest_by_account=_quota_scoped_additional_usage(
                     "anthropic_top_thinking",
-                    {cooled.id: SimpleNamespace(used_percent=100.0, reset_at=int(time.time()) + 60)},
+                    {
+                        cooled.id: SimpleNamespace(
+                            used_percent=100.0,
+                            reset_at=int(time.time()) + 60,
+                            recorded_at=_epoch_to_naive_utc(time.time()),
+                        )
+                    },
                 )
             )
             self.usage = SimpleNamespace(latest_by_account=AsyncMock(return_value={}))
@@ -1808,6 +1823,7 @@ async def test_anthropic_eligibility_transient_bypass_prefers_healthy_accounts(m
 
     eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
 
+    # 82ed714b: a live cooldown still excludes while healthy accounts route.
     assert eligibility.account_ids == [healthy.id]
     assert eligibility.blocked_count == 1
 
@@ -1826,7 +1842,11 @@ async def test_anthropic_eligibility_transient_bypass_respects_primary_exhaustio
             self.additional_usage = SimpleNamespace(
                 latest_by_account=_quota_scoped_additional_usage(
                     "anthropic_top_thinking",
-                    {account.id: SimpleNamespace(used_percent=100.0, reset_at=now + 60)},
+                    {
+                        account.id: SimpleNamespace(
+                            used_percent=100.0, reset_at=now + 60, recorded_at=_epoch_to_naive_utc(time.time())
+                        )
+                    },
                 )
             )
             self.usage = SimpleNamespace(
@@ -1858,8 +1878,10 @@ async def test_anthropic_eligibility_transient_bypass_respects_primary_exhaustio
 
     eligibility = await service._provider_quota_eligibility("anthropic", "anthropic_top_thinking")
 
+    # 82ed714b: the live cooldown excludes, not the primary snapshot.
     assert eligibility.account_ids == []
     assert eligibility.blocked_count == 1
+    assert eligibility.cooldown_reset_at == now + 60
 
 
 def _epoch_to_naive_utc(epoch: float) -> datetime:
@@ -4797,9 +4819,10 @@ def test_select_account_fill_first_primary_dominates_over_secondary():
 
 def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(monkeypatch):
     """Anthropic extra-usage credits are dashboard-visible only by default:
-    a weekly-exhausted account must stay QUOTA_EXCEEDED even though the
-    usage row carries a positive credit balance (upstream would happily keep
-    serving it by billing dollars)."""
+    a positive credit balance must not make a weekly-exhausted account look
+    healthier (upstream would happily keep serving it by billing dollars).
+    Since 82ed714b a snapshot no longer sets QUOTA_EXCEEDED; the exhausted
+    window is a ranking input, so credits must leave that input unchanged."""
     now = 1_700_000_000.0
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -4832,8 +4855,23 @@ def test_state_from_account_anthropic_credits_never_rescue_exhausted_windows(mon
         secondary_entry=weekly_exhausted,
         runtime=RuntimeState(),
     )
+    for entry in (primary, weekly_exhausted):
+        entry.credits_has = False
+        entry.credits_balance = 0.0
+    without_credits = _state_from_account(
+        account=account,
+        primary_entry=primary,
+        secondary_entry=weekly_exhausted,
+        runtime=RuntimeState(),
+    )
 
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # The exhausted weekly window still ranks the account as spent, and the
+    # credit balance changes none of the routing inputs.
+    assert state.secondary_used_percent == 100.0
+    ranking_inputs = ("status", "used_percent", "secondary_used_percent", "reset_at", "capacity_credits")
+    assert {name: getattr(state, name) for name in ranking_inputs} == {
+        name: getattr(without_credits, name) for name in ranking_inputs
+    }
 
 
 def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monkeypatch):
@@ -4870,8 +4908,9 @@ def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monke
             runtime=RuntimeState(),
         )
 
-        assert state.status == AccountStatus.RATE_LIMITED
+        # 82ed714b: snapshots rank; only a live refusal sets a rate-limit status.
+        assert state.status == AccountStatus.ACTIVE
         assert state.used_percent == 100.0
-        assert state.reset_at == int(now + 3600)
+        assert state.reset_at is None
     finally:
         get_settings.cache_clear()

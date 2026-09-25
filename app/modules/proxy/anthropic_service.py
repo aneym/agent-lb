@@ -86,8 +86,8 @@ _ANTHROPIC_FABLE_SCOPED_WEEKLY_WINDOW = "primary"
 # this, so staleness signals a refresh gap, not just normal cadence).
 _FABLE_SCOPED_FRESH_SECONDS = 21600  # 6 hours
 _ANTHROPIC_PLANNER_MODEL_ALIAS = "claude-planner"
-_ANTHROPIC_PLANNER_PRIMARY_MODEL = "claude-fable-5-1"
-_ANTHROPIC_PLANNER_FALLBACK_MODEL = "claude-opus-5-5"
+# Fable is retired (owner 2026-09-22), so the planner alias targets Opus.
+_ANTHROPIC_PLANNER_MODEL = "claude-opus-5-5"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"
 _ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 _COUNT_TOKENS_TIMEOUT_SECONDS = 30.0
@@ -262,10 +262,6 @@ class _AnthropicQuotaEligibility:
     # already been bypassed, with a weekly reset days out quoted as its end.
     cooldown_blocked_count: int = 0
     cooldown_reset_at: int | None = None
-    # True only when every otherwise-routable account is excluded by a fresh,
-    # future-reset Fable-scoped quota marker. This is the sole planner alias
-    # fallback signal; generic account/quota failures must not set it.
-    fable_scoped_pool_exhausted: bool = False
     # Exact IDs allowed to bypass a persisted primary-window RATE_LIMITED
     # status for this request. This is intentionally narrower than account_ids:
     # only the paid last-resort branch may populate it.
@@ -757,11 +753,7 @@ class AnthropicProxyService:
         requested_model = payload.model
         provider_name = _messages_provider_name(payload)
         quota_key = _messages_quota_key(payload, provider_name=provider_name)
-        effective_model = await self._resolve_planner_model(
-            requested_model,
-            provider_name=provider_name,
-            quota_key=quota_key,
-        )
+        effective_model = _resolve_planner_model(requested_model)
         if effective_model != requested_model:
             payload = payload.model_copy(update={"model": effective_model})
             provider_name = _messages_provider_name(payload)
@@ -830,11 +822,7 @@ class AnthropicProxyService:
         model: str,
     ) -> AnthropicResolvedCountTokensRequest:
         provider_name = _provider_name_for_model(model)
-        effective_model = await self._resolve_planner_model(
-            model,
-            provider_name=provider_name,
-            quota_key=_count_tokens_quota_key(provider_name),
-        )
+        effective_model = _resolve_planner_model(model)
         if effective_model != model:
             model = effective_model
             provider_name = _provider_name_for_model(model)
@@ -844,42 +832,6 @@ class AnthropicProxyService:
             model=model,
             provider_name=provider_name,
         )
-
-    async def _resolve_planner_model(
-        self,
-        model: str,
-        *,
-        provider_name: str,
-        quota_key: str,
-    ) -> str:
-        if model.strip().lower() != _ANTHROPIC_PLANNER_MODEL_ALIAS:
-            return model
-        if provider_name != ANTHROPIC_PROVIDER_NAME:
-            return _ANTHROPIC_PLANNER_PRIMARY_MODEL
-
-        fable_eligibility = await self._provider_quota_eligibility(
-            provider_name,
-            quota_key,
-            model=_ANTHROPIC_PLANNER_PRIMARY_MODEL,
-        )
-        if not fable_eligibility.fable_scoped_pool_exhausted:
-            return _ANTHROPIC_PLANNER_PRIMARY_MODEL
-
-        opus_eligibility = await self._provider_quota_eligibility(
-            provider_name,
-            quota_key,
-            model=_ANTHROPIC_PLANNER_FALLBACK_MODEL,
-        )
-        if not opus_eligibility.account_ids:
-            return _ANTHROPIC_PLANNER_PRIMARY_MODEL
-
-        logger.warning(
-            "Planner routing switched from %s to %s because all otherwise-routable "
-            "Anthropic accounts exhausted the fresh Fable-scoped quota",
-            _ANTHROPIC_PLANNER_PRIMARY_MODEL,
-            _ANTHROPIC_PLANNER_FALLBACK_MODEL,
-        )
-        return _ANTHROPIC_PLANNER_FALLBACK_MODEL
 
     def _open_upstream_response(
         self,
@@ -934,7 +886,10 @@ class AnthropicProxyService:
             raise AnthropicProxyError(
                 429,
                 (
-                    f"No {_provider_label(provider_name)} accounts are currently eligible "
+                    f"All {_provider_label(provider_name)} accounts are cooling down "
+                    f"for quota '{quota_key}'.{reset_suffix}"
+                    if eligibility.cooldown_blocked_count == eligibility.blocked_count
+                    else f"No {_provider_label(provider_name)} accounts are currently eligible "
                     f"for quota '{quota_key}'.{reset_suffix}"
                 ),
                 code=_quota_cooldown_code(provider_name),
@@ -1034,8 +989,13 @@ class AnthropicProxyService:
                 for entry in primary_usage.values()
                 if entry.reset_at and float(entry.used_percent) >= 100.0
             )
-        future_resets = [candidate for candidate in reset_candidates if candidate > now]
-        retry_at = min(future_resets) if future_resets else None
+        # A live quota cooldown owns the retry hint; a usage snapshot must not
+        # replace its reset with an earlier, merely advisory window timestamp.
+        if quota_cooldown_reset_at is not None and quota_cooldown_reset_at > now:
+            retry_at = quota_cooldown_reset_at
+        else:
+            future_resets = [candidate for candidate in reset_candidates if candidate > now]
+            retry_at = min(future_resets) if future_resets else None
         if account_count == 0:
             return fallback, retry_at
         status_summary = ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
@@ -1247,8 +1207,6 @@ class AnthropicProxyService:
 
         model_scope_account_ids = account_ids
         preferred_fable_account_ids: frozenset[str] = frozenset()
-        hard_excluded_fable_account_ids: set[str] = set()
-        hard_excluded_fable_reset_by_account_id: dict[str, int] = {}
         if fable_request:
             model_scope_account_ids = []
             preferred_ids: set[str] = set()
@@ -1364,13 +1322,6 @@ class AnthropicProxyService:
                 account_id for account_id in eligible_account_ids if _is_over_fable_threshold(account_id)
             )
 
-        if not eligible_account_ids and hard_excluded_fable_account_ids:
-            # Hard Fable exclusions remain outside model scope and therefore
-            # outside paid-pool exhaustion. They still explain a terminal
-            # no-route result and contribute their earliest known reset.
-            blocked_count += len(hard_excluded_fable_account_ids)
-            blocked_reset_by_account_id.update(hard_excluded_fable_reset_by_account_id)
-
         # Only cooldowns that survived every re-admission path may be reported
         # as a cooldown; a re-admitted account is not being held out by one.
         cooling_account_ids = request_quota_blocked_account_ids - set(eligible_account_ids)
@@ -1379,9 +1330,6 @@ class AnthropicProxyService:
             for account_id in cooling_account_ids
             if account_id in blocked_reset_by_account_id
         ]
-        fable_scoped_pool_exhausted = (
-            fable_request and bool(account_ids) and len(hard_excluded_fable_account_ids) == len(account_ids)
-        )
         return _AnthropicQuotaEligibility(
             account_ids=eligible_account_ids,
             blocked_count=blocked_count,
@@ -1390,7 +1338,6 @@ class AnthropicProxyService:
             cooldown_reset_at=min(cooldown_resets) if cooldown_resets else None,
             paid_fallback_account_ids=paid_fallback_account_ids,
             burn_first_account_ids=burn_first_account_ids,
-            fable_scoped_pool_exhausted=fable_scoped_pool_exhausted,
         )
 
     async def _record_quota_cooldown(self, account: Account, *, quota_key: str, error: UpstreamError) -> None:
@@ -1595,6 +1542,14 @@ def _anthropic_quota_key(payload: AnthropicMessageRequest) -> str:
     if "haiku" in model:
         return "anthropic_standard"
     return model_quota_key(payload.model, "anthropic_top_thinking" if payload.thinking else "anthropic_top")
+
+
+def _resolve_planner_model(model: str) -> str:
+    # Resolved before account selection, forwarding, logs, pricing and
+    # settlement, so every step sees the model that actually serves.
+    if model.strip().lower() == _ANTHROPIC_PLANNER_MODEL_ALIAS:
+        return _ANTHROPIC_PLANNER_MODEL
+    return model
 
 
 def _is_fable_model(model: str | None) -> bool:
