@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 
 from app.core.config.settings import get_settings
-from app.modules.accounts.service import with_background_accounts_service
+from app.modules.accounts.service import cancel_account_cache_refreshes, with_background_accounts_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,13 @@ class AccountsCacheWarmer:
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
-        if not self._task:
-            return
-        self._stop.set()
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
+        if self._task:
+            self._stop.set()
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        await cancel_account_cache_refreshes()
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():

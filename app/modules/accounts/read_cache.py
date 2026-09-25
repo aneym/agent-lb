@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Hashable
@@ -47,6 +48,15 @@ class StaleWhileRevalidate(Generic[T]):
         value = await load()
         self._store(key, value, started_at)
         return value
+
+    async def cancel_refresh(self) -> None:
+        """Stop an in-flight background refresh (shutdown, before the DB closes)."""
+        task, self._refresh_task = self._refresh_task, None
+        if task is None or task.done():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
     def clear(self) -> None:
         self._key = None

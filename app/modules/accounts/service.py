@@ -132,6 +132,12 @@ def clear_account_caches() -> None:
     _additional_quotas_cache.clear()
 
 
+async def cancel_account_cache_refreshes() -> None:
+    """Stop background cache refreshes so none holds a DB session past shutdown."""
+    await _request_usage_cache.cancel_refresh()
+    await _additional_quotas_cache.cancel_refresh()
+
+
 async def with_background_accounts_service(load: Callable[[AccountsService], Awaitable[_T]]) -> _T:
     """Run a background cache refresh on its own session; the request's is closed by then."""
     async with get_background_session() as session:
