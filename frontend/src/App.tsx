@@ -14,17 +14,17 @@ import { SessionsPage } from "@/features/sessions/components/sessions-page";
 import { SettingsPage } from "@/features/settings/components/settings-page";
 import { TeamPage } from "@/features/team/components/team-page";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
+import { AppShell } from "@/lb/kit/app-shell";
+import { EmptyState } from "@/lb/kit/primitives";
+import { ProvidersPage } from "@/lb/pages/providers/providers-page";
 
-function AppLayout() {
+function LegacyLayout() {
   const logout = useAuthStore((state) => state.logout);
   const passwordRequired = useAuthStore((state) => state.passwordRequired);
   const timeFormat = useTimeFormatStore((state) => state.timeFormat);
 
   return (
-    <div
-      className="flex min-h-screen flex-col bg-background pb-10"
-      data-time-format={timeFormat}
-    >
+    <div className="flex min-h-screen flex-col bg-background pb-10" data-time-format={timeFormat}>
       <AppHeader
         onLogout={() => {
           void logout();
@@ -45,8 +45,21 @@ export default function App() {
       <Toaster richColors />
       <AuthGate>
         <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route element={<AppShell />}>
+            <Route path="/" element={<ProvidersPage />} />
+            <Route
+              path="/providers/add"
+              element={<EmptyState title="Coming in the next slice" />}
+            />
+            <Route
+              path="/providers/:accountId"
+              element={<EmptyState title="Coming in the next slice" />}
+            />
+            <Route path="/routing" element={<SettingsPage />} />
+            <Route path="/usage" element={<ReportsPage />} />
+            <Route path="/keys" element={<ApisPage />} />
+          </Route>
+          <Route element={<LegacyLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
@@ -54,10 +67,7 @@ export default function App() {
             <Route path="/apis" element={<ApisPage />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route
-              path="/firewall"
-              element={<Navigate to="/settings" replace />}
-            />
+            <Route path="/firewall" element={<Navigate to="/settings" replace />} />
           </Route>
         </Routes>
       </AuthGate>

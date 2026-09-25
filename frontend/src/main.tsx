@@ -10,6 +10,7 @@ import { useThemeStore } from "@/hooks/use-theme";
 import { installExternalDomMutationGuard } from "@/utils/external-dom-mutation-guard";
 
 import "./index.css";
+import "./lb/lb.css";
 
 installExternalDomMutationGuard();
 useThemeStore.getState().initializeTheme();
