@@ -426,7 +426,9 @@ def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_
         command = [cli_bin("cursor"), "-p", "--trust", "--output-format", "json", "--model", model]
         command += ["--mode", "ask"] if mode == "ask" else ["--force"]
         return command + [prompt_file.read_text(encoding="utf-8")]
-    permission = "auto" if mode == "ask" else "dangerous"
+    # Devin's `auto` rejects every shell call in print mode, `ls` included, so a read-only
+    # task cannot finish; `smart` runs what Devin's own safety model judges safe.
+    permission = "smart" if mode == "ask" else "dangerous"
     return [
         cli_bin("devin"),
         "-p",
@@ -458,8 +460,15 @@ def cooldown_until(text: str) -> datetime:
 
 
 def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], export_file: Path) -> dict[str, Any]:
-    outcome: dict[str, Any] = {"ok": False, "result": None, "session_id": None, "tokens_in": None,
-                               "tokens_out": None, "cache_read_tokens": None, "error": None}
+    outcome: dict[str, Any] = {
+        "ok": False,
+        "result": None,
+        "session_id": None,
+        "tokens_in": None,
+        "tokens_out": None,
+        "cache_read_tokens": None,
+        "error": None,
+    }
     stderr = completed.stderr.strip()
     if vendor == "cursor":
         try:
@@ -476,8 +485,9 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
             ok=completed.returncode == 0 and envelope.get("is_error") is False,
         )
         if not outcome["ok"]:
-            outcome["error"] = (stderr or str(envelope.get("result") or completed.stdout.strip()) or
-                                f"exit {completed.returncode}")[:ERROR_CHARS]
+            outcome["error"] = (
+                stderr or str(envelope.get("result") or completed.stdout.strip()) or f"exit {completed.returncode}"
+            )[:ERROR_CHARS]
         return outcome
     export = read_json(export_file, {}) if export_file.is_file() else {}
     metrics = export.get("final_metrics") if isinstance(export, dict) else None
@@ -543,8 +553,17 @@ def command_run(args: argparse.Namespace) -> int:
     run_id = f"seat-{uuid.uuid4()}"
     seat = SEAT_FOR_VENDOR[args.vendor]
     prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    base = {"session_id": run_id, "name": None, "subagent_type": seat, "task_class": args.task_class,
-            "model": model, "vendor": args.vendor, "source": "seat", "prompt_sha256": prompt_sha, "cwd": str(cwd)}
+    base = {
+        "session_id": run_id,
+        "name": None,
+        "subagent_type": seat,
+        "task_class": args.task_class,
+        "model": model,
+        "vendor": args.vendor,
+        "source": "seat",
+        "prompt_sha256": prompt_sha,
+        "cwd": str(cwd),
+    }
     append_ledger([{**base, "ts": iso(now()), "event": "dispatch", "accounts": [a["id"] for a in candidates]}])
 
     attempts: list[dict[str, Any]] = []
@@ -558,15 +577,26 @@ def command_run(args: argparse.Namespace) -> int:
             record = state["accounts"].setdefault(account["id"], {})
             if args.vendor == "devin" and not devin_trusted(account, cwd):
                 attempts.append({"account": account["id"], "outcome": "untrusted_workspace"})
-                outcome = {"ok": False, "error": f"{cwd} is not a trusted Devin workspace for {account['id']}; "
-                           "open `devin` there once interactively to trust it"}
+                outcome = {
+                    "ok": False,
+                    "error": f"{cwd} is not a trusted Devin workspace for {account['id']}; "
+                    "open `devin` there once interactively to trust it",
+                }
                 continue
             export_file = Path(scratch) / f"{account['id']}.export.json"
             command = build_command(args.vendor, model, args.mode, prompt_file, export_file)
             started = time.monotonic()
             try:
-                completed = subprocess.run(command, cwd=cwd, env=account_env(account), stdin=subprocess.DEVNULL,
-                                           capture_output=True, text=True, timeout=args.timeout, check=False)
+                completed = subprocess.run(
+                    command,
+                    cwd=cwd,
+                    env=account_env(account),
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=args.timeout,
+                    check=False,
+                )
                 outcome = parse_outcome(args.vendor, completed, export_file)
             except subprocess.TimeoutExpired:
                 outcome = {"ok": False, "error": f"timeout after {args.timeout:.0f}s"}
@@ -576,13 +606,20 @@ def command_run(args: argparse.Namespace) -> int:
             kind = None if outcome["ok"] else classify(outcome.get("error") or "")
             record["last_run_at"] = iso(now())
             record.setdefault("runs", []).append(
-                {"ts": iso(now()), "model": model, "ok": outcome["ok"], "wall_s": wall,
-                 "tokens_in": outcome.get("tokens_in"), "tokens_out": outcome.get("tokens_out"),
-                 "run_id": run_id}
+                {
+                    "ts": iso(now()),
+                    "model": model,
+                    "ok": outcome["ok"],
+                    "wall_s": wall,
+                    "tokens_in": outcome.get("tokens_in"),
+                    "tokens_out": outcome.get("tokens_out"),
+                    "run_id": run_id,
+                }
             )
             record["runs"] = record["runs"][-RUNS_KEPT:]
-            attempts.append({"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"),
-                             "wall_s": wall})
+            attempts.append(
+                {"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"), "wall_s": wall}
+            )
             if outcome["ok"]:
                 record["last_error"] = None
                 record["auth_ok"] = True
@@ -601,7 +638,8 @@ def command_run(args: argparse.Namespace) -> int:
         **base,
         "ts": iso(now()),
         "event": "closeout",
-        "account": account["id"] if outcome.get("ok") else None,
+        # The account that answered, or the last one tried when none did.
+        "account": attempts[-1]["account"] if attempts else None,
         "attempts": attempts,
         "vendor_session_id": outcome.get("session_id"),
         "duration_s": wall_all,
@@ -661,8 +699,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     run.add_argument("--account", help="pin one account; no failover")
     run.add_argument("--class", dest="task_class", help="task class for the ledger (mechanical, explore, ...)")
     run.add_argument("--cwd", help="working directory (default: current)")
-    run.add_argument("--mode", choices=("ask", "write"), default="write",
-                     help="ask: read-only tools; write: edits and shell (default)")
+    run.add_argument(
+        "--mode",
+        choices=("ask", "write"),
+        default="write",
+        help="ask: read-only tools; write: edits and shell (default)",
+    )
     run.add_argument("--timeout", type=float, default=DEFAULT_RUN_TIMEOUT_SECONDS)
     run.add_argument("--prompt-file")
     run.add_argument("prompt", nargs="*")

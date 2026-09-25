@@ -105,7 +105,7 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     seats = read_seat_accounts(tmp_path / "seats" / "state.json")
     by_id = {account.id: account for account in seats.accounts}
     assert by_id["cursor-a"].cooldown_until is not None and not by_id["cursor-a"].ready
-    assert by_id["cursor-b"].ready and by_id["cursor-b"].last_24h.tokens_in == 120
+    assert by_id["cursor-b"].ready and by_id["cursor-b"].last_day.tokens_in == 120
     (pool,) = cli_seat_pools(seats)
     assert (pool.id, pool.status, pool.eligible_accounts, pool.observed_runs) == ("cursor", "ok", 1, 2)
 

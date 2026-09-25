@@ -23,8 +23,9 @@ Run exactly one command, from the directory the brief assigns:
 - Devin refuses a directory it does not trust, and `seat` checks first. If it
   reports an untrusted workspace, stop and return that; never pass
   `--respect-workspace-trust false` and never edit Devin's trust file.
-- `--mode ask` for read-only exploration (Devin's `auto` permission mode); the
-  default `write` runs Devin with `--permission-mode dangerous`.
+- `--mode ask` for exploration (Devin's `smart` permission mode: it runs what
+  Devin's safety model judges safe, so say "do not modify files" in the contract);
+  the default `write` runs Devin with `--permission-mode dangerous`.
 - `--account <id>` only when the brief pins one; it disables failover.
 
 Forward the brief verbatim: goal, owned files, frozen interfaces, acceptance

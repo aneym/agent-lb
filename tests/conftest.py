@@ -22,6 +22,8 @@ os.environ["AGENT_LB_MODEL_REGISTRY_ENABLED"] = "false"
 os.environ["AGENT_LB_STICKY_SESSION_CLEANUP_ENABLED"] = "false"
 os.environ["AGENT_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED"] = "false"
 os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
+# The seat CLI state on the host (registered Cursor/Devin accounts) must not leak into /api/pools.
+os.environ["AGENT_LB_SEAT_STATE"] = str(Path(tempfile.gettempdir()) / "agent-lb-tests-no-seat-state.json")
 
 from app.db.models import Base  # noqa: E402
 from app.db.session import engine  # noqa: E402

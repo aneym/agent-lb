@@ -50,7 +50,7 @@ class SeatAccount(DashboardModel):
     last_error_at: datetime | None = None
     last_run_at: datetime | None = None
     ready: bool = False
-    last_24h: SeatAccountUsage = Field(default_factory=SeatAccountUsage)
+    last_day: SeatAccountUsage = Field(default_factory=SeatAccountUsage)
 
 
 class SeatAccountsResponse(DashboardModel):
@@ -125,7 +125,7 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                 last_error_at=_ts(error.get("ts")),
                 last_run_at=_ts(record.get("last_run_at")),
                 ready=enabled and record.get("auth_ok") is not False and cooldown is None,
-                last_24h=_usage(record, current - timedelta(hours=24)),
+                last_day=_usage(record, current - timedelta(hours=24)),
             )
         )
     return SeatAccountsResponse(
@@ -156,8 +156,8 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
                 reset_at=None if ready or not cooling else min(cooling),
                 status=POOL_STATUS_OK if ready else POOL_STATUS_EXHAUSTED,
                 source=seats.source,
-                observed_runs=sum(account.last_24h.runs for account in members),
-                observed_tokens=sum(account.last_24h.tokens_in + account.last_24h.tokens_out for account in members),
+                observed_runs=sum(account.last_day.runs for account in members),
+                observed_tokens=sum(account.last_day.tokens_in + account.last_day.tokens_out for account in members),
             )
         )
     return pools
