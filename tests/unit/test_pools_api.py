@@ -306,6 +306,8 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
         "weeklyRemainingPercent",
         "weeklyResetAt",
         "weeklyPacePercent",
+        "observedRuns",
+        "observedTokens",
     }
 
 

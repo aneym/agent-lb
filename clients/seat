@@ -1,0 +1,679 @@
+#!/usr/bin/env python3
+# seat — run the CLI-only seats (Cursor, Devin) on registered accounts.
+#
+# Cursor and Devin traffic cannot pass through the LB: each CLI talks to its own
+# backend on its own subscription. agent-lb still owns the accounts: this CLI keeps
+# the registry, probes each account's auth, picks an account per dispatch, fails over
+# on a limit or auth error, and writes receipts to the dispatch ledger. The LB reads
+# the state file this CLI writes and serves it as the `cursor` and `devin` pools of
+# /api/pools and as /api/pools/seat-accounts. Stdlib only, same family as `route`.
+#
+# Commands:
+#   seat accounts [--json]                       registry, auth, cooldowns, observed usage
+#   seat add <id> --vendor cursor|devin [--api-key-file F | --api-key-prompt] [--data-dir D]
+#   seat probe [--vendor V] [--json]             auth status per account, written to state
+#   seat run --vendor V --model M [--account A] [--class C] [--cwd D] [--mode ask|write]
+#            [--timeout S] (--prompt-file F | -- <prompt>)
+#
+# Account auth (never printed, never written anywhere but the key file):
+#   cursor  auth=login    the CLI's own login (`cursor-agent login`, macOS keychain). One per Mac:
+#                         a second login replaces the first, so extra accounts use api-key.
+#           auth=api-key  a Cursor user API key read from a 0600 key file into CURSOR_API_KEY,
+#                         with its own CURSOR_CONFIG_DIR so the default login is untouched.
+#   devin   auth=data-dir credentials.toml under XDG_DATA_HOME (default ~/.local/share).
+#                         Log an extra account in with
+#                         `XDG_DATA_HOME=<dir> devin auth login --force-manual-token-flow`.
+#
+# Env:
+#   SEAT_HOME     registry, state and keys (default ~/.agent-lb/seats)
+#   ROUTE_LEDGER  dispatch ledger (default ~/.claude/logs/dispatch.jsonl)
+#   ROUTE_BIN     route CLI used to resolve family aliases (default ~/.agent-lb/bin/route)
+#   SEAT_CURSOR_BIN / SEAT_DEVIN_BIN  CLI binaries (default cursor-agent / devin on PATH)
+from __future__ import annotations
+
+import argparse
+import getpass
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+VENDORS = ("cursor", "devin")
+SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat"}
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_NO_ACCOUNT = 2
+
+PROBE_TIMEOUT_SECONDS = 20.0
+DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
+DEFAULT_COOLDOWN = timedelta(hours=1)
+RUNS_KEPT = 200
+ERROR_CHARS = 400
+
+# Devin bills every model except SWE-2 per token; the seat never spends past the subscription.
+DEVIN_FREE_MODEL = re.compile(r"^swe-\d+-(?:high|medium|max)$")
+
+# Matched against stderr and the CLI's error text. A limit cools the account down and
+# the run fails over; an auth failure marks it for re-login and fails over.
+LIMIT_RE = re.compile(
+    r"rate.?limit|usage limit|quota|too many requests|\b429\b|limit (?:reached|exceeded)|"
+    r"out of (?:credits|usage|requests)|exceeded your|resource.?exhausted|upgrade your plan",
+    re.I,
+)
+AUTH_RE = re.compile(
+    r"not logged in|authentication required|unauthori[sz]ed|\b401\b|invalid api key|api key is invalid|"
+    r"log ?in again|token (?:has )?expired|reauth",
+    re.I,
+)
+RETRY_AFTER_RE = re.compile(r"try again in (\d+)\s*(second|minute|hour)", re.I)
+
+
+def seat_home() -> Path:
+    return Path(os.environ.get("SEAT_HOME") or Path.home() / ".agent-lb" / "seats").expanduser()
+
+
+def registry_path() -> Path:
+    return seat_home() / "accounts.json"
+
+
+def state_path() -> Path:
+    return seat_home() / "state.json"
+
+
+def ledger_path() -> Path:
+    return Path(os.environ.get("ROUTE_LEDGER") or Path.home() / ".claude" / "logs" / "dispatch.jsonl").expanduser()
+
+
+def cli_bin(vendor: str) -> str:
+    return os.environ.get(f"SEAT_{vendor.upper()}_BIN") or {"cursor": "cursor-agent", "devin": "devin"}[vendor]
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso(value: datetime) -> str:
+    return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def fail(message: str, code: int = EXIT_FAILED) -> Any:
+    print(f"seat: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def read_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read {path}: {error}")
+
+
+def write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+
+
+def load_registry() -> list[dict[str, Any]]:
+    document = read_json(registry_path(), {"version": 1, "accounts": []})
+    accounts = document.get("accounts") if isinstance(document, dict) else None
+    return [account for account in accounts or [] if isinstance(account, dict) and account.get("id")]
+
+
+def load_state() -> dict[str, Any]:
+    state = read_json(state_path(), {})
+    if not isinstance(state, dict):
+        state = {}
+    state.setdefault("version", 1)
+    if not isinstance(state.get("accounts"), dict):
+        state["accounts"] = {}
+    return state
+
+
+def save_state(state: dict[str, Any], registry: list[dict[str, Any]]) -> None:
+    # The LB reads vendor and enablement from the state alone, so every registered
+    # account is mirrored here and unregistered ones are dropped.
+    known = {account["id"]: account for account in registry}
+    accounts = state["accounts"]
+    for account_id in list(accounts):
+        if account_id not in known:
+            del accounts[account_id]
+    for account_id, account in known.items():
+        record = accounts.setdefault(account_id, {})
+        record["vendor"] = account.get("vendor")
+        record["auth"] = account.get("auth")
+        record["enabled"] = account.get("enabled", True) is not False
+    state["updated_at"] = iso(now())
+    write_json(state_path(), state)
+
+
+def expand(value: Any) -> Path | None:
+    return Path(value).expanduser() if isinstance(value, str) and value else None
+
+
+def account_env(account: dict[str, Any]) -> dict[str, str]:
+    """The environment that points the vendor CLI at this account and no other."""
+    env = dict(os.environ)
+    vendor, auth = account.get("vendor"), account.get("auth")
+    if vendor == "cursor" and auth == "api-key":
+        key_file = expand(account.get("key_file"))
+        if key_file is None or not key_file.is_file():
+            raise RuntimeError(f"key file missing for {account['id']}")
+        key = key_file.read_text(encoding="utf-8").strip()
+        if not key:
+            raise RuntimeError(f"key file empty for {account['id']}")
+        env["CURSOR_API_KEY"] = key
+        config_dir = seat_home() / "cursor" / account["id"]
+        config_dir.mkdir(parents=True, exist_ok=True)
+        env["CURSOR_CONFIG_DIR"] = str(config_dir)
+    elif vendor == "cursor":
+        env.pop("CURSOR_API_KEY", None)
+    elif vendor == "devin":
+        data_dir = expand(account.get("data_dir"))
+        if data_dir is not None:
+            env["XDG_DATA_HOME"] = str(data_dir)
+    return env
+
+
+def devin_trusted(account: dict[str, Any], cwd: Path) -> bool:
+    data_dir = expand(account.get("data_dir")) or Path(
+        os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+    )
+    trusted = read_json(data_dir / "devin" / "cli" / "trusted_workspaces.json", {})
+    paths = trusted.get("trusted_paths") if isinstance(trusted, dict) else None
+    resolved = cwd.resolve()
+    for entry in paths or []:
+        try:
+            root = Path(entry).resolve()
+        except (OSError, TypeError):
+            continue
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
+
+
+# --- probe -----------------------------------------------------------------------
+
+
+def probe_account(account: dict[str, Any]) -> dict[str, Any]:
+    vendor = account.get("vendor")
+    if vendor == "devin":
+        command = [cli_bin("devin"), "auth", "status"]
+    elif account.get("auth") == "api-key":
+        # `status` and `about` report the keychain login even when CURSOR_API_KEY is set;
+        # listing models is the cheapest call that authenticates with the key itself.
+        command = [cli_bin("cursor"), "models"]
+    else:
+        command = [cli_bin("cursor"), "about"]
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            command,
+            env=account_env(account),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        return {"auth_ok": False, "auth_error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
+    if vendor == "cursor" and account.get("auth") == "api-key":
+        ok = completed.returncode == 0 and not AUTH_RE.search(text)
+        identity = {}
+    elif vendor == "cursor":
+        email = re.search(r"^User Email\s+(\S+@\S+)\s*$", text, re.M)
+        tier = re.search(r"^Subscription Tier\s+(.+?)\s*$", text, re.M)
+        ok = completed.returncode == 0 and email is not None
+        identity = {"email": email.group(1)} if email else {}
+        if tier:
+            identity["tier"] = tier.group(1)
+    else:
+        ok = completed.returncode == 0 and re.search(r"^\s*Logged in", text, re.M) is not None
+        identity = {}
+        for field, label in (("email", "Email"), ("tier", "Tier"), ("plan", "Plan")):
+            found = re.search(rf"^\s*{label}:\s*(.+?)\s*$", text, re.M)
+            if found:
+                identity[field] = found.group(1)
+    result: dict[str, Any] = {
+        "auth_ok": ok,
+        "auth_checked_at": iso(now()),
+        "probe_ms": round((time.monotonic() - started) * 1000),
+        "identity": identity,
+        "auth_error": None if ok else (text.strip().splitlines() or ["no output"])[0][:ERROR_CHARS],
+    }
+    return result
+
+
+def command_probe(args: argparse.Namespace) -> int:
+    registry = load_registry()
+    state = load_state()
+    results = {}
+    for account in registry:
+        if args.vendor and account.get("vendor") != args.vendor:
+            continue
+        if account.get("enabled", True) is False:
+            continue
+        probe = probe_account(account)
+        state["accounts"].setdefault(account["id"], {}).update(probe)
+        results[account["id"]] = probe
+    save_state(state, registry)
+    if args.json:
+        print(json.dumps(results, indent=2, sort_keys=True))
+    else:
+        for account_id, probe in results.items():
+            verdict = "ok" if probe["auth_ok"] else f"FAILED ({probe.get('auth_error')})"
+            print(f"{account_id:<24} {verdict}")
+    return EXIT_OK if all(probe["auth_ok"] for probe in results.values()) else EXIT_FAILED
+
+
+# --- accounts and usage ----------------------------------------------------------
+
+
+def usage_since(record: dict[str, Any], since: datetime) -> dict[str, Any]:
+    runs = [run for run in record.get("runs") or [] if (parse_ts(run.get("ts")) or since) > since]
+    return {
+        "runs": len(runs),
+        "ok": sum(1 for run in runs if run.get("ok")),
+        "wall_s": round(sum(float(run.get("wall_s") or 0) for run in runs), 1),
+        "tokens_in": sum(int(run.get("tokens_in") or 0) for run in runs),
+        "tokens_out": sum(int(run.get("tokens_out") or 0) for run in runs),
+    }
+
+
+def cooling(record: dict[str, Any]) -> datetime | None:
+    until = parse_ts(record.get("cooldown_until"))
+    return until if until and until > now() else None
+
+
+def command_accounts(args: argparse.Namespace) -> int:
+    registry = load_registry()
+    state = load_state()
+    day_ago = now() - timedelta(hours=24)
+    rows = []
+    for account in registry:
+        record = state["accounts"].get(account["id"], {})
+        until = cooling(record)
+        rows.append(
+            {
+                "id": account["id"],
+                "vendor": account.get("vendor"),
+                "auth": account.get("auth"),
+                "enabled": account.get("enabled", True) is not False,
+                "auth_ok": record.get("auth_ok"),
+                "auth_checked_at": record.get("auth_checked_at"),
+                "identity": record.get("identity") or {},
+                "cooldown_until": iso(until) if until else None,
+                "last_error": record.get("last_error"),
+                "last_run_at": record.get("last_run_at"),
+                "last_24h": usage_since(record, day_ago),
+            }
+        )
+    if args.json:
+        print(json.dumps({"state": str(state_path()), "accounts": rows}, indent=2, sort_keys=True))
+        return EXIT_OK
+    print(f"{'account':<22} {'vendor':<7} {'auth':<8} {'status':<22} {'24h runs':>8} {'tok in':>9} {'tok out':>8}")
+    for row in rows:
+        if not row["enabled"]:
+            status = "disabled"
+        elif row["cooldown_until"]:
+            status = f"cooling to {row['cooldown_until'][11:16]}Z"
+        elif row["auth_ok"] is False:
+            status = "re-login needed"
+        elif row["auth_ok"] is None:
+            status = "not probed"
+        else:
+            status = "ok " + (row["identity"].get("tier") or "")
+        usage = row["last_24h"]
+        print(
+            f"{row['id']:<22} {row['vendor']:<7} {row['auth']:<8} {status:<22} "
+            f"{usage['runs']:>8} {usage['tokens_in']:>9} {usage['tokens_out']:>8}"
+        )
+    return EXIT_OK
+
+
+def command_add(args: argparse.Namespace) -> int:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", args.id):
+        fail("account id must be lowercase letters, digits and dashes")
+    registry = load_registry()
+    if any(account["id"] == args.id for account in registry):
+        fail(f"account {args.id} already registered")
+    account: dict[str, Any] = {"id": args.id, "vendor": args.vendor, "enabled": True, "added_at": iso(now())}
+    if args.vendor == "cursor":
+        if args.api_key_prompt:
+            key = getpass.getpass(f"Cursor user API key for {args.id} (input hidden): ").strip()
+            if not key:
+                fail("no key entered")
+            key_file = seat_home() / "keys" / f"{args.id}.key"
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(key + "\n")
+            account.update({"auth": "api-key", "key_file": str(key_file)})
+        elif args.api_key_file:
+            key_file = Path(args.api_key_file).expanduser()
+            if not key_file.is_file():
+                fail(f"{key_file} does not exist")
+            if key_file.stat().st_mode & 0o077:
+                fail(f"{key_file} is readable by others; chmod 600 it first")
+            account.update({"auth": "api-key", "key_file": str(key_file)})
+        else:
+            if any(a.get("vendor") == "cursor" and a.get("auth") == "login" for a in registry):
+                fail("a Cursor login account exists already; extra Cursor accounts need --api-key-prompt")
+            account["auth"] = "login"
+    else:
+        account["auth"] = "data-dir"
+        if args.data_dir:
+            account["data_dir"] = str(Path(args.data_dir).expanduser())
+        elif any(a.get("vendor") == "devin" and not a.get("data_dir") for a in registry):
+            fail("a Devin account on the default data dir exists already; pass --data-dir for this one")
+    registry.append(account)
+    write_json(registry_path(), {"version": 1, "accounts": registry})
+    state = load_state()
+    state["accounts"].setdefault(args.id, {}).update(probe_account(account))
+    save_state(state, registry)
+    record = state["accounts"][args.id]
+    print(f"registered {args.id} ({args.vendor}, {account['auth']}): auth {'ok' if record['auth_ok'] else 'FAILED'}")
+    return EXIT_OK if record["auth_ok"] else EXIT_FAILED
+
+
+# --- run -------------------------------------------------------------------------
+
+
+def resolve_model(vendor: str, model: str) -> str:
+    """Family aliases go through `route resolve`, which also refuses retired models."""
+    route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
+    try:
+        completed = subprocess.run([route, "resolve", model], capture_output=True, text=True, timeout=90, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        fail(f"route resolve {model} failed: {error}")
+    if completed.returncode != 0:
+        fail(completed.stderr.strip() or f"route resolve {model} exited {completed.returncode}")
+    resolved = completed.stdout.strip().splitlines()[-1]
+    if vendor == "devin" and not DEVIN_FREE_MODEL.match(resolved):
+        fail(f"{resolved} is billed per token on Devin; the devin seat runs only SWE-2 (swe-2-high|medium|max)")
+    return resolved
+
+
+def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_file: Path) -> list[str]:
+    if vendor == "cursor":
+        command = [cli_bin("cursor"), "-p", "--trust", "--output-format", "json", "--model", model]
+        command += ["--mode", "ask"] if mode == "ask" else ["--force"]
+        return command + [prompt_file.read_text(encoding="utf-8")]
+    permission = "auto" if mode == "ask" else "dangerous"
+    return [
+        cli_bin("devin"),
+        "-p",
+        "--model",
+        model,
+        "--permission-mode",
+        permission,
+        "--export",
+        str(export_file),
+        "--prompt-file",
+        str(prompt_file),
+    ]
+
+
+def classify(text: str) -> str | None:
+    if AUTH_RE.search(text):
+        return "auth"
+    if LIMIT_RE.search(text):
+        return "limit"
+    return None
+
+
+def cooldown_until(text: str) -> datetime:
+    match = RETRY_AFTER_RE.search(text)
+    if match:
+        unit = {"second": "seconds", "minute": "minutes", "hour": "hours"}[match.group(2).lower()]
+        return now() + timedelta(**{unit: int(match.group(1))})
+    return now() + DEFAULT_COOLDOWN
+
+
+def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], export_file: Path) -> dict[str, Any]:
+    outcome: dict[str, Any] = {"ok": False, "result": None, "session_id": None, "tokens_in": None,
+                               "tokens_out": None, "cache_read_tokens": None, "error": None}
+    stderr = completed.stderr.strip()
+    if vendor == "cursor":
+        try:
+            envelope = json.loads(completed.stdout.strip().splitlines()[-1]) if completed.stdout.strip() else {}
+        except json.JSONDecodeError:
+            envelope = {}
+        usage = envelope.get("usage") if isinstance(envelope.get("usage"), dict) else {}
+        outcome.update(
+            result=envelope.get("result"),
+            session_id=envelope.get("session_id"),
+            tokens_in=usage.get("inputTokens"),
+            tokens_out=usage.get("outputTokens"),
+            cache_read_tokens=usage.get("cacheReadTokens"),
+            ok=completed.returncode == 0 and envelope.get("is_error") is False,
+        )
+        if not outcome["ok"]:
+            outcome["error"] = (stderr or str(envelope.get("result") or completed.stdout.strip()) or
+                                f"exit {completed.returncode}")[:ERROR_CHARS]
+        return outcome
+    export = read_json(export_file, {}) if export_file.is_file() else {}
+    metrics = export.get("final_metrics") if isinstance(export, dict) else None
+    metrics = metrics if isinstance(metrics, dict) else {}
+    outcome.update(
+        result=completed.stdout.strip(),
+        session_id=export.get("session_id") if isinstance(export, dict) else None,
+        tokens_in=metrics.get("total_prompt_tokens"),
+        tokens_out=metrics.get("total_completion_tokens"),
+        cache_read_tokens=metrics.get("total_cached_tokens"),
+        ok=completed.returncode == 0 and bool(completed.stdout.strip()),
+    )
+    if not outcome["ok"]:
+        outcome["error"] = (stderr or completed.stdout.strip() or f"exit {completed.returncode}")[:ERROR_CHARS]
+    return outcome
+
+
+def order_accounts(registry: list[dict[str, Any]], state: dict[str, Any], vendor: str) -> list[dict[str, Any]]:
+    """Healthy accounts of the vendor, least used in the last five hours first."""
+    window = now() - timedelta(hours=5)
+    ready = []
+    for account in registry:
+        if account.get("vendor") != vendor or account.get("enabled", True) is False:
+            continue
+        record = state["accounts"].get(account["id"], {})
+        if record.get("auth_ok") is False or cooling(record):
+            continue
+        recent = usage_since(record, window)["runs"]
+        ready.append((recent, record.get("last_run_at") or "", account))
+    ready.sort(key=lambda item: (item[0], item[1]))
+    return [account for _, _, account in ready]
+
+
+def append_ledger(rows: list[dict[str, Any]]) -> None:
+    path = ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def command_run(args: argparse.Namespace) -> int:
+    if args.prompt_file:
+        prompt_path = Path(args.prompt_file).expanduser()
+        prompt = prompt_path.read_text(encoding="utf-8")
+    else:
+        prompt = " ".join(args.prompt).strip()
+    if not prompt:
+        fail("empty prompt: pass --prompt-file or a prompt after --")
+    cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
+    model = resolve_model(args.vendor, args.model)
+    registry = load_registry()
+    state = load_state()
+    if args.account:
+        candidates = [a for a in registry if a["id"] == args.account and a.get("vendor") == args.vendor]
+        if not candidates:
+            fail(f"no {args.vendor} account {args.account!r} registered", EXIT_NO_ACCOUNT)
+    else:
+        candidates = order_accounts(registry, state, args.vendor)
+    if not candidates:
+        fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
+
+    run_id = f"seat-{uuid.uuid4()}"
+    seat = SEAT_FOR_VENDOR[args.vendor]
+    prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    base = {"session_id": run_id, "name": None, "subagent_type": seat, "task_class": args.task_class,
+            "model": model, "vendor": args.vendor, "source": "seat", "prompt_sha256": prompt_sha, "cwd": str(cwd)}
+    append_ledger([{**base, "ts": iso(now()), "event": "dispatch", "accounts": [a["id"] for a in candidates]}])
+
+    attempts: list[dict[str, Any]] = []
+    outcome: dict[str, Any] = {}
+    account: dict[str, Any] = candidates[0]
+    started_all = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="seat-") as scratch:
+        prompt_file = Path(scratch) / "prompt.md"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        for account in candidates:
+            record = state["accounts"].setdefault(account["id"], {})
+            if args.vendor == "devin" and not devin_trusted(account, cwd):
+                attempts.append({"account": account["id"], "outcome": "untrusted_workspace"})
+                outcome = {"ok": False, "error": f"{cwd} is not a trusted Devin workspace for {account['id']}; "
+                           "open `devin` there once interactively to trust it"}
+                continue
+            export_file = Path(scratch) / f"{account['id']}.export.json"
+            command = build_command(args.vendor, model, args.mode, prompt_file, export_file)
+            started = time.monotonic()
+            try:
+                completed = subprocess.run(command, cwd=cwd, env=account_env(account), stdin=subprocess.DEVNULL,
+                                           capture_output=True, text=True, timeout=args.timeout, check=False)
+                outcome = parse_outcome(args.vendor, completed, export_file)
+            except subprocess.TimeoutExpired:
+                outcome = {"ok": False, "error": f"timeout after {args.timeout:.0f}s"}
+            except (OSError, RuntimeError) as error:
+                outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
+            wall = round(time.monotonic() - started, 1)
+            kind = None if outcome["ok"] else classify(outcome.get("error") or "")
+            record["last_run_at"] = iso(now())
+            record.setdefault("runs", []).append(
+                {"ts": iso(now()), "model": model, "ok": outcome["ok"], "wall_s": wall,
+                 "tokens_in": outcome.get("tokens_in"), "tokens_out": outcome.get("tokens_out"),
+                 "run_id": run_id}
+            )
+            record["runs"] = record["runs"][-RUNS_KEPT:]
+            attempts.append({"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"),
+                             "wall_s": wall})
+            if outcome["ok"]:
+                record["last_error"] = None
+                record["auth_ok"] = True
+                break
+            record["last_error"] = {"ts": iso(now()), "kind": kind or "error", "text": outcome.get("error")}
+            if kind == "limit":
+                record["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
+            elif kind == "auth":
+                record["auth_ok"] = False
+            else:
+                # A task failure is not the account's fault; another account would repeat it.
+                break
+    save_state(state, registry)
+    wall_all = round(time.monotonic() - started_all, 1)
+    closeout = {
+        **base,
+        "ts": iso(now()),
+        "event": "closeout",
+        "account": account["id"] if outcome.get("ok") else None,
+        "attempts": attempts,
+        "vendor_session_id": outcome.get("session_id"),
+        "duration_s": wall_all,
+        "wall_s": wall_all,
+        "tokens_in": outcome.get("tokens_in"),
+        "tokens_out": outcome.get("tokens_out"),
+        "cache_read_tokens": outcome.get("cache_read_tokens"),
+        "ok": bool(outcome.get("ok")),
+        "error": outcome.get("error"),
+    }
+    append_ledger([closeout])
+    envelope = {
+        "ok": closeout["ok"],
+        "vendor": args.vendor,
+        "account": closeout["account"],
+        "model": model,
+        "run_id": run_id,
+        "vendor_session_id": closeout["vendor_session_id"],
+        "wall_s": wall_all,
+        "tokens_in": closeout["tokens_in"],
+        "tokens_out": closeout["tokens_out"],
+        "attempts": attempts,
+        "error": closeout["error"],
+        "result": outcome.get("result"),
+    }
+    print(json.dumps(envelope, indent=2))
+    if closeout["ok"]:
+        return EXIT_OK
+    exhausted = attempts and all(a["outcome"] in ("limit", "auth", "untrusted_workspace") for a in attempts)
+    return EXIT_NO_ACCOUNT if exhausted else EXIT_FAILED
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="seat", description="Run Cursor and Devin seats on registered accounts.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    accounts = commands.add_parser("accounts", help="registry, auth, cooldowns and observed usage")
+    accounts.add_argument("--json", action="store_true")
+    accounts.set_defaults(handler=command_accounts)
+
+    add = commands.add_parser("add", help="register an account")
+    add.add_argument("id")
+    add.add_argument("--vendor", choices=VENDORS, required=True)
+    add.add_argument("--api-key-file", help="Cursor: a 0600 file holding a Cursor user API key")
+    add.add_argument("--api-key-prompt", action="store_true", help="Cursor: type the key at a hidden prompt")
+    add.add_argument("--data-dir", help="Devin: XDG_DATA_HOME this account logged in under")
+    add.set_defaults(handler=command_add)
+
+    probe = commands.add_parser("probe", help="check each account's auth and record it")
+    probe.add_argument("--vendor", choices=VENDORS)
+    probe.add_argument("--json", action="store_true")
+    probe.set_defaults(handler=command_probe)
+
+    run = commands.add_parser("run", help="dispatch one task to a vendor seat")
+    run.add_argument("--vendor", choices=VENDORS, required=True)
+    run.add_argument("--model", required=True, help="model id or family alias (grok-latest, swe-latest)")
+    run.add_argument("--account", help="pin one account; no failover")
+    run.add_argument("--class", dest="task_class", help="task class for the ledger (mechanical, explore, ...)")
+    run.add_argument("--cwd", help="working directory (default: current)")
+    run.add_argument("--mode", choices=("ask", "write"), default="write",
+                     help="ask: read-only tools; write: edits and shell (default)")
+    run.add_argument("--timeout", type=float, default=DEFAULT_RUN_TIMEOUT_SECONDS)
+    run.add_argument("--prompt-file")
+    run.add_argument("prompt", nargs="*")
+    run.set_defaults(handler=command_run)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    return args.handler(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

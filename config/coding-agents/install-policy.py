@@ -71,6 +71,12 @@ MANAGED_AGENTS = (
         Path("agents/cursor-seat.md"),
     ),
     (
+        Path(".claude/agents/devin-seat.md"),
+        Path(".agent-lb/managed/coding-agents/devin-seat"),
+        "agent-lb:devin-seat:v1\n",
+        Path("agents/devin-seat.md"),
+    ),
+    (
         Path(".claude/agents/codex-verifier.md"),
         Path(".agent-lb/managed/coding-agents/codex-verifier"),
         "agent-lb:codex-verifier:v1\n",
@@ -390,6 +396,12 @@ def main() -> int:
             route_owner = args.home / ".agent-lb" / "managed" / "coding-agents" / "route-cli"
             if read_text(route_owner) != "agent-lb:route-cli:v1\n":
                 changes[route_owner] = "agent-lb:route-cli:v1\n"
+        # `seat` runs the CLI-only seats (Cursor, Devin) on registered accounts.
+        seat_source = source.parent.parent / "clients" / "seat"
+        if seat_source.is_file():
+            seat_path = args.home / ".agent-lb" / "bin" / "seat"
+            if read_text(seat_path) != seat_source.read_text():
+                changes[seat_path] = seat_source.read_text()
         # The canonical path must hold exactly what was installed, so a symlink into
         # a checkout (whose working tree can drift) is replaced by a real copy.
         replace_policy_link = policy_dir.is_symlink()
@@ -460,7 +472,7 @@ def main() -> int:
             print(f"removed {path}")
         else:
             write_atomic(path, content)
-            if path.suffix == ".py" or path.name in ("verify-routing", "route"):
+            if path.suffix == ".py" or path.name in ("verify-routing", "route", "seat"):
                 os.chmod(path, path.stat().st_mode | 0o111)
             print(f"updated {path}")
     for reason, path in preserved_agents:

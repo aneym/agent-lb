@@ -16,7 +16,7 @@ This section overrides anything below that says otherwise.
 - **Claude Code does the work by default**: the driver, its subagents and its
   teammates, on Opus or Sonnet. Implementation on Opus is normal, not a
   violation.
-- **Codex and Cursor are optional capacity.** Use them when the Claude pools
+- **Codex, Cursor and Devin are optional capacity.** Use them when the Claude pools
   are tight, for large parallel or mechanical sweeps, or for a second opinion.
   `route pick` and the class rankings below are suggestions, not gates.
 - **No required cross-vendor audit.** Verify work by running it (end to end,
@@ -42,9 +42,11 @@ model in that class by default if possible"; "NO CODEX ASTRA. codex sol".
   Claude Code's `opus` and `sonnet` aliases (`opus-latest`, `sonnet-latest` in
   the table), which the installed Claude Code maps to the newest model of that
   family. Codex seats use `sol-latest` and `terra-latest`; Cursor seats use
-  `grok-latest` (medium-fast) and `grok-latest-low`. `route resolve <alias>`
+  `grok-latest` (medium-fast) and `grok-latest-low`; Devin seats use
+  `swe-latest` (SWE-2 high, free on the subscription). `route resolve <alias>`
   returns the newest non-retired model actually served (the LB's model list
-  for Codex, `cursor-agent --list-models` for Cursor), so a new release needs
+  for Codex, `cursor-agent --list-models` for Cursor, `devin models list` for
+  Devin), so a new release needs
   no edit; `route models` shows the current resolution. Exact ids stay only in
   tests, ledgers and pricing.
 - **Classes.** Orchestrate, plan and drive: `opus-latest`, with `sol-latest`
@@ -55,7 +57,7 @@ model in that class by default if possible"; "NO CODEX ASTRA. codex sol".
   it per rule 1, and an entry whose auditor is unavailable is skipped), else
   Codex Sol (`codex-sol`, `sol-latest`), then `terra-latest` when one is
   served. Mechanical means bounded edits with a tight spec: `grok-latest` on
-  Cursor. The first A/B (2026-09-22: Opus 1/2 audit passes, Grok 0/2, both
+  Cursor, then `swe-latest` on Devin. The first A/B (2026-09-22: Opus 1/2 audit passes, Grok 0/2, both
   missing things a cross-vendor audit caught) set this split; it is re-read
   from `route report --implement` once each arm has ten or more tasks. GLM
   and Kimi are out of the chains until a seat can run them: Cursor serves
@@ -64,7 +66,7 @@ model in that class by default if possible"; "NO CODEX ASTRA. codex sol".
   by the other vendor's stronger model before acceptance: `opus-latest` when
   Codex, Cursor, GLM or Kimi wrote it, `sol-latest` (`codex-verifier`, xhigh)
   when Anthropic wrote it; `route pick implement` prints the auditor.
-  Mechanical: `grok-latest`. Explore and research:
+  Mechanical: `grok-latest`, then `swe-latest`. Explore and research:
   `sol-latest` (Codex, with web), `sonnet-latest`, `opus-latest`. Verify:
   cross-vendor, `sol-latest` for Anthropic authors and `opus-latest` for
   OpenAI, Cursor, GLM or Kimi authors. Computer use: `sol-latest` through
@@ -110,7 +112,7 @@ to its reset, and put the strongest seat that pace allows on each class.
    design, hard audit, review) newest Opus > newest Sol;
    verify newest Opus / newest Sol at xhigh (cross-vendor with the author);
    implement Terra on Codex (when served) > newest Grok on Cursor > GLM >
-   Kimi; mechanical newest Grok on Cursor > GLM > Kimi; explore and research
+   Kimi; mechanical newest Grok on Cursor > SWE on Devin > GLM > Kimi; explore and research
    Sol > Sonnet > Opus; computer Sol through Codex computer use > Opus;
    council Sol with the driver as the second voice.
 3. **The newest Opus or Sol drives** and takes plan, review, design and hard
@@ -140,8 +142,12 @@ fallback chain, and `route pools` shows what is left in each pool. Classes:
 `plan`, `review`, `explore`, `research`, `implement`, `mechanical`,
 `verify`, `computer`, `council`.
 
-`implementer`, `codex-sol`, `computer-use`, `cursor-seat`, `codex-verifier`
-and `codex-test-runner` are thin forwarders: the work runs on Cursor's and OpenAI's quotas, not on ours.
+`implementer`, `codex-sol`, `computer-use`, `cursor-seat`, `devin-seat`, `codex-verifier`
+and `codex-test-runner` are thin forwarders: the work runs on Cursor's, Devin's and OpenAI's quotas, not on ours.
+`cursor-seat` and `devin-seat` dispatch through `seat run`, which picks a healthy
+registered account (`seat accounts`), fails over on a limit or auth error and
+writes the receipt to the dispatch ledger; `/api/pools` serves their `cursor` and
+`devin` pools from the seat state.
 
 ## Enforcement
 

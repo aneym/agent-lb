@@ -28,6 +28,8 @@
 #   ROUTE_MODELS_CACHE last good LB model list (default ~/.cache/agent-lb/route-models.json)
 #   ROUTE_CURSOR_MODELS_CMD  Cursor model list command (default "cursor-agent --list-models"),
 #                      cached beside the LB list for a day
+#   ROUTE_DEVIN_CMD    devin probe command (default "devin auth status")
+#   ROUTE_DEVIN_MODELS_CMD  Devin model list command (default "devin models list"), cached a day
 #   ROUTE_FIXTURE_DIR  TEST ONLY — serve HTTP reads from files in this directory instead of the
 #                      network. A request to /api/pools reads api_pools.json; a missing file is a
 #                      404. Never set this outside tests.
@@ -68,6 +70,7 @@ POOL_LOW_HEADROOM = 5.0
 
 DOCTOR_BUDGET_SECONDS = 55.0
 CURSOR_TIMEOUT_SECONDS = 10.0
+DEVIN_TIMEOUT_SECONDS = 15.0
 CODEX_TIMEOUT_SECONDS = 15.0
 READ_TIMEOUT_SECONDS = 5.0
 
@@ -83,7 +86,7 @@ STATE_MAX_AGE_SECONDS = 7200
 
 # cursor-seat forwards to cursor-agent whatever model id it carries, so its health is the
 # forwarder's health and not the health of the model's home vendor.
-SEAT_PROBE = {"cursor-seat": "cursor-agent"}
+SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin"}
 
 ANALYTICS_SESSION_CAP = 20
 
@@ -123,6 +126,10 @@ def ledger_path() -> Path:
 
 def cursor_command() -> list[str]:
     return shlex.split(os.environ.get("ROUTE_CURSOR_CMD") or "cursor-agent status")
+
+
+def devin_command() -> list[str]:
+    return shlex.split(os.environ.get("ROUTE_DEVIN_CMD") or "devin auth status")
 
 
 def codex_command() -> list[str]:
@@ -533,6 +540,33 @@ def cursor_models() -> list[str]:
     return ids
 
 
+def devin_models() -> list[str]:
+    """Devin's model ids (`devin models list`), cached for a day."""
+    cache = models_cache_path().with_name("route-devin-models.json")
+    try:
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+        stamp = _parse_ts(cached.get("ts"))
+        if stamp and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS:
+            return [value for value in cached.get("models", []) if isinstance(value, str)]
+    except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
+        pass
+    command = shlex.split(os.environ.get("ROUTE_DEVIN_MODELS_CMD") or "devin models list")
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    # Model rows are indented `<id>  <display name>  [...]`; family headers and aliases are not.
+    ids = [line.split()[0] for line in result.stdout.splitlines() if line.startswith("  ") and line.split()]
+    ids = [value for value in ids if re.fullmatch(r"[a-z0-9][\w.\-]*", value)]
+    if ids:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
+        except OSError:
+            pass
+    return ids
+
+
 def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
@@ -563,6 +597,13 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
         served = cursor_models()
         if not served:
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
+    elif spec.get("vendor") == "devin":
+        # Devin families: `<family>-<major>-<variant>` (swe-2-high).
+        variant = spec.get("variant") or "high"
+        pattern = re.compile(rf"^{re.escape(family)}-(\d+)-{re.escape(variant)}$")
+        served = devin_models()
+        if not served:
+            return None, "Devin model list unavailable (devin models list)"
     else:
         pattern = re.compile(rf"^gpt-(\d+(?:\.\d+)*)-{re.escape(family)}$")
     candidates = []
@@ -1340,6 +1381,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     pools_probe, pools_document = probe_pools()
     probes.append(pools_probe)
     probes.append(probe_command("cursor-agent", cursor_command(), CURSOR_TIMEOUT_SECONDS))
+    probes.append(probe_command("devin", devin_command(), DEVIN_TIMEOUT_SECONDS))
     probes.append(probe_command("codex-companion", codex_command(), CODEX_TIMEOUT_SECONDS))
 
     traffic = recent_model_traffic()

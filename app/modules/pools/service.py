@@ -9,6 +9,7 @@ from app.db.models import AccountStatus
 from app.modules.accounts.schemas import AccountSummary
 from app.modules.accounts.service import AccountsService
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS, normalize_subscription_status
+from app.modules.pools.cli_seats import cli_seat_pools, read_seat_accounts
 from app.modules.pools.schemas import (
     POOL_SOURCE_SCOPED_MARKER,
     POOL_SOURCE_WEEKLY_HEURISTIC,
@@ -296,4 +297,6 @@ class PoolsService:
         # include_request_usage stays off: the pools view needs windows, not the
         # expensive request_logs dedup aggregation behind the token columns.
         summaries = await self._accounts_service.list_accounts()
-        return build_pools(summaries)
+        response = build_pools(summaries)
+        # Cursor and Devin never pass through the LB; their pools come from the seat CLI's state.
+        return response.model_copy(update={"pools": [*response.pools, *cli_seat_pools(read_seat_accounts())]})

@@ -39,6 +39,7 @@ MANAGED = (
     ("Explore", ".claude/agents/Explore.md", "agents/Explore.md"),
     ("opus-seat", ".claude/agents/opus-seat.md", "agents/opus-seat.md"),
     ("cursor-seat", ".claude/agents/cursor-seat.md", "agents/cursor-seat.md"),
+    ("devin-seat", ".claude/agents/devin-seat.md", "agents/devin-seat.md"),
     ("codex-verifier", ".claude/agents/codex-verifier.md", "agents/codex-verifier.md"),
     ("codex-test-runner", ".claude/agents/codex-test-runner.md", "agents/codex-test-runner.md"),
     ("verifier", ".claude/agents/verifier.md", "agents/verifier.md"),

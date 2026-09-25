@@ -121,6 +121,11 @@
             "model": "sol-latest",
             "vendor": "openai",
             "effort": "xhigh"
+          },
+          "devin": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
           }
         }
       },
@@ -132,6 +137,11 @@
           "seat": "cursor-seat",
           "model": "grok-latest",
           "vendor": "cursor"
+        },
+        {
+          "seat": "devin-seat",
+          "model": "swe-latest",
+          "vendor": "devin"
         }
       ],
       "audit": {
@@ -163,10 +173,15 @@
             "model": "sol-latest",
             "vendor": "openai",
             "effort": "xhigh"
+          },
+          "devin": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic"
           }
         }
       },
-      "note": "Bounded mechanical edits with a tight spec: Grok on Cursor."
+      "note": "Bounded mechanical edits with a tight spec: Grok on Cursor, then SWE-2 on Devin. Both run through `seat run`, which picks a healthy account and fails over on limits."
     },
     "verify": {
       "cross_vendor": true,
@@ -224,7 +239,9 @@
     "grok-latest-low": "cursor",
     "cursor-*": "cursor",
     "kimi-*": "kimi",
-    "glm-*": "glm"
+    "glm-*": "glm",
+    "swe-latest": "devin",
+    "swe-*": "devin"
   },
   "overrides": [
     {
@@ -465,7 +482,8 @@
     "2026-09-22: gpt-6-terra is not in the upstream model catalog for these accounts (the LB answers 503 no available accounts), so terra-latest resolves to nothing and implement falls through to grok-latest.",
     "2026-09-22 (owner): while the Anthropic general pool is on pace or ahead, Opus takes implement first (min_pace -10, the policy's behind threshold) with Cursor Grok as the fallback; Opus-written code is audited by sol-latest. `route record` logs each implement outcome and `route report --implement` compares seats per model.",
     "2026-09-22: glm-*/kimi-* chain entries removed: cursor-agent serves neither (cursor-agent --list-models) and no other seat dispatches them, so they could only ever resolve to a literal wildcard. Re-add them behind a family alias once a seat can run GLM or Kimi.",
-    "2026-09-22 (orchestrator, after the first A/B: Opus 1/2 audit pass, Grok 0/2): implement is correctness-sensitive core work on Opus (pace-gated) with Codex Sol as the fallback; Grok takes only the mechanical class. Both keep the cross-vendor audit; rerun `route report --implement` once each arm has n >= 10."
+    "2026-09-22 (orchestrator, after the first A/B: Opus 1/2 audit pass, Grok 0/2): implement is correctness-sensitive core work on Opus (pace-gated) with Codex Sol as the fallback; Grok takes only the mechanical class. Both keep the cross-vendor audit; rerun `route report --implement` once each arm has n >= 10.",
+    "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
   ],
   "aliases": {
     "opus-latest": {
@@ -504,6 +522,12 @@
       "family": "grok",
       "variant": "low-fast",
       "note": "newest Grok on Cursor, low-fast (scouting)"
+    },
+    "swe-latest": {
+      "vendor": "devin",
+      "family": "swe",
+      "variant": "high",
+      "note": "newest SWE on Devin (devin models list), high; free on the Devin subscription. The devin seat refuses every per-token Devin model."
     }
   },
   "retired": [

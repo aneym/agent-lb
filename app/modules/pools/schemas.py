@@ -41,6 +41,10 @@ class PoolSummary(DashboardModel):
     # Mean per-account weekly pace: remaining% minus the share of the 168 h cycle
     # still ahead of that account's own reset. Positive = more budget than time.
     weekly_pace_percent: float | None = None
+    # CLI seat pools only (Cursor, Devin): runs and tokens the `seat` CLI observed in
+    # the last 24 h, since neither vendor exposes a usage window to read.
+    observed_runs: int | None = None
+    observed_tokens: int | None = None
 
 
 class PoolsResponse(DashboardModel):

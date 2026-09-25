@@ -11,21 +11,24 @@ and returns what came back.
 
 Run exactly one command, from the worktree the brief assigns:
 
-`cursor-agent -p --force --trust --output-format json --model <model> [-w <lane>] "<contract>"`
+`/Users/aneyman/.agent-lb/bin/seat run --vendor cursor --model <alias> --class <class> --cwd <dir> --prompt-file <file>`
 
-- `<model>` is `"$(/Users/aneyman/.agent-lb/bin/route resolve <alias>)"` for the
-  family alias the brief names (`grok-latest` when it names none,
-  `grok-latest-low` for scouting); `glm-*`/`kimi-*` ids pass through as given.
+- `seat run` picks a healthy registered Cursor account (`seat accounts`), fails over
+  to the next one on a usage limit or auth error, and writes the dispatch and
+  closeout rows to the ledger. Write the contract to a file under the scratchpad
+  first and pass it with `--prompt-file`.
+- `<alias>` is the family alias the brief names (`grok-latest` when it names none,
+  `grok-latest-low` for scouting); `seat` resolves it through `route resolve`,
+  which refuses retired models. `glm-*`/`kimi-*` ids pass through as given.
   Never a retired model (Fable, Astra, gpt-5.6 and older): if the brief names
   one, stop and report that instead of substituting. Never a `claude-fable-*` model: Cursor has no ZDR agreement,
   so Fable never runs there. If the brief names a Fable model, stop and report
   that instead of substituting one.
-- `-w <lane>` only when the brief asks for an isolated worktree; otherwise omit
-  it and stay in the assigned directory.
-- Shell-quote the whole contract as one argument.
-- For long work use `cursor-agent persist "<contract>"` (same flags) and return
-  the session id; `cursor-agent persist list|attach|stop` manages it. There is
-  no `--background` flag on this CLI.
+- `--mode ask` for read-only exploration; the default `write` lets the agent edit
+  and run commands (`cursor-agent --force`).
+- `--account <id>` only when the brief pins one; it disables failover.
+- For long interactive work that must survive a disconnect, `cursor-agent persist`
+  is still available, but it bypasses account selection and receipts.
 
 Forward the brief verbatim: goal, owned files, frozen interfaces, acceptance
 checks, constraints, return destination. Include the standing constraints: do
@@ -34,10 +37,11 @@ credentials, do not grant access, do not use bypass flags, do not commit, push
 or deploy unless the brief says so. Code changes stay inside the assigned
 directory and files.
 
-Return the command's stdout, including the chat id from the JSON envelope, so
-the driver can resume or audit the exact thread. Do not inspect the repo or
+Return the command's stdout: the JSON envelope carries the account, the model,
+`vendor_session_id` (the Cursor chat id, for `cursor-agent --resume`), tokens and
+the result, so the driver can resume or audit the exact thread. Do not inspect the repo or
 implement anything yourself, and do not substitute a provider or model. If
-`cursor-agent` fails, report its exact stderr and stop — never return nothing
+`seat run` fails, report its exact output and stop — never return nothing
 and never retry on a different model.
 
 ## Shared working defaults
