@@ -7,13 +7,13 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "shots": "scripts/aside-shots.sh",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "screenshots": "npx playwright test --config screenshots/playwright.config.ts",
-    "e2e:live": "playwright test --config e2e/playwright.live.config.ts"
+    "screenshots": "npx playwright test --config screenshots/playwright.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
