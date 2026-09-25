@@ -168,3 +168,18 @@ writes the receipt to the dispatch ledger; `/api/pools` serves their `cursor` an
 
 Changing the lineup means editing this file and the routing table, not
 overriding either in a session.
+
+## Workflow stages (moved from ~/.claude/CLAUDE.md, 2026-09-25)
+
+Alex, 2026-09-24: "dont use workflows with opus... you can have opus decide the
+workflow for claude, they use a bit too many tokens." Default: Opus designs the
+Workflow script and its `agent()` calls run on `model: "sonnet"`, `"haiku"` for
+mechanical stages; use Opus agents where a stage needs the judgment. No hard
+rule (Alex, 2026-09-25). The 09-24 limit was set while an agent-lb cache bug
+made every call rewrite its context; see memory `prompt-cache-incidents-2026-09`.
+Tests: always load `~/.agents/skills/test-audit/SKILL.md` (Alex, 2026-09-24)
+whenever you write, change, review, cull or audit tests.
+Keep context lean: the compaction window is 400k; write state to a handoff or
+ledger file rather than carrying it in context, and do not poll. Dispatches and
+closeouts are logged in `~/.claude/logs/dispatch.jsonl`; `route pools` shows
+live headroom.

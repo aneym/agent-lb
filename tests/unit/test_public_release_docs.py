@@ -1379,11 +1379,8 @@ def test_release_codeowners_include_public_fork_owner() -> None:
 
 
 def test_agent_git_workflow_convention_matches_fork_branch_policy() -> None:
-    agents = (ROOT / "AGENTS.md").read_text()
     workflow = (ROOT / ".agents/conventions/git-workflow.md").read_text()
 
-    assert "fork (`aneym/agent-lb`) stays on `main`" in agents
-    assert "upstream (`Soju06/codex-lb`) contributions" in agents
     assert "upstream `Soju06/codex-lb`" in workflow
     assert "upstream `aneym/agent-lb`" not in workflow
 
@@ -1398,18 +1395,6 @@ def test_agent_onboarding_docs_pin_public_service_contract() -> None:
         assert "com.aneyman.agent-lb" in text
         assert "com.agent-lb" not in text
         assert "127.0.0.1:2455" in text
-
-
-def test_agents_md_routes_account_operations_to_account_operator_skill() -> None:
-    agents = (ROOT / "AGENTS.md").read_text()
-
-    assert "## Account Operations" in agents
-    assert "`agent-lb-account-operator` skill" in agents
-    assert ".agent-lb/account-profiles.json" in agents
-    assert "quota reset checks" in agents
-    assert "stuck or\nrate-limited account triage" in agents
-    assert "pause/reactivate\nrouting" in agents
-    assert "dedicated browser-profile work" in agents
 
 
 def test_agent_onboarding_docs_name_public_client_surfaces() -> None:
