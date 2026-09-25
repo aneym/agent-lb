@@ -1,0 +1,174 @@
+.lb .account-page .acct-head {
+  margin-top: 20px;
+}
+.lb .account-page .acct-head h1 {
+  font-size: 24px;
+}
+.lb .account-page .acct-head .qs {
+  font-size: 13px;
+  margin-top: 8px;
+}
+.lb .account-page .lb-pop-wrap .pop {
+  top: 40px;
+  right: 0;
+}
+.lb .account-page .card h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.lb .account-extra {
+  margin-top: 14px;
+}
+.lb .account-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.lb .account-section-head a {
+  font-size: 12px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.lb .account-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.lb .account-stats b {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: var(--mono);
+}
+.lb .account-chart {
+  display: flex;
+  height: 175px;
+  gap: 8px;
+  padding: 12px 4px 0;
+}
+.lb .account-chart-axis {
+  width: 30px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 146px;
+  text-align: right;
+  color: var(--ink-2);
+  font: 11px var(--mono);
+}
+.lb .account-chart-bars {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 12px;
+  background: repeating-linear-gradient(to bottom, var(--line-2) 0 1px, transparent 1px 36.25px);
+}
+.lb .account-chart-day {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.lb .account-chart-track {
+  height: 146px;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.lb .account-chart-track i {
+  width: 100%;
+  background: var(--ink);
+  min-height: 1px;
+}
+.lb .account-chart-day > span {
+  padding: 5px 0;
+}
+.lb .account-no-requests {
+  padding: 16px 20px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.lb .account-setting {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-2);
+}
+.lb .account-setting > span:first-child,
+.lb .account-setting > label {
+  color: var(--ink-2);
+}
+.lb .account-setting .seg button {
+  font-size: 12px;
+}
+.lb .account-warmup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lb .account-warmup .toggle {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.lb .account-warmup .toggle:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.lb .account-warmup .toggle:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.lb .account-signin .toolbar {
+  margin-top: 12px;
+}
+.lb .account-confirm,
+.lb .account-rename input {
+  width: 100%;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+.lb .account-overlay {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  background: oklch(0 0 0 / 0.5);
+  display: grid;
+  place-items: center;
+}
+.lb .account-rename {
+  width: min(420px, calc(100vw - 32px));
+}
+.lb .account-rename .toolbar {
+  justify-content: flex-end;
+}
+@media (max-width: 720px) {
+  .lb .account-section-head {
+    flex-wrap: wrap;
+  }
+  .lb .account-page .rcpt .row.hd {
+    display: none;
+  }
+  .lb .account-page .rcpt .row:not(.hd) {
+    grid-template-areas: "t m st" "s s s" "tok cache lat";
+  }
+  .lb .account-page .rcpt .row > * {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
