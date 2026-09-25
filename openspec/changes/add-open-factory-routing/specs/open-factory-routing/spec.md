@@ -32,3 +32,17 @@ dispatched seat.
 #### Scenario: Decider unavailable
 - **WHEN** `jev` exits 3 (unavailable)
 - **THEN** the decision records abstain `jev_unavailable` and dispatches the `route pick` seat
+
+### Requirement: The class default wins while it fits
+
+The first seat on a class's menu (the head of its routing-table chain) SHALL be the house default. When the decider picks another seat, `open-factory route` SHALL dispatch the default instead if the decider's fit for the default is at or above the policy's `default_min_fit`. The receipt SHALL record the decider's own pick, the default and the default's fit.
+
+#### Scenario: Codex has room for implementation
+
+- **WHEN** the implement menu is headed by `gpt-implementer` on a routable `openai-codex` pool and the decider picks `sonnet-implementer` while rating `gpt-implementer`'s fit at 0.8 or more
+- **THEN** the seat is `gpt-implementer`, `kept_default` is true, and `decider_pick` is `sonnet-implementer.sonnet`
+
+#### Scenario: The default does not fit
+
+- **WHEN** the decider picks another menu seat and rates the default's fit below `default_min_fit`
+- **THEN** the decider's pick is dispatched after the usual fresh-menu recheck

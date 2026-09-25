@@ -1,0 +1,15 @@
+{
+  "note": "Live decider eval. `expect: default` means the class chain's head must win whenever its pool is routable (models.md: GPT implements while Codex has room). Run: python3 run.py",
+  "cases": [
+    {"class": "implement", "expect": "default", "task": "Add a --since flag to the report command in clients/route that filters ledger rows by timestamp, with a unit test."},
+    {"class": "implement", "expect": "default", "task": "Fix the off-by-one in the pagination helper so the last page is returned when total is an exact multiple of page size; add a regression test."},
+    {"class": "implement", "expect": "default", "task": "Implement a retry with exponential backoff around the upstream usage fetch in the accounts service, capped at 3 attempts, and cover it with a test."},
+    {"class": "implement", "expect": "default", "task": "Add a JSON output mode to the status CLI that prints the same fields as the table, and test both modes."},
+    {"class": "implement", "expect": "default", "task": "Write a small module that parses Harbor result.json files into a per-trial dataclass with reward, tokens and phase timings, plus tests."},
+    {"class": "implement", "expect": "default", "task": "Make the menubar poller skip a cycle instead of stacking requests when the previous poll is still running; add a test with a slow fake."},
+    {"class": "mechanical", "expect": "default", "task": "Rename the helper _fmt_pct to format_percent across the clients/ directory and update every call site."},
+    {"class": "mechanical", "expect": "default", "task": "Replace every hard-coded 'claude-opus-5' string in the launch scripts with the family alias 'opus-latest'."},
+    {"class": "mechanical", "expect": "default", "task": "Add type hints to the public functions in app/modules/usage/helpers.py without changing behavior."},
+    {"class": "mechanical", "expect": "default", "task": "Sort the imports and remove unused ones in every file under tests/unit/ that ruff flags with F401 or I001."}
+  ]
+}

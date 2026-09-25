@@ -16,6 +16,8 @@ TABLE = REPO / "tests" / "fixtures" / "route" / "routing-table.json"
 
 
 PICK = '{"pick": %s, "abstain": %s, "confidence": 0.9, "fit": %s}'
+# Jev leaves the chain head (Explore) for Cursor; %s is its fit for the head.
+AWAY = '{"pick": "cursor-seat.cursor-grok-4.6-low-fast", "fit": 0.9, "fits": {"Explore.claude-sonnet-5": %s}}'
 
 
 def fake_jev(home: Path, answer: str, exit_code: int = 0) -> None:
@@ -79,6 +81,10 @@ def route(home: Path, task_class: str) -> dict:
         (PICK % ('"rogue.gpt-9"', "null", 0.9), 0, "Explore", "unknown_id", "route_pick", None),
         # An abstain falls back to the chain head.
         (PICK % ("null", '"low_fit"', 0.2), 0, "Explore", None, "route_pick", "low_fit"),
+        # A pick away from the chain head is overruled while the head still fits the task...
+        (AWAY % 0.9, 0, "Explore", "accepted", None, None),
+        # ...and kept when the head does not fit.
+        (AWAY % 0.3, 0, "cursor-seat", "accepted", None, None),
         # Jev down (exit 3) costs one fallback, not the dispatch.
         ("JEV UNAVAILABLE (quota)", 3, "Explore", None, "route_pick", "jev_unavailable"),
     ],
