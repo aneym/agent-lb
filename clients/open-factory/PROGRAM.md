@@ -290,6 +290,10 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 
 - 2026-09-25: plan written. Keel/Jev digest at `~/.agent-lb/of/keel-jev-digest.md`.
 - 2026-09-25: eval moved onto Harbor (D5-D9) at Alex's request via the fixer.
+- 2026-09-25: fixer landed the GPT bridge fix (444b5a66, ccgpt e2e PASS: Sol/Luna 13 s,
+  Sonnet driver + gpt-6-sol subagent 15 s). GPT-inside-Claude-Code is unblocked: A3 gains
+  in-session GPT seats (Agent/`agent()` with `model: gpt-6-*`) beside the codex-sol
+  forwarder, measured as separate seats since their startup cost differs (D12).
 - 2026-09-25: standing Workflow opt-in recorded. Planned uses: M4 fan-out converting dev
   candidates into Harbor task dirs (sonnet build + haiku oracle-run check per task), M5/M7
   arm batches, D9 replay sweeps.
