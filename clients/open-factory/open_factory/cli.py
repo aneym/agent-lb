@@ -339,7 +339,7 @@ def cmd_aa_sync(args: argparse.Namespace) -> int:
                 f"{str(row['coding_index']):<7} {str(row['price_blended_usd_per_1m']):<5} "
                 f"{str(row['output_tokens_per_s']):<9} {row['slug']}"
             )
-    print(f"unmapped  {', '.join(result['unmapped']) or '-'}")
+    print(f"unmapped  {len(result['unmapped'])} AA models (listed with --json)")
     print("source    Artificial Analysis (https://artificialanalysis.ai/)")
     return 0
 
