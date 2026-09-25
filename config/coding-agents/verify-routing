@@ -261,6 +261,8 @@ with tempfile.TemporaryDirectory() as scratch:
             env=env,
             timeout=30,
         )
+        if result.returncode == 0 and not result.stdout.strip():
+            return None  # admitted with nothing to report
         try:
             return json.loads(result.stdout)["hookSpecificOutput"].get("permissionDecision")
         except (json.JSONDecodeError, KeyError):
