@@ -11,7 +11,7 @@ import { ApisPage } from "@/features/apis/components/apis-page";
 import { DashboardPage } from "@/features/dashboard/components/dashboard-page";
 import { ReportsPage } from "@/features/reports/components/reports-page";
 import { SessionsPage } from "@/features/sessions/components/sessions-page";
-import { SettingsPage } from "@/features/settings/components/settings-page";
+import { SettingsPage } from "@/lb/pages/settings/settings-page";
 import { TeamPage } from "@/features/team/components/team-page";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 import { AppShell } from "@/lb/kit/app-shell";
@@ -58,6 +58,8 @@ export default function App() {
             <Route path="/routing" element={<SettingsPage />} />
             <Route path="/usage" element={<ReportsPage />} />
             <Route path="/keys" element={<ApisPage />} />
+            <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
+            <Route path="/settings/:section" element={<SettingsPage />} />
           </Route>
           <Route element={<LegacyLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
@@ -66,8 +68,7 @@ export default function App() {
             <Route path="/accounts" element={<AccountsPage />} />
             <Route path="/apis" element={<ApisPage />} />
             <Route path="/team" element={<TeamPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/firewall" element={<Navigate to="/settings" replace />} />
+            <Route path="/firewall" element={<Navigate to="/settings/security" replace />} />
           </Route>
         </Routes>
       </AuthGate>
