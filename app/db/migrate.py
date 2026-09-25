@@ -83,6 +83,7 @@ _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
             "idx_logs_status_error_time",
             "idx_logs_api_key_time_account",
             "idx_logs_source_requested_at",
+            "idx_logs_session_time",
         }
     ),
     "account_limit_warmups": frozenset(

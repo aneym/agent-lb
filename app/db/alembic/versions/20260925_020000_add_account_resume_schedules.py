@@ -16,6 +16,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("account_resume_schedules"):
+        return
     op.create_table(
         "account_resume_schedules",
         sa.Column("account_id", sa.String(), sa.ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),

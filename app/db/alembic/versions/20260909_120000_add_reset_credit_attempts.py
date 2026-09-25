@@ -10,6 +10,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Older bootstrap paths may have created this table before Alembic was stamped.
+    if sa.inspect(op.get_bind()).has_table("reset_credit_attempts"):
+        return
     op.create_table(
         "reset_credit_attempts",
         sa.Column("id", sa.String(36), primary_key=True),

@@ -16,6 +16,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("routing_policy_versions"):
+        return
     op.create_table(
         "routing_policy_versions",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),

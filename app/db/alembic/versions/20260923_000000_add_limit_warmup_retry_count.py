@@ -16,6 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("account_limit_warmups")}
+    if "retry_count" in columns:
+        return
     with op.batch_alter_table("account_limit_warmups") as batch_op:
         batch_op.add_column(sa.Column("retry_count", sa.Integer(), nullable=False, server_default="0"))
 

@@ -16,6 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("request_logs")}
+    if "client_session_id" in columns:
+        return
     with op.batch_alter_table("request_logs") as batch_op:
         batch_op.add_column(sa.Column("client_session_id", sa.String(), nullable=True))
 
