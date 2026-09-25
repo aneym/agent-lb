@@ -2110,6 +2110,21 @@ def test_state_from_account_holds_free_plan_rate_limit_until_persisted_bounded_r
     assert state.reset_at == pytest.approx(retry_at)
     assert state.blocked_at == pytest.approx(int(blocked))
 
+    after_retry = retry_at + 1.0
+    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: after_retry)
+    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: after_retry)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.utcnow", lambda: _epoch_to_naive_utc(after_retry))
+
+    expired = _state_from_account(
+        account=account,
+        primary_entry=None,
+        secondary_entry=fresh_monthly,
+        runtime=RuntimeState(),
+    )
+
+    assert expired.status == AccountStatus.ACTIVE
+    assert expired.reset_at is None
+
 
 def test_state_from_account_readmits_free_rate_limit_for_legacy_unknown_primary_window(monkeypatch):
     now = 1_700_000_000.0
