@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timezone
+from hashlib import sha256
 from json import JSONDecodeError
 from typing import Any, Final, Literal, cast
 
@@ -958,6 +959,18 @@ async def _ccgpt_messages_response(
     client_session_id = _anthropic_request_session_id(payload, request.headers)
     responses_payload = claude_to_responses(payload)
     responses_payload.model = locked_model
+    if client_session_id:
+        # One key per conversation in a Claude Code session: it pins the conversation
+        # to one Codex account (prompt-cache affinity) and scopes the upstream cache.
+        # Subagents share the session id but not the first message, so parallel
+        # subagents keep separate bridge sessions instead of queueing on one.
+        # The first message's whole text, not a prefix (every subagent's opens with the
+        # same CLAUDE.md reminder) and not its JSON (cache_control markers move off it
+        # after turn 1).
+        first = payload.messages[0].content if payload.messages else ""
+        first_text = first if isinstance(first, str) else "\n".join(part.text or part.type for part in first)
+        anchor = "\0".join((client_session_id, locked_model, first_text))
+        responses_payload.prompt_cache_key = f"ccgpt-{sha256(anchor.encode()).hexdigest()[:32]}"
     forwarded_headers = {
         key: value
         for key, value in request.headers.items()

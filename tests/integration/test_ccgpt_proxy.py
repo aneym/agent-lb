@@ -422,6 +422,67 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
 
 
 @pytest.mark.asyncio
+async def test_bridged_turns_of_one_conversation_share_a_stable_prefix_and_cache_key(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two turns of one Claude Code conversation and a parallel subagent in the same
+    # session, as sent through the first-party MITM: the billing block's cch changes
+    # on every request and cache_control moves off the first message after turn 1.
+    captured: list = []
+
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        captured.append(payload.model_copy(deep=True))
+
+        async def source():
+            yield 'data: {"type":"response.completed","response":{"usage":{}}}\n\n'
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    session = json.dumps({"device_id": "d", "session_id": "8d5c04bd-aa63-46d7-be81-03b561927d46"})
+    reminder = "<system-reminder>shared CLAUDE.md text</system-reminder>"
+
+    def request(cch: str, messages: list) -> dict:
+        return {
+            "model": "gpt-6-sol-medium",
+            "max_tokens": 512,
+            "stream": True,
+            "metadata": {"user_id": session},
+            "system": [
+                {"type": "text", "text": f"x-anthropic-billing-header: cc_version=2.1.282.b25; cch={cch};"},
+                {"type": "text", "text": "You are a Claude agent."},
+            ],
+            "messages": messages,
+        }
+
+    def first(task: str, *, cached: bool) -> dict:
+        block = {"type": "text", "text": f"{reminder}\n{task}"}
+        if cached:
+            block["cache_control"] = {"type": "ephemeral"}
+        return {"role": "user", "content": [block]}
+
+    turn_1 = request("a4129", [first("implement the parser", cached=True)])
+    turn_2 = request(
+        "7727b",
+        [
+            first("implement the parser", cached=False),
+            {"role": "assistant", "content": [{"type": "text", "text": "on it"}]},
+            {"role": "user", "content": [{"type": "text", "text": "continue", "cache_control": {"type": "ephemeral"}}]},
+        ],
+    )
+    sibling = request("91c0e", [first("review the tests", cached=True)])
+    for body in (turn_1, turn_2, sibling):
+        assert (await async_client.post("/v1/messages", json=body)).status_code == 200
+
+    one, two, other = captured
+    assert "x-anthropic-billing-header" not in one.instructions
+    assert one.instructions == two.instructions == "You are a Claude agent."
+    assert one.prompt_cache_key is not None
+    assert one.prompt_cache_key == two.prompt_cache_key
+    assert other.prompt_cache_key not in (None, one.prompt_cache_key)
+
+
+@pytest.mark.asyncio
 async def test_ccgpt_route_refuses_an_unserved_gpt_name_instead_of_running_sol(
     async_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -14,8 +14,10 @@ task instead of hanging:
   (CLAUDE_LB_CODEX_MODE=1), which sends every turn through /v1/ccgpt/messages.
 
 A case passes when the session exits 0 within its timeout, the final reply holds
-the token, and the transcript that ran on GPT shows completed Bash and Read tool
-calls. Run after any deploy that touches the ccgpt bridge:
+the token, the transcript that ran on GPT shows completed Bash and Read tool
+calls, and the LB request log shows the session's GPT calls prompt-cached: every
+call after a conversation's first reads cache (so no Codex account switch mid
+conversation). Run after any deploy that touches the ccgpt bridge:
 
     python3 scripts/ccgpt_e2e_eval.py                 # all cases
     python3 scripts/ccgpt_e2e_eval.py --case sol
@@ -145,9 +147,41 @@ def run_case(name: str, timeout: int) -> dict:
         missing = {"Bash", "Read"} - answered
         if missing:
             failures.append(f"{path.name}: tool calls without results: {sorted(missing)}")
+    if session_id:
+        failures += cache_failures(session_id, result)
     result["pass"] = not failures
     result["failures"] = failures
     return result
+
+
+def cache_failures(session_id: str, result: dict) -> list[str]:
+    """A conversation's GPT calls stay on one Codex account and read its prompt cache.
+
+    A session holds one conversation per case, plus the subagent's in `subagent`.
+    Any call after the first with no cache read means the prefix changed or the
+    call moved accounts; either way the bridge lost the cache.
+    """
+    query = Path(__file__).with_name("request_log_query.py")
+    proc = subprocess.run(
+        [sys.executable, str(query), "--session", session_id, "--json"], capture_output=True, text=True, timeout=60
+    )
+    try:
+        rows = json.loads(proc.stdout)["requests"]
+    except (json.JSONDecodeError, KeyError):
+        return [f"request log unreadable for session {session_id}: {proc.stderr[-200:]}"]
+    gpt = sorted(
+        (row for row in rows if str(row.get("model", "")).startswith("gpt-")), key=lambda row: row["requested_at"]
+    )
+    result["gpt_calls"] = [{"account": row.get("account"), "cache_read": row.get("cache_read")} for row in gpt]
+    if len(gpt) < 2:
+        return [f"request log shows {len(gpt)} GPT call(s); need 2+ to judge caching"]
+    uncached = [row for row in gpt[1:] if not row.get("cache_read")]
+    # A subagent's first call starts a second conversation, so it may miss once.
+    allowed = 1 if result["case"] == "subagent" else 0
+    if len(uncached) > allowed:
+        accounts = sorted({str(row.get("account")) for row in gpt})
+        return [f"{len(uncached)} GPT call(s) after the first read no cache (accounts {accounts})"]
+    return []
 
 
 def main() -> int:

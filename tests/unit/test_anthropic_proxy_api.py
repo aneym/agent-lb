@@ -10,6 +10,7 @@ from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy import anthropic_service as anthropic_service_module
 from app.modules.proxy import api as proxy_api
 from app.modules.proxy.anthropic_service import AnthropicCountTokensResult, AnthropicProxyError, AnthropicProxyStream
+from app.modules.proxy.claude_codex_bridge import CCGPT_MODEL
 
 pytestmark = pytest.mark.unit
 
@@ -152,7 +153,7 @@ async def test_v1_ccgpt_messages_rejects_anthropic_defined_tools(
     response = await async_client.post(
         "/v1/ccgpt/messages",
         json={
-            "model": "caller-controlled-model",
+            "model": CCGPT_MODEL,
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "Search the web"}],
             "stream": True,

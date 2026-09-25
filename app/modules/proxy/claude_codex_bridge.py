@@ -452,6 +452,13 @@ def _text_message(role: str, text: str) -> JsonObject:
     }
 
 
+# Claude Code's first system block is a billing attestation for Anthropic whose
+# cch/cc_prompt_id change on every request. Leading the GPT instructions, it made
+# every prompt prefix unique: no upstream prompt caching, and a new derived
+# prompt_cache_key (so a new account) on every turn.
+BILLING_HEADER_PREFIX = "x-anthropic-billing-header:"
+
+
 def _system_text(value: JsonValue | None) -> str:
     if isinstance(value, str):
         return value
@@ -460,7 +467,10 @@ def _system_text(value: JsonValue | None) -> str:
     return "\n\n".join(
         cast(str, part["text"])
         for part in value
-        if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+        if isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+        and not cast(str, part["text"]).startswith(BILLING_HEADER_PREFIX)
     )
 
 
