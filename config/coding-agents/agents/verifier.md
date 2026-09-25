@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: Independent verification of executor claims. Use after any dispatched implementation (implementer, workflow lane) to confirm the work is real and in-scope before the orchestrator accepts it.
+description: Independent verification of executor claims. Use after any dispatched implementation (implementation seat, workflow lane) to confirm the work is real and in-scope before the orchestrator accepts it.
 tools: [Read, Bash, Grep, Glob]
 model: opus
 ---

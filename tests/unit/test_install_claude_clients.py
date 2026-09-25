@@ -617,6 +617,36 @@ def test_policy_installer_registers_the_seat_guard_once(tmp_path: Path) -> None:
     assert sum("hooks/subagent-closeout.py" in command for command in stop_commands) == 1
 
 
+def test_policy_installer_retires_implementer_and_keeps_local_ccgpt_seats(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    agents = home / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    retired = agents / "implementer.md"
+    retired.write_text("---\nname: implementer\nmodel: sonnet\n---\nforward to terra-latest\n")
+    owner = home / ".agent-lb" / "managed" / "coding-agents" / "implementer"
+    owner.parent.mkdir(parents=True)
+    owner.write_text("agent-lb:implementer:v1\n")
+    mirror = home / ".agents" / "policy" / "coding-agents" / "agents" / "implementer.md"
+    mirror.parent.mkdir(parents=True)
+    mirror.write_text(retired.read_text())
+    local = {
+        name: f"---\nname: {name}\nmodel: {name}-model\n---\nlocal\n"
+        for name in ("gpt-implementer", "luna-implementer")
+    }
+    for name, text in local.items():
+        (agents / f"{name}.md").write_text(text)
+
+    result = subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
+
+    assert not retired.exists() and not owner.exists() and not mirror.exists()
+    checkpoint = Path(
+        next(line.removeprefix("checkpoint ") for line in result.stdout.splitlines() if line.startswith("checkpoint "))
+    )
+    assert (checkpoint / ".claude" / "agents" / "implementer.md").read_text().endswith("forward to terra-latest\n")
+    for name, text in local.items():
+        assert (agents / f"{name}.md").read_text() == text
+
+
 def test_policy_installer_replaces_a_symlinked_policy_dir_with_a_full_copy(tmp_path: Path) -> None:
     home = tmp_path / "home"
     policy = home / ".agents" / "policy" / "coding-agents"

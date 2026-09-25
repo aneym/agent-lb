@@ -33,7 +33,7 @@ def invoke(
         else json.dumps(
             {
                 "tool_name": "Agent",
-                "tool_input": {"subagent_type": "implementer", "model": model, "prompt": "test"},
+                "tool_input": {"subagent_type": "sonnet-implementer", "model": model, "prompt": "test"},
             }
         )
     )
@@ -96,7 +96,7 @@ def test_fable_model_pinned_on_a_subagent_is_denied_and_logged(tmp_path: Path) -
 def test_subagent_type_defined_on_fable_is_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agents = tmp_path / "agents"
     agents.mkdir()
-    (agents / "implementer.md").write_text("---\nname: implementer\nmodel: claude-planner\n---\nbody\n")
+    (agents / "sonnet-implementer.md").write_text("---\nname: sonnet-implementer\nmodel: claude-planner\n---\nbody\n")
     monkeypatch.setenv("SEAT_GUARD_AGENTS_DIR", str(agents))
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="")
     assert output["permissionDecision"] == "deny"
@@ -123,7 +123,7 @@ def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) ->
         {
             "tool_name": "Agent",
             "tool_input": {
-                "subagent_type": "implementer",
+                "subagent_type": "gpt-implementer",
                 "prompt": "Replace the gpt-5.6-sol pins with route resolve sol-latest; --model gpt-6-sol is fine.",
             },
         }

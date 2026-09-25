@@ -17,12 +17,6 @@ MODEL = "opus"
 EFFORT_LEVEL = "high"
 MANAGED_AGENTS = (
     (
-        Path(".claude/agents/implementer.md"),
-        Path(".agent-lb/managed/coding-agents/implementer"),
-        "agent-lb:implementer:v1\n",
-        Path("agents/implementer.md"),
-    ),
-    (
         Path(".claude/agents/computer-use.md"),
         Path(".agent-lb/managed/coding-agents/computer-use"),
         "agent-lb:computer-use:v1\n",
@@ -107,9 +101,11 @@ MANAGED_AGENTS = (
         Path("hooks/seat-guard.py"),
     ),
 )
-# Seats retired by the owner's 2026-09-22 lineup (no Codex Astra). The
-# installer removes them; the checkpoint keeps the removed copy.
-RETIRED_AGENTS = (Path(".claude/agents/astra.md"),)
+# Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
+# implementer (2026-09-25, its terra-latest model is unserved). The installer
+# removes the definition, its ownership marker and the policy mirror copy; the
+# checkpoint keeps what it removed.
+RETIRED_AGENTS = ("astra", "implementer")
 # The live routing table keeps the `overrides` that `route learn` writes; the
 # installer replaces everything else from the canonical table.
 ROUTING_TABLE = Path(".agent-lb/managed/coding-agents/routing-table.json")
@@ -376,9 +372,14 @@ def main() -> int:
                 changes[owner_path] = owner_marker
 
     if not args.uninstall:
-        for relative in RETIRED_AGENTS:
-            if (args.home / relative).exists():
-                changes[args.home / relative] = None
+        for name in RETIRED_AGENTS:
+            for relative in (
+                Path(".claude/agents") / f"{name}.md",
+                Path(".agent-lb/managed/coding-agents") / name,
+                POLICY_DIR / "agents" / f"{name}.md",
+            ):
+                if (args.home / relative).is_file() and (args.home / relative).resolve().parent != source / "agents":
+                    changes[args.home / relative] = None
         table_path = args.home / ROUTING_TABLE
         desired_table = desired_routing_table(source / "routing-table.json", table_path)
         if desired_table != read_text(table_path):
