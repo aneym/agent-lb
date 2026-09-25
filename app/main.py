@@ -77,6 +77,7 @@ from app.modules.reports import api as reports_api
 from app.modules.receipts import api as receipts_api
 from app.modules.request_logs import api as request_logs_api
 from app.modules.routing_view import api as routing_view_api
+from app.modules.routing_policy import api as routing_policy_api
 from app.modules.runtime import api as runtime_api
 from app.modules.sessions import api as sessions_api
 from app.modules.settings import api as settings_api
@@ -443,6 +444,7 @@ def create_app() -> FastAPI:
     app.include_router(request_logs_api.router)
     app.include_router(receipts_api.router)
     app.include_router(routing_view_api.router)
+    app.include_router(routing_policy_api.router)
     app.include_router(sessions_api.router)
     app.include_router(sessions_api.short_link_router)
     app.include_router(pools_api.router)

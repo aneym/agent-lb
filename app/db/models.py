@@ -1339,3 +1339,21 @@ Index(
     AdditionalUsageHistory.account_id,
     AdditionalUsageHistory.recorded_at,
 )
+
+
+class RoutingPolicyVersion(Base):
+    __tablename__ = "routing_policy_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    routing_table_json: Mapped[str] = mapped_column(Text, nullable=False)
+    decider_json: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    replay_json: Mapped[str | None] = mapped_column(Text, nullable=True)
