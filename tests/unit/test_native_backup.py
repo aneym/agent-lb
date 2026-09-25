@@ -8,6 +8,7 @@ import pytest
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
     GLM_PROVIDER_NAME,
+    KIMI_PROVIDER_NAME,
     OPENAI_PROVIDER_NAME,
     ProviderLookupError,
     get_provider,
@@ -21,6 +22,7 @@ from app.core.providers.native_backup import (
     grok_native_backup,
     list_native_backup_candidates,
 )
+from app.core.providers.openrouter import OPENROUTER_PROVIDER_NAME
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +46,14 @@ _SECRET_MARKERS = (
 def test_import_does_not_join_the_live_provider_registry() -> None:
     before = list_provider_names()
 
-    assert before == (ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME, OPENAI_PROVIDER_NAME)
+    # 5b88b132 added Kimi; 55ba9871 added OpenRouter to the live provider registry.
+    assert before == (
+        ANTHROPIC_PROVIDER_NAME,
+        GLM_PROVIDER_NAME,
+        KIMI_PROVIDER_NAME,
+        OPENAI_PROVIDER_NAME,
+        OPENROUTER_PROVIDER_NAME,
+    )
     assert CURSOR_PROVIDER_NAME not in before
     assert GROK_PROVIDER_NAME not in before
     for name in (CURSOR_PROVIDER_NAME, GROK_PROVIDER_NAME):

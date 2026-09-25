@@ -7,7 +7,9 @@ from app.core.types import JsonValue
 
 pytestmark = pytest.mark.integration
 
+# 5030e44e added gpt-5.6-sol to the bootstrap catalog for the ccdex harness.
 BOOTSTRAP_MODEL_SLUGS = {
+    "gpt-5.6-sol",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -35,6 +37,7 @@ EXPECTED_CORE_MODEL_PLANS = {
 }
 
 EXPECTED_BOOTSTRAP_MINIMAL_CLIENT_VERSIONS = {
+    "gpt-5.6-sol": "0.124.0",
     "gpt-5.5": "0.124.0",
     "gpt-5.4": "0.98.0",
     "gpt-5.4-mini": "0.98.0",

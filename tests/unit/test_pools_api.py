@@ -292,7 +292,11 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
     ).model_dump(mode="json", by_alias=True)
 
     assert payload["generatedAt"] == "2026-09-19T21:00:00Z"
+    # 1175ed9b added five-hour and window-label fields; preserve the exact camelCase wire contract.
     assert set(payload["pools"][0]) == {
+        "fiveHourResetAt",
+        "fiveHourRemainingPercent",
+        "windowLabel",
         "id",
         "provider",
         "kind",
