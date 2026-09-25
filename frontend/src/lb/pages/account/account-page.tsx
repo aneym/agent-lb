@@ -119,7 +119,7 @@ function Limits({ account }: { account: AccountSummary }) {
             <LimitMeter
               remaining={account.usage?.primaryRemainingPercent}
               resetAt={account.resetAtPrimary}
-              label="5h"
+              unit="5h"
             />
           </div>
         )}

@@ -224,7 +224,7 @@ export function AddAccountPage() {
                           <LimitMeter
                             remaining={added.usage?.primaryRemainingPercent}
                             resetAt={added.resetAtPrimary}
-                            label="5h"
+                            unit="5h"
                           />
                         </div>
                       )}

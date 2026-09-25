@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { Menu } from "lucide-react";
+import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { useConnectAddress, usePools, useRuntimeVersion, useStickySessions } from "../api";
 import { clock } from "../format";
 
@@ -13,6 +14,8 @@ const nav = [
 ];
 export function AppShell() {
   const { pathname } = useLocation();
+  const logout = useAuthStore((state) => state.logout);
+  const passwordRequired = useAuthStore((state) => state.passwordRequired);
   const [mobile, setMobile] = useState(false);
   const address = useConnectAddress().data?.connectAddress;
   const version = useRuntimeVersion().data?.currentVersion;
@@ -65,6 +68,11 @@ export function AppShell() {
               </span>
             </span>
             {version && <span className="mono hide-m">v{version}</span>}
+            {passwordRequired && (
+              <button className="btn ghost sm" onClick={() => void logout()}>
+                Sign out
+              </button>
+            )}
           </div>
           <button
             className="btn ghost icon lb-mobile-menu"
