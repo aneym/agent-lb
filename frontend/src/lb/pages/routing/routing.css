@@ -1,0 +1,193 @@
+.lb .routing-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lb .routing-confirm {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 12px;
+  margin-top: 8px;
+}
+.lb .routing-confirm p {
+  margin: 0 0 10px;
+}
+.lb .dl dd .muted {
+  font-size: 12.5px;
+}
+.lb .dl dd .toggle {
+  flex: none;
+}
+.lb .dec {
+  --cols: 64px 86px minmax(0, 1fr) 95px minmax(105px, auto);
+  min-width: 0;
+}
+.lb .dec .row.link {
+  width: 100%;
+  text-align: left;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+}
+.lb .dec .row.link.sel {
+  background: var(--fill);
+}
+.lb .dec .row.link:hover {
+  background: var(--hover);
+}
+.lb .dec .c-out {
+  overflow-wrap: anywhere;
+}
+.lb .routing-trace-desktop {
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  align-self: start;
+}
+.lb .routing-trace-desktop > h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+.lb .dsplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.lb .route-trace .meta {
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  margin-bottom: 16px;
+}
+.lb .route-trace .stg {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+}
+.lb .route-trace .sh {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+.lb .route-trace .sh .no {
+  color: var(--ink-2);
+  font: 500 11px var(--mono);
+  white-space: nowrap;
+}
+.lb .route-trace h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.lb .route-trace p {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+.lb .route-trace .cand {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-2);
+}
+.lb .route-trace .cand .rs {
+  width: 100%;
+  padding-left: 20px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.lb .route-trace .cand.x .chip {
+  text-decoration: line-through;
+  color: var(--ink-2);
+}
+.lb .route-trace .cand .num {
+  margin-left: auto;
+}
+.lb .route-trace .kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--ink-2);
+  font-size: 12px;
+  margin-top: 12px;
+}
+.lb .route-trace .st {
+  font-size: 13px;
+}
+.lb .routing-trace-desktop + .lb-sheet {
+  display: none;
+}
+@media (min-width: 721px) {
+  .lb-sheet-overlay:has(+ .lb-sheet .route-trace) {
+    display: none;
+  }
+  .lb-sheet:has(.route-trace) {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .lb .dsplit {
+    grid-template-columns: 1fr;
+  }
+  .lb .routing-trace-desktop {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .lb .dec .row {
+    grid-template-columns: 55px minmax(0, 1fr) auto;
+    grid-template-areas: "time cls out" "pick pick pick" "decider decider decider";
+    gap: 6px 10px;
+  }
+  .lb .dec .row.hd {
+    display: none;
+  }
+  .lb .dec .c-t {
+    grid-area: time;
+  }
+  .lb .dec .c-cls {
+    grid-area: cls;
+  }
+  .lb .dec .c-out {
+    grid-area: out;
+  }
+  .lb .dec .c-pick {
+    grid-area: pick;
+  }
+  .lb .dec .c-d {
+    grid-area: decider;
+  }
+  .lb .dec .c-out {
+    max-width: 130px;
+    font-size: 12px;
+  }
+  .lb .routing-option {
+    max-width: 100%;
+  }
+}
+
+.lb .routing-excluded {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.lb .routing-more {
+  width: 100%;
+  padding: 14px;
+  background: var(--card);
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+}
