@@ -45,7 +45,7 @@ function RouteTrace({ decision }: { decision: RouteDecision }) {
               aria-label="Copy full session ID"
               onClick={() => void navigator.clipboard.writeText(decision.sessionId!)}
             >
-              {decision.sessionId.slice(0, 8)}…
+              {decision.sessionId.slice(0, 8)}
             </button>
           </>
         )}

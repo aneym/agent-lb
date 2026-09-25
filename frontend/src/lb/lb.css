@@ -1141,7 +1141,7 @@ html.dark .lb {
 @media (max-width: 720px) {
   .lb .code {
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
   }
 }
 @media (max-width: 720px) {
