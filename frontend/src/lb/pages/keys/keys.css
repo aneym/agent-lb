@@ -1,0 +1,153 @@
+.lb .keys-page .keys-connect {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.lb .keys-page .keys-connect .top2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lb .keys-page .keys-snippet {
+  position: relative;
+  min-width: 0;
+}
+.lb .keys-page .keys-snippet .code {
+  margin: 0;
+  padding-right: 45px;
+}
+.lb .keys-page .keys-snippet > button {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
+.lb .keys-page .keys {
+  --cols: minmax(200px, 1.3fr) minmax(110px, 0.8fr) minmax(150px, 1fr) 104px 96px 32px;
+}
+.lb .keys-page .scope {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.lb .keys-page .spend {
+  display: grid;
+  gap: 5px;
+  font-size: 12.5px;
+}
+.lb .keys-page .spend .t {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lb .keys-page .grp .cap {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.lb .keys-page .grp .cap .bar {
+  width: 120px;
+}
+.lb .keys-page .grp .cap + .ga {
+  margin-left: 0;
+}
+.lb .keys-page .c-more {
+  justify-self: end;
+}
+.lb .keys-page .keys-revoked-toggle {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  padding: 12px 16px;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.lb .keys-page .keys-revoked-toggle:hover {
+  color: var(--ink);
+}
+.keys-owner-options {
+  display: grid;
+  gap: 8px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.keys-owner-option {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.keys-owner-option:hover,
+.keys-owner-option:focus-visible {
+  border-color: var(--accent);
+}
+.keys-owner-option span {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.lb .keys-page .keys-add-member {
+  margin-top: 12px;
+}
+.lb .keys-page .qline {
+  flex-wrap: wrap;
+}
+.lb .keys-page .qline code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .lb .keys-page .keys .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "who more" "scope used" "spend spend";
+    gap: 8px 12px;
+  }
+  .lb .keys-page .keys .c-who {
+    grid-area: who;
+  }
+  .lb .keys-page .keys .c-scope {
+    grid-area: scope;
+  }
+  .lb .keys-page .keys .c-spend {
+    grid-area: spend;
+  }
+  .lb .keys-page .keys .c-used {
+    grid-area: used;
+    text-align: right;
+  }
+  .lb .keys-page .keys .c-exp {
+    display: none;
+  }
+  .lb .keys-page .keys .c-more {
+    grid-area: more;
+  }
+  .lb .keys-page .grp .cap {
+    margin-left: 0;
+    width: 100%;
+  }
+  .lb .keys-page .grp .cap .bar {
+    flex: 1;
+  }
+  .lb .keys-page .connect {
+    padding: 14px;
+  }
+  .lb .keys-page .keys-snippet .code {
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+}
