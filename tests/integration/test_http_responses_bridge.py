@@ -24,6 +24,7 @@ from app.core.utils.request_id import reset_request_id, set_request_id
 from app.db.models import Account, AccountStatus, DashboardSettings
 from app.db.session import SessionLocal
 from app.dependencies import get_proxy_service_for_app
+from app.modules.proxy._service.http_bridge.mixin import _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS
 from app.modules.proxy.load_balancer import AccountSelection
 
 pytestmark = pytest.mark.integration
@@ -1596,12 +1597,16 @@ async def test_v1_responses_http_bridge_codex_session_uses_extended_idle_ttl(asy
         max_sessions=8,
     )
 
+    # The idle prune scans at most once per interval (c488fab5); step past that window before
+    # each scan so both TTL checks actually run.
     session.last_used_at = time.monotonic() - 300.0
+    service._http_bridge_last_idle_prune_monotonic -= _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS + 1.0
     async with service._http_bridge_lock:
         service._prune_http_bridge_sessions_locked()
         assert key in service._http_bridge_sessions
 
     session.last_used_at = time.monotonic() - 601.0
+    service._http_bridge_last_idle_prune_monotonic -= _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS + 1.0
     async with service._http_bridge_lock:
         service._prune_http_bridge_sessions_locked()
         assert key not in service._http_bridge_sessions
