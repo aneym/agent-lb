@@ -292,7 +292,8 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
         ("primaryRemainingPercent", "resetAtPrimary"),
         ("secondaryRemainingPercent", "resetAtSecondary"),
     ):
-        if key not in usage:
+        # A null window is one the provider does not report (OpenAI has no 5h window).
+        if usage.get(key) is None:
             continue
         remaining = _number(usage.get(key))
         if remaining is None:

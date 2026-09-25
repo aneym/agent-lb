@@ -367,7 +367,8 @@ def test_openai_weekly_only_usage_and_malformed_quota_are_safe(service, capsys):
         [
             _account(
                 provider="openai",
-                usage={"secondaryRemainingPercent": 25},
+                # Shape the live API sends since OpenAI dropped the 5h window (2026-09-25).
+                usage={"primaryRemainingPercent": None, "secondaryRemainingPercent": 25, "monthlyRemainingPercent": None},
                 additionalQuotas=[{"quotaKey": "codex", "modelIds": None, "primaryWindow": "bad"}],
             )
         ]
