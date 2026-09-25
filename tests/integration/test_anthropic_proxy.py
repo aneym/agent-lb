@@ -4601,65 +4601,18 @@ async def test_anthropic_messages_keeps_claude_code_identity_payload_untouched(a
 
 
 @pytest.mark.asyncio
-async def test_anthropic_messages_keep_volatile_billing_marker_after_cache_breakpoints(async_client, monkeypatch):
+async def test_anthropic_messages_forward_claude_code_billing_first_payloads_unchanged(async_client, monkeypatch):
+    """Claude Code 2.1.280+ leads with a billing block whose cch changes on
+    every request, then its identity (CLI) or Agent SDK line. Anthropic only
+    keeps that block out of the cached prefix while it is the FIRST system
+    block. Prepending an identity pushed it to index 1 and every request
+    re-wrote its whole context (2026-09-23..25: subagents missed the cache on
+    99% of calls). The proxy must forward these payloads byte-for-byte."""
     await _insert_account(
         account_id="anthropic-account",
         provider="anthropic",
         access_token="anthropic-access",
         email="claude@example.com",
-    )
-    forwarded = []
-
-    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
-        del self, session, provider_name, headers
-        forwarded.append(dict(json_body))
-        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
-
-    monkeypatch.setattr(
-        anthropic_proxy_module.AnthropicProxyService, "_open_upstream_response", fake_open_upstream_response
-    )
-    stable = {"type": "text", "text": "Stable cached prompt", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
-    for prompt_id in ("first", "second"):
-        billing = {
-            "type": "text",
-            "text": (
-                f"x-anthropic-billing-header: cc_version=2.1.280; cch={prompt_id}; "
-                f"cc_prompt_id={prompt_id}; cc_turn_origin=sdk;"
-            ),
-        }
-        async with async_client.stream(
-            "POST",
-            "/v1/messages",
-            json={
-                "model": "claude-sonnet-5",
-                "max_tokens": 32,
-                "stream": True,
-                "system": [billing, stable],
-                "messages": [{"role": "user", "content": "reply ok"}],
-            },
-        ) as response:
-            assert response.status_code == 200
-            await response.aread()
-
-    assert [body["system"][:2] for body in forwarded] == [
-        [
-            {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
-            stable,
-        ]
-    ] * 2
-    assert [body["system"][2]["text"] for body in forwarded] == [
-        "x-anthropic-billing-header: cc_version=2.1.280; cch=first; cc_prompt_id=first; cc_turn_origin=sdk;",
-        "x-anthropic-billing-header: cc_version=2.1.280; cch=second; cc_prompt_id=second; cc_turn_origin=sdk;",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_anthropic_messages_reuse_message_prefix_across_session_turns(async_client, monkeypatch):
-    await _insert_account(
-        account_id="anthropic-cache-session",
-        provider="anthropic",
-        access_token="anthropic-access",
-        email="cache-session@example.com",
     )
     forwarded = []
 
@@ -4671,17 +4624,18 @@ async def test_anthropic_messages_reuse_message_prefix_across_session_turns(asyn
     monkeypatch.setattr(
         anthropic_proxy_module.AnthropicProxyService, "_open_upstream_response", fake_open_upstream_response
     )
-    for prompt_id, messages in (
-        ("first", [{"role": "user", "content": "say a", "cache_control": {"type": "ephemeral"}}]),
-        (
-            "second",
-            [
-                {"role": "user", "content": "say a", "cache_control": {"type": "ephemeral"}},
-                {"role": "assistant", "content": "a"},
-                {"role": "user", "content": "say b", "cache_control": {"type": "ephemeral"}},
-            ],
-        ),
+    cached = {"type": "text", "text": "Stable prompt", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+    sent = []
+    for second_block, cch in (
+        ("You are Claude Code, Anthropic's official CLI for Claude.", "7122f"),
+        ("You are Claude Code, Anthropic's official CLI for Claude.", "dc618"),
+        ("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "60f1e"),
+        # In-process teammates carry no cc_prompt_id.
+        ("You are a Claude agent, built on Anthropic's Claude Agent SDK.", "f8d14"),
     ):
+        marker = f"x-anthropic-billing-header: cc_version=2.1.282.190; cc_entrypoint=cli; cch={cch};"
+        system = [{"type": "text", "text": marker}, {"type": "text", "text": second_block}, cached]
+        sent.append(system)
         async with async_client.stream(
             "POST",
             "/v1/messages",
@@ -4689,27 +4643,15 @@ async def test_anthropic_messages_reuse_message_prefix_across_session_turns(asyn
                 "model": "claude-sonnet-5",
                 "max_tokens": 32,
                 "stream": True,
-                "metadata": {"user_id": json.dumps({"session_id": "billing-cache-two-turn-test"})},
-                "system": [
-                    {
-                        "type": "text",
-                        "text": (
-                            f"x-anthropic-billing-header: cc_version=2.1.280; cch={prompt_id}; "
-                            f"cc_prompt_id={prompt_id}; cc_turn_origin=sdk;"
-                        ),
-                    },
-                    {"type": "text", "text": "Stable prompt", "cache_control": {"type": "ephemeral"}},
-                ],
-                "messages": messages,
+                "metadata": {"user_id": json.dumps({"session_id": "billing-first-session"})},
+                "system": system,
+                "messages": [{"role": "user", "content": "reply ok"}],
             },
         ) as response:
             assert response.status_code == 200
             await response.aread()
 
-    assert len(forwarded) == 2
-    assert forwarded[0]["system"] == forwarded[1]["system"]
-    assert forwarded[0]["messages"] == forwarded[1]["messages"][:1]
-    assert "cch=first; cc_prompt_id=first;" in forwarded[1]["system"][-1]["text"]
+    assert [body["system"] for body in forwarded] == sent
 
 
 @pytest.mark.asyncio

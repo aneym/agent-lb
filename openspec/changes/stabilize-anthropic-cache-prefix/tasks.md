@@ -1,6 +1,5 @@
-- [x] Capture the changing prefix without logging prompt bodies or credentials.
-- [x] Demonstrate cold/cold versus cold/read behavior with a spare-port live upstream probe.
-- [x] Add a failing `/v1/messages` regression test, then implement the reorder.
-- [x] Validate targeted tests, OpenSpec, and a spare-port repeated-call cache read.
-- [x] Add a failing two-turn message-prefix regression and stabilize session billing values.
-- [ ] Validate a resumed real Claude session and live trailing-ten-minute request logs.
+- [x] Capture request shapes through a local forwarder without logging prompt text or credentials (billing block at index 0; CLI identity or Agent SDK line at index 1).
+- [x] Show a direct (no proxy) Claude Code session caches turn over turn with the per-request billing block at index 0.
+- [x] Add a regression test that fails on the prepend/move/pin code and passes on passthrough.
+- [x] Remove the move and pin transforms and their tests.
+- [ ] Validate live: through the restarted proxy, a subagent and a teammate-shaped session read the cache on steady turns; trailing-hour bust rate returns to the pre-2026-09-23 baseline.

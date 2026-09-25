@@ -1,5 +1,7 @@
 # Stabilize Anthropic cache prefixes
 
-Claude Code 2.1.280 emits a per-turn billing marker as the first system block. Its `cch` and `cc_prompt_id` vary for every request, ahead of the client's cache-control breakpoints. Move that marker after the cacheable system blocks when forwarding to Anthropic. Preserve the marker content, stable system blocks, tools, messages, and identity requirement.
+Claude Code 2.1.280 sends a per-request billing block (`x-anthropic-billing-header: ...; cch=...`) as the first system block. Anthropic recognizes that block only in first position and keeps it out of the cached prefix; a direct Claude Code session caches normally with it.
 
-Follow-up: Moving it after the system breakpoint still leaves it before all message-level breakpoints. Pin `cch` and `cc_prompt_id` to their first values for an identifiable Claude session in a bounded, idle-expiring cache; keep the rest of the marker text intact. Without a session ID, leave the marker untouched.
+The proxy prepended its Claude Code identity whenever the first block was not the identity line, which pushed the billing block to index 1, where upstream treats it as prompt text. Its `cch` changes on every request, so every request re-wrote its whole context. Two interim fixes (move the block after the system breakpoints, then pin `cch`/`cc_prompt_id` per session) repaired main-thread turns only: payloads without `cc_prompt_id` (in-process teammates, notification-driven turns) still missed the cache on about 99% of calls through 2026-09-25.
+
+Correct fix: treat a payload whose first system block is the billing block as a Claude Code payload and forward it unchanged. Remove the move and pin transforms.

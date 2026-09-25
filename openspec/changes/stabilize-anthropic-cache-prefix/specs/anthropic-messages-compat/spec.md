@@ -1,21 +1,16 @@
 ## ADDED Requirements
 
-### Requirement: Volatile Claude Code billing metadata does not invalidate a cached prefix
+### Requirement: Claude Code billing-first payloads are forwarded unchanged
 
-When a Claude Code Messages request contains a per-turn `x-anthropic-billing-header` system block before a system cache-control breakpoint, the proxy MUST forward the billing block after all cacheable system blocks. It MUST keep the Claude Code identity as the first system block. Other request fields MUST remain unchanged.
+When a Messages request's first system block is a Claude Code billing block (text starting `x-anthropic-billing-header:`), the proxy MUST treat the payload as a Claude Code payload and MUST NOT insert, remove, reorder, or rewrite any system block. The identity line is only added to payloads whose first system block is neither the Claude Code identity nor a billing block.
 
-#### Scenario: Consecutive turns carry different prompt IDs
+#### Scenario: Consecutive requests carry different billing values
 
-- **WHEN** two otherwise identical Messages requests contain different per-turn billing markers before the same cache-control breakpoint
-- **THEN** the upstream cacheable prefix through that breakpoint is identical for both requests
-- **AND** a request without an identifiable session retains its own billing marker after the breakpoint
+- **WHEN** two requests in one session lead with billing blocks whose `cch` values differ, followed by the Claude Code identity or the Agent SDK line
+- **THEN** each request is forwarded with exactly the system blocks it arrived with
+- **AND** no identity block is prepended ahead of the billing block
 
-### Requirement: Session billing metadata remains stable through message cache breakpoints
+#### Scenario: Teammate payloads without a prompt id
 
-For Claude Code requests with an identifiable session, the proxy MUST retain the first observed `cch` and `cc_prompt_id` billing-marker values for subsequent requests in that session. It MUST change no other billing-marker text or request field. The session-value cache MUST be bounded and expire idle sessions. Requests without an identifiable session MUST retain their original billing marker.
-
-#### Scenario: A resumed conversation reuses its message prefix
-
-- **WHEN** the second request in a session adds a turn after a previously cache-controlled message and supplies new billing-marker values
-- **THEN** the forwarded system blocks and prior message prefix are byte-equivalent to the first request
-- **AND** only the two volatile billing-marker values are replaced with the session's first values
+- **WHEN** a billing-first request carries no `cc_prompt_id`
+- **THEN** it is forwarded unchanged like any other billing-first request
