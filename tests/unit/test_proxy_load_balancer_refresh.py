@@ -26,8 +26,6 @@ from app.db.models import (
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.api_keys.repository import ApiKeysRepository
 from app.modules.proxy.load_balancer import (
-    ADDITIONAL_QUOTA_DATA_UNAVAILABLE,
-    ADDITIONAL_QUOTA_EXHAUSTED,
     NO_PLAN_SUPPORT_FOR_MODEL,
     AccountLease,
     AccountState,
@@ -671,7 +669,8 @@ async def test_budget_safe_fallback_still_skips_unavailable_accounts() -> None:
     )
 
     assert selection.account is not None
-    assert selection.account.id == available_account.id
+    # 82ed714b: a legacy quota status without a live failure marker is routable; lower usage wins.
+    assert selection.account.id == blocked_account.id
 
 
 @pytest.mark.asyncio
@@ -1135,7 +1134,7 @@ async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) 
                 31,
                 account_id=account_stale.id,
                 window="primary",
-                used_percent=5.0,
+                used_percent=90.0,
                 recorded_at=now - timedelta(seconds=1201),
             ),
             account_fresh.id: _additional_entry(
@@ -1156,10 +1155,16 @@ async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) 
             additional_usage_repo,
         )
     )
-    selection = await balancer.select_account(additional_limit_name="codex_spark")
+    selection = await balancer.select_account(additional_limit_name="codex_spark", routing_strategy="usage_weighted")
+    stale_only = await balancer.select_account(
+        additional_limit_name="codex_spark", account_ids=[account_stale.id]
+    )
 
     assert selection.account is not None
+    # 82ed714b: stale additional usage lowers ranking but cannot remove an otherwise routable account.
     assert selection.account.id == account_fresh.id
+    assert stale_only.account is not None
+    assert stale_only.account.id == account_stale.id
 
 
 @pytest.mark.asyncio
@@ -1470,6 +1475,8 @@ async def test_round_robin_does_not_serialize_concurrent_selection(monkeypatch) 
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> None:
         nonlocal inflight_persist_calls
         inflight_persist_calls += 1
@@ -1477,7 +1484,9 @@ async def test_round_robin_does_not_serialize_concurrent_selection(monkeypatch) 
             if inflight_persist_calls >= 2:
                 overlap_observed.set()
             await asyncio.sleep(0.05)
-            await original_persist_selection_state(self, accounts_repo, account_map, states)
+            await original_persist_selection_state(
+                self, accounts_repo, account_map, states, skip_account_ids=skip_account_ids
+            )
         finally:
             inflight_persist_calls -= 1
 
@@ -1539,13 +1548,17 @@ async def test_select_account_does_not_clobber_concurrent_error_state(monkeypatc
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> None:
         nonlocal blocked_once
         if not blocked_once and any(state.error_count == 0 for state in states):
             blocked_once = True
             select_sync_blocked.set()
             await release_select_sync.wait()
-        await original_persist_selection_state(self, accounts_repo, account_map, states)
+        await original_persist_selection_state(
+            self, accounts_repo, account_map, states, skip_account_ids=skip_account_ids
+        )
 
     monkeypatch.setattr(LoadBalancer, "_persist_selection_state", controlled_persist_selection_state)
 
@@ -1914,9 +1927,13 @@ async def test_select_account_retries_after_post_persist_permanent_failure(monke
     original_persist_selection_state = balancer._persist_selection_state
     injected = False
 
-    async def wrapped_persist_selection_state(accounts_repo_arg, account_map, states):
+    async def wrapped_persist_selection_state(
+        accounts_repo_arg, account_map, states, *, skip_account_ids: frozenset[str] = frozenset()
+    ):
         nonlocal injected
-        result = await original_persist_selection_state(accounts_repo_arg, account_map, states)
+        result = await original_persist_selection_state(
+            accounts_repo_arg, account_map, states, skip_account_ids=skip_account_ids
+        )
         if not injected:
             injected = True
             await balancer.mark_permanent_failure(account, "refresh_token_expired")
@@ -1962,9 +1979,13 @@ async def test_select_account_retries_after_post_persist_quota_exceeded(monkeypa
     original_persist_selection_state = balancer._persist_selection_state
     injected = False
 
-    async def wrapped_persist_selection_state(accounts_repo_arg, account_map, states):
+    async def wrapped_persist_selection_state(
+        accounts_repo_arg, account_map, states, *, skip_account_ids: frozenset[str] = frozenset()
+    ):
         nonlocal injected
-        result = await original_persist_selection_state(accounts_repo_arg, account_map, states)
+        result = await original_persist_selection_state(
+            accounts_repo_arg, account_map, states, skip_account_ids=skip_account_ids
+        )
         if not injected:
             injected = True
             await balancer.mark_quota_exceeded(account, {"message": "quota exceeded"})
@@ -2210,6 +2231,8 @@ async def test_select_account_sticky_reloads_inputs_after_stale_selected_persist
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
         nonlocal first_persist
         if first_persist:
@@ -2217,7 +2240,9 @@ async def test_select_account_sticky_reloads_inputs_after_stale_selected_persist
             account.status = AccountStatus.DEACTIVATED
             account.deactivation_reason = "Refresh token expired - re-login required"
             return {account.id}
-        return await original_persist_selection_state(accounts_repo, account_map, states)
+        return await original_persist_selection_state(
+            accounts_repo, account_map, states, skip_account_ids=skip_account_ids
+        )
 
     monkeypatch.setattr(balancer, "_load_selection_inputs", counted_load_selection_inputs)
     monkeypatch.setattr(sticky_repo, "get_account_id", pinned_account_id)
@@ -2293,8 +2318,10 @@ async def test_select_account_sticky_does_not_return_stale_selection_at_retry_ca
         accounts_repo: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
-        del accounts_repo, account_map, states
+        del accounts_repo, account_map, states, skip_account_ids
         return {account.id}
 
     monkeypatch.setattr(balancer, "_load_selection_inputs", counted_load_selection_inputs)
@@ -2712,10 +2739,14 @@ async def test_select_account_retries_no_accounts_after_runtime_recovery(monkeyp
         accounts_repo_arg: AccountsRepository,
         account_map: dict[str, Account],
         states: list[Any],
+        *,
+        skip_account_ids: frozenset[str] = frozenset(),
     ) -> set[str]:
         persist_started.set()
         await release_persist.wait()
-        return await original_persist_selection_state(accounts_repo_arg, account_map, states)
+        return await original_persist_selection_state(
+            accounts_repo_arg, account_map, states, skip_account_ids=skip_account_ids
+        )
 
     monkeypatch.setattr(balancer, "_persist_selection_state", blocking_persist_selection_state)
 
@@ -2775,8 +2806,10 @@ async def test_select_account_returns_data_unavailable_error_for_mapped_model(mo
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    assert selection.account is None
-    assert selection.error_code == ADDITIONAL_QUOTA_DATA_UNAVAILABLE
+    # 82ed714b: stale additional-usage snapshots cannot deny a live attempt.
+    assert selection.account is not None
+    assert selection.account.id == account.id
+    assert selection.error_code is None
 
 
 @pytest.mark.asyncio
@@ -2852,7 +2885,9 @@ async def test_select_account_keeps_standard_quota_for_plus_gated_model_without_
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    assert selection.account is None
+    # 82ed714b: primary exhaustion alone cannot block a routable plus account.
+    assert selection.account is not None
+    assert selection.account.id == account.id
 
 
 @pytest.mark.asyncio
@@ -2956,8 +2991,10 @@ async def test_select_account_fails_closed_for_unmapped_plan_without_additional_
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    assert selection.account is None
-    assert selection.error_code == ADDITIONAL_QUOTA_DATA_UNAVAILABLE
+    # 82ed714b: the registry permits this plan; missing additional rows do not establish model incompatibility.
+    assert selection.account is not None
+    assert selection.account.id == account.id
+    assert selection.error_code is None
 
 
 @pytest.mark.asyncio
@@ -3016,8 +3053,10 @@ async def test_select_account_returns_data_unavailable_when_secondary_window_is_
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    assert selection.account is None
-    assert selection.error_code == ADDITIONAL_QUOTA_DATA_UNAVAILABLE
+    # 82ed714b: stale secondary additional usage cannot block a live attempt.
+    assert selection.account is not None
+    assert selection.account.id == account.id
+    assert selection.error_code is None
 
 
 @pytest.mark.asyncio
@@ -3098,9 +3137,19 @@ async def test_select_account_allows_primary_only_account_when_other_account_has
         )
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
+    primary_only = await balancer.select_account(
+        model="gpt-5.3-codex-spark", account_ids=[primary_only_account.id]
+    )
+    stale_secondary = await balancer.select_account(
+        model="gpt-5.3-codex-spark", account_ids=[stale_secondary_account.id]
+    )
 
+    # 82ed714b: stale secondary history does not exclude that account or the primary-only one.
     assert selection.account is not None
-    assert selection.account.id == primary_only_account.id
+    assert primary_only.account is not None
+    assert primary_only.account.id == primary_only_account.id
+    assert stale_secondary.account is not None
+    assert stale_secondary.account.id == stale_secondary_account.id
     assert selection.error_code is None
 
 
@@ -3160,8 +3209,10 @@ async def test_select_account_returns_no_eligible_error_for_mapped_model(monkeyp
     )
     selection = await balancer.select_account(model="gpt-5.3-codex-spark")
 
-    assert selection.account is None
-    assert selection.error_code == ADDITIONAL_QUOTA_EXHAUSTED
+    # 82ed714b: exhausted additional usage is advisory until upstream rejects a request.
+    assert selection.account is not None
+    assert selection.account.id == account.id
+    assert selection.error_code is None
 
 
 @pytest.mark.asyncio

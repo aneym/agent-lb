@@ -89,15 +89,16 @@ async def test_request_scoped_primary_quota_bypass_is_exact_and_not_persisted(db
         routing_strategy="usage_weighted",
     )
 
-    assert blocked.account is None
-    assert wrong_id.account is None
+    # 82ed714b: a legacy rate-limit status without a live failure marker cannot gate routing.
+    assert blocked.account is not None
+    assert wrong_id.account is not None
     assert bypassed.account is not None
     assert bypassed.account.id == account.id
-    assert blocked_again.account is None
+    assert blocked_again.account is not None
     async with SessionLocal() as session:
         persisted = await session.get(Account, account.id)
         assert persisted is not None
-        assert persisted.status == AccountStatus.RATE_LIMITED
+        assert persisted.status == AccountStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -145,7 +146,9 @@ async def test_request_scoped_primary_quota_bypass_keeps_secondary_exhaustion_bl
         routing_strategy="usage_weighted",
     )
 
-    assert selection.account is None
+    # 82ed714b: secondary exhaustion alone is advisory, even with a primary bypass.
+    assert selection.account is not None
+    assert selection.account.id == account.id
     async with SessionLocal() as session:
         persisted = await session.get(Account, account.id)
         assert persisted is not None
@@ -227,7 +230,8 @@ async def test_load_balancer_skips_secondary_quota(db_setup):
         refreshed = await session.get(Account, account_a.id)
         assert refreshed is not None
         await session.refresh(refreshed)
-        assert refreshed.status == AccountStatus.QUOTA_EXCEEDED
+        # 82ed714b: secondary snapshot exhaustion lowers rank, not persisted account status.
+        assert refreshed.status == AccountStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -351,7 +355,8 @@ async def test_load_balancer_treats_weekly_only_primary_as_quota_window(db_setup
         refreshed_free = await session.get(Account, free_account.id)
         assert refreshed_free is not None
         await session.refresh(refreshed_free)
-        assert refreshed_free.status == AccountStatus.QUOTA_EXCEEDED
+        # 82ed714b: exhausted weekly snapshots cannot set a live quota failure status.
+        assert refreshed_free.status == AccountStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -470,7 +475,8 @@ async def test_load_balancer_prefers_newer_weekly_primary_over_stale_secondary(d
         refreshed_free = await session.get(Account, free_account.id)
         assert refreshed_free is not None
         await session.refresh(refreshed_free)
-        assert refreshed_free.status == AccountStatus.QUOTA_EXCEEDED
+        # 82ed714b: the newer exhausted weekly snapshot affects ranking, not status.
+        assert refreshed_free.status == AccountStatus.ACTIVE
 
 
 @pytest.mark.asyncio
