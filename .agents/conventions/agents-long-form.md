@@ -47,13 +47,26 @@ right away. This is a standing instruction from the repo owner.
 - **Server (`app/**`)**: imports clean, `ruff check app clients` passes, the relevant
   tests pass, and — for runtime behavior — the service starts and the affected endpoint
   returns the expected response. Restart the live `com.aneyman.agent-lb` service so the
-  running process matches what was pushed (the resilient launcher absorbs the brief
-  restart; avoid restarting while long streams are mid-flight when it can be helped).
-  Restart means `launchctl kickstart -k gui/501/com.aneyman.agent-lb` — never
-  `bootout`/`bootstrap`. If a plist change forces a bootout, `touch
-  ~/.agent-lb/watchdog.pause` first and remove it after; the watchdog re-bootstraps
-  an unloaded job after ~60s (a bootout left un-bootstrapped caused the 2026-07-11
-  outage).
+  running process matches what was pushed, and only with `lb-restart`:
+
+  ```bash
+  ~/.agent-lb/bin/lb-restart --reason "<what>" --from <worktree> --files <runtime-relative paths>
+  ~/.agent-lb/bin/lb-restart --reason "<what>"            # files already in the runtime
+  ~/.agent-lb/bin/lb-restart --reason "<what>" --check    # boot and health-gate the code on disk only
+  ```
+
+  It takes a machine-wide lock, boots the new code as a standby on :2459 and
+  health-gates it (on failure it rolls the files back and the primary is never
+  touched), points the TCP front at the standby, drains the primary (in-flight
+  streams finish, bound 300s) while launchd restarts it, then points the front back.
+  New connections never wait. Source: `scripts/lb-restart`; the installed copy is
+  `~/.agent-lb/bin/lb-restart`. Never `launchctl kickstart -k` the service by hand: the
+  drain bound is 300s and without a standby every new request waits for it (before
+  lb-restart, restarts held new connections 45-95s and cut streams past 75s,
+  2026-09-25). Plist edits: `lb-restart --reload-plist` (it pauses the watchdog and
+  waits for the old job to be gone before bootstrapping). Migrations run while the old
+  code still serves, so they must be additive. The front itself is upgraded in place
+  with `node scripts/front-hot-swap.mjs` (no dropped connections); never kickstart it.
 - **Anthropic request path (`app/core/anthropic/**`, `app/modules/proxy/anthropic*`)**: after the
   restart, run `python3 scripts/claude_cache_eval.py` and keep its receipt. It drives a real Claude
   Code session with a subagent through the proxy and fails if any steady turn rewrote its context.

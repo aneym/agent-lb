@@ -35,6 +35,7 @@ SERVICE_LOG_FILES="${AGENT_LB_WATCHDOG_SERVICE_LOG_FILES:-$HOME/.agent-lb/agent-
 FORENSICS_DIR="${AGENT_LB_FORENSICS_DIR:-$HOME/.agent-lb/forensics}"
 FORENSICS_MAX_FILES="${AGENT_LB_FORENSICS_MAX_FILES:-50}"
 FORENSICS_SAMPLE_SECONDS="${AGENT_LB_FORENSICS_SAMPLE_SECONDS:-2}"
+LB_RESTART="${AGENT_LB_RESTART_BIN:-$HOME/.agent-lb/bin/lb-restart}"
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '%s %s\n' "$(ts)" "$*" >> "$LOG_FILE"; }
@@ -185,9 +186,23 @@ if (( count >= THRESHOLD )); then
     fi
   fi
   capture_forensics "$pid" "unhealthy http=$http_code count=$count" || true
-  log "unhealthy (http=$http_code) count=$count >= threshold=$THRESHOLD — kickstarting $LABEL"
-  launchctl kickstart -k "gui/$(id -u)/$LABEL" >> "$LOG_FILE" 2>&1 || \
-    log "kickstart failed with exit $?"
+  # Prefer the blue/green restart: a standby takes new connections while the
+  # sick primary drains or is killed. rc 75 = another restart holds the lock
+  # (it is already replacing the primary), so leave it alone.
+  if [[ -x "$LB_RESTART" ]]; then
+    log "unhealthy (http=$http_code) count=$count >= threshold=$THRESHOLD — lb-restart"
+    "$LB_RESTART" --reason "watchdog: unhealthy http=$http_code count=$count" --lock-wait 0 >> "$LOG_FILE" 2>&1
+    rc=$?
+  else
+    rc=1
+  fi
+  if (( rc == 75 )); then
+    log "lb-restart already in progress — not kicking"
+  elif (( rc != 0 )); then
+    log "unhealthy (http=$http_code) count=$count >= threshold=$THRESHOLD — kickstarting $LABEL (lb-restart rc=$rc)"
+    launchctl kickstart -k "gui/$(id -u)/$LABEL" >> "$LOG_FILE" 2>&1 || \
+      log "kickstart failed with exit $?"
+  fi
   count=0
   last_kick=$now
   save_state

@@ -18,9 +18,11 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
    `ruff check app clients`, the relevant tests, and the affected endpoint
    answering after restart. Launcher changes: `py_compile` plus a
    `CLAUDE_LB_DRY_RUN=1` round trip.
-3. Restart only with `launchctl kickstart -k gui/501/com.aneyman.agent-lb`.
-   Never `bootout`/`bootstrap`; if a plist change forces it, `touch
-   ~/.agent-lb/watchdog.pause` first and remove it after.
+3. Restart or deploy into the runtime only with `~/.agent-lb/bin/lb-restart
+   --reason "<what>" [--from <worktree> --files <paths>]` (blue/green: new
+   connections never wait; lock, health gate, rollback). Plist edits:
+   `--reload-plist`. Never `launchctl kickstart`/`bootout` the service or the
+   front by hand; upgrade the front with `node scripts/front-hot-swap.mjs`.
 4. Anthropic request path (`app/core/anthropic/**`, `app/modules/proxy/anthropic*`):
    never add, remove or reorder system blocks on a Claude Code payload (the
    first block is a billing marker that must stay first). After restart, run

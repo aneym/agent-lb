@@ -1,0 +1,595 @@
+#!/usr/bin/env python3
+"""Controlled, zero-gap restart of the live agent-lb service (blue/green).
+
+Every Claude Code and Codex session on this machine sends its model traffic
+through agent-lb, so a restart is a production event. This is the only
+supported way to restart it or deploy files into the runtime:
+
+    lb-restart --reason "why"                                  # restart onto what is on disk
+    lb-restart --reason "why" --from <worktree> --files a b    # copy files in, then restart
+    lb-restart --reason "why" --backup <dir>                   # files already copied; roll back from <dir> on failure
+    lb-restart --reason "why" --reload-plist                   # also re-read the launchd plist
+    lb-restart --reason "why" --check                          # boot + health-gate the code on disk, touch nothing
+
+What it does, in order:
+
+1. Takes a machine-wide lock (one restart at a time; others wait, up to --lock-wait).
+2. Optionally backs up and copies --files from --from into the runtime.
+3. Boots a standby instance of the new code on the standby port (2459) and
+   health-gates it. If the gate fails, the files are rolled back and the live
+   primary was never touched: no client sees anything.
+4. Points the TCP front (2455) at the standby for new connections, then
+   SIGTERMs the primary (launchd job on 2457). The primary stops accepting,
+   closes idle keep-alive sockets (clients reconnect to the standby) and lets
+   in-flight streams finish (uvicorn graceful shutdown), then launchd restarts it.
+5. Health-gates the new primary, points the front back at it, and drains and
+   stops the standby the same way.
+6. Appends one line with durations and in-flight counts to runtime/sync.log.
+
+New connections are served by some healthy instance throughout; the only
+client-visible cost is a keep-alive socket closed while idle, which clients
+reopen. Streams longer than the drain bound (UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
+in the plist) are cut.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import errno
+import fcntl
+import json
+import os
+import plistlib
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+HOME = Path.home()
+LB_HOME = HOME / ".agent-lb"
+RUNTIME = LB_HOME / "runtime" / "agent-lb"
+BACKUPS = LB_HOME / "runtime" / "backups"
+SYNC_LOG = LB_HOME / "runtime" / "sync.log"
+STATE_DIR = LB_HOME / "state"
+LOCK_FILE = LB_HOME / "runtime" / "lb-restart.lock"
+PREFERRED_FILE = STATE_DIR / "front-preferred-port"
+FRONT_STATE = STATE_DIR / "front.json"
+STANDBY_PIDFILE = STATE_DIR / "lb-standby.pid"
+STANDBY_LOG = LB_HOME / "agent-lb-standby.log"
+WATCHDOG_PAUSE = LB_HOME / "watchdog.pause"
+LABEL = "com.aneyman.agent-lb"
+FRONT_LABEL = "com.aneyman.agent-lb-front"
+PLIST = HOME / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+FRONT_PORT = 2455
+PRIMARY_PORT = 2457
+STANDBY_PORT = 2459
+UID = os.getuid()
+
+T0 = time.monotonic()
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def say(msg: str) -> None:
+    print(f"[lb-restart +{time.monotonic() - T0:6.1f}s] {msg}", flush=True)
+
+
+def sync_log(line: str) -> None:
+    with SYNC_LOG.open("a") as fh:
+        fh.write(f"{now_iso()} {line}\n")
+
+
+def http_get(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, b""
+    except Exception:
+        return 0, b""
+
+
+def healthy(port: int) -> bool:
+    """Ready to serve: DB reachable and the proxy router answers."""
+    code, body = http_get(port, "/health/ready")
+    if code != 200:
+        return False
+    try:
+        if json.loads(body).get("checks", {}).get("database") != "ok":
+            return False
+    except ValueError:
+        return False
+    code, _ = http_get(port, "/v1/models", timeout=5.0)
+    return code == 200
+
+
+def in_flight(port: int) -> int | None:
+    code, body = http_get(port, "/internal/drain/status", timeout=2.0)
+    if code != 200:
+        return None
+    try:
+        return int(json.loads(body)["checks"]["in_flight"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def established(port: int) -> int:
+    """Server-side sockets on port (the front's piped connections)."""
+    out = subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:ESTABLISHED"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return sum(1 for line in out.splitlines()[1:] if f":{port}->" in line)
+
+
+def launchd_pid(label: str) -> int | None:
+    out = subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("pid = "):
+            return int(line.split("=", 1)[1])
+    return None
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError as exc:
+        return exc.errno == errno.EPERM
+
+
+def listener_pid(port: int) -> int | None:
+    out = subprocess.run(
+        ["lsof", "-nP", f"-iTCP@127.0.0.1:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True
+    ).stdout.split()
+    return int(out[0]) if out else None
+
+
+def wait_until(pred, timeout: float, interval: float = 0.25) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(interval)
+    return pred()
+
+
+def set_preferred(port: int) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PREFERRED_FILE.with_suffix(".tmp")
+    tmp.write_text(f"{port}\n")
+    os.replace(tmp, PREFERRED_FILE)
+
+
+def front_understands_preference() -> bool:
+    """True when the running front is the blue/green build (writes front.json)."""
+    # launchd runs the front through a volta shim, so compare against the
+    # process that actually holds the public port.
+    pid = listener_pid(FRONT_PORT)
+    try:
+        state = json.loads(FRONT_STATE.read_text())
+    except (OSError, ValueError):
+        return False
+    fresh = time.time() - FRONT_STATE.stat().st_mtime < 5
+    return bool(pid and state.get("pid") == pid and fresh and STANDBY_PORT in state.get("upstreams", []))
+
+
+def front_routes_to(port: int, timeout: float = 5.0) -> bool:
+    def ok() -> bool:
+        try:
+            return json.loads(FRONT_STATE.read_text()).get("preferred") == port
+        except (OSError, ValueError):
+            return False
+
+    return wait_until(ok, timeout)
+
+
+# ---------------------------------------------------------------- lock
+
+
+class Lock:
+    def __init__(self, reason: str, wait: float) -> None:
+        self.reason = reason
+        self.wait = wait
+        self.fh = None
+
+    def __enter__(self) -> "Lock":
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = LOCK_FILE.open("a+")
+        deadline = time.monotonic() + self.wait
+        announced = False
+        while True:
+            try:
+                fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not announced:
+                    self.fh.seek(0)
+                    say(f"another restart holds the lock ({self.fh.read().strip() or 'unknown'}); waiting")
+                    announced = True
+                if time.monotonic() >= deadline:
+                    say(f"lock not free after {self.wait:.0f}s; retry later")
+                    sys.exit(75)
+                time.sleep(1)
+        self.fh.seek(0)
+        self.fh.truncate()
+        self.fh.write(f"pid={os.getpid()} since={now_iso()} reason={self.reason}\n")
+        self.fh.flush()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        assert self.fh is not None
+        self.fh.seek(0)
+        self.fh.truncate()
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+
+
+# ---------------------------------------------------------------- files
+
+
+class Files:
+    """Backup-and-copy of runtime files, with rollback."""
+
+    def __init__(self, label: str) -> None:
+        self.backup_dir: Path | None = None
+        self.created: list[Path] = []
+        self.restored_from: Path | None = None
+        self.label = label
+
+    def deploy(self, src_root: Path, rel_paths: list[str]) -> None:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.backup_dir = BACKUPS / f"{self.label}-{stamp}"
+        for rel in rel_paths:
+            src = (src_root / rel).resolve()
+            dst = RUNTIME / rel
+            if not src.is_file():
+                raise SystemExit(f"--files: {src} is not a file")
+            if dst.exists():
+                bak = self.backup_dir / rel
+                bak.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(dst, bak)
+            else:
+                self.created.append(dst)
+        (self.backup_dir).mkdir(parents=True, exist_ok=True)
+        (self.backup_dir / "MANIFEST.json").write_text(
+            json.dumps({"from": str(src_root), "files": rel_paths, "created": [str(p) for p in self.created]}, indent=1)
+        )
+        for rel in rel_paths:
+            dst = RUNTIME / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src_root / rel, dst)
+            shutil.copymode(src_root / rel, dst)
+            if (src_root / rel).read_bytes() != dst.read_bytes():
+                raise SystemExit(f"copy verify failed for {rel}")
+        say(f"deployed {len(rel_paths)} file(s); backup {self.backup_dir}")
+
+    def use_backup(self, backup: Path) -> None:
+        # Deploy scripts here keep either <dir>/<runtime-relative path> or <dir>/runtime/<path>.
+        self.backup_dir = backup / "runtime" if (backup / "runtime").is_dir() else backup
+
+    def rollback(self) -> bool:
+        if self.backup_dir is None or not self.backup_dir.is_dir():
+            return False
+        restored = 0
+        for bak in self.backup_dir.rglob("*"):
+            if not bak.is_file() or bak.name == "MANIFEST.json":
+                continue
+            rel = bak.relative_to(self.backup_dir)
+            dst = RUNTIME / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(bak, dst)
+            restored += 1
+        for path in self.created:
+            path.unlink(missing_ok=True)
+        say(f"rolled back {restored} file(s) from {self.backup_dir}, removed {len(self.created)} new file(s)")
+        self.restored_from = self.backup_dir
+        return True
+
+
+# ---------------------------------------------------------------- standby
+
+
+def plist_env() -> dict[str, str]:
+    with PLIST.open("rb") as fh:
+        data = plistlib.load(fh)
+    return {str(k): str(v) for k, v in data.get("EnvironmentVariables", {}).items()}
+
+
+def plist_program() -> list[str]:
+    with PLIST.open("rb") as fh:
+        return list(plistlib.load(fh)["ProgramArguments"])
+
+
+def start_standby(drain_seconds: int) -> subprocess.Popen:
+    env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "TMPDIR", "LANG") if k in os.environ}
+    env.update(plist_env())
+    env["AGENT_LB_METRICS_ENABLED"] = "false"  # the primary owns :9090
+    env["UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"] = str(drain_seconds)
+    args = [a for a in plist_program()]
+    try:
+        i = args.index("--port")
+        args[i + 1] = str(STANDBY_PORT)
+    except ValueError:
+        args += ["--port", str(STANDBY_PORT)]
+    STANDBY_LOG.parent.mkdir(parents=True, exist_ok=True)
+    log = STANDBY_LOG.open("a")
+    log.write(f"\n==== {now_iso()} standby start ====\n")
+    log.flush()
+    proc = subprocess.Popen(
+        args, cwd=RUNTIME, env=env, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True
+    )
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STANDBY_PIDFILE.write_text(f"{proc.pid}\n")
+    return proc
+
+
+def stop_pid_gracefully(pid: int, port: int, bound: float) -> tuple[float, bool]:
+    """SIGTERM, wait up to bound for exit, SIGKILL after. Returns (seconds, forced)."""
+    start = time.monotonic()
+    try:
+        # The standby runs under bash -> exec, so the pid is uvicorn itself; signal
+        # the whole session in case a wrapper stayed in between.
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return 0.0, False
+    last = 0.0
+    while pid_alive(pid) and time.monotonic() - start < bound:
+        if time.monotonic() - last >= 10:
+            last = time.monotonic()
+            say(f"  :{port} draining, {established(port)} connection(s) open")
+        time.sleep(0.25)
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+    forced = False
+    if pid_alive(pid):
+        forced = True
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except OSError:
+            pass
+    return time.monotonic() - start, forced
+
+
+def stop_leftover_standby(drain_seconds: int) -> None:
+    pid = listener_pid(STANDBY_PORT)
+    if pid is None:
+        STANDBY_PIDFILE.unlink(missing_ok=True)
+        return
+    say(f"found a standby still on :{STANDBY_PORT} (pid {pid}) from an earlier run")
+    if not healthy(PRIMARY_PORT):
+        raise SystemExit("primary unhealthy and a standby is serving; fix by hand before restarting")
+    set_preferred(PRIMARY_PORT)
+    front_routes_to(PRIMARY_PORT)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    wait_until(lambda: listener_pid(STANDBY_PORT) is None, 15)
+    say("leftover standby stopped listening; it drains in the background")
+    STANDBY_PIDFILE.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------- primary
+
+
+def job_loaded(label: str) -> bool:
+    return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True).returncode == 0
+
+
+def restart_primary(reload_plist: bool, old_pid: int | None, bound: float) -> None:
+    if not reload_plist:
+        subprocess.Popen(["launchctl", "kickstart", "-k", f"gui/{UID}/{LABEL}"])
+        return
+    # Pause the watchdog so it does not re-bootstrap mid-swap. bootout returns
+    # while the old process is still draining and bootstrap fails with EIO
+    # until the job is fully gone, so wait for both before bootstrapping.
+    WATCHDOG_PAUSE.touch()
+    try:
+        subprocess.run(["launchctl", "bootout", f"gui/{UID}/{LABEL}"], timeout=bound, check=False)
+        wait_until(lambda: not pid_alive(old_pid) and not job_loaded(LABEL), bound, 0.25)
+        deadline = time.monotonic() + 30
+        while True:
+            rc = subprocess.run(["launchctl", "bootstrap", f"gui/{UID}", str(PLIST)], capture_output=True).returncode
+            if rc == 0 or job_loaded(LABEL):
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"launchctl bootstrap kept failing (rc={rc})")
+            time.sleep(0.5)
+    finally:
+        WATCHDOG_PAUSE.unlink(missing_ok=True)
+
+
+def graceful_seconds() -> int:
+    env = plist_env()
+    return int(env.get("UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN", "75"))
+
+
+def exit_timeout() -> int:
+    with PLIST.open("rb") as fh:
+        return int(plistlib.load(fh).get("ExitTimeOut", 20))
+
+
+# ---------------------------------------------------------------- main
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--reason", required=True, help="Why; goes into sync.log.")
+    p.add_argument("--from", dest="src", type=Path, help="Source root (a worktree) for --files.")
+    p.add_argument("--files", nargs="+", default=[], help="Runtime-relative paths to copy from --from.")
+    p.add_argument("--backup", type=Path, help="Backup dir to restore from if the new code fails its health gate.")
+    p.add_argument("--reload-plist", action="store_true", help="bootout/bootstrap the primary so plist edits apply.")
+    p.add_argument(
+        "--check", action="store_true", help="Only boot and health-gate a standby on the code on disk, then stop it."
+    )
+    p.add_argument("--lock-wait", type=float, default=900, help="Seconds to wait for another restart (default 900).")
+    p.add_argument("--boot-timeout", type=float, default=90, help="Seconds for an instance to pass health (default 90).")
+    args = p.parse_args()
+    if args.files and not args.src:
+        p.error("--files needs --from")
+    if not RUNTIME.is_dir() or not PLIST.is_file():
+        p.error(f"runtime {RUNTIME} or plist {PLIST} missing")
+
+    with Lock(args.reason, args.lock_wait):
+        try:
+            return run(args)
+        except BaseException as exc:
+            if isinstance(exc, SystemExit):
+                raise
+            standby = listener_pid(STANDBY_PORT)
+            say(f"crashed: {exc!r}; primary pid {launchd_pid(LABEL)}, standby pid {standby}")
+            sync_log(
+                f"lb-restart CRASHED reason={args.reason!r} error={exc!r}; front prefers "
+                f"{PREFERRED_FILE.read_text().strip() if PREFERRED_FILE.exists() else '?'}; standby pid {standby}. "
+                "The front falls back to whichever instance is up; the next lb-restart retires a leftover standby."
+            )
+            raise
+
+
+def run(args) -> int:
+    drain = graceful_seconds()
+    primary_bound = max(drain, exit_timeout()) + 15
+    files = Files(label="lb-restart")
+    stats: dict[str, object] = {"reason": args.reason}
+    say(f"reason: {args.reason}; drain bound {drain}s")
+
+    if not front_understands_preference():
+        say("the running front does not support blue/green (old build or not running); refusing")
+        say(f"install the front from scripts/agent-lb-front.mjs and kickstart {FRONT_LABEL} in a quiet moment first")
+        return 3
+
+    stop_leftover_standby(drain)
+    set_preferred(PRIMARY_PORT)
+    old_pid = launchd_pid(LABEL)
+    if not healthy(PRIMARY_PORT):
+        say("primary is not healthy before the restart; continuing (the standby will carry traffic)")
+
+    if args.files:
+        files.deploy(args.src, args.files)
+    elif args.backup:
+        files.use_backup(args.backup)
+
+    # 1. standby on the new code
+    t = time.monotonic()
+    standby = start_standby(drain)
+    if not wait_until(lambda: healthy(STANDBY_PORT) or standby.poll() is not None, args.boot_timeout):
+        pass
+    stats["standby_boot_s"] = round(time.monotonic() - t, 1)
+    if standby.poll() is not None or not healthy(STANDBY_PORT):
+        say(f"standby failed its health gate (exit={standby.poll()}); see {STANDBY_LOG}")
+        if standby.poll() is None:
+            stop_pid_gracefully(standby.pid, STANDBY_PORT, 10)
+        rolled = files.rollback()
+        STANDBY_PIDFILE.unlink(missing_ok=True)
+        sync_log(
+            f"lb-restart FAILED reason={args.reason!r} standby health gate failed after {stats['standby_boot_s']}s; "
+            f"primary untouched (pid {old_pid}); rollback={'yes ' + str(files.restored_from) if rolled else 'none'}"
+        )
+        return 1
+    say(f"standby healthy on :{STANDBY_PORT} in {stats['standby_boot_s']}s (pid {standby.pid})")
+    if args.check:
+        secs, forced = stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15)
+        STANDBY_PIDFILE.unlink(missing_ok=True)
+        say(f"--check: code on disk boots and passes health; standby stopped in {secs:.1f}s; primary untouched")
+        return 0
+
+    # 2. front -> standby, then drain and restart the primary
+    set_preferred(STANDBY_PORT)
+    if not front_routes_to(STANDBY_PORT):
+        say("front did not pick up the standby preference; aborting before touching the primary")
+        stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15)
+        set_preferred(PRIMARY_PORT)
+        return 4
+    time.sleep(0.5)
+    stats["primary_in_flight_at_cutover"] = in_flight(PRIMARY_PORT)
+    stats["primary_conns_at_cutover"] = established(PRIMARY_PORT)
+    say(
+        f"front -> :{STANDBY_PORT}; primary pid {old_pid} had {stats['primary_in_flight_at_cutover']} in flight, "
+        f"{stats['primary_conns_at_cutover']} connection(s); draining it (bound {primary_bound}s)"
+    )
+    t = time.monotonic()
+    restart_primary(args.reload_plist, old_pid, primary_bound)
+
+    def old_gone() -> bool:
+        return not pid_alive(old_pid)
+
+    last = [0.0]
+
+    def old_gone_logged() -> bool:
+        if time.monotonic() - last[0] >= 10:
+            last[0] = time.monotonic()
+            say(f"  primary draining, {established(PRIMARY_PORT)} connection(s) open")
+        return old_gone()
+
+    wait_until(old_gone_logged, primary_bound, 0.25)
+    stats["primary_drain_s"] = round(time.monotonic() - t, 1)
+    say(f"old primary exited after {stats['primary_drain_s']}s")
+
+    t = time.monotonic()
+    primary_ok = wait_until(
+        lambda: (launchd_pid(LABEL) not in (None, old_pid)) and healthy(PRIMARY_PORT), args.boot_timeout, 0.25
+    )
+    stats["primary_boot_s"] = round(time.monotonic() - t, 1)
+    if not primary_ok:
+        say("new primary failed its health gate; rolling back files and restarting the primary on them")
+        rolled = files.rollback()
+        if rolled:
+            subprocess.run(["launchctl", "kickstart", "-k", f"gui/{UID}/{LABEL}"], check=False)
+            primary_ok = wait_until(lambda: healthy(PRIMARY_PORT), args.boot_timeout, 0.5)
+        if not primary_ok:
+            sync_log(
+                f"lb-restart FAILED reason={args.reason!r} primary unhealthy after restart; standby pid {standby.pid} "
+                f"still serving on :{STANDBY_PORT}; rollback={'yes' if rolled else 'none'}"
+            )
+            say(f"primary still down; standby pid {standby.pid} keeps serving on :{STANDBY_PORT}. Fix by hand.")
+            return 2
+    say(f"new primary healthy on :{PRIMARY_PORT} (pid {launchd_pid(LABEL)}) {stats['primary_boot_s']}s after exit")
+
+    # 3. front -> primary, drain and stop the standby
+    set_preferred(PRIMARY_PORT)
+    front_routes_to(PRIMARY_PORT)
+    time.sleep(0.5)
+    stats["standby_in_flight_at_cutover"] = in_flight(STANDBY_PORT)
+    # SIGTERM closes the standby's listener at once, so the port is free for
+    # the next restart; the process finishes its in-flight streams on its own
+    # (uvicorn graceful bound) and exits. Nobody needs to wait for that.
+    try:
+        os.killpg(standby.pid, signal.SIGTERM)
+    except OSError:
+        pass
+    wait_until(lambda: listener_pid(STANDBY_PORT) is None, 10)
+    STANDBY_PIDFILE.unlink(missing_ok=True)
+    stats["total_s"] = round(time.monotonic() - T0, 1)
+    say(
+        f"standby pid {standby.pid} stopped listening and drains its {stats['standby_in_flight_at_cutover']} "
+        f"in-flight request(s) in the background (log {STANDBY_LOG}); done in {stats['total_s']}s"
+    )
+    rollback_note = f" rolled_back_from={files.restored_from}" if files.restored_from else ""
+    backup_note = f" backup={files.backup_dir}" if files.backup_dir else ""
+    sync_log(
+        "lb-restart ok "
+        + " ".join(f"{k}={v!r}" if isinstance(v, str) else f"{k}={v}" for k, v in stats.items())
+        + f" old_pid={old_pid} new_pid={launchd_pid(LABEL)}{backup_note}{rollback_note}"
+    )
+    return 0 if not files.restored_from else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
