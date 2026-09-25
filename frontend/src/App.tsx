@@ -15,7 +15,8 @@ import { SettingsPage } from "@/features/settings/components/settings-page";
 import { TeamPage } from "@/features/team/components/team-page";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 import { AppShell } from "@/lb/kit/app-shell";
-import { EmptyState } from "@/lb/kit/primitives";
+import { AccountPage } from "@/lb/pages/account/account-page";
+import { AddAccountPage } from "@/lb/pages/add-account/add-account-page";
 import { ProvidersPage } from "@/lb/pages/providers/providers-page";
 
 function LegacyLayout() {
@@ -47,14 +48,8 @@ export default function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/" element={<ProvidersPage />} />
-            <Route
-              path="/providers/add"
-              element={<EmptyState title="Coming in the next slice" />}
-            />
-            <Route
-              path="/providers/:accountId"
-              element={<EmptyState title="Coming in the next slice" />}
-            />
+            <Route path="/providers/add" element={<AddAccountPage />} />
+            <Route path="/providers/:accountId" element={<AccountPage />} />
             <Route path="/routing" element={<SettingsPage />} />
             <Route path="/usage" element={<ReportsPage />} />
             <Route path="/keys" element={<ApisPage />} />
