@@ -22,10 +22,15 @@ def _live_paths() -> tuple[Path, Path]:
         if os.environ.get("ROUTE_TABLE")
         else (managed if managed.is_file() else _REPO_ROOT / "config/coding-agents/routing-table.json")
     )
+    if os.environ.get("OF_DECIDER_JSON"):
+        return table, Path(os.environ["OF_DECIDER_JSON"]).expanduser()
+    # The runtime copy has no clients/open-factory; follow the installed launcher to the checkout it runs from.
+    launcher = Path.home() / ".local/bin/open-factory"
+    installed = launcher.resolve().parents[1] / "open_factory/decider.json" if launcher.exists() else None
     decider = (
-        Path(os.environ["OF_DECIDER_JSON"]).expanduser()
-        if os.environ.get("OF_DECIDER_JSON")
-        else (_REPO_ROOT / "clients/open-factory/open_factory/decider.json")
+        installed
+        if installed and installed.is_file()
+        else _REPO_ROOT / "clients/open-factory/open_factory/decider.json"
     )
     return table, decider
 
@@ -103,7 +108,7 @@ def detail(row: RoutingPolicyVersion, active: RoutingPolicyVersion | None) -> Po
 async def observe(repo: RoutingPolicyRepository) -> RoutingPolicyVersion:
     table_path, decider_path = _live_paths()
     table = _serialize(json.loads(table_path.read_text()))
-    decider = _serialize(json.loads(decider_path.read_text()))
+    decider = _serialize(json.loads(decider_path.read_text() if decider_path.is_file() else "{}"))
     digest = _digest(table, decider)
     active = await repo.active()
     if active is not None and active.content_sha256 == digest:
