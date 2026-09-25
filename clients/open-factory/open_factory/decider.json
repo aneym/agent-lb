@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "note": "Decider policy for `open-factory route`. Any change here is a policy change: replay it against the eval before adopting it (PROGRAM.md D9).",
   "decider": "jev",
   "jev_timeout_s": 5,
@@ -9,9 +9,9 @@
     "opus-latest": "Claude Opus, newest. Strongest reasoning and judgment; for ambiguous, correctness-critical or multi-file work.",
     "sonnet-latest": "Claude Sonnet, newest. Strong everyday coding and codebase research at lower cost than Opus.",
     "sol-latest": "OpenAI GPT Sol via Codex. Strong coding and long agentic runs.",
-    "terra-latest": "OpenAI GPT Terra via Codex. Implementation-focused coding model.",
     "luna-latest": "OpenAI GPT Luna. Fast and cheap; for small, well-specified work.",
     "grok-latest": "xAI Grok medium-fast via Cursor. Fast mechanical edits against a tight spec.",
-    "grok-latest-low": "xAI Grok low-fast via Cursor. Quick scouting and lookups."
+    "grok-latest-low": "xAI Grok low-fast via Cursor. Quick scouting and lookups.",
+    "swe-latest": "Cognition SWE via Devin. Free on the Devin subscription; mechanical and volume work as the fallback behind Cursor."
   }
 }
