@@ -34,7 +34,7 @@ Pass full model ids. With a custom base URL, Harbor passes the model name throug
 |---|---|
 | `of-work/agents:cc2.1.282-codex0.157.0` (`:latest`) | Ubuntu 24.04, Node 22.23.3, Claude Code 2.1.282 (native binary, checksum-checked against the release manifest), Codex 0.157.0 (npm), git, ripgrep, jq, procps, and a non-root `agent` user |
 | `of-work/agent-lb-base:<sha12>` (`:latest`) | `of-work/agents` plus uv 0.12.19, CPython 3.14.5 (uv-managed), and agent-lb at `origin/main` in `/app` with `uv sync --frozen --dev` |
-| `of-work/agent-rails-base:<sha12>` (`:latest`) | The same for agent-rails: `uv sync --frozen --extra dev`, `.ci/requirements.txt`, `npm ci --ignore-scripts`, and `PYTHONPATH=/app` |
+| `of-work/agent-rails-base:<sha12>` (`:latest`) | The same for agent-rails (shallow, 300 commits deep): `uv sync --frozen --extra dev`, `.ci/requirements.txt`, `npm ci --ignore-scripts`, and `PYTHONPATH=/app` (4.7 GB) |
 
 ```bash
 ./build-images.sh             # agents + agent-lb
@@ -61,7 +61,18 @@ RUN of-checkout <task-base-sha>
 5. Verifies that every commit object left in the repo is the base commit or one of its ancestors.
 6. Re-syncs dependencies with the image's `of-sync`.
 
-It fails the build if any other commit survives. A per-task build takes about 5 s on top of the base.
+It fails the build if any other commit survives. A per-task build takes about 5 s for agent-lb and 10-20 s
+for agent-rails. agent-rails's `of-sync` reruns `npm ci` only when `package-lock.json` differs from the one
+installed in the base; a full reinstall takes about 11 min and adds 2.6 GB to the layer.
+
+### Running the repo's tests inside
+
+Run the suites with the repo's CI timeouts and a few workers, for example
+`uv run --frozen pytest -q -n 4 --timeout=180 --timeout-method=thread tests/unit`. agent-lb's unit suite
+takes about 4 min this way. Run serially without `--timeout`, it hangs on some async tests. Neither image
+matches CI exactly: there is no `gh`, no system `python3` on PATH, and no agent-lb frontend build (bun).
+So some tests fail in the image whatever the commit. Grade tasks on their own fail-to-pass and
+pass-to-pass lists, measured in the task image, and not on the whole suite being green.
 
 ### Why the fix cannot leak through git
 
@@ -72,9 +83,10 @@ It fails the build if any other commit survives. A per-task build takes about 5 
   unreachable objects. Inside the container, `git log --all`, `git reflog` and `git cat-file <later-sha>`
   can only reach history up to the task's base commit. The base layer's older pack files are hidden by
   overlay whiteouts, and nothing in the container can read image layers.
-- **Base images must not be newer than their tasks.** Build the base at or before the oldest task base
-  commit you care about, or rebuild it per batch. Always run `of-checkout`, even when the base commit is
-  the image's own.
+- **The base must contain every task commit.** Build it at or after the newest task base commit, since
+  `of-checkout` can only check out history the base holds. Newer objects stay in the base's lower layers,
+  where only the host can see them (for example, through `docker save`). Always run `of-checkout`, even
+  when the base commit is the image's own.
 - **Remaining channels are outside git.** The uv cache holds third-party wheels, not project source.
   `docker history` shows the `of-checkout <sha>` build step, but only on the host. Network access is still
   possible: a task on `network_mode = "public"` can clone the repo from GitHub if it has credentials. agent-rails is private and no
