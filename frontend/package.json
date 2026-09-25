@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "screenshots": "npx playwright test --config screenshots/playwright.config.ts"
+    "screenshots": "npx playwright test --config screenshots/playwright.config.ts",
+    "e2e:live": "playwright test --config e2e/playwright.live.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
