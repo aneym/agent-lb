@@ -119,6 +119,26 @@
   font-size: 13px;
   color: var(--ink-2);
 }
+.lb .usage-page .usage-loading-stats {
+  margin-top: 24px;
+  padding: 20px;
+  color: var(--ink-2);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.lb .usage-page .usage-loading-chart {
+  min-height: 180px;
+  color: var(--ink-2);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.lb .usage-option-loading {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
 .lb .usage-page .usage-receipt {
   cursor: pointer;
 }
@@ -131,8 +151,11 @@
 .lb .usage-page .usage-receipt .c-acct,
 .lb .usage-page .usage-receipt .c-model {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.lb .usage-page .usage-receipt .c-acct,
+.lb .usage-page .usage-receipt .c-model {
+  text-overflow: ellipsis;
 }
 .lb .usage-page .usage-key {
   color: var(--ink-2);

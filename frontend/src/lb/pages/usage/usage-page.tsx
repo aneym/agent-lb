@@ -1,7 +1,8 @@
 import { useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Download } from "lucide-react";
+import { ChevronDown, Copy, Download } from "lucide-react";
+import { DropdownMenu } from "radix-ui";
 import { z } from "zod";
 import { get } from "@/lib/api-client";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
@@ -14,7 +15,7 @@ import {
   type Receipt,
   type ReceiptSummary,
 } from "../../api/receipts";
-import { compact, money } from "../../format";
+import { compact } from "../../format";
 import { ProviderMark } from "../../kit/provider-mark";
 import { providerMark } from "../../kit/provider-mark-helpers";
 import {
@@ -42,7 +43,14 @@ const percent = (n: number | null) => (n == null ? "—" : `${Math.round(n * 100
 const latency = (n: number | null) =>
   n == null ? "—" : n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${Math.round(n)} ms`;
 const displayAccount = (a?: AccountSummary) =>
-  a ? a.alias || `${a.planType} · ${a.email.split("@")[0]}` : "Unknown account";
+  a ? a.alias || `${a.planType} · ${a.email.split("@")[0]}` : "Deleted or unknown account";
+const usageMoney = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: Math.abs(value) < 10 ? 2 : 0,
+    maximumFractionDigits: Math.abs(value) < 10 ? 2 : 0,
+  }).format(value);
 const markFor = (provider?: string | null) =>
   provider === "anthropic" ? "claude" : providerMark(provider || "anthropic");
 const providerName = (provider?: string | null) =>
@@ -63,7 +71,7 @@ function SummaryStats({ totals, hours }: { totals: ReceiptSummary["totals"]; hou
   const stats = [
     ["Requests", number(totals.requests), `${compact(totals.requests / (hours / 24))} a day`],
     ["Tokens", compact(totals.tokens), `${percent(totals.cacheReadRatio)} read from cache`],
-    ["API equivalent", money(totals.costUsd), "at API list prices"],
+    ["API equivalent", usageMoney(totals.costUsd), "at API list prices"],
     ["Errors", percent(totals.errorRate), `most: ${totals.topErrorCode || "none"}`],
     [
       "Median latency",
@@ -252,6 +260,11 @@ function Breakdown({
           <span>Errors</span>
           <span>Share of cost</span>
         </div>
+        {!summary && (
+          <div className="usage-empty" role="status">
+            Loading breakdown…
+          </div>
+        )}
         {summary?.groups.map((row) => {
           const account = accounts.get(row.key || "");
           const name =
@@ -309,7 +322,7 @@ function Breakdown({
               <span className="c-req mono right">{number(row.requests)}</span>
               <span className="c-tok mono right">{compact(row.tokens)}</span>
               <span className="c-cache mono right">{percent(row.cacheReadRatio)}</span>
-              <span className="c-cost mono right">{money(row.costUsd)}</span>
+              <span className="c-cost mono right">{usageMoney(row.costUsd)}</span>
               <span className="c-err mono right">{percent(row.errorRate)}</span>
               <div className="c-bar share">
                 <i style={{ width: `${max ? Math.max(1, (row.costUsd / max) * 100) : 0}%` }} />
@@ -363,8 +376,8 @@ function ReceiptRow({
         })}
       </span>
       <span className="c-ses mono">
-        {session || "—"}
-        <span className="usage-key"> {receipt.apiKeyName || receipt.apiKeyPrefix || "—"}</span>
+        {session?.slice(0, 8) || "—"}
+        <span className="usage-key"> · {receipt.apiKeyName || "no key"}</span>
       </span>
       <span className="c-acct cellm">
         <ProviderMark id={markFor(receipt.provider || account?.provider)} size={16} />
@@ -385,7 +398,7 @@ function ReceiptRow({
         {status} {receipt.httpStatus || receipt.errorCode || receipt.status}
       </span>
       <span className="c-cost mono right">
-        {receipt.costUsd == null ? "—" : money(receipt.costUsd)}
+        {receipt.costUsd == null ? "—" : usageMoney(receipt.costUsd)}
       </span>
     </div>
   );
@@ -455,6 +468,7 @@ export function UsagePage() {
   const [group, setGroup] = useState<Group>("account");
   const [limit, setLimit] = useState(50);
   const [selected, setSelected] = useState<Receipt | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
   const [sessionDraft, setSessionDraft] = useState(params.get("session") || "");
   const [showMore, setShowMore] = useState(() =>
     ["account", "key", "session", "model"].some((key) => params.has(key)),
@@ -476,11 +490,16 @@ export function UsagePage() {
   }
   const filterString = filters.toString();
   const summary = useUsageSummary(filterString, group, range.bucket);
+  const modelFilters = new URLSearchParams(filters);
+  modelFilters.delete("model");
+  const reuseModelSummary = group === "model" && !filters.has("model");
   const modelSummary = useUsageSummary(
-    new URLSearchParams({ since: filters.get("since")!, until: filters.get("until")! }).toString(),
+    modelFilters.toString(),
     "model",
     range.bucket,
+    modelOpen && !reuseModelSummary,
   );
+  const modelGroups = reuseModelSummary ? summary.data?.groups : modelSummary.data?.groups;
   const receipts = useUsageReceipts(filterString, limit);
   const { accountsQuery } = useAccounts();
   const keyQuery = useQuery({
@@ -644,18 +663,35 @@ export function UsagePage() {
             setShowMore(v !== "");
           }}
         />
-        <FilterSelect
-          label="Model"
-          value={params.get("model") || ""}
-          options={choices(
-            (modelSummary.data?.groups || []).map((m) => ({
-              value: m.key || "",
-              label: m.key || "Unknown",
-            })),
-            "All",
-          )}
-          onChange={(v) => update("model", v)}
-        />
+        <DropdownMenu.Root open={modelOpen} onOpenChange={setModelOpen}>
+          <DropdownMenu.Trigger className="select">
+            <span className="k">Model</span>
+            {params.get("model") || "All"}
+            <ChevronDown size={13} />
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content className="lb-dropdown" sideOffset={5} align="end">
+              <DropdownMenu.Item onSelect={() => update("model", "")}>All</DropdownMenu.Item>
+              {modelGroups
+                ?.filter((m) => m.key)
+                .map((m) => (
+                  <DropdownMenu.Item key={m.key} onSelect={() => update("model", m.key!)}>
+                    {m.key}
+                  </DropdownMenu.Item>
+                ))}
+              {modelOpen && !reuseModelSummary && modelSummary.isPending && (
+                <div className="usage-option-loading" role="status">
+                  Loading models…
+                </div>
+              )}
+              {modelOpen && !reuseModelSummary && modelSummary.isError && (
+                <div className="usage-option-loading" role="alert">
+                  Could not load models.
+                </div>
+              )}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
         <button className="btn usage-more" onClick={() => setShowMore(!showMore)}>
           ☷ More filters
         </button>
@@ -683,12 +719,21 @@ export function UsagePage() {
       {summary.isError || receipts.isError ? (
         <p role="alert">Could not load usage. Try refreshing the page.</p>
       ) : null}
-      {summary.data && (
+      {summary.data ? (
         <>
           <SummaryStats totals={summary.data.totals} hours={range.hours} />
           <UsageChart series={summary.data.series} bucket={range.bucket} />
         </>
-      )}
+      ) : summary.isPending ? (
+        <>
+          <div className="usage-loading-stats" role="status">
+            Loading usage totals…
+          </div>
+          <div className="usage-chart-panel usage-loading-chart" role="status">
+            Loading request chart…
+          </div>
+        </>
+      ) : null}
       <Breakdown
         summary={summary.data}
         group={group}
@@ -710,6 +755,11 @@ export function UsagePage() {
             <span>Status</span>
             <span>Cost</span>
           </div>
+          {receipts.isPending && (
+            <div className="usage-empty" role="status">
+              Loading receipts…
+            </div>
+          )}
           {receipts.data?.receipts.map((r) => (
             <ReceiptRow
               key={r.id}
