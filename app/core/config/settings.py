@@ -223,6 +223,9 @@ class Settings(BaseSettings):
     # selectable burn_first account proactively, instead of waiting for
     # budget pressure to force the reallocation.
     anthropic_fable_sticky_drain_enabled: bool = True
+    # Prefer accounts past the Fable weekly threshold for non-Fable traffic.
+    # Off since Fable was retired (owner, 2026-09-22).
+    anthropic_fable_burn_first_enabled: bool = False
     # The weekly threshold is an unverified belief about Anthropic's Fable
     # policy — keep empirically probing over-threshold accounts instead of
     # permanently stranding them in case upstream doesn't actually block.
@@ -240,6 +243,11 @@ class Settings(BaseSettings):
     # rebind to a budget-safe account one window early (anti-thrash guard still
     # keeps the pin when the whole pool is exhausted).
     anthropic_sticky_headroom_reallocation_enabled: bool = True
+    # Keep a pinned Claude session on its account until that account is really
+    # exhausted (100% or a live 429), then fail over once. Overrides the
+    # headroom-reallocation and sticky-drain moves above, each of which costs a
+    # full prompt-cache rewrite on the new account.
+    anthropic_sticky_hold_until_exhausted: bool = True
     # Anthropic accounts with vendor-side "extra usage" enabled keep answering
     # 200 after their subscription window exhausts and silently bill metered
     # credits. Selection excludes such accounts; when false (default) they stay

@@ -194,6 +194,7 @@ class _ConnectRetryingResponse:
             return None
         return await self._context.__aexit__(exc_type, exc, tb)
 
+
 _OVERLOADED_RETRY_JITTER: Callable[[], float] = _default_overloaded_backoff_jitter
 
 
@@ -633,7 +634,9 @@ class AnthropicProxyService:
                                         stream_error.error.message,
                                     )
                                     if stream_error_type in (
-                                        "rate_limit_error", "rate_limit_exceeded", "usage_limit_reached"
+                                        "rate_limit_error",
+                                        "rate_limit_exceeded",
+                                        "usage_limit_reached",
                                     ):
                                         await self._load_balancer.mark_rate_limit(
                                             account, UpstreamError(message=stream_error.error.message)
@@ -938,10 +941,17 @@ class AnthropicProxyService:
                 retry_at=eligibility.next_reset_at,
             )
         settings = await get_settings_cache().get()
-        # The headroom flag lives on the app config (get_settings), the same
-        # source as its sibling anthropic_fable_routing_enabled, not the
-        # dashboard-editable settings above.
-        headroom_reallocate = get_settings().anthropic_sticky_headroom_reallocation_enabled
+        # The routing flags live on the app config (get_settings), the same
+        # source as anthropic_fable_routing_enabled, not the dashboard-editable
+        # settings above.
+        app_settings = get_settings()
+        # A session's prompt cache lives on the account that wrote it, so a
+        # move re-writes the whole context on the new account. When holding,
+        # a pinned session stays until its account is really out (eligibility
+        # drops it at 100%, or a live 429 excludes it) and then fails over once
+        # to the least-used account. Moving at 95% or onto burn-first accounts
+        # strands the rest of the window and still pays the rewrite.
+        hold_until_exhausted = app_settings.anthropic_sticky_hold_until_exhausted
         selection = await self._load_balancer.select_account(
             model=model,
             provider=provider_name,
@@ -950,13 +960,16 @@ class AnthropicProxyService:
             ignore_primary_quota_account_ids=eligibility.paid_fallback_account_ids,
             burn_first_account_ids=eligibility.burn_first_account_ids,
             burn_first_sticky_drain=bool(eligibility.burn_first_account_ids)
-            and get_settings().anthropic_fable_sticky_drain_enabled,
+            and app_settings.anthropic_fable_sticky_drain_enabled
+            and not hold_until_exhausted,
             sticky_key=sticky_key,
             sticky_kind=StickySessionKind.CODEX_SESSION if sticky_key else None,
             prefer_earlier_reset_accounts=settings.prefer_earlier_reset_accounts,
             prefer_earlier_reset_window="primary",
             routing_strategy="usage_weighted",
-            headroom_reallocate=headroom_reallocate,
+            budget_threshold_pct=100.0 if hold_until_exhausted else 95.0,
+            headroom_reallocate=app_settings.anthropic_sticky_headroom_reallocation_enabled
+            and not hold_until_exhausted,
         )
         if selection.account is None:
             labeled = f"No available {_provider_label(provider_name)} accounts"
@@ -1105,9 +1118,7 @@ class AnthropicProxyService:
                 account_ids=account_ids,
             )
             request_quota_cooldowns = {
-                account_id: (
-                    float(entry.used_percent), entry.reset_at, naive_utc_to_epoch(entry.recorded_at)
-                )
+                account_id: (float(entry.used_percent), entry.reset_at, naive_utc_to_epoch(entry.recorded_at))
                 for account_id, entry in request_quota_latest.items()
             }
             extra_usage_tripwire_cooldowns: dict[str, tuple[float, int | None, int]] = {}
@@ -1278,9 +1289,7 @@ class AnthropicProxyService:
             ):
                 blocked_count += 1
                 request_quota_blocked_account_ids.add(account_id)
-                blocked_reset_by_account_id[account_id] = min(
-                    int(request_cooldown[1]), request_cooldown[2] + 60
-                )
+                blocked_reset_by_account_id[account_id] = min(int(request_cooldown[1]), request_cooldown[2] + 60)
                 continue
             # Primary and secondary usage snapshots are ranking only.
             tripwire_cooldown = extra_usage_tripwire_cooldowns.get(account_id)
@@ -1340,7 +1349,10 @@ class AnthropicProxyService:
                 blocked_reset_by_account_id.pop(account_id, None)
 
         burn_first_account_ids: frozenset[str] = frozenset()
-        if fable_routing and not fable_request and eligible_account_ids:
+        # Burn-first steers non-Fable traffic onto accounts already past the
+        # Fable threshold to save Fable capacity. Off by default since Fable
+        # was retired: it pulls sessions onto busier accounts for no benefit.
+        if fable_routing and settings.anthropic_fable_burn_first_enabled and not fable_request and eligible_account_ids:
 
             def _is_over_fable_threshold(account_id: str) -> bool:
                 scoped_percent = _fresh_scoped_percent(account_id)

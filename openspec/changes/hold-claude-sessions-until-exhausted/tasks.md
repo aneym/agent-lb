@@ -1,0 +1,4 @@
+- [x] Add `anthropic_sticky_hold_until_exhausted` (default on): no 95% budget move, no headroom reallocation, no burn-first drain for pinned Claude sessions.
+- [x] Add `anthropic_fable_burn_first_enabled` (default off) gating the burn-first set for non-Fable traffic.
+- [x] Integration test: a pin at 97% stays; after a live 429 it fails over to the least-used account and the new pin persists. Fails on the old code.
+- [ ] Live: trailing-day `sticky_session_rebound` reasons contain no `budget_pressure` or `burn_first_drain` after deploy.

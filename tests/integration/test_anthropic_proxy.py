@@ -434,6 +434,17 @@ async def _insert_quota_cooldown(
 
 
 @pytest.fixture
+def fable_burn_first_enabled(monkeypatch):
+    """Burn-first is opt-in since Fable was retired; these tests guard that path."""
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_FABLE_BURN_FIRST_ENABLED", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
 def eastern_local_time(monkeypatch):
     monkeypatch.setenv("TZ", "America/New_York")
     time.tzset()
@@ -2032,7 +2043,7 @@ async def test_fable_requests_fall_back_when_all_accounts_over_threshold(async_c
 
 
 @pytest.mark.asyncio
-async def test_non_fable_requests_prefer_accounts_over_weekly_threshold(async_client):
+async def test_non_fable_requests_prefer_accounts_over_weekly_threshold(async_client, fable_burn_first_enabled):
     await _insert_account(
         account_id="anthropic-burn-hot",
         provider="anthropic",
@@ -2099,7 +2110,7 @@ async def test_non_fable_burn_preference_respects_preserve_policy(async_client):
 
 
 @pytest.mark.asyncio
-async def test_mixed_model_session_holds_separate_pins(async_client):
+async def test_mixed_model_session_holds_separate_pins(async_client, fable_burn_first_enabled):
     """A session that interleaves Fable and non-Fable requests on the same
     quotaKey family must hold two independent sticky pins (one per Fable-
     class affinity family) instead of ping-ponging a single shared pin
@@ -2166,7 +2177,12 @@ async def test_mixed_model_session_holds_separate_pins(async_client):
 
 
 @pytest.mark.asyncio
-async def test_non_fable_sticky_session_drains_to_over_threshold_account(async_client):
+async def test_non_fable_sticky_session_drains_to_over_threshold_account(async_client, monkeypatch, fable_burn_first_enabled):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_STICKY_HOLD_UNTIL_EXHAUSTED", "false")
+    get_settings.cache_clear()
+
     await _insert_account(
         account_id="anthropic-drain-hot",
         provider="anthropic",
@@ -2219,6 +2235,78 @@ async def test_non_fable_sticky_session_drains_to_over_threshold_account(async_c
             )
         ).scalar_one()
     assert sticky.account_id == "anthropic-drain-hot"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("live_429", "expected_account"),
+    [
+        # 97% of the 5-hour window used: the session keeps its warm cache and
+        # spends the last of the window instead of moving to the idle account
+        # (the burn-first drain and the 95% budget move both used to fire).
+        (False, "anthropic-hold-pinned"),
+        # Upstream answered 429: the pin fails over once, to the least-used
+        # account, and stays there.
+        (True, "anthropic-hold-idle"),
+    ],
+)
+async def test_sticky_session_holds_account_until_exhausted(async_client, live_429, expected_account):
+    await _insert_account(
+        account_id="anthropic-hold-pinned",
+        provider="anthropic",
+        access_token="anthropic-access-hold-pinned",
+        email="hold-pinned@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-hold-idle",
+        provider="anthropic",
+        access_token="anthropic-access-hold-idle",
+        email="hold-idle@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-hold-busy",
+        provider="anthropic",
+        access_token="anthropic-access-hold-busy",
+        email="hold-busy@example.com",
+    )
+    await _insert_primary_usage(account_id="anthropic-hold-pinned", used_percent=97.0)
+    if live_429:
+        await _insert_quota_cooldown(
+            account_id="anthropic-hold-pinned",
+            quota_key="anthropic_standard",
+            reset_at=int((utcnow() + timedelta(minutes=30)).replace(tzinfo=timezone.utc).timestamp()),
+        )
+    await _insert_weekly_usage(account_id="anthropic-hold-pinned", used_percent=10.0)
+    await _insert_primary_usage(account_id="anthropic-hold-idle", used_percent=5.0)
+    # Over the Fable weekly threshold, so it is a burn-first target.
+    await _insert_primary_usage(account_id="anthropic-hold-busy", used_percent=60.0)
+    await _insert_weekly_usage(account_id="anthropic-hold-busy", used_percent=60.0)
+
+    session_id = f"session-hold-{live_429}"
+    sticky_key = "claude:anthropic_standard:session:" + anthropic_proxy_module._hash_for_key(session_id)
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(key=sticky_key, account_id="anthropic-hold-pinned", kind=StickySessionKind.CODEX_SESSION)
+        )
+        await session.commit()
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={"sessionId": session_id, "model": "claude-haiku-4-5", "quotaKey": "anthropic_standard"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accountId"] == expected_account
+    async with SessionLocal() as session:
+        sticky = (
+            await session.execute(
+                select(StickySession).where(
+                    StickySession.key == sticky_key,
+                    StickySession.kind == StickySessionKind.CODEX_SESSION,
+                )
+            )
+        ).scalar_one()
+    assert sticky.account_id == expected_account
 
 
 @pytest.mark.asyncio
@@ -2445,7 +2533,7 @@ async def test_over_threshold_accounts_without_fresh_capable_marker_stay_exclude
 
 
 @pytest.mark.asyncio
-async def test_non_fable_burn_preference_unchanged_by_capable_fable_marker(async_client):
+async def test_non_fable_burn_preference_unchanged_by_capable_fable_marker(async_client, fable_burn_first_enabled):
     await _insert_account(
         account_id="anthropic-burn-marker-hot",
         provider="anthropic",
