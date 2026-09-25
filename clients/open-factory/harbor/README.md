@@ -133,6 +133,17 @@ The proof is the `egress-probe` task in `~/.agent-lb/of/harbor-smoke/` (2026-09-
 | Spoofing an allowlisted name (Host header, or SNI pointed at a GitHub IP) | 200/301 | blocked | blocked |
 | Another host port (`host.docker.internal:2457`) | 200 | 200 | blocked |
 
+Recipe for a task:
+1. Put the `[environment]` block from [Per-task images](#per-task-images) in its `task.toml`.
+2. Run it with `-a agents:PrebakedClaudeCode` or `-a agents:PrebakedCodex`.
+
+You need no `--allow-agent-host` flag. That flag cannot carry a port, and the agents apply the pin
+themselves. `~/.agent-lb/of/harbor-smoke/hello-file-egress` is the minimal proof. Its verifier checks,
+inside the trial's own container, that `curl -m5 https://github.com` and
+`git ls-remote https://github.com/aneym/agent-lb` both fail (TLS reset by the sidecar) while
+agent-lb's `/health` returns 200. With both agents it scored reward 1.0, and every request was keyed
+`of-harbor`.
+
 Model traffic still works under the pin. Both agent trials scored reward 1.0, and every request showed
 up with `key_name=of-harbor`.
 
