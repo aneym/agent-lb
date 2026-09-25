@@ -181,39 +181,60 @@ D3. **Decider contract.** Input: task text, class hint, menu ids with facts. Out
     menu id, or abstain. The host re-checks the pick against a fresh `route menu`
     (pool not exhausted, model still served); on abstain or failed re-check it takes
     `route pick <class>`; if that is unroutable, it takes the driver (Opus). Every step is
-    one receipt row.
+    one receipt row. Borrowed from keel (`jev_routing.rs`): at most 16 candidates with
+    ids `[A-Za-z0-9_.-]`, `escalate` reserved as abstain; the menu is fingerprinted and
+    a pick expires after 45 s; a pick below confidence 0.35 or per-candidate fit 0.8 is
+    treated as abstain; the decider never grants permission.
 D4. **One ledger.** Decisions go to `~/.claude/logs/dispatch.jsonl` as
     `event: "of_decision"` (candidates, pick, abstain, recheck, fallback, seat, model,
     decider latency). Outcomes go as `event: "implement_result"` through `route record`
     (extended with `--decision-id`, `--ok`, `--tokens-cache`). The per-project
     `.open-factory/ledger.jsonl` and `dispatch/log.jsonl` are removed.
-D5. **Eval = outcome matrix + policy replay.** Run each (task, seat) cell for real, k
-    times, and record receipts. Score each arm (all-Opus, static table, Jev, CLM,
-    hindsight cheapest-that-passes) by replaying its picks against the matrix, adding
-    the arm's real decision cost. This makes every new policy cheap to evaluate and is
-    the "improve by replay" loop. A smaller live end-to-end run (decider -> recheck ->
-    dispatch inside `cc`) proves the loop works and checks that replay predicts live.
-D6. **Task set.** Each task = repo + base commit + prompt + executable check + class.
-    Sources: agent-lb and agent-rails commits that ship a regression test (check = that
-    test passes and the touched module's suite stays green), planted-bug reviews (check
-    = finding names the file and defect), codebase questions with fixed answers
-    (check = required facts present, verified by a rubric verifier), and mechanical
-    sweeps (diff predicate + tests). Dev set (10, then 30) lives in git under
-    `clients/open-factory/evals/tasks/dev/`. The held-out set is written by a separate
-    agent into `~/.agent-lb/of/heldout/`; only its sha256 manifest is committed, and
-    the orchestrator never reads it before the final run.
-D7. **Executors per seat, headless.** Claude seats: `claude-lb-launch -p --model M
-    --output-format json` with `CLAUDE_LB_MINIMAL=1`, in a fresh git worktree per run
-    under `~/.agent-lb/of/runs/<run>/`. Codex seats: `codex exec` (does not need the
-    bridge). Cursor seats: `cursor-agent -p --model grok-*`. GPT *inside Claude Code*
-    (subagent `model: gpt-6-*`) waits for the fixer's bridge fix; it is its own arm.
-D8. **Budget.** Claude is behind pace, so v0 runs 10 tasks x {opus, sonnet} x k=1,
-    at most 3 concurrent runs, and checks `route pools` before each batch; a
-    critical Claude pool pauses the batch. Codex/Cursor cells are cheap to add and
-    carry most of the new volume.
-D9. **Metrics per cell.** Verified success, wall time, tokens in/out/cache-read, cost
-    estimate, retries, account and pool that served it (LB logs), cache-read ratio,
-    whether a human would need to review (check was rubric, not tests).
+D5. **Harbor runs the eval** (Alex via the fixer, 2026-09-25). harbor v0.23.0
+    (`~/.local/bin/harbor`), containers on OrbStack docker (apple-container as a second
+    option). The question it answers: which harness config is best for OUR work.
+    **Arms are harness configs**, each a Harbor agent with its model traffic going
+    through agent-lb so it spends the subscriptions:
+    (A1) stock `claude-code`, Opus; (A2) stock `claude-code`, Sonnet;
+    (A3) `cc` + OF routing: a custom Harbor agent (reusing the useful parts of the
+    abandoned `/Volumes/StudioExt/repos/of-wt-harbor/adapters/harbor/agent.py`) whose
+    Claude Code driver dispatches per call through `route menu` + Jev with host
+    re-check; its routing policy has sub-arms (static table, Jev, later CLM);
+    (A4) `codex` on `sol-latest`; (A5) `cursor-cli` / `grok-build` on Grok;
+    (A6) others as they prove runnable: `opencode` on Kimi/GLM via agent-lb, `devin`,
+    `hermes`. Arms whose traffic cannot pass through agent-lb (Cursor, Devin use their
+    own backends) are labelled so in the report.
+D6. **Gate before any eval spend:** a containerized agent reaches agent-lb on the host
+    (`host.docker.internal:2455`) and authenticates without the macOS keychain, for
+    claude-code and codex, proven by a trivial Harbor task that passes and shows up in
+    agent-lb's request log on a subscription account. Findings:
+    `~/.agent-lb/of/harbor-feasibility.md`.
+D7. **Datasets.** (1) `of-work`, our own Harbor dataset built from real agent-rails
+    and agent-lb PRs: each task = the repo at the PR's base commit baked into the
+    environment, an instruction written from the PR's intent (not its diff), and
+    tests from the PR plus the touched module's suite as the verifier. Classes:
+    small/medium implement, bug fix with regression test, mechanical sweep, and
+    planted-bug review with a checkable finding. Dev split lives in git
+    (`clients/open-factory/evals/of-work/dev/`); the held-out split is written by a
+    separate agent into `~/.agent-lb/of/heldout/`, only its sha256 manifest is
+    committed, and the orchestrator does not read it before the final run.
+    (2) One public Harbor-hub dataset (Terminal-Bench style) for comparability with
+    published numbers; if its full size is too costly for the Claude pool, a fixed
+    seeded subset, reported as a subset.
+D8. **Statistics.** k>=3 attempts per (task, arm). Report pass rate with 95% CIs from
+    a task-clustered bootstrap (resample tasks, then attempts), and arm differences
+    as paired bootstrap CIs over the same tasks; Wilson intervals as a cross-check.
+    Cost, tokens and wall time get the same treatment. No single-number claims.
+D9. **Replay for routing policies.** Harbor trials of single-seat arms (A1, A2, A4,
+    A5) on the same tasks form a (task, seat) outcome matrix. Routing policies
+    (all-Opus, static table, Jev, CLM, hindsight cheapest-that-passes) are scored by
+    replaying their picks against it, plus their real decision cost; A3 live runs check
+    that replay predicts live. Every trial keeps Harbor's trajectory and our receipt
+    (tokens, cache-read ratio, serving account/pool from agent-lb logs) under
+    `~/.agent-lb/of/runs/`.
+    **Budget:** Claude is behind weekly pace, so trials run at most 3 concurrent, a
+    batch checks `route pools` first and pauses on a critical Claude pool, and Codex
+    arms carry the bulk of exploratory volume.
 D10. **`open-factory start` launches `cc`** (Opus drives) with the live menu and policy
     in the system prompt. The `recommend_driver()` Fable/Astra logic goes.
 D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
@@ -226,13 +247,15 @@ D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
 | # | Milestone | Status |
 |---|-----------|--------|
 | 1 | Orient, plan (this section) | done 2026-09-25 |
-| 2 | One router: `route menu`, OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | in progress |
-| 3 | Menu builder with live headroom and resets (lands with 2 as `route menu`) | in progress |
-| 4 | Eval harness v0: 10 dev tasks, opus + sonnet cells, arms (a) all-Opus and (b) static, receipts | next |
-| 5 | Jev arm (c): replay + a live end-to-end subset with recheck, abstain, fallback | |
-| 6 | Codex (`codex exec`), Cursor/Grok cells; GPT-in-Claude-Code arm after bridge fix | |
-| 7 | Held-out run, report (pretty-doc on tailnet), Alex review, publish on approval | |
+| 2 | One router: `route menu` (menu builder with live headroom and resets), OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | in progress |
+| 3 | Harbor gate (D6): container -> agent-lb auth for claude-code and codex, smoke trials | in progress |
+| 4 | `of-work` v0: 10 dev tasks from real PRs as Harbor tasks + sealed held-out manifest | next |
+| 5 | Eval v0: arms A1, A2, A4 on dev, k=3, CIs, receipts | |
+| 6 | A3 (cc + OF routing) as a Harbor agent; Jev sub-arm with re-check/abstain/fallback; policy replay | |
+| 7 | A5/A6 arms, GPT-inside-Claude-Code after the bridge fix, public dataset subset | |
+| 8 | Held-out run, report (pretty-doc on tailnet), Alex review, publish on approval | |
 
 ### Log
 
-- 2026-09-25: plan written. Keel/Jev decision docs digest pending (subagent).
+- 2026-09-25: plan written. Keel/Jev digest at `~/.agent-lb/of/keel-jev-digest.md`.
+- 2026-09-25: eval moved onto Harbor (D5-D9) at Alex's request via the fixer.
