@@ -9,7 +9,8 @@ import {
   useStickySessions,
   type Pool,
 } from "../../api";
-import { money } from "../../format";
+import { accountLabel, money } from "../../format";
+import { usePrivacyStore } from "@/hooks/use-privacy";
 
 function durationWords(milliseconds: number) {
   const minutes = Math.max(0, Math.ceil(milliseconds / 60_000));
@@ -57,9 +58,8 @@ const poolModels: Record<string, string> = {
   cursor: "Cursor seat",
   devin: "Devin seat",
 };
-const accountName = (a: Account) =>
-  a.alias ||
-  `${a.planType.charAt(0).toUpperCase()}${a.planType.slice(1)} · ${a.email.split("@")[0]}`;
+// Components that show names subscribe to the privacy store, so a toggle re-renders them.
+const accountName = (a: Account) => accountLabel(a, usePrivacyStore.getState().blurred);
 function PoolRow({ pool, bestAccount }: { pool: Pool; bestAccount?: string }) {
   const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(pool.provider);
   const isSeat = pool.kind === "cli_seat" || ["cursor", "devin"].includes(pool.provider);
@@ -119,6 +119,7 @@ function AccountRow({
   sessions?: number;
 }) {
   const navigate = useNavigate();
+  const hideEmails = usePrivacyStore((state) => state.blurred);
   const [pauseOpen, setPauseOpen] = useState(false);
   const { resumeMutation, probeMutation } = useAccounts();
   const no5h = ["openai", "kimi", "cursor", "devin", "openrouter"].includes(a.provider || "");
@@ -153,8 +154,11 @@ function AccountRow({
       <div className="c-who who">
         <ProviderMark id={a.provider === "anthropic" ? "claude" : providerMark(a.provider)} />
         <div className="t">
-          <span className="n">{accountName(a)}</span>
-          <span className="s privacy-blur">{a.email}</span>
+          <span className="n">{accountLabel(a, hideEmails)}</span>
+          <span className="s">
+            <span className="privacy-blur">{a.email}</span>
+            <span className="mono id"> · {a.accountId.slice(0, 6)}</span>
+          </span>
         </div>
       </div>
       <div className="c-st">
@@ -224,6 +228,7 @@ function AccountRow({
   );
 }
 export function ProvidersPage() {
+  usePrivacyStore((state) => state.blurred);
   const pools = usePools();
   const { accountsQuery } = useAccounts();
   const seat = useSeatAccounts();

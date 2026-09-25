@@ -15,7 +15,7 @@ import {
   type Receipt,
   type ReceiptSummary,
 } from "../../api/receipts";
-import { compact } from "../../format";
+import { accountLabel, compact } from "../../format";
 import { ProviderMark } from "../../kit/provider-mark";
 import { providerMark } from "../../kit/provider-mark-helpers";
 import {
@@ -42,8 +42,8 @@ const number = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const percent = (n: number | null) => (n == null ? "—" : `${Math.round(n * 100)}%`);
 const latency = (n: number | null) =>
   n == null ? "—" : n >= 1000 ? `${(n / 1000).toFixed(1)} s` : `${Math.round(n)} ms`;
-const displayAccount = (a?: AccountSummary) =>
-  a ? a.alias || `${a.planType} · ${a.email.split("@")[0]}` : "Deleted or unknown account";
+const displayAccount = (a: AccountSummary | undefined, hideEmails: boolean) =>
+  a ? accountLabel(a, hideEmails) : "Deleted or unknown account";
 const usageMoney = (value: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -58,9 +58,11 @@ const providerName = (provider?: string | null) =>
     ? "Claude"
     : provider === "openai"
       ? "Codex"
-      : provider
-        ? provider.charAt(0).toUpperCase() + provider.slice(1)
-        : "Other";
+      : provider === "glm"
+        ? "GLM"
+        : provider
+          ? provider.charAt(0).toUpperCase() + provider.slice(1)
+          : "Other";
 const safeCsv = (value: string | number | null) => {
   const text = String(value ?? "");
   const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
@@ -269,7 +271,7 @@ function Breakdown({
           const account = accounts.get(row.key || "");
           const name =
             group === "account"
-              ? displayAccount(account)
+              ? displayAccount(account, blurred)
               : group === "key"
                 ? keys.get(row.key || "") || row.key
                 : row.key || "Unknown";
@@ -282,11 +284,7 @@ function Breakdown({
                 {group === "model" ? (
                   <ModelChip model={row.key || "Unknown"} />
                 ) : (
-                  <span
-                    className={`n ${group === "session" ? "mono" : ""} ${group === "account" && blurred && account && !account.alias ? "privacy-blur" : ""}`}
-                  >
-                    {name}
-                  </span>
+                  <span className={`n ${group === "session" ? "mono" : ""}`}>{name}</span>
                 )}
                 {group === "account" && (
                   <span className="s">{providerName(row.provider || account?.provider)}</span>
@@ -381,9 +379,7 @@ function ReceiptRow({
       </span>
       <span className="c-acct cellm">
         <ProviderMark id={markFor(receipt.provider || account?.provider)} size={16} />
-        <span className={blurred && account && !account.alias ? "privacy-blur" : ""}>
-          {displayAccount(account)}
-        </span>
+        <span>{displayAccount(account, blurred)}</span>
       </span>
       <span className="c-model">
         <ModelChip model={receipt.model || "Unknown"} />
@@ -394,7 +390,9 @@ function ReceiptRow({
       </span>
       <span className="c-cache mono right">{percent(receipt.cacheReadRatio)}</span>
       <span className="c-lat mono right">{latency(receipt.latencyMs)}</span>
-      <span className="c-st mono right">
+      <span
+        className={`c-st mono right tint ${receipt.status === "ok" ? "ok" : receipt.httpStatus === 429 ? "warn" : "bad"}`}
+      >
         {status} {receipt.httpStatus || receipt.errorCode || receipt.status}
       </span>
       <span className="c-cost mono right">
@@ -417,7 +415,7 @@ function RouteTrace({
   if (!receipt) return null;
   const fields = [
     ["Time", new Date(receipt.requestedAt).toLocaleString()],
-    ["Account", displayAccount(account)],
+    ["Account", displayAccount(account, blurred)],
     ["Pool", receipt.pool],
     ["Model", receipt.model],
     ["Input tokens", number(receipt.inputTokens)],
@@ -446,11 +444,7 @@ function RouteTrace({
           .map(([key, value]) => (
             <div key={key}>
               <dt>{key}</dt>
-              <dd
-                className={`mono ${key === "Account" && blurred && account && !account.alias ? "privacy-blur" : ""}`}
-              >
-                {value}
-              </dd>
+              <dd className="mono">{value}</dd>
             </div>
           ))}
       </dl>
@@ -629,7 +623,7 @@ export function UsagePage() {
           options={choices(
             (accountsQuery.data || []).map((a) => ({
               value: a.accountId,
-              label: blurred && !a.alias ? `${a.planType} · Account` : displayAccount(a),
+              label: displayAccount(a, blurred),
             })),
             "All",
           )}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { Eye, EyeOff, Menu } from "lucide-react";
+import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAuthStore } from "@/features/auth/hooks/use-auth";
 import { useConnectAddress, usePools, useRuntimeVersion, useStickySessions } from "../api";
 import { clock } from "../format";
@@ -16,6 +17,8 @@ export function AppShell() {
   const { pathname } = useLocation();
   const logout = useAuthStore((state) => state.logout);
   const passwordRequired = useAuthStore((state) => state.passwordRequired);
+  const hideEmails = usePrivacyStore((state) => state.blurred);
+  const toggleEmails = usePrivacyStore((state) => state.toggle);
   const [mobile, setMobile] = useState(false);
   const address = useConnectAddress().data?.connectAddress;
   const version = useRuntimeVersion().data?.currentVersion;
@@ -68,6 +71,15 @@ export function AppShell() {
               </span>
             </span>
             {version && <span className="mono hide-m">v{version}</span>}
+            <button
+              className="btn ghost icon"
+              aria-label={hideEmails ? "Show emails" : "Hide emails"}
+              aria-pressed={hideEmails}
+              title={hideEmails ? "Show emails" : "Hide emails"}
+              onClick={toggleEmails}
+            >
+              {hideEmails ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
             {passwordRequired && (
               <button className="btn ghost sm" onClick={() => void logout()}>
                 Sign out

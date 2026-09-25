@@ -10,7 +10,8 @@ import { OauthDialog } from "@/features/accounts/components/oauth-dialog";
 import { AuthExportDialog } from "@/features/accounts/components/auth-export-dialog";
 import type { AccountSummary } from "@/features/accounts/schemas";
 import { useStickySessions } from "../../api";
-import { clock, compact, money, relative } from "../../format";
+import { accountLabel, clock, compact, money, relative } from "../../format";
+import { usePrivacyStore } from "@/hooks/use-privacy";
 import { PausePopover } from "../../kit/pause-popover";
 import { ProviderMark } from "../../kit/provider-mark";
 import { providerMark } from "../../kit/provider-mark-helpers";
@@ -50,7 +51,7 @@ const Summary = z.object({
   series: z.array(z.object({ start: z.string(), requests: z.number() })),
 });
 type ReceiptItem = z.infer<typeof Receipt>;
-const nameOf = (a: AccountSummary) => a.alias || `${a.planType} · ${a.email.split("@")[0]}`;
+
 const groupOf = (a: AccountSummary) =>
   a.provider === "anthropic"
     ? "Claude"
@@ -260,7 +261,9 @@ function ReceiptRow({ receipt }: { receipt: ReceiptItem }) {
       <span className="c-lat mono">
         {receipt.latencyMs != null ? `${(receipt.latencyMs / 1000).toFixed(1)}s` : "—"}
       </span>
-      <span className="c-st mono">
+      <span
+        className={`c-st mono tint ${receipt.httpStatus === 429 ? "warn" : (receipt.httpStatus != null && receipt.httpStatus >= 400) || receipt.status === "error" ? "bad" : "ok"}`}
+      >
         {receipt.httpStatus === 429
           ? "◷"
           : (receipt.httpStatus != null && receipt.httpStatus >= 400) || receipt.status === "error"
@@ -375,6 +378,7 @@ function Routing({
 }
 
 export function AccountPage() {
+  const hideEmails = usePrivacyStore((state) => state.blurred);
   const { accountId = "" } = useParams();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -418,7 +422,7 @@ export function AccountPage() {
         description="Return to Providers to choose an account."
       />
     );
-  const name = nameOf(account);
+  const name = accountLabel(account, hideEmails);
   const isOAuth = account.provider === "anthropic" || account.provider === "openai";
   const signIn = () =>
     isOAuth ? setOauthOpen(true) : navigate(`/providers/add?provider=${account.provider || "glm"}`);

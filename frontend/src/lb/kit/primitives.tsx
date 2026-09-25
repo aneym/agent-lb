@@ -99,7 +99,7 @@ export function LimitMeter({
         ? `${Math.round(Math.abs(paceDelta))}% short of pace: at this rate it runs out before the reset`
         : `On pace for ${Math.round(Math.max(0, paceDelta))}% to spare at reset`;
   return (
-    <div className="lim" title={title}>
+    <div className={`lim ${fillTone(percent)}`} title={title}>
       <div className="lt">
         <span className={`v ${percent < 20 ? "warn" : ""}`}>
           {percent < 20 && <TriangleAlert size={12} aria-label="Low remaining" />}
@@ -149,6 +149,14 @@ function StateGlyph({ status }: { status: string }) {
       return <Circle {...props} />;
   }
 }
+/** Bar fill tone by remaining: green above 30%, amber from 10 to 30%, red below 10%. */
+const fillTone = (remaining: number) => (remaining > 30 ? "ok" : remaining >= 10 ? "warn" : "bad");
+const accountTone: Record<string, string> = {
+  active: "ok",
+  rate_limited: "warn",
+  quota_exceeded: "warn",
+  reauth_required: "bad",
+};
 export function AccountState({
   status,
   resetAt,
@@ -175,7 +183,7 @@ export function AccountState({
   return (
     <div className="qs">
       <span
-        className={`st ${["paused", "reauth_required", "deactivated"].includes(status) ? "d" : ""}`}
+        className={`st ${["paused", "deactivated"].includes(status) ? "d" : ""} ${accountTone[status] ? `tone ${accountTone[status]}` : ""}`}
       >
         <StateGlyph status={status} />
         {text[status] || status}
@@ -209,17 +217,19 @@ export function PoolState({
   const out = ["exhausted", "unavailable"].includes(status);
   return (
     <div className="qs">
-      <span className={`st ${out ? "d" : ""}`}>
-        {critical ? (
-          <TriangleAlert size={14} aria-hidden="true" />
-        ) : out ? (
-          <Circle size={14} aria-hidden="true" />
-        ) : low ? (
-          <Circle size={14} className="lb-half-circle" aria-hidden="true" />
-        ) : (
-          <Circle size={14} fill="currentColor" aria-hidden="true" />
-        )}
-        {out ? "Exhausted" : critical ? "Critical" : low ? "Low" : "OK"}
+      <span className="st">
+        <span className={`tone ${out || low || critical ? "warn" : "ok"}`}>
+          {critical ? (
+            <TriangleAlert size={14} aria-hidden="true" />
+          ) : out ? (
+            <Circle size={14} aria-hidden="true" />
+          ) : low ? (
+            <Circle size={14} className="lb-half-circle" aria-hidden="true" />
+          ) : (
+            <Circle size={14} fill="currentColor" aria-hidden="true" />
+          )}
+          {out ? "Exhausted" : critical ? "Critical" : low ? "Low" : "OK"}
+        </span>
         {ready != null && total != null && (
           <span className="rd">
             · {ready} of {total}
