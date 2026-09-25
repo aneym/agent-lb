@@ -20,8 +20,13 @@
 #
 # agent-rails's local checkout is a blob:none partial clone, so its history
 # cannot be copied offline. The script makes a shallow clone
-# (AGENT_RAILS_DEPTH commits, default 300) from GitHub with GITHUB_TOKEN; tasks
-# must use base commits inside that window.
+# (AGENT_RAILS_DEPTH commits, default 300) of AGENT_RAILS_REF from GitHub with
+# GITHUB_TOKEN; tasks must use base commits inside that window.
+#
+# The base commit (AGENT_LB_REF, AGENT_RAILS_BASE) must contain every task
+# base commit, since of-checkout can only reach history the base holds. Build
+# at the newest task base_sha, not at the branch tip, so the base carries no
+# history past what the tasks need.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -37,6 +42,7 @@ AGENT_LB_REF="${AGENT_LB_REF:-origin/main}"
 AGENT_RAILS_URL="${AGENT_RAILS_URL:-https://github.com/shelf-group/agent-rails.git}"
 AGENT_RAILS_REF="${AGENT_RAILS_REF:-main}"
 AGENT_RAILS_DEPTH="${AGENT_RAILS_DEPTH:-300}"
+AGENT_RAILS_BASE="${AGENT_RAILS_BASE:-$AGENT_RAILS_REF}"
 
 agents_tag="of-work/agents:cc${CLAUDE_CODE_VERSION}-codex${CODEX_VERSION}"
 ctx=""
@@ -96,7 +102,7 @@ build_agent_rails() {
     clone -q --bare --no-tags --depth "$AGENT_RAILS_DEPTH" --single-branch \
     --branch "$AGENT_RAILS_REF" "$AGENT_RAILS_URL" "$ctx/src.git"
   git -C "$ctx/src.git" remote remove origin
-  sha="$(git -C "$ctx/src.git" rev-parse --verify "${AGENT_RAILS_REF}^{commit}")"
+  sha="$(git -C "$ctx/src.git" rev-parse --verify "${AGENT_RAILS_BASE}^{commit}")"
   git -C "$ctx/src.git" update-ref refs/of/base "$sha"
   docker_build_base agent-rails "$ctx" "$sha" --build-arg REPO_PYTHONPATH=/app
   rm -r -f -- "$ctx"; ctx=""
