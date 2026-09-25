@@ -305,6 +305,12 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
   cursor-cli and devin cannot route through agent-lb and need CURSOR_API_KEY/DEVIN_API_KEY;
   grok-build can run Claude/GPT through agent-lb, native Grok needs an xAI key. These
   keys are requested from Alex only when A5/A6 are next.
+- 2026-09-25: fixer's lb-harbor-access landed agent-lb 561e12eb: sk-clb keys are honored
+  from loopback/containers (x-api-key too), so every trial sends `of-harbor`
+  (`~/.agent-lb/of/of-harbor.key`). Plain base URL, no launcher: Max pool, one account per
+  session, 100% cache-read after the first call, host and OrbStack; gpt-6-sol-low through
+  the bridge 99% cached. Receipts: `~/.agent-lb/runtime/agent-lb/scripts/request_log_query.py
+  --session <id> | --key of-harbor --json` (account, pool, model, tokens, cache, latency).
 - 2026-09-25: in-session GPT seats `gpt-explorer` (gpt-6-luna) and `gpt-implementer`
   (gpt-6-sol) appeared; they join Q1 as seats.
 - 2026-09-25: fixer landed the GPT bridge fix (444b5a66, ccgpt e2e PASS: Sol/Luna 13 s,
