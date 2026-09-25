@@ -23,13 +23,15 @@ if [[ "$MODE" == "uninstall" ]]; then
   exit 0
 fi
 
+# launchd cannot read /Volumes. Refuse by path before probing the file, so an
+# external launcher is named as such even when its volume is not mounted.
+if [[ "$MODE" == "install" && "$LAUNCHER" == /Volumes/* ]]; then
+  echo "error: refusing external-volume launcher for launchd: $LAUNCHER" >&2
+  exit 1
+fi
 if [[ "$MODE" == "install" && ! -x "$LAUNCHER" ]]; then
   echo "error: pinned internal-disk launcher is not executable: $LAUNCHER" >&2
   echo "set AGENT_LB_DOCTOR_LAUNCHER to the installed launcher path" >&2
-  exit 1
-fi
-if [[ "$MODE" == "install" && "$LAUNCHER" == /Volumes/* ]]; then
-  echo "error: refusing external-volume launcher for launchd: $LAUNCHER" >&2
   exit 1
 fi
 if [[ "$MODE" == "install" ]]; then
