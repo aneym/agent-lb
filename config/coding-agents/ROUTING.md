@@ -5,6 +5,27 @@ Single source of truth for model routing on this computer. Host-neutral path:
 adapters; when they disagree with this file, this file wins. The history this
 file used to carry (seat lineups from 2026-07 through 2026-09) is in git.
 
+## Claude-vertical default (owner, 2026-09-25)
+
+Alex, 2026-09-25: "we need to make our prompt rules looser - dont assume we're
+routing work to codex. i'd rather optimize agent lb to fully allow us to use
+claude vertically and occasionally use codex, but i dont want hard rules."
+
+This section overrides anything below that says otherwise.
+
+- **Claude Code does the work by default**: the driver, its subagents and its
+  teammates, on Opus or Sonnet. Implementation on Opus is normal, not a
+  violation.
+- **Codex and Cursor are optional capacity.** Use them when the Claude pools
+  are tight, for large parallel or mechanical sweeps, or for a second opinion.
+  `route pick` and the class rankings below are suggestions, not gates.
+- **No required cross-vendor audit.** Verify work by running it (end to end,
+  real output). A cross-vendor review is a tool for risky changes.
+- **Efficiency is the machinery's job**: agent-lb keeps sessions on one
+  account until it is really exhausted and forwards Claude Code payloads
+  unchanged so the prompt cache holds (`scripts/claude_cache_eval.py`,
+  `cache-watch`). Sessions compact at 400k and keep state in files.
+
 ## The lineup (owner, 2026-09-22)
 
 Alex, 2026-09-22: "remove all seats that use fable, opus is good now"; "opus
@@ -94,11 +115,10 @@ to its reset, and put the strongest seat that pace allows on each class.
    council Sol with the driver as the second voice.
 3. **The newest Opus or Sol drives** and takes plan, review, design and hard
    audits. No class, seat or catch-all subagent runs on Fable.
-4. **Implementation is cheap and audited.** Opus and Sol do not take volume
-   implementation; the cheap seats do, and each closeout gets one cross-vendor
-   audit (rule 5) by the newest Opus or Sol before it is accepted.
-5. **Cross-vendor verification** stays: the verifier never shares a vendor
-   with the author.
+4. **Implementation** (superseded 2026-09-25, see the Claude-vertical
+   default above): Claude does it by default; cheap seats are optional.
+5. **Cross-vendor verification** is optional (superseded 2026-09-25): when you
+   do ask for one, the verifier should not share a vendor with the author.
 6. **Bands are re-read every 5 minutes** (`route alert`, or the coordinator's
    quota monitor until it lands) and before every wave a planner dispatches;
    the band line goes in the planner's 30-minute report. Reset times are

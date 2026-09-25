@@ -890,16 +890,27 @@ def _probe(name: str, started: float, *, ok: bool, error: str | None, **detail: 
     return record
 
 
+LB_HEALTH_ATTEMPTS = 3
+LB_HEALTH_RETRY_SECONDS = 5.0
+
+
 def probe_lb_health() -> dict[str, Any]:
+    # A single miss must not mark every Claude seat down until the next
+    # 30-minute doctor run: on 2026-09-25 one probe landed inside a routine
+    # LB restart and `route pick` refused all Claude seats for 16 minutes.
     started = time.monotonic()
-    result = http_get("/api/health", timeout=4.0)
-    path = "/api/health"
-    if result.status == 404:
-        result = http_get("/health", timeout=4.0)
-        path = "/health"
-    ok = result.ok and result.status == 200
+    for attempt in range(LB_HEALTH_ATTEMPTS):
+        result = http_get("/api/health", timeout=4.0)
+        path = "/api/health"
+        if result.status == 404:
+            result = http_get("/health", timeout=4.0)
+            path = "/health"
+        ok = result.ok and result.status == 200
+        if ok or attempt == LB_HEALTH_ATTEMPTS - 1:
+            break
+        time.sleep(LB_HEALTH_RETRY_SECONDS)
     error = None if ok else (result.error or f"HTTP {result.status}")
-    return _probe("lb-health", started, ok=ok, error=error, path=path)
+    return _probe("lb-health", started, ok=ok, error=error, path=path, attempts=attempt + 1)
 
 
 def probe_pools() -> tuple[dict[str, Any], dict[str, Any] | None]:
