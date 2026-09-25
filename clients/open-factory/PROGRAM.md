@@ -146,7 +146,11 @@ Publish numbers only from runs you observed. The design:
 - Load `~/.agents/skills/test-audit/SKILL.md` before writing tests; prefer
   end-to-end evals with receipts.
 - Use Workflows for fan-outs; Opus designs, `sonnet` runs volume stages, `haiku`
-  mechanical ones. Keep your own context lean: state goes in this file and
+  mechanical ones.
+  Standing opt-in (Alex via the fixer, 2026-09-25): "if a workflow would make us move
+  faster, for any of the tasks, i approve use of workflows." Applies to all OF work
+  (task-set building, Harbor arm runs, replay sweeps); stages default to sonnet/haiku,
+  Opus only where a stage needs judgment. Keep your own context lean: state goes in this file and
   `~/.agent-lb/of/`, not in the chat.
 - Never print secrets. No macOS keychain prompts (Alex is remote). No messages
   to real people. Do not touch the agent-rails repo except to read.
@@ -286,6 +290,9 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 
 - 2026-09-25: plan written. Keel/Jev digest at `~/.agent-lb/of/keel-jev-digest.md`.
 - 2026-09-25: eval moved onto Harbor (D5-D9) at Alex's request via the fixer.
+- 2026-09-25: standing Workflow opt-in recorded. Planned uses: M4 fan-out converting dev
+  candidates into Harbor task dirs (sonnet build + haiku oracle-run check per task), M5/M7
+  arm batches, D9 replay sweeps.
 - 2026-09-25: routing questions become eval arms (Q1-Q10); startup token cost added (D12).
 - 2026-09-25: milestone 2 landed. `open-factory route` measured live: Jev 370-750 ms,
   ~$0.00005 per pick. Observation for the eval: the routing table still puts `codex-sol`
