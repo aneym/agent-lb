@@ -17266,7 +17266,6 @@ async def test_ensure_fresh_same_stale_account_joins_singleflight_before_refresh
     auth_manager_module._clear_refresh_singleflight_state()
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     settings.proxy_token_refresh_limit = 1
-    service = proxy_service.ProxyService(_repo_factory(_RequestLogsRecorder()))
     encryptor = TokenEncryptor()
     stale_refresh = utcnow().replace(year=utcnow().year - 1)
     account_a = Account(
@@ -17281,7 +17280,18 @@ async def test_ensure_fresh_same_stale_account_joins_singleflight_before_refresh
         status=AccountStatus.ACTIVE,
         deactivation_reason=None,
     )
-    account_b = Account(**{column.name: getattr(account_a, column.name) for column in Account.__table__.columns})
+    stored_row = {column.name: getattr(account_a, column.name) for column in Account.__table__.columns}
+    account_b = Account(**stored_row)
+    request_logs = _RequestLogsRecorder()
+
+    def repo_factory() -> _RepoContext:
+        # AuthManager reloads the stored row before a refresh exchange (a1f0f06b); the store
+        # still holds the stale credentials that both callers present.
+        context = _RepoContext(request_logs)
+        cast(Any, context._repos.accounts).reload_by_id = AsyncMock(side_effect=lambda _: Account(**stored_row))
+        return context
+
+    service = proxy_service.ProxyService(repo_factory)
     started = asyncio.Event()
     release = asyncio.Event()
     refresh_calls = 0
@@ -17304,7 +17314,7 @@ async def test_ensure_fresh_same_stale_account_joins_singleflight_before_refresh
     monkeypatch.setattr(auth_manager_module, "refresh_access_token", fake_refresh_access_token)
 
     first = asyncio.create_task(service._ensure_fresh(account_a, force=True))
-    await started.wait()
+    await asyncio.wait_for(started.wait(), timeout=1)
     second = asyncio.create_task(service._ensure_fresh(account_b, force=True))
     await asyncio.sleep(0.01)
     assert not second.done()
