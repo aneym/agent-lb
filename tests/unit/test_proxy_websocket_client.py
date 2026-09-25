@@ -12,6 +12,7 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidHandshake, InvalidProxy, InvalidStatus
 from websockets.http11 import Response
 
+import app.core.clients.proxy as proxy_module
 import app.core.clients.proxy_websocket as proxy_websocket_module
 from app.core.clients.codex import CodexTransportError, CodexWebSocketResult
 from app.core.clients.proxy import ProxyResponseError
@@ -940,8 +941,8 @@ async def _serve_handshakes(monkeypatch, answers: list[tuple[int, bytes, str] | 
 
     server = await websocket_serve(upstream_handler, "127.0.0.1", 0, process_request=process_request).__aenter__()
     port = next(iter(server.sockets)).getsockname()[1]
-    monkeypatch.setattr(proxy_websocket_module, "_EDGE_REJECT_FIRST_BACKOFF_SECONDS", 0.01)
-    monkeypatch.setattr(proxy_websocket_module, "_EDGE_REJECT_MAX_BACKOFF_SECONDS", 0.02)
+    monkeypatch.setattr(proxy_module, "_EDGE_REJECT_FIRST_BACKOFF_SECONDS", 0.01)
+    monkeypatch.setattr(proxy_module, "_EDGE_REJECT_MAX_BACKOFF_SECONDS", 0.02)
     monkeypatch.setattr(
         proxy_websocket_module,
         "get_settings",
@@ -985,7 +986,7 @@ async def test_edge_rejected_handshake_is_retried_until_it_connects(monkeypatch)
 @pytest.mark.asyncio
 async def test_edge_rejection_that_never_clears_surfaces_after_bounded_retries(monkeypatch):
     server, attempts = await _serve_handshakes(monkeypatch, [_EDGE_403])
-    monkeypatch.setattr(proxy_websocket_module, "_EDGE_REJECT_RETRY_WINDOW_SECONDS", 0.3)
+    monkeypatch.setattr(proxy_module, "_EDGE_REJECT_RETRY_WINDOW_SECONDS", 0.3)
     started_at = time.monotonic()
     try:
         with pytest.raises(ProxyResponseError) as exc_info:
