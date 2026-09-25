@@ -1,0 +1,221 @@
+.lb .settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 760px);
+  gap: 32px;
+  align-items: start;
+}
+
+.lb .settings-nav {
+  position: sticky;
+  top: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lb .settings-nav a {
+  display: block;
+  padding: 9px 12px;
+  border-radius: 7px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.lb .settings-nav a:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.lb .settings-nav a[aria-current] {
+  background: var(--fill);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lb .settings-nav a:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.lb .settings-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lb .settings-body .settings-panel {
+  min-width: 0;
+  padding: 20px;
+}
+
+.lb .settings-body .settings-panel-heading {
+  margin-bottom: 18px;
+}
+
+.lb .settings-body .settings-panel-heading p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.lb .settings-body .settings-panel > section {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+.lb
+  .settings-body
+  .settings-panel:not(.settings-keep-heading)
+  > section
+  > div
+  > div:first-child:has(h3),
+.lb
+  .settings-body
+  .settings-panel:not(.settings-keep-heading)
+  > section.space-y-3
+  > div:first-child:has(h3) {
+  display: none;
+}
+
+.lb .settings-body .settings-panel.settings-keep-heading > section > div > div:first-child:has(h3) {
+  display: flex;
+  padding-top: 2px;
+}
+
+.lb
+  .settings-body
+  .settings-panel.settings-keep-heading
+  > section
+  > div
+  > div:first-child:has(h3)
+  h3,
+.lb
+  .settings-body
+  .settings-panel.settings-keep-heading
+  > section
+  > div
+  > div:first-child:has(h3)
+  .bg-primary\/10 {
+  display: none;
+}
+
+.lb .settings-body .settings-panel > section h3 {
+  color: var(--ink);
+}
+
+.lb .settings-body .settings-panel > section .bg-primary\/10,
+.lb .settings-body .settings-panel > section .bg-primary\/5 {
+  background: var(--fill);
+}
+
+.lb .settings-body .settings-panel > section .text-primary,
+.lb .settings-body .settings-panel > section .text-destructive {
+  color: var(--ink);
+}
+
+.lb .settings-body .settings-moved,
+.lb .settings-body .settings-notice {
+  margin: 0;
+  padding: 16px 20px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.lb .settings-body .settings-notice {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.lb .settings-body .settings-copy,
+.lb .settings-body .settings-archive p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.lb .settings-body .settings-archive {
+  display: grid;
+  gap: 16px;
+}
+
+.lb .settings-body .settings-archive form {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.lb .settings-body .settings-archive-search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lb .settings-body .settings-archive-search input {
+  flex: 1 1 190px;
+  min-width: 0;
+  padding: 0 10px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+}
+
+.lb .settings-body .settings-archive-search input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.lb .settings-body .settings-archive-search button:disabled {
+  opacity: 0.45;
+}
+
+@media (max-width: 720px) {
+  .lb .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .lb .settings-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: fit-content;
+    max-width: 100%;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--fill);
+    gap: 2px;
+  }
+
+  .lb .settings-nav a {
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+  }
+
+  .lb .settings-nav a[aria-current] {
+    background: var(--card);
+    box-shadow:
+      0 1px 2px oklch(0 0 0 / 0.08),
+      0 0 0 1px var(--line);
+  }
+
+  .lb .settings-body .settings-panel {
+    padding: 16px;
+  }
+
+  .lb .settings-body .settings-panel > section .flex.items-center.justify-between {
+    flex-wrap: wrap;
+  }
+
+  .lb .settings-body .settings-panel > section .overflow-x-auto {
+    max-width: 100%;
+  }
+}
