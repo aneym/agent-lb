@@ -152,6 +152,9 @@ Publish numbers only from runs you observed. The design:
   (task-set building, Harbor arm runs, replay sweeps); stages default to sonnet/haiku,
   Opus only where a stage needs judgment. Keep your own context lean: state goes in this file and
   `~/.agent-lb/of/`, not in the chat.
+- Restart freeze (fixer, 2026-09-25): nobody in OF kickstarts or restarts the live
+  agent-lb until the fixer's lb-restart (lock, drain, health gate, rollback) lands and the
+  fixer sends the command. Deploys can be staged.
 - Never print secrets. No macOS keychain prompts (Alex is remote). No messages
   to real people. Do not touch the agent-rails repo except to read.
 - Report to Alex only milestones and hard blockers.
