@@ -219,10 +219,7 @@ class FederationUsageDaily(Base):
 
 class RequestLog(Base):
     __tablename__ = "request_logs"
-    __table_args__ = (
-        Index("idx_logs_useragent_group", "useragent_group"),
-        Index("idx_logs_session_time", "session_id", text("requested_at DESC")),
-    )
+    __table_args__ = (Index("idx_logs_useragent_group", "useragent_group"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[str | None] = mapped_column(
@@ -1225,6 +1222,7 @@ Index("idx_logs_api_key_time_account", RequestLog.api_key_id, RequestLog.request
 Index("idx_logs_request_kind_time", RequestLog.request_kind, RequestLog.requested_at.desc(), RequestLog.id.desc())
 Index("idx_logs_requested_at", RequestLog.requested_at)
 Index("idx_logs_source_requested_at", RequestLog.source, RequestLog.requested_at.desc())
+Index("idx_logs_session_time", RequestLog.session_id, RequestLog.requested_at.desc())
 Index("idx_logs_requested_at_id", RequestLog.requested_at.desc(), RequestLog.id.desc())
 Index(
     "idx_logs_deleted_at_requested_at_id",
