@@ -354,9 +354,7 @@ function AccountSelection() {
             <dt>Sticky sessions</dt>
             <dd>
               <span className="muted">
-                {settings?.stickyReallocationPrimaryBudgetThresholdPct != null
-                  ? `until a limit falls below ${Math.round(100 - settings.stickyReallocationPrimaryBudgetThresholdPct)}%`
-                  : "Keep sessions on their current account"}
+                {stickyUntil(settings?.stickyReallocationPrimaryBudgetThresholdPct)}
               </span>
               <button
                 className={`toggle ${settings?.stickyThreadsEnabled ? "on" : ""}`}
@@ -427,4 +425,10 @@ export function PipelineTab() {
       </div>
     </>
   );
+}
+
+function stickyUntil(usedThresholdPct: number | null | undefined): string {
+  if (usedThresholdPct == null) return "Keep sessions on their current account";
+  const left = Math.round(100 - usedThresholdPct);
+  return left <= 0 ? "until a limit runs out" : `until a limit falls below ${left}%`;
 }
