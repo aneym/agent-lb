@@ -120,7 +120,8 @@ def test_installer_converges_links_and_removes_retired_artifacts(tmp_path: Path)
             "CLAUDE_LB_DRY_RUN": "1",
         },
     )
-    assert "--autocompact 1m" in dry_run.stdout
+    # The launcher leaves the compaction window to settings.json (400k since 2026-09-25).
+    assert "--autocompact" not in dry_run.stdout
     assert "--model opus[1m]" in dry_run.stdout
 
     subprocess.run([str(INSTALLER), "--uninstall"], check=True, env=env, capture_output=True, text=True)
