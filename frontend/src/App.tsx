@@ -16,6 +16,7 @@ import { TeamPage } from "@/features/team/components/team-page";
 import { useTimeFormatStore } from "@/hooks/use-time-format";
 import { AppShell } from "@/lb/kit/app-shell";
 import { EmptyState } from "@/lb/kit/primitives";
+import { KeysPage } from "@/lb/pages/keys/keys-page";
 import { ProvidersPage } from "@/lb/pages/providers/providers-page";
 
 function LegacyLayout() {
@@ -57,7 +58,7 @@ export default function App() {
             />
             <Route path="/routing" element={<SettingsPage />} />
             <Route path="/usage" element={<ReportsPage />} />
-            <Route path="/keys" element={<ApisPage />} />
+            <Route path="/keys" element={<KeysPage />} />
           </Route>
           <Route element={<LegacyLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
