@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
-import random
 import ssl
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, cast
@@ -52,18 +50,6 @@ _WEBSOCKET_HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 _RESPONSES_WEBSOCKET_BETA_HEADER = "responses_websockets=2026-02-06"
-
-logger = logging.getLogger(__name__)
-
-# The upstream edge answers a burst of websocket handshakes from one address with
-# a bare 403 (no JSON error body), on every account at once: 127 of 200 parallel
-# Codex requests on 2026-09-25, and all of a follow-up burst for about a minute.
-# It is a rate limit on new connections, so the handshake is retried with
-# jittered exponential backoff (about 30 s in all) instead of failing the agent.
-# A 403 with an OpenAI error body is about the account and is never retried.
-_EDGE_REJECT_MAX_ATTEMPTS = 6
-_EDGE_REJECT_FIRST_BACKOFF_SECONDS = 1.0
-_EDGE_REJECT_MAX_BACKOFF_SECONDS = 16.0
 
 
 @dataclass(slots=True)
@@ -459,7 +445,7 @@ async def connect_responses_websocket(
         # in the same stall dumps. Share one context per process.
         connect_kwargs["ssl"] = _shared_upstream_ssl_context()
     try:
-        response = await _websocket_connect_through_edge_rejections(url, connect_kwargs)
+        response = await websocket_connect(url, **connect_kwargs)
     except asyncio.TimeoutError as exc:
         raise ProxyResponseError(
             502,
@@ -497,31 +483,6 @@ async def connect_responses_websocket(
         account_id=account_id,
         direct_egress=allow_direct_egress,
     )
-
-
-async def _websocket_connect_through_edge_rejections(url: str, connect_kwargs: dict[str, Any]) -> ClientConnection:
-    attempt = 1
-    while True:
-        try:
-            return await websocket_connect(url, **connect_kwargs)
-        except InvalidStatus as exc:
-            response = exc.response
-            if (
-                response.status_code != 403
-                or _try_parse_handshake_error_payload(response.headers, response.body) is not None
-                or attempt >= _EDGE_REJECT_MAX_ATTEMPTS
-            ):
-                raise
-            ceiling = min(_EDGE_REJECT_MAX_BACKOFF_SECONDS, _EDGE_REJECT_FIRST_BACKOFF_SECONDS * 2 ** (attempt - 1))
-            delay = random.uniform(ceiling / 2, ceiling)
-            logger.warning(
-                "upstream_websocket_edge_rejected attempt=%d retry_in=%.2fs cf_ray=%s",
-                attempt,
-                delay,
-                "present" if response.headers.get("cf-ray") else "absent",
-            )
-            await asyncio.sleep(delay)
-            attempt += 1
 
 
 def _close_code_from_exception(exc: ConnectionClosedOK | ConnectionClosedError) -> int | None:

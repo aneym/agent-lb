@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aiohttp import web
 
 import app.core.clients.http as http_module
 
@@ -282,47 +281,3 @@ async def test_close_http_client_force_closes_active_current_and_retired_session
     first_retry_client.close.assert_awaited_once()
     second_websocket_session.close.assert_awaited_once()
     second_retry_client.close.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_shared_session_holds_hundreds_of_streams_open_to_one_host() -> None:
-    # Every Anthropic stream goes to one host through this session. A per-host
-    # pool cap makes stream N+1 wait for a slot, and the pool wait counts
-    # against the 8 s connect timeout, so parallel agents past the cap fail.
-    concurrent = 200
-    arrived = 0
-    all_arrived = asyncio.Event()
-
-    async def hold_until_everyone_is_connected(request: web.Request) -> web.Response:
-        nonlocal arrived
-        arrived += 1
-        if arrived == concurrent:
-            all_arrived.set()
-        await all_arrived.wait()
-        return web.Response(text="ok")
-
-    server_app = web.Application()
-    server_app.router.add_get("/stream", hold_until_everyone_is_connected)
-    runner = web.AppRunner(server_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]
-
-    await http_module.close_http_client()
-    await http_module.init_http_client()
-    try:
-        async with http_module.lease_http_session() as session:
-
-            async def one_stream() -> str:
-                async with session.get(f"http://127.0.0.1:{port}/stream") as response:
-                    return await response.text()
-
-            results = await asyncio.wait_for(
-                asyncio.gather(*(one_stream() for _ in range(concurrent))),
-                timeout=10,
-            )
-        assert results == ["ok"] * concurrent
-    finally:
-        await http_module.close_http_client()
-        await runner.cleanup()

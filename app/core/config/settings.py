@@ -443,13 +443,9 @@ class Settings(BaseSettings):
     # Shutdown drain
     shutdown_drain_timeout_seconds: int = 30
 
-    # HTTP connector limits. Every Anthropic and OpenAI HTTP stream shares one
-    # pool, and all of a provider's streams go to one host, so a per-host cap is
-    # a cap on parallel agents: the pool wait counts against the connect timeout.
-    # The total limit stays as a file-descriptor guard (the launchd soft limit
-    # is 4096 and inbound sockets need their share); 0 per host means no cap.
-    http_connector_limit: int = 1024
-    http_connector_limit_per_host: int = 0
+    # HTTP connector limits
+    http_connector_limit: int = 100
+    http_connector_limit_per_host: int = 50
 
     @field_validator("data_dir", mode="before")
     @classmethod
