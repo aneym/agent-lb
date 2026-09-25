@@ -16,6 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Re-runnable: a legacy revision id remaps to an older ancestor and replays this.
+    if sa.inspect(op.get_bind()).has_table("routing_policy_versions"):
+        return
     op.create_table(
         "routing_policy_versions",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),

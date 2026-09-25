@@ -10,6 +10,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Re-runnable: a legacy revision id remaps to an older ancestor and replays this.
+    if sa.inspect(op.get_bind()).has_table("reset_credit_attempts"):
+        return
     op.create_table(
         "reset_credit_attempts",
         sa.Column("id", sa.String(36), primary_key=True),
