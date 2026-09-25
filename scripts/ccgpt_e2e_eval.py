@@ -5,10 +5,13 @@ Runs real headless Claude Code sessions through `claude-lb-launch` (the same MIT
 path interactive `cc` sessions use) and checks that each one finishes a tool-using
 task instead of hanging:
 
-- `sol` / `luna`: a session on gpt-6-sol-low / gpt-6-luna-low runs Bash, then Read,
-  then replies with a token only the file contains.
+- `sol` / `luna`: a session on sol-latest-low / luna-latest-low (resolved by the LB
+  to the newest served gpt-*-sol / gpt-*-luna) runs Bash, then Read, then replies
+  with a token only the file contains.
 - `subagent`: a Claude session delegates the same task to a subagent whose
-  definition pins model gpt-6-sol-low.
+  definition pins model sol-latest-low.
+- `ccgpt`: the same task in the launcher's fail-closed GPT mode
+  (CLAUDE_LB_CODEX_MODE=1), which sends every turn through /v1/ccgpt/messages.
 
 A case passes when the session exits 0 within its timeout, the final reply holds
 the token, and the transcript that ran on GPT shows completed Bash and Read tool
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import subprocess
 import sys
@@ -42,8 +46,8 @@ TASK = (
     "3) Reply with exactly: DONE <the token from the file>."
 )
 CASES = {
-    "sol": {"model": "gpt-6-sol-low", "prompt": TASK},
-    "luna": {"model": "gpt-6-luna-low", "prompt": TASK},
+    "sol": {"model": "sol-latest-low", "prompt": TASK},
+    "luna": {"model": "luna-latest-low", "prompt": TASK},
     "subagent": {
         "model": "sonnet",
         "prompt": (
@@ -51,6 +55,7 @@ CASES = {
             "Then reply with exactly the subagent's final line and nothing else."
         ),
     },
+    "ccgpt": {"model": "sol-latest", "prompt": TASK, "env": {"CLAUDE_LB_CODEX_MODE": "1"}},
 }
 
 
@@ -101,6 +106,7 @@ def run_case(name: str, timeout: int) -> dict:
             text=True,
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            env={**os.environ, **case.get("env", {})},
         )
     except subprocess.TimeoutExpired:
         return {"case": name, "pass": False, "seconds": timeout, "failures": [f"hung: no exit within {timeout}s"]}
@@ -153,7 +159,7 @@ def main() -> int:
     agents = WORKDIR / ".claude" / "agents"
     agents.mkdir(parents=True, exist_ok=True)
     (agents / f"{PROBE_AGENT}.md").write_text(
-        f"---\nname: {PROBE_AGENT}\ndescription: ccgpt e2e probe subagent\nmodel: gpt-6-sol-low\n"
+        f"---\nname: {PROBE_AGENT}\ndescription: ccgpt e2e probe subagent\nmodel: sol-latest-low\n"
         "tools: Bash, Read\n---\n\nFollow the task exactly.\n"
     )
     results = [run_case(name, args.timeout) for name in args.case or list(CASES)]

@@ -1,0 +1,4 @@
+- [x] Resolve bridge model names from the model registry (`resolve_ccgpt_model`).
+- [x] Route `/v1/ccgpt/messages` by the resolved model; refuse unserved GPT names.
+- [x] Launcher gate admits GPT names and defaults to `sol-latest`.
+- [x] Regression tests fail on the pre-change code; e2e eval passes after deploy.

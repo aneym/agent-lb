@@ -52,6 +52,7 @@ import http.server
 import json
 import math
 import os
+import re
 import resource
 import select
 import shutil
@@ -71,7 +72,11 @@ from pathlib import Path
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
-CCGPT_MODEL = "gpt-6-sol"
+CCGPT_MODEL = "sol-latest"
+# agent-lb resolves GPT names against its served model list (any gpt-* slug or a
+# family alias such as sol-latest, optionally -low/-medium/-high/-xhigh) and
+# refuses unserved ones, so this gate only has to keep Claude names out.
+CCGPT_MODEL_NAME = re.compile(r"^(?:gpt-[\w.-]+|[a-z]+-latest(?:-(?:low|medium|high|xhigh))?)$")
 DEFAULT_CLAUDE_MODEL = "opus[1m]"
 DEFAULT_CLAUDE_EFFORT = "high"
 HOP_BY_HOP_HEADERS = {
@@ -1707,11 +1712,9 @@ def _ccgpt_upstream_path(path: str, body: bytes | None = None) -> str:
     if normalized == "/v1/messages/count_tokens":
         return f"/v1/ccgpt/messages/count_tokens{trailing_slash}{suffix}"
     requested = _ccgpt_request_model(body)
-    if requested != CCGPT_MODEL:
+    if not requested or not CCGPT_MODEL_NAME.match(requested):
         label = requested or "missing model"
-        raise CcgptModelViolation(
-            f"CCGPT only permits its canonical GPT model; rejected Messages request for {label}"
-        )
+        raise CcgptModelViolation(f"CCGPT only permits GPT models; rejected Messages request for {label}")
     return f"/v1/ccgpt/messages{trailing_slash}{suffix}"
 
 

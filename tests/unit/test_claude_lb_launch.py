@@ -77,7 +77,7 @@ def test_ccgpt_build_command_locks_model_effort_and_bypass_perms() -> None:
     assert command == [
         "claude",
         "--model",
-        "gpt-6-sol",
+        "sol-latest",
         "--effort",
         "high",
         "--permission-mode",
@@ -97,7 +97,7 @@ def test_ccgpt_explicit_permission_mode_wins_over_bypass_default(monkeypatch) ->
     assert command == [
         "claude",
         "--model",
-        "gpt-6-sol",
+        "sol-latest",
         "--effort",
         "high",
         "--permission-mode",
@@ -123,6 +123,10 @@ def test_ccgpt_proxy_rewrites_gpt_messages_and_token_count_but_rejects_claude() 
     gpt_body = b'{"model":"gpt-6-sol"}'
     claude_body = b'{"model":"claude-opus-4-8"}'
     assert launcher._ccgpt_upstream_path("/v1/messages", gpt_body) == "/v1/ccgpt/messages"
+    # Other GPT names pass the gate; agent-lb resolves them against its served models.
+    for name in ("gpt-6-luna-low", "sol-latest", "luna-latest-xhigh"):
+        body = b'{"model":"' + name.encode() + b'"}'
+        assert launcher._ccgpt_upstream_path("/v1/messages", body) == "/v1/ccgpt/messages"
     with pytest.raises(launcher.CcgptModelViolation, match="rejected Messages request for claude-opus-4-8"):
         launcher._ccgpt_upstream_path("/v1/messages", claude_body)
     assert launcher._ccgpt_upstream_path("/v1/messages/count_tokens", claude_body) == "/v1/ccgpt/messages/count_tokens"

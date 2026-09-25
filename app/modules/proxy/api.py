@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timezone
@@ -772,8 +773,9 @@ async def v1_messages(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    if payload.model in CCGPT_MODEL_ALIASES:
-        locked_model, alias_effort = CCGPT_MODEL_ALIASES[payload.model]
+    ccgpt_model = resolve_ccgpt_model(payload.model)
+    if ccgpt_model is not None:
+        locked_model, alias_effort = ccgpt_model
         return await _ccgpt_messages_response(
             request,
             payload,
@@ -846,9 +848,9 @@ async def v1_messages_count_tokens(
     model = payload.get("model")
     if not isinstance(model, str) or not model.strip():
         return _anthropic_error_response(400, "invalid_request_error", "model is required")
-    if model in CCGPT_MODEL_ALIASES:
-        locked_model, _ = CCGPT_MODEL_ALIASES[model]
-        validate_model_access(api_key, locked_model)
+    ccgpt_model = resolve_ccgpt_model(model)
+    if ccgpt_model is not None:
+        validate_model_access(api_key, ccgpt_model[0])
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
     resolved_request = await context.service.resolve_count_tokens_request(payload, model=model)
     payload = dict(resolved_request.body)
@@ -870,20 +872,40 @@ async def v1_messages_count_tokens(
     return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
 
 
-# Worker model aliases accepted directly on /v1/messages. Each maps to its
-# locked upstream model and a pinned reasoning effort; None defers to the
-# request's own output_config.effort (bridge default: high).
-CCGPT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
-    alias: (model, effort)
-    for model in (CCGPT_MODEL, CCGPT_WORKER_MODEL)
-    for alias, effort in (
-        (model, None),
-        (f"{model}-low", "low"),
-        (f"{model}-medium", "medium"),
-        (f"{model}-high", "high"),
-        (f"{model}-xhigh", "xhigh"),
-    )
-}
+# GPT model names accepted directly on /v1/messages, resolved against the served
+# model list so a new gpt-* release routes with no code change. A name is a served
+# gpt-* slug or a family alias (sol-latest: the newest served gpt-<version>-sol),
+# optionally suffixed with a pinned reasoning effort; None defers to the request's
+# own output_config.effort (bridge default: high).
+CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
+CCGPT_LATEST_FAMILIES = ("sol", "luna")
+
+
+def resolve_ccgpt_model(name: str | None) -> tuple[str, str | None] | None:
+    if not name:
+        return None
+    served = {slug for slug in get_model_registry().get_models_with_fallback() if slug.startswith("gpt-")}
+    # The bridge's own models stay routable while the registry is still bootstrapping.
+    served.update((CCGPT_MODEL, CCGPT_WORKER_MODEL))
+    if name in served:
+        return name, None
+    base, _, effort = name.rpartition("-")
+    if effort not in CCGPT_EFFORTS:
+        base, effort = name, ""
+    if base in served:
+        return base, effort or None
+    family = base.removesuffix("-latest")
+    if family == base or family not in CCGPT_LATEST_FAMILIES:
+        return None
+    pattern = re.compile(rf"^gpt-(\d+(?:\.\d+)*)-{re.escape(family)}$")
+    versions = [
+        (tuple(int(part) for part in match.group(1).split(".")), slug)
+        for slug in served
+        if (match := pattern.match(slug))
+    ]
+    if not versions:
+        return None
+    return max(versions)[1], effort or None
 
 
 @v1_router.post("/ccgpt/messages", response_model=None)
@@ -893,8 +915,16 @@ async def v1_ccgpt_messages(
     context: ProxyContext = Depends(get_proxy_context),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    """Run Claude Code's Messages protocol through the locked Codex Sol profile."""
-    return await _ccgpt_messages_response(request, payload, context, api_key)
+    """Run Claude Code's Messages protocol through the bridge; Claude names lock to Codex Sol."""
+    resolved = resolve_ccgpt_model(payload.model)
+    if resolved is None and not payload.model.startswith("claude-"):
+        return _anthropic_error_response(
+            400, "invalid_request_error", f"model {payload.model} is not a served GPT model"
+        )
+    locked_model, alias_effort = resolved or (CCGPT_MODEL, None)
+    return await _ccgpt_messages_response(
+        request, payload, context, api_key, alias_effort=alias_effort, locked_model=locked_model
+    )
 
 
 async def _ccgpt_messages_response(

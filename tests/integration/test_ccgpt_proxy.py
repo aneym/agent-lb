@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi.responses import StreamingResponse
@@ -368,6 +369,73 @@ async def test_messages_route_serves_worker_alias_via_bridge(
     assert captured["kwargs"]["locked_model"] == expected_model
     assert captured["kwargs"]["locked_reasoning_effort"] == expected_effort
     assert captured["kwargs"]["locked_service_tier"] == "priority"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "model", "expected_model", "expected_effort"),
+    [
+        ("/v1/messages", "sol-latest", "gpt-7-sol", None),
+        ("/v1/messages", "sol-latest-low", "gpt-7-sol", "low"),
+        ("/v1/messages", "luna-latest-xhigh", CCGPT_WORKER_MODEL, "xhigh"),
+        ("/v1/messages", "gpt-7-sol-high", "gpt-7-sol", "high"),
+        ("/v1/ccgpt/messages", "gpt-6-luna-low", CCGPT_WORKER_MODEL, "low"),
+    ],
+)
+async def test_gpt_model_names_resolve_from_the_served_model_list(
+    async_client,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    model: str,
+    expected_model: str,
+    expected_effort: str | None,
+) -> None:
+    # gpt-7-sol stands in for a release the code has never heard of.
+    served = dict.fromkeys(["gpt-5.6-sol", "gpt-6-sol", "gpt-7-sol", "gpt-6-luna", "codex-auto-review"])
+    monkeypatch.setattr(
+        proxy_api, "get_model_registry", lambda: SimpleNamespace(get_models_with_fallback=lambda: served)
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        captured["kwargs"] = kwargs
+
+        async def source():
+            yield 'data: {"type":"response.completed","response":{"usage":{}}}\n\n'
+
+        return StreamingResponse(source(), media_type="text/event-stream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    response = await async_client.post(
+        path,
+        json={
+            "model": model,
+            "max_tokens": 512,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["kwargs"]["locked_model"] == expected_model
+    assert captured["kwargs"]["locked_reasoning_effort"] == (expected_effort or "high")
+
+
+@pytest.mark.asyncio
+async def test_ccgpt_route_refuses_an_unserved_gpt_name_instead_of_running_sol(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_stream(*args, **kwargs):
+        raise AssertionError("an unserved model must not reach upstream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+    response = await async_client.post(
+        "/v1/ccgpt/messages",
+        json={"model": "gpt-9-typo-low", "max_tokens": 512, "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 400
+    assert "gpt-9-typo-low" in response.json()["error"]["message"]
 
 
 @pytest.mark.asyncio
