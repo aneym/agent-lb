@@ -75,6 +75,28 @@ def test_gpt_6_astra_long_context_surcharge():
     assert _cost_for("gpt-6-astra", usage) == pytest.approx(6.0 + 7.5)
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        # 50k fresh input + 10k cached + 20k output at OpenAI's published list price.
+        ("gpt-6-sol", 50_000 * 2.0e-6 + 10_000 * 0.2e-6 + 20_000 * 10.0e-6),
+        ("gpt-6-sol-low", 50_000 * 2.0e-6 + 10_000 * 0.2e-6 + 20_000 * 10.0e-6),
+        ("gpt-6-luna", 50_000 * 0.1e-6 + 10_000 * 0.01e-6 + 20_000 * 0.5e-6),
+        ("gpt-6-luna-xhigh", 50_000 * 0.1e-6 + 10_000 * 0.01e-6 + 20_000 * 0.5e-6),
+        # Unpublished variants stay unpriced rather than billed at Sol rates.
+        ("gpt-6-sol-pro", None),
+        ("gpt-6-terra", None),
+    ],
+)
+def test_gpt_6_sol_and_luna_carry_subscription_equivalent_price(model, expected):
+    usage = UsageTokens(input_tokens=60_000, output_tokens=20_000, cached_input_tokens=10_000)
+    cost = _cost_for(model, usage)
+    if expected is None:
+        assert cost is None
+    else:
+        assert cost == pytest.approx(expected)
+
+
 def test_get_pricing_for_model_gpt_5_3_alias():
     result = get_pricing_for_model("gpt-5.3-codex-2026", DEFAULT_PRICING_MODELS, DEFAULT_MODEL_ALIASES)
     assert result is not None

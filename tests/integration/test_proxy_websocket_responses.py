@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import app.modules.proxy.api as proxy_api_module
 import app.modules.proxy.service as proxy_module
+from app.core.utils.client_session import get_client_session_id
 
 pytestmark = pytest.mark.integration
 
@@ -631,7 +632,8 @@ def test_backend_responses_websocket_proxies_upstream_and_persists_log(app_insta
         return SimpleNamespace(id="acct_ws_proxy"), fake_upstream
 
     async def fake_write_request_log(self, **kwargs):
-        log_calls.append(kwargs)
+        # add_log reads the client's own session id from context; it must reach the websocket log call.
+        log_calls.append({**kwargs, "client_session_id": get_client_session_id()})
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
@@ -698,6 +700,7 @@ def test_backend_responses_websocket_proxies_upstream_and_persists_log(app_insta
     assert log["status"] == "success"
     assert log["input_tokens"] == 3
     assert log["output_tokens"] == 5
+    assert log["client_session_id"] == "thread-ws-1"
 
 
 def test_backend_responses_websocket_keeps_same_response_distinct_tool_call_ids(

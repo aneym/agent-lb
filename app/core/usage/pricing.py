@@ -107,6 +107,31 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
         long_context_cached_input_per_1m=2.0,
         long_context_output_per_1m=75.0,
     ),
+    # GPT-6 Sol / Luna: agent-lb serves these through ChatGPT subscriptions, so
+    # there is no per-token bill. These are OpenAI's published API list prices
+    # (developers.openai.com/api/docs/models/gpt-6-sol and gpt-6-luna, read
+    # 2026-09-25), recorded as the subscription-equivalent cost so arms and
+    # members can be compared in dollars. Cached input is 10% of input; >272k
+    # input bills the whole request at 2x input / 1.5x output. Priority rates are
+    # unpublished, so priority traffic falls back to standard rates.
+    "gpt-6-sol": ModelPrice(
+        input_per_1m=2.0,
+        cached_input_per_1m=0.2,
+        output_per_1m=10.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=4.0,
+        long_context_cached_input_per_1m=0.4,
+        long_context_output_per_1m=15.0,
+    ),
+    "gpt-6-luna": ModelPrice(
+        input_per_1m=0.1,
+        cached_input_per_1m=0.01,
+        output_per_1m=0.5,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=0.2,
+        long_context_cached_input_per_1m=0.02,
+        long_context_output_per_1m=0.75,
+    ),
     # GPT-5.6 tier rates as of the 2026-07-30 price cut (Terra -20%, Luna -80%,
     # Sol unchanged); cache reads are 90% off input. Long-context (>272k input)
     # bills the whole request at 2x input / 1.5x output. Priority rates are
@@ -332,6 +357,13 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     # base model's rates. No bare "gpt-6*" alias: only Astra is published, and a
     # guessed catch-all would silently misprice a future tier.
     "gpt-6-astra*": "gpt-6-astra",
+    # GPT-6 Sol / Luna: only the effort suffixes share the base price. No
+    # "gpt-6-sol*" catch-all, which would bill a pro or 6.1 variant at Sol rates.
+    **{
+        f"gpt-6-{tier}-{suffix}": f"gpt-6-{tier}"
+        for tier in ("sol", "luna")
+        for suffix in ("minimal", "low", "medium", "high", "xhigh", "fast")
+    },
     # Bare "gpt-5.6" is OpenAI's alias for Sol; the tier patterns win by length.
     "gpt-5.6-sol*": "gpt-5.6-sol",
     "gpt-5.6-terra*": "gpt-5.6-terra",
