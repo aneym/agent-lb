@@ -279,7 +279,7 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 |---|-----------|--------|
 | 1 | Orient, plan (this section) | done 2026-09-25 |
 | 2 | One router: `route menu` (menu builder with live headroom and resets), OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | done 2026-09-25 (`jev pick` added in the jev repo, e6f17bf) |
-| 3 | Harbor gate (D6): container -> agent-lb auth for claude-code and codex, smoke trials | in progress |
+| 3 | Harbor gate (D6): container -> agent-lb auth for claude-code and codex, smoke trials | done 2026-09-25 |
 | 4 | `of-work` v0: 10 dev tasks from real PRs as Harbor tasks + sealed held-out manifest | next |
 | 5 | Eval v0: arms A1, A2, A4 on dev, k=3, CIs, receipts | |
 | 6 | A3 (cc + OF routing) as a Harbor agent; Jev sub-arm with re-check/abstain/fallback; policy replay | |
@@ -290,6 +290,23 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
 
 - 2026-09-25: plan written. Keel/Jev digest at `~/.agent-lb/of/keel-jev-digest.md`.
 - 2026-09-25: eval moved onto Harbor (D5-D9) at Alex's request via the fixer.
+- 2026-09-25: M3 Harbor gate passed (`~/.agent-lb/of/harbor-feasibility.md`). OrbStack
+  containers reach agent-lb at `host.docker.internal:2455` (loopback-forwarded, so agent-lb
+  treats them as local and keyless; attribution is by sessionId via /api/request-logs).
+  claude-code/claude-sonnet-5 reward 1.0, 69,967 in / 34,904 cache-read, one Max account,
+  second request cache-read (LB cost $0.088 -> $0.0076); codex/gpt-6-luna reward 1.0 on one
+  Pro account. Flags: `--ae ANTHROPIC_BASE_URL=... --ae ANTHROPIC_AUTH_TOKEN=...` /
+  `--ae OPENAI_BASE_URL=.../v1`; full model ids. Agent install is 3-6 min of each trial, so
+  CLIs get pre-baked into images and install-skipping agent subclasses before any sweep.
+  The `of-harbor` key (7d6b0004) exists for non-local paths (tailnet, apple-container);
+  lb-harbor-access (fixer) owns it. Old of-wt-harbor adapter is dead; A3 subclasses the
+  built-in ClaudeCode agent. Public dataset: terminal-bench@2.0 (89 tasks; published
+  Claude Code and Codex numbers exist), terminal-bench-sample@2.0 (10) for iteration.
+  cursor-cli and devin cannot route through agent-lb and need CURSOR_API_KEY/DEVIN_API_KEY;
+  grok-build can run Claude/GPT through agent-lb, native Grok needs an xAI key. These
+  keys are requested from Alex only when A5/A6 are next.
+- 2026-09-25: in-session GPT seats `gpt-explorer` (gpt-6-luna) and `gpt-implementer`
+  (gpt-6-sol) appeared; they join Q1 as seats.
 - 2026-09-25: fixer landed the GPT bridge fix (444b5a66, ccgpt e2e PASS: Sol/Luna 13 s,
   Sonnet driver + gpt-6-sol subagent 15 s). GPT-inside-Claude-Code is unblocked: A3 gains
   in-session GPT seats (Agent/`agent()` with `model: gpt-6-*`) beside the codex-sol
