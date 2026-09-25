@@ -43,7 +43,12 @@ def test_implementation_is_cheap_and_audited_by_the_other_vendor() -> None:
         assert 'route resolve sol-latest)"' in (agents / f"{name}.md").read_text()
     chain = table["classes"]["implement"]["chain"]
     assert [entry["model"] for entry in chain[:2]] == ["opus-latest", "sol-latest"]
-    assert [entry["model"] for entry in table["classes"]["mechanical"]["chain"]] == ["grok-latest"]
+    # Mechanical work runs on Cursor's Grok first, Devin's free SWE model when Cursor is out.
+    mechanical = table["classes"]["mechanical"]["chain"]
+    assert [(entry["seat"], entry["model"]) for entry in mechanical] == [
+        ("cursor-seat", "grok-latest"),
+        ("devin-seat", "swe-latest"),
+    ]
     assert chain[0]["min_pace"] == table["policy"]["pace"]["behind_lt"]
     audit = table["classes"]["implement"]["audit"]["by_author_vendor"]
     assert audit["anthropic"]["model"] == "sol-latest"
