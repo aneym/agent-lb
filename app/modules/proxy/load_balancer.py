@@ -2112,10 +2112,7 @@ def _state_from_account(
     )
     effective_runtime_reset = db_reset_at or runtime.reset_at
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at
-    if (
-        account.status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
-        and effective_blocked_at is not None
-    ):
+    if status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED) and effective_blocked_at is not None:
         legacy_retry_at = effective_blocked_at + 60.0
         if effective_runtime_reset is None or effective_runtime_reset > effective_blocked_at + 3600.0:
             effective_runtime_reset = legacy_retry_at
@@ -2252,7 +2249,10 @@ def background_recovery_state_from_account(
             primary_entry=primary_entry,
             long_window_entry=secondary_entry,
         )
-        if blocked_at is not None and reset_at is not None and reset_at <= time.time():
+        # Compare against the computed state, not the raw persisted reset: the
+        # bounded retry can expire before a legacy long reset does, and pre-block
+        # usage is still no evidence that the persisted status recovered.
+        if blocked_at is not None and reset_at is not None and state.status == AccountStatus.ACTIVE:
             if not _usage_entry_recorded_after_block(freshness_entry, blocked_at):
                 return replace(
                     state,
