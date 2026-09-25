@@ -403,6 +403,13 @@ def main() -> int:
             seat_path = args.home / ".agent-lb" / "bin" / "seat"
             if read_text(seat_path) != seat_source.read_text():
                 changes[seat_path] = seat_source.read_text()
+        # agent-lb's routing-policy view reads the Open Factory decider from here,
+        # because the service runtime has no clients/ checkout.
+        decider_source = source.parent.parent / "clients" / "open-factory" / "open_factory" / "decider.json"
+        if decider_source.is_file():
+            decider_path = args.home / ROUTING_TABLE.with_name("decider.json")
+            if read_text(decider_path) != decider_source.read_text():
+                changes[decider_path] = decider_source.read_text()
         # The canonical path must hold exactly what was installed, so a symlink into
         # a checkout (whose working tree can drift) is replaced by a real copy.
         replace_policy_link = policy_dir.is_symlink()
