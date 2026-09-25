@@ -71,7 +71,7 @@ const SummarySchema = z.object({
   ),
 });
 export type ReceiptSummary = z.infer<typeof SummarySchema>;
-export function useUsageSummary(filters: string, groupBy: string, bucket: string) {
+export function useUsageSummary(filters: string, groupBy: string, bucket: string, enabled = true) {
   const query = new URLSearchParams(filters);
   query.set("group_by", groupBy);
   query.set("bucket", bucket);
@@ -79,6 +79,7 @@ export function useUsageSummary(filters: string, groupBy: string, bucket: string
   return useQuery({
     queryKey: ["usage", "summary", url],
     queryFn: () => get(url, SummarySchema),
+    enabled,
     refetchInterval: 30_000,
   });
 }
