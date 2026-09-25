@@ -55,6 +55,11 @@ async def validate_proxy_api_key(
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
 ) -> ApiKeyData | None:
     authorization = None if credentials is None else f"Bearer {credentials.credentials}"
+    if authorization is None:
+        # Anthropic-native clients (Claude Code with ANTHROPIC_API_KEY) send the key as x-api-key.
+        x_api_key = (request.headers.get("x-api-key") or "").strip()
+        if x_api_key:
+            authorization = f"Bearer {x_api_key}"
     return await validate_proxy_api_key_authorization(authorization, request=request)
 
 
@@ -66,7 +71,12 @@ async def validate_proxy_api_key_authorization(
     settings = await get_settings_cache().get()
     if not settings.api_key_auth_enabled:
         if request is None or is_local_request(request) or _is_proxy_unauthenticated_client_allowed(request):
-            # Trusted clients stay keyless; any bearer they send is ignored.
+            # Trusted clients stay keyless. An agent-lb key they send anyway is validated, so
+            # its traffic is attributed to the key and a revoked key stops working; any other
+            # bearer is ignored.
+            trusted_token = _extract_bearer_token(authorization)
+            if trusted_token and trusted_token.startswith(API_KEY_TOKEN_PREFIX):
+                return await _validate_api_key_token(trusted_token)
             return None
         if getattr(settings, "team_mode_enabled", False):
             untrusted_token = _extract_bearer_token(authorization)

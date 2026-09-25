@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from starlette.requests import HTTPConnection
+from starlette.requests import HTTPConnection, Request
 
 import app.core.config.settings as settings_module
 import app.core.request_locality as request_locality
@@ -139,6 +139,43 @@ async def test_trusted_client_with_junk_bearer_stays_keyless(monkeypatch):
 
     assert result is None
     assert seen == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("header", ["authorization", "x-api-key"])
+async def test_trusted_client_with_agent_lb_key_is_attributed(monkeypatch, header):
+    """Local harnesses (Harbor containers via host.docker.internal) pass a key for per-key attribution."""
+    _patch_settings(monkeypatch, team_mode_enabled=True)
+    _patch_client_trust(monkeypatch, trusted=True)
+    seen = _patch_token_validation(monkeypatch)
+    value = "Bearer sk-clb-harbor-key" if header == "authorization" else "sk-clb-harbor-key"
+    request = Request(_make_connection("127.0.0.1", headers=[(header, value)]).scope)
+
+    result = await auth_dependencies.validate_proxy_api_key(request, await _bearer_credentials(request))
+
+    assert result is not None and result.id == "key-1"
+    assert seen == ["sk-clb-harbor-key"]
+
+
+@pytest.mark.asyncio
+async def test_trusted_client_with_revoked_agent_lb_key_is_rejected(monkeypatch):
+    _patch_settings(monkeypatch, team_mode_enabled=True)
+    _patch_client_trust(monkeypatch, trusted=True)
+
+    async def _revoked(_token: str) -> ApiKeyData:
+        raise ProxyAuthError("Invalid API key")
+
+    monkeypatch.setattr(auth_dependencies, "_validate_api_key_token", _revoked)
+
+    with pytest.raises(ProxyAuthError, match="Invalid API key"):
+        await auth_dependencies.validate_proxy_api_key_authorization(
+            "Bearer sk-clb-revoked-key",
+            request=_make_connection("127.0.0.1"),
+        )
+
+
+async def _bearer_credentials(request: Request):
+    return await auth_dependencies._bearer(request)
 
 
 @pytest.mark.asyncio
