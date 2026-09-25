@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import cast
+from typing import TypeVar, cast
 
 from pydantic import ValidationError
 
@@ -33,6 +34,7 @@ from app.core.providers import (
 from app.core.providers.openrouter import OPENROUTER_PROVIDER_NAME
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
+from app.db.session import get_background_session
 from app.modules.accounts import probes, reset_credit_cache
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.credits import (
@@ -42,6 +44,7 @@ from app.modules.accounts.credits import (
     window_from_parts,
 )
 from app.modules.accounts.mappers import build_account_summaries, build_account_usage_trends
+from app.modules.accounts.read_cache import StaleWhileRevalidate
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.reset_credit_attempts import ResetCreditAttemptsRepository
 from app.modules.accounts.reset_credit_recovery import refresh_standard_capacity
@@ -99,20 +102,22 @@ PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
 PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
 
-# Short-TTL cache for the expensive per-account request-usage aggregation (a dedup
-# window over the full request_logs history, ~2s on a large DB). request-usage is a
-# cumulative, non-real-time token/cost tally, so brief staleness is acceptable; only
-# the dashboard (GET /api/accounts?fresh=1) computes it, and this keeps repeated
-# dashboard polls from re-running the scan. Keyed by the account-id set.
-_REQUEST_USAGE_CACHE_TTL_SECONDS = 20.0
-_request_usage_cache: dict[frozenset[str], tuple[float, dict[str, AccountRequestUsage]]] = {}
-
-# Short-TTL cache for the per-account additional-quota windows. Assembling these is
-# ~14 serial DB round-trips (a single AsyncSession can't run them concurrently), and
-# the data is background-refreshed by the usage scheduler, so a few seconds of
-# staleness is fine and keeps repeated cc/menubar startup calls cheap.
+# Stale-while-revalidate caches for the two expensive parts of GET /api/accounts
+# (see read_cache.py): a read never waits on a recompute once a value exists.
+# request-usage is a cumulative token/cost tally over all of request_logs (~2-3s on
+# the live table) that only the dashboard asks for (?fresh=1). The additional-quota
+# windows are ~28 serial DB round-trips that the menubar, cc banner and pools read;
+# AccountsCacheWarmer keeps them fresh between reads and warms both at startup.
+_REQUEST_USAGE_CACHE_TTL_SECONDS = 60.0
+_request_usage_cache: StaleWhileRevalidate[dict[str, AccountRequestUsage]] = StaleWhileRevalidate(
+    "request_usage", ttl_seconds=_REQUEST_USAGE_CACHE_TTL_SECONDS
+)
 _ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS = 12.0
-_additional_quotas_cache: dict[frozenset[str], tuple[float, dict[str, list[AccountAdditionalQuota]]]] = {}
+_additional_quotas_cache: StaleWhileRevalidate[dict[str, list[AccountAdditionalQuota]]] = StaleWhileRevalidate(
+    "additional_quotas", ttl_seconds=_ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS
+)
+
+_T = TypeVar("_T")
 
 # Mirrored in app/modules/proxy/anthropic_service.py and app/modules/usage/updater.py
 # — all three must agree on the quota_key/window identifying Anthropic's
@@ -125,6 +130,18 @@ def clear_account_caches() -> None:
     """Clear the in-process accounts read caches (used by tests for isolation)."""
     _request_usage_cache.clear()
     _additional_quotas_cache.clear()
+
+
+async def with_background_accounts_service(load: Callable[[AccountsService], Awaitable[_T]]) -> _T:
+    """Run a background cache refresh on its own session; the request's is closed by then."""
+    async with get_background_session() as session:
+        service = AccountsService(
+            AccountsRepository(session),
+            UsageRepository(session),
+            AdditionalUsageRepository(session),
+            LimitWarmupRepository(session),
+        )
+        return await load(service)
 
 
 class InvalidAuthJsonError(Exception):
@@ -202,10 +219,9 @@ class AccountsService:
         last_primed_by_account = (
             await self._limit_warmup_repo.last_primed_by_account(account_ids) if self._limit_warmup_repo else {}
         )
-        # request-usage is an expensive dedup aggregation over the full request_logs
-        # history and is consumed only by the dashboard token/cost columns — not the cc
-        # banner or menubar. Keep it off the hot path: compute (cached) only when asked
-        # for via GET /api/accounts?fresh=1.
+        # request-usage is an aggregation over the full request_logs history consumed
+        # only by the dashboard token/cost columns, not the cc banner or menubar.
+        # Compute (cached) only when asked for via GET /api/accounts?fresh=1.
         request_usage_by_account: dict[str, AccountRequestUsage] = {}
         if include_request_usage:
             request_usage_by_account = await self._request_usage_by_account(account_ids)
@@ -238,20 +254,30 @@ class AccountsService:
             account_ids=account_ids,
         )
 
-    async def _request_usage_by_account(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
-        """Per-account cumulative request-usage, short-TTL cached.
-
-        The underlying query is a dedup window over the full request_logs history
-        (~2s on a large DB). It backs the dashboard token/cost columns only, so a few
-        seconds of staleness is fine and keeps repeated dashboard polls cheap.
-        """
+    async def warm_read_caches(self, *, include_request_usage: bool) -> None:
+        """Reload the cached parts of list_accounts now (startup warm, warmer loop)."""
+        account_ids = [account.id for account in await self._repo.list_accounts()]
+        if not account_ids:
+            return
         key = frozenset(account_ids)
-        now = time.monotonic()
-        cached = _request_usage_cache.get(key)
-        if cached is not None and (now - cached[0]) < _REQUEST_USAGE_CACHE_TTL_SECONDS:
-            return cached[1]
+        account_id_set = set(account_ids)
+        await _additional_quotas_cache.refresh_now(
+            key, lambda: self._load_additional_quotas(account_ids, account_id_set)
+        )
+        if include_request_usage:
+            await _request_usage_cache.refresh_now(key, lambda: self._load_request_usage(account_ids))
+
+    async def _request_usage_by_account(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
+        """Per-account cumulative request-usage, stale-while-revalidate cached."""
+        return await _request_usage_cache.get(
+            frozenset(account_ids),
+            load=lambda: self._load_request_usage(account_ids),
+            refresh=lambda: with_background_accounts_service(lambda service: service._load_request_usage(account_ids)),
+        )
+
+    async def _load_request_usage(self, account_ids: list[str]) -> dict[str, AccountRequestUsage]:
         rows = await self._repo.list_request_usage_summary_by_account(account_ids)
-        result = {
+        return {
             account_id: AccountRequestUsage(
                 request_count=row.request_count,
                 total_tokens=row.total_tokens,
@@ -262,18 +288,22 @@ class AccountsService:
             )
             for account_id, row in rows.items()
         }
-        _request_usage_cache[key] = (now, result)
-        return result
 
     async def _additional_quotas_by_account(
         self, account_ids: list[str], account_id_set: set[str]
     ) -> dict[str, list[AccountAdditionalQuota]]:
-        """Per-account additional-quota windows, short-TTL cached (see module cache)."""
-        key = frozenset(account_ids)
-        now = time.monotonic()
-        cached = _additional_quotas_cache.get(key)
-        if cached is not None and (now - cached[0]) < _ADDITIONAL_QUOTAS_CACHE_TTL_SECONDS:
-            return cached[1]
+        """Per-account additional-quota windows, stale-while-revalidate cached."""
+        return await _additional_quotas_cache.get(
+            frozenset(account_ids),
+            load=lambda: self._load_additional_quotas(account_ids, account_id_set),
+            refresh=lambda: with_background_accounts_service(
+                lambda service: service._load_additional_quotas(account_ids, account_id_set)
+            ),
+        )
+
+    async def _load_additional_quotas(
+        self, account_ids: list[str], account_id_set: set[str]
+    ) -> dict[str, list[AccountAdditionalQuota]]:
         result: dict[str, list[AccountAdditionalQuota]] = {}
         additional_usage_repo = cast(AdditionalUsageRepository | None, self._additional_usage_repo)
         if additional_usage_repo:
@@ -315,7 +345,6 @@ class AccountsService:
                     )
         for account_quota_list in result.values():
             account_quota_list.sort(key=lambda quota: quota.display_label or quota.quota_key or quota.limit_name)
-        _additional_quotas_cache[key] = (now, result)
         return result
 
     async def get_account_trends(self, account_id: str) -> AccountTrendsResponse | None:

@@ -333,6 +333,9 @@ class Settings(BaseSettings):
     federation_usage_window_days: int = Field(default=7, gt=0)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
     http_responses_session_bridge_advertise_base_url: str | None = None
+    accounts_cache_warmer_enabled: bool = True
+    accounts_cache_warmer_interval_seconds: float = Field(default=10.0, gt=0)
+    accounts_cache_warmer_startup_timeout_seconds: float = Field(default=30.0, gt=0)
     sticky_session_cleanup_enabled: bool = True
     sticky_session_cleanup_interval_seconds: int = Field(default=300, gt=0)
     quota_planner_scheduler_enabled: bool = True

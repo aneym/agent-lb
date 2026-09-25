@@ -29,6 +29,8 @@ from app.modules.usage.additional_quota_keys import normalize_additional_quota_r
 _SETTINGS_ROW_ID = 1
 _DUPLICATE_ACCOUNT_SUFFIX = "__copy"
 _UNSET = object()
+# Replayed request_ids are looked up in chunks to keep the IN list bounded.
+_DUPLICATE_LOOKUP_CHUNK = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +77,13 @@ class AccountsRepository:
         self,
         account_ids: list[str] | None = None,
     ) -> dict[str, AccountRequestUsageSummary]:
-        summaries: dict[str, AccountRequestUsageSummary] = {}
+        """Per-account request-usage totals, counting each replayed row once.
+
+        Rows sharing (account_id, request_id, requested_at) are one request and only
+        the newest id counts (#904). Such duplicates are rare, so this sums every row
+        in one pass and subtracts the superseded duplicates, instead of ranking the
+        whole table through a window function (that sort took ~10s at 1.8M rows).
+        """
         output_tokens_expr = func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)
         conditions: list = [
             RequestLog.request_kind.not_in(("warmup", "limit_warmup")),
@@ -84,38 +92,70 @@ class AccountsRepository:
         if account_ids:
             conditions.append(RequestLog.account_id.in_(account_ids))
 
-        latest_request_log_ids_stmt = select(
-            RequestLog.id.label("request_log_id"),
-            func.row_number()
-            .over(
-                partition_by=(
+        totals_stmt = (
+            select(
+                RequestLog.account_id,
+                func.count(RequestLog.id),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0),
+                func.coalesce(func.sum(output_tokens_expr), 0),
+                func.coalesce(func.sum(RequestLog.cached_input_tokens), 0),
+                func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0),
+                func.coalesce(func.sum(RequestLog.cache_read_tokens), 0),
+                func.coalesce(func.sum(RequestLog.cost_usd), 0.0),
+            )
+            .where(*conditions)
+            .group_by(RequestLog.account_id)
+        )
+        # [request_count, input, output, cached_input, cache_creation, cache_read, cost]
+        totals: dict[str, list[float]] = {
+            account_id: [float(value or 0) for value in values]
+            for account_id, *values in (await self._session.execute(totals_stmt)).all()
+            if account_id
+        }
+
+        duplicate_keys_stmt = (
+            select(
+                RequestLog.account_id,
+                RequestLog.request_id,
+                RequestLog.requested_at,
+                func.max(RequestLog.id),
+            )
+            .where(*conditions)
+            .group_by(RequestLog.account_id, RequestLog.request_id, RequestLog.requested_at)
+            .having(func.count(RequestLog.id) > 1)
+        )
+        duplicate_keys = (await self._session.execute(duplicate_keys_stmt)).all()
+        if duplicate_keys:
+            kept_ids = {kept_id for *_, kept_id in duplicate_keys}
+            duplicate_key_set = {
+                (account_id, request_id, requested_at) for account_id, request_id, requested_at, _ in duplicate_keys
+            }
+            request_ids = sorted({request_id for _, request_id, _, _ in duplicate_keys})
+            for offset in range(0, len(request_ids), _DUPLICATE_LOOKUP_CHUNK):
+                rows_stmt = select(
+                    RequestLog.id,
                     RequestLog.account_id,
                     RequestLog.request_id,
                     RequestLog.requested_at,
-                ),
-                order_by=(RequestLog.requested_at.desc(), RequestLog.id.desc()),
-            )
-            .label("request_log_rank"),
-        ).where(*conditions)
-        latest_request_log_ids = latest_request_log_ids_stmt.subquery("latest_request_log_ids")
-        stmt = (
-            select(
-                RequestLog.account_id,
-                func.count(RequestLog.id).label("request_count"),
-                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(output_tokens_expr), 0).label("output_tokens"),
-                func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-                func.coalesce(func.sum(RequestLog.cache_creation_tokens), 0).label("cache_creation_tokens"),
-                func.coalesce(func.sum(RequestLog.cache_read_tokens), 0).label("cache_read_tokens"),
-                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("total_cost_usd"),
-            )
-            .join(latest_request_log_ids, RequestLog.id == latest_request_log_ids.c.request_log_id)
-            .where(latest_request_log_ids.c.request_log_rank == 1)
-            .group_by(RequestLog.account_id)
-        )
-        result = await self._session.execute(stmt)
-        for (
-            account_id,
+                    RequestLog.input_tokens,
+                    output_tokens_expr,
+                    RequestLog.cached_input_tokens,
+                    RequestLog.cache_creation_tokens,
+                    RequestLog.cache_read_tokens,
+                    RequestLog.cost_usd,
+                ).where(*conditions, RequestLog.request_id.in_(request_ids[offset : offset + _DUPLICATE_LOOKUP_CHUNK]))
+                for row_id, account_id, request_id, requested_at, *values in (
+                    await self._session.execute(rows_stmt)
+                ).all():
+                    if row_id in kept_ids or (account_id, request_id, requested_at) not in duplicate_key_set:
+                        continue
+                    account_totals = totals[account_id]
+                    account_totals[0] -= 1
+                    for index, value in enumerate(values, start=1):
+                        account_totals[index] -= float(value or 0)
+
+        summaries: dict[str, AccountRequestUsageSummary] = {}
+        for account_id, (
             request_count,
             input_tokens,
             output_tokens,
@@ -123,23 +163,18 @@ class AccountsRepository:
             cache_creation_tokens,
             cache_read_tokens,
             total_cost_usd,
-        ) in result.all():
-            if not account_id:
-                continue
-            input_sum = int(input_tokens or 0)
-            output_sum = int(output_tokens or 0)
-            cached_sum = int(cached_input_tokens or 0)
-            cached_sum = max(0, min(cached_sum, input_sum))
-            return_row = AccountRequestUsageSummary(
-                request_count=int(request_count or 0),
+        ) in totals.items():
+            input_sum = int(input_tokens)
+            output_sum = int(output_tokens)
+            cached_sum = max(0, min(int(cached_input_tokens), input_sum))
+            summaries[account_id] = AccountRequestUsageSummary(
+                request_count=int(request_count),
                 total_tokens=input_sum + output_sum,
                 cached_input_tokens=cached_sum,
-                cache_creation_tokens=int(cache_creation_tokens or 0),
-                cache_read_tokens=int(cache_read_tokens or 0),
-                total_cost_usd=round(float(total_cost_usd or 0.0), 6),
+                cache_creation_tokens=int(cache_creation_tokens),
+                cache_read_tokens=int(cache_read_tokens),
+                total_cost_usd=round(total_cost_usd, 6),
             )
-            summaries[account_id] = return_row
-
         return summaries
 
     async def exists_active_chatgpt_account_id(self, chatgpt_account_id: str) -> bool:
