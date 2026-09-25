@@ -154,4 +154,85 @@ Publish numbers only from runs you observed. The design:
 
 ## Plan and decisions
 
-(orchestrator writes here)
+State files outside git: `~/.agent-lb/of/` (`INBOX.md` to the fixer, `runs/` receipts,
+`heldout/` sealed tasks, `STATE.md` orchestrator handoff).
+
+### Live picture at kickoff (2026-09-25 18:40Z)
+
+- Claude Max: 6 accounts, 3 weekly-exhausted (reset 09-27 to 09-30), 1 at 7% weekly,
+  2 healthy. `anthropic-general` weekly pace -29.6 (behind). Claude is the scarce pool.
+- Codex: 4 Pro accounts, 3 active (44-73% weekly), 1 `reauth_required`. Kimi and GLM:
+  1 account each, unmetered. Cursor: `grok-4.7-*` served.
+- `dispatch.jsonl` rows are thin: 823 of 908 dispatch rows have no model, no row has a
+  class. It cannot score routing yet; OF receipts must carry the decision.
+
+### Decisions
+
+D1. **`route` is the only router.** OF keeps no catalog. New `route menu [--class C]
+    [--json]` returns every seat the host can run now (seat, resolved model, vendor, pool,
+    pool status, eligible accounts, 5h and weekly headroom, weekly pace, next 5h and
+    weekly reset) plus the excluded seats with a reason. `route pick` becomes "first
+    menu entry in the class chain", so both share one eligibility function. OF talks to
+    `route` over its JSON CLI, not by importing it.
+D2. **Menu unit is seat x model x pool, not account.** agent-lb owns account choice
+    (sticky sessions, failover). Account spread is measured after the fact from LB
+    request logs keyed by session id, not chosen by the host.
+D3. **Decider contract.** Input: task text, class hint, menu ids with facts. Output: one
+    menu id, or abstain. The host re-checks the pick against a fresh `route menu`
+    (pool not exhausted, model still served); on abstain or failed re-check it takes
+    `route pick <class>`; if that is unroutable, it takes the driver (Opus). Every step is
+    one receipt row.
+D4. **One ledger.** Decisions go to `~/.claude/logs/dispatch.jsonl` as
+    `event: "of_decision"` (candidates, pick, abstain, recheck, fallback, seat, model,
+    decider latency). Outcomes go as `event: "implement_result"` through `route record`
+    (extended with `--decision-id`, `--ok`, `--tokens-cache`). The per-project
+    `.open-factory/ledger.jsonl` and `dispatch/log.jsonl` are removed.
+D5. **Eval = outcome matrix + policy replay.** Run each (task, seat) cell for real, k
+    times, and record receipts. Score each arm (all-Opus, static table, Jev, CLM,
+    hindsight cheapest-that-passes) by replaying its picks against the matrix, adding
+    the arm's real decision cost. This makes every new policy cheap to evaluate and is
+    the "improve by replay" loop. A smaller live end-to-end run (decider -> recheck ->
+    dispatch inside `cc`) proves the loop works and checks that replay predicts live.
+D6. **Task set.** Each task = repo + base commit + prompt + executable check + class.
+    Sources: agent-lb and agent-rails commits that ship a regression test (check = that
+    test passes and the touched module's suite stays green), planted-bug reviews (check
+    = finding names the file and defect), codebase questions with fixed answers
+    (check = required facts present, verified by a rubric verifier), and mechanical
+    sweeps (diff predicate + tests). Dev set (10, then 30) lives in git under
+    `clients/open-factory/evals/tasks/dev/`. The held-out set is written by a separate
+    agent into `~/.agent-lb/of/heldout/`; only its sha256 manifest is committed, and
+    the orchestrator never reads it before the final run.
+D7. **Executors per seat, headless.** Claude seats: `claude-lb-launch -p --model M
+    --output-format json` with `CLAUDE_LB_MINIMAL=1`, in a fresh git worktree per run
+    under `~/.agent-lb/of/runs/<run>/`. Codex seats: `codex exec` (does not need the
+    bridge). Cursor seats: `cursor-agent -p --model grok-*`. GPT *inside Claude Code*
+    (subagent `model: gpt-6-*`) waits for the fixer's bridge fix; it is its own arm.
+D8. **Budget.** Claude is behind pace, so v0 runs 10 tasks x {opus, sonnet} x k=1,
+    at most 3 concurrent runs, and checks `route pools` before each batch; a
+    critical Claude pool pauses the batch. Codex/Cursor cells are cheap to add and
+    carry most of the new volume.
+D9. **Metrics per cell.** Verified success, wall time, tokens in/out/cache-read, cost
+    estimate, retries, account and pool that served it (LB logs), cache-read ratio,
+    whether a human would need to review (check was rubric, not tests).
+D10. **`open-factory start` launches `cc`** (Opus drives) with the live menu and policy
+    in the system prompt. The `recommend_driver()` Fable/Astra logic goes.
+D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
+    (`claude_codex_bridge.py`, `http_bridge_forwarding.py`, primer). Dynamic
+    `CCGPT_MODEL_ALIASES` in `app/modules/proxy/api.py` is requested from the fixer via
+    INBOX, since it sits beside the bridge work.
+
+### Milestones (status)
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| 1 | Orient, plan (this section) | done 2026-09-25 |
+| 2 | One router: `route menu`, OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | in progress |
+| 3 | Menu builder with live headroom and resets (lands with 2 as `route menu`) | in progress |
+| 4 | Eval harness v0: 10 dev tasks, opus + sonnet cells, arms (a) all-Opus and (b) static, receipts | next |
+| 5 | Jev arm (c): replay + a live end-to-end subset with recheck, abstain, fallback | |
+| 6 | Codex (`codex exec`), Cursor/Grok cells; GPT-in-Claude-Code arm after bridge fix | |
+| 7 | Held-out run, report (pretty-doc on tailnet), Alex review, publish on approval | |
+
+### Log
+
+- 2026-09-25: plan written. Keel/Jev decision docs digest pending (subagent).
