@@ -64,11 +64,21 @@ def _psql_json(sql: str) -> list[dict]:
     return json.loads(result.stdout or "[]")
 
 
+def _has_client_session_column() -> bool:
+    # client_session_id arrives with migration 20260925_000000; older databases lack it.
+    rows = _psql_json(
+        "select 1 from information_schema.columns"
+        " where table_name = 'request_logs' and column_name = 'client_session_id'"
+    )
+    return bool(rows)
+
+
 def query(args: argparse.Namespace) -> list[dict]:
+    client_session = "r.client_session_id" if _has_client_session_column() else "null::text"
     where = []
     if args.session:
         sid = _literal(args.session)
-        where.append(f"(r.session_id = {sid} or r.client_session_id = {sid})")
+        where.append(f"(r.session_id = {sid} or {client_session} = {sid})")
     if args.useragent:
         where.append(f"r.useragent ilike {_literal('%' + args.useragent + '%')}")
     if args.key:
@@ -82,7 +92,8 @@ def query(args: argparse.Namespace) -> list[dict]:
     if args.until:
         where.append(f"r.requested_at < {_literal(_time(args.until))}")
     sql = f"""
-        select r.id, r.requested_at, r.session_id, r.client_session_id, r.request_kind, r.provider, r.model, r.status,
+        select r.id, r.requested_at, r.session_id, {client_session} as client_session_id,
+               r.request_kind, r.provider, r.model, r.status,
                r.useragent_group, r.transport,
                r.api_key_id, k.name as key_name,
                r.account_id, a.plan_type,
