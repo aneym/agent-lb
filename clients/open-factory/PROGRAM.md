@@ -247,7 +247,7 @@ D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
 | # | Milestone | Status |
 |---|-----------|--------|
 | 1 | Orient, plan (this section) | done 2026-09-25 |
-| 2 | One router: `route menu` (menu builder with live headroom and resets), OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | in progress |
+| 2 | One router: `route menu` (menu builder with live headroom and resets), OF on `route`, catalog + `recommend_driver` gone, receipts to dispatch.jsonl | done 2026-09-25 (`jev pick` added in the jev repo, e6f17bf) |
 | 3 | Harbor gate (D6): container -> agent-lb auth for claude-code and codex, smoke trials | in progress |
 | 4 | `of-work` v0: 10 dev tasks from real PRs as Harbor tasks + sealed held-out manifest | next |
 | 5 | Eval v0: arms A1, A2, A4 on dev, k=3, CIs, receipts | |
@@ -259,3 +259,7 @@ D11. **Things OF does not edit.** Bridge and warm-up code belong to the fixer
 
 - 2026-09-25: plan written. Keel/Jev digest at `~/.agent-lb/of/keel-jev-digest.md`.
 - 2026-09-25: eval moved onto Harbor (D5-D9) at Alex's request via the fixer.
+- 2026-09-25: milestone 2 landed. `open-factory route` measured live: Jev 370-750 ms,
+  ~$0.00005 per pick. Observation for the eval: the routing table still puts `codex-sol`
+  first for explore/research although ROUTING.md (dfe1ea2d) made Claude the default
+  worker; A3's static sub-arm uses the table as it is, and the eval decides.

@@ -7,6 +7,8 @@
 # Commands:
 #   route pools  [--json]                        pool headroom (C1, or an accounts approximation)
 #   route pick   <class> [--author-vendor V]     first routable chain entry for a class
+#   route menu   [--class C] [--json]            every seat runnable now per class, excluded seats
+#                                                with reasons, pool headroom, pace and reset times
 #   route doctor [--write]                       probe seats and pools; write routing-state.json
 #   route report [--days N]                      dispatch ledger joined with LB session cost
 #   route learn  [--apply]                       propose (or write) chain demotions from outcomes
@@ -684,6 +686,132 @@ def apply_overrides(chain: list[dict[str, Any]], overrides: Any, class_name: str
     return kept + demoted
 
 
+class ServedModels:
+    """The LB's served model list, fetched once and only when an alias needs it."""
+
+    def __init__(self) -> None:
+        self._models: list[str] | None = None
+
+    def get(self) -> list[str]:
+        if self._models is None:
+            self._models, _ = served_models()
+        return self._models
+
+
+def class_candidates(
+    table: dict[str, Any],
+    class_name: str,
+    spec: dict[str, Any],
+    *,
+    author_vendor: str | None,
+    pools: dict[str, dict[str, Any]],
+    seats: Any,
+    served: ServedModels,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """(routable, skipped, paced) for one class chain: the eligibility rule pick and menu share.
+
+    A cross_vendor class with no author vendor keeps every vendor; pick refuses that case
+    before calling here, menu lists it with the flag so the caller applies it.
+    """
+    chain = spec.get("chain") if isinstance(spec.get("chain"), list) else []
+    entries = [entry for entry in chain if isinstance(entry, dict)]
+    ordered = apply_overrides(entries, table.get("overrides"), class_name)
+    routable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
+    paced: list[str] = []
+    cross_vendor = bool(spec.get("cross_vendor"))
+
+    def skip(seat: str, alias: str, reason: str) -> None:
+        skipped.append({"seat": seat, "alias": alias, "reason": reason})
+
+    pace_policy = (table.get("policy") or {}).get("pace") if isinstance(table.get("policy"), dict) else None
+    cycle_hours = float((pace_policy or {}).get("cycle_hours") or 168)
+    for entry in ordered:
+        seat = entry.get("seat")
+        alias = entry.get("model")
+        if not isinstance(seat, str) or not isinstance(alias, str):
+            continue
+        model, why = resolve_alias(table, alias, served.get() if alias in aliases else [])
+        if model is None:
+            skip(seat, alias, why)
+            continue
+        pool = pool_for_model(table, alias)
+        vendor = vendor_for(entry, pool)
+        if cross_vendor and author_vendor and vendor == author_vendor:
+            skip(seat, alias, f"same vendor as author: {vendor}")
+            continue
+        if not seat_is_up(seats, seat):
+            skip(seat, alias, "seat down per routing-state.json")
+            continue
+        pool_doc = pools.get(pool, {}) if pool else {}
+        status = pool_doc.get("status")
+        if status == "exhausted":
+            skip(seat, alias, f"pool {pool} exhausted")
+            continue
+        min_pace = entry.get("min_pace")
+        if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
+            # Pace-gated entries (Opus on implement) only take work while their pool can
+            # afford it; with no pool data they are skipped rather than assumed healthy.
+            pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
+            if pace is None and pool_doc and pool:
+                pace = accounts_pace(pool)
+            if pace is None:
+                skip(seat, alias, f"pool {pool} pace unknown")
+                continue
+            eligible = pool_doc.get("eligibleAccounts")
+            if isinstance(eligible, int) and eligible <= LOW_BAND_MAX_ELIGIBLE:
+                # ROUTING.md rule 1: a low (2) or critical (1) pool serves judgment only.
+                band = "critical" if eligible <= 1 else "low"
+                skip(seat, alias, f"pool {pool} {band}: {eligible} eligible account(s)")
+                continue
+            if pace < min_pace:
+                skip(seat, alias, f"pool {pool} behind pace: {pace:+.1f} < {min_pace:+g}")
+                continue
+            paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
+        auditor = None
+        audit_spec = spec.get("audit")
+        if isinstance(audit_spec, dict) and isinstance(audit_spec.get("by_author_vendor"), dict):
+            audit_entry = audit_spec["by_author_vendor"].get(vendor)
+            if not isinstance(audit_entry, dict) or not isinstance(audit_entry.get("model"), str):
+                skip(seat, alias, f"no auditor declared for author vendor {vendor}")
+                continue
+            audit_alias = audit_entry["model"]
+            audit_model, audit_why = resolve_alias(table, audit_alias, served.get() if audit_alias in aliases else [])
+            if audit_model is None:
+                # Work nobody can audit is not accepted work; route to a seat that can be.
+                skip(seat, alias, f"its auditor {audit_entry['model']} is unavailable: {audit_why}")
+                continue
+            audit_pool = pool_for_model(table, audit_entry["model"])
+            audit_seat = str(audit_entry.get("seat") or "")
+            audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
+            if audit_pool_doc.get("status") == "exhausted":
+                skip(seat, alias, f"its auditor's pool {audit_pool} is exhausted")
+                continue
+            audit_eligible = audit_pool_doc.get("eligibleAccounts")
+            if isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
+                # A critical pool starts nothing new (rule 1), audits included.
+                skip(seat, alias, f"its auditor's pool {audit_pool} is critical: {audit_eligible} eligible")
+                continue
+            if audit_seat and not seat_is_up(seats, audit_seat):
+                skip(seat, alias, f"its auditor seat {audit_seat} is down per routing-state.json")
+                continue
+            auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
+        routable.append(
+            {
+                "seat": seat,
+                "model": model,
+                "alias": alias,
+                "pool": pool,
+                "vendor": vendor,
+                "poolStatus": status,
+                "auditor": auditor,
+            }
+        )
+
+    return routable, skipped, paced
+
+
 def command_pick(args: argparse.Namespace) -> int:
     table = load_table()
     classes = table.get("classes")
@@ -728,100 +856,16 @@ def command_pick(args: argparse.Namespace) -> int:
         document = state["pools"]
     pools = pools_by_id(document)
 
-    entries = [entry for entry in chain if isinstance(entry, dict)]
-    ordered = apply_overrides(entries, table.get("overrides"), args.task_class)
-    routable: list[dict[str, Any]] = []
-    skipped: list[str] = []
-    aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
-    served: list[str] | None = None
-    paced: list[str] = []
-    pace_policy = (table.get("policy") or {}).get("pace") if isinstance(table.get("policy"), dict) else None
-    cycle_hours = float((pace_policy or {}).get("cycle_hours") or 168)
-    for entry in ordered:
-        seat = entry.get("seat")
-        alias = entry.get("model")
-        if not isinstance(seat, str) or not isinstance(alias, str):
-            continue
-        if alias in aliases and served is None:
-            served, _ = served_models()
-        model, why = resolve_alias(table, alias, served or [])
-        if model is None:
-            skipped.append(f"{seat} ({why})")
-            continue
-        pool = pool_for_model(table, alias)
-        vendor = vendor_for(entry, pool)
-        if cross_vendor and vendor == args.author_vendor:
-            skipped.append(f"{seat} (same vendor as author: {vendor})")
-            continue
-        if not seat_is_up(seats, seat):
-            skipped.append(f"{seat} (seat down per routing-state.json)")
-            continue
-        pool_doc = pools.get(pool, {}) if pool else {}
-        status = pool_doc.get("status")
-        if status == "exhausted":
-            skipped.append(f"{seat} (pool {pool} exhausted)")
-            continue
-        min_pace = entry.get("min_pace")
-        if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
-            # Pace-gated entries (Opus on implement) only take work while their pool can
-            # afford it; with no pool data they are skipped rather than assumed healthy.
-            pace = pool_pace(pool_doc, cycle_hours) if pool_doc else None
-            if pace is None and pool_doc and pool:
-                pace = accounts_pace(pool)
-            if pace is None:
-                skipped.append(f"{seat} (pool {pool} pace unknown)")
-                continue
-            eligible = pool_doc.get("eligibleAccounts")
-            if isinstance(eligible, int) and eligible <= LOW_BAND_MAX_ELIGIBLE:
-                # ROUTING.md rule 1: a low (2) or critical (1) pool serves judgment only.
-                band = "critical" if eligible <= 1 else "low"
-                skipped.append(f"{seat} (pool {pool} {band}: {eligible} eligible account(s))")
-                continue
-            if pace < min_pace:
-                skipped.append(f"{seat} (pool {pool} behind pace: {pace:+.1f} < {min_pace:+g})")
-                continue
-            paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
-        auditor = None
-        audit_spec = spec.get("audit")
-        if isinstance(audit_spec, dict) and isinstance(audit_spec.get("by_author_vendor"), dict):
-            audit_entry = audit_spec["by_author_vendor"].get(vendor)
-            if not isinstance(audit_entry, dict) or not isinstance(audit_entry.get("model"), str):
-                skipped.append(f"{seat} (no auditor declared for author vendor {vendor})")
-                continue
-            if audit_entry["model"] in aliases and served is None:
-                served, _ = served_models()
-            audit_model, audit_why = resolve_alias(table, audit_entry["model"], served or [])
-            if audit_model is None:
-                # Work nobody can audit is not accepted work; route to a seat that can be.
-                skipped.append(f"{seat} (its auditor {audit_entry['model']} is unavailable: {audit_why})")
-                continue
-            audit_pool = pool_for_model(table, audit_entry["model"])
-            audit_seat = str(audit_entry.get("seat") or "")
-            audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
-            if audit_pool_doc.get("status") == "exhausted":
-                skipped.append(f"{seat} (its auditor's pool {audit_pool} is exhausted)")
-                continue
-            audit_eligible = audit_pool_doc.get("eligibleAccounts")
-            if isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
-                # A critical pool starts nothing new (rule 1), audits included.
-                skipped.append(f"{seat} (its auditor's pool {audit_pool} is critical: {audit_eligible} eligible)")
-                continue
-            if audit_seat and not seat_is_up(seats, audit_seat):
-                skipped.append(f"{seat} (its auditor seat {audit_seat} is down per routing-state.json)")
-                continue
-            auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
-        routable.append(
-            {
-                "seat": seat,
-                "model": model,
-                "alias": alias,
-                "pool": pool,
-                "vendor": vendor,
-                "poolStatus": status,
-                "auditor": auditor,
-            }
-        )
-
+    routable, skipped_entries, paced = class_candidates(
+        table,
+        args.task_class,
+        spec,
+        author_vendor=args.author_vendor,
+        pools=pools,
+        seats=seats,
+        served=ServedModels(),
+    )
+    skipped = [f"{entry['seat']} ({entry['reason']})" for entry in skipped_entries]
     if not routable:
         detail = "; ".join(skipped) if skipped else "no chain entry survived filtering"
         print(f"route: nothing routable for class {args.task_class!r}: {detail}", file=sys.stderr)
@@ -857,6 +901,116 @@ def command_pick(args: argparse.Namespace) -> int:
     }
     _print_pick(result, as_json=args.json)
     return EXIT_OK
+
+
+def _five_hour_windows(accounts_body: Any) -> dict[str, dict[str, Any]]:
+    """Per pool: the best 5-hour headroom among active accounts and the earliest 5-hour reset."""
+    accounts = accounts_body.get("accounts") if isinstance(accounts_body, dict) else accounts_body
+    windows: dict[str, dict[str, Any]] = {}
+    for account in accounts if isinstance(accounts, list) else []:
+        if not isinstance(account, dict) or account.get("status") != "active":
+            continue
+        remaining = (account.get("usage") or {}).get("primaryRemainingPercent")
+        reset = account.get("resetAtPrimary")
+        for pool_id in _pool_ids(account):
+            window = windows.setdefault(pool_id, {"fiveHourHeadroomPercent": None, "fiveHourResetAt": None})
+            if isinstance(remaining, (int, float)) and not isinstance(remaining, bool):
+                best = window["fiveHourHeadroomPercent"]
+                window["fiveHourHeadroomPercent"] = max(float(remaining), best if best is not None else 0.0)
+            if isinstance(reset, str) and reset and (window["fiveHourResetAt"] or "~") > reset:
+                window["fiveHourResetAt"] = reset
+    return windows
+
+
+MENU_POOL_FIELDS = (
+    "status",
+    "accounts",
+    "eligibleAccounts",
+    "headroomPercent",
+    "weeklyRemainingPercent",
+    "weeklyPacePercent",
+    "weeklyResetAt",
+    "resetAt",
+)
+
+
+def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
+    """Every seat the host can run now, per class, with the pool facts a decider needs.
+
+    Seats that cannot run are listed under `excluded` with the reason, never on the menu.
+    """
+    table = load_table()
+    classes = table.get("classes") if isinstance(table.get("classes"), dict) else {}
+    state = read_state()
+    age = state_age_seconds(state)
+    stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
+    seats = None if stale else state.get("seats")
+    document, pools_error = fetch_pools(timeout=3.0)
+    if document is None and isinstance(state.get("pools"), dict):
+        document = state["pools"]
+    pools = pools_by_id(document)
+    accounts = http_get("/api/accounts", timeout=3.0)
+    windows = _five_hour_windows(accounts.body) if accounts.json_ok else {}
+
+    served = ServedModels()
+    menu_classes: dict[str, Any] = {}
+    used_pools: set[str] = set()
+    for class_name in class_names or list(classes):
+        spec = classes.get(class_name)
+        if not isinstance(spec, dict):
+            fail(f"unknown class {class_name!r}; known classes: {', '.join(sorted(classes))}")
+        if spec.get("driver"):
+            menu_classes[class_name] = {"driver": True, "crossVendor": False, "seats": [], "excluded": []}
+            continue
+        routable, skipped, paced = class_candidates(
+            table, class_name, spec, author_vendor=None, pools=pools, seats=seats, served=served
+        )
+        entries = []
+        for entry in routable:
+            entries.append({"id": f"{entry['seat']}.{entry['model']}", **entry})
+            if entry["pool"]:
+                used_pools.add(entry["pool"])
+        menu_classes[class_name] = {
+            "driver": False,
+            "crossVendor": bool(spec.get("cross_vendor")),
+            "seats": entries,
+            "excluded": skipped,
+            "paced": paced,
+        }
+
+    pool_facts = {}
+    for pool_id in sorted(set(pools) | used_pools):
+        pool = pools.get(pool_id, {})
+        facts = {field: pool.get(field) for field in MENU_POOL_FIELDS}
+        facts.update(windows.get(pool_id, {"fiveHourHeadroomPercent": None, "fiveHourResetAt": None}))
+        pool_facts[pool_id] = facts
+    return {
+        "generatedAt": now_iso(),
+        "poolsSource": (document or {}).get("source") if isinstance(document, dict) else None,
+        "poolsError": pools_error,
+        "stateAgeS": None if age is None else round(age, 1),
+        "stateIgnored": stale,
+        "pools": pool_facts,
+        "classes": menu_classes,
+    }
+
+
+def command_menu(args: argparse.Namespace) -> int:
+    menu = build_menu([args.task_class] if args.task_class else None)
+    if args.json:
+        print(json.dumps(menu, indent=2, sort_keys=True))
+    else:
+        print(f"menu at {menu['generatedAt']} (pools: {menu['poolsSource'] or menu['poolsError']})")
+        for class_name, entry in menu["classes"].items():
+            if entry["driver"]:
+                print(f"{class_name:<11} driver session")
+                continue
+            shown = ", ".join(seat["id"] for seat in entry["seats"]) or "nothing routable"
+            print(f"{class_name:<11} {shown}")
+            for excluded in entry["excluded"]:
+                print(f"{'':<11}   excluded {excluded['seat']}: {excluded['reason']}")
+    routable = any(entry["seats"] or entry["driver"] for entry in menu["classes"].values())
+    return EXIT_OK if routable else EXIT_UNROUTABLE
 
 
 def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
@@ -1575,6 +1729,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pick.add_argument("--author-vendor", default=None, help="required for cross_vendor classes")
     pick.add_argument("--json", action="store_true")
     pick.set_defaults(handler=command_pick)
+
+    menu = sub.add_parser("menu", help="every seat runnable now, per class, with pool facts")
+    menu.add_argument("--class", dest="task_class", default=None, help="one class only")
+    menu.add_argument("--json", action="store_true")
+    menu.set_defaults(handler=command_menu)
 
     doctor = sub.add_parser("doctor", help="probe seats and pools")
     doctor.add_argument("--write", action="store_true", help="write routing-state.json and the alert")

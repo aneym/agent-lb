@@ -156,6 +156,43 @@ def test_pick_skips_a_seat_whose_pool_is_exhausted(home: Path, tmp_path: Path) -
     assert "anthropic-general exhausted" in picked["reason"]
 
 
+def test_menu_offers_what_pick_routes_and_names_each_excluded_seat(home: Path, tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    pools_fixture(fixtures, {"anthropic-general": "exhausted", "openai-codex": "ok"})
+    write_fixture(
+        fixtures,
+        "api_accounts.json",
+        {
+            "accounts": [
+                {
+                    "provider": "openai",
+                    "status": "active",
+                    "usage": {"primaryRemainingPercent": 40.0, "secondaryRemainingPercent": 70.0},
+                    "resetAtPrimary": "2026-09-19T23:00:00Z",
+                },
+                {
+                    "provider": "openai",
+                    "status": "active",
+                    "usage": {"primaryRemainingPercent": 90.0, "secondaryRemainingPercent": 70.0},
+                    "resetAtPrimary": "2026-09-19T22:00:00Z",
+                },
+            ]
+        },
+    )
+
+    menu = run("menu", "--class", "implement", "--json", home=home, fixtures=fixtures)
+    pick = run("pick", "implement", "--json", home=home, fixtures=fixtures)
+
+    assert menu.returncode == 0, menu.stderr
+    implement = json.loads(menu.stdout)["classes"]["implement"]
+    assert implement["seats"][0]["seat"] == json.loads(pick.stdout)["seat"] == "implementer"
+    assert {"seat": "opus-seat", "alias": "claude-opus-5", "reason": "pool anthropic-general exhausted"} in (
+        implement["excluded"]
+    )
+    codex = json.loads(menu.stdout)["pools"]["openai-codex"]
+    assert (codex["fiveHourHeadroomPercent"], codex["fiveHourResetAt"]) == (90.0, "2026-09-19T22:00:00Z")
+
+
 def routing_state(home: Path, *, age_seconds: float, seats: dict[str, object]) -> None:
     stamp = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
     (home / ".claude" / "routing-state.json").write_text(

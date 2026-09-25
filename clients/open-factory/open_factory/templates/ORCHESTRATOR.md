@@ -7,10 +7,10 @@ Standing goal: {{GOAL}}
 ## Behavior
 
 - Decide and accept. Seats implement.
-- Prefer typed seats from the allowlist over catch-all agents.
+- Get every seat from `open-factory route`; never pick one it did not return.
 - Brief with: outcome in product terms, owned files, what to read first, how to verify, what to return, wall-clock budget for verifiers.
 - Herdr worktrees under `~/.herdr/worktrees/<repo>/<lane>` when parallel write seats run.
-- Update `.open-factory/state.json` stage and `.open-factory/ledger.jsonl` on material events.
+- Update `.open-factory/state.json` stage on material events.
 - Use `/unblock` for anything only Alex can provide — do not stall in chat.
 
 ## First move

@@ -4,44 +4,25 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
-import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
-__version__ = "0.1.0"
+from .common import PKG, resolve_bin, utc_now
+from .decide import DECIDERS, decide, ledger_path, load_policy, read_decisions, run_route
 
-PKG = Path(__file__).resolve().parent
-CATALOG_PATH = PKG / "catalog.json"
+__version__ = "0.2.0"
+
 TEMPLATES = PKG / "templates"
 FACTORY_DIRNAME = ".open-factory"
 AGENT_LB_URL = os.environ.get("OPEN_FACTORY_AGENT_LB", "http://127.0.0.1:2455")
-# cli.py → open_factory/ → open-factory/ → clients/
-REPO_CLIENTS = Path(__file__).resolve().parents[2]
-LOCAL_BIN = Path.home() / ".local" / "bin"
-
-
-def resolve_bin(name: str) -> str | None:
-    """Prefer repo clients, then ~/.local/bin, then PATH (avoid zsh function wrappers)."""
-    repo = REPO_CLIENTS / name
-    if repo.is_file() and os.access(repo, os.X_OK):
-        return str(repo)
-    local = LOCAL_BIN / name
-    if local.is_file() and os.access(local, os.X_OK):
-        return str(local.resolve() if local.is_symlink() else local)
-    return shutil.which(name)
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def load_catalog() -> dict[str, Any]:
-    return json.loads(CATALOG_PATH.read_text())
+CLAUDE_LAUNCHER = "claude-lb-launch"
+# The `cc` / `opus` shell functions: Opus drives with the 1M window, compacting near 300k.
+DRIVER_ARGS = ["--dangerously-skip-permissions", "--model", "opus[1m]", "--effort", "high", "--autocompact", "300k"]
+WORK_CLASSES = ("explore", "research", "implement", "mechanical", "review", "verify", "plan")
 
 
 def find_project(start: Path | None = None) -> Path:
@@ -54,12 +35,6 @@ def find_project(start: Path | None = None) -> Path:
 
 def factory_root(project: Path) -> Path:
     return project / FACTORY_DIRNAME
-
-
-def append_jsonl(path: Path, row: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def http_json(url: str, timeout: float = 5.0) -> tuple[int, Any]:
@@ -76,131 +51,9 @@ def http_json(url: str, timeout: float = 5.0) -> tuple[int, Any]:
         return 0, None
 
 
-def cmd_seats(_: argparse.Namespace) -> int:
-    cat = load_catalog()
-    seats = cat["seats"]
-    print(f"open-factory seats  v{cat.get('version')}  ({len(seats)} seats)\n")
-    for s in seats:
-        models = " → ".join(s["models"][:4])
-        if len(s["models"]) > 4:
-            models += " → …"
-        agent = s.get("claude_agent") or "—"
-        print(f"  {s['id']:<22} {s['role']:<14} agent={agent}")
-        print(f"    {s['purpose']}")
-        print(f"    models: {models}")
-        print()
-    print("policy:", json.dumps(cat.get("policy", {}), separators=(",", ":")))
-    return 0
-
-
-def recommend_driver() -> tuple[str, str]:
-    """Pick a launcher that won't burn Fable/Astra when those pools are dry.
-
-    Returns (driver, reason).
-    """
-    code, accounts = http_json(f"{AGENT_LB_URL}/api/accounts")
-    if code != 200 or not isinstance(accounts, (list, dict)):
-        return "opus", "agent-lb accounts unavailable; default opus"
-    rows = accounts if isinstance(accounts, list) else accounts.get("accounts") or accounts.get("data") or []
-    fable_ready = False
-    opus_ready = False
-    openai_ready = False
-    for a in rows if isinstance(rows, list) else []:
-        if not isinstance(a, dict):
-            continue
-        prov = str(a.get("provider") or "")
-        status = str(a.get("status") or "")
-        usage = a.get("usage") or {}
-        pri = usage.get("primaryRemainingPercent")
-        if prov == "anthropic" and status == "active":
-            opus_ready = True
-            if a.get("fableEligible") is True and (pri is None or float(pri) > 0):
-                fable_ready = True
-        if prov == "openai" and status == "active":
-            openai_ready = True
-    if fable_ready:
-        return "fable", "Fable-eligible Anthropic seat active with primary headroom"
-    if opus_ready:
-        return "opus", "Fable dry/ineligible; use Opus/non-Fable Claude on active seat"
-    if openai_ready:
-        return "opus", "no Anthropic active; still prefer Claude launcher (OpenAI for seats only)"
-    return "opus", "no healthy Anthropic; try opus and expect quota errors"
-
-
-def cmd_doctor(_: argparse.Namespace) -> int:
-    checks: list[tuple[str, bool, str]] = []
-
-    def add(name: str, ok: bool, detail: str) -> None:
-        checks.append((name, ok, detail))
-
-    for bin_name in ("claude", "fable", "cc", "opus", "jev"):
-        path = resolve_bin(bin_name)
-        add(bin_name, bool(path), path or "not on PATH")
-
-    code, _ = http_json(f"{AGENT_LB_URL}/health/ready")
-    if code != 200:
-        code, _ = http_json(f"{AGENT_LB_URL}/health")
-        add("agent-lb", code == 200, f"{AGENT_LB_URL}/health → {code or 'down'} (ready unavailable)")
-    else:
-        add("agent-lb", True, f"{AGENT_LB_URL}/health/ready → 200")
-
-    code, accounts = http_json(f"{AGENT_LB_URL}/api/accounts")
-    if code == 200 and isinstance(accounts, (list, dict)):
-        rows = accounts if isinstance(accounts, list) else accounts.get("accounts") or accounts.get("data") or []
-        by_prov: dict[str, list[str]] = {}
-        for a in rows if isinstance(rows, list) else []:
-            if not isinstance(a, dict):
-                continue
-            prov = str(a.get("provider") or "?")
-            st = str(a.get("status") or "?")
-            by_prov.setdefault(prov, []).append(st)
-        summary = " · ".join(f"{p}:{','.join(sorted(set(v)))}" for p, v in sorted(by_prov.items()))
-        usable = any(s == "active" for vals in by_prov.values() for s in vals)
-        add("accounts", usable, summary or "no accounts")
-    else:
-        add("accounts", False, f"http {code}")
-
-    jev = resolve_bin("jev")
-    if jev:
-        try:
-            p = subprocess.run([jev, "health"], capture_output=True, text=True, timeout=20)
-            ok = p.returncode == 0 and "UNAVAILABLE" not in (p.stdout + p.stderr)
-            add("jev-health", ok, (p.stdout or p.stderr).strip().splitlines()[-1][:120] if (p.stdout or p.stderr) else f"exit {p.returncode}")
-        except Exception as e:
-            add("jev-health", False, type(e).__name__)
-    else:
-        add("jev-health", False, "jev missing")
-
-    herdr = Path.home() / ".herdr" / "worktrees"
-    add("herdr-worktrees", herdr.is_dir(), str(herdr))
-
-    catalog_ok = CATALOG_PATH.is_file()
-    add("catalog", catalog_ok, str(CATALOG_PATH))
-
-    print(f"open-factory doctor  {utc_now()}\n")
-    failed = 0
-    for name, ok, detail in checks:
-        mark = "ok" if ok else "FAIL"
-        if not ok:
-            failed += 1
-        print(f"  [{mark:>4}]  {name:<18} {detail}")
-    print()
-    driver, reason = recommend_driver()
-    print(f"recommended driver: {driver}  ({reason})")
-    if driver != "fable":
-        print("  tip: open-factory start --driver opus --effort none   # skip Fable + top_thinking")
-        print("  tip: hands → GLM/Kimi/OpenRouter Cerebras (Astra secondary is exhausted)")
-    if failed:
-        print(f"{failed} check(s) failed. Fix before start, or use --force.")
-        return 1
-    print("ready")
-    return 0
-
-
 def scaffold(project: Path, goal: str, name: str | None) -> Path:
     root = factory_root(project)
     root.mkdir(parents=True, exist_ok=True)
-    (root / "dispatch").mkdir(exist_ok=True)
     (root / "artifacts").mkdir(exist_ok=True)
     (root / "checks").mkdir(exist_ok=True)
 
@@ -208,13 +61,11 @@ def scaffold(project: Path, goal: str, name: str | None) -> Path:
         "name": name or project.name,
         "goal": goal,
         "created_at": utc_now(),
-        "catalog_version": load_catalog().get("version"),
+        "decider_policy_version": load_policy().get("version"),
         "project_path": str(project),
         "status": "ready",
     }
     (root / "factory.json").write_text(json.dumps(factory, indent=2) + "\n")
-    (root / "ledger.jsonl").touch()
-    (root / "dispatch" / "log.jsonl").touch()
     (root / "state.json").write_text(
         json.dumps(
             {
@@ -248,10 +99,6 @@ def scaffold(project: Path, goal: str, name: str | None) -> Path:
             f"Goal: {goal}\n"
         )
 
-    append_jsonl(
-        root / "ledger.jsonl",
-        {"ts": utc_now(), "event": "init", "goal": goal, "name": factory["name"]},
-    )
     return root
 
 
@@ -265,7 +112,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     goal = args.goal or f"Ship work in {project.name}"
     root = scaffold(project, goal=goal, name=args.name)
     print(f"initialized {root}")
-    print("  factory.json  state.json  ledger.jsonl  dispatch/")
+    print(f"  factory.json  state.json  (decisions go to {ledger_path()})")
     print(f"  start with: open-factory start --path {project}")
     return 0
 
@@ -281,292 +128,207 @@ def cmd_status(args: argparse.Namespace) -> int:
     root = factory_root(project)
     factory = json.loads((root / "factory.json").read_text())
     state = json.loads((root / "state.json").read_text()) if (root / "state.json").is_file() else {}
-    log = root / "dispatch" / "log.jsonl"
-    n_disp = sum(1 for _ in log.open()) if log.is_file() else 0
+    n_disp = len(read_decisions(project))
     print(f"project   {project}")
     print(f"name      {factory.get('name')}")
     print(f"goal      {factory.get('goal')}")
     print(f"stage     {state.get('stage')}")
-    print(f"dispatch  {n_disp} rows")
+    print(f"decisions {n_disp} (of_decision rows in {ledger_path()})")
     print(f"updated   {state.get('updated_at') or factory.get('created_at')}")
     return 0
 
 
-def remap_jev(destination: str) -> str:
-    cat = load_catalog()
-    return cat.get("jev_remap", {}).get(destination, "orchestrator")
+def cmd_seats(args: argparse.Namespace) -> int:
+    route = resolve_bin("route")
+    if not route:
+        raise SystemExit("open-factory: route not found")
+    extra = ["--class", args.task_class] if args.task_class else []
+    return subprocess.run([route, "menu", *extra, *(["--json"] if args.json else [])], check=False).returncode
+
+
+def cmd_doctor(_: argparse.Namespace) -> int:
+    checks: list[tuple[str, bool, str]] = []
+    for name in (CLAUDE_LAUNCHER, "route", "jev"):
+        path = resolve_bin(name)
+        checks.append((name, bool(path), path or "not found"))
+    code, _ = http_json(f"{AGENT_LB_URL}/health")
+    checks.append(("agent-lb", code == 200, f"{AGENT_LB_URL}/health -> {code or 'down'}"))
+    code, menu, err = run_route("menu", "--json")
+    if isinstance(menu, dict):
+        runnable = sorted({seat["id"] for entry in menu["classes"].values() for seat in entry.get("seats", [])})
+        checks.append(("menu", bool(runnable), f"{len(runnable)} runnable seats (pools: {menu.get('poolsSource')})"))
+    else:
+        checks.append(("menu", False, err or f"route menu exit {code}"))
+    jev = resolve_bin("jev")
+    if jev:
+        proc = subprocess.run([jev, "health"], capture_output=True, text=True, timeout=20, check=False)
+        text = (proc.stdout or proc.stderr).strip()
+        checks.append(
+            (
+                "jev-health",
+                proc.returncode == 0 and "UNAVAILABLE" not in text,
+                text.splitlines()[0][:100] if text else f"exit {proc.returncode}",
+            )
+        )
+
+    print(f"open-factory doctor  {utc_now()}\n")
+    failed = 0
+    for name, ok, detail in checks:
+        failed += not ok
+        print(f"  [{'ok' if ok else 'FAIL':>4}]  {name:<18} {detail}")
+    print()
+    if failed:
+        print(f"{failed} check(s) failed. Fix before start, or use --force.")
+        return 1
+    print("ready")
+    return 0
 
 
 def cmd_route(args: argparse.Namespace) -> int:
-    prompt = args.prompt
-    jev = resolve_bin("jev")
-    row: dict[str, Any] = {"ts": utc_now(), "prompt": prompt[:500], "source": "jev"}
-    if not jev:
-        seat = load_catalog()["policy"].get("fail_open_seat", "implementer-speed")
-        row.update({"ok": False, "error": "jev missing", "seat": seat, "fallback": True})
-        print(json.dumps(row, indent=2))
+    receipt = decide(args.task, args.task_class, decider=args.decider, context=args.context)
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
         return 0
-
-    try:
-        p = subprocess.run(
-            [jev, "route", prompt],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        out = (p.stdout or "").strip()
-        err = (p.stderr or "").strip()
-        if p.returncode == 3 or "UNAVAILABLE" in out or "UNAVAILABLE" in err:
-            seat = load_catalog()["policy"].get("fail_open_seat", "implementer-speed")
-            row.update({"ok": False, "error": "jev unavailable", "seat": seat, "fallback": True})
-        else:
-            # jev route prints JSON or key lines — try parse
-            data: Any = None
-            for line in reversed(out.splitlines()):
-                line = line.strip()
-                if line.startswith("{"):
-                    try:
-                        data = json.loads(line)
-                        break
-                    except json.JSONDecodeError:
-                        continue
-            if data is None:
-                # heuristic: look for destination=
-                dest = None
-                for line in out.splitlines():
-                    if "destination" in line.lower():
-                        for part in line.replace(",", " ").split():
-                            if part in load_catalog().get("jev_remap", {}):
-                                dest = part
-                data = {"destination": dest or "opus_subagents", "raw": out[:800]}
-            dest = str(data.get("destination") or data.get("dest") or "opus_subagents")
-            seat = remap_jev(dest)
-            conf = data.get("confidence")
-            try:
-                conf_f = float(conf) if conf is not None else None
-            except (TypeError, ValueError):
-                conf_f = None
-            if conf_f is not None and conf_f < 0.5:
-                seat = load_catalog()["policy"].get("fail_open_seat", "implementer-speed")
-                row["low_confidence"] = True
-            # jev emits probabilities; only hard-override when clearly high risk
-            try:
-                risk_f = float(data.get("high_risk") or 0)
-            except (TypeError, ValueError):
-                risk_f = 1.0 if data.get("high_risk") is True else 0.0
-            if risk_f >= 0.7:
-                seat = "orchestrator"
-                row["high_risk_override"] = True
-            # high ambiguity → keep brain involved
-            try:
-                amb_f = float(data.get("ambiguous") or 0)
-            except (TypeError, ValueError):
-                amb_f = 0.0
-            if amb_f >= 0.75 and seat.startswith("implementer"):
-                seat = "planner"
-                row["ambiguity_promote"] = True
-            row.update({"ok": True, "jev": data, "seat": seat, "destination": dest})
-    except Exception as e:
-        seat = load_catalog()["policy"].get("fail_open_seat", "implementer-speed")
-        row.update({"ok": False, "error": f"{type(e).__name__}: {e}", "seat": seat, "fallback": True})
-
-    # optional project log
-    try:
-        project = find_project(Path(args.path).resolve() if args.path else None)
-        append_jsonl(factory_root(project) / "dispatch" / "log.jsonl", row)
-    except SystemExit:
-        pass
-
-    print(json.dumps(row, indent=2))
+    how = (
+        f"picked by {args.decider}"
+        if receipt["validation"] == "accepted"
+        else f"fallback {receipt['fallback']} ({receipt['abstain'] or receipt['validation']})"
+    )
+    print(f"seat      {receipt['seat']}")
+    print(f"model     {receipt['model'] or '-'}")
+    print(f"pool      {receipt['pool'] or '-'}")
+    print(f"decision  {how}; {receipt['total_ms']} ms; id {receipt['decision_id']}")
     return 0
+
+
+def menu_text(menu: dict[str, Any]) -> str:
+    lines = []
+    for name in WORK_CLASSES:
+        entry = menu.get("classes", {}).get(name)
+        if not entry:
+            continue
+        seats = (
+            ", ".join(f"`{seat['seat']}` on `{seat['model']}`" for seat in entry.get("seats", []))
+            or "nothing routable; stay on the driver"
+        )
+        lines.append(f"- {name}: {seats}")
+    return "\n".join(lines)
 
 
 def build_orchestrator_prompt(project: Path, goal: str | None) -> str:
     root = factory_root(project)
     orch = (root / "ORCHESTRATOR.md").read_text()
     factory = json.loads((root / "factory.json").read_text())
-    seats = load_catalog()["seats"]
-    seat_lines = "\n".join(
-        f"- `{s['id']}` ({s['role']}): {s['purpose']} · models: {', '.join(s['models'][:3])}"
-        for s in seats
-    )
-    g = goal or factory.get("goal") or ""
+    try:
+        menu = menu_text(fetch_menu_all())
+    except SystemExit as error:
+        menu = f"(route menu unavailable: {error})"
     return f"""You are the Open Factory orchestrator for this project.
 
 Project: {project}
 Factory: {root}
-Goal: {g}
+Goal: {goal or factory.get("goal") or ""}
 
 {orch}
 
-## Allowlisted seats (dispatch only these)
-{seat_lines}
+## Routing (per call, not per session)
 
-## Hard rules
-1. You are the brain: decide, brief, accept. Do not grind files or run unbounded verifies.
-2. One seam → one herdr worktree → one branch → one file set. Claim files before briefing.
-3. Independent seats dispatch in one message. Verifier gets a wall-clock budget + named suites.
-4. Designer is Fable or Opus only — never Astra/Sol.
-5. When Astra is dry: quality hand → Sol Ultrafast (if human waiting) or Opus; speed hand → Cerebras oss/Qwen then Luna/GLM/Kimi.
-6. Log every dispatch conceptually; prefer `open-factory route` for new-turn triage.
-7. Maker builds; separate checker verifies. Merge-ready is a conjunction of checks.
-8. Budget heavy jobs (test/build slots), never refuse agents.
-9. While Fable weekly / Astra secondary are dry: orchestrate on Opus with `--effort none` (anthropic_top); hands on GLM/Kimi/Cerebras. Do not start Fable or Astra seats.
+Before each subagent or Workflow agent, get the seat from the host router:
 
-Start by reading `{root}/FACTORY.md` and `{root}/state.json`, then propose the first lane plan for the goal.
+    open-factory route --class <explore|research|implement|mechanical|review|verify|plan> "<one-paragraph task>"
+
+It returns a seat and model and records the decision in the dispatch ledger. Dispatch to
+exactly that seat: Claude models as `Agent`/`agent()` with that `model`; Codex and Cursor
+seats through their forwarder agents (`codex-sol`, `implementer`, `cursor-seat`). If it
+returns `driver`, do the work in this session. Never pick a seat the router did not return.
+
+Seats runnable at launch ({utc_now()}; the router re-checks live):
+{menu}
+
+## Rules
+1. Decide, brief, accept. Seats do the volume work.
+2. One seam, one worktree, one branch, one file set.
+3. Independent seats go out in one message. Verify by running the work.
 """
+
+
+def fetch_menu_all() -> dict[str, Any]:
+    code, menu, err = run_route("menu", "--json")
+    if not isinstance(menu, dict):
+        raise SystemExit(err or f"route menu exit {code}")
+    return menu
 
 
 def cmd_start(args: argparse.Namespace) -> int:
     project = Path(args.path).expanduser().resolve() if args.path else Path.cwd().resolve()
     marker = factory_root(project) / "factory.json"
     if not marker.is_file():
-        if args.init_if_missing:
-            scaffold(project, goal=args.goal or f"Ship work in {project.name}", name=args.name)
-        else:
-            raise SystemExit(f"not initialized: {project} — run open-factory init or pass --init-if-missing")
-
-    if not args.force:
-        dr = cmd_doctor(argparse.Namespace())
-        if dr != 0:
-            raise SystemExit("doctor failed; pass --force to start anyway")
+        if not args.init_if_missing:
+            raise SystemExit(f"not initialized: {project}; run open-factory init or pass --init-if-missing")
+        scaffold(project, goal=args.goal or f"Ship work in {project.name}", name=args.name)
+    if not args.force and cmd_doctor(argparse.Namespace()) != 0:
+        raise SystemExit("doctor failed; pass --force to start anyway")
 
     prompt = build_orchestrator_prompt(project, args.goal)
-    prompt_path = factory_root(project) / "dispatch" / "last-start-prompt.md"
+    prompt_path = factory_root(project) / "last-start-prompt.md"
     prompt_path.write_text(prompt)
-
     factory = json.loads(marker.read_text())
     if args.goal:
         factory["goal"] = args.goal
-    factory["status"] = "running"
-    factory["last_start_at"] = utc_now()
+    factory.update(status="running", last_start_at=utc_now())
     marker.write_text(json.dumps(factory, indent=2) + "\n")
-    state_path = factory_root(project) / "state.json"
-    state = json.loads(state_path.read_text()) if state_path.is_file() else {}
-    state.update({"stage": "in_execution", "updated_at": utc_now(), "goal": factory["goal"]})
-    state_path.write_text(json.dumps(state, indent=2) + "\n")
-    append_jsonl(
-        factory_root(project) / "ledger.jsonl",
-        {"ts": utc_now(), "event": "start", "goal": factory["goal"], "dry_run": bool(args.dry_run)},
-    )
 
-    launcher = resolve_bin("fable") or resolve_bin("cc")
+    launcher = resolve_bin(CLAUDE_LAUNCHER)
     if not launcher:
-        raise SystemExit("fable/cc not on PATH")
-
-    repo_clients = REPO_CLIENTS
-    driver = (args.driver or "auto").lower()
-    if driver == "auto":
-        driver, reason = recommend_driver()
-        print(f"open-factory auto-driver → {driver} ({reason})")
-
-    if driver == "opus":
-        opus_bin = resolve_bin("opus")
-        if opus_bin:
-            launcher = opus_bin
-        else:
-            launcher = str(repo_clients / "fable") if (repo_clients / "fable").is_file() else launcher
-            os.environ["AGENT_LB_FABLE_MODEL"] = os.environ.get("AGENT_LB_OPUS_MODEL") or "claude-opus-5"
-            os.environ["ANTHROPIC_MODEL"] = os.environ["AGENT_LB_FABLE_MODEL"]
-    elif driver == "fable":
-        print(
-            "warning: Fable may be dry; prefer --driver opus until Fable primary returns",
-            file=sys.stderr,
-        )
-        launcher = resolve_bin("fable") or launcher
-    elif driver == "cc":
-        launcher = resolve_bin("cc") or launcher
-    else:
-        raise SystemExit(f"unknown --driver {driver!r} (auto|fable|opus|cc)")
-
-    if args.model:
-        os.environ["AGENT_LB_FABLE_MODEL"] = args.model
-        os.environ["ANTHROPIC_MODEL"] = args.model
-        cmd_model = ["--model", args.model]
-    else:
-        cmd_model = []
-
-    # Default effort: none for non-Fable drivers → anthropic_top (not top_thinking).
-    # Claude Code rejects --effort none; claude-lb-launch strips the sentinel.
-    effort = (args.effort or "").strip().lower()
-    if not effort:
-        effort = "high" if driver == "fable" else "none"
-    os.environ["CC_EFFORT_LEVEL"] = effort
-    cmd_effort = ["--effort", effort] if effort not in {"none", "off"} else ["--effort", "none"]
-
-    cmd = [
-        launcher,
-        *cmd_model,
-        *cmd_effort,
-        "--permission-mode",
-        args.permission_mode,
-        "--append-system-prompt",
-        prompt,
-    ]
+        raise SystemExit(f"{CLAUDE_LAUNCHER} not found")
+    cmd = [launcher, *DRIVER_ARGS, "--append-system-prompt", prompt]
     if args.print:
         cmd.extend(["-p", args.print])
     elif args.goal:
         cmd.append(f"Open Factory start. Goal: {args.goal}. Read .open-factory/FACTORY.md and begin.")
-
-    print("open-factory start")
-    print(f"  project   {project}")
-    print(f"  driver    {driver}")
-    print(f"  launcher  {launcher}")
-    print(f"  effort    {effort}")
-    print(f"  prompt    {prompt_path}")
+    print(f"open-factory start\n  project   {project}\n  launcher  {launcher} (Opus drives)\n  prompt    {prompt_path}")
     if args.dry_run:
         print("  dry-run   true (not exec)")
-        print("  cmdline  ", " ".join(json.dumps(c) if " " in c else c for c in cmd[:8]), "…")
         return 0
-
     os.chdir(project)
-    os.execv(launcher, cmd)
+    env = {k: v for k, v in os.environ.items() if k not in {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION"}}
+    os.execve(launcher, cmd, env)
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    project = find_project(Path(args.path).resolve() if args.path else None)
-    root = factory_root(project)
-    factory = json.loads((root / "factory.json").read_text())
-    log = root / "dispatch" / "log.jsonl"
-    rows = []
-    if log.is_file():
-        for line in log.read_text().splitlines():
-            if line.strip():
-                try:
-                    rows.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    seats_used: dict[str, int] = {}
-    for r in rows:
-        s = str(r.get("seat") or "?")
-        seats_used[s] = seats_used.get(s, 0) + 1
-    print(f"# Open Factory report — {factory.get('name')}")
-    print(f"path: {project}")
-    print(f"goal: {factory.get('goal')}")
-    print(f"status: {factory.get('status')}")
-    print(f"dispatch rows: {len(rows)}")
-    if seats_used:
-        print("seats:")
-        for k, v in sorted(seats_used.items(), key=lambda x: -x[1]):
-            print(f"  {k}: {v}")
-    print(f"\ncatalog: {CATALOG_PATH}")
-    print("doctor tip: open-factory doctor")
-    print(f"start tip: open-factory start --path {project}")
+    project = Path(args.path).expanduser().resolve() if args.path else None
+    rows = read_decisions(project)
+    print(f"# Open Factory decisions{f' under {project}' if project else ''}: {len(rows)}")
+    if not rows:
+        return 0
+    accepted = sum(r.get("validation") == "accepted" for r in rows)
+    print(
+        f"accepted picks {accepted}/{len(rows)}; fallbacks {Counter(r.get('fallback') for r in rows if r.get('fallback'))}"
+    )
+    print(f"abstain reasons {Counter(r.get('abstain') for r in rows if r.get('abstain'))}")
+    print("seats:")
+    for (seat, model), n in Counter((r.get("seat"), r.get("model")) for r in rows).most_common():
+        print(f"  {seat}/{model}: {n}")
+    ms = sorted(r["decider_ms"] for r in rows if isinstance(r.get("decider_ms"), int))
+    if ms:
+        print(f"decider latency p50 {ms[len(ms) // 2]} ms, max {ms[-1]} ms")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="open-factory",
-        description="Local software factory: Fable orchestrator + allowlisted seats over agent-lb/herdr.",
+        description="Open Factory: an Opus host that routes each call across subscriptions through agent-lb.",
     )
     p.add_argument("--version", action="version", version=f"open-factory {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("seats", help="List allowlisted seats")
+    s = sub.add_parser("seats", help="Seats runnable now, per class (route menu)")
+    s.add_argument("--class", dest="task_class", default=None)
+    s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_seats)
 
-    d = sub.add_parser("doctor", help="Check fable/cc/jev/agent-lb/herdr")
+    d = sub.add_parser("doctor", help="Check the launcher, route, jev and agent-lb")
     d.set_defaults(func=cmd_doctor)
 
     i = sub.add_parser("init", help="Scaffold .open-factory in a project")
@@ -580,35 +342,26 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--path", default=None)
     st.set_defaults(func=cmd_status)
 
-    r = sub.add_parser("route", help="Classify a turn via jev → seat id")
-    r.add_argument("prompt")
-    r.add_argument("--path", default=None)
+    r = sub.add_parser("route", help="Pick the seat for one task: menu, decider, host re-check, receipt")
+    r.add_argument("task")
+    r.add_argument("--class", dest="task_class", default="implement", choices=WORK_CLASSES)
+    r.add_argument("--decider", default=None, choices=DECIDERS, help="default from decider.json")
+    r.add_argument("--context", default=None, help="extra state for the decider")
+    r.add_argument("--json", action="store_true")
     r.set_defaults(func=cmd_route)
 
-    start = sub.add_parser("start", help="Launch Fable orchestrator for this project")
+    start = sub.add_parser("start", help="Launch the Opus orchestrator (cc) for this project")
     start.add_argument("--path", default=None)
     start.add_argument("--goal", default=None)
     start.add_argument("--name", default=None)
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--force", action="store_true")
     start.add_argument("--init-if-missing", action="store_true")
-    start.add_argument("--driver", default="auto", help="auto | fable | opus | cc (auto skips Fable when dry)")
-    start.add_argument(
-        "--model",
-        default=None,
-        help="Override driver model (prefer claude-sonnet-5 / claude-opus-5 while Fable thinking is cool)",
-    )
-    start.add_argument(
-        "--effort",
-        default=None,
-        help="Claude effort (none|low|medium|high). Default: none for opus/cc, high for fable",
-    )
-    start.add_argument("--permission-mode", default="auto")
     start.add_argument("--print", dest="print", default=None, help="Non-interactive -p prompt")
     start.set_defaults(func=cmd_start)
 
-    rep = sub.add_parser("report", help="Print a short factory report")
-    rep.add_argument("--path", default=None)
+    rep = sub.add_parser("report", help="Summarize routing decisions from the dispatch ledger")
+    rep.add_argument("--path", default=None, help="only decisions made under this directory")
     rep.set_defaults(func=cmd_report)
 
     return p
@@ -617,6 +370,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "decider", "x") is None:
+        args.decider = load_policy().get("decider", "jev")
     return int(args.func(args) or 0)
 
 
