@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+from typing import cast
 
+import aiohttp
 import pytest
 
-from app.core.clients.anthropic_usage import AnthropicOAuthUsagePayload, _usage_payload_from_anthropic
+from app.core.clients.anthropic_usage import (
+    AnthropicOAuthUsagePayload,
+    _usage_payload_from_anthropic,
+    fetch_anthropic_usage,
+)
+from app.core.clients.usage import UsageFetchError
 
 pytestmark = pytest.mark.unit
 
@@ -232,3 +240,37 @@ def test_banked_reset_count_is_independent_of_current_redemption_eligibility():
         },
     })
     assert _usage_payload_from_anthropic(payload).reset_credits_available == 2
+
+
+class _RejectedUsageResponse:
+    status = 401
+
+    async def json(self, content_type: str | None = None) -> dict[str, object]:
+        return {"error": {"type": "authentication_error", "message": "OAuth access token has been revoked."}}
+
+    async def __aenter__(self) -> _RejectedUsageResponse:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+class _RejectingClient:
+    def get(self, *args: object, **kwargs: object) -> _RejectedUsageResponse:
+        return _RejectedUsageResponse()
+
+
+@pytest.mark.asyncio
+async def test_rejected_usage_fetch_logs_account_short_id(caplog: pytest.LogCaptureFixture) -> None:
+    # The revoked-token 401 is how we find a second holder of the same grant;
+    # the log line has to say which account it was.
+    with caplog.at_level(logging.WARNING, logger="app.core.clients.anthropic_usage"):
+        with pytest.raises(UsageFetchError):
+            await fetch_anthropic_usage(
+                access_token="token",
+                client=cast(aiohttp.ClientSession, _RejectingClient()),
+                account_id="ddb5ff1a-4aea-4810-9f10-196fb49b5d80",
+            )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("account=ddb5ff1a " in m and "has been revoked" in m for m in messages), messages

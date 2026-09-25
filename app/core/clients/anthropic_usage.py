@@ -86,6 +86,7 @@ async def fetch_anthropic_usage(
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
     client: aiohttp.ClientSession | None = None,
+    account_id: str | None = None,
 ) -> UsagePayload:
     settings = get_settings()
     usage_base = base_url or settings.anthropic_upstream_base_url
@@ -98,7 +99,7 @@ async def fetch_anthropic_usage(
     try:
         if client is not None:
             async with client.get(url, headers=headers, timeout=timeout) as resp:
-                return await _usage_payload_or_raise(resp)
+                return await _usage_payload_or_raise(resp, account_id=account_id)
         async with lease_retry_client() as retry_client:
             async with retry_client.request(
                 "GET",
@@ -107,7 +108,7 @@ async def fetch_anthropic_usage(
                 timeout=timeout,
                 retry_options=retry_options,
             ) as resp:
-                return await _usage_payload_or_raise(resp)
+                return await _usage_payload_or_raise(resp, account_id=account_id)
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.warning("Anthropic usage fetch error request_id=%s error=%s", get_request_id(), exc)
         raise UsageFetchError(0, f"Anthropic usage fetch failed: {exc}") from exc
@@ -232,14 +233,15 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> dict[str, Any]:
     return data if isinstance(data, dict) else {"error": {"message": str(data)}}
 
 
-async def _usage_payload_or_raise(resp: aiohttp.ClientResponse) -> UsagePayload:
+async def _usage_payload_or_raise(resp: aiohttp.ClientResponse, *, account_id: str | None = None) -> UsagePayload:
     data = await _safe_json(resp)
     if resp.status >= 400:
         code = _extract_error_code(data)
         message = _extract_error_message(data) or f"Anthropic usage fetch failed ({resp.status})"
         logger.warning(
-            "Anthropic usage fetch failed request_id=%s status=%s code=%s message=%s",
+            "Anthropic usage fetch failed request_id=%s account=%s status=%s code=%s message=%s",
             get_request_id(),
+            account_id[:8] if account_id else None,
             resp.status,
             code,
             message,

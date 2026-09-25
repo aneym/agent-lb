@@ -829,7 +829,7 @@ async def _fetch_usage_payload(
     usage_account_id: str | None,
 ) -> UsagePayload:
     if account.provider == ANTHROPIC_PROVIDER_NAME:
-        return await fetch_anthropic_usage(access_token=access_token)
+        return await fetch_anthropic_usage(access_token=access_token, account_id=account.id)
     route = await _resolve_upstream_route_for_account(account, operation="usage_refresh")
     return await fetch_usage(
         access_token=access_token,
