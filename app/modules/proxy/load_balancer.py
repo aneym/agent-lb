@@ -2128,13 +2128,15 @@ def _state_from_account(
     )
     effective_runtime_reset = db_reset_at or runtime.reset_at
     effective_blocked_at = float(account.blocked_at) if account.blocked_at is not None else runtime.blocked_at
-    if (
-        account.status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
-        and effective_blocked_at is not None
-    ):
-        legacy_retry_at = effective_blocked_at + 60.0
-        if effective_runtime_reset is None or effective_runtime_reset > effective_blocked_at + 3600.0:
-            effective_runtime_reset = legacy_retry_at
+    if ignore_zero_capacity_primary_runtime_reset and effective_blocked_at is not None:
+        # The zero-capacity-primary seed only discounts snapshot-derived limits.
+        # A persisted real refusal still holds until its bounded retry expires.
+        marker_reset = (float(account.reset_at) if account.reset_at else None) or runtime.reset_at
+        if _bounded_retry_at(marker_reset, effective_blocked_at) > time.time():
+            status_seed = account.status
+            effective_runtime_reset = marker_reset
+    if status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED) and effective_blocked_at is not None:
+        effective_runtime_reset = _bounded_retry_at(effective_runtime_reset, effective_blocked_at)
 
     # Usage is a ranking signal, not evidence that an upstream request failed.
     # Older quota statuses with no failure marker were inferred from snapshots.
@@ -2232,6 +2234,14 @@ def _state_from_account(
     )
 
 
+def _bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
+    # A missing reset, or a legacy one more than an hour past the block, retries
+    # 60s after the real refusal instead of holding the account for the window.
+    if reset_at is None or reset_at > blocked_at + 3600.0:
+        return blocked_at + 60.0
+    return reset_at
+
+
 def background_recovery_state_from_account(
     *,
     account: Account,
@@ -2268,7 +2278,10 @@ def background_recovery_state_from_account(
             primary_entry=primary_entry,
             long_window_entry=secondary_entry,
         )
-        if blocked_at is not None and reset_at is not None and reset_at <= time.time():
+        # Compare against the computed state, not the raw persisted reset: the
+        # bounded retry can expire before a legacy long reset does, and pre-block
+        # usage is still no evidence that the persisted status recovered.
+        if blocked_at is not None and reset_at is not None and state.status == AccountStatus.ACTIVE:
             if not _usage_entry_recorded_after_block(freshness_entry, blocked_at):
                 return replace(
                     state,

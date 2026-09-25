@@ -868,15 +868,17 @@ def test_handle_rate_limit_sets_reset_at_from_message(monkeypatch):
     assert state.cooldown_until == pytest.approx(now + 1.5)
 
 
-def test_handle_rate_limit_uses_backoff_when_no_delay(monkeypatch):
+def test_handle_rate_limit_uses_bounded_retry_when_no_delay(monkeypatch):
     now = 1_700_000_000.0
     monkeypatch.setattr("app.core.balancer.logic.time.time", lambda: now)
-    monkeypatch.setattr("app.core.balancer.logic.backoff_seconds", lambda _: 0.2)
     state = AccountState("a", AccountStatus.ACTIVE, used_percent=5.0)
     handle_rate_limit(state, {"message": "Rate limit exceeded."})
     assert state.status == AccountStatus.RATE_LIMITED
     assert state.cooldown_until is not None
-    assert state.cooldown_until == pytest.approx(now + 0.2)
+    # 82ed714b: live refusals now use bounded quota retry, not jittered request backoff.
+    assert state.cooldown_until == pytest.approx(now + 60.0)
+    assert state.reset_at == state.cooldown_until
+    assert state.blocked_at == now
 
 
 def test_select_account_skips_cooldown_until_expired():
@@ -1126,7 +1128,7 @@ def test_apply_usage_quota_resets_to_active_if_runtime_reset_expired(monkeypatch
     assert reset_at is None
 
 
-def test_select_account_resets_used_percent_when_rate_limit_expires():
+def test_select_account_readmits_expired_rate_limit_keeping_used_percent():
     now = 1_700_000_000.0
     state = AccountState(
         "a",
@@ -1139,11 +1141,12 @@ def test_select_account_resets_used_percent_when_rate_limit_expires():
 
     assert result.account is not None
     assert state.status == AccountStatus.ACTIVE
-    assert state.used_percent == 0.0
+    # 82ed714b: retry eligibility does not erase the last usage ranking snapshot.
+    assert state.used_percent == 100.0
     assert state.reset_at is None
 
 
-def test_select_account_resets_secondary_used_percent_when_quota_exceeded_expires():
+def test_select_account_readmits_expired_quota_exceeded_keeping_usage_percents():
     now = 1_700_000_000.0
     state = AccountState(
         "a",
@@ -1157,8 +1160,9 @@ def test_select_account_resets_secondary_used_percent_when_quota_exceeded_expire
 
     assert result.account is not None
     assert state.status == AccountStatus.ACTIVE
-    assert state.used_percent == 0.0
-    assert state.secondary_used_percent == 0.0
+    # 82ed714b: expired refusal readmits without fabricating fresh usage.
+    assert state.used_percent == 100.0
+    assert state.secondary_used_percent == 100.0
     assert state.reset_at is None
 
 
@@ -1257,8 +1261,9 @@ def test_bypass_quota_exceeded_still_recovers_expired_quota_state():
     assert result.account is not None
     assert result.account.account_id == "a"
     assert state.status == AccountStatus.ACTIVE
-    assert state.used_percent == 0.0
-    assert state.secondary_used_percent == 0.0
+    # 82ed714b: bounded retry does not reset advisory usage percentages.
+    assert state.used_percent == 100.0
+    assert state.secondary_used_percent == 100.0
     assert state.reset_at is None
 
 
@@ -1925,7 +1930,8 @@ def test_state_from_account_treats_monthly_usage_as_long_window_quota(monkeypatc
         runtime=RuntimeState(),
     )
 
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: exhausted monthly snapshot ranks but cannot exclude an account.
+    assert state.status == AccountStatus.ACTIVE
     assert state.secondary_used_percent == 100.0
     assert state.secondary_reset_at == future_reset
     assert state.capacity_credits == usage_core.capacity_for_plan("free", "monthly")
@@ -2040,7 +2046,7 @@ def test_state_from_account_ignores_zero_capacity_primary_for_active_free_accoun
     assert state.reset_at is None
 
 
-def test_state_from_account_preserves_free_rate_limit_without_weekly_usage_signal(monkeypatch):
+def test_state_from_account_readmits_free_rate_limit_without_failure_marker(monkeypatch):
     now = 1_700_000_000.0
     future_reset = int(now + 14 * 24 * 3600)
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
@@ -2063,11 +2069,49 @@ def test_state_from_account_preserves_free_rate_limit_without_weekly_usage_signa
         runtime=RuntimeState(),
     )
 
+    # 82ed714b: a snapshot-only rate limit has no upstream failure marker.
+    assert state.status == AccountStatus.ACTIVE
+    assert state.reset_at is None
+    assert state.used_percent == 100.0
+
+
+def test_state_from_account_holds_free_plan_rate_limit_until_persisted_bounded_retry_expires(monkeypatch):
+    # 82ed714b: a persisted real 429 holds for its bounded retry across a restart,
+    # even when the zero-capacity-primary rule would otherwise seed the account active.
+    now = 1_700_000_000.0
+    blocked = now - 30.0
+    retry_at = int(blocked + 60)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
+    monkeypatch.setattr("app.modules.proxy.load_balancer.utcnow", lambda: _epoch_to_naive_utc(now))
+
+    account = _make_test_account(
+        status=AccountStatus.RATE_LIMITED,
+        reset_at=retry_at,
+        blocked_at=int(blocked),
+        plan_type="free",
+    )
+    fresh_monthly = _make_test_usage(
+        window="monthly",
+        used_percent=40.0,
+        reset_at=int(now + 30 * 24 * 3600),
+        recorded_at=_epoch_to_naive_utc(now - 10),
+        window_minutes=43200,
+    )
+
+    state = _state_from_account(
+        account=account,
+        primary_entry=None,
+        secondary_entry=fresh_monthly,
+        runtime=RuntimeState(),
+    )
+
     assert state.status == AccountStatus.RATE_LIMITED
-    assert state.reset_at == future_reset
+    assert state.reset_at == pytest.approx(retry_at)
+    assert state.blocked_at == pytest.approx(int(blocked))
 
 
-def test_state_from_account_preserves_free_rate_limit_for_legacy_unknown_primary_window(monkeypatch):
+def test_state_from_account_readmits_free_rate_limit_for_legacy_unknown_primary_window(monkeypatch):
     now = 1_700_000_000.0
     future_reset = int(now + 14 * 24 * 3600)
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
@@ -2095,8 +2139,10 @@ def test_state_from_account_preserves_free_rate_limit_for_legacy_unknown_primary
         runtime=RuntimeState(),
     )
 
-    assert state.status == AccountStatus.RATE_LIMITED
-    assert state.reset_at == future_reset
+    # 82ed714b: legacy rate-limit status without blocked_at cannot exclude.
+    assert state.status == AccountStatus.ACTIVE
+    assert state.reset_at is None
+    assert state.used_percent == 100.0
 
 
 def test_state_from_account_recovers_quota_exceeded_on_restart_without_blocked_at_when_usage_shows_new_reset_window(
@@ -2158,7 +2204,7 @@ def test_state_from_account_uses_secondary_credits_when_primary_lacks_credit_fie
     assert state.blocked_at is None
 
 
-def test_state_from_account_keeps_quota_exceeded_on_restart_when_fresh_usage_is_missing_and_no_blocked_at(
+def test_state_from_account_readmits_quota_exceeded_on_restart_without_blocked_at_when_fresh_usage_is_missing(
     monkeypatch,
 ):
     now = 1_700_000_000.0
@@ -2180,7 +2226,9 @@ def test_state_from_account_keeps_quota_exceeded_on_restart_when_fresh_usage_is_
         secondary_entry=secondary,
         runtime=RuntimeState(),
     )
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: missing usage cannot turn a marker-free legacy status into a real refusal.
+    assert state.status == AccountStatus.ACTIVE
+    assert state.blocked_at is None
 
 
 def test_state_from_account_preserves_credits_when_weekly_primary_replaces_secondary(monkeypatch):
@@ -2254,7 +2302,9 @@ def test_state_from_account_uses_freshest_credit_snapshot(monkeypatch):
         runtime=RuntimeState(),
     )
 
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: exhausted credits snapshot is advisory, not an upstream refusal.
+    assert state.status == AccountStatus.ACTIVE
+    assert state.secondary_used_percent == 100.0
     assert _extract_credit_status(stale_primary_with_credits, fresh_secondary_without_credits) == (
         False,
         False,
@@ -2262,7 +2312,7 @@ def test_state_from_account_uses_freshest_credit_snapshot(monkeypatch):
     )
 
 
-def test_state_from_account_keeps_quota_exceeded_without_blocked_at_when_usage_stays_on_same_reset_window(
+def test_state_from_account_readmits_quota_exceeded_without_blocked_at_when_usage_stays_on_same_reset_window(
     monkeypatch,
 ):
     now = 1_700_000_000.0
@@ -2284,7 +2334,9 @@ def test_state_from_account_keeps_quota_exceeded_without_blocked_at_when_usage_s
         secondary_entry=secondary,
         runtime=RuntimeState(),
     )
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: same-window usage does not preserve a marker-free exclusion.
+    assert state.status == AccountStatus.ACTIVE
+    assert state.blocked_at is None
 
 
 def test_state_from_account_clears_quota_exceeded_after_restart_with_persisted_blocked_at(monkeypatch):
@@ -2317,7 +2369,8 @@ def test_state_from_account_clears_quota_exceeded_after_restart_with_persisted_b
 
 def test_state_from_account_keeps_quota_exceeded_after_restart_when_persisted_blocked_at_is_recent(monkeypatch):
     now = 1_700_000_000.0
-    blocked = now - 60.0
+    # 82ed714b: a persisted real refusal must exclude before its bounded retry.
+    blocked = now - 30.0
     future_reset = int(now + 3600)
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -2340,9 +2393,13 @@ def test_state_from_account_keeps_quota_exceeded_after_restart_when_persisted_bl
         runtime=RuntimeState(),
     )
     assert state.status == AccountStatus.QUOTA_EXCEEDED
+    assert state.blocked_at == blocked
+    assert state.reset_at == pytest.approx(blocked + 60.0)
 
 
-def test_state_from_account_keeps_quota_exceeded_after_restart_when_secondary_usage_is_older_than_block(monkeypatch):
+def test_state_from_account_readmits_expired_quota_block_after_restart_when_secondary_usage_is_older_than_block(
+    monkeypatch,
+):
     now = 1_700_000_000.0
     blocked = now - 130.0
     future_reset = int(now + 3600)
@@ -2366,7 +2423,9 @@ def test_state_from_account_keeps_quota_exceeded_after_restart_when_secondary_us
         secondary_entry=secondary,
         runtime=RuntimeState(),
     )
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: older usage cannot extend an expired persisted upstream refusal.
+    assert state.status == AccountStatus.ACTIVE
+    assert state.blocked_at is None
 
 
 def test_state_from_account_clears_quota_exceeded_after_cooldown_expiry(monkeypatch):
@@ -2423,7 +2482,7 @@ def test_state_from_account_keeps_quota_exceeded_during_active_cooldown(monkeypa
     assert state.status == AccountStatus.QUOTA_EXCEEDED
 
 
-def test_state_from_account_keeps_quota_exceeded_when_usage_is_stale(monkeypatch):
+def test_state_from_account_readmits_quota_exceeded_at_retry_expiry_when_usage_is_stale(monkeypatch):
     now = 1_700_000_000.0
     blocked = now - 60.0
     future_reset = int(now + 3600)
@@ -2447,10 +2506,11 @@ def test_state_from_account_keeps_quota_exceeded_when_usage_is_stale(monkeypatch
         secondary_entry=secondary,
         runtime=runtime,
     )
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: stale usage cannot extend the expired runtime retry.
+    assert state.status == AccountStatus.ACTIVE
 
 
-def test_state_from_account_keeps_quota_exceeded_when_no_usage_data(monkeypatch):
+def test_state_from_account_readmits_quota_exceeded_after_retry_without_usage_data(monkeypatch):
     now = 1_700_000_000.0
     blocked = now - 130.0
     future_reset = int(now + 3600)
@@ -2469,10 +2529,11 @@ def test_state_from_account_keeps_quota_exceeded_when_no_usage_data(monkeypatch)
         secondary_entry=None,
         runtime=runtime,
     )
-    assert state.status == AccountStatus.QUOTA_EXCEEDED
+    # 82ed714b: retry does not require any usage refresh.
+    assert state.status == AccountStatus.ACTIVE
 
 
-def test_state_from_account_rate_limited_checks_primary_freshness(monkeypatch):
+def test_state_from_account_readmits_rate_limited_after_retry_when_primary_is_stale(monkeypatch):
     now = 1_700_000_000.0
     blocked = now - 130.0
     future_reset = int(now + 3600)
@@ -2503,7 +2564,8 @@ def test_state_from_account_rate_limited_checks_primary_freshness(monkeypatch):
         secondary_entry=fresh_secondary,
         runtime=runtime,
     )
-    assert state.status == AccountStatus.RATE_LIMITED
+    # 82ed714b: a stale primary snapshot cannot extend a live refusal retry.
+    assert state.status == AccountStatus.ACTIVE
 
 
 def test_state_from_account_rate_limited_clears_with_fresh_primary(monkeypatch):
