@@ -1,0 +1,6 @@
+- [x] Baseline the live LB with the staircase eval and record the receipts.
+- [x] Remove the per-host cap on the shared HTTP pool and raise the total to 1024.
+- [x] Release paced upload bytes in TLS-record chunks.
+- [x] Retry edge-rejected websocket handshakes with jittered backoff.
+- [x] Add regression tests that fail before each fix.
+- [ ] After the restart, rerun the eval at 100 and 200 and compare it with the baseline.
