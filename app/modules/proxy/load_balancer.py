@@ -320,6 +320,7 @@ class LoadBalancer:
         budget_threshold_pct: float = 95.0,
         secondary_budget_threshold_pct: float = 100.0,
         headroom_reallocate: bool = False,
+        hold_sticky_until_exhausted: bool = False,
         routing_costs_by_account_id: RoutingCostsByAccount | None = None,
         lease_kind: AccountLeaseKind | None = None,
         estimated_lease_tokens: float = 0.0,
@@ -672,6 +673,7 @@ class LoadBalancer:
                             secondary_budget_threshold_pct=secondary_budget_threshold_pct,
                             headroom_reallocate=headroom_reallocate,
                             burn_first_sticky_drain=burn_first_sticky_drain,
+                            hold_sticky_until_exhausted=hold_sticky_until_exhausted,
                             prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
                             prefer_earlier_reset_window=prefer_earlier_reset_window,
                             routing_strategy=routing_strategy,
@@ -1280,6 +1282,7 @@ class LoadBalancer:
         secondary_budget_threshold_pct: float = 100.0,
         headroom_reallocate: bool = False,
         burn_first_sticky_drain: bool = False,
+        hold_sticky_until_exhausted: bool = False,
         prefer_earlier_reset_accounts: bool,
         prefer_earlier_reset_window: ResetPreferenceWindow,
         routing_strategy: RoutingStrategy,
@@ -1338,8 +1341,13 @@ class LoadBalancer:
                 # threshold while avoiding obvious short-window failures once
                 # the session is skating on the edge of exhaustion.
                 now = time.time()
+                # Holding, a pin moves only when its account becomes unselectable
+                # (a live 429 or usage-limit cooldown, or 100% usage): budget
+                # pressure and burn-first drain would strand the rest of the window
+                # and pay a full prompt-cache rewrite on the new account.
                 budget_pressured = (
-                    sticky_kind
+                    not hold_sticky_until_exhausted
+                    and sticky_kind
                     in (
                         StickySessionKind.PROMPT_CACHE,
                         StickySessionKind.STICKY_THREAD,
@@ -1388,6 +1396,7 @@ class LoadBalancer:
                 # grace/fallback semantics below are untouched.
                 sticky_drain_reallocate = (
                     burn_first_sticky_drain
+                    and not hold_sticky_until_exhausted
                     and burn_first_target_selectable
                     and sticky_kind
                     in (
@@ -1523,6 +1532,14 @@ class LoadBalancer:
                     # Permanently down (PAUSED/DEACTIVATED) — let the
                     # fallback be persisted to rebind the mapping.
                     rebind_reason = "account_unavailable"
+                elif hold_sticky_until_exhausted and pinned.status in (
+                    AccountStatus.RATE_LIMITED,
+                    AccountStatus.QUOTA_EXCEEDED,
+                ):
+                    # Holding: the pin's account is out, so fail over once and
+                    # persist it; returning to the old account on recovery would
+                    # rewrite the cache a second time.
+                    rebind_reason = "rate_limited_failover"
                 elif sticky_max_age_seconds is not None:
                     # TTL-based kind (PROMPT_CACHE): preserve the original
                     # mapping so the next request returns to the warm-cache

@@ -1380,6 +1380,7 @@ class ProxyService(
             routing_strategy=_routing_strategy(settings),
             budget_threshold_pct=_sticky_reallocation_primary_budget_threshold_pct(settings),
             secondary_budget_threshold_pct=_sticky_reallocation_secondary_budget_threshold_pct(settings),
+            hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
             traffic_class=traffic_class,
         )
         if selection.account is None:
@@ -1752,6 +1753,7 @@ class ProxyService(
                         require_security_work_authorized=require_security_work_authorized,
                         budget_threshold_pct=_sticky_reallocation_primary_budget_threshold_pct(settings),
                         secondary_budget_threshold_pct=_sticky_reallocation_secondary_budget_threshold_pct(settings),
+                        hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
                         lease_kind=lease_kind,
                         estimated_lease_tokens=estimated_lease_tokens,
                         traffic_class=effective_traffic_class,
@@ -1794,6 +1796,7 @@ class ProxyService(
                     require_security_work_authorized=require_security_work_authorized,
                     budget_threshold_pct=_sticky_reallocation_primary_budget_threshold_pct(settings),
                     secondary_budget_threshold_pct=_sticky_reallocation_secondary_budget_threshold_pct(settings),
+                    hold_sticky_until_exhausted=_openai_sticky_hold_until_exhausted(),
                     lease_kind=lease_kind,
                     estimated_lease_tokens=estimated_lease_tokens,
                     traffic_class=effective_traffic_class,
@@ -2238,6 +2241,10 @@ def _relative_availability_top_k(settings: DashboardSettings) -> int:
 
 def _prefer_earlier_reset_window(settings: DashboardSettings) -> ResetPreferenceWindow:
     return "primary" if getattr(settings, "prefer_earlier_reset_window", None) == "primary" else "secondary"
+
+
+def _openai_sticky_hold_until_exhausted() -> bool:
+    return bool(getattr(get_settings(), "openai_sticky_hold_until_exhausted", True))
 
 
 def _sticky_reallocation_primary_budget_threshold_pct(settings: DashboardSettings) -> float:

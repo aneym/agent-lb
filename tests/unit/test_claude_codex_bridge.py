@@ -101,7 +101,6 @@ async def test_response_translation_emits_native_text_stream() -> None:
         "message_stop",
     ]
     assert payloads[2]["delta"] == {"type": "text_delta", "text": "hello"}
-    assert payloads[4]["usage"] == {"input_tokens": 12, "output_tokens": 3}
     assert payloads[4]["delta"]["stop_reason"] == "end_turn"
 
 

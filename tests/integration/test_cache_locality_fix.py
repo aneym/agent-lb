@@ -10,6 +10,7 @@ import pytest
 import app.modules.proxy.service as proxy_module
 from app.core.types import JsonValue
 from app.core.utils.time import utcnow
+from app.db.models import Account, AccountStatus
 from app.db.session import SessionLocal
 from app.modules.usage.repository import UsageRepository
 
@@ -152,6 +153,10 @@ def test_model_class_extraction_for_all_model_types():
 
 @pytest.mark.asyncio
 async def test_prompt_cache_reallocates_when_usage_exceeds_configured_budget_threshold(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_OPENAI_STICKY_HOLD_UNTIL_EXHAUSTED", "false")
+    get_settings.cache_clear()
     settings_response = await async_client.put(
         "/api/settings",
         json={
@@ -224,6 +229,95 @@ async def test_prompt_cache_reallocates_when_usage_exceeds_configured_budget_thr
     second = await async_client.post("/backend-api/codex/responses", json=payload)
     assert second.status_code == 200
     assert seen == ["acc_budget_a", "acc_budget_b"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_cache_holds_its_account_until_a_real_rate_limit_then_stays_on_the_failover(
+    async_client, monkeypatch
+):
+    # A conversation's prompt cache lives on the account that wrote it. Budget
+    # pressure must not move it; an upstream 429 moves it once, and it stays on the
+    # new account after the old one recovers.
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().openai_sticky_hold_until_exhausted is True
+    settings_response = await async_client.put(
+        "/api/settings",
+        json={
+            "stickyThreadsEnabled": False,
+            "stickyReallocationBudgetThresholdPct": 80.0,
+            "preferEarlierResetAccounts": False,
+            "routingStrategy": "usage_weighted",
+        },
+    )
+    assert settings_response.status_code == 200
+    acc_a_id = await _import_account(async_client, "acc_hold_a", "hold_a@example.com")
+    acc_b_id = await _import_account(async_client, "acc_hold_b", "hold_b@example.com")
+    now_epoch = int(utcnow().replace(tzinfo=timezone.utc).timestamp())
+
+    async def set_usage(a: float, b: float) -> None:
+        async with SessionLocal() as session:
+            usage_repo = UsageRepository(session)
+            for account_id, used in ((acc_a_id, a), (acc_b_id, b)):
+                await usage_repo.add_entry(
+                    account_id=account_id,
+                    used_percent=used,
+                    window="primary",
+                    reset_at=now_epoch + 3600,
+                    window_minutes=300,
+                )
+
+    seen: list[str] = []
+    limited: set[str] = set()
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **_kwargs):
+        seen.append(account_id)
+        if account_id in limited:
+            limited.discard(account_id)
+            error = {"code": "rate_limit_exceeded", "message": "slow down"}
+            yield f"data: {json.dumps({'type': 'response.failed', 'response': {'error': error}})}\n\n"
+            return
+        yield 'data: {"type":"response.completed","response":{"id":"resp_hold"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+    payload = {
+        "model": "gpt-5.1",
+        "instructions": "hi",
+        "input": [],
+        "stream": True,
+        "prompt_cache_key": "hold-key",
+    }
+
+    async def turn() -> None:
+        response = await async_client.post("/backend-api/codex/responses", json=payload)
+        assert response.status_code == 200
+
+    await set_usage(10.0, 20.0)
+    await turn()
+    assert seen == ["acc_hold_a"]
+
+    # Budget pressure (85% over an 80% threshold, with a 5% account free) holds.
+    await set_usage(85.0, 5.0)
+    await turn()
+    assert seen == ["acc_hold_a"] * 2
+
+    # A real upstream 429 fails over once.
+    limited.add("acc_hold_a")
+    await turn()
+    assert seen == ["acc_hold_a"] * 3 + ["acc_hold_b"]
+
+    # The old account recovers and the new one comes under budget pressure: stay.
+    async with SessionLocal() as session:
+        account = await session.get(Account, acc_a_id)
+        assert account is not None and account.status == AccountStatus.RATE_LIMITED
+        account.status = AccountStatus.ACTIVE
+        account.reset_at = None
+        account.blocked_at = None
+        await session.commit()
+    await set_usage(5.0, 85.0)
+    await turn()
+    assert seen == ["acc_hold_a"] * 3 + ["acc_hold_b"] * 2
 
 
 def test_owner_mismatch_raises_409_for_retry() -> None:

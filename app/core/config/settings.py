@@ -248,6 +248,12 @@ class Settings(BaseSettings):
     # headroom-reallocation and sticky-drain moves above, each of which costs a
     # full prompt-cache rewrite on the new account.
     anthropic_sticky_hold_until_exhausted: bool = True
+    # The same hold for OpenAI/Codex sticky sessions (prompt-cache, thread and Codex
+    # session pins): budget pressure and burn-first drain do not move a pin; only
+    # the account becoming unselectable does (a live 429 or usage-limit error, or
+    # 100% usage). The one failover is persisted, so the conversation stays on the
+    # new account instead of returning to the old one and rewriting its cache again.
+    openai_sticky_hold_until_exhausted: bool = True
     # Anthropic accounts with vendor-side "extra usage" enabled keep answering
     # 200 after their subscription window exhausts and silently bill metered
     # credits. Selection excludes such accounts; when false (default) they stay

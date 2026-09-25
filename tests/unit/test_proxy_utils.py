@@ -2217,6 +2217,7 @@ async def test_select_codex_control_account_without_budget_uses_balancer(monkeyp
         account_ids=None,
         budget_threshold_pct=95.0,
         secondary_budget_threshold_pct=100.0,
+        hold_sticky_until_exhausted=True,
         traffic_class=proxy_service.TRAFFIC_CLASS_FOREGROUND,
     )
 
