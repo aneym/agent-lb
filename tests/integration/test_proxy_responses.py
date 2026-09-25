@@ -228,7 +228,7 @@ async def test_proxy_responses_repeated_401_after_refresh_fails_over(async_clien
 
 
 @pytest.mark.asyncio
-async def test_proxy_responses_stream_surfaces_additional_quota_data_unavailable(async_client, monkeypatch):
+async def test_proxy_responses_stream_reaches_upstream_despite_missing_additional_quota_data(async_client, monkeypatch):
     email = "gated-unavailable@example.com"
     raw_account_id = "acc_gated_unavailable"
     auth_json = _make_auth_json(raw_account_id, email, plan_type="pro")

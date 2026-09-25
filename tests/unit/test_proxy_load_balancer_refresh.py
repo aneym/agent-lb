@@ -616,6 +616,7 @@ async def test_budget_safe_fallback_still_skips_unavailable_accounts() -> None:
     now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
     blocked_account.status = AccountStatus.QUOTA_EXCEEDED
     blocked_account.reset_at = now_epoch + 300
+    blocked_account.blocked_at = now_epoch
 
     primary = {
         blocked_account.id: UsageHistory(
@@ -669,8 +670,8 @@ async def test_budget_safe_fallback_still_skips_unavailable_accounts() -> None:
     )
 
     assert selection.account is not None
-    # 82ed714b: a legacy quota status without a live failure marker is routable; lower usage wins.
-    assert selection.account.id == blocked_account.id
+    # 82ed714b: a persisted live failure marker still excludes the blocked account.
+    assert selection.account.id == available_account.id
 
 
 @pytest.mark.asyncio
@@ -1093,7 +1094,7 @@ async def test_additional_quota_selection_does_not_persist_canonical_account_sta
 
 
 @pytest.mark.asyncio
-async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) -> None:
+async def test_select_account_ranks_by_additional_usage_when_stale(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.core.config.settings.get_settings",
         lambda: SimpleNamespace(usage_refresh_interval_seconds=600),
@@ -1161,7 +1162,7 @@ async def test_select_account_requires_fresh_additional_usage_data(monkeypatch) 
     )
 
     assert selection.account is not None
-    # 82ed714b: stale additional usage lowers ranking but cannot remove an otherwise routable account.
+    # 82ed714b: additional usage (5% vs 90%) ranks accounts even when stale; staleness does not exclude.
     assert selection.account.id == account_fresh.id
     assert stale_only.account is not None
     assert stale_only.account.id == account_stale.id
@@ -2762,7 +2763,7 @@ async def test_select_account_retries_no_accounts_after_runtime_recovery(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_select_account_returns_data_unavailable_error_for_mapped_model(monkeypatch) -> None:
+async def test_select_account_routes_mapped_model_despite_stale_additional_data(monkeypatch) -> None:
     account = _make_account("acc-gated-stale", "gated-stale@example.com")
     account.plan_type = "pro"
     now = utcnow()
@@ -2957,7 +2958,7 @@ async def test_select_account_limits_additional_quota_routing_policy_to_scoped_a
 
 
 @pytest.mark.asyncio
-async def test_select_account_fails_closed_for_unmapped_plan_without_additional_quota_rows(monkeypatch) -> None:
+async def test_select_account_routes_unmapped_plan_without_additional_quota_rows(monkeypatch) -> None:
     account = _make_account("acc-unmapped-no-gated-rows", "unmapped-no-gated-rows@example.com")
     account.plan_type = "research"
     now = utcnow()
@@ -2998,7 +2999,7 @@ async def test_select_account_fails_closed_for_unmapped_plan_without_additional_
 
 
 @pytest.mark.asyncio
-async def test_select_account_returns_data_unavailable_when_secondary_window_is_stale(monkeypatch) -> None:
+async def test_select_account_routes_when_additional_secondary_window_is_stale(monkeypatch) -> None:
     account = _make_account("acc-gated-stale-secondary", "gated-stale-secondary@example.com")
     account.plan_type = "pro"
     now = utcnow()
@@ -3154,7 +3155,7 @@ async def test_select_account_allows_primary_only_account_when_other_account_has
 
 
 @pytest.mark.asyncio
-async def test_select_account_returns_no_eligible_error_for_mapped_model(monkeypatch) -> None:
+async def test_select_account_routes_mapped_model_despite_exhausted_additional_usage(monkeypatch) -> None:
     account = _make_account("acc-gated-exhausted", "gated-exhausted@example.com")
     account.plan_type = "pro"
     now = utcnow()
