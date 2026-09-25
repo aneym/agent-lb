@@ -19,6 +19,7 @@ from app.core.usage.types import (
     UsageCostSummary,
     UsageMetricsSummary,
 )
+from app.core.utils.client_session import get_client_session_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, RequestKind, RequestLog
@@ -380,6 +381,7 @@ class RequestLogsRepository:
                 provider=provider,
                 api_key_id=api_key_id,
                 session_id=session_id,
+                client_session_id=get_client_session_id(),
                 request_id=resolved_request_id,
                 model=model,
                 plan_type=resolved_plan_type,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Per-request receipt from the agent-lb request log.
 
-Select requests by Claude Code session id and/or API key (name, id or key prefix)
+Select requests by session id, API key (name, id or key prefix) and/or user agent
 inside a time range, and print for each request and in total: account, pool
 (provider/plan), model, input/output tokens, cache-read and cache-write tokens,
 latency. Open Factory uses it for per-trial receipts.
@@ -12,6 +12,10 @@ latency. Open Factory uses it for per-trial receipts.
 Token columns are normalised across providers: `input` is uncached input, and
 `context` = input + cache_read + cache_write. Anthropic logs input without cache;
 OpenAI logs input including its cached part, so cache_read is subtracted there.
+Session ids: --session matches agent-lb's session_id or the client's own id
+(client_session_id: Codex's `session-id` header = its rollout file id, Claude Code's
+session UUID). Codex websockets log session_id `turn_<hex>`, minted per connection. Loopback clients (incl. OrbStack
+containers via host.docker.internal) are logged keyless unless they send a key.
 Accounts show as their alias or provider:id-prefix, never an email. Reads Postgres
 through `psql` (AGENT_LB_DATABASE_URL, else the Studio default).
 """
@@ -63,7 +67,10 @@ def _psql_json(sql: str) -> list[dict]:
 def query(args: argparse.Namespace) -> list[dict]:
     where = []
     if args.session:
-        where.append(f"r.session_id = {_literal(args.session)}")
+        sid = _literal(args.session)
+        where.append(f"(r.session_id = {sid} or r.client_session_id = {sid})")
+    if args.useragent:
+        where.append(f"r.useragent ilike {_literal('%' + args.useragent + '%')}")
     if args.key:
         k = _literal(args.key)
         where.append(f"(k.name = {k} or k.id = {k} or k.key_prefix = {k} or r.api_key_id = {k})")
@@ -75,7 +82,8 @@ def query(args: argparse.Namespace) -> list[dict]:
     if args.until:
         where.append(f"r.requested_at < {_literal(_time(args.until))}")
     sql = f"""
-        select r.id, r.requested_at, r.session_id, r.request_kind, r.provider, r.model, r.status,
+        select r.id, r.requested_at, r.session_id, r.client_session_id, r.request_kind, r.provider, r.model, r.status,
+               r.useragent_group, r.transport,
                r.api_key_id, k.name as key_name,
                r.account_id, a.plan_type,
                coalesce(nullif(a.alias, ''), r.provider || ':' || left(r.account_id, 8)) as account,
@@ -162,13 +170,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--session", help="Claude Code / Codex session id (request_logs.session_id)")
     parser.add_argument("--key", help="API key name, id or key prefix (e.g. of-harbor)")
+    parser.add_argument("--useragent", help="substring of the client user agent, e.g. 'codex_exec' or 'Ubuntu'")
     parser.add_argument("--since", help="ISO time, UTC if no offset (default: 24h ago unless --session)")
     parser.add_argument("--until", help="ISO time, exclusive")
     parser.add_argument("--limit", type=int, default=5000)
     parser.add_argument("--json", action="store_true", help="print {requests, summary} as JSON")
     args = parser.parse_args()
-    if not args.session and not args.key:
-        parser.error("give --session and/or --key")
+    if not (args.session or args.key or args.useragent):
+        parser.error("give --session, --key and/or --useragent")
     rows = query(args)
     summary = summarise(rows)
     if args.json:

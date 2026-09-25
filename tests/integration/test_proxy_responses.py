@@ -1156,7 +1156,8 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
         "POST",
         "/backend-api/codex/responses",
         json=payload,
-        headers={"x-request-id": request_id},
+        # Codex 0.157 names its conversation (rollout file id) in `session-id`.
+        headers={"x-request-id": request_id, "session-id": "01a0d9f6-f125-75a2-a6dd-0efe73e324d7"},
     ) as resp:
         assert resp.status_code == 200
         lines = [line async for line in resp.aiter_lines() if line]
@@ -1176,6 +1177,7 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
         assert log is not None
         assert log.request_id == "resp_1"
         assert log.transport == "http"
+        assert log.client_session_id == "01a0d9f6-f125-75a2-a6dd-0efe73e324d7"
 
 
 @pytest.mark.asyncio
