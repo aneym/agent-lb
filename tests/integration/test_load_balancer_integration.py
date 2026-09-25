@@ -51,6 +51,7 @@ async def test_request_scoped_primary_quota_bypass_is_exact_and_not_persisted(db
         last_refresh=now,
         status=AccountStatus.RATE_LIMITED,
         reset_at=now_epoch + 3600,
+        blocked_at=now_epoch,
         deactivation_reason=None,
     )
 
@@ -89,20 +90,21 @@ async def test_request_scoped_primary_quota_bypass_is_exact_and_not_persisted(db
         routing_strategy="usage_weighted",
     )
 
-    # 82ed714b: a legacy rate-limit status without a live failure marker cannot gate routing.
-    assert blocked.account is not None
-    assert wrong_id.account is not None
+    # 82ed714b: a live failure marker excludes unless the exact account is bypassed for this request.
+    assert blocked.account is None
+    assert wrong_id.account is None
     assert bypassed.account is not None
     assert bypassed.account.id == account.id
-    assert blocked_again.account is not None
+    assert blocked_again.account is None
     async with SessionLocal() as session:
         persisted = await session.get(Account, account.id)
         assert persisted is not None
-        assert persisted.status == AccountStatus.ACTIVE
+        assert persisted.status == AccountStatus.RATE_LIMITED
+        assert persisted.blocked_at == now_epoch
 
 
 @pytest.mark.asyncio
-async def test_request_scoped_primary_quota_bypass_keeps_secondary_exhaustion_blocking(db_setup):
+async def test_request_scoped_primary_quota_bypass_secondary_exhaustion_is_advisory(db_setup):
     encryptor = TokenEncryptor()
     now = utcnow()
     now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())

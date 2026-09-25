@@ -141,7 +141,7 @@ async def test_proxy_compact_strips_tool_fields_before_upstream(async_client, mo
 
 
 @pytest.mark.asyncio
-async def test_proxy_compact_surfaces_additional_quota_exhausted(async_client, monkeypatch):
+async def test_proxy_compact_reaches_upstream_despite_exhausted_additional_quota(async_client, monkeypatch):
     email = "compact-gated@example.com"
     raw_account_id = "acc_compact_gated"
     auth_json = _make_auth_json(raw_account_id, email, plan_type="pro")
