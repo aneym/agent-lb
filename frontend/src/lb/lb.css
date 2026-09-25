@@ -2180,3 +2180,7 @@ html.dark .lb {
     display: none;
   }
 }
+
+.lb .lim .v{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+/* Kimi's letter is black; the page theme is a class, not the system scheme, so flip it here */
+html.dark .lb img.logo[src$="kimi-color.svg"]{filter:invert(1) hue-rotate(180deg)}

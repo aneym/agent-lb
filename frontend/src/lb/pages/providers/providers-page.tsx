@@ -185,9 +185,7 @@ function AccountRow({
       </div>
       <div className="c-today today">
         <span className="num">{summary?.requests.toLocaleString() || "—"}</span>
-        <span className="s">
-          {summary ? `${money(summary.costUsd)} API value` : "No usage today"}
-        </span>
+        {summary && <span className="s">{money(summary.costUsd)} API value</span>}
       </div>
       <div className="c-more lb-pop-wrap">
         <RowMenu
