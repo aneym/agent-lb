@@ -13,36 +13,18 @@ import {
   createAccountTrends,
   createApiKey,
   createApiKeyCreateResponse,
-  createApiKeyTrends,
-  createApiKeyUsage7Day,
   createDashboardAuthSession,
-  createDashboardOverview,
-  createDashboardProjections,
   createDashboardSettings,
   createDefaultAccounts,
   createDefaultApiKeys,
-  createDefaultRequestLogs,
   createOauthCompleteResponse,
   createOauthStartResponse,
   createOauthStatusResponse,
-  createQuotaPlannerDecision,
-  createQuotaPlannerForecast,
-  createQuotaPlannerSettings,
-  createQuotaPlannerWarmupActionResponse,
-  createRequestLogFilterOptions,
   createUpstreamProxyAdmin,
-  createRequestLogsResponse,
   type DashboardAuthSession,
   type DashboardSettings,
-  type QuotaPlannerDecision,
-  type QuotaPlannerForecast,
-  type QuotaPlannerSettings,
-  type RequestLogEntry,
   type UpstreamProxyAdmin,
 } from "@/test/mocks/factories";
-
-const MODEL_OPTION_DELIMITER = ":::";
-const STATUS_ORDER = ["ok", "rate_limit", "quota", "error"] as const;
 
 // ── Zod schemas for mock request bodies ──
 
@@ -138,25 +120,6 @@ const SettingsPayloadSchema = z
   })
   .passthrough();
 
-const QuotaPlannerSettingsPayloadSchema = z
-	.object({
-		mode: z.enum(["off", "shadow", "suggest", "auto"]).optional(),
-		timezone: z.string().optional(),
-		workingDays: z.array(z.number().int().min(0).max(6)).optional(),
-		workingHoursStart: z.string().optional(),
-		workingHoursEnd: z.string().optional(),
-		prewarmEnabled: z.boolean().optional(),
-		prewarmLeadMinutes: z.number().int().min(0).optional(),
-		maxWarmupsPerDay: z.number().int().min(0).optional(),
-		maxWarmupCreditsPerDay: z.number().min(0).optional(),
-		minExpectedGain: z.number().min(0).optional(),
-		forecastQuantile: z.enum(["p50", "p75", "p90"]).optional(),
-		allowSyntheticTraffic: z.boolean().optional(),
-		warmupModelPreference: z.string().nullable().optional(),
-		dryRun: z.boolean().optional(),
-	})
-	.passthrough();
-
 // ── Helpers ──
 
 async function parseJsonBody<T>(
@@ -174,13 +137,9 @@ async function parseJsonBody<T>(
 
 type MockState = {
   accounts: AccountSummary[];
-  requestLogs: RequestLogEntry[];
   authSession: DashboardAuthSession;
   settings: DashboardSettings;
-  quotaPlannerSettings: QuotaPlannerSettings;
-  quotaPlannerDecisions: QuotaPlannerDecision[];
   upstreamProxyAdmin: UpstreamProxyAdmin;
-  quotaPlannerForecast: QuotaPlannerForecast;
   apiKeys: ApiKey[];
   firewallEntries: Array<{ ipAddress: string; createdAt: string }>;
   stickySessions: Array<{
@@ -197,13 +156,9 @@ type MockState = {
 function createInitialState(): MockState {
   return {
     accounts: createDefaultAccounts(),
-    requestLogs: createDefaultRequestLogs(),
     authSession: createDashboardAuthSession(),
     settings: createDashboardSettings(),
-    quotaPlannerSettings: createQuotaPlannerSettings(),
-    quotaPlannerDecisions: [createQuotaPlannerDecision()],
     upstreamProxyAdmin: createUpstreamProxyAdmin(),
-    quotaPlannerForecast: createQuotaPlannerForecast(),
     apiKeys: createDefaultApiKeys(),
     firewallEntries: [],
     stickySessions: [],
@@ -214,170 +169,6 @@ let state: MockState = createInitialState();
 
 export function resetMockState(): void {
   state = createInitialState();
-}
-
-function parseDateValue(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? null : timestamp;
-}
-
-function filterRequestLogs(
-  url: URL,
-  options?: { includeStatuses?: boolean; ignoreApiKeyIds?: boolean },
-): RequestLogEntry[] {
-  const includeStatuses = options?.includeStatuses ?? true;
-  const ignoreApiKeyIds = options?.ignoreApiKeyIds ?? false;
-  const accountIds = new Set(url.searchParams.getAll("accountId"));
-  const apiKeyIds = new Set(url.searchParams.getAll("apiKeyId"));
-  const statuses = new Set(
-    url.searchParams.getAll("status").map((value) => value.toLowerCase()),
-  );
-  const models = new Set(url.searchParams.getAll("model"));
-  const reasoningEfforts = new Set(url.searchParams.getAll("reasoningEffort"));
-  const modelOptions = new Set(url.searchParams.getAll("modelOption"));
-  const search = (url.searchParams.get("search") || "").trim().toLowerCase();
-  const since = parseDateValue(url.searchParams.get("since"));
-  const until = parseDateValue(url.searchParams.get("until"));
-
-  return state.requestLogs.filter((entry) => {
-    if (
-      accountIds.size > 0 &&
-      (!entry.accountId || !accountIds.has(entry.accountId))
-    ) {
-      return false;
-    }
-    if (
-      !ignoreApiKeyIds &&
-      apiKeyIds.size > 0 &&
-      (!entry.apiKeyId || !apiKeyIds.has(entry.apiKeyId))
-    ) {
-      return false;
-    }
-
-    if (
-      includeStatuses &&
-      statuses.size > 0 &&
-      !statuses.has("all") &&
-      !statuses.has(entry.status)
-    ) {
-      return false;
-    }
-
-    if (models.size > 0 && !models.has(entry.model)) {
-      return false;
-    }
-
-    if (reasoningEfforts.size > 0) {
-      const effort = entry.reasoningEffort ?? "";
-      if (!reasoningEfforts.has(effort)) {
-        return false;
-      }
-    }
-
-    if (modelOptions.size > 0) {
-      const key = `${entry.model}${MODEL_OPTION_DELIMITER}${entry.reasoningEffort ?? ""}`;
-      const matchNoEffort = modelOptions.has(entry.model);
-      if (!modelOptions.has(key) && !matchNoEffort) {
-        return false;
-      }
-    }
-
-    const timestamp = new Date(entry.requestedAt).getTime();
-    if (since !== null && timestamp < since) {
-      return false;
-    }
-    if (until !== null && timestamp > until) {
-      return false;
-    }
-
-    if (search.length > 0) {
-      const haystack = [
-        entry.accountId,
-        entry.apiKeyId,
-        entry.apiKeyName,
-        entry.requestId,
-        entry.model,
-        entry.reasoningEffort,
-        entry.errorCode,
-        entry.errorMessage,
-        entry.status,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      if (!haystack.includes(search)) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-}
-
-function requestLogOptionsFromEntries(
-  entries: RequestLogEntry[],
-  apiKeyEntries: RequestLogEntry[] = entries,
-) {
-  const accountIds = [
-    ...new Set(
-      entries
-        .map((entry) => entry.accountId)
-        .filter((id): id is string => id != null),
-    ),
-  ].sort();
-
-  const modelMap = new Map<
-    string,
-    { model: string; reasoningEffort: string | null }
-  >();
-  for (const entry of entries) {
-    const key = `${entry.model}${MODEL_OPTION_DELIMITER}${entry.reasoningEffort ?? ""}`;
-    if (!modelMap.has(key)) {
-      modelMap.set(key, {
-        model: entry.model,
-        reasoningEffort: entry.reasoningEffort ?? null,
-      });
-    }
-  }
-  const modelOptionsList = [...modelMap.values()].sort((a, b) => {
-    if (a.model !== b.model) {
-      return a.model.localeCompare(b.model);
-    }
-    return (a.reasoningEffort ?? "").localeCompare(b.reasoningEffort ?? "");
-  });
-
-  const apiKeyMap = new Map<
-    string,
-    { id: string; name: string; keyPrefix: string | null }
-  >();
-  for (const entry of apiKeyEntries) {
-    if (!entry.apiKeyId) continue;
-    const apiKey = findApiKey(entry.apiKeyId);
-    apiKeyMap.set(entry.apiKeyId, {
-      id: entry.apiKeyId,
-      name: apiKey?.name ?? entry.apiKeyName ?? entry.apiKeyId,
-      keyPrefix: apiKey?.keyPrefix ?? null,
-    });
-  }
-  const apiKeys = [...apiKeyMap.values()].sort((a, b) => {
-    if (a.name !== b.name) {
-      return a.name.localeCompare(b.name);
-    }
-    return (a.keyPrefix ?? "").localeCompare(b.keyPrefix ?? "");
-  });
-
-  const presentStatuses = new Set(entries.map((entry) => entry.status));
-  const statuses = STATUS_ORDER.filter((status) => presentStatuses.has(status));
-
-  return createRequestLogFilterOptions({
-    accountIds,
-    modelOptions: modelOptionsList,
-    apiKeys,
-    statuses: [...statuses],
-  });
 }
 
 function findAccount(accountId: string): AccountSummary | undefined {
@@ -402,48 +193,6 @@ export const handlers = [
       source: "github",
       releaseUrl: "https://github.com/aneym/agent-lb/releases/latest",
     });
-  }),
-
-  http.get("/api/dashboard/overview", () => {
-    return HttpResponse.json(
-      createDashboardOverview({
-        accounts: state.accounts,
-      }),
-    );
-  }),
-
-  http.get("/api/dashboard/projections", () => {
-    return HttpResponse.json(createDashboardProjections());
-  }),
-
-  http.get("/api/request-logs", ({ request }) => {
-    const url = new URL(request.url);
-    const filtered = filterRequestLogs(url);
-    const total = filtered.length;
-    const limitRaw = Number(url.searchParams.get("limit") ?? 50);
-    const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
-    const limit =
-      Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : 50;
-    const offset =
-      Number.isFinite(offsetRaw) && offsetRaw > 0 ? Math.floor(offsetRaw) : 0;
-    const requests = filtered.slice(offset, offset + limit);
-    return HttpResponse.json(
-      createRequestLogsResponse(requests, total, offset + limit < total),
-    );
-  }),
-
-  http.get("/api/request-logs/options", ({ request }) => {
-    const url = new URL(request.url);
-    const filtered = filterRequestLogs(url, {
-      includeStatuses: false,
-    });
-    const apiKeyFiltered = filterRequestLogs(url, {
-      includeStatuses: false,
-      ignoreApiKeyIds: true,
-    });
-    return HttpResponse.json(
-      requestLogOptionsFromEntries(filtered, apiKeyFiltered),
-    );
   }),
 
   http.get("/api/accounts", () => {
@@ -1068,78 +817,6 @@ export const handlers = [
     return HttpResponse.json({ status: "deleted" });
   }),
 
-  http.get("/api/quota-planner/settings", () =>
-    HttpResponse.json(state.quotaPlannerSettings),
-  ),
-
-  http.put("/api/quota-planner/settings", async ({ request }) => {
-    const payload = await parseJsonBody(
-      request,
-      QuotaPlannerSettingsPayloadSchema,
-    );
-    if (!payload) {
-      return HttpResponse.json(state.quotaPlannerSettings);
-    }
-    state.quotaPlannerSettings = createQuotaPlannerSettings({
-      ...state.quotaPlannerSettings,
-      ...payload,
-    });
-    return HttpResponse.json(state.quotaPlannerSettings);
-  }),
-
-  http.get("/api/quota-planner/decisions", ({ request }) => {
-    const url = new URL(request.url);
-    const limit = Number(url.searchParams.get("limit") ?? "50");
-    return HttpResponse.json(state.quotaPlannerDecisions.slice(0, limit));
-  }),
-
-  http.get("/api/quota-planner/forecast", () =>
-    HttpResponse.json(state.quotaPlannerForecast),
-  ),
-
-  http.post("/api/quota-planner/warm-now", async ({ request }) => {
-    const payload = await parseJsonBody(
-      request,
-      z.object({
-        accountId: z.string().min(1),
-        model: z.string().nullable().optional(),
-        apiKeyId: z.string().nullable().optional(),
-        forceProbe: z.boolean().optional(),
-      }),
-    );
-    const decision = createQuotaPlannerDecision({
-      id: `decision_${state.quotaPlannerDecisions.length + 1}`,
-      accountId: payload?.accountId ?? null,
-      action: "warmup",
-      status: "skipped",
-      reason: "synthetic_traffic_disabled",
-    });
-    state.quotaPlannerDecisions = [decision, ...state.quotaPlannerDecisions];
-    return HttpResponse.json(
-      createQuotaPlannerWarmupActionResponse({
-        decisionId: decision.id,
-        status: decision.status,
-        reason: decision.reason ?? "synthetic_traffic_disabled",
-      }),
-    );
-  }),
-
-  http.post("/api/quota-planner/decisions/:decisionId/cancel", ({ params }) => {
-    const decisionId = String(params.decisionId);
-    state.quotaPlannerDecisions = state.quotaPlannerDecisions.map((decision) =>
-      decision.id === decisionId
-        ? { ...decision, status: "canceled", reason: "admin_canceled" }
-        : decision,
-    );
-    return HttpResponse.json(
-      createQuotaPlannerWarmupActionResponse({
-        decisionId,
-        status: "canceled",
-        reason: "admin_canceled",
-      }),
-    );
-  }),
-
   http.put("/api/settings", async ({ request }) => {
     const payload = await parseJsonBody(request, SettingsPayloadSchema);
     if (!payload) {
@@ -1540,27 +1217,4 @@ export const handlers = [
     return HttpResponse.json(regenerated);
   }),
 
-  http.get("/api/api-keys/:keyId/trends", ({ params }) => {
-    const keyId = String(params.keyId);
-    const existing = findApiKey(keyId);
-    if (!existing) {
-      return HttpResponse.json(
-        { error: { code: "not_found", message: "API key not found" } },
-        { status: 404 },
-      );
-    }
-    return HttpResponse.json(createApiKeyTrends({ keyId }));
-  }),
-
-  http.get("/api/api-keys/:keyId/usage-7d", ({ params }) => {
-    const keyId = String(params.keyId);
-    const existing = findApiKey(keyId);
-    if (!existing) {
-      return HttpResponse.json(
-        { error: { code: "not_found", message: "API key not found" } },
-        { status: 404 },
-      );
-    }
-    return HttpResponse.json(createApiKeyUsage7Day({ keyId }));
-  }),
 ];
