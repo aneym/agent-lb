@@ -41,6 +41,10 @@ DEFAULT_BYTES_PER_SEC = 1_500_000
 # Largest single release: small enough that one write cannot itself burst the
 # uplink queue, large enough to keep per-write overhead negligible.
 BURST_BYTES = 64 * 1024
+# Smallest paced release: one full TLS record. Releasing whatever trickled in
+# since the previous call (about a byte per microsecond) turned each upload into
+# a busy loop of 1-byte writes that held the event loop for the whole upload.
+MIN_RELEASE_BYTES = 16 * 1024
 STATE_REFRESH_SECONDS = 1.0
 # Accepted cap range; anything outside it (or not finite) falls back to the default.
 MIN_BYTES_PER_SEC = 65_000
@@ -134,9 +138,10 @@ class _Bucket:
             return wanted, 0.0
         self._tokens = min(float(BURST_BYTES), self._tokens + (now - self._stamp) * self.rate)
         self._stamp = now
+        quantum = min(wanted, BURST_BYTES, MIN_RELEASE_BYTES)
+        if self._tokens < quantum:
+            return 0, max(0.001, (quantum - self._tokens) / self.rate)
         allowed = int(min(self._tokens, wanted, BURST_BYTES))
-        if allowed <= 0:
-            return 0, max(0.001, (min(wanted, BURST_BYTES) - self._tokens) / self.rate)
         self._tokens -= allowed
         return allowed, 0.0
 

@@ -112,6 +112,51 @@ async def test_installed_client_upload_is_paced_end_to_end(monkeypatch: pytest.M
     assert elapsed >= 0.6
 
 
+@pytest.mark.asyncio
+async def test_a_paced_upload_leaves_the_event_loop_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2026-09-23, gaming mode on: the bucket released the few bytes that trickled
+    # in between calls, so a paced upload became a busy loop of 1-byte writes that
+    # held the event loop for the whole upload (stall dumps up to 13.9 s in the
+    # drain's ssl write; every other stream on the proxy froze with it).
+    upload_throttle.write_state(enabled=True, bytes_per_sec=500_000)
+    monkeypatch.setattr(upload_throttle, "_LOCAL_HOSTS", frozenset())
+    upload_throttle.install()
+
+    async def handler(request: web.Request) -> web.Response:
+        await request.read()
+        return web.Response(text="ok")
+
+    app = web.Application(client_max_size=10_000_000)
+    app.router.add_post("/", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    loop = asyncio.get_running_loop()
+    worst_lag = 0.0
+    done = asyncio.Event()
+
+    async def tick() -> None:
+        nonlocal worst_lag
+        while not done.is_set():
+            before = loop.time()
+            await asyncio.sleep(0.01)
+            worst_lag = max(worst_lag, loop.time() - before - 0.01)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
+                assert await response.text() == "ok"
+    finally:
+        done.set()
+        await ticker
+        await runner.cleanup()
+    # The upload itself takes ~0.7 s at 0.5 MB/s; the loop must keep turning meanwhile.
+    assert worst_lag < 0.1
+
+
 class _FakeProtocol:
     def __init__(self) -> None:
         self._paused = False
@@ -211,7 +256,6 @@ def test_a_waiting_upload_wakes_within_a_state_refresh() -> None:
         transport._scheduled.cancel()
     finally:
         loop.close()
-
 
 
 def test_the_documented_minimum_rate_is_accepted() -> None:
