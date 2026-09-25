@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import plistlib
+import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -137,6 +139,17 @@ echo '{"status":"ok"}'
 
 
 def test_install_service_busy_port_after_bootout_still_bootstraps(tmp_path: Path) -> None:
+    # Run a copy of the installer from a scratch repo so the test needs neither
+    # this checkout's .venv (fresh worktrees have none) nor the real launchd.
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    installer = repo / "scripts" / "install-service.sh"
+    shutil.copy2(ROOT / "scripts" / "install-service.sh", installer)
+    service_bin = repo / ".venv" / "bin" / "agent-lb"
+    service_bin.parent.mkdir(parents=True)
+    service_bin.write_text("#!/bin/sh\nexit 0\n")
+    service_bin.chmod(0o755)
+
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name, body in (("launchctl", LAUNCHCTL_SHIM), ("lsof", LSOF_SHIM), ("curl", CURL_SHIM)):
@@ -155,11 +168,12 @@ def test_install_service_busy_port_after_bootout_still_bootstraps(tmp_path: Path
             "PATH": f"{bin_dir}:{env['PATH']}",
             "SHIM_CALL_LOG": str(call_log),
             "AGENT_LB_INSTALL_PORT_FREE_TIMEOUT_SECONDS": "1",
+            "PYTHON_BIN": sys.executable,
         }
     )
     result = subprocess.run(
-        ["bash", "scripts/install-service.sh"],
-        cwd=ROOT,
+        ["bash", str(installer)],
+        cwd=repo,
         env=env,
         capture_output=True,
         text=True,
