@@ -38,8 +38,10 @@ or deploy unless the brief says so. Code changes stay inside the assigned
 directory and files.
 
 Return the command's stdout: the JSON envelope carries the account, the model,
-`vendor_session_id` (the Cursor chat id, for `cursor-agent --resume`), tokens and
-the result, so the driver can resume or audit the exact thread. Do not inspect the repo or
+`vendor_session_id` (the Cursor chat id, for `cursor-agent --resume`), `tokens_in`,
+`tokens_out`, `cache_read_tokens`, `wall_s` and the result, so the driver can resume or audit the exact thread. Keep those fields in
+your reply verbatim: Open Factory prices the seat from them and from the matching
+closeout row in dispatch.jsonl. Do not inspect the repo or
 implement anything yourself, and do not substitute a provider or model. If
 `seat run` fails, report its exact output and stop — never return nothing
 and never retry on a different model.
