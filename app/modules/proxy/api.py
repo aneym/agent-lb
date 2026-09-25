@@ -961,15 +961,20 @@ async def _ccgpt_messages_response(
     responses_payload.model = locked_model
     if client_session_id:
         # One key per conversation in a Claude Code session: it pins the conversation
-        # to one Codex account (prompt-cache affinity) and scopes the upstream cache.
-        # Subagents share the session id but not the first message, so parallel
-        # subagents keep separate bridge sessions instead of queueing on one.
-        # The first message's whole text, not a prefix (every subagent's opens with the
-        # same CLAUDE.md reminder) and not its JSON (cache_control markers move off it
-        # after turn 1).
-        first = payload.messages[0].content if payload.messages else ""
-        first_text = first if isinstance(first, str) else "\n".join(part.text or part.type for part in first)
-        anchor = "\0".join((client_session_id, locked_model, first_text))
+        # to one Codex account (prompt-cache affinity), scopes the upstream cache and
+        # names the bridge session, which runs one turn at a time. Subagents share the
+        # session id, and a workflow fans out many with the same first message, so a
+        # subagent is named by the agent id Claude Code sends; only a conversation
+        # without one (the main thread) falls back to its first message's whole text,
+        # not a prefix (every subagent's opens with the same CLAUDE.md reminder) and
+        # not its JSON (cache_control markers move off it after turn 1).
+        agent_id = request.headers.get("x-claude-code-agent-id", "").strip()
+        if agent_id:
+            conversation = f"agent:{agent_id}"
+        else:
+            first = payload.messages[0].content if payload.messages else ""
+            conversation = first if isinstance(first, str) else "\n".join(part.text or part.type for part in first)
+        anchor = "\0".join((client_session_id, locked_model, conversation))
         responses_payload.prompt_cache_key = f"ccgpt-{sha256(anchor.encode()).hexdigest()[:32]}"
     forwarded_headers = {
         key: value

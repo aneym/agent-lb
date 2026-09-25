@@ -555,6 +555,17 @@ async def test_bridged_turns_of_one_conversation_share_a_stable_prefix_and_cache
     assert one.prompt_cache_key == two.prompt_cache_key
     assert other.prompt_cache_key not in (None, one.prompt_cache_key)
 
+    # A workflow fans out subagents whose first messages are identical. Each one
+    # is its own conversation (its own bridge session, which runs one turn at a
+    # time), named by the agent id header, and keeps its key across its turns.
+    captured.clear()
+    for agent_id, body in (("a1", turn_1), ("a2", turn_1), ("a1", turn_2)):
+        response = await async_client.post("/v1/messages", json=body, headers={"x-claude-code-agent-id": agent_id})
+        assert response.status_code == 200
+    first_agent, twin, first_agent_again = captured
+    assert twin.prompt_cache_key not in (None, first_agent.prompt_cache_key)
+    assert first_agent_again.prompt_cache_key == first_agent.prompt_cache_key
+
 
 @pytest.mark.asyncio
 async def test_ccgpt_route_refuses_an_unserved_gpt_name_instead_of_running_sol(
