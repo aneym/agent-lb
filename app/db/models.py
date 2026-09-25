@@ -157,6 +157,14 @@ class Account(Base):
     )
 
 
+class AccountResumeSchedule(Base):
+    __tablename__ = "account_resume_schedules"
+
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    resume_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UsageHistory(Base):
     __tablename__ = "usage_history"
 
