@@ -44,6 +44,14 @@ right away. This is a standing instruction from the repo owner.
   ~/.agent-lb/watchdog.pause` first and remove it after; the watchdog re-bootstraps
   an unloaded job after ~60s (a bootout left un-bootstrapped caused the 2026-07-11
   outage).
+- **Anthropic request path (`app/core/anthropic/**`, `app/modules/proxy/anthropic*`)**: after the
+  restart, run `python3 scripts/claude_cache_eval.py` and keep its receipt. It drives a real Claude
+  Code session with a subagent through the proxy and fails if any steady turn rewrote its context.
+  Never add, remove or reorder system blocks on a Claude Code payload: its first block is a
+  per-request billing marker that Anthropic keeps out of the cache only in first position. Moving it
+  broke caching for 43h (2026-09-21) and 12h (2026-09-23), and a partial fix left teammates
+  rewriting their whole context for two more days. `clients/cache-watch` (installed by
+  `scripts/install-cache-watch.sh`) alerts when the trailing-hour cache-read ratio drops under 90%.
 - **Cross-machine**: after pushing, fast-forward every other instance (e.g. the laptop)
   so all checkouts converge on `origin/main`.
 

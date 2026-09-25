@@ -92,6 +92,14 @@ def observe(
     return result
 
 
+# Healthy hours (2026-09-17..20, and after the 2026-09-25 billing-block fix)
+# read 93-98% of Anthropic input from cache; every broken hour during the
+# 2026-09-21..25 cache incidents read under 90%. The old 50% line stayed quiet
+# through a day where 35% of steady-state turns rewrote their whole context.
+CACHE_ALERT_READ_PERCENT = 90
+CACHE_ALERT_MIN_REQUESTS = 50
+
+
 def _unknown_anthropic_cache() -> dict[str, Any]:
     return {"state": "unknown", "ratio_percent": None, "window_minutes": 60, "request_count": None}
 
@@ -117,7 +125,12 @@ def _anthropic_cache_observation(summary: Any) -> dict[str, Any]:
     if not count or incomplete or incomplete > count or not denominator:
         return observation
     observation["ratio_percent"] = 100 * read / denominator
-    observation["state"] = "alert" if 2 * read < denominator else "ok"
+    if count < CACHE_ALERT_MIN_REQUESTS:
+        # A handful of new sessions writing their first prompt can pull a quiet
+        # hour under the line without anything being wrong.
+        observation["state"] = "ok"
+    else:
+        observation["state"] = "alert" if read * 100 < CACHE_ALERT_READ_PERCENT * denominator else "ok"
     return observation
 
 
@@ -455,9 +468,12 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
     cache = payload.get("anthropic_cache")
     if cache:
         if cache["state"] == "alert":
-            print(f"ALERT Anthropic cache-read ratio (last hour): {cache['ratio_percent']}% (<50%)")
+            print(
+                f"ALERT Anthropic cache-read ratio (last hour): {cache['ratio_percent']:.1f}% "
+                f"(<{CACHE_ALERT_READ_PERCENT}%): sessions are rewriting their context; check the proxy"
+            )
         elif cache["state"] == "ok":
-            print(f"Anthropic cache-read ratio (last hour): {cache['ratio_percent']}%")
+            print(f"Anthropic cache-read ratio (last hour): {cache['ratio_percent']:.1f}%")
         else:
             print("Anthropic cache-read ratio (last hour): unknown")
     print(payload["availability_note"])

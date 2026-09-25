@@ -132,14 +132,17 @@ def test_status_reports_last_confirmed_anthropic_prime(service, capsys):
     cli.main(["status", "--base-url", service])
     assert f"last primed {primed_at}" in capsys.readouterr().out
 
-@pytest.mark.parametrize(("read", "state"), [(49, "alert"), (50, "ok"), (75, "ok")])
-def test_anthropic_cache_ratio_threshold(service, capsys, read, state):
+@pytest.mark.parametrize(
+    ("read", "count", "state"),
+    [(89, 50, "alert"), (90, 50, "ok"), (97, 400, "ok"), (70, 400, "alert"), (10, 49, "ok")],
+)
+def test_anthropic_cache_ratio_threshold(service, capsys, read, count, state):
     _set_routes([_account()])
     _Handler.routes["/api/request-logs/anthropic-cache-summary"] = (
         200,
         {
             "window_minutes": 60,
-            "request_count": 2,
+            "request_count": count,
             "incomplete_request_count": 0,
             "input_tokens": 100 - read,
             "cache_creation_tokens": 0,
@@ -152,7 +155,7 @@ def test_anthropic_cache_ratio_threshold(service, capsys, read, state):
         "state": state,
         "ratio_percent": float(read),
         "window_minutes": 60,
-        "request_count": 2,
+        "request_count": count,
     }
     cli.main(["status", "--base-url", service])
     output = capsys.readouterr().out

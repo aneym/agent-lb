@@ -16,8 +16,9 @@ def main() -> None:
         print("opus: Claude Code executable 'claude' was not found on PATH", file=sys.stderr)
         raise SystemExit(127)
     argv = list(sys.argv[1:])
-    if "--autocompact" not in argv:
-        argv = ["--autocompact", "1m", *argv]
+    # No forced --autocompact: the compaction window comes from
+    # ~/.claude/settings.json (autoCompactWindow). Forcing 1m let orchestrators
+    # run for a day at 900k+ tokens, re-reading all of it every turn.
     if "--model" not in argv and "-m" not in argv:
         argv = ["--model", MODEL, *argv]
     launcher = Path(__file__).resolve().with_name("claude-lb-launch")
