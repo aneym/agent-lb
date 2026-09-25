@@ -172,6 +172,9 @@ function LastSevenDays({ accountId }: { accountId: string }) {
   const totals = query.data?.totals;
   const series = query.data?.series.slice(-7) || [];
   const max = Math.max(1, ...series.map((day) => day.requests));
+  const stepSize = 10 ** Math.floor(Math.log10(max / 4));
+  const gridStep = Math.ceil(max / 4 / stepSize) * stepSize;
+  const gridMax = gridStep * 4;
   return (
     <section className="card">
       <div className="account-section-head">
@@ -210,20 +213,29 @@ function LastSevenDays({ accountId }: { accountId: string }) {
             role="img"
             aria-label="Requests per day for the last seven days"
           >
-            {series.map((day) => (
-              <div
-                className="account-chart-day"
-                key={day.start}
-                title={`${day.requests.toLocaleString()} requests`}
-              >
-                <div className="account-chart-track">
-                  <i style={{ height: `${(day.requests / max) * 100}%` }} />
+            <div className="account-chart-axis" aria-hidden="true">
+              {[4, 3, 2, 1, 0].map((tick) => (
+                <span key={tick}>{compact(tick * gridStep)}</span>
+              ))}
+            </div>
+            <div className="account-chart-bars" aria-hidden="true">
+              {series.map((day) => (
+                <div
+                  className="account-chart-day"
+                  key={day.start}
+                  title={`${day.requests.toLocaleString()} requests`}
+                >
+                  <div className="account-chart-track">
+                    <i style={{ height: `${(day.requests / gridMax) * 100}%` }} />
+                  </div>
+                  <span>
+                    {new Intl.DateTimeFormat("en", { weekday: "short" }).format(
+                      new Date(day.start),
+                    )}
+                  </span>
                 </div>
-                <span>
-                  {new Intl.DateTimeFormat("en", { weekday: "short" }).format(new Date(day.start))}
-                </span>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </>
       )}
@@ -235,8 +247,8 @@ function ReceiptRow({ receipt }: { receipt: ReceiptItem }) {
     <div className="row">
       <span className="c-t mono">{clock(receipt.requestedAt)}</span>
       <span className="c-s mono">
-        {receipt.sessionId ? `${receipt.sessionId.slice(0, 10)} · ` : ""}
-        {receipt.apiKeyName || "—"}
+        {receipt.sessionId ? `${receipt.sessionId.slice(0, 8)} · ` : ""}
+        {receipt.apiKeyName || "no key"}
       </span>
       <span className="c-m">{receipt.model ? <ModelChip model={receipt.model} /> : "—"}</span>
       <span className="c-tok mono">
@@ -249,8 +261,12 @@ function ReceiptRow({ receipt }: { receipt: ReceiptItem }) {
         {receipt.latencyMs != null ? `${(receipt.latencyMs / 1000).toFixed(1)}s` : "—"}
       </span>
       <span className="c-st mono">
-        {receipt.httpStatus && receipt.httpStatus >= 400 ? "△" : "●"}{" "}
-        {receipt.httpStatus || receipt.status}
+        {receipt.httpStatus === 429
+          ? "◷"
+          : (receipt.httpStatus != null && receipt.httpStatus >= 400) || receipt.status === "error"
+            ? "×"
+            : "✓"}{" "}
+        {receipt.httpStatus ?? (receipt.status === "error" ? "error" : "ok")}
       </span>
     </div>
   );
@@ -329,20 +345,22 @@ function Routing({
         </div>
       </div>
       <div className="account-setting">
-        <label htmlFor="account-warmup">Warm-up</label>
-        <span>
-          <input
-            type="checkbox"
-            id="account-warmup"
-            checked={account.limitWarmupEnabled}
+        <span>Warm-up</span>
+        <span className="account-warmup">
+          <button
+            type="button"
+            role="switch"
+            aria-label="Warm-up 10 min before reset"
+            aria-checked={account.limitWarmupEnabled}
+            className={`toggle ${account.limitWarmupEnabled ? "on" : ""}`}
             disabled={mutations.limitWarmupMutation.isPending}
-            onChange={(event) =>
+            onClick={() =>
               mutations.limitWarmupMutation.mutate({
                 accountId: account.accountId,
-                enabled: event.target.checked,
+                enabled: !account.limitWarmupEnabled,
               })
             }
-          />{" "}
+          />
           10 min before reset
         </span>
       </div>
@@ -379,14 +397,19 @@ export function AccountPage() {
         "/api/accounts",
         z.object({
           accounts: z.array(
-            z.object({ accountId: z.string(), lastRefreshAt: z.string().nullable().optional() }),
+            z.object({
+              accountId: z.string(),
+              lastRefreshAt: z.string().nullable().optional(),
+              createdAt: z.string().nullable().optional(),
+              addedAt: z.string().nullable().optional(),
+            }),
           ),
         }),
       ),
   });
-  const lastRefreshAt = refresh.data?.accounts.find(
-    (entry) => entry.accountId === accountId,
-  )?.lastRefreshAt;
+  const accountDetails = refresh.data?.accounts.find((entry) => entry.accountId === accountId);
+  const lastRefreshAt = accountDetails?.lastRefreshAt;
+  const addedAt = accountDetails?.createdAt || accountDetails?.addedAt;
   if (mutations.accountsQuery.isPending) return <EmptyState title="Loading account…" />;
   if (!account)
     return (
@@ -440,7 +463,17 @@ export function AccountPage() {
         <div className="id">
           <h1>{name}</h1>
           <span className="meta">
-            {account.planType} · <span className="privacy-blur">{account.email}</span>
+            {account.planType.replace(/^./, (first) => first.toUpperCase())} ·{" "}
+            <span className="privacy-blur">{account.email}</span>
+            {addedAt && !Number.isNaN(new Date(addedAt).getTime()) && (
+              <>
+                {" "}
+                · added{" "}
+                {new Intl.DateTimeFormat("en", { day: "numeric", month: "short" }).format(
+                  new Date(addedAt),
+                )}
+              </>
+            )}
           </span>
           <AccountState
             status={account.status}
@@ -449,35 +482,39 @@ export function AccountPage() {
           />
         </div>
         <div className="actions">
-          <div className="lb-pop-wrap">
-            {account.status === "paused" ? (
-              <button className="btn" onClick={() => mutations.resumeMutation.mutate(accountId)}>
-                Resume
-              </button>
-            ) : (
-              <button className="btn" onClick={() => setPauseOpen(!pauseOpen)}>
-                Pause ⌄
-              </button>
-            )}
-            {pauseOpen && (
-              <PausePopover
-                accountId={accountId}
-                pool={groupOf(account)}
-                fiveHourResetAt={
-                  account.windowMinutesPrimary === 300 ? account.resetAtPrimary : null
-                }
-                weeklyResetAt={account.resetAtSecondary}
-                onClose={() => setPauseOpen(false)}
-              />
-            )}
-          </div>
-          <button
-            className="btn"
-            disabled={mutations.probeMutation.isPending}
-            onClick={() => mutations.probeMutation.mutate({ accountId })}
-          >
-            Check limits now
-          </button>
+          {account.status !== "reauth_required" && (
+            <div className="lb-pop-wrap">
+              {account.status === "paused" ? (
+                <button className="btn" onClick={() => mutations.resumeMutation.mutate(accountId)}>
+                  Resume
+                </button>
+              ) : (
+                <button className="btn" onClick={() => setPauseOpen(!pauseOpen)}>
+                  Pause ⌄
+                </button>
+              )}
+              {pauseOpen && (
+                <PausePopover
+                  accountId={accountId}
+                  pool={groupOf(account)}
+                  fiveHourResetAt={
+                    account.windowMinutesPrimary === 300 ? account.resetAtPrimary : null
+                  }
+                  weeklyResetAt={account.resetAtSecondary}
+                  onClose={() => setPauseOpen(false)}
+                />
+              )}
+            </div>
+          )}
+          {account.status !== "reauth_required" && (
+            <button
+              className="btn"
+              disabled={mutations.probeMutation.isPending}
+              onClick={() => mutations.probeMutation.mutate({ accountId })}
+            >
+              Check limits now
+            </button>
+          )}
           <RowMenu
             label="Account actions"
             items={[

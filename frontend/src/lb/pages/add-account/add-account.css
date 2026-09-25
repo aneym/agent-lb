@@ -7,10 +7,10 @@
 .lb .grouph {
   font-size: 13px;
   color: var(--ink-2);
-  margin: 22px 0 10px;
+  margin: 26px 0 14px;
   font-weight: 500;
 }
-.lb .grouph:first-child {
+.lb .addsplit section:first-child .grouph {
   margin-top: 0;
 }
 .lb .ptiles {
