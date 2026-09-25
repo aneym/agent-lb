@@ -305,6 +305,10 @@ result replaces it. Alex's gates stay: publishing numbers, product direction.
   cursor-cli and devin cannot route through agent-lb and need CURSOR_API_KEY/DEVIN_API_KEY;
   grok-build can run Claude/GPT through agent-lb, native Grok needs an xAI key. These
   keys are requested from Alex only when A5/A6 are next.
+- 2026-09-25: fixer landed dynamic GPT aliases (agent-lb 3f80283f): `/v1/messages` takes any
+  served `gpt-*` plus `sol-latest`/`luna-latest` with optional effort suffix; unserved names
+  get a 400 before upstream. Retired slugs still route when named, so `route` keeps its
+  retirement check. Effort (Q2) is now a per-call model-name suffix for GPT seats.
 - 2026-09-25: fixer's lb-harbor-access landed agent-lb 561e12eb: sk-clb keys are honored
   from loopback/containers (x-api-key too), so every trial sends `of-harbor`
   (`~/.agent-lb/of/of-harbor.key`). Plain base URL, no launcher: Max pool, one account per
