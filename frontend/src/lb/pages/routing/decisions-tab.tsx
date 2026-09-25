@@ -8,13 +8,22 @@ function elapsed(seconds: number) {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
+const dateTime = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
 function Pick({ decision }: { decision: RouteDecision }) {
   if (!decision.pick) return <span className="muted">No pick</span>;
   return (
     <div className="pickc">
       <ModelChip
         model={decision.pick.model || decision.pick.seat || "unknown"}
-        seat={decision.pick.seat || undefined}
+        seat={decision.pick.model && decision.pick.seat ? decision.pick.seat : undefined}
       />
       {decision.fallback && <span className="muted">after {decision.fallback}</span>}
     </div>
@@ -25,10 +34,19 @@ function RouteTrace({ decision }: { decision: RouteDecision }) {
   return (
     <div className="route-trace">
       <div className="meta">
-        {decision.taskClass || "Task"} · {new Date(decision.ts).toLocaleString()}{" "}
+        {decision.taskClass || "Task"} · {dateTime.format(new Date(decision.ts))}{" "}
         {decision.sessionId && (
           <>
-            · session <span className="mono">{decision.sessionId}</span>
+            · session{" "}
+            <button
+              type="button"
+              className="routing-session-copy mono"
+              title={`Copy session ID: ${decision.sessionId}`}
+              aria-label="Copy full session ID"
+              onClick={() => void navigator.clipboard.writeText(decision.sessionId!)}
+            >
+              {decision.sessionId.slice(0, 8)}…
+            </button>
           </>
         )}
       </div>
@@ -149,6 +167,13 @@ export function DecisionsTab() {
       ? new Date(referenceTime - 86_400_000).toISOString()
       : new Date(referenceTime - 7 * 86_400_000).toISOString();
   const decisions = useRouteDecisions(since, taskClass, outcome);
+  const observed = useRouteDecisions(since);
+  const classes = [
+    ...new Set([
+      ...Object.keys(menu.data?.classes ?? {}),
+      ...(observed.data?.decisions ?? []).flatMap((row) => (row.taskClass ? [row.taskClass] : [])),
+    ]),
+  ].sort();
   const base = (decisions.data?.decisions ?? []).filter(
     (row) => !session || row.sessionId === session,
   );
@@ -176,7 +201,7 @@ export function DecisionsTab() {
           value={taskClass}
           options={[
             { label: "All", value: "" },
-            ...Object.keys(menu.data?.classes ?? {}).map((value) => ({ label: value, value })),
+            ...classes.map((value) => ({ label: value, value })),
           ]}
           onChange={setTaskClass}
         />

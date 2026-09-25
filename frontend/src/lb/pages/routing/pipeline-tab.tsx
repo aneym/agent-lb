@@ -120,7 +120,11 @@ function PipelineStages() {
         <>
           <div className="logos">
             {[...new Set(providers)].map((provider) => (
-              <ProviderMark key={provider} id={providerMark(provider)} size={16} />
+              <ProviderMark
+                key={provider}
+                id={provider === "anthropic" ? "claude" : providerMark(provider)}
+                size={16}
+              />
             ))}
           </div>
           <div className="live">
@@ -211,14 +215,28 @@ function MenuSection() {
 
 function PaceLimits() {
   const menu = useMenu();
-  const constrainedPools = new Set(
-    Object.values(menu.data?.classes ?? {}).flatMap((task) =>
-      task.excluded
-        .filter((entry) => entry.reason.includes("behind pace"))
-        .map((entry) => entry.reason.match(/pool ([\w-]+) behind pace/)?.[1])
-        .filter((name): name is string => !!name),
-    ),
-  );
+  const displayNames: Record<string, string> = {
+    "anthropic-general": "Anthropic general",
+    "openai-codex": "OpenAI Codex",
+    cursor: "Cursor",
+    devin: "Devin",
+    glm: "GLM",
+    kimi: "Kimi",
+  };
+  const classes = Object.entries(menu.data?.classes ?? {}).filter(([, task]) => !task.driver);
+  const admittedClasses = (pool: string) =>
+    classes
+      .filter(([, task]) => task.seats.some((seat) => seat.pool === pool))
+      .map(([name]) => name);
+  const admission = (pool: string, status?: string) => {
+    if (status === "exhausted" || status === "unavailable") return "No work until capacity returns";
+    const excludedByPace = classes.some(([, task]) =>
+      task.excluded.some((entry) => entry.reason.includes(`pool ${pool} behind pace`)),
+    );
+    if (!excludedByPace) return "All work";
+    const admitted = admittedClasses(pool);
+    return admitted.length ? `Admits: ${admitted.join(", ")}` : "No options available";
+  };
   return (
     <section>
       <div className="sec-h">
@@ -230,19 +248,22 @@ function PaceLimits() {
           .map(([name, pool]) => (
             <div className="row" key={name}>
               <span className="c-who who">
-                <ProviderMark id={providerMark(name.split("-")[0])} size={20} />
-                <span className="n">{name}</span>
+                <ProviderMark
+                  id={
+                    name === "anthropic-general"
+                      ? "claude"
+                      : name === "openai-codex"
+                        ? "codex"
+                        : providerMark(name)
+                  }
+                  size={20}
+                />
+                <span className="n">{displayNames[name] ?? name}</span>
               </span>
-              <span className="c-st num">
+              <span className="c-st">
                 {pool.weeklyPacePercent == null ? "No weekly cap" : pace(pool.weeklyPacePercent)}
               </span>
-              <span className="c-gate muted">
-                {pool.status === "exhausted" || pool.status === "unavailable"
-                  ? "No work until capacity returns"
-                  : constrainedPools.has(name)
-                    ? "Some options excluded by pace"
-                    : "All work"}
-              </span>
+              <span className="c-gate muted">{admission(name, pool.status)}</span>
             </div>
           ))}
       </div>
@@ -263,7 +284,9 @@ function AccountSelection() {
   const plannerMutation = useMutation({
     mutationFn: (mode: string) => updatePlannerMode(planner.data!, mode),
     onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ["routing", "planner-settings"] }),
+      void queryClient.invalidateQueries({
+        queryKey: ["routing", "planner-settings"],
+      }),
     onError: (error: Error) => toast.error(error.message),
   });
   const settings = settingsQuery.data;

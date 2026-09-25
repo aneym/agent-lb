@@ -20,9 +20,48 @@
 .lb .dl dd .toggle {
   flex: none;
 }
+.lb .panel > .dl {
+  padding: 0 16px;
+}
+.lb .adm .c-st {
+  font-family: var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+.lb .adm .c-gate {
+  overflow-wrap: anywhere;
+}
 .lb .dec {
-  --cols: 64px 86px minmax(0, 1fr) 95px minmax(105px, auto);
+  --cols: 58px 76px minmax(135px, 1fr) 72px minmax(92px, 1fr);
   min-width: 0;
+}
+.lb .dec .row {
+  gap: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.lb .dec .c-pick,
+.lb .dec .c-d,
+.lb .dec .c-out {
+  min-width: 0;
+}
+.lb .dec .pickc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.lb .dec .chip {
+  max-width: 100%;
+  height: auto;
+  min-height: 26px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.lb .dec .chip .nm,
+.lb .dec .chip .seat {
+  min-width: 0;
+}
+.lb .dec .c-d {
+  overflow-wrap: anywhere;
 }
 .lb .dec .row.link {
   width: 100%;
@@ -66,6 +105,15 @@
   color: var(--ink-2);
   overflow-wrap: anywhere;
   margin-bottom: 16px;
+}
+.lb .routing-session-copy {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
 .lb .route-trace .stg {
   border-top: 1px solid var(--line);
