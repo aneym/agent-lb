@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import math
@@ -266,8 +267,21 @@ async def _empty_events() -> AsyncIterator[JsonObject]:
     yield  # pragma: no cover - makes this a (never-yielding) async generator
 
 
+# Claude Code logs a slow first byte after 30 s without a stream chunk and
+# aborts the request (then retries it) after ~180 s without response headers.
+# The startup peek below holds the headers, so it is bounded on both sides:
+# a stream that never produces a frame fails fast with an Anthropic error, and
+# a stream that has started (``message_start`` buffered) but is still reasoning
+# releases its headers after a short grace instead of waiting for content.
+STARTUP_FIRST_FRAME_TIMEOUT_SECONDS = 90.0
+STARTUP_CONTENT_GRACE_SECONDS = 10.0
+
+
 async def split_startup_error(
     events: AsyncIterator[JsonObject],
+    *,
+    first_frame_timeout_seconds: float = STARTUP_FIRST_FRAME_TIMEOUT_SECONDS,
+    content_grace_seconds: float = STARTUP_CONTENT_GRACE_SECONDS,
 ) -> tuple[JsonObject | None, AsyncIterator[JsonObject]]:
     """Peek the translated stream for a terminal error before any assistant content.
 
@@ -275,39 +289,87 @@ async def split_startup_error(
     it creates the assistant turn; an ``error`` frame delivered after
     ``message_start`` under HTTP 200 is silently dropped, so the harness storms
     identical over-limit retries. The pre-stream HTTP probe upstream of this bridge
-    can miss an overflow that arrives after a fast ``response.created`` (e.g. after
-    a reasoning phase), leaving it as an in-band ``error`` frame.
+    can miss an overflow that arrives after a fast ``response.created``, leaving it
+    as an in-band ``error`` frame.
 
-    Buffer only until the first ``content_block_*`` frame or the first terminal
-    ``error`` frame, whichever comes first (bounded — one or two frames in
-    practice, and released the moment real content appears). If the error wins,
-    return it so the caller can surface an HTTP error and drop the stream. If
-    content wins, return a replay iterator that yields the buffered frames then the
-    rest of the stream unchanged, preserving genuine mid-stream failures.
+    Buffer until the first ``content_block_*`` frame, the first terminal ``error``
+    frame, or the end of the content grace after the first frame, whichever comes
+    first. If the error wins, return it so the caller can surface an HTTP error and
+    drop the stream. Otherwise return a replay iterator that yields the buffered
+    frames then the rest of the stream unchanged, preserving genuine mid-stream
+    failures. If no frame at all arrives within ``first_frame_timeout_seconds``,
+    close the stream and return a timeout error so the client fails fast instead
+    of hanging on a request that upstream never answered.
     """
+    iterator = events.__aiter__()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + first_frame_timeout_seconds
     buffered: list[JsonObject] = []
-    startup_error: JsonObject | None = None
-    async for event in events:
-        if event.get("type") == "error":
-            startup_error = event
+    pending: asyncio.Future[JsonObject] | None = None
+    exhausted = False
+    while True:
+        if pending is None:
+            pending = asyncio.ensure_future(iterator.__anext__())
+        done, _ = await asyncio.wait({pending}, timeout=max(0.0, deadline - loop.time()))
+        if not done:
+            if buffered:
+                break
+            pending.cancel()
+            await asyncio.wait({pending})
+            await _aclose(events)
+            return _startup_timeout_error(first_frame_timeout_seconds), _empty_events()
+        try:
+            event = pending.result()
+        except StopAsyncIteration:
+            pending = None
+            exhausted = True
             break
+        pending = None
+        if event.get("type") == "error":
+            await _aclose(events)
+            return event, _empty_events()
+        if not buffered:
+            deadline = loop.time() + content_grace_seconds
         buffered.append(event)
         if event.get("type") in _CONTENT_FRAME_TYPES:
             break
 
-    if startup_error is not None:
-        aclose = getattr(events, "aclose", None)
-        if callable(aclose):
-            await aclose()
-        return startup_error, _empty_events()
-
     async def replay() -> AsyncIterator[JsonObject]:
-        for event in buffered:
-            yield event
-        async for event in events:
-            yield event
+        try:
+            for event in buffered:
+                yield event
+            if exhausted:
+                return
+            if pending is not None:
+                try:
+                    yield await pending
+                except StopAsyncIteration:
+                    return
+            async for event in iterator:
+                yield event
+        finally:
+            if pending is not None and not pending.done():
+                pending.cancel()
+                await asyncio.wait({pending})
+            await _aclose(events)
 
     return None, replay()
+
+
+def _startup_timeout_error(timeout_seconds: float) -> JsonObject:
+    return {
+        "type": "error",
+        "error": {
+            "type": "api_error",
+            "message": f"Upstream produced no response within {timeout_seconds:g}s; retry the request",
+        },
+    }
+
+
+async def _aclose(events: AsyncIterator[JsonObject]) -> None:
+    aclose = getattr(events, "aclose", None)
+    if callable(aclose):
+        await aclose()
 
 
 async def collect_claude_message(source: AsyncIterator[str]) -> JsonObject:

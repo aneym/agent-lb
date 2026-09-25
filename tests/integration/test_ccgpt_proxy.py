@@ -198,9 +198,7 @@ async def test_ccgpt_midstream_context_overflow_emits_prompt_too_long_without_su
 
 
 @pytest.mark.asyncio
-async def test_ccgpt_precontent_stream_overflow_returns_http_400(
-    async_client, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_ccgpt_precontent_stream_overflow_returns_http_400(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
     # Upstream emits `response.created` fast (so the pre-stream HTTP probe sees a
     # non-error first item and commits to a streaming response), then a terminal
     # context overflow arrives BEFORE any assistant content. Claude Code only
@@ -277,9 +275,7 @@ async def test_ccgpt_precontent_top_level_overflow_frame_returns_http_400(
 
 
 @pytest.mark.asyncio
-async def test_ccgpt_non_overflow_error_stays_api_error(
-    async_client, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_ccgpt_non_overflow_error_stays_api_error(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
     generic_envelope = {"error": {"type": "server_error", "message": "upstream exploded"}}
 
     async def fake_stream(request, payload, context, api_key, **kwargs):
@@ -417,3 +413,41 @@ async def test_messages_count_tokens_worker_alias_is_local(async_client, alias: 
     assert response.status_code == 200
     assert isinstance(response.json()["input_tokens"], int)
     assert response.json()["input_tokens"] > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("thread", [{"type": "create"}, {"type": "continue", "previous_message_id": "msg_prev"}])
+async def test_messages_route_refuses_message_threads_before_upstream(
+    async_client, monkeypatch: pytest.MonkeyPatch, thread: dict[str, str]
+) -> None:
+    # Claude Code's message-threads beta sends continuation turns as a bare
+    # delta (no system, no tools, no history). Forwarding one upstream hung the
+    # session; the route must refuse it with the error code Claude Code reads
+    # to resend the turn stateless.
+    called = False
+
+    async def fake_stream(request, payload, context, api_key, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("thread requests must not reach upstream")
+
+    monkeypatch.setattr(proxy_api, "_stream_responses", fake_stream)
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "gpt-6-sol-low",
+            "max_tokens": 512,
+            "stream": True,
+            "thread": thread,
+            "messages": [
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "hi"}]}
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["details"] == {"error_code": "thread_unsupported_request"}
+    assert called is False

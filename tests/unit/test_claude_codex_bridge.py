@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -280,6 +281,63 @@ async def test_split_startup_error_replays_empty_success() -> None:
     assert startup_error is None
     types = [event["type"] async for event in replay]
     assert types == ["message_start", "message_delta", "message_stop"]
+
+
+@pytest.mark.asyncio
+async def test_split_startup_error_releases_headers_while_upstream_is_still_reasoning() -> None:
+    # A started turn that is still reasoning (no content yet) must release
+    # message_start after the content grace; holding it until content made
+    # Claude Code abort the request after ~180 s with no response headers.
+    stalled = asyncio.Event()
+
+    async def source():
+        yield 'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+        yield 'data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1"}}\n\n'
+        await stalled.wait()
+        yield 'data: {"type":"response.output_text.delta","delta":"late"}\n\n'
+
+    startup_error, replay = await asyncio.wait_for(
+        split_startup_error(responses_to_claude_events(source()), content_grace_seconds=0.05),
+        timeout=2,
+    )
+
+    assert startup_error is None
+    assert (await anext(replay))["type"] == "message_start"
+    stalled.set()
+    rest = [event async for event in replay]
+    assert [event["type"] for event in rest] == [
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_split_startup_error_fails_fast_when_upstream_never_answers() -> None:
+    # Upstream accepting the request and never emitting a frame must become an
+    # Anthropic error the caller returns as non-200, and the upstream stream
+    # must be closed, not left pending.
+    closed = asyncio.Event()
+
+    async def source():
+        try:
+            await asyncio.Event().wait()
+            yield "unreachable"
+        finally:
+            closed.set()
+
+    startup_error, replay = await asyncio.wait_for(
+        split_startup_error(responses_to_claude_events(source()), first_frame_timeout_seconds=0.05),
+        timeout=2,
+    )
+
+    assert startup_error is not None
+    assert startup_error["error"]["type"] == "api_error"
+    assert anthropic_status_for_error(startup_error) == 502
+    assert closed.is_set()
+    assert [event async for event in replay] == []
 
 
 def test_anthropic_status_for_error_maps_types() -> None:

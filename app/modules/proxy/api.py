@@ -905,6 +905,20 @@ async def _ccgpt_messages_response(
     alias_effort: str | None = None,
     locked_model: str = CCGPT_MODEL,
 ) -> Response:
+    # Claude Code's message-threads beta (first-party host only, which the
+    # desktop MITM proxy looks like) sends `thread: continue` turns carrying just
+    # the delta and leaves system/tools/history to server-side thread state the
+    # bridge does not keep. Translating that delta upstream hangs: no tools, no
+    # history, an orphan function_call_output. This error code makes Claude Code
+    # resend the turn stateless and keep this model stateless for the session.
+    thread = (payload.model_extra or {}).get("thread")
+    if thread is not None:
+        return _anthropic_error_response(
+            400,
+            "invalid_request_error",
+            "thread: message threads are not supported by the ccgpt compatibility route",
+            details={"error_code": "thread_unsupported_request"},
+        )
     if payload.tools and any(isinstance(tool, AnthropicDefinedToolDefinition) for tool in payload.tools):
         return _anthropic_error_response(
             400,
