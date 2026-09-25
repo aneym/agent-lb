@@ -16,7 +16,12 @@ from typing import Protocol, cast
 from app.core.audit.service import AuditService
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.crypto import TokenEncryptor
-from app.core.providers import ANTHROPIC_COMPAT_PROFILES, ANTHROPIC_PROVIDER_NAME, normalize_provider_name
+from app.core.providers import (
+    ANTHROPIC_COMPAT_PROFILES,
+    ANTHROPIC_PROVIDER_NAME,
+    OPENAI_PROVIDER_NAME,
+    normalize_provider_name,
+)
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
@@ -128,6 +133,8 @@ _RepoFactory = Callable[[], AbstractAsyncContextManager[_AccountsRepositoryLike]
 _AuthManagerFactory = Callable[[_AccountsRepositoryLike], _AuthManagerLike]
 _LeaderElectionFactory = Callable[[], _LeaderElectionLike]
 _ProbeSender = Callable[[Account, str], Awaitable[tuple[int, str | None]]]
+# Status of an auth-only upstream call made with the account's token.
+_AuthCheckSender = Callable[[Account, str], Awaitable[int]]
 # (used_percent, reset_at) of the account's latest weekly (secondary) usage
 # entry, or None when no such entry exists.
 _WeeklyUsageLookup = Callable[[str], Awaitable[tuple[float, int | None] | None]]
@@ -158,6 +165,11 @@ class AccountPulseScheduler:
       credentials intact),
     - disconnected (``reauth_required`` — credentials rejected upstream).
 
+    An OpenAI probe 401 is confirmed with an auth-only call (``/wham/usage``)
+    before the account is marked disconnected: codex/responses has rejected
+    every account at once for upstream reasons while the tokens were valid.
+    If the auth-only call succeeds, the verdict is inconclusive.
+
     Paused accounts are operator intent and are never probed.
 
     Between full passes a fast recovery lane re-probes only recovery-pending
@@ -178,6 +190,7 @@ class AccountPulseScheduler:
     repo_factory: _RepoFactory = field(default_factory=lambda: _default_accounts_repo_factory)
     auth_manager_factory: _AuthManagerFactory = field(default_factory=lambda: _default_auth_manager_factory)
     probe_sender: _ProbeSender = field(default_factory=lambda: _default_probe_sender)
+    openai_auth_check_sender: _AuthCheckSender = field(default_factory=lambda: _default_openai_auth_check_sender)
     fable_probe_sender: _ProbeSender = field(default_factory=lambda: _default_fable_probe_sender)
     weekly_usage_lookup: _WeeklyUsageLookup = field(default_factory=lambda: _default_weekly_usage_lookup)
     fable_marker_writer: _FableMarkerWriter = field(default_factory=lambda: _default_fable_marker_writer)
@@ -331,12 +344,38 @@ class AccountPulseScheduler:
                 access_token = self._encryptor.decrypt(fresh_account.access_token_encrypted)
                 status, message = await self.probe_sender(fresh_account, access_token)
                 verdict = probes.classify_probe_result(status, message)
+                if (
+                    verdict is probes.ProbeVerdict.DISCONNECTED
+                    and normalize_provider_name(fresh_account.provider) == OPENAI_PROVIDER_NAME
+                ):
+                    verdict = await self._confirm_openai_rejection(fresh_account, access_token, status, message)
                 await self._apply_verdict(repo, fresh_account, verdict, status, message)
                 # Runs after the normal verdict is fully applied, and is
                 # internally exception-safe, so a Fable-probe failure can
                 # never suppress or alter the handling above.
                 await self._maybe_probe_fable_access(fresh_account, access_token)
                 await self._reconcile_fable_quota_cooldowns(fresh_account, access_token)
+
+    async def _confirm_openai_rejection(
+        self,
+        account: Account,
+        access_token: str,
+        status: int,
+        code: str | None,
+    ) -> probes.ProbeVerdict:
+        """A codex/responses 401 counts only if the token also fails an auth-only call."""
+        check_status = await self.openai_auth_check_sender(account, access_token)
+        if check_status == 401:
+            return probes.ProbeVerdict.DISCONNECTED
+        logger.warning(
+            "Account pulse probe got HTTP %s code=%s but the auth check returned HTTP %s; "
+            "not marking the credential rejected account_id=%s",
+            status,
+            code,
+            check_status,
+            account.id,
+        )
+        return probes.ProbeVerdict.INCONCLUSIVE
 
     async def _reconcile_fable_quota_cooldowns(self, account: Account, access_token: str) -> None:
         """Clear only model cooldowns disproved by exact quota-shaped probes."""
@@ -612,12 +651,18 @@ async def _default_probe_sender(account: Account, access_token: str) -> tuple[in
             base_url=base_url,
             model=compat_profile.default_probe_model,
         )
-    status = await probes.send_openai_probe(
+    return await probes.send_openai_probe_with_error_code(
         access_token=access_token,
         chatgpt_account_id=account.chatgpt_account_id,
         model=probes.DEFAULT_PROBE_MODEL,
     )
-    return status, None
+
+
+async def _default_openai_auth_check_sender(account: Account, access_token: str) -> int:
+    return await probes.send_openai_auth_check(
+        access_token=access_token,
+        chatgpt_account_id=account.chatgpt_account_id,
+    )
 
 
 async def _default_fable_probe_sender(account: Account, access_token: str) -> tuple[int, str | None]:
