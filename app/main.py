@@ -76,11 +76,11 @@ from app.modules.proxy.ring_membership import (
 from app.modules.public_usage import api as public_usage_api
 from app.modules.quota_planner import api as quota_planner_api
 from app.modules.quota_planner.scheduler import build_quota_planner_scheduler
-from app.modules.reports import api as reports_api
 from app.modules.receipts import api as receipts_api
+from app.modules.reports import api as reports_api
 from app.modules.request_logs import api as request_logs_api
-from app.modules.routing_view import api as routing_view_api
 from app.modules.routing_policy import api as routing_policy_api
+from app.modules.routing_view import api as routing_view_api
 from app.modules.runtime import api as runtime_api
 from app.modules.sessions import api as sessions_api
 from app.modules.settings import api as settings_api
