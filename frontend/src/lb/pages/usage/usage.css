@@ -1,0 +1,217 @@
+.lb .usage-page .usage-filters {
+  margin-top: 18px;
+  margin-bottom: 0;
+}
+.lb .usage-page .usage-more {
+  display: none;
+}
+.lb .usage-page .usage-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.lb .usage-page .usage-session input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  min-width: 0;
+}
+.lb .usage-page .usage-chart-panel {
+  padding: 16px 18px 10px;
+  margin: 16px 0 36px;
+}
+.lb .usage-page .usage-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.lb .usage-page .usage-chart-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.lb .usage-page .chart {
+  margin-top: 12px;
+}
+.lb .usage-page .chart .col {
+  align-items: center;
+  min-width: 0;
+}
+.lb .usage-page .chart .col i {
+  width: 72%;
+}
+.lb .usage-page .chart .x span {
+  flex: 1;
+  min-width: 0;
+}
+.lb .usage-page .chart .x .blank {
+  color: transparent;
+}
+.lb .usage-page .usage-tip {
+  left: 62%;
+  top: 24px;
+}
+.lb .usage-page .usage-tip .sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+.lb .usage-page .usage-tip .sw.s2 {
+  background: var(--g2);
+}
+.lb .usage-page .usage-tip .sw.s3 {
+  background: var(--g3);
+}
+.lb .usage-page .brk {
+  margin-top: 12px;
+}
+.lb .usage-page .brk .row:not(.hd) {
+  min-height: 63px;
+}
+.lb .usage-page .who {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+.lb .usage-page .who .t {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lb .usage-page .who .n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb .usage-page .who .s {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.lb .usage-page .usage-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lb .usage-page .usage-name:hover {
+  text-decoration: underline;
+}
+.lb .usage-page .right {
+  text-align: right;
+}
+.lb .usage-page .c-meta {
+  display: none;
+}
+.lb .usage-page .brk .row .c-bar {
+  height: 4px;
+}
+.lb .usage-page .sec + .sec {
+  margin-top: 36px;
+}
+.lb .usage-page .usage-empty {
+  padding: 20px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.lb .usage-page .usage-receipt {
+  cursor: pointer;
+}
+.lb .usage-page .usage-receipt:hover,
+.lb .usage-page .usage-receipt:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.lb .usage-page .usage-receipt .c-ses,
+.lb .usage-page .usage-receipt .c-acct,
+.lb .usage-page .usage-receipt .c-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb .usage-page .usage-key {
+  color: var(--ink-2);
+}
+.lb .usage-page .usage-receipt .chip {
+  max-width: 100%;
+}
+.lb .usage-page .usage-receipt .chip .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lb .usage-page .usage-load {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+.lb .usage-trace {
+  margin: 30px 0;
+}
+.lb .usage-trace dd {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .lb .usage-page .usage-filters .select:nth-child(n + 3) {
+    display: none;
+  }
+  .lb .usage-page .usage-filters .select {
+    flex: 1 1 45%;
+  }
+  .lb .usage-page .usage-more {
+    display: inline-flex;
+  }
+  .lb .usage-page .usage-filters:has(+ .usage-session) .select:nth-child(n + 3) {
+    display: inline-flex;
+  }
+  .lb .usage-page .usage-chart-panel {
+    padding: 14px 12px 10px;
+    margin-bottom: 26px;
+  }
+  .lb .usage-page .chart {
+    padding-left: 36px;
+  }
+  .lb .usage-page .chart .grid {
+    left: 36px;
+  }
+  .lb .usage-page .chart .plot {
+    height: 160px;
+    gap: 2px;
+  }
+  .lb .usage-page .usage-chart-header {
+    align-items: flex-start;
+  }
+  .lb .usage-page .usage-chart-header .legend {
+    gap: 6px 12px;
+  }
+  .lb .usage-page .chart .x span {
+    font-size: 10px;
+  }
+  .lb .usage-page .usage-tip {
+    left: 3px;
+    top: 20px;
+  }
+  .lb .usage-page .brk .row:not(.hd) {
+    min-height: 0;
+  }
+  .lb .usage-page .brk .c-meta {
+    display: block;
+  }
+  .lb .usage-page .rc .c-model {
+    grid-area: model;
+  }
+  .lb .usage-page .rc .row {
+    grid-template-areas: "t acct st" "ses ses cost" "tok cache lat" "model model model";
+  }
+  .lb .usage-page .usage-receipt .c-acct {
+    justify-content: center;
+  }
+  .lb .usage-page .usage-receipt .c-ses {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
