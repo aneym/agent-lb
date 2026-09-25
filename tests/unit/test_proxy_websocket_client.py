@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -917,10 +918,12 @@ async def test_connect_responses_websocket_maps_invalid_proxy(monkeypatch):
 
 
 # The upstream edge rejects websocket handshakes with a bare 403 (no JSON error
-# body) once too many open from one address at once: live evals on 2026-09-25 saw
-# it hit every account in the same second at 100+ parallel agents. That is a burst
-# limit, so the handshake is retried with backoff. A 403 carrying an OpenAI error
-# body is about the account and must still surface on the first answer.
+# body) when too many open from one address in a short time: live evals on
+# 2026-09-25 saw it hit every account in the same second at 100+ parallel agents,
+# and a burst could stay rejected for over a minute. That is a rate limit, so the
+# handshake is retried with backoff for minutes, not a fixed handful of tries. A
+# 403 carrying an OpenAI error body is about the account and must still surface on
+# the first answer.
 async def _serve_handshakes(monkeypatch, answers: list[tuple[int, bytes, str] | None]):
     attempts: list[int] = []
 
@@ -938,6 +941,7 @@ async def _serve_handshakes(monkeypatch, answers: list[tuple[int, bytes, str] | 
     server = await websocket_serve(upstream_handler, "127.0.0.1", 0, process_request=process_request).__aenter__()
     port = next(iter(server.sockets)).getsockname()[1]
     monkeypatch.setattr(proxy_websocket_module, "_EDGE_REJECT_FIRST_BACKOFF_SECONDS", 0.01)
+    monkeypatch.setattr(proxy_websocket_module, "_EDGE_REJECT_MAX_BACKOFF_SECONDS", 0.02)
     monkeypatch.setattr(
         proxy_websocket_module,
         "get_settings",
@@ -961,7 +965,9 @@ _ACCOUNT_403 = (
 
 @pytest.mark.asyncio
 async def test_edge_rejected_handshake_is_retried_until_it_connects(monkeypatch):
-    server, attempts = await _serve_handshakes(monkeypatch, [_EDGE_403, _EDGE_403, _EDGE_403, None])
+    # Eight rejections in a row: at 200 parallel agents the edge kept rejecting
+    # past the six tries (about 30 s) the first version allowed.
+    server, attempts = await _serve_handshakes(monkeypatch, [_EDGE_403] * 8 + [None])
     try:
         websocket = await connect_responses_websocket(
             {"openai-beta": "responses_websockets=2026-02-06"}, "access-token", None, allow_direct_egress=True
@@ -972,13 +978,15 @@ async def test_edge_rejected_handshake_is_retried_until_it_connects(monkeypatch)
         server.close()
         await server.wait_closed()
 
-    assert len(attempts) == 4
+    assert len(attempts) == 9
     assert message.text == '{"type":"response.completed"}'
 
 
 @pytest.mark.asyncio
 async def test_edge_rejection_that_never_clears_surfaces_after_bounded_retries(monkeypatch):
     server, attempts = await _serve_handshakes(monkeypatch, [_EDGE_403])
+    monkeypatch.setattr(proxy_websocket_module, "_EDGE_REJECT_RETRY_WINDOW_SECONDS", 0.3)
+    started_at = time.monotonic()
     try:
         with pytest.raises(ProxyResponseError) as exc_info:
             await connect_responses_websocket(
@@ -989,7 +997,8 @@ async def test_edge_rejection_that_never_clears_surfaces_after_bounded_retries(m
         await server.wait_closed()
 
     assert exc_info.value.status_code == 403
-    assert len(attempts) == proxy_websocket_module._EDGE_REJECT_MAX_ATTEMPTS
+    assert len(attempts) > 1
+    assert time.monotonic() - started_at < 5.0
 
 
 @pytest.mark.asyncio

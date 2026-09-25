@@ -30,15 +30,22 @@ the configured cap.
 
 When an upstream Responses websocket handshake is refused with HTTP 403 and the
 body is not an OpenAI error payload, the client MUST retry the handshake with
-jittered exponential backoff, for up to six attempts in total. If every attempt is
-refused, the 403 MUST be surfaced as before. A 403 that carries an OpenAI error
+jittered exponential backoff, for up to three minutes after the first refusal,
+with no single wait longer than 30 seconds. If the handshake is still refused when
+that window ends, the 403 MUST be surfaced as before. A 403 that carries an OpenAI error
 payload MUST be surfaced on the first answer, without a retry.
 
 #### Scenario: A burst limit clears
 
-- **GIVEN** the edge refuses the first three handshakes with a bare 403
+- **GIVEN** the edge refuses the first eight handshakes with a bare 403
 - **WHEN** a Responses websocket is opened
-- **THEN** the fourth handshake succeeds, and the caller gets a connected websocket
+- **THEN** the ninth handshake succeeds, and the caller gets a connected websocket
+
+#### Scenario: A refusal that never clears
+
+- **GIVEN** the edge refuses every handshake with a bare 403
+- **WHEN** a Responses websocket is opened
+- **THEN** the caller gets the 403 once the retry window has passed
 
 #### Scenario: An account-level refusal
 

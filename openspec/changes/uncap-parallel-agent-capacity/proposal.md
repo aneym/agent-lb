@@ -25,8 +25,12 @@ protecting against any upstream limit:
 - Release paced upload bytes in chunks of at least one TLS record (16 KiB), so
   the cap keeps its rate without holding the event loop.
 - Retry an upstream websocket handshake that the edge rejects with a bare 403,
-  using jittered exponential backoff (six attempts, about 30 s in all). A 403
-  that carries an OpenAI error body is still surfaced on the first answer.
+  using jittered exponential backoff capped at 30 s per wait, for up to three
+  minutes from the first refusal. The edge limits the rate of new handshakes,
+  not how many stay open: 210 sockets opened 70 at a time and held open drew no
+  refusal, while a single burst of 200 kept 30 refused for more than the 30 s
+  that a first six-attempt version allowed. A 403 that carries an OpenAI error
+  body is still surfaced on the first answer.
 - Add `scripts/parallel_load_eval.py`, the staircase eval that produced this
   evidence. It writes receipts under `~/.agent-lb/evals/parallel-load/receipts/`.
 
