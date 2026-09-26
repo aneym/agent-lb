@@ -59,7 +59,7 @@ from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
-from app.modules.accounts.auth_manager import _access_token_needs_refresh, access_token_hard_expired, is_locally_owned
+from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
@@ -861,8 +861,12 @@ class LoadBalancer:
                     if account.id in fresh_accounts
                     and fresh_accounts[account.id] in selectable_accounts([fresh_accounts[account.id]])
                     and (
+                        fresh_accounts[account.id].status != AccountStatus.EXCHANGE_UNCERTAIN
+                        or not access_token_hard_expired(encryptor, fresh_accounts[account.id])
+                    )
+                    and (
                         is_locally_owned(fresh_accounts[account.id], selection_settings)
-                        or not _access_token_needs_refresh(encryptor, fresh_accounts[account.id])
+                        or not access_token_hard_expired(encryptor, fresh_accounts[account.id])
                     )
                 ]
             return replace(_clone_selection_inputs(cached), accounts=accounts)
@@ -876,16 +880,16 @@ class LoadBalancer:
             ]
             # Non-owned mirrors are unroutable once their access token is actually
             # expired (federation degraded mode): nobody local can refresh them.
-            # Owned accounts and fresh/within-margin mirrors stay eligible.
+            # Owned accounts and mirrors with a still-valid access token stay eligible.
             selection_settings = get_settings()
             encryptor = TokenEncryptor()
             excluded_mirror_count = 0
             eligible_accounts = []
             for account in all_accounts:
-                if not is_locally_owned(account, selection_settings) and (
-                    access_token_hard_expired(encryptor, account) or _access_token_needs_refresh(encryptor, account)
-                ):
+                if not is_locally_owned(account, selection_settings) and access_token_hard_expired(encryptor, account):
                     excluded_mirror_count += 1
+                    continue
+                if account.status == AccountStatus.EXCHANGE_UNCERTAIN and access_token_hard_expired(encryptor, account):
                     continue
                 eligible_accounts.append(account)
             all_accounts = eligible_accounts
@@ -2115,7 +2119,7 @@ def _state_from_account(
         primary_window_minutes = None
 
     ignore_zero_capacity_primary_runtime_reset = False
-    status_seed = account.status
+    status_seed = AccountStatus.ACTIVE if account.status == AccountStatus.EXCHANGE_UNCERTAIN else account.status
     if primary_quota_bypassed and account.status == AccountStatus.RATE_LIMITED:
         status_seed = AccountStatus.ACTIVE
     long_window_quota_available = (
@@ -2441,7 +2445,6 @@ def selectable_accounts(accounts: list[Account]) -> list[Account]:
         if account.status
         not in (
             AccountStatus.REAUTH_REQUIRED,
-            AccountStatus.EXCHANGE_UNCERTAIN,
             AccountStatus.DEACTIVATED,
             AccountStatus.PAUSED,
         )

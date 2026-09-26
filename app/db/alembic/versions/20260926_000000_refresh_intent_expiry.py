@@ -39,6 +39,8 @@ def upgrade() -> None:
             sa.Column("account_id", sa.String(), sa.ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
             sa.Column("refresh_token_sha256", sa.String(length=64), nullable=False),
             sa.Column("started_at", sa.DateTime(), nullable=False),
+            sa.Column("replay", sa.Boolean(), server_default=sa.false(), nullable=False),
+            sa.Column("reason", sa.String(length=32), nullable=True),
         )
 
 

@@ -50,9 +50,7 @@ from app.modules.usage.updater import UsageUpdater
 
 logger = logging.getLogger(__name__)
 
-_SERVING_STATUSES = frozenset(
-    {AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED}
-)
+_SERVING_STATUSES = frozenset({AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED})
 # ISO timestamps sort lexicographically; missing expiry sorts last.
 _NO_EXPIRY_SORT_KEY = "9999"
 
@@ -66,6 +64,11 @@ def _get_leader_election() -> _LeaderElectionLike:
     return cast(_LeaderElectionLike, module.get_leader_election())
 
 
+def _locally_owned(account: Account) -> bool:
+    owner = account.owner_instance
+    return owner is None or owner == get_settings().local_instance_id
+
+
 def serving_openai_pool(accounts: list[Account]) -> list[Account]:
     return [
         account
@@ -73,6 +76,7 @@ def serving_openai_pool(accounts: list[Account]) -> list[Account]:
         if normalize_provider_name(account.provider) == OPENAI_PROVIDER_NAME
         and account.status in _SERVING_STATUSES
         and is_subscription_usable(account)
+        and _locally_owned(account)
     ]
 
 
@@ -168,10 +172,15 @@ class ResetCreditAutoRedeemScheduler:
             attempts = ResetCreditAttemptsRepository(session)
             active = await attempts.active()
             if active is not None:
+                account = await repo.get_by_id(active.account_id)
+                if account is None or not _locally_owned(account):
+                    return
                 service = _build_accounts_service(repo, session)
                 try:
                     await service.redeem_rate_limit_reset_credit(
-                        active.account_id, credit_id=active.credit_id, trigger=active.trigger,
+                        active.account_id,
+                        credit_id=active.credit_id,
+                        trigger=active.trigger,
                     )
                 except Exception:
                     logger.warning("Reset recovery remains pending attempt=%s", active.id, exc_info=True)
@@ -189,6 +198,8 @@ class ResetCreditAutoRedeemScheduler:
                     usage_repo = UsageRepository(session)
                     updater = UsageUpdater(usage_repo, repo)
                     for account in candidates:
+                        if not _locally_owned(account):
+                            continue
                         available = await refresh_standard_capacity(account, updater, usage_repo)
                         if available is not False:
                             # Unknown refresh or any recovered capacity keeps
@@ -238,9 +249,7 @@ class ResetCreditAutoRedeemScheduler:
                 continue
             available = [credit for credit in payload.credits if credit.status == "available"]
             reset_credit_cache.record_count(account.id, len(available))
-            expiring = [
-                credit for credit in available if _expires_within(credit.expires_at, now, window)
-            ]
+            expiring = [credit for credit in available if _expires_within(credit.expires_at, now, window)]
             for credit in expiring:
                 await self._redeem_expiring(service, account, credit.id, credit.expires_at)
                 # A second expiry reset needs a new inventory/usage sweep.
@@ -248,6 +257,8 @@ class ResetCreditAutoRedeemScheduler:
                 return
 
     async def _redeem_expiring(self, service, account: Account, credit_id: str, expires_at: str | None) -> None:  # noqa: ANN001
+        if not _locally_owned(account):
+            return
         try:
             result = await service.redeem_rate_limit_reset_credit(account.id, credit_id=credit_id, trigger="expiring")
         except Exception:
@@ -313,6 +324,8 @@ class ResetCreditAutoRedeemScheduler:
             )
             return
         for account, credit_id in ranked:
+            if not _locally_owned(account):
+                continue
             try:
                 result = await service.redeem_rate_limit_reset_credit(account.id, credit_id=credit_id, trigger="auto")
             except Exception:
@@ -395,6 +408,8 @@ async def _rank_candidates_by_credit_expiry(
     """
     ranked: list[tuple[int, str, Account, str]] = []
     for account in candidates:
+        if not _locally_owned(account):
+            continue
         try:
             payload = await rate_limit_resets.fetch_reset_credits(
                 access_token=encryptor.decrypt(account.access_token_encrypted),

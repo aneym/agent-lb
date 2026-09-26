@@ -13,6 +13,7 @@ from urllib.parse import quote, urlencode
 import aiohttp
 from pydantic import ValidationError
 
+from app.core.auth.exchange_phase import ExchangePhase
 from app.core.auth.models import DeviceCodePayload, OAuthTokenPayload
 from app.core.clients.codex import (
     CodexClient,
@@ -50,11 +51,14 @@ class OAuthTokens:
 
 
 class OAuthError(Exception):
-    def __init__(self, code: str, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self, code: str, message: str, status_code: int | None = None, *, phase: ExchangePhase = ExchangePhase.AMBIGUOUS
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.phase = phase
 
 
 def pkce_challenge(verifier: str) -> str:

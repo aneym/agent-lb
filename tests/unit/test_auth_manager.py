@@ -76,6 +76,8 @@ class _DummyRepo:
         seat_type: str | None = None,
         *,
         expected_refresh_token_encrypted: bytes | None = None,
+        access_expires_at: datetime | None = None,
+        exchange_token_hash: str | None = None,
     ) -> bool:
         self.tokens_payload = {
             "account_id": account_id,
@@ -90,6 +92,8 @@ class _DummyRepo:
             "workspace_label": workspace_label,
             "seat_type": seat_type,
             "expected_refresh_token_encrypted": expected_refresh_token_encrypted,
+            "access_expires_at": access_expires_at,
+            "exchange_token_hash": exchange_token_hash,
         }
         return self.tokens_update_result
 
@@ -829,9 +833,7 @@ async def test_refresh_account_preserves_token_rotated_after_permanent_failure_r
         status=AccountStatus.ACTIVE,
         deactivation_reason=None,
     )
-    same_version = Account(
-        **{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns}
-    )
+    same_version = Account(**{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns})
     winning_account = Account(
         **{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns}
     )
@@ -892,9 +894,7 @@ async def test_refresh_account_preserves_newer_tokens_when_conditional_write_los
         deactivation_reason=None,
     )
     expected_refresh_token_encrypted = account.refresh_token_encrypted
-    latest_account = Account(
-        **{column.name: getattr(account, column.name) for column in Account.__table__.columns}
-    )
+    latest_account = Account(**{column.name: getattr(account, column.name) for column in Account.__table__.columns})
     latest_account.access_token_encrypted = encryptor.encrypt("winning-access")
     latest_account.refresh_token_encrypted = encryptor.encrypt("winning-refresh")
 

@@ -163,6 +163,19 @@ async def test_selection_keeps_fresh_mirror_and_owned_expired_account(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_selection_keeps_uncertain_account_until_access_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
+    uncertain = _make_account("uncertain", access_token=_jwt_with_exp(time.time() + 60))
+    uncertain.status = AccountStatus.EXCHANGE_UNCERTAIN
+    balancer = LoadBalancer(lambda: _repo_factory([uncertain]))
+    assert (await balancer.select_account()).account.id == uncertain.id
+
+    uncertain.access_expires_at = datetime.fromtimestamp(time.time() - 360, tz=timezone.utc).replace(tzinfo=None)
+    balancer = LoadBalancer(lambda: _repo_factory([uncertain]))
+    assert (await balancer.select_account()).account is None
+
+
+@pytest.mark.asyncio
 async def test_excluded_mirror_absent_from_candidate_set_even_when_scoped_by_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
