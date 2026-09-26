@@ -339,6 +339,22 @@ final class AppState {
     return verdict
   }
 
+  /// Spends one banked reset credit on an account. The verdict comes from the
+  /// upstream `code`, not the HTTP status: `nothing_to_reset` and `no_credit`
+  /// answer 200 while resetting nothing, and must surface as a row failure so
+  /// the operator does not read a no-op as recovered capacity.
+  @discardableResult
+  func redeemResetCredit(accountId: String) async -> Bool {
+    let verdict: Bool
+    do {
+      verdict = try await client.redeemResetCredit(accountId).didReset
+    } catch {
+      return false
+    }
+    await fetchAccounts()
+    return verdict
+  }
+
   // MARK: - Service actions
 
   func startService() async {

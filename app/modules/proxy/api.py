@@ -75,6 +75,7 @@ from app.core.openai.models import (
 from app.core.openai.parsing import parse_response_payload
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesReasoning, ResponsesRequest
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
+from app.core.providers import get_anthropic_compat_profile
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
@@ -283,7 +284,7 @@ async def claim_anthropic_session_route(
     context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
 ) -> dict[str, str | None] | JSONResponse:
     session_id = (payload.get("sessionId") or "").strip()
-    model = (payload.get("model") or "claude-fable-5").strip()
+    model = (payload.get("model") or "claude-opus-5").strip()
     quota_key = (payload.get("quotaKey") or "anthropic_top_thinking").strip()
     affinity_quota_key = (payload.get("affinityQuotaKey") or "").strip()
     if not affinity_quota_key:
@@ -849,7 +850,15 @@ async def v1_messages_count_tokens(
         locked_model, _ = CCGPT_MODEL_ALIASES[model]
         validate_model_access(api_key, locked_model)
         return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
+    resolved_request = await context.service.resolve_count_tokens_request(payload, model=model)
+    payload = dict(resolved_request.body)
+    model = resolved_request.model
     validate_model_access(api_key, model)
+    profile = get_anthropic_compat_profile(resolved_request.provider_name)
+    if not profile.supports_upstream_count_tokens:
+        # This vendor answers count_tokens with a non-Anthropic 404, so serve
+        # the local estimate rather than forwarding a broken envelope.
+        return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
     # Token counting is quota-free upstream, so this route never creates an
     # api-key reservation, settles usage, or writes response-driven account
     # error-health; the raw body is forwarded and the envelope returned

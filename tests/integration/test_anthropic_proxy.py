@@ -10,12 +10,15 @@ import pytest
 from sqlalchemy import select
 
 import app.modules.proxy.anthropic_service as anthropic_proxy_module
+import app.modules.proxy.api as proxy_api_module
 from app.core.anthropic.models import AnthropicMessageRequest
+from app.core.auth.dependencies import validate_proxy_api_key
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog, StickySession, StickySessionKind
 from app.db.session import SessionLocal
 from app.dependencies import _proxy_repo_context
+from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
 from app.modules.proxy.load_balancer import AccountSelection
 
 pytestmark = pytest.mark.integration
@@ -33,6 +36,24 @@ ANTHROPIC_SSE_BYTES = (
     b'"usage":{"output_tokens":5}}\n\n'
     b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
 )
+
+
+def _override_proxy_api_key(app_instance, *, allowed_models: list[str]) -> ApiKeyData:
+    api_key = ApiKeyData(
+        id="planner-test-key",
+        name="planner-test-key",
+        key_prefix="sk-planner-test",
+        allowed_models=allowed_models,
+        enforced_model=None,
+        enforced_reasoning_effort=None,
+        enforced_service_tier=None,
+        expires_at=None,
+        is_active=True,
+        created_at=utcnow(),
+        last_used_at=None,
+    )
+    app_instance.dependency_overrides[validate_proxy_api_key] = lambda: api_key
+    return api_key
 
 
 @pytest.mark.asyncio
@@ -57,6 +78,26 @@ async def test_anthropic_messages_returns_error_when_no_accounts_available(async
             ),
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_session_route_defaults_omitted_model_to_opus_5(async_client):
+    await _insert_account(
+        account_id="anthropic-opus-default",
+        provider="anthropic",
+        access_token="anthropic-access-opus-default",
+        email="opus-default@example.com",
+    )
+
+    response = await async_client.post(
+        "/api/anthropic/session-route",
+        json={"sessionId": "session-opus-default"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "claude-opus-5"
+    assert response.json()["quotaKey"] == "anthropic_top_thinking"
+    assert response.json()["affinityQuotaKey"] == "anthropic_top_thinking"
 
 
 class _FakeContent:
@@ -242,6 +283,32 @@ def test_messages_affinity_quota_key_scopes_fable_class_separately():
     )
 
 
+def test_kimi_messages_derive_kimi_provider_quota_and_sticky_key():
+    payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "k3-256k",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "enabled"},
+        }
+    )
+
+    assert anthropic_proxy_module._messages_provider_name(payload) == "kimi"
+    quota_key = anthropic_proxy_module._messages_quota_key(payload, provider_name="kimi")
+    key = anthropic_proxy_module._messages_sticky_key(
+        payload,
+        {"x-claude-session-id": "session-123"},
+        provider_name="kimi",
+        quota_key=quota_key,
+    )
+
+    assert quota_key == "kimi_coding_thinking"
+    assert anthropic_proxy_module._count_tokens_quota_key("kimi") == "kimi_count_tokens"
+    assert key is not None
+    assert key.startswith("kimi:kimi_coding_thinking:session:")
+    assert "session-123" not in key
+
+
 def test_glm_messages_derive_glm_provider_quota_and_sticky_key():
     payload = AnthropicMessageRequest.model_validate(
         {
@@ -277,7 +344,7 @@ async def _insert_account(
     subscription_status: str | None = None,
 ) -> None:
     encryptor = TokenEncryptor()
-    plan_type = "max" if provider == "anthropic" else "glm-coding" if provider == "glm" else "plus"
+    plan_type = {"anthropic": "max", "glm": "glm-coding", "kimi": "kimi-coding"}.get(provider, "plus")
     async with SessionLocal() as session:
         session.add(
             Account(
@@ -975,6 +1042,36 @@ async def test_anthropic_upstream_stream_error_event_is_logged_as_error(async_cl
 
 
 @pytest.mark.asyncio
+async def test_kimi_count_tokens_served_locally_without_upstream_call(async_client, monkeypatch):
+    # Kimi's upstream answers count_tokens with a non-Anthropic 404, which
+    # breaks Claude Code at startup, so the estimate is served locally.
+    await _insert_account(
+        account_id="kimi-account",
+        provider="kimi",
+        access_token="kimi-access",
+        email="kimi@example.com",
+    )
+
+    def fail_open_count_tokens_response(self, session, *, provider_name, headers, json_body):
+        raise AssertionError(f"count_tokens must not reach upstream for {provider_name}")
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_count_tokens_response",
+        fail_open_count_tokens_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "kimi-k3", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"authorization": "Bearer client-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["input_tokens"] > 0
+
+
+@pytest.mark.asyncio
 async def test_anthropic_count_tokens_forwards_verbatim_without_usage_writes(async_client, monkeypatch):
     await _insert_account(
         account_id="anthropic-account",
@@ -1162,6 +1259,73 @@ async def test_glm_messages_selects_glm_account_and_upstream(async_client, monke
 
     assert log.provider == "glm"
     assert log.account_id == "glm-account"
+    assert log.status == "success"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["k3-256k", "kimi-k3"])
+async def test_kimi_messages_selects_kimi_account_and_upstream(async_client, monkeypatch, model):
+    from app.core.config.settings import get_settings
+
+    # Pin the upstream so an operator .env override cannot decide this test.
+    monkeypatch.setenv("AGENT_LB_KIMI_ANTHROPIC_UPSTREAM_BASE_URL", "https://api.kimi.com/coding")
+    get_settings.cache_clear()
+
+    await _insert_account(
+        account_id="anthropic-account",
+        provider="anthropic",
+        access_token="anthropic-access",
+        email="claude@example.com",
+    )
+    await _insert_account(
+        account_id="glm-account",
+        provider="glm",
+        access_token="glm-access",
+        email="glm@example.com",
+    )
+    await _insert_account(
+        account_id="kimi-account",
+        provider="kimi",
+        access_token="kimi-access",
+        email="kimi@example.com",
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session
+        captured["provider_name"] = provider_name
+        captured["base_url"] = anthropic_proxy_module._upstream_base_url(provider_name)
+        captured["headers"] = dict(headers)
+        captured["json_body"] = dict(json_body)
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_JSON_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["provider_name"] == "kimi"
+    assert captured["base_url"] == "https://api.kimi.com/coding"
+    assert captured["headers"]["Authorization"] == "Bearer kimi-access"
+    assert captured["json_body"]["model"] == model
+
+    async with SessionLocal() as session:
+        log = (await session.execute(select(RequestLog))).scalar_one()
+
+    assert log.provider == "kimi"
+    assert log.account_id == "kimi-account"
     assert log.status == "success"
 
 
@@ -2468,6 +2632,553 @@ async def test_fable_scoped_exhaustion_excludes_despite_overall_headroom(async_c
 
     assert response.status_code == 200
     assert response.json()["accountId"] == "anthropic-scoped-control"
+
+
+@pytest.mark.asyncio
+async def test_planner_messages_use_fable_while_scoped_capacity_remains(
+    async_client,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-fable-capacity",
+        provider="anthropic",
+        access_token="anthropic-access-fable-capacity",
+        email="fable-capacity@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-fable-capacity",
+        used_percent=20.0,
+        reset_at=scoped_reset_at,
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["model"] = json_body["model"]
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-planner",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    ) as response:
+        assert response.status_code == 200
+        await response.aread()
+
+    assert captured["model"] == "claude-fable-5-1"
+
+
+@pytest.mark.asyncio
+async def test_planner_messages_use_opus_5_when_all_scoped_fable_capacity_is_exhausted(
+    async_client,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-fable-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-fable-exhausted",
+        email="fable-exhausted@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-fable-exhausted",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["model"] = json_body["model"]
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    async def fake_finalize_api_key_reservation(self, reservation, *, model, usage):
+        del self, reservation, usage
+        captured["settled_model"] = model
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_finalize_api_key_reservation",
+        fake_finalize_api_key_reservation,
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "claude-planner",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    ) as response:
+        assert response.status_code == 200
+        await response.aread()
+
+    assert captured["model"] == "claude-opus-5"
+    assert captured["settled_model"] == "claude-opus-5"
+    async with SessionLocal() as session:
+        log = (await session.execute(select(RequestLog))).scalar_one()
+    assert log.model == "claude-opus-5"
+    assert log.cost_usd is not None
+
+
+@pytest.mark.asyncio
+async def test_planner_api_key_allows_effective_fable_primary(async_client, app_instance, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-planner-key-fable",
+        provider="anthropic",
+        access_token="anthropic-access-planner-key-fable",
+        email="planner-key-fable@example.com",
+    )
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-fable-5"])
+    captured: dict[str, Any] = {}
+
+    async def fake_enforce_request_limits(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["model"] = json_body["model"]
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+    monkeypatch.setattr(proxy_api_module, "_enforce_request_limits", fake_enforce_request_limits)
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-planner",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
+    )
+
+    assert response.status_code == 200
+    assert captured["model"] == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_api_key_allows_effective_opus_fallback(async_client, app_instance, monkeypatch):
+    await _insert_account(
+        account_id="anthropic-planner-key-opus",
+        provider="anthropic",
+        access_token="anthropic-access-planner-key-opus",
+        email="planner-key-opus@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-key-opus",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5"])
+    captured: dict[str, Any] = {}
+
+    async def fake_enforce_request_limits(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["model"] = json_body["model"]
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+    monkeypatch.setattr(proxy_api_module, "_enforce_request_limits", fake_enforce_request_limits)
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-planner",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
+    )
+
+    assert response.status_code == 200
+    assert captured["model"] == "claude-opus-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_api_key_rejects_disallowed_effective_model(async_client, app_instance):
+    await _insert_account(
+        account_id="anthropic-planner-key-disallowed",
+        provider="anthropic",
+        access_token="anthropic-access-planner-key-disallowed",
+        email="planner-key-disallowed@example.com",
+    )
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5"])
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-planner",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "model_not_allowed"
+    assert "claude-fable-5" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_planner_api_key_reservation_and_settlement_use_effective_model(
+    async_client,
+    app_instance,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-planner-key-reservation",
+        provider="anthropic",
+        access_token="anthropic-access-planner-key-reservation",
+        email="planner-key-reservation@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-key-reservation",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5"])
+    captured: dict[str, Any] = {}
+
+    async def fake_enforce_request_limits(api_key, *, request_model, request_service_tier, request_usage_budget):
+        del request_service_tier, request_usage_budget
+        captured["reserved_model"] = request_model
+        return ApiKeyUsageReservationData(
+            reservation_id="planner-reservation",
+            key_id=api_key.id,
+            model=request_model,
+        )
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["upstream_model"] = json_body["model"]
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    async def fake_finalize_api_key_reservation(self, reservation, *, model, usage):
+        del self, usage
+        captured["settled_model"] = model
+        captured["settled_reservation_model"] = reservation.model
+
+    monkeypatch.setattr(proxy_api_module, "_enforce_request_limits", fake_enforce_request_limits)
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_finalize_api_key_reservation",
+        fake_finalize_api_key_reservation,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-planner",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+        },
+        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "reserved_model": "claude-opus-5",
+        "upstream_model": "claude-opus-5",
+        "settled_model": "claude-opus-5",
+        "settled_reservation_model": "claude-opus-5",
+    }
+
+
+@pytest.mark.asyncio
+async def test_planner_count_tokens_api_key_allows_effective_opus_fallback(
+    async_client,
+    app_instance,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-planner-count-key-opus",
+        provider="anthropic",
+        access_token="anthropic-access-planner-count-key-opus",
+        email="planner-count-key-opus@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-count-key-opus",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5"])
+    captured: dict[str, Any] = {}
+
+    def fake_open_count_tokens_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["model"] = json_body["model"]
+        return _FakeResponseContext(
+            _FakeResponse(200, b'{"input_tokens": 17}', headers={"content-type": "application/json"})
+        )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_count_tokens_response",
+        fake_open_count_tokens_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "claude-planner", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"input_tokens": 17}
+    assert captured["model"] == "claude-opus-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_count_tokens_api_key_rejects_disallowed_effective_fable(
+    async_client,
+    app_instance,
+):
+    await _insert_account(
+        account_id="anthropic-planner-count-key-fable",
+        provider="anthropic",
+        access_token="anthropic-access-planner-count-key-fable",
+        email="planner-count-key-fable@example.com",
+    )
+    api_key = _override_proxy_api_key(app_instance, allowed_models=["claude-opus-5"])
+
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "claude-planner", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": f"Bearer {api_key.key_prefix}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "model_not_allowed"
+    assert "claude-fable-5" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_planner_model_does_not_fall_back_when_scoped_exhaustion_is_partial():
+    await _insert_account(
+        account_id="anthropic-planner-partial-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-planner-partial-exhausted",
+        email="planner-partial-exhausted@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-planner-partial-available",
+        provider="anthropic",
+        access_token="anthropic-access-planner-partial-available",
+        email="planner-partial-available@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-partial-exhausted",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
+
+    model = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._resolve_planner_model(
+        "claude-planner",
+        provider_name="anthropic",
+        quota_key="anthropic_top_thinking",
+    )
+
+    assert model == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_model_does_not_fall_back_for_soft_weekly_threshold():
+    await _insert_account(
+        account_id="anthropic-planner-soft-weekly",
+        provider="anthropic",
+        access_token="anthropic-access-planner-soft-weekly",
+        email="planner-soft-weekly@example.com",
+    )
+    await _insert_weekly_usage(account_id="anthropic-planner-soft-weekly", used_percent=90.0)
+
+    model = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._resolve_planner_model(
+        "claude-planner",
+        provider_name="anthropic",
+        quota_key="anthropic_top_thinking",
+    )
+
+    assert model == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_model_does_not_fall_back_for_stale_scoped_marker():
+    await _insert_account(
+        account_id="anthropic-planner-stale-scoped",
+        provider="anthropic",
+        access_token="anthropic-access-planner-stale-scoped",
+        email="planner-stale-scoped@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-stale-scoped",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+        recorded_at=utcnow() - timedelta(hours=7),
+    )
+
+    model = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._resolve_planner_model(
+        "claude-planner",
+        provider_name="anthropic",
+        quota_key="anthropic_top_thinking",
+    )
+
+    assert model == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_model_does_not_fall_back_for_generic_request_cooldown():
+    await _insert_account(
+        account_id="anthropic-planner-request-cooldown",
+        provider="anthropic",
+        access_token="anthropic-access-planner-request-cooldown",
+        email="planner-request-cooldown@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(minutes=10)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-planner-request-cooldown",
+        quota_key="anthropic_top_thinking",
+        reset_at=reset_at,
+    )
+
+    model = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._resolve_planner_model(
+        "claude-planner",
+        provider_name="anthropic",
+        quota_key="anthropic_top_thinking",
+    )
+
+    assert model == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_model_does_not_fall_back_when_total_anthropic_quota_is_exhausted():
+    await _insert_account(
+        account_id="anthropic-planner-total-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-planner-total-exhausted",
+        email="planner-total-exhausted@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-total-exhausted",
+        used_percent=100.0,
+        reset_at=reset_at,
+    )
+    await _insert_primary_usage(
+        account_id="anthropic-planner-total-exhausted",
+        used_percent=100.0,
+        reset_at=reset_at,
+    )
+
+    model = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._resolve_planner_model(
+        "claude-planner",
+        provider_name="anthropic",
+        quota_key="anthropic_top_thinking",
+    )
+
+    assert model == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_planner_count_tokens_uses_same_scoped_exhaustion_resolution(
+    async_client,
+    monkeypatch,
+):
+    await _insert_account(
+        account_id="anthropic-planner-count-exhausted",
+        provider="anthropic",
+        access_token="anthropic-access-planner-count-exhausted",
+        email="planner-count-exhausted@example.com",
+    )
+    scoped_reset_at = int((utcnow() + timedelta(days=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_fable_scoped_weekly(
+        account_id="anthropic-planner-count-exhausted",
+        used_percent=100.0,
+        reset_at=scoped_reset_at,
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_open_count_tokens_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, headers
+        captured["model"] = json_body["model"]
+        return _FakeResponseContext(
+            _FakeResponse(200, b'{"input_tokens": 17}', headers={"content-type": "application/json"})
+        )
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_count_tokens_response",
+        fake_open_count_tokens_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages/count_tokens",
+        json={"model": "claude-planner", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"input_tokens": 17}
+    assert captured["model"] == "claude-opus-5"
 
 
 @pytest.mark.asyncio

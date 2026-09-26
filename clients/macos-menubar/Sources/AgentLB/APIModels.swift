@@ -94,6 +94,18 @@ extension Account {
   var isRoutable: Bool {
     isHeadlineCountable && status != "paused"
   }
+
+  /// True when spending a banked reset credit would actually buy capacity: a
+  /// Codex row that is limit-blocked and holds a credit. Paused, disconnected
+  /// and unsubscribed rows cannot serve traffic, so a reset there would waste
+  /// a scarce credit; an already-active row has nothing to reset (upstream
+  /// answers `nothing_to_reset` and keeps the credit banked).
+  var canRedeemResetCredit: Bool {
+    guard provider.lowercased() == "openai" else { return false }
+    guard (resetCreditsAvailable ?? 0) > 0 else { return false }
+    guard isRoutable else { return false }
+    return status == "rate_limited" || status == "quota_exceeded"
+  }
 }
 
 enum FableAvailability: Sendable, Equatable {
@@ -166,6 +178,19 @@ struct AccountProbeResponse: Decodable, Sendable, Equatable {
   let status: String
   let accountId: String
   let probeStatusCode: Int
+}
+
+/// Result of spending one banked rate-limit reset credit. `code` carries the
+/// upstream verdict — `reset` wiped windows, `already_redeemed` is idempotent
+/// success, `nothing_to_reset` left the credit banked, `no_credit` means the
+/// bank was empty — so the row must read it rather than the HTTP status.
+struct AccountResetCreditConsumeResponse: Decodable, Sendable, Equatable {
+  let status: String
+  let accountId: String
+  let code: String
+  let windowsReset: Int
+
+  var didReset: Bool { status == "redeemed" }
 }
 
 struct AccountSubscriptionCheckResponse: Decodable, Sendable, Equatable {

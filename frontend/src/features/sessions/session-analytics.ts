@@ -10,7 +10,7 @@ export function getSeatLabel(model: string, reasoningEffort: string | null) {
     return "Verifier";
   }
   if (model === "claude-sonnet-5") return "Explore";
-  if (model === "claude-fable-5") return "Driver";
+  if (model === "claude-fable-5" || model === "claude-opus-5") return "Driver";
   return model;
 }
 

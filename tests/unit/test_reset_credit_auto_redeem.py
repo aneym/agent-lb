@@ -362,3 +362,103 @@ class TestExpirySweep:
         scheduler = _scheduler()
         scheduler.expiry_enabled = False
         assert scheduler._expiry_sweep_due() is False
+
+
+class TestDailyAutoRedeemAllowance:
+    """One automatic reset per rolling 24h, plus one more on same-day re-limit."""
+
+    def test_default_allowance_is_two_per_day(self):
+        scheduler = scheduler_module.build_reset_credit_auto_redeem_scheduler()
+        assert scheduler.max_per_day == 2
+
+    @pytest.mark.asyncio
+    async def test_first_redemption_of_the_day_is_allowed(self):
+        scheduler = _scheduler()
+        attempts = AsyncMock()
+        attempts.count_applied_since.return_value = 0
+        assert await scheduler._daily_allowance_exhausted(attempts) is False
+
+    @pytest.mark.asyncio
+    async def test_second_redemption_is_the_relimit_allowance(self):
+        scheduler = _scheduler()
+        attempts = AsyncMock()
+        attempts.count_applied_since.return_value = 1
+        assert await scheduler._daily_allowance_exhausted(attempts) is False
+
+    @pytest.mark.asyncio
+    async def test_third_redemption_in_a_day_is_refused(self):
+        scheduler = _scheduler()
+        attempts = AsyncMock()
+        attempts.count_applied_since.return_value = 2
+        assert await scheduler._daily_allowance_exhausted(attempts) is True
+
+    @pytest.mark.asyncio
+    async def test_allowance_window_is_the_last_24h(self):
+        scheduler = _scheduler()
+        attempts = AsyncMock()
+        attempts.count_applied_since.return_value = 0
+        before = scheduler_module.utcnow() - timedelta(days=1)
+        await scheduler._daily_allowance_exhausted(attempts)
+        since = attempts.count_applied_since.await_args.args[0]
+        assert before <= since <= scheduler_module.utcnow() - timedelta(hours=23, minutes=59)
+
+    @pytest.mark.asyncio
+    async def test_zero_allowance_disables_automatic_redemption(self):
+        scheduler = _scheduler()
+        scheduler.max_per_day = 0
+        attempts = AsyncMock()
+        assert await scheduler._daily_allowance_exhausted(attempts) is True
+        attempts.count_applied_since.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_exhausted_allowance_suppresses_the_sweep(self, monkeypatch):
+        """A spent allowance must stop redemption even with credits banked."""
+        scheduler = _scheduler()
+        redeemed: list[str] = []
+
+        async def _redeem(self, session, repo, candidates):  # noqa: ARG001, ANN001
+            redeemed.append("called")
+
+        # slots=True dataclass: the override has to land on the class.
+        monkeypatch.setattr(
+            scheduler_module.ResetCreditAutoRedeemScheduler, "_redeem_first_available", _redeem
+        )
+
+        leader = AsyncMock()
+        leader.try_acquire.return_value = True
+        monkeypatch.setattr(scheduler_module, "_get_leader_election", lambda: leader)
+
+        class _FakeSessionCtx:
+            async def __aenter__(self):
+                return AsyncMock()
+
+            async def __aexit__(self, *args):
+                return False
+
+        monkeypatch.setattr(scheduler_module, "get_background_session", lambda: _FakeSessionCtx())
+
+        repo = AsyncMock()
+        repo.list_accounts.return_value = [_account("a1", AccountStatus.QUOTA_EXCEEDED)]
+        monkeypatch.setattr(scheduler_module, "AccountsRepository", lambda session: repo)
+
+        attempts = AsyncMock()
+        attempts.active.return_value = None
+        attempts.latest_applied_at.return_value = None
+        attempts.count_applied_since.return_value = 2
+        monkeypatch.setattr(scheduler_module, "ResetCreditAttemptsRepository", lambda session: attempts)
+
+        await scheduler._tick()
+        assert redeemed == []
+
+    def test_spacing_cooldown_still_separates_two_redemptions(self):
+        scheduler = _scheduler(cooldown_seconds=900)
+        scheduler._last_redeemed_at = scheduler_module.utcnow() - timedelta(minutes=5)
+        assert scheduler._cooldown_active() is True
+
+    def test_expiry_sweep_is_exempt_from_the_allowance(self):
+        scheduler = _scheduler()
+        scheduler.expiry_enabled = True
+        scheduler._last_redeemed_at = scheduler_module.utcnow()
+        # Use-it-or-lose-it credits must still be swept while the cap holds.
+        assert scheduler._cooldown_active() is True
+        assert scheduler._expiry_sweep_due() is True

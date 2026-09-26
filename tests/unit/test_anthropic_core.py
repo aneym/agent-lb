@@ -237,6 +237,15 @@ def test_pricing_resolves_versioned_model_alias():
 
 
 def test_pricing_resolves_current_generation_models():
+    opus_5 = get_pricing_for_model("claude-opus-5-20260724")
+    assert opus_5 is not None
+    assert opus_5[0] == "claude-opus-5"
+    assert opus_5[1].input_per_1m == 5.0
+    assert opus_5[1].cache_creation_5m_input_per_1m == 6.25
+    assert opus_5[1].cache_creation_1h_input_per_1m == 10.0
+    assert opus_5[1].cache_read_input_per_1m == 0.50
+    assert opus_5[1].output_per_1m == 25.0
+
     fable = get_pricing_for_model("claude-fable-5[1m]")
     assert fable is not None
     assert fable[0] == "claude-fable-5"

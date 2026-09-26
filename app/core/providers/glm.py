@@ -7,6 +7,7 @@ import aiohttp
 from app.core.anthropic import model_registry, models, parsing
 from app.core.anthropic import pricing as anthropic_pricing
 from app.core.auth.refresh import TokenRefreshResult
+from app.core.providers.anthropic_compat import echo_api_key_refresh
 from app.core.providers.types import AccountMetadata, ProviderOAuthConfig
 
 GLM_PROVIDER_NAME = "glm"
@@ -33,14 +34,7 @@ class GlmProvider:
         session: aiohttp.ClientSession | None = None,
     ) -> TokenRefreshResult:
         del session
-        return TokenRefreshResult(
-            access_token=refresh_token,
-            refresh_token=refresh_token,
-            id_token=None,
-            account_id=None,
-            plan_type=GLM_DEFAULT_PLAN,
-            email=None,
-        )
+        return echo_api_key_refresh(refresh_token, plan_type=GLM_DEFAULT_PLAN)
 
     def account_metadata_from_id_token(self, id_token: str | None) -> AccountMetadata:
         del id_token

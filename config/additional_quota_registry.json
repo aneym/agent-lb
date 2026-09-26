@@ -97,5 +97,20 @@
     "routing_policy": "normal",
     "model_ids": ["gpt-6-astra", "gpt-5.6-luna"],
     "limit_name_aliases": ["openai_subscription"]
+  },
+  {
+    "quota_key": "kimi_coding",
+    "display_label": "Kimi Coding Plan",
+    "routing_policy": "normal",
+    "model_ids": ["k3-256k", "kimi-k3", "kimi-k2.7-code"],
+    "applies_to_plans": ["kimi-coding"],
+    "limit_name_aliases": ["kimi_coding"]
+  },
+  {
+    "quota_key": "kimi_coding_thinking",
+    "display_label": "Kimi Coding Plan with thinking",
+    "routing_policy": "normal",
+    "applies_to_plans": ["kimi-coding"],
+    "limit_name_aliases": ["kimi_coding_thinking"]
   }
 ]

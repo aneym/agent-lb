@@ -242,6 +242,18 @@ async def test_settings_api_returns_known_additional_quota_policies(async_client
             "routingPolicy": "normal",
             "modelIds": [],
         },
+        "kimi_coding": {
+            "quotaKey": "kimi_coding",
+            "displayLabel": "Kimi Coding Plan",
+            "routingPolicy": "normal",
+            "modelIds": ["k3_256k", "kimi_k2_7_code", "kimi_k3"],
+        },
+        "kimi_coding_thinking": {
+            "quotaKey": "kimi_coding_thinking",
+            "displayLabel": "Kimi Coding Plan with thinking",
+            "routingPolicy": "normal",
+            "modelIds": [],
+        },
     }
 
     update_payload = {

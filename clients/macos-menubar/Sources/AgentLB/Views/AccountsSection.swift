@@ -243,6 +243,7 @@ struct AccountRow: View {
   @State private var actionFailed = false
   @State private var isHovered = false
   @State private var refreshPhase = RefreshPhase.idle
+  @State private var resetPhase = RefreshPhase.idle
 
   private enum RefreshPhase: Equatable {
     case idle, inFlight, success, failure
@@ -394,16 +395,50 @@ struct AccountRow: View {
 
   @ViewBuilder
   private var resetCreditsChip: some View {
-    if account.provider.lowercased() == "openai", let count = account.resetCreditsAvailable {
-      Text("⟲ \(count)")
-        .font(.system(size: 9, weight: .medium))
-        .foregroundStyle(count == 0 ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
-        .padding(.horizontal, 5)
-        .padding(.vertical, 1)
-        .background(Capsule().fill(.quaternary.opacity(count == 0 ? 0.35 : 0.5)))
-        .lineLimit(1)
-        .fixedSize()
-        .help("Banked rate-limit reset credits")
+    if isCodex, let count = account.resetCreditsAvailable {
+      if account.canRedeemResetCredit {
+        Button {
+          runRedeemResetCredit()
+        } label: {
+          resetCreditsChipLabel(count: count)
+        }
+        .buttonStyle(.plain)
+        .disabled(resetPhase != .idle)
+        .help("Spend one banked credit to reset this account's rate limits now")
+        .accessibilityLabel("Reset rate limits now")
+      } else {
+        resetCreditsChipLabel(count: count)
+          .help("Banked rate-limit reset credits")
+      }
+    }
+  }
+
+  private func resetCreditsChipLabel(count: Int) -> some View {
+    let redeemable = account.canRedeemResetCredit
+    return HStack(spacing: 3) {
+      if resetPhase == .inFlight {
+        ProgressView().controlSize(.mini)
+      }
+      Text(resetPhase == .failure ? "⟲ !" : "⟲ \(count)")
+    }
+    .font(.system(size: 9, weight: redeemable ? .semibold : .medium))
+    .foregroundStyle(count == 0 ? AnyShapeStyle(.tertiary) : AnyShapeStyle(redeemable ? .primary : .secondary))
+    .padding(.horizontal, 5)
+    .padding(.vertical, 1)
+    .background(Capsule().fill(.quaternary.opacity(count == 0 ? 0.35 : redeemable ? 0.7 : 0.5)))
+    .lineLimit(1)
+    .fixedSize()
+    .contentShape(.capsule)
+  }
+
+  private func runRedeemResetCredit() {
+    guard resetPhase == .idle else { return }
+    resetPhase = .inFlight
+    Task {
+      let succeeded = await appState.redeemResetCredit(accountId: account.accountId)
+      resetPhase = succeeded ? .success : .failure
+      try? await Task.sleep(for: .seconds(2))
+      resetPhase = .idle
     }
   }
 
@@ -567,6 +602,11 @@ struct AccountRow: View {
       }
     case .unsubscribed:
       EmptyView()
+    }
+    if account.canRedeemResetCredit {
+      Button("Reset Rate Limits (\(account.resetCreditsAvailable ?? 0) banked)") {
+        runRedeemResetCredit()
+      }
     }
     Button("Copy Account ID") {
       NSPasteboard.general.clearContents()

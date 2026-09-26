@@ -163,6 +163,12 @@ struct APIClient: @unchecked Sendable {
     try await postDecoding("/api/accounts/\(id)/subscription/check")
   }
 
+  /// Spends one banked reset credit on this account. Upstream round-trip, so
+  /// it rides the probe session's longer timeout envelope.
+  func redeemResetCredit(_ id: String) async throws -> AccountResetCreditConsumeResponse {
+    try await postDecoding("/api/accounts/\(id)/rate-limit-reset-credits/consume")
+  }
+
   // MARK: - Generic helpers
 
   private func get<T: Decodable>(_ path: String) async throws -> T {
