@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import socket
@@ -333,7 +335,9 @@ class Settings(BaseSettings):
     # Legacy token remains mirror-only; transfers require a separate credential.
     federation_token: str | None = None
     federation_mirror_token: str | None = None
-    federation_transfer_token: str | None = None
+    federation_transfer_token: str | None = None  # rejected explicitly for safe upgrades
+    federation_transfer_inbound_sha256: str | None = None
+    federation_transfer_outbound_token: str | None = None
     federation_taker_instance_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     @property
@@ -598,7 +602,14 @@ class Settings(BaseSettings):
             return [item.strip() for item in value if item.strip()]
         raise TypeError("federation_taker_instance_ids must be a comma-separated string or list of strings")
 
-    @field_validator("federation_token", "federation_mirror_token", "federation_transfer_token", mode="before")
+    @field_validator(
+        "federation_token",
+        "federation_mirror_token",
+        "federation_transfer_token",
+        "federation_transfer_inbound_sha256",
+        "federation_transfer_outbound_token",
+        mode="before",
+    )
     @classmethod
     def _normalize_federation_token(cls, value: OptionalStringInput) -> str | None:
         if value is None:
@@ -643,6 +654,29 @@ class Settings(BaseSettings):
         if not normalized:
             raise ValueError("warmup_model must not be blank")
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_transfer_credentials(self) -> "Settings":
+        if self.federation_transfer_token is not None:
+            raise ValueError(
+                "federation_transfer_token is obsolete; use federation_transfer_inbound_sha256 "
+                "and federation_transfer_outbound_token"
+            )
+        inbound = self.federation_transfer_inbound_sha256
+        outbound = self.federation_transfer_outbound_token
+        if inbound is not None and (len(inbound) != 64 or any(c not in "0123456789abcdef" for c in inbound)):
+            raise ValueError("federation_transfer_inbound_sha256 must be 64 lowercase hex characters")
+        other = [value for value in (self.federation_token, self.federation_mirror_token) if value]
+        if outbound and any(hmac.compare_digest(outbound, value) for value in other):
+            raise ValueError("federation_transfer_outbound_token must differ from mirror and legacy credentials")
+        if inbound and any(
+            hmac.compare_digest(inbound, hashlib.sha256(value.encode()).hexdigest())
+            for value in ([outbound] if outbound else []) + other
+        ):
+            raise ValueError(
+                "federation_transfer_inbound_sha256 must differ from outbound, mirror and legacy credentials"
+            )
+        return self
 
     @model_validator(mode="after")
     def _apply_data_dir_defaults(self) -> "Settings":

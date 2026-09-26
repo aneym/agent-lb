@@ -1118,3 +1118,38 @@ def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> N
             migrate_module.downgrade_refresh_intent_for_rollback(url)
     finally:
         engine.dispose()
+
+
+def test_transfer_abort_states_upgrade_and_downgrade(tmp_path: Path) -> None:
+    """Both transfer states survive upgrade and map to a compatible old state on rollback."""
+    url = _db_url(tmp_path / "transfer-abort.db")
+    parent = "20260925_020000_add_account_resume_schedules"
+    head = "20260926_000000_refresh_intent_expiry"
+    run_upgrade(url, parent, bootstrap_legacy=False)
+    run_upgrade(url, head, bootstrap_legacy=False)
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO accounts (id, provider, email, plan_type, access_token_encrypted, "
+                    "refresh_token_encrypted, last_refresh, status, owner_instance) VALUES "
+                    "('mig-transfer', 'anthropic', 'mig@example.invalid', 'pro', X'6161', X'6262', "
+                    "'2026-09-26 00:00:00', 'active', 'peer')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO account_transfers (id, account_id, nonce, direction, counterparty_instance_id, state) "
+                    "VALUES ('mig-aborting', 'mig-transfer', 'nonce-aborting', 'checkout', 'peer', 'aborting'), "
+                    "('mig-aborted', 'mig-transfer', 'nonce-aborted', 'checkin', 'peer', 'aborted')"
+                )
+            )
+        command.downgrade(_build_alembic_config(url), parent)
+        with engine.connect() as connection:
+            states = connection.execute(text("SELECT state FROM account_transfers ORDER BY id")).scalars().all()
+        assert states == ["settled", "settled"]
+        run_upgrade(url, head, bootstrap_legacy=False)
+        assert check_schema_drift(url) == ()
+    finally:
+        engine.dispose()

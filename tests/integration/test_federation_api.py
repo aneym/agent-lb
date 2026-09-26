@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date, timedelta
 
 import pytest
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, FederationUsageDaily, RequestLog
+from app.db.models import Account, AccountStatus, AccountTransferDirection, FederationUsageDaily, RequestLog
 from app.db.session import SessionLocal
 from app.modules.federation.repository import FederationRepository
 from app.modules.federation.schemas import FederationUsageDayRollup
@@ -24,7 +25,9 @@ _OTHER_INSTANCE_ID = "other-instance-test"
 
 def _enable_federation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_LB_FEDERATION_TOKEN", _FEDERATION_TOKEN)
-    monkeypatch.setenv("AGENT_LB_FEDERATION_TRANSFER_TOKEN", _TRANSFER_TOKEN)
+    monkeypatch.setenv(
+        "AGENT_LB_FEDERATION_TRANSFER_INBOUND_SHA256", hashlib.sha256(_TRANSFER_TOKEN.encode()).hexdigest()
+    )
     monkeypatch.setenv("AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS", _TAKER_INSTANCE_ID)
     monkeypatch.setenv("AGENT_LB_LOCAL_INSTANCE_ID", _LOCAL_INSTANCE_ID)
     get_settings.cache_clear()
@@ -397,13 +400,17 @@ async def test_checkout_happy_path_and_idempotent_retry(async_client, monkeypatc
 
     first = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "acc_checkout", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "acc_checkout",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     assert first.status_code == 200
     first_body = first.json()
     assert first_body["auth"]["refresh_token"] == "checkout-refresh"
-    nonce = first_body["nonce"]
+    assert first_body["nonce"] == "checkout-nonce-12345678901234567890"
 
     account_after_release = await _get_account("acc_checkout")
     assert account_after_release.owner_instance == _TAKER_INSTANCE_ID
@@ -411,13 +418,15 @@ async def test_checkout_happy_path_and_idempotent_retry(async_client, monkeypatc
     # Retry (lost response): same taker, same nonce, same payload — no double transfer.
     second = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "acc_checkout", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "acc_checkout",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
-    assert second.status_code == 200
-    second_body = second.json()
-    assert second_body["nonce"] == nonce
-    assert second_body["auth"]["refresh_token"] == "checkout-refresh"
+    assert second.status_code == 409
+    assert (await _get_account("acc_checkout")).owner_instance == _TAKER_INSTANCE_ID
 
 
 @pytest.mark.asyncio
@@ -427,7 +436,11 @@ async def test_checkout_from_non_owner_returns_409(async_client, monkeypatch: py
 
     response = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "acc_conflict", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "acc_conflict",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
 
@@ -441,7 +454,11 @@ async def test_checkout_confirm_is_idempotent(async_client, monkeypatch: pytest.
 
     checkout = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "acc_confirm", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "acc_confirm",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     nonce = checkout.json()["nonce"]
@@ -463,12 +480,21 @@ async def test_checkout_confirm_is_idempotent(async_client, monkeypatch: pytest.
 async def test_checkin_happy_path(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_federation(monkeypatch)
     await _seed_account("acc_checkin", owner_instance=_TAKER_INSTANCE_ID)
+    async with SessionLocal() as session:
+        await FederationRepository(session).create_transfer(
+            account_id="acc_checkin",
+            direction=AccountTransferDirection.CHECKOUT,
+            counterparty_instance_id=_TAKER_INSTANCE_ID,
+            nonce="prior-checkout-checkin",
+        )
+        await FederationRepository(session).mark_transfer_settled("prior-checkout-checkin")
 
     response = await async_client.post(
         "/api/federation/checkin",
         json={
             "account_id": "acc_checkin",
-            "nonce": "checkin-nonce-1",
+            "nonce": "checkin-nonce-12345678901234567890",
+            "caller_instance_id": _TAKER_INSTANCE_ID,
             "auth": {
                 "access_token": "rotated-access",
                 "refresh_token": "rotated-refresh",
@@ -499,10 +525,19 @@ async def test_checkin_happy_path(async_client, monkeypatch: pytest.MonkeyPatch)
 async def test_checkin_retry_after_success_does_not_reimport(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_federation(monkeypatch)
     await _seed_account("acc_checkin_retry", owner_instance=_TAKER_INSTANCE_ID)
+    async with SessionLocal() as session:
+        await FederationRepository(session).create_transfer(
+            account_id="acc_checkin_retry",
+            direction=AccountTransferDirection.CHECKOUT,
+            counterparty_instance_id=_TAKER_INSTANCE_ID,
+            nonce="prior-checkout-retry",
+        )
+        await FederationRepository(session).mark_transfer_settled("prior-checkout-retry")
 
     payload_a = {
         "account_id": "acc_checkin_retry",
-        "nonce": "checkin-nonce-retry",
+        "nonce": "checkin-nonce-retry-12345678901234567890",
+        "caller_instance_id": _TAKER_INSTANCE_ID,
         "auth": {
             "access_token": "payload-a-access",
             "refresh_token": "payload-a-refresh",
@@ -546,27 +581,44 @@ async def test_legacy_mirror_credential_cannot_transfer_and_checkout_requires_al
     _enable_federation(monkeypatch)
     await _seed_account("scoped-account", owner_instance=None)
     for route, payload in (
-        ("checkout", {"account_id": "scoped-account", "taker_instance_id": _TAKER_INSTANCE_ID}),
+        (
+            "checkout",
+            {
+                "account_id": "scoped-account",
+                "taker_instance_id": _TAKER_INSTANCE_ID,
+                "nonce": "checkout-nonce-12345678901234567890",
+            },
+        ),
         ("checkout/confirm", {"nonce": "arbitrary"}),
         ("checkin", {}),
-        ("checkout/execute", {"account_id": "scoped-account"}),
-        ("checkin/execute", {"account_id": "scoped-account"}),
+        (
+            "transfers/arbitrary/abort",
+            {"account_id": "scoped-account", "direction": "checkout", "caller_instance_id": _TAKER_INSTANCE_ID},
+        ),
     ):
         denied = await async_client.post(f"/api/federation/{route}", json=payload, headers=_auth_headers())
         assert denied.status_code == 403, route
     denied_taker = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "scoped-account", "taker_instance_id": _OTHER_INSTANCE_ID},
+        json={
+            "account_id": "scoped-account",
+            "taker_instance_id": _OTHER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     assert denied_taker.status_code == 403
     assert (await _get_account("scoped-account")).owner_instance is None
 
-    monkeypatch.delenv("AGENT_LB_FEDERATION_TRANSFER_TOKEN")
+    monkeypatch.delenv("AGENT_LB_FEDERATION_TRANSFER_INBOUND_SHA256")
     get_settings.cache_clear()
     legacy_denied = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "scoped-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "scoped-account",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_auth_headers(),
     )
     assert legacy_denied.status_code == 403
@@ -581,7 +633,11 @@ async def test_confirm_blanks_old_refresh_only_after_confirmation(
     await _seed_account("confirmed-account", owner_instance=None, refresh_token="handoff-refresh")
     checkout = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "confirmed-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "confirmed-account",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "checkout-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     assert checkout.status_code == 200
@@ -603,23 +659,31 @@ async def test_reclaim_only_unsettled_handoff(async_client, monkeypatch: pytest.
     await _seed_account("reclaim-account", owner_instance=None)
     checkout = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "reclaim-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "reclaim-account",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "reclaim-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     nonce = checkout.json()["nonce"]
-    # Pending does not tell us whether the peer has already imported.
-    assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 409
+    # The answering side has no outbound credential and cannot roll back itself.
+    assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 503
     assert (await _get_account("reclaim-account")).owner_instance == _TAKER_INSTANCE_ID
     assert (
         await async_client.post("/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_transfer_headers())
     ).status_code == 200
     retry = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "reclaim-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "reclaim-account",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "reclaim-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     assert retry.status_code == 409
-    assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 409
+    assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 503
     assert (await _get_account("reclaim-account")).owner_instance == _TAKER_INSTANCE_ID
 
 
@@ -630,6 +694,7 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
     del db_setup
     from app.core.config.settings import Settings
     from app.db.models import AccountTransfer, AccountTransferDirection
+    from app.modules.federation.exceptions import FederationConflictError
     from app.modules.federation.service import FederationService
 
     if SessionLocal.kw["bind"].dialect.name != "postgresql":
@@ -637,6 +702,7 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
     await _seed_account("checkout-crash", owner_instance=None, refresh_token="live-refresh")
     settings = Settings(local_instance_id=_LOCAL_INSTANCE_ID)
     encryptor = TokenEncryptor()
+    retry_nonce = ""
     for crash_before_commit in (True, False):
         # The first attempt crashes either before the only commit or just
         # after it; a new session models the next process on retry.
@@ -654,16 +720,23 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
             monkeypatch.setattr(session, "commit", crash_commit)
             with pytest.raises(RuntimeError, match="interrupted|response lost"):
                 await FederationService(repo, settings=settings, encryptor=encryptor).checkout(
-                    "checkout-crash", _TAKER_INSTANCE_ID
+                    "checkout-crash", _TAKER_INSTANCE_ID, "crash-nonce-12345678901234567890"
                 )
         async with SessionLocal() as session:
             repo = FederationRepository(session)
             if crash_before_commit:
                 assert (await repo.get_account("checkout-crash")).owner_instance is None
-            retry = await FederationService(repo, settings=settings, encryptor=encryptor).checkout(
-                "checkout-crash", _TAKER_INSTANCE_ID
-            )
-            assert retry.auth.refresh_token == "live-refresh"
+            if crash_before_commit:
+                retry = await FederationService(repo, settings=settings, encryptor=encryptor).checkout(
+                    "checkout-crash", _TAKER_INSTANCE_ID, "crash-retry-nonce-12345678901234567890"
+                )
+                assert retry.auth.refresh_token == "live-refresh"
+            else:
+                with pytest.raises(FederationConflictError):
+                    await FederationService(repo, settings=settings, encryptor=encryptor).checkout(
+                        "checkout-crash", _TAKER_INSTANCE_ID, "crash-nonce-12345678901234567890"
+                    )
+                retry_nonce = "crash-nonce-12345678901234567890"
             rows = (
                 (
                     await session.execute(
@@ -677,7 +750,7 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
                 .all()
             )
             assert len(rows) == 1
-            assert rows[0].nonce == retry.nonce
+            assert rows[0].nonce == (retry.nonce if crash_before_commit else retry_nonce)
             assert (await repo.get_account("checkout-crash")).owner_instance == _TAKER_INSTANCE_ID
         if crash_before_commit:
             # Prepare the second scenario from the pristine state again.
@@ -690,7 +763,7 @@ async def test_postgres_checkout_crash_before_and_after_commit_retries_without_d
 
     async with SessionLocal() as session:
         service = FederationService(FederationRepository(session), settings=settings, encryptor=encryptor)
-        await service.confirm_checkout(retry.nonce)
+        await service.confirm_checkout(retry_nonce)
     assert encryptor.decrypt((await _get_account("checkout-crash")).refresh_token_encrypted) == ""
 
 
@@ -707,6 +780,15 @@ async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_toke
     if SessionLocal.kw["bind"].dialect.name != "postgresql":
         pytest.skip("Requires disposable Postgres")
     await _seed_account("checkin-crash", owner_instance=_TAKER_INSTANCE_ID)
+    async with SessionLocal() as session:
+        repo = FederationRepository(session)
+        await repo.create_transfer(
+            account_id="checkin-crash",
+            direction=AccountTransferDirection.CHECKOUT,
+            counterparty_instance_id=_TAKER_INSTANCE_ID,
+            nonce="prior-checkout-crash",
+        )
+        await repo.mark_transfer_settled("prior-checkout-crash")
     payload = FederationAuthPayload(
         access_token="new-access",
         refresh_token="new-refresh",
@@ -728,8 +810,11 @@ async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_toke
         monkeypatch.setattr(session, "commit", crash_commit)
         with pytest.raises(RuntimeError, match="interrupted"):
             await FederationService(
-                FederationRepository(session), settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID)
-            ).checkin("checkin-crash", "return-nonce", payload)
+                FederationRepository(session),
+                settings=Settings(
+                    local_instance_id=_LOCAL_INSTANCE_ID, federation_taker_instance_ids=[_TAKER_INSTANCE_ID]
+                ),
+            ).checkin("checkin-crash", "return-nonce-12345678901234567890", _TAKER_INSTANCE_ID, payload)
     account = await _get_account("checkin-crash")
     assert account.owner_instance == _TAKER_INSTANCE_ID
     assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "seed-refresh"
@@ -750,8 +835,9 @@ async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_toke
         )
         assert rows == []
         await FederationService(
-            FederationRepository(session), settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID)
-        ).checkin("checkin-crash", "return-nonce", payload)
+            FederationRepository(session),
+            settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID, federation_taker_instance_ids=[_TAKER_INSTANCE_ID]),
+        ).checkin("checkin-crash", "return-nonce-12345678901234567890", _TAKER_INSTANCE_ID, payload)
     account = await _get_account("checkin-crash")
     assert account.owner_instance is None
     assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "new-refresh"
@@ -764,12 +850,16 @@ async def test_pending_checkout_mirror_keeps_retryable_token(async_client, monke
     await _seed_account("pending-mirror", owner_instance=None, refresh_token="still-live")
     first = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "pending-mirror", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "pending-mirror",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "pending-mirror-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
     assert first.status_code == 200
     async with SessionLocal() as session:
-        assert await FederationRepository(session).upsert_mirror_account(
+        assert not await FederationRepository(session).upsert_mirror_account(
             account_id="pending-mirror",
             provider="anthropic",
             email="pending-mirror@example.com",
@@ -784,12 +874,15 @@ async def test_pending_checkout_mirror_keeps_retryable_token(async_client, monke
         )
     retry = await async_client.post(
         "/api/federation/checkout",
-        json={"account_id": "pending-mirror", "taker_instance_id": _TAKER_INSTANCE_ID},
+        json={
+            "account_id": "pending-mirror",
+            "taker_instance_id": _TAKER_INSTANCE_ID,
+            "nonce": "pending-mirror-nonce-12345678901234567890",
+        },
         headers=_transfer_headers(),
     )
-    assert retry.status_code == 200
-    assert retry.json()["nonce"] == first.json()["nonce"]
-    assert retry.json()["auth"]["refresh_token"] == "still-live"
+    assert retry.status_code == 409
+    assert TokenEncryptor().decrypt((await _get_account("pending-mirror")).refresh_token_encrypted) == "still-live"
 
 
 @pytest.mark.asyncio
@@ -802,21 +895,22 @@ async def test_outbound_transfer_token_does_not_enable_inbound_routes(
     get_settings.cache_clear()
     for token in (_TRANSFER_TOKEN, "dedicated-mirror", _FEDERATION_TOKEN):
         denied = await async_client.post(
-            "/api/federation/checkin/execute",
-            json={"account_id": "any"},
+            "/api/federation/checkin",
+            json={},
             headers={"Authorization": f"Bearer {token}"},
         )
         assert denied.status_code == 403
     # A renamed legacy mirror credential must not become a transfer credential.
     monkeypatch.setenv("AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS", _TAKER_INSTANCE_ID)
-    monkeypatch.setenv("AGENT_LB_FEDERATION_TRANSFER_TOKEN", _FEDERATION_TOKEN)
-    get_settings.cache_clear()
-    denied = await async_client.post(
-        "/api/federation/checkout",
-        json={"account_id": "any", "taker_instance_id": _TAKER_INSTANCE_ID},
-        headers=_auth_headers(),
-    )
-    assert denied.status_code == 403
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="federation_transfer_inbound_sha256 must differ"):
+        from app.core.config.settings import Settings
+
+        Settings(
+            federation_token=_FEDERATION_TOKEN,
+            federation_transfer_inbound_sha256=hashlib.sha256(_FEDERATION_TOKEN.encode()).hexdigest(),
+        )
 
 
 @pytest.mark.asyncio
@@ -825,12 +919,22 @@ async def test_postgres_checkin_has_no_committed_import_before_owner_change(
 ) -> None:
     """A crash on the old second commit cannot expose a new token with the old owner."""
     from app.core.config.settings import Settings
+    from app.db.models import AccountTransferDirection
     from app.modules.federation.schemas import FederationAuthPayload
     from app.modules.federation.service import FederationService
 
     if SessionLocal.kw["bind"].dialect.name != "postgresql":
         pytest.skip("Requires disposable Postgres")
     await _seed_account("checkin-one-commit", owner_instance=_TAKER_INSTANCE_ID)
+    async with SessionLocal() as session:
+        repo = FederationRepository(session)
+        await repo.create_transfer(
+            account_id="checkin-one-commit",
+            direction=AccountTransferDirection.CHECKOUT,
+            counterparty_instance_id=_TAKER_INSTANCE_ID,
+            nonce="prior-checkout-one-commit",
+        )
+        await repo.mark_transfer_settled("prior-checkout-one-commit")
     payload = FederationAuthPayload(
         access_token="new-access",
         refresh_token="new-refresh",
@@ -858,8 +962,11 @@ async def test_postgres_checkin_has_no_committed_import_before_owner_change(
         monkeypatch.setattr(session, "commit", fail_on_second_commit)
         try:
             await FederationService(
-                FederationRepository(session), settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID)
-            ).checkin("checkin-one-commit", "single-nonce", payload)
+                FederationRepository(session),
+                settings=Settings(
+                    local_instance_id=_LOCAL_INSTANCE_ID, federation_taker_instance_ids=[_TAKER_INSTANCE_ID]
+                ),
+            ).checkin("checkin-one-commit", "single-nonce-12345678901234567890", _TAKER_INSTANCE_ID, payload)
         except RuntimeError:
             pass
     account = await _get_account("checkin-one-commit")

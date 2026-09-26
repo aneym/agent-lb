@@ -22,6 +22,14 @@ def _enum(values: tuple[str, ...]) -> sa.Enum:
     return sa.Enum(*values, name="account_status", validate_strings=True, create_type=False)
 
 
+_TRANSFER_OLD = ("pending", "settled")
+_TRANSFER_NEW = (*_TRANSFER_OLD, "aborting", "aborted")
+
+
+def _transfer_enum(values: tuple[str, ...]) -> sa.Enum:
+    return sa.Enum(*values, name="account_transfer_state", validate_strings=True, create_type=False)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
@@ -30,6 +38,18 @@ def upgrade() -> None:
     else:
         with op.batch_alter_table("accounts") as batch:
             batch.alter_column("status", existing_type=_enum(_OLD), type_=_enum(_NEW), existing_nullable=False)
+    if bind.dialect.name == "postgresql":
+        with op.get_context().autocommit_block():
+            op.execute("ALTER TYPE account_transfer_state ADD VALUE IF NOT EXISTS 'aborting'")
+            op.execute("ALTER TYPE account_transfer_state ADD VALUE IF NOT EXISTS 'aborted'")
+    else:
+        with op.batch_alter_table("account_transfers") as batch:
+            batch.alter_column(
+                "state",
+                existing_type=_transfer_enum(_TRANSFER_OLD),
+                type_=_transfer_enum(_TRANSFER_NEW),
+                existing_nullable=False,
+            )
     inspector = sa.inspect(op.get_bind())
     if "access_expires_at" not in {column["name"] for column in inspector.get_columns("accounts")}:
         op.add_column("accounts", sa.Column("access_expires_at", sa.DateTime(), nullable=True))
@@ -45,6 +65,24 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("UPDATE account_transfers SET state = 'settled' WHERE state IN ('aborted', 'aborting')")
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table("account_transfers") as batch:
+            batch.alter_column(
+                "state",
+                existing_type=_transfer_enum(_TRANSFER_NEW),
+                type_=_transfer_enum(_TRANSFER_OLD),
+                existing_nullable=False,
+            )
+    elif bind.dialect.name == "postgresql":
+        op.execute("ALTER TYPE account_transfer_state RENAME TO account_transfer_state_old")
+        op.execute("CREATE TYPE account_transfer_state AS ENUM ('pending', 'settled')")
+        op.execute(
+            "ALTER TABLE account_transfers ALTER COLUMN state TYPE account_transfer_state "
+            "USING state::text::account_transfer_state"
+        )
+        op.execute("DROP TYPE account_transfer_state_old")
     op.drop_table("account_exchange_intents")
     op.drop_column("accounts", "access_expires_at")
     op.execute("UPDATE accounts SET status = 'deactivated' WHERE status = 'exchange_uncertain'")
