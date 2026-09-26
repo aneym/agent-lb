@@ -51,7 +51,7 @@ from app.core.errors import (
     openai_error,
     response_failed_event,
 )
-from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
+from app.core.exceptions import ProxyAuthError, ProxyRateLimitError, TeamMemberOverCapError, TeamMemberSuspendedError
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, bridge_public_contract_error_total
 from app.core.middleware.api_firewall import _parse_trusted_proxy_networks, resolve_connection_client_ip
 from app.core.openai.chat_requests import ChatCompletionsRequest
@@ -167,6 +167,7 @@ from app.modules.proxy.schemas import (
     V1UsageLimitResponse,
     V1UsageMemberResponse,
     V1UsageMemberWindowResponse,
+    V1UsagePoolWindowResponse,
     V1UsageResponse,
     WarmupFailedAccount,
     WarmupRequest,
@@ -739,6 +740,17 @@ async def responses_websocket(
     if denial is not None:
         await websocket.send_denial_response(denial)
         return
+    try:
+        await check_member_gate(api_key, model=None)
+    except (TeamMemberOverCapError, TeamMemberSuspendedError) as exc:
+        await websocket.send_denial_response(
+            JSONResponse(
+                status_code=exc.status_code,
+                content=openai_error(exc.code, exc.message, error_type=exc.error_type),
+                headers=exc.headers if isinstance(exc, TeamMemberOverCapError) else None,
+            )
+        )
+        return
     turn_state = proxy_affinity_module.ensure_downstream_turn_state(websocket.headers)
     await websocket.accept(headers=proxy_affinity_module.build_downstream_turn_state_accept_headers(turn_state))
     forwarded_headers = dict(websocket.headers)
@@ -1172,6 +1184,17 @@ async def v1_responses_websocket(
     if denial is not None:
         await websocket.send_denial_response(denial)
         return
+    try:
+        await check_member_gate(api_key, model=None)
+    except (TeamMemberOverCapError, TeamMemberSuspendedError) as exc:
+        await websocket.send_denial_response(
+            JSONResponse(
+                status_code=exc.status_code,
+                content=openai_error(exc.code, exc.message, error_type=exc.error_type),
+                headers=exc.headers if isinstance(exc, TeamMemberOverCapError) else None,
+            )
+        )
+        return
     turn_state = proxy_affinity_module.ensure_downstream_turn_state(websocket.headers)
     await websocket.accept(headers=proxy_affinity_module.build_downstream_turn_state_accept_headers(turn_state))
     forwarded_headers = dict(websocket.headers)
@@ -1326,6 +1349,16 @@ def _to_v1_usage_member_response(status: TeamMemberSelfStatus | None) -> V1Usage
         status=status.status,
         gate=status.gate,
         allowed_models=status.allowed_models,
+        pool_share_percent=status.pool_share_percent,
+        pool_windows=[
+            V1UsagePoolWindowResponse(
+                window=window.window,
+                used_percent=window.used_percent,
+                limit_percent=window.limit_percent,
+                reset_at=window.reset_at.isoformat() + "Z",
+            )
+            for window in status.pool_windows
+        ],
         windows=[
             V1UsageMemberWindowResponse(
                 window=window.window,

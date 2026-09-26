@@ -18,6 +18,7 @@ from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import ApiKey, TeamMember, TeamMemberStatus
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy.request_policy import resolve_model_alias, strip_model_alias_suffix
+from app.modules.team.pool_share import PoolWindow, pool_share_windows, reset_pool_share_cache
 from app.modules.team.repository import (
     TeamRepository,
     TeamUsageDayRow,
@@ -58,6 +59,7 @@ def invalidate_team_member_caches() -> None:
     """Drop cached member aggregates and force api-key cache re-reads."""
 
     reset_team_usage_cache()
+    reset_pool_share_cache()
     get_api_key_cache().clear()
 
 
@@ -85,6 +87,7 @@ class TeamMemberCreateData:
     allowed_models: list[str] | None = None
     notes: str | None = None
     status: str = TeamMemberStatus.ACTIVE.value
+    pool_share_percent: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +114,8 @@ class TeamMemberUpdateData:
     allowed_models_set: bool = False
     notes: str | None = None
     notes_set: bool = False
+    pool_share_percent: float | None = None
+    pool_share_percent_set: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +146,9 @@ class TeamMemberData:
     usage: dict[str, TeamUsageTotals] = field(default_factory=dict)
     gate: str = GATE_OK
     keys: list[TeamMemberKeyData] = field(default_factory=list)
+    pool_share_percent: float | None = None
+    pool_share: list[PoolWindow] = field(default_factory=list)
+    pool_share_known: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +172,8 @@ class TeamMemberSelfStatus:
     gate: str
     allowed_models: list[str] | None
     windows: list[TeamMemberWindowStatus]
+    pool_share_percent: float | None = None
+    pool_windows: list[PoolWindow] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +284,14 @@ class TeamService:
             if token_cap is not None and totals.tokens >= int(token_cap):
                 raise _over_cap_error(member, window, now, f"token cap {int(token_cap)}")
 
+        for pool_window in await self._pool_windows(member, now=now):
+            if pool_window.used_percent >= pool_window.limit_percent:
+                raise TeamMemberOverCapError(
+                    f"Team member '{member.name}' reached its {pool_window.window} pool share limit",
+                    window=pool_window.window,
+                    reset_at=pool_window.reset_at,
+                )
+
     async def _usage_for_window(self, member_id: str, window: str, *, now: datetime) -> TeamUsageTotals:
         cache_key = (member_id, window)
         cached = _aggregate_cache.get(cache_key)
@@ -285,6 +303,11 @@ class TeamService:
         totals = await self._repository.aggregate_usage(member_id, since=since)
         _aggregate_cache[cache_key] = (clock + _AGGREGATE_CACHE_TTL_SECONDS, since, totals)
         return totals
+
+    async def _pool_windows(self, member: TeamMember, *, now: datetime) -> list[PoolWindow]:
+        if member.pool_share_percent is None:
+            return []
+        return await pool_share_windows(self._repository._session, member.id, float(member.pool_share_percent), now=now)
 
     # ── CRUD ──
 
@@ -301,7 +324,12 @@ class TeamService:
                 for window in TEAM_WINDOWS
             }
             results.append(
-                _to_member_data(member, usage=usage, keys=keys_by_member.get(member.id, [])),
+                _to_member_data(
+                    member,
+                    usage=usage,
+                    keys=keys_by_member.get(member.id, []),
+                    pool_windows=await self._pool_windows(member, now=now),
+                ),
             )
         return results
 
@@ -313,7 +341,7 @@ class TeamService:
             for window in TEAM_WINDOWS
         }
         keys = await self._repository.list_keys_by_member(member.id)
-        return _to_member_data(member, usage=usage, keys=keys)
+        return _to_member_data(member, usage=usage, keys=keys, pool_windows=await self._pool_windows(member, now=now))
 
     async def create_member(self, payload: TeamMemberCreateData) -> TeamMemberData:
         name = _normalize_name(payload.name)
@@ -333,13 +361,16 @@ class TeamService:
             token_cap_month=payload.caps.token_cap_month,
             allowed_models=serialize_allowed_models(payload.allowed_models),
             notes=_normalize_optional_text(payload.notes),
+            pool_share_percent=payload.pool_share_percent,
             created_at=now,
             updated_at=now,
         )
         created = await self._repository.create(row)
         invalidate_team_member_caches()
         await bump_api_key_cache_namespace()
-        return _to_member_data(created, usage=_empty_usage(), keys=[])
+        return _to_member_data(
+            created, usage=_empty_usage(), keys=[], pool_windows=await self._pool_windows(created, now=now)
+        )
 
     async def update_member(self, member_id: str, payload: TeamMemberUpdateData) -> TeamMemberData:
         member = await self._require_member(member_id)
@@ -370,6 +401,8 @@ class TeamService:
             member.allowed_models = serialize_allowed_models(payload.allowed_models)
         if payload.notes_set:
             member.notes = _normalize_optional_text(payload.notes)
+        if payload.pool_share_percent_set:
+            member.pool_share_percent = payload.pool_share_percent
         member.updated_at = utcnow()
 
         await self._repository.commit()
@@ -416,11 +449,14 @@ class TeamService:
 
         now = utcnow()
         usage = {window: await self._usage_for_window(member.id, window, now=now) for window in TEAM_WINDOWS}
+        pool_windows = await self._pool_windows(member, now=now)
         return TeamMemberSelfStatus(
             id=member.id,
             name=member.name,
             status=_status_value(member.status),
-            gate=compute_gate(member, usage),
+            gate=compute_gate(member, usage, pool_windows),
+            pool_share_percent=_optional_float(member.pool_share_percent),
+            pool_windows=pool_windows,
             allowed_models=deserialize_allowed_models(member.allowed_models),
             windows=[
                 TeamMemberWindowStatus(
@@ -487,6 +523,7 @@ def _to_member_data(
     *,
     usage: dict[str, TeamUsageTotals],
     keys: list[ApiKey],
+    pool_windows: list[PoolWindow] | None = None,
 ) -> TeamMemberData:
     status = _status_value(member.status)
     return TeamMemberData(
@@ -505,7 +542,10 @@ def _to_member_data(
         created_at=to_utc_naive(member.created_at),
         updated_at=to_utc_naive(member.updated_at),
         usage=usage,
-        gate=compute_gate(member, usage),
+        gate=compute_gate(member, usage, pool_windows),
+        pool_share_percent=_optional_float(member.pool_share_percent),
+        pool_share=pool_windows or [],
+        pool_share_known=bool(pool_windows),
         keys=[
             TeamMemberKeyData(
                 id=key.id,
@@ -519,7 +559,9 @@ def _to_member_data(
     )
 
 
-def compute_gate(member: TeamMember, usage: dict[str, TeamUsageTotals]) -> str:
+def compute_gate(
+    member: TeamMember, usage: dict[str, TeamUsageTotals], pool_windows: list[PoolWindow] | None = None
+) -> str:
     if _status_value(member.status) == TeamMemberStatus.SUSPENDED.value:
         return GATE_SUSPENDED
 
@@ -542,6 +584,11 @@ def compute_gate(member: TeamMember, usage: dict[str, TeamUsageTotals]) -> str:
                 return GATE_OVER_CAP
             if ratio >= _NEAR_CAP_RATIO:
                 near = True
+    for pool_window in pool_windows or []:
+        if pool_window.used_percent >= pool_window.limit_percent:
+            return GATE_OVER_CAP
+        if pool_window.used_percent >= _NEAR_CAP_RATIO * pool_window.limit_percent:
+            near = True
     return GATE_NEAR_CAP if near else GATE_OK
 
 

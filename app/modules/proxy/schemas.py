@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from app.core.clients.files import OPENAI_FILE_UPLOAD_LIMIT_BYTES, OPENAI_FILE_USE_CASE
 from app.core.types import JsonValue
@@ -235,8 +236,17 @@ class V1UsageMemberWindowResponse(BaseModel):
     window_end: str
 
 
+class V1UsagePoolWindowResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", alias_generator=to_camel, populate_by_name=True)
+
+    window: str
+    used_percent: float
+    limit_percent: float
+    reset_at: str
+
+
 class V1UsageMemberResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     id: str
     name: str
@@ -244,6 +254,8 @@ class V1UsageMemberResponse(BaseModel):
     gate: str
     allowed_models: list[str] | None = None
     windows: list[V1UsageMemberWindowResponse] = []
+    pool_share_percent: float | None = Field(default=None, alias="poolSharePercent")
+    pool_windows: list[V1UsagePoolWindowResponse] = Field(default_factory=list, alias="poolWindows")
 
 
 class V1UsageResponse(BaseModel):

@@ -19,6 +19,7 @@ from app.modules.team.schemas import (
     TeamMemberUsageResponse,
     TeamOnboardingResponse,
     TeamOnboardingSnippets,
+    TeamPoolWindowResponse,
     TeamUsageDayResponse,
     TeamUsageModelResponse,
     TeamUsageResponse,
@@ -65,6 +66,17 @@ def _to_member_response(member: TeamMemberData) -> TeamMemberResponse:
             month=_to_window_response(member, "month"),
         ),
         gate=member.gate,
+        pool_share_percent=member.pool_share_percent,
+        pool_share_known=member.pool_share_known,
+        pool_share=[
+            TeamPoolWindowResponse(
+                window=window.window,
+                used_percent=window.used_percent,
+                limit_percent=window.limit_percent,
+                reset_at=window.reset_at,
+            )
+            for window in member.pool_share
+        ],
         keys=[
             TeamMemberKeyResponse(
                 id=key.id,
@@ -139,6 +151,7 @@ async def create_team_member(
                 allowed_models=payload.allowed_models,
                 notes=payload.notes,
                 status=payload.status or "active",
+                pool_share_percent=payload.pool_share_percent,
             )
         )
     except TeamValidationError as exc:
@@ -182,6 +195,8 @@ async def update_team_member(
         allowed_models_set="allowed_models" in fields,
         notes=payload.notes,
         notes_set="notes" in fields,
+        pool_share_percent=payload.pool_share_percent,
+        pool_share_percent_set="pool_share_percent" in fields,
     )
     try:
         member = await context.service.update_member(member_id, update)
