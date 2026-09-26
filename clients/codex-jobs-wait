@@ -1,0 +1,20 @@
+#!/bin/sh
+# Wait for any job in a TSV (task<TAB>worktree<TAB>label) to finish; print label, status and result once, then exit.
+# One waiter for many jobs: keeps the driver's context to one shell.
+#   codex-jobs-wait <jobs.tsv> [out-dir]
+# out-dir defaults to $CODEX_JOBS_OUT, then ~/.codex/reports/codex-jobs. The companion script
+# defaults to the codex-plugin-cc copy under ~/.agent-lb/plugins (override with CODEX_COMPANION).
+C=${CODEX_COMPANION:-$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs}
+OUT=${2:-${CODEX_JOBS_OUT:-$HOME/.codex/reports/codex-jobs}}; mkdir -p "$OUT"
+while :; do
+  while IFS="$(printf '\t')" read -r job wt label; do
+    [ -z "$job" ] && continue
+    [ -f "$OUT/$label.done" ] && continue
+    s=$(cd "$wt" && node "$C" status "$job" 2>/dev/null | grep -o "| [a-z]* |" | head -1 | tr -d '| ')
+    case "$s" in completed|failed|cancelled|error)
+      (cd "$wt" && node "$C" result "$job" > "$OUT/$label.md" 2>&1); echo "$s" > "$OUT/$label.done"
+      echo "DONE $label $s $job"; tail -c 1800 "$OUT/$label.md"; exit 0;;
+    esac
+  done < "$1"
+  /bin/sleep 45
+done

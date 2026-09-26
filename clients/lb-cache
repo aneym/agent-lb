@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Show prompt-cache health by client and provider from agent-lb request receipts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+# No password in the default: libpq reads it from PGPASSWORD or ~/.pgpass.
+DEFAULT_DB = "postgresql://agent_lb@127.0.0.1:5432/agent_lb"
+ACK_FILE = Path.home() / ".agent-lb" / "cache-watch.ack.json"
+GROUPS = ("anthropic", "ccgpt-bridge", "codex-cli")
+
+
+def utc(value: str) -> datetime:
+    value = value.strip()
+    duration = re.fullmatch(r"(\d+)([hd])", value)
+    if duration:
+        return datetime.now(timezone.utc) - timedelta(**{{"h": "hours", "d": "days"}[duration[2]]: int(duration[1])})
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def sql_time(value: datetime) -> str:
+    return "'" + value.replace(tzinfo=None).isoformat(sep=" ") + "'"
+
+
+def query(sql: str) -> list[list[str]]:
+    dsn = os.environ.get("AGENT_LB_DATABASE_URL") or DEFAULT_DB
+    dsn = re.sub(r"^postgresql\+\w+://", "postgresql://", dsn)
+    result = subprocess.run(
+        ["psql", "-X", "-At", "-F|", "-v", "ON_ERROR_STOP=1", "-c", sql, dsn],
+        text=True, capture_output=True, timeout=90,
+    )
+    if result.returncode:
+        # Extract only server SQL errors; psql diagnostics can echo connection strings.
+        errors = [line for line in result.stderr.splitlines() if line.startswith("ERROR:")]
+        raise RuntimeError("database query failed (psql exit %s): %s" %
+                           (result.returncode, errors[0] if errors else "connection or query error"))
+    return [line.split("|") for line in result.stdout.splitlines() if line]
+
+
+def request_metrics(start: datetime, end: datetime) -> tuple[dict, list[dict]]:
+    rows = query(f"""
+        WITH req AS (
+            SELECT provider,
+                   CASE WHEN provider = 'anthropic' THEN 'anthropic'
+                        WHEN provider = 'openai' AND
+                             (useragent_group IN ('claude-cli', 'Claude') OR
+                              useragent ILIKE 'Claude Code/%') THEN 'ccgpt-bridge'
+                        ELSE 'codex-cli' END AS grp,
+                   COALESCE(NULLIF(client_session_id, ''), NULLIF(session_id, '')) AS sid,
+                   account_id, requested_at, id,
+                   COALESCE(input_tokens, 0) AS input,
+                   COALESCE(cache_read_tokens, 0) AS cache_read,
+                   COALESCE(cache_creation_tokens, 0) AS cache_write,
+                   COALESCE(cached_input_tokens, 0) AS cached_input,
+                   COALESCE(output_tokens, 0) AS output
+            FROM request_logs
+            WHERE requested_at >= {sql_time(start)} AND requested_at < {sql_time(end)}
+              AND provider IN ('anthropic', 'openai') AND status = 'success'
+              AND deleted_at IS NULL
+        ), ordered AS (
+            SELECT *, row_number() OVER (PARTITION BY grp, sid ORDER BY requested_at, id) AS turn,
+                   CASE WHEN grp = 'anthropic' THEN cache_write > 20000
+                        ELSE cached_input = 0 AND input > 4000 END AS rewrite
+            FROM req
+        ), sessions AS (
+            SELECT grp, sid, count(*) AS turns, count(DISTINCT account_id) AS accounts,
+                   count(*) FILTER (WHERE turn > 1 AND rewrite) AS rewrites
+            FROM ordered WHERE sid IS NOT NULL GROUP BY grp, sid
+        ), metrics AS (
+            SELECT grp, count(*) AS requests, sum(input + cache_read + cache_write + output) AS tokens,
+                   sum(cache_write) AS writes, sum(cache_read) AS reads,
+                   sum(input) AS input, sum(cached_input) AS cached_input,
+                   count(*) FILTER (WHERE turn > 1 AND sid IS NOT NULL) AS steady,
+                   count(*) FILTER (WHERE turn > 1 AND sid IS NOT NULL AND rewrite) AS rewrites
+            FROM ordered GROUP BY grp
+        ), switching AS (
+            SELECT grp, count(*) FILTER (WHERE turns >= 2) AS multi_sessions,
+                   count(*) FILTER (WHERE turns >= 2 AND accounts > 1) AS switched
+            FROM sessions GROUP BY grp
+        )
+        SELECT m.grp, m.requests, m.tokens, m.writes, m.reads,
+               m.input, m.cached_input, m.steady, m.rewrites,
+               COALESCE(s.multi_sessions, 0), COALESCE(s.switched, 0)
+        FROM metrics m LEFT JOIN switching s USING (grp)
+    """)
+    metrics = {}
+    for row in rows:
+        grp, requests, tokens, writes, reads, input_, cached, steady, rewrites, multi, switched = row
+        requests, tokens, writes, reads, input_, cached, steady, rewrites, multi, switched = map(
+            int, (requests, tokens, writes, reads, input_, cached, steady, rewrites, multi, switched)
+        )
+        denominator = input_ + reads + writes if grp == "anthropic" else input_
+        metrics[grp] = {
+            "requests": requests, "total_tokens": tokens, "cache_writes": writes,
+            "read_ratio": (reads if grp == "anthropic" else cached) / denominator if denominator else None,
+            "steady_turns": steady, "steady_rewrites": rewrites,
+            "rewrite_rate": rewrites / steady if steady else None,
+            "multi_request_sessions": multi, "switching_sessions": switched,
+            "switch_rate": switched / multi if multi else None,
+        }
+    return metrics, top_sessions(start, end)
+
+
+def top_sessions(start: datetime, end: datetime) -> list[dict]:
+    rows = query(f"""
+        WITH req AS (
+            SELECT CASE WHEN provider = 'anthropic' THEN 'anthropic'
+                        WHEN useragent_group IN ('claude-cli', 'Claude') OR useragent ILIKE 'Claude Code/%'
+                        THEN 'ccgpt-bridge' ELSE 'codex-cli' END AS grp,
+                   COALESCE(NULLIF(client_session_id, ''), NULLIF(session_id, '')) AS sid,
+                   useragent_group, account_id, requested_at, id,
+                   COALESCE(cache_creation_tokens, 0) AS written,
+                   COALESCE(cached_input_tokens, 0) AS cached,
+                   COALESCE(input_tokens, 0) AS input
+            FROM request_logs
+            WHERE requested_at >= {sql_time(start)} AND requested_at < {sql_time(end)}
+              AND provider IN ('anthropic', 'openai') AND status = 'success'
+              AND deleted_at IS NULL
+        ), turns AS (
+            SELECT *, row_number() OVER (PARTITION BY grp, sid ORDER BY requested_at, id) AS n
+            FROM req WHERE sid IS NOT NULL
+        )
+        SELECT left(sid, 12), grp,
+               count(*) FILTER (WHERE n > 1 AND
+                   (CASE WHEN grp = 'anthropic' THEN written > 20000
+                         ELSE cached = 0 AND input > 4000 END)),
+               count(DISTINCT account_id), coalesce(min(useragent_group), '-')
+        FROM turns GROUP BY grp, sid
+        HAVING count(*) FILTER (WHERE n > 1 AND
+                   (CASE WHEN grp = 'anthropic' THEN written > 20000
+                         ELSE cached = 0 AND input > 4000 END)) > 0
+        ORDER BY 3 DESC, 4 DESC, 1 LIMIT 5
+    """)
+    return [{"session": sid, "group": grp, "useragent_group": useragent_group,
+             "steady_rewrites": int(rewrites), "accounts": int(accounts)}
+            for sid, grp, rewrites, accounts, useragent_group in rows]
+
+
+def quota_burn(start: datetime, end: datetime) -> dict:
+    hours = (end - start).total_seconds() / 3600
+    previous_start = start - timedelta(days=1)
+    previous_end = end - timedelta(days=1)
+    rows = query(f"""
+        WITH snapshots AS (
+            SELECT provider, account_id,
+                   CASE WHEN provider = 'anthropic' AND "window" = 'primary' THEN '5h'
+                        WHEN provider = 'anthropic' AND "window" = 'secondary' THEN 'weekly'
+                        WHEN provider = 'openai' AND window_minutes = 10080 THEN 'weekly'
+                   END AS quota, recorded_at, used_percent
+            FROM usage_history
+            WHERE ((recorded_at >= {sql_time(start)} AND recorded_at < {sql_time(end)})
+                OR (recorded_at >= {sql_time(previous_start)} AND recorded_at < {sql_time(previous_end)}))
+              AND account_id IS NOT NULL AND used_percent IS NOT NULL
+        ), changes AS (
+            SELECT *, lag(used_percent) OVER
+                    (PARTITION BY provider, account_id, quota,
+                     CASE WHEN recorded_at >= {sql_time(start)} THEN 'current' ELSE 'previous' END
+                     ORDER BY recorded_at) AS prior
+            FROM snapshots WHERE quota IS NOT NULL
+        ), per_account AS (
+            SELECT provider, quota,
+                   CASE WHEN recorded_at >= {sql_time(start)} THEN 'current' ELSE 'previous' END AS period,
+                   account_id, coalesce(sum(greatest(used_percent - prior, 0)), 0) AS positive
+            FROM changes GROUP BY provider, quota, period, account_id
+        )
+        SELECT provider, quota, period, round((avg(positive) / {hours:.10f})::numeric, 4)
+        FROM per_account GROUP BY provider, quota, period ORDER BY provider, quota, period
+    """)
+    burn = {"anthropic": {"5h": {}, "weekly": {}}, "openai": {"weekly": {}}}
+    for provider, quota, period, value in rows:
+        burn[provider][quota][period] = float(value) if value else None
+    return burn
+
+
+def evaluate(metrics: dict, acknowledgements: list[dict], now: datetime) -> tuple[str, list[dict]]:
+    checks = []
+    for grp in GROUPS:
+        m = metrics.get(grp, {})
+        if grp == "anthropic":
+            specs = [("anthropic.read_ratio", m.get("read_ratio"), 0.90, 50, m.get("requests", 0), "low")]
+        else:
+            specs = []
+        # Anthropic baseline is ~2-3%: subagents and teammates share the parent session id, so each one's
+        # first call counts as a steady-turn write. Incidents measured 20-35% (2026-09-24/25).
+        specs += [(f"{grp}.rewrite", m.get("rewrite_rate"), 0.10 if grp == "anthropic" else 0.20,
+                   50 if grp == "anthropic" else 20, m.get("steady_turns", 0), "high"),
+                  (f"{grp}.account_switch", m.get("switch_rate"), 0.10, 20,
+                   m.get("multi_request_sessions", 0), "high")]
+        for name, value, threshold, minimum, sample, direction in specs:
+            is_alert = sample >= minimum and value is not None and (
+                value < threshold if direction == "low" else value > threshold)
+            warning_boundary = (1 + threshold) / 2 if direction == "low" else threshold / 2
+            is_warn = sample >= minimum and value is not None and (
+                value < warning_boundary if direction == "low" else value > warning_boundary)
+            level = "ALERT" if is_alert else "WARN" if is_warn else "OK"
+            ack = next((a for a in acknowledgements if a.get("check") == name and
+                        isinstance(a.get("reason"), str) and
+                        utc(a["until"]) > now), None)
+            checks.append({"check": name, "state": "ACK" if ack and level != "OK" else level,
+                           "value": value, "sample": sample,
+                           **({"reason": ack["reason"], "until": ack["until"]} if ack and level != "OK" else {})})
+    verdict = "ALERT" if any(c["state"] == "ALERT" for c in checks) else (
+        "WARN" if any(c["state"] == "WARN" for c in checks) else "OK")
+    return verdict, checks
+
+
+def report(start: datetime, end: datetime) -> dict:
+    metrics, sessions = request_metrics(start, end)
+    acks = json.loads(ACK_FILE.read_text()) if ACK_FILE.exists() else []
+    verdict, checks = evaluate(metrics, acks, datetime.now(timezone.utc))
+    return {"since": start.isoformat(), "until": end.isoformat(), "groups": metrics,
+            "quota_burn_per_hour": quota_burn(start, end), "worst_sessions": sessions,
+            "checks": checks, "verdict": verdict,
+            "failing_checks": [c["check"] for c in checks if c["state"] == "ALERT"]}
+
+
+def percent(value: float | None) -> str:
+    return "-" if value is None else f"{value * 100:.1f}%"
+
+
+def display(data: dict) -> str:
+    lines = [f"Cache health  {data['since'][:19]} → {data['until'][:19]} UTC",
+             "group          requests       tokens      writes   read   rewrite (steady)   switch (sessions)"]
+    for grp in GROUPS:
+        m = data["groups"].get(grp, {})
+        lines.append(f"{grp:14} {m.get('requests', 0):>8,} {m.get('total_tokens', 0):>12,} "
+                     f"{m.get('cache_writes', 0):>11,} {percent(m.get('read_ratio')):>6} "
+                     f"{percent(m.get('rewrite_rate')):>7} ({m.get('steady_turns', 0):,}) "
+                     f"{percent(m.get('switch_rate')):>7} ({m.get('multi_request_sessions', 0):,})")
+    lines.append("Quota burn (% points/account/hour):           selected   24h earlier")
+    for provider, windows in data["quota_burn_per_hour"].items():
+        for name, rates in windows.items():
+            fmt = lambda v: "-" if v is None else f"{v:.3f}"
+            lines.append(f"  {provider:10} {name:7} {fmt(rates.get('current')):>12} {fmt(rates.get('previous')):>13}")
+    lines.append("Worst sessions (steady rewrites, accounts):")
+    for s in data["worst_sessions"]:
+        lines.append(f"  {s['session']:12} {s['useragent_group']:14} {s['steady_rewrites']:>5}  {s['accounts']}")
+    for check in data["checks"]:
+        if check["state"] == "ACK":
+            lines.append(f"ACK {check['check']}: {check['reason']} (until {check['until']})")
+    tripped = [f"{c['check']} ({c['state']})" for c in data["checks"] if c["state"] in ("WARN", "ALERT")]
+    lines.append(f"{data['verdict']}: " + (", ".join(tripped) if tripped else "no unacknowledged checks tripped"))
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--since", default="1h", help="1h, 24h, 7d or ISO timestamp (UTC by default)")
+    parser.add_argument("--until", help="ISO timestamp, exclusive (UTC by default)")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--watch", action="store_true", help="redraw every 30 seconds")
+    args = parser.parse_args()
+    try:
+        while True:
+            start, end = utc(args.since), utc(args.until) if args.until else datetime.now(timezone.utc)
+            if start >= end:
+                parser.error("--since must precede --until")
+            data = report(start, end)
+            if args.watch and not args.json:
+                print("\033[H\033[J", end="")
+            print(json.dumps(data) if args.json else display(data), flush=True)
+            if not args.watch:
+                return {"OK": 0, "WARN": 1, "ALERT": 2}[data["verdict"]]
+            time.sleep(30)
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+        print(f"lb-cache: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

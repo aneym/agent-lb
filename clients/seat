@@ -428,7 +428,7 @@ def resolve_model(vendor: str, model: str) -> str:
 def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_file: Path) -> list[str]:
     if vendor == "cursor":
         command = [cli_bin("cursor"), "-p", "--trust", "--output-format", "json", "--model", model]
-        command += ["--mode", "ask"] if mode == "ask" else ["--force"]
+        command += ["--mode", "ask", "--force"] if mode == "ask" else ["--force"]
         return command + [prompt_file.read_text(encoding="utf-8")]
     # Devin's `auto` rejects every shell call in print mode, `ls` included, so a read-only
     # task cannot finish; `smart` runs what Devin's own safety model judges safe.

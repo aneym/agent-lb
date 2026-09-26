@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Page the team lead the first time an agent-lb account goes reauth_required.
+
+Runs every minute from launchd (a StartInterval=60 job). For each
+account newly in status reauth_required it finds the log line that flipped it
+and records one page line. With REAUTH_PAGE_TYPE=1 it also types the line into
+the team lead's herdr pane, found by the Claude session id in
+REAUTH_PAGE_LEAD_SESSION, so pane renumbering does not matter. The operator is
+never paged directly: no macOS notification, no unblock item. An account that
+recovers and flips again pages again. Every page is also appended to
+~/.agent-lb/state/reauth-pages.log.
+
+  reauth-page            check once and page
+  reauth-page --dry-run  print what would be paged, change nothing
+  reauth-page --seed     mark the current reauth set as already paged
+
+Environment: AGENT_LB_DATABASE_URL (Postgres; defaults to the local agent_lb
+database, password from PGPASSWORD or ~/.pgpass), PSQL_BIN, HERDR_BIN, REAUTH_PAGE_TYPE, REAUTH_PAGE_LEAD_SESSION.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+LB_HOME = HOME / ".agent-lb"
+STATE = LB_HOME / "state" / "reauth-paged.json"
+PAGE_LOG = LB_HOME / "state" / "reauth-pages.log"
+LOGS = [LB_HOME / "agent-lb.err.log", LB_HOME / "agent-lb-standby.log"]
+TAIL_BYTES = 64 * 1024 * 1024
+HERDR = os.environ.get("HERDR_BIN", str(HOME / ".local/bin/herdr"))
+LEAD_SESSION = os.environ.get("REAUTH_PAGE_LEAD_SESSION", "")
+PSQL = os.environ.get("PSQL_BIN", "/opt/homebrew/bin/psql")
+# No password in the default: libpq reads it from PGPASSWORD or ~/.pgpass.
+DEFAULT_DB = "postgresql://agent_lb@127.0.0.1:5432/agent_lb"
+CAUSE_MARKERS = (
+    "requires reauthentication",
+    "account_status=reauth_required",
+    "refresh_token_invalidated",
+    "refresh_token_reused",
+    "refresh_token_expired",
+    "invalid_grant",
+)
+
+
+def reauth_accounts() -> dict[str, str]:
+    dsn = os.environ.get("AGENT_LB_DATABASE_URL", "")
+    dsn = re.sub(r"^postgresql\+\w+://", "postgresql://", dsn)
+    if not dsn.startswith("postgresql://"):
+        dsn = DEFAULT_DB
+    sql = (
+        "select id, provider || ' ' || coalesce(deactivation_reason, '') "
+        "from accounts where status = 'reauth_required' order by id"
+    )
+    result = subprocess.run(
+        [PSQL, "-AtF", "\t", "-c", sql, dsn],
+        capture_output=True, text=True, timeout=20,
+    )
+    if result.returncode:
+        # Do not raise CalledProcessError: its message would carry the connection string.
+        raise RuntimeError(f"psql exited {result.returncode} reading reauth_required accounts")
+    out = result.stdout
+    rows = {}
+    for line in out.splitlines():
+        account_id, _, detail = line.partition("\t")
+        if account_id:
+            rows[account_id] = detail
+    return rows
+
+
+def cause_line(account_id: str) -> str:
+    best = ""
+    for path in LOGS:
+        try:
+            with path.open("rb") as fh:
+                fh.seek(max(0, path.stat().st_size - TAIL_BYTES))
+                data = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        for line in data.splitlines():
+            if account_id in line and any(m in line for m in CAUSE_MARKERS):
+                if line[:20] >= best[:20]:
+                    best = f"{path.name}: {line.strip()}"
+    return best[:600] or "no matching log line in the last 64 MB of agent-lb.err.log / agent-lb-standby.log"
+
+
+def lead_pane() -> str | None:
+    try:
+        out = subprocess.run([HERDR, "pane", "list"], capture_output=True, text=True, timeout=10).stdout
+        panes = json.loads(out).get("result", {}).get("panes", [])
+    except Exception:
+        return None
+    for pane in panes:
+        session = (pane.get("agent_session") or {}).get("value")
+        if session == LEAD_SESSION:
+            return pane.get("pane_id")
+    return None
+
+
+def page(text: str) -> str:
+    # Log-only by default: the lead pane is also where the operator types, and `pane run` presses
+    # Enter, which could submit their half-typed text with the page. orch-watch surfaces
+    # new lines from PAGE_LOG instead. REAUTH_PAGE_TYPE=1 restores typing into the pane.
+    if os.environ.get("REAUTH_PAGE_TYPE") != "1":
+        return "logged only; orch-watch surfaces it"
+    pane = lead_pane() if LEAD_SESSION else None
+    if pane is None:
+        return "no team-lead pane found; logged only"
+    one_line = " ".join(text.split())
+    # `pane run` sends the text and Enter in one call.
+    subprocess.run([HERDR, "pane", "run", pane, one_line], timeout=10, check=True)
+    return f"paged pane {pane}"
+
+
+def load_state() -> set[str]:
+    try:
+        return set(json.loads(STATE.read_text()))
+    except (OSError, ValueError):
+        return set()
+
+
+def save_state(ids: set[str]) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(ids)))
+    tmp.replace(STATE)
+
+
+def main() -> int:
+    dry = "--dry-run" in sys.argv
+    current = reauth_accounts()
+    if "--seed" in sys.argv:
+        save_state(set(current))
+        print(f"seeded {len(current)} account(s)")
+        return 0
+    paged = load_state()
+    new = [a for a in current if a not in paged]
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for account_id in new:
+        text = (
+            f"[agent-lb reauth-page {stamp}] Account {account_id} ({current[account_id].strip()}) "
+            f"just went reauth_required. Cause line: {cause_line(account_id)}"
+        )
+        if dry:
+            print(text)
+            continue
+        result = page(text)
+        with PAGE_LOG.open("a") as fh:
+            fh.write(f"{text} -> {result}\n")
+    if not dry:
+        save_state(paged.intersection(current) | set(new))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

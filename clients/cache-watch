@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""cache-watch: push an alert when Claude sessions stop reading from the prompt cache.
+"""cache-watch: alert on sustained prompt-cache failures across client groups.
 
-Runs every 10 minutes under launchd. Reads the trailing-hour Anthropic cache
-observation from `agent-lb status --json` (alert when under 90% read with at
-least 50 requests). Two alert checks in a row write ~/.agent-lb/CACHE_ALERT and
-post a macOS notification; one healthy check removes the file. Every new Claude
+Runs every 10 minutes under launchd (scripts/install-cache-watch.sh). Reads the
+trailing-hour verdict from `lb-cache --since 1h --json` and falls back to the
+Anthropic cache line in `agent-lb status --json` when lb-cache is unavailable.
+Two consecutive ALERT observations write ~/.agent-lb/CACHE_ALERT and post a
+macOS notification; a healthy observation removes the file. Every new Claude
 Code session prints that file through a SessionStart hook, so an agent sees the
-problem on its first turn instead of a cost review finding it days later.
+problem on its first turn instead of a cost review finding it days later. A
+failed observation is recorded in ~/.agent-lb/cache-watch.json as state
+"unknown" with the error type.
 
 Why: 2026-09-21..25 the proxy broke prompt caching twice (43h and 12h) and a
 partial fix left teammates rewriting their context on 99% of turns; the only
@@ -26,13 +29,29 @@ HOME = Path.home()
 STATE = HOME / ".agent-lb" / "cache-watch.json"
 ALERT = HOME / ".agent-lb" / "CACHE_ALERT"
 AGENT_LB = os.environ.get("AGENT_LB_BIN", str(HOME / ".local" / "bin" / "agent-lb"))
+LB_CACHE = os.environ.get("LB_CACHE_BIN", str(HOME / ".agent-lb" / "bin" / "lb-cache"))
 CONSECUTIVE = 2
 
 
 def observe() -> dict:
-    out = subprocess.run([AGENT_LB, "status", "--json"], capture_output=True, text=True, timeout=60)
-    cache = json.loads(out.stdout).get("anthropic_cache") or {}
-    return {"state": cache.get("state", "unknown"), "ratio": cache.get("ratio_percent"), "requests": cache.get("request_count")}
+    try:
+        out = subprocess.run([LB_CACHE, "--since", "1h", "--json"],
+                             capture_output=True, text=True, timeout=90)
+        if out.returncode not in (0, 1, 2):
+            raise RuntimeError("lb-cache returned an error")
+        result = json.loads(out.stdout)
+        if result["verdict"] not in ("OK", "WARN", "ALERT"):
+            raise ValueError("invalid lb-cache verdict")
+        failing = result.get("failing_checks", [])
+        return {"state": result["verdict"].lower(), "checks": failing,
+                "source": "lb-cache"}
+    except Exception:
+        out = subprocess.run([AGENT_LB, "status", "--json"], capture_output=True, text=True, timeout=60)
+        if out.returncode:
+            raise RuntimeError("agent-lb status failed")
+        cache = json.loads(out.stdout).get("anthropic_cache") or {}
+        return {"state": cache.get("state", "unknown"), "ratio": cache.get("ratio_percent"),
+                "requests": cache.get("request_count"), "source": "agent-lb status"}
 
 
 def notify(message: str) -> None:
@@ -42,27 +61,35 @@ def notify(message: str) -> None:
 
 def main() -> int:
     try:
-        obs = observe()
-    except Exception as exc:  # the watcher must never crash-loop launchd
-        obs = {"state": "unknown", "error": type(exc).__name__}
-    try:
-        prev = json.loads(STATE.read_text())
-    except Exception:
-        prev = {}
-    streak = prev.get("alert_streak", 0) + 1 if obs["state"] == "alert" else 0
-    STATE.write_text(json.dumps({**obs, "alert_streak": streak, "at": int(time.time())}))
-    if streak >= CONSECUTIVE:
-        line = (
-            f"Claude prompt cache is failing: {obs['ratio']:.0f}% of input read from cache over the last hour "
-            f"({obs['requests']} requests; healthy is 93-98%). Sessions are rewriting their whole context each turn. "
-            "Check recent agent-lb deploys to app/core/anthropic or app/modules/proxy, then run "
-            "scripts/claude_cache_eval.py."
-        )
-        if not ALERT.exists():
-            notify(line)
-        ALERT.write_text(line + "\n")
-    elif obs["state"] == "ok" and ALERT.exists():
-        ALERT.unlink()
+        try:
+            obs = observe()
+        except Exception as exc:  # record the failed observation instead of skipping it
+            obs = {"state": "unknown", "error": type(exc).__name__}
+        try:
+            prev = json.loads(STATE.read_text())
+        except Exception:
+            prev = {}
+        streak = prev.get("alert_streak", 0) + 1 if obs["state"] == "alert" else 0
+        STATE.write_text(json.dumps({**obs, "alert_streak": streak, "at": int(time.time())}))
+        if streak >= CONSECUTIVE:
+            if obs.get("source") == "lb-cache":
+                line = ("Prompt cache ALERT: " + ", ".join(obs["checks"]) +
+                        ". Inspect the failing check; run lb-cache.")
+            else:
+                ratio = obs.get("ratio")
+                line = (f"Anthropic prompt cache ALERT: {ratio:.0f}% read over the last hour "
+                        f"({obs.get('requests')} requests; healthy is 93-98%)." if ratio is not None
+                        else "Anthropic prompt cache ALERT.")
+                line += (" Sessions are rewriting their whole context each turn. Check recent agent-lb "
+                         "deploys to app/core/anthropic or app/modules/proxy, then run lb-cache and "
+                         "scripts/claude_cache_eval.py.")
+            if not ALERT.exists():
+                notify(line)
+            ALERT.write_text(line + "\n")
+        elif obs["state"] == "ok" and ALERT.exists():
+            ALERT.unlink()
+    except Exception:  # the watcher must never crash-loop launchd
+        pass
     return 0
 
 

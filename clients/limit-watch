@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+"""
+limit-watch — reads Agent LB account capacity every 300s and tells the
+operator, through Unblock, the moment a provider is about to run out of usable
+accounts. Read-only against the LB: it makes no inference calls, writes no
+LB config, and changes no account caps. Its only writes are its own state
+file and an Unblock ask.
+
+Usable account = status "active", no active rate-limit reset, and every
+applicable reported window above reserve. Anthropic accounts fail closed if either core
+window is missing or non-numeric. Other providers can legitimately omit a
+window, so one numeric window above reserve is sufficient. Fable capacity additionally requires its scoped weekly quota and fresh
+Fable-scoped weekly telemetry.
+
+Transitions that file an ask (deduplicated against the state file, so a
+steady-state poll never re-files):
+  - a provider drops from >1 to exactly 1 usable account
+  - a provider drops from >0 to 0 usable accounts
+  - the count of Fable-eligible usable accounts drops from >=2 to <2
+  - the LB has been unreachable for 3 consecutive polls
+
+State:
+  ~/.agent-lb/state/limit-watch-state.json   dedup memory (not for humans)
+  ~/.agent-lb/state/limit-watch.json         current snapshot (for the orchestrator)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+
+LB_ACCOUNTS_URL = os.environ.get(
+    "AGENT_LB_BASE_URL", "http://127.0.0.1:2455"
+).rstrip("/") + "/api/accounts"
+STATE_DIR = os.path.expanduser("~/.agent-lb/state")
+DEDUP_STATE_FILE = os.path.join(STATE_DIR, "limit-watch-state.json")
+SNAPSHOT_FILE = os.path.join(STATE_DIR, "limit-watch.json")
+UNBLOCK_DAEMON_JSON = os.environ.get(
+    "UNBLOCK_DAEMON_JSON", os.path.expanduser("~/.local/state/unblock/daemon.json")
+)
+
+DEFAULT_RESERVE_PERCENT = 20.0
+DEFAULT_INTERVAL_SECONDS = 300
+UNREACHABLE_THRESHOLD = 3
+FRESHNESS_SECONDS = 15 * 60
+FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+
+
+def load_dedup_state():
+    try:
+        with open(DEDUP_STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {"unreachable_count": 0, "providers": {}, "fable_low": False}
+
+
+def save_dedup_state(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = DEDUP_STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp, DEDUP_STATE_FILE)
+
+
+def write_snapshot(snapshot):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = SNAPSHOT_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(snapshot, f, indent=2)
+    os.replace(tmp, SNAPSHOT_FILE)
+
+
+def fetch_accounts(timeout=5):
+    req = urllib.request.Request(LB_ACCOUNTS_URL, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.load(resp)
+
+
+def is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def account_id(account):
+    return str(account.get("accountId") or "unknown")[:8]
+
+
+def parse_timestamp(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def eligibility(account, reserve_percent, now=None):
+    """Return (usable, reasons, remaining percentages, freshness_is_unknown)."""
+    reasons = []
+    if account.get("status") != "active":
+        reasons.append("status is not active")
+
+    now = now or datetime.now(timezone.utc)
+    rate_limit_reset = parse_timestamp(account.get("rateLimitResetAt"))
+    if rate_limit_reset is not None and rate_limit_reset > now:
+        reasons.append(f"rate limited until {account['rateLimitResetAt']}")
+
+    usage = account.get("usage") or {}
+    primary = usage.get("primaryRemainingPercent")
+    secondary = usage.get("secondaryRemainingPercent")
+    provider = account.get("provider")
+    remaining = []
+
+    # OpenAI can legitimately omit the short primary window; its weekly window
+    # is then the only core window required for admission.
+    for name, value in (("primary", primary), ("secondary", secondary)):
+        if not is_number(value):
+            if provider == "anthropic":
+                reasons.append(f"{name} remaining missing or non-numeric")
+        elif value <= reserve_percent:
+            reasons.append(f"{name} remaining <= reserve")
+        else:
+            remaining.append(value)
+    if provider != "anthropic" and not remaining:
+        reasons.append("no numeric remaining window")
+    # lastRefreshAt records authentication token refreshes, not usage
+    # telemetry. No non-Fable account has a live usage-freshness signal.
+    return not reasons, reasons, remaining, True
+
+
+def is_usable(account, reserve_percent):
+    return eligibility(account, reserve_percent)[0]
+
+
+def fable_scoped_remaining(account):
+    for quota in account.get("additionalQuotas") or []:
+        if quota.get("quotaKey") != FABLE_SCOPED_WEEKLY_QUOTA_KEY:
+            continue
+        window = quota.get("primaryWindow") or {}
+        used = window.get("usedPercent")
+        if is_number(used):
+            return 100 - used
+        return None
+    return None
+
+
+def fable_eligibility(account, reserve_percent, now=None):
+    """Return Fable-specific admission reasons after general eligibility."""
+    now = now or datetime.now(timezone.utc)
+    reasons = []
+    scope = account.get("fableScopedWeekly")
+    if isinstance(scope, dict):
+        recorded_at = parse_timestamp(scope.get("recordedAt"))
+        if scope.get("fresh") is False or (
+            recorded_at is not None and (now - recorded_at).total_seconds() > FRESHNESS_SECONDS
+        ):
+            reasons.append("fable window stale")
+
+    remaining = fable_scoped_remaining(account)
+    if not is_number(remaining):
+        reasons.append("fable scoped weekly remaining missing or non-numeric")
+    elif remaining <= reserve_percent:
+        reasons.append("fable scoped weekly remaining <= reserve")
+    return not reasons, reasons
+
+
+def nearest_reset_local(accounts):
+    """Earliest of resetAtPrimary/resetAtSecondary across accounts, in local time."""
+    resets = []
+    for a in accounts:
+        for key in ("resetAtPrimary", "resetAtSecondary"):
+            v = a.get(key)
+            if v:
+                resets.append(v)
+    if not resets:
+        return "unknown (no reset time reported)"
+    resets.sort()
+    raw = resets[0]
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%a %b %-d, %-I:%M %p %Z")
+    except (ValueError, TypeError):
+        return str(raw)
+
+
+def unblock_port_and_auth():
+    with open(UNBLOCK_DAEMON_JSON) as f:
+        d = json.load(f)
+    return d["port"], d["auth"]
+
+
+def file_ask(title, why, dry_run):
+    if dry_run:
+        print(f"[dry-run] would file ask: {title}\n  why: {why}")
+        return None
+    port, auth = unblock_port_and_auth()
+    body = {
+        "ask": {
+            "kind": "file",
+            "purpose": "blocker",
+            "project": "limit-watch",
+            "title": title[:90],
+            "why": why[:1200],
+            "fields": [{"name": "seen", "type": "confirm", "label": "Got it"}],
+        },
+        "origin": {"agent": "limit-watch"},
+    }
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/asks",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {auth}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        result = json.load(resp)
+    print(f"filed: {title} -> {result.get('ticket')}")
+    return result
+
+
+def run_once(args):
+    state = load_dedup_state()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        data = fetch_accounts()
+        accounts = data.get("accounts", [])
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as e:
+        unreachable_count = state.get("unreachable_count", 0) + 1
+        state["unreachable_count"] = unreachable_count
+        snapshot = {
+            "polled_at": now_iso,
+            "reachable": False,
+            "error": str(e),
+            "unreachable_count": unreachable_count,
+        }
+        if unreachable_count == UNREACHABLE_THRESHOLD:
+            file_ask(
+                "Agent LB telemetry is unreachable",
+                "limit-watch could not read account status from the Agent LB API for 3 polls in a "
+                f"row (about {3 * args.interval // 60} minutes). Until this is back, nobody — human or "
+                f"orchestrator — can see which provider accounts are close to running out. Last error: {e}",
+                args.dry_run,
+            )
+        if not args.dry_run:
+            save_dedup_state(state)
+            write_snapshot(snapshot)
+        print(json.dumps(snapshot, indent=2))
+        return
+
+    state["unreachable_count"] = 0
+
+    by_provider = {}
+    for a in accounts:
+        by_provider.setdefault(a.get("provider", "unknown"), []).append(a)
+
+    prev_providers = state.get("providers", {})
+    snapshot_providers = {}
+
+    observed_at = datetime.now(timezone.utc)
+    for provider, accts in sorted(by_provider.items()):
+        eligible = [(a, eligibility(a, args.reserve, observed_at)) for a in accts]
+        usable_accts = [a for a, result in eligible if result[0]]
+        count = len(usable_accts)
+        total = len(accts)
+        usable_remaining = [percent for _, result in eligible if result[0] for percent in result[2]]
+        reasons = [
+            {"account_id": account_id(a), "reasons": result[1]}
+            for a, result in eligible if not result[0]
+        ]
+        snapshot_providers[provider] = {
+            "usable_count": count,
+            "total_count": total,
+            "min_remaining_percent": min(usable_remaining) if usable_remaining else None,
+            "reasons": reasons,
+        }
+        if any(result[3] for _, result in eligible):
+            snapshot_providers[provider]["freshness"] = "unknown"
+
+        prev_count = prev_providers.get(provider, {}).get("usable_count")
+        # No prior observation (cold start / new provider): record, do not alert
+        # on a state we have no "before" for.
+        if prev_count is not None:
+            if count == 0 and prev_count > 0:
+                reset = nearest_reset_local(accts)
+                file_ask(
+                    f"{provider}: no usable accounts left",
+                    f"All {total} {provider} account(s) are now rate-limited, exhausted, or otherwise "
+                    f"unusable. The nearest window resets around {reset}. Meanwhile the orchestrator "
+                    f"will pause new {provider} work and shift it to another provider.",
+                    args.dry_run,
+                )
+            elif count == 1 and prev_count > 1:
+                reset = nearest_reset_local(accts)
+                file_ask(
+                    f"{provider}: down to 1 usable account",
+                    f"{provider} has 1 of {total} accounts left with headroom above "
+                    f"{int(args.reserve)}%. The nearest window resets around {reset}. Meanwhile the "
+                    f"orchestrator will shift new {provider} work to another provider to keep this "
+                    "last account in reserve.",
+                    args.dry_run,
+                )
+
+    fable_accts = [a for a in accounts if a.get("fableEligible")]
+    fable_eligible = [
+        (a, eligibility(a, args.reserve, observed_at), fable_eligibility(a, args.reserve, observed_at))
+        for a in fable_accts
+    ]
+    fable_usable = [a for a, general, scoped in fable_eligible if general[0] and scoped[0]]
+    fable_count = len(fable_usable)
+    fable_total = len(fable_accts)
+    fable_reasons = [
+        {"account_id": account_id(a), "reasons": scoped[1]}
+        for a, general, scoped in fable_eligible if general[0] and not scoped[0]
+    ]
+    prev_fable_low = state.get("fable_low")
+    now_fable_low = fable_count < 2
+    if now_fable_low and prev_fable_low is False:
+        reset = nearest_reset_local(fable_accts)
+        file_ask(
+            "Fable is down to fewer than 2 usable accounts",
+            f"Only {fable_count} of {fable_total} Fable-eligible account(s) have headroom above "
+            f"{int(args.reserve)}% right now. The nearest window resets around {reset}. Meanwhile the "
+            "orchestrator will hold back new Fable-only work (design, hard audits) and route "
+            "everything else to another provider.",
+            args.dry_run,
+        )
+
+    state["providers"] = snapshot_providers
+    state["fable_low"] = now_fable_low
+    if not args.dry_run:
+        save_dedup_state(state)
+
+    snapshot = {
+        "polled_at": now_iso,
+        "reachable": True,
+        "reserve_percent": args.reserve,
+        "providers": snapshot_providers,
+        "fable_eligible_usable": fable_count,
+        "fable_eligible_total": fable_total,
+        "fable_reasons": fable_reasons,
+    }
+    if not args.dry_run:
+        write_snapshot(snapshot)
+    print(json.dumps(snapshot, indent=2))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap.add_argument("--once", action="store_true", help="poll once and exit (default: loop forever)")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would happen; file no ask and write no state or snapshot",
+    )
+    ap.add_argument(
+        "--reserve",
+        type=float,
+        default=DEFAULT_RESERVE_PERCENT,
+        help=f"usable floor as a percent (default {DEFAULT_RESERVE_PERCENT})",
+    )
+    ap.add_argument(
+        "--interval",
+        type=int,
+        default=DEFAULT_INTERVAL_SECONDS,
+        help=f"seconds between polls when looping (default {DEFAULT_INTERVAL_SECONDS})",
+    )
+    args = ap.parse_args()
+
+    while True:
+        run_once(args)
+        if args.once:
+            break
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -759,6 +759,23 @@ For Helm, pass the same values through `extraEnv`.
 
 Backup this directory to preserve your data.
 
+## Operator tools
+
+A long-running macOS install deploys these to `~/.agent-lb/bin/`. The repo copy is
+the source; copy a tool there after editing it. None of them change account caps
+or make inference calls.
+
+| Tool                      | What it does                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `scripts/run-agent-lb.sh` | Program the main launchd job runs: starts the runtime checkout (`AGENT_LB_RUNTIME_DIR`).                                       |
+| `scripts/backup.sh`       | Daily `pg_dump` of the Postgres database into `~/.agent-lb/backups`, keeping the newest 14.                                    |
+| `clients/lb-cache`        | Prompt-cache health by client group and provider from request receipts; `--json`, `--watch`; exit 0/1/2 for OK/WARN/ALERT.     |
+| `clients/cache-watch`     | 10-minute launchd job (`scripts/install-cache-watch.sh`) that writes `~/.agent-lb/CACHE_ALERT` after two ALERTs from lb-cache. |
+| `clients/limit-watch`     | Polls `/api/accounts` and files an Unblock ask when a provider is down to one or zero usable accounts.                         |
+| `clients/reauth-page`     | Records a page line the first time an account goes `reauth_required`, with the log line that caused it.                        |
+| `clients/seat`            | Keeps the Cursor and Devin account registry, probes auth, runs a seat with failover, and writes dispatch receipts.             |
+| `clients/codex-jobs-wait` | Waits on a TSV of Codex companion jobs and prints the first one that finishes.                                                 |
+
 ## Troubleshooting
 
 - [Usage and quota - why does agent-lb still say `rate_limited` when Codex Desktop says reset?](openspec/specs/usage-refresh-policy/context.md)
