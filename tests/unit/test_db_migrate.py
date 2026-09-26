@@ -41,6 +41,19 @@ def _db_url(path: Path) -> str:
     return f"sqlite+aiosqlite:///{path}"
 
 
+def test_socket_host_url_survives_alembic_config_and_full_upgrade(tmp_path: Path) -> None:
+    # A socket path in the host query is percent-encoded by SQLAlchemy's URL renderer.
+    socket_url = "postgresql+asyncpg://localhost/agentlb_si_r3m?host=/tmp"
+    sync_url = to_sync_database_url(socket_url)
+    assert _build_alembic_config(socket_url).get_main_option("sqlalchemy.url") == sync_url
+    # An encoded query on SQLite exercises the same Alembic offline and online paths
+    # without requiring a Postgres unix socket at a particular location.
+    url = f"sqlite+aiosqlite:///{tmp_path / 'encoded.db'}?timeout=1%2E0"
+    assert _build_alembic_config(url).get_main_option("sqlalchemy.url") == to_sync_database_url(url)
+    upgraded = run_upgrade(url, "head", bootstrap_legacy=False)
+    assert upgraded.current_revision == inspect_migration_state(url).head_revision
+
+
 def test_check_schema_drift_disposes_sync_engine(monkeypatch) -> None:
     class _FakeConnectionContext:
         def __init__(self) -> None:

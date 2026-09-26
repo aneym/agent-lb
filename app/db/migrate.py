@@ -164,7 +164,7 @@ def _script_location() -> str:
 def _build_alembic_config(database_url: str) -> Config:
     config = Config()
     config.set_main_option("script_location", _script_location())
-    config.set_main_option("sqlalchemy.url", to_sync_database_url(database_url))
+    config.set_main_option("sqlalchemy.url", to_sync_database_url(database_url).replace("%", "%%"))
     config.attributes["configure_logger"] = False
     return config
 
