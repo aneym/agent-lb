@@ -135,6 +135,8 @@ class AccountState:
     leased_tokens: float = 0.0
     routing_policy: str = ROUTING_POLICY_NORMAL
     ignore_standard_quota: bool = False
+    raw_used_percent: float | None = None
+    raw_secondary_used_percent: float | None = None
 
 
 @dataclass
@@ -960,8 +962,18 @@ def _configured_capacity_credits(state: AccountState) -> float:
 
 
 def _usage_exhausted(state: AccountState) -> bool:
-    primary_used = state.used_percent if state.used_percent is not None else 0.0
-    secondary_used = state.secondary_used_percent if state.secondary_used_percent is not None else primary_used
+    if state.raw_used_percent is not None:
+        primary_used = state.raw_used_percent
+    elif state.used_percent is not None:
+        primary_used = state.used_percent
+    else:
+        primary_used = 0.0
+    if state.raw_secondary_used_percent is not None:
+        secondary_used = state.raw_secondary_used_percent
+    elif state.secondary_used_percent is not None:
+        secondary_used = state.secondary_used_percent
+    else:
+        secondary_used = primary_used
     return primary_used >= 100.0 or secondary_used >= 100.0
 
 

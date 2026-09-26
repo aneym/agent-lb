@@ -2240,6 +2240,8 @@ def _state_from_account(
         blocked_at=next_blocked_at,
         cooldown_until=runtime.cooldown_until,
         secondary_used_percent=effective_secondary_used_percent,
+        raw_used_percent=used_percent,
+        raw_secondary_used_percent=secondary_used,
         secondary_reset_at=secondary_reset,
         last_error_at=runtime.last_error_at,
         last_selected_at=runtime.last_selected_at,
