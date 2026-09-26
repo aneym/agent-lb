@@ -279,7 +279,9 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
         ("primaryRemainingPercent", "resetAtPrimary"),
         ("secondaryRemainingPercent", "resetAtSecondary"),
     ):
-        if key not in usage:
+        # The accounts API reports a window the plan does not have as null
+        # (ChatGPT Pro has no five-hour window); that is absent, not malformed.
+        if usage.get(key) is None:
             continue
         remaining = _number(usage.get(key))
         if remaining is None:

@@ -12,6 +12,7 @@ from app.core.plan_types import normalize_rate_limit_plan_type
 from app.core.types import JsonValue
 from app.core.usage.types import UsageWindowRow, UsageWindowSummary
 from app.db.models import Account, AccountStatus, UsageHistory
+from app.modules.proxy.account_model_incompat import is_account_model_unsupported_error
 from app.modules.proxy.types import (
     CreditStatusDetailsData,
     RateLimitStatusDetailsData,
@@ -49,7 +50,9 @@ def classify_upstream_failure(
     phase: FailurePhase,
 ) -> ClassifiedFailure:
     failure_class: FailureClass
-    if error_code in _RATE_LIMIT_CODES:
+    if is_account_model_unsupported_error(error_code, error.get("message")):
+        failure_class = "account_model_unsupported"
+    elif error_code in _RATE_LIMIT_CODES:
         failure_class = "rate_limit"
     elif error_code in _QUOTA_CODES:
         failure_class = "quota"

@@ -319,6 +319,10 @@ from app.modules.proxy._service.warmup import (
 from app.modules.proxy._service.warmup import (
     _WarmupUsageSnapshot as _WarmupUsageSnapshot,
 )
+from app.modules.proxy.account_model_incompat import (
+    ACCOUNT_MODEL_UNSUPPORTED_CODE,
+    is_account_model_unsupported_error,
+)
 from app.modules.proxy.affinity import (
     _sticky_key_from_session_header,  # noqa: F401
 )
@@ -571,10 +575,7 @@ def _websocket_precreated_retry_error_code(
     if event_type not in {"error", "response.failed"}:
         return None
 
-    error_code = _normalize_error_code(
-        _websocket_event_error_code(event_type, payload),
-        _websocket_event_error_type(event_type, payload),
-    )
+    error_code = _websocket_event_replay_error_code(event_type, payload)
     error_param = _websocket_event_error_param(event_type, payload)
     error_message = _websocket_event_error_message(event_type, payload)
     if _facade()._is_previous_response_not_found_error(
@@ -780,12 +781,25 @@ def _websocket_owner_pinned_quota_error_code(
     if event_type not in {"error", "response.failed"}:
         return None
 
+    error_code = _websocket_event_replay_error_code(event_type, payload)
+    if error_code not in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES:
+        return None
+    return error_code
+
+
+def _websocket_event_replay_error_code(event_type: str | None, payload: dict[str, JsonValue] | None) -> str | None:
+    """Normalized error code, with the account-model 400 given its own code.
+
+    Upstream sends that rejection as a generic ``invalid_request_error``; only
+    the message says the account's plan lacks the model, and only that makes
+    it safe to replay the request on another account.
+    """
     error_code = _normalize_error_code(
         _websocket_event_error_code(event_type, payload),
         _websocket_event_error_type(event_type, payload),
     )
-    if error_code not in _facade()._WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES:
-        return None
+    if is_account_model_unsupported_error(error_code, _websocket_event_error_message(event_type, payload)):
+        return ACCOUNT_MODEL_UNSUPPORTED_CODE
     return error_code
 
 

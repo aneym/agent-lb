@@ -1,0 +1,5 @@
+- [x] Classify the upstream account-model 400 and fail over on stream, websocket and HTTP bridge.
+- [x] Per-(account, model) TTL memory consulted by account selection.
+- [x] Status CLI treats a null usage window as absent.
+- [x] Route-level regression tests: websocket failover, balancer selection, status CLI.
+- [x] Deploy to the live runtime and prove with codex exec probes.

@@ -655,6 +655,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_top_level_error_payload,  # noqa: F401
     _wrapped_websocket_error_event,  # noqa: F401
 )
+from app.modules.proxy.account_model_incompat import ACCOUNT_MODEL_UNSUPPORTED_CODE
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
     _sticky_key_for_codex_control_request,
@@ -809,6 +810,7 @@ _STREAM_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_MAX_ACCOUNT_ATTEMPTS = 3
 _WEBSOCKET_TRANSPARENT_REPLAY_ERROR_CODES = frozenset(
     {
+        ACCOUNT_MODEL_UNSUPPORTED_CODE,
         "rate_limit_exceeded",
         "usage_limit_reached",
         "insufficient_quota",

@@ -1169,7 +1169,7 @@ def failover_decision(
         return "surface"
     if candidates_remaining <= 0:
         return "surface"
-    if failure_class in ("rate_limit", "quota", "retryable_transient"):
+    if failure_class in ("rate_limit", "quota", "retryable_transient", "account_model_unsupported"):
         return "failover_next"
     return "surface"
 

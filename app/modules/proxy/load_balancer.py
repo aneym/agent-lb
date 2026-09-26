@@ -62,6 +62,10 @@ from app.db.models import Account, AccountStatus, AdditionalUsageHistory, Sticky
 from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
+from app.modules.proxy.account_model_incompat import (
+    ACCOUNT_MODEL_UNSUPPORTED_CODE,
+    get_account_model_incompatibility,
+)
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
 from app.modules.proxy.repo_bundle import ProxyRepoFactory, ProxyRepositories
 from app.modules.quota_planner.logic import PlannerSettings, build_routing_costs
@@ -328,6 +332,7 @@ class LoadBalancer:
     ) -> AccountSelection:
         excluded_ids = set(exclude_account_ids or ())
         scoped_account_ids = None if account_ids is None else set(account_ids)
+        model_incompatible_ids = get_account_model_incompatibility().blocked_account_ids(model)
         request_ignore_primary_quota_ids = frozenset(ignore_primary_quota_account_ids or ())
         request_burn_first_ids = frozenset(burn_first_account_ids or ())
         # Last failed core-selection result; its per-account exclusion detail
@@ -399,6 +404,27 @@ class LoadBalancer:
                     persist_standard_quota_status=selection_inputs.persist_standard_quota_status,
                     routing_policy_override=selection_inputs.routing_policy_override,
                 )
+            if model_incompatible_ids and selection_inputs.accounts:
+                compatible_accounts = [
+                    account for account in selection_inputs.accounts if account.id not in model_incompatible_ids
+                ]
+                if not compatible_accounts and scoped_account_ids is not None:
+                    # A pinned/preferred lookup for an account that recently
+                    # rejected this model: let the caller fall back to the pool.
+                    return _SelectionInputs(
+                        accounts=[],
+                        latest_primary={},
+                        latest_secondary={},
+                        latest_monthly=selection_inputs.latest_monthly,
+                        quota_planner_settings=selection_inputs.quota_planner_settings,
+                        runtime_accounts=selection_inputs.runtime_accounts,
+                        error_message=f"Account does not currently support model '{model}'",
+                        error_code=ACCOUNT_MODEL_UNSUPPORTED_CODE,
+                    )
+                if compatible_accounts:
+                    # With no compatible account left, keep the pool so the
+                    # client sees the upstream answer rather than a local 503.
+                    selection_inputs = replace(selection_inputs, accounts=compatible_accounts)
             return selection_inputs
 
         selection_inputs = await load_selection_inputs()

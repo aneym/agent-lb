@@ -364,7 +364,9 @@ def test_openai_weekly_only_usage_and_malformed_quota_are_safe(service, capsys):
         [
             _account(
                 provider="openai",
-                usage={"secondaryRemainingPercent": 25},
+                # Shape /api/accounts returns for a Pro account: the missing
+                # five-hour window is null, not absent.
+                usage={"primaryRemainingPercent": None, "secondaryRemainingPercent": 25},
                 additionalQuotas=[{"quotaKey": "codex", "modelIds": None, "primaryWindow": "bad"}],
             )
         ]

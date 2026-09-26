@@ -391,6 +391,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _wrapped_websocket_error_event,
 )
 from app.modules.proxy._service.websocket.protocol import _WebSocketServiceProtocol
+from app.modules.proxy.account_model_incompat import ACCOUNT_MODEL_UNSUPPORTED_CODE
 from app.modules.proxy.affinity import (
     _AffinityPolicy,
     _owner_lookup_session_id_from_headers,
@@ -2875,6 +2876,8 @@ class _WebSocketMixin:
                     upstream_control.suppress_downstream_event = True
                     upstream_control.replay_request_state = request_state
             else:
+                if retry_error_code == ACCOUNT_MODEL_UNSUPPORTED_CODE:
+                    request_state.excluded_account_ids.add(account.id)
                 upstream_control.reconnect_requested = True
                 _prepare_websocket_request_state_for_visible_output_replay(request_state)
                 upstream_control.suppress_downstream_event = True

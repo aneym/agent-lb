@@ -6470,3 +6470,108 @@ def test_backend_responses_websocket_emits_response_failed_before_close_on_upstr
     assert log_calls[0]["request_id"] == "resp_ws_eof_retry"
     assert log_calls[0]["status"] == "error"
     assert log_calls[0]["error_code"] == "stream_incomplete"
+
+
+def test_backend_responses_websocket_fails_over_when_account_plan_lacks_model(app_instance, monkeypatch):
+    # 2026-09-24: an account whose plan silently dropped to free answered every
+    # gpt-6-sol request with this 400 while another Pro account could serve it.
+    # The client must never see it; the rejecting account is skipped and
+    # remembered for the model.
+    from app.modules.proxy.account_model_incompat import get_account_model_incompatibility
+
+    incompatibility = get_account_model_incompatibility()
+    incompatibility.clear()
+    first_upstream = _FakeUpstreamWebSocket(
+        [
+            _FakeUpstreamMessage(
+                "text",
+                text=json.dumps(
+                    {
+                        "type": "error",
+                        "status": 400,
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account.",
+                        },
+                    },
+                    separators=(",", ":"),
+                ),
+            )
+        ]
+    )
+    second_upstream = _FakeUpstreamWebSocket(
+        [
+            _FakeUpstreamMessage(
+                "text",
+                text=json.dumps(
+                    {"type": "response.created", "response": {"id": "resp_ws_model_ok", "status": "in_progress"}},
+                    separators=(",", ":"),
+                ),
+            ),
+            _FakeUpstreamMessage(
+                "text",
+                text=json.dumps(
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp_ws_model_ok",
+                            "status": "completed",
+                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                        },
+                    },
+                    separators=(",", ":"),
+                ),
+            ),
+        ]
+    )
+    upstreams = [first_upstream, second_upstream]
+    excluded_at_connect: list[set[str]] = []
+
+    class _FakeSettingsCache:
+        async def get(self):
+            return _websocket_settings()
+
+    async def allow_firewall(_websocket):
+        return None
+
+    async def allow_proxy_api_key(_authorization: str | None, *, request: object | None = None):
+        return None
+
+    async def fake_connect_proxy_websocket(self, headers, *, request_state, **kwargs):
+        del self, headers, kwargs
+        excluded_at_connect.append(set(request_state.excluded_account_ids))
+        index = len(excluded_at_connect)
+        return SimpleNamespace(id=f"acct_ws_model_{index}"), upstreams[index - 1]
+
+    async def fake_write_request_log(self, **kwargs):
+        del self, kwargs
+
+    monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
+    monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
+    monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
+
+    request_payload = {
+        "type": "response.create",
+        "model": "gpt-6-sol",
+        "instructions": "",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "reply ok"}]}],
+        "stream": True,
+    }
+
+    try:
+        with TestClient(app_instance) as client:
+            with client.websocket_connect("/backend-api/codex/responses") as websocket:
+                websocket.send_text(json.dumps(request_payload))
+                first_event = json.loads(websocket.receive_text())
+                second_event = json.loads(websocket.receive_text())
+
+        assert first_event["type"] == "response.created"
+        assert second_event["type"] == "response.completed"
+        assert excluded_at_connect == [set(), {"acct_ws_model_1"}]
+        assert json.loads(first_upstream.sent_text[0]) == json.loads(second_upstream.sent_text[0])
+        assert incompatibility.blocked_account_ids("gpt-6-sol") == {"acct_ws_model_1"}
+        assert incompatibility.blocked_account_ids("gpt-6-luna") == frozenset()
+    finally:
+        incompatibility.clear()

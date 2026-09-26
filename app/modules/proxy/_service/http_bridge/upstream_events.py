@@ -132,6 +132,7 @@ from app.modules.proxy._service.warmup import (
 from app.modules.proxy._service.warmup import (
     _WarmupUsageSnapshot as _WarmupUsageSnapshot,
 )
+from app.modules.proxy.account_model_incompat import ACCOUNT_MODEL_UNSUPPORTED_CODE
 from app.modules.proxy.affinity import (
     _extract_model_class,
 )
@@ -684,6 +685,8 @@ class _HTTPBridgeUpstreamEventsMixin:
             )
             if status_request_state is not None:
                 setattr(status_request_state, "account_health_error_handled", True)
+                if retry_error_code == ACCOUNT_MODEL_UNSUPPORTED_CODE:
+                    status_request_state.excluded_account_ids.add(session.account.id)
             if status_request_state is not None and status_request_state.previous_response_id is None:
                 async with session.pending_lock:
                     if status_request_state not in session.pending_requests:

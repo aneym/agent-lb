@@ -383,6 +383,10 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_top_level_error_payload,  # noqa: F401
     _wrapped_websocket_error_event,  # noqa: F401
 )
+from app.modules.proxy.account_model_incompat import (
+    get_account_model_incompatibility,
+    unsupported_model_from_message,
+)
 from app.modules.proxy.affinity import (
     _owner_lookup_session_id_from_headers,
     _sticky_key_from_session_header,  # noqa: F401
@@ -1053,6 +1057,12 @@ class _StreamingMixin(_StreamingRetryMixin):
             phase="first_event",
         )
         if _facade()._is_account_neutral_error_code(code):
+            return classified
+        if classified["failure_class"] == "account_model_unsupported":
+            # The account is healthy; only this model is off its plan. Remember
+            # the pair so selection routes the model elsewhere, without a
+            # health penalty that would also drain the account's other models.
+            get_account_model_incompatibility().mark(account.id, unsupported_model_from_message(error.get("message")))
             return classified
         if classified["failure_class"] == "rate_limit":
             await proxy._load_balancer.mark_rate_limit(account, error)

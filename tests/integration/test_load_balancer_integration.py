@@ -773,3 +773,54 @@ async def test_load_balancer_fill_first_cycles_through_accounts(db_setup):
     third = await balancer.select_account(routing_strategy="fill_first")
     assert third.account is not None
     assert third.account.id == accounts[1].id
+
+
+@pytest.mark.asyncio
+async def test_model_rejection_routes_that_model_away_but_keeps_account_for_others(db_setup):
+    from app.modules.proxy.account_model_incompat import get_account_model_incompatibility
+
+    encryptor = TokenEncryptor()
+    now = utcnow()
+    accounts = [
+        Account(
+            id=f"openai-model-incompat-{name}",
+            provider="openai",
+            email=f"openai-model-incompat-{name}@example.com",
+            plan_type="pro",
+            access_token_encrypted=encryptor.encrypt(f"access-{name}"),
+            refresh_token_encrypted=encryptor.encrypt(f"refresh-{name}"),
+            last_refresh=now,
+            status=AccountStatus.ACTIVE,
+            deactivation_reason=None,
+        )
+        for name in ("rejecting", "capable")
+    ]
+    async with SessionLocal() as session:
+        for account in accounts:
+            await AccountsRepository(session).upsert(account)
+    rejecting, capable = (account.id for account in accounts)
+    incompatibility = get_account_model_incompatibility()
+    incompatibility.clear()
+    get_account_selection_cache().invalidate()
+    balancer = LoadBalancer(_repo_factory)
+    try:
+        incompatibility.mark(rejecting, "gpt-6-sol")
+        for _ in range(4):
+            routed = await balancer.select_account(provider="openai", model="gpt-6-sol")
+            assert routed.account is not None and routed.account.id == capable
+        pinned = await balancer.select_account(provider="openai", model="gpt-6-sol", account_ids=[rejecting])
+        other_model = await balancer.select_account(provider="openai", model="gpt-6-luna", account_ids=[rejecting])
+        incompatibility.mark(capable, "gpt-6-sol")
+        none_capable = await balancer.select_account(provider="openai", model="gpt-6-sol")
+    finally:
+        incompatibility.clear()
+
+    assert pinned.account is None
+    assert pinned.error_code == "account_model_unsupported"
+    assert other_model.account is not None and other_model.account.id == rejecting
+    # With every account rejecting the model, keep routing so the client gets
+    # the upstream's own answer, not a local no-accounts error.
+    assert none_capable.account is not None
+    async with SessionLocal() as session:
+        persisted = await session.get(Account, rejecting)
+        assert persisted is not None and persisted.status == AccountStatus.ACTIVE
