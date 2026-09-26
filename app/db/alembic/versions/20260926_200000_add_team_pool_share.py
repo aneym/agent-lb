@@ -16,8 +16,13 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        # ADD COLUMN takes ACCESS EXCLUSIVE; fail fast (and let the deploy roll back)
+        # rather than queue live traffic behind a long-running transaction.
+        op.execute("SET LOCAL lock_timeout = '5s'")
     # A model-created schema or remapped legacy revision may already have this field.
-    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("team_members")}
+    columns = {column["name"] for column in sa.inspect(bind).get_columns("team_members")}
     if "pool_share_percent" not in columns:
         op.add_column("team_members", sa.Column("pool_share_percent", sa.Numeric(6, 3, asdecimal=False), nullable=True))
 

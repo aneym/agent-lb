@@ -61,6 +61,13 @@ def select_proxy_authorization(authorization: str | None, x_api_key: str | None)
     return authorization
 
 
+def select_member_key_authorization(authorization: str | None, x_api_key: str | None) -> str | None:
+    """The selected agent-lb key as a bearer, or None; never a client's upstream credential."""
+    selected = select_proxy_authorization(authorization, x_api_key)
+    token = _extract_bearer_token(selected)
+    return selected if token and token.startswith(API_KEY_TOKEN_PREFIX) else None
+
+
 async def validate_proxy_api_key(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
