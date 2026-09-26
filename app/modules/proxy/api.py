@@ -34,6 +34,8 @@ from app.core import usage as usage_core
 from app.core.anthropic.models import AnthropicDefinedToolDefinition, AnthropicMessageRequest
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import (
+    select_member_key_authorization,
+    select_proxy_authorization,
     set_openai_error_format,
     validate_codex_usage_identity,
     validate_proxy_api_key,
@@ -51,7 +53,7 @@ from app.core.errors import (
     openai_error,
     response_failed_event,
 )
-from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
+from app.core.exceptions import ProxyAuthError, ProxyRateLimitError, TeamMemberOverCapError, TeamMemberSuspendedError
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, bridge_public_contract_error_total
 from app.core.middleware.api_firewall import _parse_trusted_proxy_networks, resolve_connection_client_ip
 from app.core.openai.chat_requests import ChatCompletionsRequest
@@ -167,6 +169,7 @@ from app.modules.proxy.schemas import (
     V1UsageLimitResponse,
     V1UsageMemberResponse,
     V1UsageMemberWindowResponse,
+    V1UsagePoolWindowResponse,
     V1UsageResponse,
     WarmupFailedAccount,
     WarmupRequest,
@@ -739,6 +742,17 @@ async def responses_websocket(
     if denial is not None:
         await websocket.send_denial_response(denial)
         return
+    try:
+        await check_member_gate(api_key, model=None)
+    except (TeamMemberOverCapError, TeamMemberSuspendedError) as exc:
+        await websocket.send_denial_response(
+            JSONResponse(
+                status_code=exc.status_code,
+                content=openai_error(exc.code, exc.message, error_type=exc.error_type),
+                headers=exc.headers if isinstance(exc, TeamMemberOverCapError) else None,
+            )
+        )
+        return
     turn_state = proxy_affinity_module.ensure_downstream_turn_state(websocket.headers)
     await websocket.accept(headers=proxy_affinity_module.build_downstream_turn_state_accept_headers(turn_state))
     forwarded_headers = dict(websocket.headers)
@@ -1172,6 +1186,17 @@ async def v1_responses_websocket(
     if denial is not None:
         await websocket.send_denial_response(denial)
         return
+    try:
+        await check_member_gate(api_key, model=None)
+    except (TeamMemberOverCapError, TeamMemberSuspendedError) as exc:
+        await websocket.send_denial_response(
+            JSONResponse(
+                status_code=exc.status_code,
+                content=openai_error(exc.code, exc.message, error_type=exc.error_type),
+                headers=exc.headers if isinstance(exc, TeamMemberOverCapError) else None,
+            )
+        )
+        return
     turn_state = proxy_affinity_module.ensure_downstream_turn_state(websocket.headers)
     await websocket.accept(headers=proxy_affinity_module.build_downstream_turn_state_accept_headers(turn_state))
     forwarded_headers = dict(websocket.headers)
@@ -1326,6 +1351,16 @@ def _to_v1_usage_member_response(status: TeamMemberSelfStatus | None) -> V1Usage
         status=status.status,
         gate=status.gate,
         allowed_models=status.allowed_models,
+        pool_share_percent=status.pool_share_percent,
+        pool_windows=[
+            V1UsagePoolWindowResponse(
+                window=window.window,
+                used_percent=window.used_percent,
+                limit_percent=window.limit_percent,
+                reset_at=window.reset_at.isoformat() + "Z",
+            )
+            for window in status.pool_windows
+        ],
         windows=[
             V1UsageMemberWindowResponse(
                 window=window.window,
@@ -3574,7 +3609,7 @@ async def _validate_proxy_websocket_request(
         return None, denial
     try:
         api_key = await _validate_proxy_api_key_authorization_for_connection(
-            websocket.headers.get("authorization"),
+            select_proxy_authorization(websocket.headers.get("authorization"), websocket.headers.get("x-api-key")),
             websocket,
         )
     except ProxyAuthError as exc:
@@ -3589,9 +3624,14 @@ async def _validate_internal_bridge_api_key(
     request: Request,
 ) -> tuple[ApiKeyData | None, JSONResponse | None]:
     dashboard_settings = await get_settings_cache().get()
-    if not dashboard_settings.api_key_auth_enabled:
-        return None, None
     try:
+        if not dashboard_settings.api_key_auth_enabled:
+            # Peers stay keyless, but a forwarded member key is still validated so the
+            # owner attributes the request to it (team usage and pool share).
+            member_authorization = select_member_key_authorization(request.headers.get("authorization"), None)
+            if member_authorization is None:
+                return None, None
+            return await validate_proxy_api_key_authorization(member_authorization), None
         api_key = await _validate_proxy_api_key_authorization_for_connection(
             request.headers.get("authorization"),
             request,

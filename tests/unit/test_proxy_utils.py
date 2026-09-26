@@ -178,6 +178,7 @@ def test_trim_websocket_previous_response_input_items_keeps_non_replay_prefix() 
 def test_filter_inbound_headers_strips_auth_and_account():
     headers = {
         "Authorization": "Bearer x",
+        "X-Api-Key": "sk-clb-member-key",
         "chatgpt-account-id": "acc_1",
         "Content-Encoding": "gzip",
         "Content-Type": "application/json",
@@ -185,6 +186,7 @@ def test_filter_inbound_headers_strips_auth_and_account():
     }
     filtered = filter_inbound_headers(headers)
     assert "Authorization" not in filtered
+    assert "X-Api-Key" not in filtered
     assert "chatgpt-account-id" not in filtered
     assert filtered["Content-Encoding"] == "gzip"
     assert filtered["Content-Type"] == "application/json"
@@ -253,9 +255,15 @@ def test_request_log_useragent_fields_handle_missing_and_blank_headers(
 
 
 def test_build_upstream_headers_overrides_auth():
-    inbound = {"X-Request-Id": "req_1"}
+    inbound = {
+        "X-Request-Id": "req_1",
+        "authorization": "Bearer chatgpt-SENTINEL-abc123",
+        "x-api-key": "sk-clb-member-key",
+    }
     headers = _build_upstream_headers(inbound, "token", "acc_2")
     assert headers["Authorization"] == "Bearer token"
+    assert not any(key.lower() == "x-api-key" for key in headers)
+    assert not any(key.lower() == "authorization" and key != "Authorization" for key in headers)
     assert headers["chatgpt-account-id"] == "acc_2"
     assert headers["Accept"] == "text/event-stream"
     assert headers["Content-Type"] == "application/json"
@@ -787,6 +795,8 @@ def test_build_upstream_websocket_headers_strip_hop_by_hop_headers_and_connectio
             "Proxy-Connection": "keep-alive",
             "X-Handshake-Debug": "1",
             "User-Agent": "codex-test",
+            "authorization": "Bearer chatgpt-SENTINEL-abc123",
+            "x-api-key": "sk-clb-member-key",
         },
         "token",
         "acc_2",
@@ -798,6 +808,8 @@ def test_build_upstream_websocket_headers_strip_hop_by_hop_headers_and_connectio
     assert "Transfer-Encoding" not in headers
     assert "Proxy-Connection" not in headers
     assert "X-Handshake-Debug" not in headers
+    assert "x-api-key" not in headers
+    assert "authorization" not in headers
     assert headers["Authorization"] == "Bearer token"
     assert headers["chatgpt-account-id"] == "acc_2"
     assert headers["User-Agent"] == "codex-test"

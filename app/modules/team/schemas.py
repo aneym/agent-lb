@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -29,6 +29,13 @@ class TeamMemberKeyResponse(DashboardModel):
     last_used_at: datetime | None = None
 
 
+class TeamPoolWindowResponse(DashboardModel):
+    window: str
+    used_percent: float
+    limit_percent: float
+    reset_at: datetime
+
+
 class TeamMemberResponse(DashboardModel):
     id: str
     name: str
@@ -46,10 +53,22 @@ class TeamMemberResponse(DashboardModel):
     updated_at: datetime
     usage: TeamUsageResponse
     gate: str
+    pool_share_percent: float | None = None
+    pool_share: list[TeamPoolWindowResponse] = Field(default_factory=list)
+    pool_share_known: bool = False
     keys: list[TeamMemberKeyResponse] = Field(default_factory=list)
 
 
-class TeamMemberCreateRequest(DashboardModel):
+class _PoolShareRequest(DashboardModel):
+    @field_validator("pool_share_percent", check_fields=False)
+    @classmethod
+    def validate_pool_share_precision(cls, value: float | None) -> float | None:
+        if value is not None and abs(value * 1000 - round(value * 1000)) > 1e-8:
+            raise ValueError("pool_share_percent must have at most three decimal places")
+        return value
+
+
+class TeamMemberCreateRequest(_PoolShareRequest):
     name: str = Field(min_length=1, max_length=128)
     email: str | None = Field(default=None, max_length=320)
     status: str | None = Field(default=None, pattern=TEAM_STATUS_PATTERN)
@@ -59,11 +78,12 @@ class TeamMemberCreateRequest(DashboardModel):
     token_cap_day: int | None = Field(default=None, gt=0)
     token_cap_week: int | None = Field(default=None, gt=0)
     token_cap_month: int | None = Field(default=None, gt=0)
+    pool_share_percent: float | None = Field(default=None, ge=0.001, le=100)
     allowed_models: list[str] | None = None
     notes: str | None = Field(default=None, max_length=4000)
 
 
-class TeamMemberUpdateRequest(DashboardModel):
+class TeamMemberUpdateRequest(_PoolShareRequest):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     email: str | None = Field(default=None, max_length=320)
     status: str | None = Field(default=None, pattern=TEAM_STATUS_PATTERN)
@@ -73,6 +93,7 @@ class TeamMemberUpdateRequest(DashboardModel):
     token_cap_day: int | None = Field(default=None, gt=0)
     token_cap_week: int | None = Field(default=None, gt=0)
     token_cap_month: int | None = Field(default=None, gt=0)
+    pool_share_percent: float | None = Field(default=None, ge=0.001, le=100)
     allowed_models: list[str] | None = None
     notes: str | None = Field(default=None, max_length=4000)
 

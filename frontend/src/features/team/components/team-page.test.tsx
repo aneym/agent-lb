@@ -46,6 +46,9 @@ function createMember(overrides: Partial<TeamMember> = {}): TeamMember {
       month: { costUsd: 9, tokens: 20_000 },
     },
     gate: "ok",
+    poolSharePercent: null,
+    poolShare: [],
+    poolShareKnown: false,
     keys: [],
     ...overrides,
   };
@@ -105,6 +108,27 @@ describe("TeamPage", () => {
     expect(within(row).getByText("$4.00 / no cap")).toBeInTheDocument();
   });
 
+  it("shows the highest-pressure pool window, the other window, and unknown/unset shares", () => {
+    renderTeamPage({ members: [
+      createMember({
+        poolSharePercent: 25, poolShareKnown: true,
+        poolShare: [
+          { window: "pool_5h", usedPercent: 2, limitPercent: 25, resetAt: "2026-09-26T12:00:00Z" },
+          { window: "pool_week", usedPercent: 3.1, limitPercent: 25, resetAt: "2026-09-27T12:00:00Z" },
+        ],
+      }),
+      createMember({ id: "unknown", poolSharePercent: 25, poolShareKnown: false }),
+      createMember({ id: "unset", poolSharePercent: null }),
+    ] });
+
+    const row = screen.getByTestId("team-member-row-member-1");
+    expect(within(row).getByText("3.1% of 25% weekly")).toHaveAttribute(
+      "title", expect.stringContaining("2% of 25% 5-hour"),
+    );
+    expect(within(screen.getByTestId("team-member-row-unknown")).getByText("unknown")).toBeInTheDocument();
+    expect(within(screen.getByTestId("team-member-row-unset")).getByText("-")).toBeInTheDocument();
+  });
+
   it("shows the empty state when there are no members", () => {
     renderTeamPage({ members: [] });
 
@@ -161,6 +185,50 @@ describe("TeamPage", () => {
     const drawer = await screen.findByRole("dialog", { name: "Edit team member" });
     expect(within(drawer).getByLabelText("Name")).toHaveValue("Ada");
     expect(within(drawer).getByLabelText("Cost cap / day ($)")).toHaveValue(5);
+  });
+
+  it("sets and clears the pool share when editing a member", async () => {
+    const user = userEvent.setup();
+    const updateMutation = createMutationMock();
+    renderTeamPage({ members: [createMember({ poolSharePercent: 25 })], updateMutation });
+    await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const drawer = await screen.findByRole("dialog", { name: "Edit team member" });
+    const share = within(drawer).getByLabelText("Share of pool (%)");
+    expect(share).toHaveValue(25);
+    await user.clear(share);
+    await user.click(within(drawer).getByRole("button", { name: "Save" }));
+    expect(updateMutation.mutateAsync).toHaveBeenCalledWith({
+      memberId: "member-1", payload: expect.objectContaining({ poolSharePercent: null }),
+    });
+
+  });
+
+  it("sets a pool share on a new member", async () => {
+    const user = userEvent.setup();
+    const createMutation = createMutationMock();
+    renderTeamPage({ createMutation });
+    await user.click(screen.getByRole("button", { name: "Add member" }));
+    const drawer = await screen.findByRole("dialog", { name: "Add team member" });
+    await user.type(within(drawer).getByLabelText("Name"), "Grace");
+    await user.type(within(drawer).getByLabelText("Share of pool (%)"), "3.1");
+    await user.click(within(drawer).getByRole("button", { name: "Add member" }));
+    expect(createMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ poolSharePercent: 3.1 }));
+  });
+
+  it.each(["0", "101", "-5"])('rejects an invalid pool share of %s', async (value) => {
+    const user = userEvent.setup();
+    const createMutation = createMutationMock();
+    renderTeamPage({ createMutation });
+    await user.click(screen.getByRole("button", { name: "Add member" }));
+    const drawer = await screen.findByRole("dialog", { name: "Add team member" });
+    await user.type(within(drawer).getByLabelText("Name"), "Grace");
+    const share = within(drawer).getByLabelText("Share of pool (%)");
+    await user.type(share, value);
+    expect(share).toHaveAttribute("aria-invalid", "true");
+    expect(within(drawer).getByRole("alert")).toHaveTextContent("at most 100%");
+    expect(within(drawer).getByRole("button", { name: "Add member" })).toBeDisabled();
+    expect(createMutation.mutateAsync).not.toHaveBeenCalled();
   });
 
   it("surfaces list errors", () => {

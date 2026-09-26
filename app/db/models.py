@@ -762,6 +762,7 @@ class TeamMember(Base):
     token_cap_day: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     token_cap_week: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     token_cap_month: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    pool_share_percent: Mapped[float | None] = mapped_column(Numeric(6, 3, asdecimal=False), nullable=True)
     allowed_models: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

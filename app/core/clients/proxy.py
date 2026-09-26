@@ -77,6 +77,7 @@ from app.core.utils.sse import format_sse_event
 
 IGNORE_INBOUND_HEADERS = {
     "authorization",
+    "x-api-key",
     "chatgpt-account-id",
     "content-length",
     "host",
@@ -464,7 +465,7 @@ def _build_upstream_headers(
     account_id: str | None,
     accept: str = "text/event-stream",
 ) -> dict[str, str]:
-    headers = dict(inbound)
+    headers = {key: value for key, value in inbound.items() if key.lower() not in {"authorization", "x-api-key"}}
     lower_keys = {key.lower() for key in headers}
     if "x-request-id" not in lower_keys and "request-id" not in lower_keys:
         request_id = get_request_id()
@@ -514,7 +515,7 @@ def _build_upstream_websocket_headers(
         connected_header_tokens.update(
             token.strip().lower() for token in value.split(",") if isinstance(value, str) and token.strip()
         )
-    blocked_header_names = _HOP_BY_HOP_HEADER_NAMES | connected_header_tokens
+    blocked_header_names = _HOP_BY_HOP_HEADER_NAMES | connected_header_tokens | {"authorization", "x-api-key"}
     headers = {key: value for key, value in inbound.items() if key.lower() not in blocked_header_names}
     lower_keys = {key.lower() for key in headers}
     if "x-request-id" not in lower_keys and "request-id" not in lower_keys:

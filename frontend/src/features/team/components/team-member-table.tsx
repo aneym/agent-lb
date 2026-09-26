@@ -20,7 +20,34 @@ import {
 } from "@/components/ui/table";
 import { TeamGateChip } from "@/features/team/components/team-gate-chip";
 import { formatUsageAgainstCap } from "@/features/team/usage-format";
-import type { TeamMember } from "@/features/team/schemas";
+import type { TeamMember, TeamPoolWindow } from "@/features/team/schemas";
+
+function windowLabel(window: string): string {
+  if (window === "pool_week") return "weekly";
+  if (window === "pool_5h") return "5-hour";
+  return window.startsWith("pool_") && window.endsWith("m")
+    ? `${window.slice(5, -1)}-minute`
+    : window;
+}
+
+function shareLabel(window: TeamPoolWindow): string {
+  return `${window.usedPercent.toLocaleString(undefined, { maximumFractionDigits: 1 })}% of ${window.limitPercent.toLocaleString()}% ${windowLabel(window.window)}`;
+}
+
+function PoolShareCell({ member }: { member: TeamMember }) {
+  if (member.poolSharePercent === null) return <>-</>;
+  if (!member.poolShareKnown || member.poolShare.length === 0) return <>unknown</>;
+
+  const windows = [...member.poolShare].sort(
+    (a, b) => b.usedPercent / b.limitPercent - a.usedPercent / a.limitPercent,
+  );
+  const [highest, ...otherWindows] = windows;
+  return (
+    <span title={otherWindows.map((window) => `${shareLabel(window)} (resets ${window.resetAt})`).join("; ") || undefined}>
+      {shareLabel(highest)}
+    </span>
+  );
+}
 
 export type TeamMemberTableProps = {
   members: TeamMember[];
@@ -51,23 +78,26 @@ export function TeamMemberTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border">
-      <Table className="min-w-5xl table-fixed">
+      <Table className="min-w-[85rem] table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[18%] min-w-[11rem] pl-4 text-xs font-medium text-muted-foreground">
+            <TableHead className="w-[15%] min-w-[11rem] pl-4 text-xs font-medium text-muted-foreground">
               Name
             </TableHead>
             <TableHead className="w-[9%] min-w-[6rem] text-xs font-medium text-muted-foreground">
               Status
             </TableHead>
-            <TableHead className="w-[17%] min-w-[11rem] text-xs font-medium text-muted-foreground">
+            <TableHead className="w-[12%] min-w-[11rem] text-xs font-medium text-muted-foreground">
               Today
             </TableHead>
-            <TableHead className="w-[17%] min-w-[11rem] text-xs font-medium text-muted-foreground">
+            <TableHead className="w-[12%] min-w-[11rem] text-xs font-medium text-muted-foreground">
               This week
             </TableHead>
-            <TableHead className="w-[17%] min-w-[11rem] text-xs font-medium text-muted-foreground">
+            <TableHead className="w-[12%] min-w-[11rem] text-xs font-medium text-muted-foreground">
               This month
+            </TableHead>
+            <TableHead className="w-[16%] min-w-[11rem] text-xs font-medium text-muted-foreground">
+              Pool share
             </TableHead>
             <TableHead className="w-[9%] min-w-[6rem] text-xs font-medium text-muted-foreground">
               Gate
@@ -104,6 +134,9 @@ export function TeamMemberTable({
               </TableCell>
               <TableCell className="text-xs tabular-nums whitespace-normal">
                 {formatUsageAgainstCap(member, "month")}
+              </TableCell>
+              <TableCell className="text-xs tabular-nums whitespace-normal">
+                <PoolShareCell member={member} />
               </TableCell>
               <TableCell>
                 <TeamGateChip gate={member.gate} />

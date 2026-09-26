@@ -261,6 +261,60 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("header", "valid", "expected"),
+    [
+        ("Bearer sk-clb-member", True, "attributed"),
+        ("  bearer   sk-clb-member ", True, "attributed"),
+        ("Bearer sk-clb-member", False, "refused"),
+        ("Basic sk-clb-member", True, "keyless"),
+        ("Bearer chatgpt-token", True, "keyless"),
+    ],
+)
+async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_key_when_auth_disabled(
+    monkeypatch, header: str, valid: bool, expected: str
+):
+    async def fake_settings():
+        return SimpleNamespace(api_key_auth_enabled=False)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/internal/bridge/responses",
+            "headers": [(b"authorization", header.encode())],
+            "client": ("10.0.0.12", 12345),
+        }
+    )
+    member_key = SimpleNamespace(id="member-key")
+    seen: list[str | None] = []
+
+    async def validate(authorization: str | None, *, request: Request | None = None):
+        seen.append(authorization)
+        assert request is None
+        if not valid:
+            raise ProxyAuthError("Invalid API key")
+        return member_key
+
+    monkeypatch.setattr(proxy_api_module, "get_settings_cache", lambda: SimpleNamespace(get=fake_settings))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", validate)
+
+    api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)
+
+    if expected == "attributed":
+        assert api_key is member_key
+        assert response is None
+    elif expected == "refused":
+        # A forwarded member key that fails validation is refused, never downgraded to keyless.
+        assert seen == ["Bearer sk-clb-member"]
+        assert api_key is None
+        assert response is not None and response.status_code == 401
+    else:
+        # Anything that is not a bearer sk-clb key stays keyless for peers.
+        assert (api_key, response, seen) == (None, None, [])
+
+
+@pytest.mark.asyncio
 async def test_validate_internal_bridge_api_key_preserves_local_request_exemption(monkeypatch):
     async def fake_settings():
         return SimpleNamespace(api_key_auth_enabled=True)
