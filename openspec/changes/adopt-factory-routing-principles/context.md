@@ -1,0 +1,5 @@
+## Evidence and decisions
+
+The measured implement admission table (2026-09-26) gives gpt-implementer when the Codex pool is healthy or low, opus-seat when gpt-implementer is recorded down and both auditor and Anthropic fallback pools qualify, and no route when Codex is exhausted. Mechanical work also starts with gpt-implementer. E6 favored Sol over Luna and Sonnet as the implementation default; E7 favored fresh cross-vendor review and an any-fail three-lens panel; E10 favored Sol medium over low per accepted unit.
+
+Diff identity uses `git diff --cached | git patch-id --stable | cut -c1-12`: a direct-to-main flow rebases frequently, and whole-file context changes as main changes. A hunk moved with identical context may keep its id. No push-verdict check is introduced: the verifier records the id and the commit records its verdict, rather than weakening the flow with an incomplete automatic gate. The runtime router's fallback is documented, not changed: its existing min_pace and auditor admission produce the measured results. Local account and quota steers remain local, not in public policy.

@@ -15,6 +15,4 @@ Preserve unrelated work and stay within the authorized scope. Ask before destruc
 
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
 
-Studio is Alex's main machine. When Alex says "working on Book," keep the work on Studio unless asked otherwise and open review pages in Aside on Book. Send Tailscale URLs for review links, not localhost-only URLs. If no route is available, say so.
-
 Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed.

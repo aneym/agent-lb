@@ -89,6 +89,24 @@ MANAGED_AGENTS = (
         Path("agents/verifier.md"),
     ),
     (
+        Path(".claude/agents/gpt-implementer.md"),
+        Path(".agent-lb/managed/coding-agents/gpt-implementer"),
+        "agent-lb:gpt-implementer:v1\n",
+        Path("agents/gpt-implementer.md"),
+    ),
+    (
+        Path(".claude/agents/gpt-explorer.md"),
+        Path(".agent-lb/managed/coding-agents/gpt-explorer"),
+        "agent-lb:gpt-explorer:v1\n",
+        Path("agents/gpt-explorer.md"),
+    ),
+    (
+        Path(".claude/agents/sol-consult.md"),
+        Path(".agent-lb/managed/coding-agents/sol-consult"),
+        "agent-lb:sol-consult:v1\n",
+        Path("agents/sol-consult.md"),
+    ),
+    (
         Path(".claude/hooks/subagent-closeout.py"),
         Path(".agent-lb/managed/coding-agents/subagent-closeout"),
         "agent-lb:subagent-closeout:v1\n",

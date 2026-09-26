@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Check the installed coding-agent routing against this policy directory.
+"""Check coding-agent routing against this policy directory.
 
 The source is the directory this script lives in (the repo's
-config/coding-agents or its ~/.agents/policy mirror), so the same checks run
-from either copy. Lineup (owner, 2026-09-22): the newest Opus or Sol plans
-and drives, nothing runs on Fable or a retired model, models are named by
-family alias and resolved to the newest served model, and implementation is
-cheap and audited cross-vendor.
+config/coding-agents or its ~/.agents/policy mirror). Source-only mode checks
+this directory without consulting the installed home or a live LB; full mode
+also checks the installation, launchers and live model resolution.
 """
 
 from __future__ import annotations
 
+import argparse
 import fnmatch
 import json
 import os
@@ -20,6 +19,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+PARSER = argparse.ArgumentParser(description="Verify coding-agent routing policy")
+PARSER.add_argument("--source-only", action="store_true", help="Check source without installed policy or an LB")
+SOURCE_ONLY = PARSER.parse_args().source_only
 HOME = Path(os.environ.get("AGENT_LB_USER_HOME", Path.home()))
 SOURCE = Path(__file__).resolve().parent
 CANONICAL = HOME / ".agents" / "policy" / "coding-agents"
@@ -42,6 +44,9 @@ MANAGED = (
     ("codex-verifier", ".claude/agents/codex-verifier.md", "agents/codex-verifier.md"),
     ("codex-test-runner", ".claude/agents/codex-test-runner.md", "agents/codex-test-runner.md"),
     ("verifier", ".claude/agents/verifier.md", "agents/verifier.md"),
+    ("gpt-implementer", ".claude/agents/gpt-implementer.md", "agents/gpt-implementer.md"),
+    ("gpt-explorer", ".claude/agents/gpt-explorer.md", "agents/gpt-explorer.md"),
+    ("sol-consult", ".claude/agents/sol-consult.md", "agents/sol-consult.md"),
     ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
     ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
 )
@@ -70,53 +75,54 @@ def frontmatter_model(text: str) -> str | None:
     return None
 
 
-# Policy mirror and CLAUDE.md block.
-for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json"):
-    check(read(CANONICAL / name) == read(SOURCE / name) != "", f"{CANONICAL / name} matches {SOURCE / name}")
+settings = {}
+if not SOURCE_ONLY:
+    # Policy mirror and CLAUDE.md block.
+    for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json"):
+        check(read(CANONICAL / name) == read(SOURCE / name) != "", f"{CANONICAL / name} matches {SOURCE / name}")
 
-claude_doc = HOME / ".claude" / "CLAUDE.md"
-claude_text = read(claude_doc)
-check(
-    claude_text.count(MARKER_START) == 1 and claude_text.count(MARKER_END) == 1,
-    f"{claude_doc} has exactly one managed routing block",
-)
-check(read(SOURCE / "claude-adapter.md").strip() in claude_text, f"{claude_doc} routing block matches the adapter")
-check(
-    all(value in claude_text for value in ("Aside on Book", "Tailscale URLs", "MACHINES.md")),
-    f"{claude_doc} keeps the approved delivery defaults",
-)
-check(MARKER_START not in read(HOME / ".codex" / "AGENTS.md"), "~/.codex/AGENTS.md carries no managed routing block")
+    claude_doc = HOME / ".claude" / "CLAUDE.md"
+    claude_text = read(claude_doc)
+    check(
+        claude_text.count(MARKER_START) == 1 and claude_text.count(MARKER_END) == 1,
+        f"{claude_doc} has exactly one managed routing block",
+    )
+    check(read(SOURCE / "claude-adapter.md").strip() in claude_text, f"{claude_doc} routing block matches the adapter")
+    check(
+        MARKER_START not in read(HOME / ".codex" / "AGENTS.md"),
+        "~/.codex/AGENTS.md carries no managed routing block",
+    )
 
-settings_path = HOME / ".claude" / "settings.json"
-try:
-    settings = json.loads(read(settings_path) or "{}")
-except json.JSONDecodeError:
-    settings = {}
-    check(False, f"{settings_path} contains valid JSON")
-check(settings.get("model") == "opus", "direct Claude Code default model is opus (Opus 5.5)")
-check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
-guard_registered = any(
-    "seat-guard.py" in hook.get("command", "")
-    for group in settings.get("hooks", {}).get("PreToolUse", [])
-    if group.get("matcher") == "Agent"
-    for hook in group.get("hooks", [])
-)
-check(guard_registered, "seat guard is registered as the Agent PreToolUse hook")
+    settings_path = HOME / ".claude" / "settings.json"
+    try:
+        settings = json.loads(read(settings_path) or "{}")
+    except json.JSONDecodeError:
+        settings = {}
+        check(False, f"{settings_path} contains valid JSON")
+    check(settings.get("model") == "opus", "direct Claude Code default model is opus (Opus 5.5)")
+    check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
+    guard_registered = any(
+        "seat-guard.py" in hook.get("command", "")
+        for group in settings.get("hooks", {}).get("PreToolUse", [])
+        if group.get("matcher") == "Agent"
+        for hook in group.get("hooks", [])
+    )
+    check(guard_registered, "seat guard is registered as the Agent PreToolUse hook")
 
-# Managed seat definitions and the hook.
-for name, installed, source in MANAGED:
-    check(read(HOME / installed) == read(SOURCE / source) != "", f"{installed} matches {source}")
-    owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
-    check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
+    # Managed seat definitions and the hook.
+    for name, installed, source in MANAGED:
+        check(read(HOME / installed) == read(SOURCE / source) != "", f"{installed} matches {source}")
+        owner = HOME / ".agent-lb" / "managed" / "coding-agents" / name
+        check(read(owner) == f"agent-lb:{name}:v1\n", f"{owner} records installer ownership")
 
-for retired_seat in ("astra", "implementer"):
-    installed = (HOME / ".claude" / "agents" / f"{retired_seat}.md").exists()
-    check(not installed, f"the retired {retired_seat} seat is not installed")
+    for retired_seat in ("astra", "implementer"):
+        installed = (HOME / ".claude" / "agents" / f"{retired_seat}.md").exists()
+        check(not installed, f"the retired {retired_seat} seat is not installed")
 
-# No subagent type runs on Fable or Astra, managed or not.
-for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
-    model = frontmatter_model(read(path)) or ""
-    check(not forbidden(model), f"{path.name} does not pin a Fable model ({model or 'unset'})")
+    # No subagent type runs on Fable or Astra, managed or not.
+    for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
+        model = frontmatter_model(read(path)) or ""
+        check(not forbidden(model), f"{path.name} does not pin a Fable model ({model or 'unset'})")
 for name in ("planner", "plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
@@ -125,29 +131,35 @@ check(
     "codex-verifier forwards to the newest Sol at xhigh",
 )
 
-# Routing table: installed copy equals the source apart from learned overrides.
-table_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
+# Routing table: installed copy equals source except learned overrides in full mode.
 try:
-    live_table = json.loads(read(table_path) or "{}")
     source_table = json.loads(read(SOURCE / "routing-table.json") or "{}")
 except json.JSONDecodeError:
-    live_table, source_table = {}, {}
+    source_table = {}
     check(False, "routing tables are valid JSON")
-strip = lambda table: {key: value for key, value in table.items() if key != "overrides"}  # noqa: E731
-check(bool(source_table) and strip(live_table) == strip(source_table), f"{table_path} matches the source table")
+if not SOURCE_ONLY:
+    table_path = HOME / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
+    try:
+        live_table = json.loads(read(table_path) or "{}")
+    except json.JSONDecodeError:
+        live_table = {}
+        check(False, "routing tables are valid JSON")
+    strip = lambda table: {key: value for key, value in table.items() if key != "overrides"}  # noqa: E731
+    check(bool(source_table) and strip(live_table) == strip(source_table), f"{table_path} matches the source table")
 classes = source_table.get("classes", {})
 chain_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
 check(bool(chain_models) and not any(forbidden(m) for m in chain_models), "no routing-table class runs on Fable")
 check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
 # Every seat the router can name has a definition here; the ccgpt seats
 # (gpt-implementer, luna-implementer, ...) are local and unmanaged.
-chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])})
-missing_seats = [seat for seat in chain_seats if not (HOME / ".claude" / "agents" / f"{seat}.md").is_file()]
-check(
-    not missing_seats,
-    "every routing-table seat has a definition in ~/.claude/agents"
-    + (f": missing {missing_seats}" if missing_seats else ""),
-)
+if not SOURCE_ONLY:
+    chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])})
+    missing_seats = [seat for seat in chain_seats if not (HOME / ".claude" / "agents" / f"{seat}.md").is_file()]
+    check(
+        not missing_seats,
+        "every routing-table seat has a definition in ~/.claude/agents"
+        + (f": missing {missing_seats}" if missing_seats else ""),
+    )
 plan_chain = [entry.get("model") for entry in classes.get("plan", {}).get("chain", [])]
 check(
     plan_chain[:1] in (["opus-latest"], ["sol-latest"]), f"plan leads with opus-latest or sol-latest ({plan_chain[:1]})"
@@ -163,37 +175,182 @@ for name in ("implement", "mechanical"):
     check(
         audit.get("required") is True
         and by_vendor.get("anthropic", {}).get("model") == "sol-latest"
-        and all(by_vendor.get(v, {}).get("model") == "opus-latest" for v in ("openai", "cursor", "glm", "kimi")),
+        and all(
+            by_vendor.get(v, {}).get("model") == "opus-latest"
+            for v in ("openai", "cursor", "devin", "glm", "kimi")
+        ),
         f"{name} closeouts are audited cross-vendor (newest Opus / newest Sol)",
     )
+
+# Factory invariants are source checks in both modes.
+def factory(rule: str, valid: bool, detail: str) -> None:
+    check(valid, f"factory:{rule} {detail}")
+
+
+heads = [classes.get(name, {}).get("chain", [{}])[0] for name in ("implement", "mechanical")]
+factory(
+    "implement-head",
+    all({key: head.get(key) for key in ("seat", "model", "vendor", "effort")}
+        == {"seat": "gpt-implementer", "model": "sol-latest", "vendor": "openai", "effort": "medium"}
+        for head in heads),
+    "implement and mechanical heads are gpt-implementer/sol-latest/openai/medium",
+)
+off_default = source_table.get("off_default", [])
+off_seats = {item.get("seat") for item in off_default}
+factory(
+    "off-default",
+    bool(off_default) and all(all(item.get(field) for field in ("seat", "since", "evidence", "returns_when"))
+        for item in off_default)
+    and not any(entry.get("seat") in off_seats for spec in classes.values() for entry in spec.get("chain", [])),
+    "dated off-default seats are absent from chains",
+)
+expected_auditors = {
+    vendor: {"seat": "verifier", "model": "opus-latest", "vendor": "anthropic", "effort": "high"}
+    for vendor in ("openai", "cursor", "devin", "glm", "kimi")
+}
+expected_auditors["anthropic"] = {
+    "seat": "codex-verifier", "model": "sol-latest", "vendor": "openai", "effort": "xhigh"
+}
+for task_class in ("implement", "mechanical"):
+    audit = classes.get(task_class, {}).get("audit", {})
+    auditors = audit.get("by_author_vendor", {})
+    factory(
+        "audit-cross-vendor",
+        all(audit.get(key) is True for key in ("required", "fresh_per_unit", "release_facts"))
+        and auditors == expected_auditors
+        and all(author != auditor.get("vendor") for author, auditor in auditors.items()),
+        f"{task_class} requires fresh cross-vendor auditors and release facts",
+    )
+review = source_table.get("policy", {}).get("review", {})
+factory(
+    "review-policy",
+    classes.get("verify", {}).get("cross_vendor") is True
+    and any(entry.get("seat") == "codex-verifier" and entry.get("effort") == "xhigh"
+        for entry in classes.get("verify", {}).get("chain", []))
+    and review.get("money_path") == {"lenses": 3, "rule": "any-fail", "effort": "xhigh"}
+    and all(review.get(key) is True for key in ("never_after_fail", "fresh_per_unit", "cross_vendor", "release_facts"))
+    and review.get("max_fix_rounds") == 2,
+    "fresh cross-vendor review, any-fail money path and two fix rounds",
+)
+bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
+forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat"}
+
+
+def valid_effort(entry: dict, band: str) -> bool:
+    effort = entry.get("effort")
+    if entry.get("vendor") in ("openai", "anthropic") and effort not in bands.get(band, []):
+        return False
+    text = read(SOURCE / "agents" / f"{entry.get('seat')}.md")
+    head = text.split("\n---", 1)[0]
+    field = next((line.split(":", 1)[1].strip() for line in head.splitlines() if line.startswith("effort:")), None)
+    if entry.get("seat") in forwarders:
+        return field in bands.get("relay", [])
+    model = frontmatter_model(text) or ""
+    if entry.get("seat", "").startswith("gpt-") or entry.get("seat") == "sol-consult":
+        if not re.fullmatch(r"(?:sol|luna)-latest-(?:low|medium|high|xhigh)", model):
+            return False
+    if re.fullmatch(r"(?:sol|luna)-latest-(?:low|medium|high|xhigh)", model):
+        return model.rsplit("-", 1)[-1] == effort
+    return field is None or field == effort
+
+
+effort_valid = all(
+    valid_effort(entry, task_class)
+    and (entry.get("vendor") in ("openai", "anthropic") or "effort" not in entry)
+    for task_class, spec in classes.items() for entry in spec.get("chain", [])
+)
+effort_valid = effort_valid and all(
+    valid_effort(auditor, "verify")
+    for spec in classes.values() for auditor in spec.get("audit", {}).get("by_author_vendor", {}).values()
+)
+second = classes.get("plan", {}).get("second_opinion", {})
+effort_valid = effort_valid and valid_effort(second, "plan")
+factory("stage-effort", effort_valid, "chain, audit and second-opinion efforts match their stage and definition")
+factory(
+    "second-opinion",
+    second == {"seat": "sol-consult", "model": "sol-latest", "vendor": "openai", "effort": "high",
+        "when": "complex or risky plans, before the work is split"},
+    "complex plans get sol-consult/sol-latest/openai/high",
+)
+routing_text = read(SOURCE / "ROUTING.md")
+factory(
+    "routing-doc",
+    bool(routing_text) and len(routing_text.splitlines()) <= 150
+    and all(re.search(r"20\d\d-\d\d-\d\d", line) for line in routing_text.splitlines() if line.startswith("## ")),
+    "ROUTING.md headings are dated and document is at most 150 lines",
+)
+seats = {entry.get("seat") for spec in classes.values() for entry in spec.get("chain", [])}
+seats.update(auditor.get("seat") for spec in classes.values()
+    for auditor in spec.get("audit", {}).get("by_author_vendor", {}).values())
+seats.add(second.get("seat"))
+missing = sorted(seat for seat in seats if not seat or not (SOURCE / "agents" / f"{seat}.md").is_file())
+factory(
+    "seat-definitions", not missing,
+    f"source defines every chain, auditor and second-opinion seat; missing {missing}",
+)
+# Names of people and machines stay out of this public file too: each operator lists their own private literals
+# (people, machines, hosts), one per line, in the file named by AGENT_LB_PRIVATE_LITERALS. Unset means only the
+# generic patterns run; set but unreadable or empty is a failed check, not a silent pass.
+private_literals: list[str] = []
+literals_error = ""
+literals_path = os.environ.get("AGENT_LB_PRIVATE_LITERALS")
+if literals_path:
+    try:
+        private_literals = [
+            item.strip() for item in Path(literals_path).expanduser().read_text().splitlines() if item.strip()
+        ]
+    except OSError as exc:
+        literals_error = f"cannot read AGENT_LB_PRIVATE_LITERALS: {type(exc).__name__}"
+    if not private_literals and not literals_error:
+        literals_error = "AGENT_LB_PRIVATE_LITERALS names an empty file"
+factory("private-literals", not literals_error, literals_error or "operator literal list loaded or not configured")
+public_pattern = re.compile(
+    "|".join(
+        [r"/Users/|/Volumes/|\.ts\.net\b|[Tt]ailscale|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}"]
+        + [rf"(?<![A-Za-z0-9_]){re.escape(literal)}(?![A-Za-z0-9_])" for literal in private_literals]
+    )
+)
+public_files = [
+    SOURCE / name for name in ("ROUTING.md", "claude-adapter.md", "routing-table.json", "install-policy.py")
+]
+public_files += sorted((SOURCE / "agents").glob("*.md")) + sorted((SOURCE / "hooks").glob("*.py"))
+private_lines = [
+    f"{path.name}:{index}"
+    for path in public_files
+    for index, line in enumerate(read(path).splitlines(), 1)
+    if public_pattern.search(line)
+]
+factory("public-text", not private_lines, f"public policy has no private literals; found {private_lines}")
 
 # Retired and older-than-newest model ids, anywhere a seat could be pinned.
 retired = tuple(source_table.get("retired") or ())
 aliases = source_table.get("aliases") or {}
 check(bool(retired) and bool(aliases), "the table declares family aliases and retired models")
-try:
-    served_out = subprocess.run(
-        [
-            sys.executable,
-            str((SOURCE / ".." / ".." / "clients" / "route").resolve())
-            if (SOURCE / ".." / ".." / "clients" / "route").exists()
-            else str(HOME / ".agent-lb" / "bin" / "route"),
-            "models",
-            "--json",
-        ],
-        text=True,
-        capture_output=True,
-        timeout=30,
-        env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table.json")},
-    )
-    resolution = {row["alias"]: row["model"] for row in json.loads(served_out.stdout)["aliases"]}
-except Exception:
-    resolution = {}
-    check(False, "route models resolves the family aliases")
 newest_by_family = {}
-for alias, spec in aliases.items():
-    if spec.get("family") and resolution.get(alias):
-        newest_by_family[spec["family"]] = resolution[alias]
+if not SOURCE_ONLY:
+    try:
+        served_out = subprocess.run(
+            [
+                sys.executable,
+                str((SOURCE / ".." / ".." / "clients" / "route").resolve())
+                if (SOURCE / ".." / ".." / "clients" / "route").exists()
+                else str(HOME / ".agent-lb" / "bin" / "route"),
+                "models",
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table.json")},
+        )
+        resolution = {row["alias"]: row["model"] for row in json.loads(served_out.stdout)["aliases"]}
+    except Exception:
+        resolution = {}
+        check(False, "route models resolves the family aliases")
+    newest_by_family = {}
+    for alias, spec in aliases.items():
+        if spec.get("family") and resolution.get(alias):
+            newest_by_family[spec["family"]] = resolution[alias]
 
 
 def stale_reason(model):
@@ -213,9 +370,13 @@ def stale_reason(model):
     return None
 
 
-pinned_sources = [(path, read(path)) for path in sorted((HOME / ".claude" / "agents").glob("*.md"))]
-pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("ROUTING.md", "claude-adapter.md")]
-pinned_sources += [(HOME / ".codex" / "AGENTS.md", read(HOME / ".codex" / "AGENTS.md"))]
+if SOURCE_ONLY:
+    pinned_sources = [(path, read(path)) for path in sorted((SOURCE / "agents").glob("*.md"))]
+    pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("ROUTING.md", "claude-adapter.md")]
+else:
+    pinned_sources = [(path, read(path)) for path in sorted((HOME / ".claude" / "agents").glob("*.md"))]
+    pinned_sources += [(SOURCE / name, read(SOURCE / name)) for name in ("ROUTING.md", "claude-adapter.md")]
+    pinned_sources += [(HOME / ".codex" / "AGENTS.md", read(HOME / ".codex" / "AGENTS.md"))]
 stale = []
 for path, text in pinned_sources:
     for match in MODEL_PIN.finditer(text):
@@ -228,6 +389,7 @@ table_models += [
     for spec in classes.values()
     for auditor in (spec.get("audit", {}).get("by_author_vendor", {}) or {}).values()
 ]
+table_models += [classes.get("plan", {}).get("second_opinion", {}).get("model", "")]
 table_models += list(source_table.get("pools", {}))
 for model in table_models:
     reason = stale_reason(model)
@@ -246,10 +408,15 @@ with tempfile.TemporaryDirectory() as scratch:
     agents_dir.mkdir()
     (agents_dir / "legacy-fable.md").write_text("---\nname: legacy-fable\nmodel: claude-fable-5-1\n---\nbody\n")
     env = os.environ | {
+        "HOME": scratch,
+        "ROUTING_TABLE": str(SOURCE / "routing-table.json"),
+        "ROUTE_TABLE": str(SOURCE / "routing-table.json"),
         "SEAT_GUARD_AGENTS_DIR": str(agents_dir),
         "DISPATCH_LEDGER": str(Path(scratch) / "dispatch.jsonl"),
         "LIMIT_WATCH_SNAPSHOT": str(Path(scratch) / "missing.json"),
     }
+
+    env.pop("ROUTE_LEDGER", None)
 
     def decision(tool_input: dict) -> str | None:
         payload = json.dumps({"tool_name": "Agent", "tool_input": {"prompt": "x", **tool_input}})
@@ -272,38 +439,39 @@ with tempfile.TemporaryDirectory() as scratch:
     check(decision({"subagent_type": "legacy-fable"}) == "deny", "seat guard denies a Fable-defined subagent type")
     check(decision({"subagent_type": "gpt-implementer"}) is None, "seat guard admits a cheap seat")
 
-# The installed router returns a live, non-retired seat for every class.
-route_bin = HOME / ".agent-lb" / "bin" / "route"
-if route_bin.is_file():
-    for task_class, spec in classes.items():
-        extra = ["--author-vendor", "anthropic"] if spec.get("cross_vendor") else []
-        result = subprocess.run(
-            [sys.executable, str(route_bin), "pick", task_class, *extra, "--json"],
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-        try:
-            picked = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            picked = {}
-        model = picked.get("model") or ""
-        ok = bool(model) and not forbidden(model) and stale_reason(model) is None
-        if task_class == "plan":
-            ok = ok and picked.get("alias") in ("opus-latest", "sol-latest")
-        check(ok, f"route pick {task_class} -> {picked.get('seat')}/{model or result.stderr.strip()}")
-else:
-    check(False, f"route CLI exists at {route_bin}")
+if not SOURCE_ONLY:
+    # The installed router returns a live, non-retired seat for every class.
+    route_bin = HOME / ".agent-lb" / "bin" / "route"
+    if route_bin.is_file():
+        for task_class, spec in classes.items():
+            extra = ["--author-vendor", "anthropic"] if spec.get("cross_vendor") else []
+            result = subprocess.run(
+                [sys.executable, str(route_bin), "pick", task_class, *extra, "--json"],
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            try:
+                picked = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                picked = {}
+            model = picked.get("model") or ""
+            ok = bool(model) and not forbidden(model) and stale_reason(model) is None
+            if task_class == "plan":
+                ok = ok and picked.get("alias") in ("opus-latest", "sol-latest")
+            check(ok, f"route pick {task_class} -> {picked.get('seat')}/{model or result.stderr.strip()}")
+    else:
+        check(False, f"route CLI exists at {route_bin}")
 
-# Launchers: cc drives on Opus 5.5.
-cc_text = read((HOME / ".local" / "bin" / "cc").resolve())
-check('with_name("opus")' in cc_text, "~/.local/bin/cc execs the opus client")
-check(
-    'MODEL = "opus[1m]"' in read((HOME / ".local" / "bin" / "opus").resolve()),
-    "~/.local/bin/opus launches Claude Code's newest Opus (opus[1m])",
-)
-for name in ("ccdex", "ccdex-worker-mcp"):
-    check(not (HOME / ".local" / "bin" / name).exists(), f"retired client {name} is absent")
+    # Launchers: cc drives on Opus 5.5.
+    cc_text = read((HOME / ".local" / "bin" / "cc").resolve())
+    check('with_name("opus")' in cc_text, "~/.local/bin/cc execs the opus client")
+    check(
+        'MODEL = "opus[1m]"' in read((HOME / ".local" / "bin" / "opus").resolve()),
+        "~/.local/bin/opus launches Claude Code's newest Opus (opus[1m])",
+    )
+    for name in ("ccdex", "ccdex-worker-mcp"):
+        check(not (HOME / ".local" / "bin" / name).exists(), f"retired client {name} is absent")
 
 if failures:
     print(f"\n{len(failures)} routing check(s) failed", file=sys.stderr)

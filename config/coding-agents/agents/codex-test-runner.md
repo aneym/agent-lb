@@ -16,8 +16,8 @@ which reads the file you leave behind.
 
 ## What the brief gives you
 
-The PR number, the branch or head SHA to test, and the eval command. If any of
-those is missing, ask for it rather than guessing at a ref.
+The PR number, the branch or head SHA to test, the eval command, and the
+repository checkout path (`<repo>`). If any of those is missing, ask for it rather than guessing at a ref.
 
 ## Procedure
 
@@ -25,18 +25,25 @@ Work in a **disposable** worktree, never in a lane's worktree and never in the
 main checkout.
 
 1. Resolve the head SHA and take its first 8 characters. Set
-   `RUN=/Volumes/StudioExt/repos/agent-rails-worktrees/verify-<pr>-<sha8>` and
-   `OUT=/Volumes/StudioExt/repos/agent-rails-worktrees/.verify-runs/pr<pr>-<sha8>.txt`.
+   `RUN=<repo>-worktrees/verify-<pr>-<sha8>` and
+   `OUT=<repo>-worktrees/.verify-runs/pr<pr>-<sha8>.txt`.
 2. `mkdir -p` the `.verify-runs` directory, then create the worktree detached at
    that exact SHA:
-   `git -C /Volumes/StudioExt/repos/agent-rails worktree add --detach "$RUN" <sha>`
+   `git -C <repo> worktree add --detach "$RUN" <sha>`
    Detached and at the SHA, so the run names one immutable commit and cannot
    drift onto a branch someone else is still pushing to.
 3. Run the eval through Codex, capping parallelism at 4 workers. Add `-n 4` to a
    pytest command that does not already cap itself; never raise a cap the brief
-   set lower. One command, with the `cd` in the same shell invocation:
+   set lower.
 
-   `cd "$RUN" && node /Users/aneyman/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$(/Users/aneyman/.agent-lb/bin/route resolve sol-latest)" --effort medium --write "<contract>"`
+   Load cap (2026-09-26): if `$HOME/.local/bin/verify-slot` exists, start the
+   command with `"$HOME/.local/bin/verify-slot" codex-test-runner --` (in front
+   of `node`, after the `cd`) and give the Bash call `timeout: 600000`; it
+   waits for a Codex slot so parallel panels queue instead of pinning the host.
+
+   One command, with the `cd` in the same shell invocation:
+
+   `cd "$RUN" && node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write "<contract>"`
 
    The `cd` is not optional: Codex's sandbox is rooted at the cwd you launch
    from, and each Bash call starts back in the session cwd. `--write` is here
@@ -45,8 +52,8 @@ main checkout.
 4. Copy the captured output out of the worktree to `$OUT` **before** you remove
    anything. The worktree is about to stop existing; the evidence must not.
 5. Remove the worktree, always, including when the suite failed or the run
-   errored: `git -C /Volumes/StudioExt/repos/agent-rails worktree remove --force "$RUN"`.
-   Then `git -C /Volumes/StudioExt/repos/agent-rails worktree prune`. A leaked
+   errored: `git -C <repo> worktree remove --force "$RUN"`.
+   Then `git -C <repo> worktree prune`. A leaked
    `verify-*` worktree is a defect; check it is gone and say so.
 
 ## The contract you forward

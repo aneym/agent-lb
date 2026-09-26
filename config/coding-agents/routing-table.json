@@ -6,7 +6,8 @@
         {
           "seat": "planner",
           "model": "opus-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "high"
         },
         {
           "seat": "codex-sol",
@@ -14,14 +15,22 @@
           "vendor": "openai",
           "effort": "high"
         }
-      ]
+      ],
+      "second_opinion": {
+        "seat": "sol-consult",
+        "model": "sol-latest",
+        "vendor": "openai",
+        "effort": "high",
+        "when": "complex or risky plans, before the work is split"
+      }
     },
     "review": {
       "chain": [
         {
           "seat": "plan-reviewer",
           "model": "opus-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "high"
         },
         {
           "seat": "codex-sol",
@@ -34,20 +43,22 @@
     "explore": {
       "chain": [
         {
-          "seat": "codex-sol",
-          "model": "sol-latest",
+          "seat": "gpt-explorer",
+          "model": "luna-latest",
           "vendor": "openai",
-          "effort": "medium"
+          "effort": "low"
         },
         {
           "seat": "Explore",
           "model": "sonnet-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "medium"
         },
         {
-          "seat": "opus-seat",
-          "model": "opus-latest",
-          "vendor": "anthropic"
+          "seat": "codex-sol",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
         }
       ]
     },
@@ -62,12 +73,14 @@
         {
           "seat": "Explore",
           "model": "sonnet-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "medium"
         },
         {
           "seat": "opus-seat",
           "model": "opus-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "high"
         }
       ]
     },
@@ -80,61 +93,64 @@
           "effort": "medium"
         },
         {
-          "seat": "sonnet-implementer",
-          "model": "sonnet-latest",
-          "vendor": "anthropic"
-        },
-        {
           "seat": "opus-seat",
           "model": "opus-latest",
           "vendor": "anthropic",
+          "effort": "medium",
           "min_pace": -10
         }
       ],
       "audit": {
         "required": true,
-        "rule": "every implement/mechanical closeout is audited by a stronger model from the other vendor before acceptance",
+        "rule": "every implement and mechanical unit, and every fix round, is reviewed by a fresh verifier from the vendor that did not write it, plus a release-facts check, before acceptance; money-path units use policy.review.money_path",
         "by_author_vendor": {
           "openai": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "cursor": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "devin": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "glm": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "kimi": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "anthropic": {
             "seat": "codex-verifier",
             "model": "sol-latest",
             "vendor": "openai",
             "effort": "xhigh"
-          },
-          "devin": {
-            "seat": "verifier",
-            "model": "opus-latest",
-            "vendor": "anthropic"
           }
-        }
+        },
+        "fresh_per_unit": true,
+        "release_facts": true
       },
-      "note": "Code to a spec with a check command. gpt-implementer (newest Sol, medium, Claude Code subagent through the agent-lb ccgpt bridge), then sonnet-implementer, then Opus behind the pace gate. The ladder is ~/.claude/rules/models.md; climb a rung when a piece still fails its check after two tries."
+      "note": "Code to a spec with one check. gpt-implementer (newest Sol, medium) writes all code; route falls back to opus-seat only when it skips gpt-implementer and the Anthropic pool is on pace and above low and the Codex pool is above critical. The driver sends judgment code, and anything Sol fails twice, to opus-seat by name. luna-implementer and sonnet-implementer are off the default path (off_default)."
     },
     "mechanical": {
       "chain": [
         {
-          "seat": "luna-implementer",
-          "model": "luna-latest",
+          "seat": "gpt-implementer",
+          "model": "sol-latest",
           "vendor": "openai",
           "effort": "medium"
         },
@@ -151,42 +167,49 @@
       ],
       "audit": {
         "required": true,
-        "rule": "every implement/mechanical closeout is audited by a stronger model from the other vendor before acceptance",
+        "rule": "every implement and mechanical unit, and every fix round, is reviewed by a fresh verifier from the vendor that did not write it, plus a release-facts check, before acceptance; money-path units use policy.review.money_path",
         "by_author_vendor": {
           "openai": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "cursor": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
+          },
+          "devin": {
+            "seat": "verifier",
+            "model": "opus-latest",
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "glm": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "kimi": {
             "seat": "verifier",
             "model": "opus-latest",
-            "vendor": "anthropic"
+            "vendor": "anthropic",
+            "effort": "high"
           },
           "anthropic": {
             "seat": "codex-verifier",
             "model": "sol-latest",
             "vendor": "openai",
             "effort": "xhigh"
-          },
-          "devin": {
-            "seat": "verifier",
-            "model": "opus-latest",
-            "vendor": "anthropic"
           }
-        }
+        },
+        "fresh_per_unit": true,
+        "release_facts": true
       },
-      "note": "Grunt work with a tight spec and a check: luna-implementer (newest Luna, medium, ccgpt bridge) first, then Grok on Cursor and SWE-2 on Devin through `seat run`, which picks a healthy account and fails over on limits."
+      "note": "Mechanical edits go to gpt-implementer too (2026-09-26); cursor-seat and devin-seat are optional capacity."
     },
     "verify": {
       "cross_vendor": true,
@@ -194,7 +217,8 @@
         {
           "seat": "verifier",
           "model": "opus-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "high"
         },
         {
           "seat": "codex-verifier",
@@ -209,12 +233,14 @@
         {
           "seat": "computer-use",
           "model": "sol-latest",
-          "vendor": "openai"
+          "vendor": "openai",
+          "effort": "medium"
         },
         {
           "seat": "opus-seat",
           "model": "opus-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "medium"
         }
       ]
     },
@@ -229,7 +255,8 @@
         {
           "seat": "opus-seat",
           "model": "opus-latest",
-          "vendor": "anthropic"
+          "vendor": "anthropic",
+          "effort": "high"
         }
       ]
     }
@@ -247,200 +274,7 @@
     "swe-latest": "devin",
     "swe-*": "devin"
   },
-  "overrides": [
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "briefs-align-planner",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 50% over 8 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 8,
-        "ok": 4,
-        "okRate": 0.5,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T22:12:11Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "implementer",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 54% over 28 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 28,
-        "ok": 15,
-        "okRate": 0.536,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T22:12:11Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "jacob-cli-install",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 60% over 5 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 5,
-        "ok": 3,
-        "okRate": 0.6,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T22:12:11Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "opus-seat",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 50% over 16 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 16,
-        "ok": 8,
-        "okRate": 0.5,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T22:12:11Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "task-system",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 50% over 8 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 8,
-        "ok": 4,
-        "okRate": 0.5,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T22:12:11Z"
-    },
-    {
-      "class": "verify",
-      "demote": {
-        "seat": "codex-verifier",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 15% over 39 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 39,
-        "ok": 6,
-        "okRate": 0.154,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T22:12:11Z"
-    },
-    {
-      "class": "explore",
-      "demote": {
-        "seat": "opus-seat",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 60% over 5 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 5,
-        "ok": 3,
-        "okRate": 0.6,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-20T23:43:12Z"
-    },
-    {
-      "class": "implement",
-      "demote": {
-        "seat": "opus-seat",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 70% over 128 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 128,
-        "ok": 89,
-        "okRate": 0.695,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-21T01:43:19Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "codex-test-runner",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 62% over 8 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 8,
-        "ok": 5,
-        "okRate": 0.625,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-21T09:14:06Z"
-    },
-    {
-      "class": "explore",
-      "demote": {
-        "seat": "explore",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 67% over 9 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 9,
-        "ok": 6,
-        "okRate": 0.667,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-21T19:45:16Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "phone-hero-planner",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 60% over 5 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 5,
-        "ok": 3,
-        "okRate": 0.6,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-21T20:45:23Z"
-    },
-    {
-      "class": "unknown",
-      "demote": {
-        "seat": "workflow-subagent",
-        "model": "unknown"
-      },
-      "reason": "ok-rate 50% over 8 closeouts, below the 70% floor",
-      "evidence": {
-        "closeouts": 8,
-        "ok": 4,
-        "okRate": 0.5,
-        "windowDays": 1,
-        "ledger": "/Users/aneyman/.claude/logs/dispatch.jsonl"
-      },
-      "ts": "2026-09-22T17:18:46Z"
-    }
-  ],
+  "overrides": [],
   "policy": {
     "mode": "adaptive",
     "owner_date": "2026-09-20",
@@ -456,11 +290,11 @@
       "exhausted": "eligible==0"
     },
     "admit": {
-      "ok_on_pace": "all classes in the pool ranking",
-      "ahead": "all classes plus the next class down",
-      "behind_or_low": "judgment classes only (plan, review, verify)",
-      "critical": "nothing new",
-      "exhausted": "nothing"
+      "ok_on_pace": "a min_pace entry passes the pace gate when its pool's pace is known and >= min_pace and the pool's eligibleAccounts count, when present, is above 2",
+      "behind_or_low": "a min_pace entry fails the pace gate when its pool's pace is unknown or below min_pace, or when the pool's eligibleAccounts count is present and 2 or less; an entry with no min_pace has no pace gate",
+      "critical": "the same pace gate as behind_or_low (a count of 1 is 2 or less)",
+      "exhausted": "an entry whose pool status is exhausted is skipped",
+      "every_entry": "paced or not, an entry is skipped when its model alias does not resolve, its seat is down, or it shares the author's vendor on a cross-vendor class; in a class that declares auditors it is also skipped when no auditor is declared for its vendor, the auditor's model does not resolve, the auditor's pool is exhausted or has an eligibleAccounts count of 1 or less, or the auditor's seat is down"
     },
     "judgment_classes": [
       "plan",
@@ -471,21 +305,75 @@
     ],
     "source_of_truth": "~/.agents/policy/coding-agents/ROUTING.md",
     "lineup": {
-      "owner_date": "2026-09-22",
+      "owner_date": "2026-09-26",
       "drivers": [
         "opus-latest",
         "sol-latest"
       ],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
-      "implementation": "~/.claude/rules/models.md is the local source (2026-09-25): Opus plans, specs, designs and verifies; implement goes gpt-implementer (sol-latest, medium) > sonnet-implementer > opus-latest (pace-gated); mechanical goes luna-implementer (luna-latest, medium) > cursor-seat (grok-latest) > devin-seat (swe-latest)."
+      "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; opus-seat takes judgment code and is the pace-gated implement fallback; luna-implementer and sonnet-implementer are off_default."
+    },
+    "review": {
+      "owner_date": "2026-09-26",
+      "fresh_per_unit": true,
+      "cross_vendor": true,
+      "release_facts": true,
+      "never_after_fail": true,
+      "max_fix_rounds": 2,
+      "money_path": {
+        "lenses": 3,
+        "rule": "any-fail",
+        "effort": "xhigh"
+      },
+      "evidence": "orch-lab E7 (2026-09-26, 8 candidates, 5 planted bugs): 3 lenses any-fail 5/5; fresh Sol xhigh 4/5; fresh Opus high 4/5; majority vote 3/5; one standing context 3/5. 2026-09-25: a change queued after a FAIL crash-looped production for about 8 minutes."
+    },
+    "stage_effort": {
+      "owner_date": "2026-09-26",
+      "bands": {
+        "relay": [
+          "low"
+        ],
+        "explore": [
+          "low",
+          "medium"
+        ],
+        "research": [
+          "medium",
+          "high"
+        ],
+        "implement": [
+          "medium"
+        ],
+        "mechanical": [
+          "medium"
+        ],
+        "plan": [
+          "high"
+        ],
+        "review": [
+          "high"
+        ],
+        "council": [
+          "high"
+        ],
+        "verify": [
+          "high",
+          "xhigh"
+        ],
+        "computer": [
+          "medium"
+        ],
+        "money_path": [
+          "xhigh"
+        ]
+      },
+      "evidence": "orch-lab E10 (2026-09-26): Sol medium 6/6 at 92k tokens per accepted unit vs low 5/6 at 124k. A public DeepSWE run (2026-09-26): low 16/20 vs xhigh 17/20 at a third of the cost; per-request routing added latency, not quality. Artificial Analysis TBS 0.1 (2026-09-24): open-ended work depends on effort."
     }
   },
   "notes": [
     "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
-    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus orchestrates; cheaper seats implement; the other vendor's stronger model audits (classes.*.audit).",
-    "2026-09-22: glm-*/kimi-* chain entries removed: cursor-agent serves neither (cursor-agent --list-models) and no other seat dispatches them, so they could only ever resolve to a literal wildcard. Re-add them behind a family alias once a seat can run GLM or Kimi.",
-    "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB.",
-    "2026-09-25: the `implementer` seat (a Sonnet forwarder to Codex terra-latest) is retired. terra-latest is unserved (gpt-6-terra is not in the upstream catalog, gpt-5.6-terra is retired) and no seat uses it. Implementation runs on the ccgpt-bridge seats gpt-implementer and luna-implementer, local unmanaged definitions in ~/.claude/agents."
+    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements; the other vendor audits (classes.*.audit).",
+    "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
   ],
   "aliases": {
     "opus-latest": {
@@ -547,5 +435,19 @@
     "gpt-5.4*",
     "gpt-5-*",
     "gpt-5"
+  ],
+  "off_default": [
+    {
+      "seat": "luna-implementer",
+      "since": "2026-09-26",
+      "evidence": "orch-lab E6: 5/6 accepted, ~135k tokens per accepted unit vs gpt-implementer 6/6 at ~105k",
+      "returns_when": "an eval matches gpt-implementer's accept rate on that kind of task"
+    },
+    {
+      "seat": "sonnet-implementer",
+      "since": "2026-09-26",
+      "evidence": "orch-lab E6: 5/6 accepted, ~284k tokens per accepted unit",
+      "returns_when": "an eval matches gpt-implementer's accept rate on that kind of task"
+    }
   ]
 }

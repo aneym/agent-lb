@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,54 +12,101 @@ import pytest
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[2]
-ROUTING = ROOT / "config" / "coding-agents" / "ROUTING.md"
-ADAPTER = ROOT / "config" / "coding-agents" / "claude-adapter.md"
-VERIFIER = ROOT / "config" / "coding-agents" / "verify-routing"
+def _source_env(home: Path) -> dict[str, str]:
+    return {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("ROUTE_") and not key.startswith("SEAT_GUARD_")
+        and key not in ("ROUTING_TABLE", "AGENT_LB_USER_HOME")
+    } | {"HOME": str(home), "AGENT_LB_USER_HOME": str(home), "AGENT_LB_URL": "http://127.0.0.1:1"}
 
 
-def test_lineup_plans_on_opus_and_retires_fable_astra_and_gpt_5_6() -> None:
-    routing = " ".join(ROUTING.read_text().split())
-    adapter = " ".join(ADAPTER.read_text().split())
-    verifier = VERIFIER.read_text()
-    table = json.loads((ROOT / "config" / "coding-agents" / "routing-table.json").read_text())
-
-    assert "## The lineup (owner, 2026-09-22)" in routing
-    assert "## Operating rules (owner, 2026-09-22)" in routing
-    for text in (routing, adapter):
-        assert "Fable" in text and "Astra" in text and "gpt-5.6" in text
-        assert "route resolve" in text
-    assert "Fable drives" not in adapter
-    for pattern in ("claude-fable-*", "gpt-*-astra", "gpt-5.6*"):
-        assert pattern in table["retired"]
-    for name in ("planner", "plan-reviewer", "frontend-designer", "verifier", "opus-seat"):
-        definition = (ROOT / "config" / "coding-agents" / "agents" / f"{name}.md").read_text()
-        assert "\nmodel: opus\n" in definition
-    assert not (ROOT / "config" / "coding-agents" / "agents" / "astra.md").exists()
-    assert 'settings.get("model") == "opus"' in verifier
+def _verify(source: Path, home: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(source / "verify-routing"), "--source-only"],
+        env=_source_env(home), capture_output=True, text=True, timeout=60,
+    )
 
 
-def test_implementation_is_cheap_and_audited_by_the_other_vendor() -> None:
-    agents = ROOT / "config" / "coding-agents" / "agents"
-    table = json.loads((ROOT / "config" / "coding-agents" / "routing-table.json").read_text())
+def test_source_canon_passes_verify_routing(tmp_path: Path) -> None:
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    result = _verify(ROOT / "config" / "coding-agents", home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert list(home.iterdir()) == []
 
-    assert not (agents / "implementer.md").exists()
-    for name in ("codex-verifier", "codex-test-runner", "computer-use", "codex-sol"):
-        assert 'route resolve sol-latest)"' in (agents / f"{name}.md").read_text()
-    chain = table["classes"]["implement"]["chain"]
-    assert [(entry["seat"], entry["model"]) for entry in chain] == [
-        ("gpt-implementer", "sol-latest"),
-        ("sonnet-implementer", "sonnet-latest"),
-        ("opus-seat", "opus-latest"),
-    ]
-    assert [(entry["seat"], entry["model"]) for entry in table["classes"]["mechanical"]["chain"]] == [
-        ("luna-implementer", "luna-latest"),
-        ("cursor-seat", "grok-latest"),
-        ("devin-seat", "swe-latest"),
-    ]
-    assert chain[-1]["min_pace"] == table["policy"]["pace"]["behind_lt"]
-    audit = table["classes"]["implement"]["audit"]["by_author_vendor"]
-    assert audit["anthropic"]["model"] == "sol-latest"
-    assert {audit[vendor]["model"] for vendor in ("openai", "cursor", "glm", "kimi")} == {"opus-latest"}
+
+@pytest.mark.parametrize(
+    ("violation", "expected"),
+    [
+        ("implement-head", "factory:implement-head"),
+        ("off-default", "factory:off-default"),
+        ("audit-cross-vendor", "factory:audit-cross-vendor"),
+        ("review-policy", "factory:review-policy"),
+        ("implement-effort", "factory:stage-effort"),
+        ("explore-effort", "factory:stage-effort"),
+        ("forwarder-effort", "factory:stage-effort"),
+        ("second-opinion", "factory:second-opinion"),
+        ("undated-heading", "factory:routing-doc"),
+        ("oversized-doc", "factory:routing-doc"),
+        ("missing-definition", "factory:seat-definitions"),
+        ("private-path", "factory:public-text"),
+        ("retired", "retired"),
+    ],
+)
+def test_verify_routing_rejects_each_factory_violation(
+    tmp_path: Path, violation: str, expected: str,
+) -> None:
+    source = tmp_path / "coding-agents"
+    shutil.copytree(ROOT / "config" / "coding-agents", source)
+    table_path = source / "routing-table.json"
+    table = json.loads(table_path.read_text())
+    classes = table["classes"]
+    if violation == "implement-head":
+        classes["implement"]["chain"][0]["seat"] = "luna-implementer"
+    elif violation == "off-default":
+        classes["research"]["chain"].append(
+            {"seat": "sonnet-implementer", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"}
+        )
+    elif violation == "audit-cross-vendor":
+        classes["implement"]["audit"]["by_author_vendor"]["anthropic"] = {
+            "seat": "verifier", "model": "opus-latest", "vendor": "anthropic", "effort": "high"
+        }
+    elif violation == "review-policy":
+        table["policy"]["review"]["money_path"]["rule"] = "majority"
+    elif violation == "implement-effort":
+        classes["implement"]["chain"][0]["effort"] = "high"
+    elif violation == "explore-effort":
+        classes["explore"]["chain"][0]["effort"] = "xhigh"
+    elif violation == "second-opinion":
+        del classes["plan"]["second_opinion"]
+    elif violation == "retired":
+        classes["implement"]["chain"][0]["model"] = "gpt-5.6-sol"
+    if violation in ("forwarder-effort", "undated-heading", "oversized-doc", "missing-definition", "private-path"):
+        if violation == "forwarder-effort":
+            path = source / "agents" / "codex-sol.md"
+            path.write_text(path.read_text().replace("effort: low", "effort: high"))
+        elif violation == "undated-heading":
+            with (source / "ROUTING.md").open("a") as f:
+                f.write("\n## Undated\n")
+        elif violation == "oversized-doc":
+            path = source / "ROUTING.md"
+            path.write_text(path.read_text() + "\n" * (152 - len(path.read_text().splitlines())))
+        elif violation == "missing-definition":
+            (source / "agents" / "sol-consult.md").unlink()
+        else:
+            with (source / "agents" / "opus-seat.md").open("a") as f:
+                f.write("\n/Users/someone/x\n")
+    else:
+        table_path.write_text(json.dumps(table))
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    result = _verify(source, home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    if expected == "retired":
+        assert "FAIL no retired or older-than-newest model is pinned" in result.stdout
+        assert "gpt-5.6-sol (retired)" in result.stdout
+    else:
+        assert f"FAIL {expected} " in result.stdout
 
 
 def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> None:

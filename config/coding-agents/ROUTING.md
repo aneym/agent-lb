@@ -1,180 +1,150 @@
 # Canonical coding-agent routing
 
-Host-neutral path: `~/.agents/policy/coding-agents/ROUTING.md`. The history
-this file used to carry (seat lineups from 2026-07 through 2026-09) is in git.
+Host-neutral path: `~/.agents/policy/coding-agents/ROUTING.md`. The evidence below is small-n: E3 used 3 units, E6 and
+E10 six each, E7 eight candidates. This file is the canon. A machine's `~/.claude/rules/models.md` may add local
+steers; it changes a rule here only with the same evidence, and the change comes back here.
 
-**Which model or seat does which job is `~/.claude/rules/models.md`.** It is
-local to each machine, kept current, and wins over this file and the routing
-table wherever they disagree. In short (2026-09-25): Opus plans, specs, designs
-and verifies, with `sol-consult` (newest Sol, high) as the second opinion on
-complex work; `frontend-designer` and every design decision stay on Opus.
-Implementation climbs a ladder, cheapest first, one rung after two failed tries
-on a piece's check: `luna-implementer` (newest Luna), `gpt-implementer`
-(newest Sol), `sonnet-implementer`, then Opus. The GPT seats are Claude Code
-subagents through the agent-lb ccgpt bridge, not Codex CLI forwarders; their
-definitions are local and unmanaged, so the installer leaves them alone.
+## Who does what (owner, 2026-09-25; 2026-09-26)
 
-## Claude-vertical default (owner, 2026-09-25)
+Owner, 2026-09-25: "Opus plans and consults the latest Sol at high effort on complex things; cheaper agents implement
+the raw code that comes out of those decisions."
 
-Alex, 2026-09-25: "we need to make our prompt rules looser - dont assume we're
-routing work to codex. i'd rather optimize agent lb to fully allow us to use
-claude vertically and occasionally use codex, but i dont want hard rules."
+1. **Opus plans, specs, designs and verifies.** On complex or risky work it asks `sol-consult` (newest Sol, high) for
+   a second opinion before the work is split (`plan.second_opinion`). Design stays on Opus (`frontend-designer`).
+2. **Every piece names its files, fixed interfaces and one check command.** A seat is trusted only as far as its
+   check reaches. A piece with no check gets smaller, or gets its check first. Orch-lab E5 (5 units): an
+   end-to-end-only check passed a real regression that existing tests plus an implementer-written test caught.
+3. **`gpt-implementer` (Sol, medium) writes all code to a spec**, mechanical edits included. `opus-seat` takes
+   judgment code and anything Sol fails twice; the driver sends those to it by name. Owner, 2026-09-26: "sol and opus
+   are the right models, since the others just make mistakes? we shouldnt risk mistakes if they're just going to
+   make more work later."
+   Router fallback, measured 2026-09-26: `route pick implement` falls back to opus-seat only when it skips
+   gpt-implementer (seat recorded down, model unserved) and the Anthropic pool is on pace and above low and the
+   Codex pool is above critical, because Opus's work needs a Sol auditor.
+   A low Codex pool does not move implementation to Opus. An exhausted Codex pool leaves nothing routable.
+4. **`luna-implementer` and `sonnet-implementer` are off the default path** (`off_default`). They return only
+   through an eval that matches Sol's accept rate on that kind of task. Orch-lab E6 (2026-09-26, the same 6 units,
+   specs and review template per seat, small n): Sol 6/6 at about 105k tokens per accepted unit; Luna 5/6 at about
+   135k; Sonnet 5/6 at about 284k; Opus 4/6 at about 618k. A miss costs a fix round plus a re-verify.
+5. **Read-only lookups go to `gpt-explorer` (Luna, low) or `Explore` (Sonnet, medium).** No decision rides on
+   them. First call: about 3.4k tokens for gpt-explorer, 13k for Explore.
+6. Codex CLI, Cursor and Devin are optional capacity; Cursor takes mechanical sweeps, Devin sits behind it.
 
-This section overrides anything below that says otherwise.
+## Review (2026-09-26, orch-lab E7)
 
-- **Claude Code does the work**: the driver, its subagents and its teammates.
-  Implementation runs on Claude Code subagents along the models.md ladder
-  (the GPT rungs go through the ccgpt bridge); Opus implementing is the last
-  rung, not a violation.
-- **Codex CLI, Cursor and Devin are optional capacity.** Use them when the Claude pools
-  are tight, for large parallel or mechanical sweeps, or for a second opinion.
-  `route pick` and the class rankings below are suggestions, not gates.
-- **No required cross-vendor audit.** Verify work by running it (end to end,
-  real output). A cross-vendor review is a tool for risky changes.
-- **Efficiency is the machinery's job**: agent-lb keeps sessions on one
-  account until it is really exhausted and forwards Claude Code payloads
-  unchanged so the prompt cache holds (`scripts/claude_cache_eval.py`,
-  `cache-watch`). Sessions compact at 400k and keep state in files.
+This replaces the 2026-09-25 rule "no required cross-vendor audit". E7 used 8 seeded candidates with 5 planted bugs.
 
-## The lineup (owner, 2026-09-22)
+- **Every unit, and every fix round, gets one fresh verifier from the vendor that did not write it:** `verifier`
+  (Opus, high) for GPT, Cursor, Devin, GLM and Kimi authors; `codex-verifier` (Sol, xhigh) for Claude authors. The
+  brief names the author vendor. Add a release-facts check; no standing reviewer. Fresh Sol xhigh caught 4/5, fresh
+  Opus high 4/5, one Opus context reused across all 8 only 3/5. Both missed a package change with no version bump.
+- **Money-path units get three lenses at xhigh; any one FAIL blocks** (`policy.review.money_path`). Any-fail caught
+  5/5, majority vote 3/5. Each repo names its money path and its lenses in its own AGENTS.md.
+- **A verdict is bound to the diff it reviewed.** Never ship or queue work whose latest verdict is FAIL or REJECT.
+  Re-verify the final diff, or log an override with the reason. On 2026-09-25 a change was queued after its
+  verifier failed it, and production crash-looped from 22:59Z to 23:07Z. Two more were queued the same way.
+- **At most two fix rounds** (`max_fix_rounds`; the fold-pr review gate, 2026-09-26). Then the lane fixes, splits
+  or parks the unit and logs why.
+- **An incident fix ships a fixture test or a check in the same change.** On the 2026-09-26 night watch a person,
+  not a check, found every factory incident.
+- Prove UI changes with a screenshot of the running page.
 
-Alex, 2026-09-22: "remove all seats that use fable, opus is good now"; "opus
-5.5 and sol 6 for orchestration and planning, cheaper agents that we audit
-with better models for implementation"; "NEVER use gpt 5.6 sol anymore ... we
-should default to opus 5.5 for orchestration"; "ensure it just uses the latest
-model in that class by default if possible"; "NO CODEX ASTRA. codex sol".
+## Effort per stage (2026-09-25; 2026-09-26)
 
-- **Retired, never resolved, denied by the seat guard, failed by
-  verify-routing:** Fable (`claude-fable-*`, `fable`, the `claude-planner`
-  alias), the whole Codex Astra family (`gpt-*-astra`), and the gpt-5.6
-  generation and older. The table's `retired` list is the authority.
-- **Models are named by family alias, never by version.** Claude seats use
-  Claude Code's `opus` and `sonnet` aliases (`opus-latest`, `sonnet-latest` in
-  the table), which the installed Claude Code maps to the newest model of that
-  family. Codex and ccgpt seats use `sol-latest` and `luna-latest`; Cursor seats use
-  `grok-latest` (medium-fast) and `grok-latest-low`; Devin seats use
-  `swe-latest` (SWE-2 high, free on the subscription). `route resolve <alias>`
-  returns the newest non-retired model actually served (the LB's model list
-  for Codex, `cursor-agent --list-models` for Cursor, `devin models list` for
-  Devin), so a new release needs
-  no edit; `route models` shows the current resolution. Exact ids stay only in
-  tests, ledgers and pricing.
-- **Classes.** The routing table maps `implement` to gpt-implementer
-  (`sol-latest`, medium), then sonnet-implementer, then Opus behind the pace
-  gate; `mechanical` to luna-implementer (`luna-latest`, medium), then
-  `grok-latest` on Cursor, then `swe-latest` on Devin. Plan and review:
-  `opus-latest`. Explore and research: `sol-latest`, `sonnet-latest`,
-  `opus-latest`. Computer use: `sol-latest` through Codex computer use, else
-  `opus-latest`. `route pick <class>` reads the table.
-- **Top-level sessions.** `cc` and the Claude launcher start the newest Opus
-  (`opus[1m]`); herdr-tab agents run Opus.
-- **Terra is unserved** (2026-09-25): gpt-6-terra is not in the upstream
-  catalog and gpt-5.6-terra is retired, so no seat uses `terra-latest`. The
-  `implementer` seat that forwarded to it is retired.
+Effort is fixed per stage; no per-request router sits in the hot path. Higher effort buys verification, not a better
+approach, which comes from the plan. `verify-routing` checks every chain entry against `policy.stage_effort`.
 
-## Operating rules (owner, 2026-09-22)
+| Stage | Effort |
+|---|---|
+| Relay a contract (forwarders) | low |
+| Search and read | low to medium |
+| Implement to a spec | medium |
+| Plan, spec, second opinion | high |
+| Verify | high; `codex-verifier` xhigh |
+| Money path and security | xhigh |
+| Max | only after asking |
 
-- **One owner per app.** If a herdr tab owns an app, no teammate runs a
-  parallel lane on it.
-- **Tabs coordinate directly with each other.**
-- **Never ask Alex** for merges, deploys, releases that have a rehearsal and a
-  backup, or infra fixes, including accounts and keys he already scoped. Do
-  them and report the result. Product direction and visual sign-off go to
-  Alex.
-- **Every UI change is screenshot-verified.**
-- **Fan out** as wide as the work splits; back off only on real limits
-  (models.md, Parallelism).
+The driver session runs at high. Orch-lab E10 (2026-09-26, the E6 units, small n): Sol medium 6/6 at 92k tokens per
+accepted unit in 14.0 min; Sol low 5/6 at 124k in 19.1 min, since its misses cost extra rounds and review is about
+two thirds of all tokens. A public DeepSWE run (2026-09-26, 20 tasks, on a model now retired): low 16/20 at
+$1.46 and 4.6 min per task; xhigh 17/20 at $4.42 and 12.8 min; a per-request router 16/20 at $1.50 and 19.9 min.
+Artificial Analysis TBS 0.1 (2026-09-24, open-ended research): Opus 5.5 low 24%, xhigh 62%. Open-ended work with no
+tight spec stays on Opus at xhigh.
 
-## The rule (owner, 2026-09-20: adaptive; lineup amended 2026-09-22)
+## Workflows and seats (2026-09-25; 2026-09-26)
 
-Every pool is a weekly budget with a known reset, and what is unspent at the
-reset is lost. So the router does two things at once: spend every pool on pace
-to its reset, and put the strongest seat that pace allows on each class.
+- **Lanes run as workflows whose templates carry the review rules**, not as teammates. Batch small units into one
+  run. E3: headless workflow 5.7 min, planner teammate 14.2 min. E9: 17 units in 22.3 min, 15 accepted.
+- **Every workflow `agent()` call passes `agentType`** and its stage effort. Seat definitions stay lean. Never use
+  `general-purpose` as an implementer. First call (2026-09-25): the default workflow agent 91k to 99k tokens,
+  `general-purpose` (tools "*") 48k, lean definitions 3.4k to 6.4k.
+- **Claude seats never drive a browser one step at a time.** Capture each page in one windowless call and read only
+  the final image. Three Sonnet seats that drove step by step used about 40M tokens each.
+- Sessions compact at 400k; keep state in files and do not poll. Tests (2026-09-24): load the test-audit skill first.
 
-1. **Pace, not headroom, decides.** For each pool: `pace = remaining% -
-   (hours_to_reset / hours_in_cycle x 100)`. Ahead (pace > +15): the pool is
-   promoted and also serves the next class down its ranking. On pace (-10 to
-   +15): normal. Behind (pace < -10) or `low` (two eligible accounts): the
-   pool serves only its judgment classes. `critical` (one account) or
-   `exhausted`: nothing new starts there. Eligibility comes from the LB's own
-   account marks (`status`, the selector's quota_blocked),
-   never from the usage fetch alone, which was blind on 2026-09-19.
-2. **Capability ranking per class, best first**, in the routing table. The
-   pick is the best-ranked seat whose pool's band admits the class right now,
-   and `route pick` says which band decided it. Rankings: judgment (plan,
-   design, hard audit, review) newest Opus > newest Sol;
-   verify newest Opus / newest Sol at xhigh (cross-vendor with the author);
-   implement newest Sol (gpt-implementer) > Sonnet > Opus; mechanical newest
-   Luna (luna-implementer) > newest Grok on Cursor > SWE on Devin; explore and research
-   Sol > Sonnet > Opus; computer Sol through Codex computer use > Opus;
-   council Sol with the driver as the second voice.
-3. **The newest Opus or Sol drives** and takes plan, review, design and hard
-   audits. No class, seat or catch-all subagent runs on Fable.
-4. **Implementation** follows the models.md ladder (2026-09-25): the cheapest
-   seat that passes the piece's check, climbing one rung after two failures.
-5. **Cross-vendor verification** is optional (superseded 2026-09-25): when you
-   do ask for one, the verifier should not share a vendor with the author.
-6. **Bands are re-read every 5 minutes** (`route alert`, or the coordinator's
-   quota monitor until it lands) and before every wave a planner dispatches;
-   the band line goes in the planner's 30-minute report. Reset times are
-   known, so a pool that is out is scheduled for, not forgotten: work that
-   wants that pool queues with the reset time on the ticket.
-7. **Every dispatch and closeout is recorded** (`~/.claude/logs/dispatch.jsonl`);
-   defaults change from recorded outcomes via `route learn`. A seat that is
-   down is routed around by `route doctor`.
+## Parallelism (owner, 2026-09-25; 2026-09-26)
 
-## The seats
+Owner, 2026-09-25: "hundreds of agents in parallel must always be possible". Fan out as wide as the work splits.
+Back off only on 429 or usage-limit errors, an account near the end of its 5-hour window, or rising error rates.
+Host CPU sets the width: job steps slowed from 5 s to 16 s past about 15 concurrent jobs on one 16-core host
+(2026-09-26). `route pools` is advisory and its aggregate hides spent accounts. If agent-lb throttles, that is a bug.
 
-Which seat serves which class, on which model, out of which pool, is
-`config/coding-agents/routing-table.json` and nothing else — this file does not
-restate it, because a second copy is a copy that goes stale.
+## Rules change with evidence (owner, 2026-09-26)
 
-Read it through the router rather than from memory: `route pick <class>
-[--author-vendor V]` returns the first seat whose pool is live plus its
-fallback chain, and `route pools` shows what is left in each pool. Classes:
-`plan`, `review`, `explore`, `research`, `implement`, `mechanical`,
-`verify`, `computer`, `council`.
+Owner: "i'd also like our rules to be fluid over time so that as things change and models improve we can change
+things." Every rule carries a date and its evidence. Revisit a rule when a new model ships (run the E6 shape on it
+first), a seat's accept rate or tokens per accepted unit moves, an incident traces back to it, or the owner steers.
+Dropped seats return through an eval. Record each change as a dated `DECISIONS.md` entry and edit this file and the
+table together. Log which rung passed which task (`route record`, 2026-09-25) so evals can move the default down.
 
-`codex-sol`, `computer-use`, `cursor-seat`, `devin-seat`, `codex-verifier` and
-`codex-test-runner` are thin forwarders: the work runs on Cursor's, Devin's and
-OpenAI's quotas. `gpt-implementer`, `luna-implementer`, `gpt-explorer` and
-`sol-consult` bill the Codex pool through the ccgpt bridge.
-`cursor-seat` and `devin-seat` dispatch through `seat run`, which picks a healthy
-registered account (`seat accounts`), fails over on a limit or auth error and
-writes the receipt to the dispatch ledger; `/api/pools` serves their `cursor` and
-`devin` pools from the seat state.
+## Models (owner, 2026-09-22)
 
-## Enforcement
+- **Retired**, never resolved, denied by the seat guard, failed by verify-routing: Fable (`claude-fable-*`, `fable`,
+  the `claude-planner` alias), the Codex Astra family (`gpt-*-astra`), and the gpt-5.6 generation and older. The
+  table's `retired` list is the authority.
+- **Family aliases, never versions:** `opus-latest` and `sonnet-latest` (Claude Code's `opus` and `sonnet`),
+  `sol-latest` and `luna-latest` for Codex and ccgpt seats, `grok-latest` for Cursor, `swe-latest` for Devin.
+  `route resolve <alias>` returns the newest non-retired model actually served; `route models` shows the current
+  resolution. Exact ids stay in tests, ledgers and pricing.
+- Terra is unserved and `implementer` retired (2026-09-25). `cc` and the Claude launcher start `opus[1m]`.
 
-- `hooks/seat-guard.py` (PreToolUse on Agent) denies a retired model (the
-  table's `retired` list: Fable, `claude-planner`, the gpt-5.6 generation and
-  older) pinned on a subagent, a subagent type whose definition pins one when
-  the dispatch sets no model, and a brief that tells a forwarder to use one
-  (`--model <id>`, `model: <id>`). Capacity is advisory only. Everything else
-  passes and is logged.
-- `hooks/subagent-closeout.py` (SubagentStop) closes the ledger line.
-- `hooks/routing-pulse.py` (UserPromptSubmit) fires when a session spends 40+
-  Fable requests in an hour, or 25+ in six hours with too few closeouts.
-- `install-policy.py` installs the seat definitions, `routing-table.json`
-  (keeping the live `overrides` that `route learn` wrote), the seat guard, the
-  CLAUDE.md routing block and the settings default model (`opus`). Run
-  `verify-routing` to check; it fails on any retired or older-than-newest
-  model id named in a seat definition, the table, this file or the adapter.
+## The router (owner, 2026-09-20; chains 2026-09-26)
 
-Changing the lineup means editing this file and the routing table, not
-overriding either in a session.
+Which seat serves which class, on which model and effort, out of which pool, is `routing-table.json` and nothing else.
+`route pick <class> [--author-vendor V]` returns the first admitted seat, its chain and its auditor. Chains, best
+first (2026-09-26): plan planner (Opus high), then codex-sol (Sol high), with `sol-consult` (Sol high) as the second
+opinion; review plan-reviewer (Opus high), then codex-sol; explore gpt-explorer (Luna low), Explore (Sonnet medium),
+codex-sol (Sol medium); research codex-sol (Sol high), Explore, opus-seat (Opus high); implement gpt-implementer (Sol
+medium), then opus-seat (Opus medium, `min_pace` -10); mechanical gpt-implementer, then cursor-seat (`grok-latest`),
+devin-seat (`swe-latest`); verify verifier (Opus high), then codex-verifier (Sol xhigh), cross-vendor; computer
+computer-use (Sol medium), then opus-seat; council codex-sol (Sol high), then opus-seat. Implement and mechanical
+units are audited by the other vendor: Anthropic authors get `codex-verifier` (sol-latest, xhigh); openai, cursor,
+devin, glm and kimi authors get `verifier` (opus-latest, high).
 
-## Workflow stages (moved from ~/.claude/CLAUDE.md, 2026-09-25)
+Pace gates only seats with a `min_pace`: `pace = remaining% - (hours_to_reset / hours_in_cycle x 100)`. Such a seat is
+skipped when pace is unknown or below `min_pace`, or its pool's `eligibleAccounts` count is present and 2 or less;
+others have no pace gate. Any seat is skipped when its model does not resolve, its seat is down, its pool is
+`exhausted`, or it shares the author's vendor on a cross-vendor class; where a class has auditors, also when its
+auditor is undeclared, unresolved, down, or in an `exhausted` pool or one with 1 eligible account or fewer.
+Bands are re-read every 5 minutes and before every wave. Every dispatch and closeout goes to the dispatch ledger
+(`~/.claude/logs/dispatch.jsonl`). The Codex forwarders run Codex CLI; cursor-seat and devin-seat go through
+`seat run`, which fails over between registered accounts and writes the receipt.
 
-Alex, 2026-09-24: "dont use workflows with opus... you can have opus decide the
-workflow for claude, they use a bit too many tokens." Default: Opus designs the
-Workflow script and its `agent()` calls run on `model: "sonnet"`, `"haiku"` for
-mechanical stages; use Opus agents where a stage needs the judgment. No hard
-rule (Alex, 2026-09-25). The 09-24 limit was set while an agent-lb cache bug
-made every call rewrite its context; see memory `prompt-cache-incidents-2026-09`.
-Tests: always load `~/.agents/skills/test-audit/SKILL.md` (Alex, 2026-09-24)
-whenever you write, change, review, cull or audit tests.
-Keep context lean: the compaction window is 400k; write state to a handoff or
-ledger file rather than carrying it in context, and do not poll. Dispatches and
-closeouts are logged in `~/.claude/logs/dispatch.jsonl`; `route pools` shows
-live headroom.
+Efficiency is the machinery's job: agent-lb forwards Claude Code payloads unchanged so the prompt cache holds (it
+broke for 43 h on 2026-09-21 and 12 h on 2026-09-23). Run `scripts/claude_cache_eval.py` after request-path deploys.
+
+## Planned, not live (2026-09-26)
+
+The factory's doctor, map, hourly canary and scoreboard are planned, not built. agent-lb's per-account status line is
+the doctor's accounts component.
+
+## Enforcement (2026-09-26)
+
+- `hooks/seat-guard.py` denies a retired model on a subagent, its definition or a forwarder's brief, and logs the
+  rest; `hooks/subagent-closeout.py` closes the ledger line.
+- `install-policy.py` installs the seat definitions (now with the managed ccgpt seats gpt-implementer, gpt-explorer
+  and sol-consult), `routing-table.json` (keeping live `overrides`), the seat guard and the CLAUDE.md block.
+- `verify-routing` checks an install; `verify-routing --source-only` checks this directory with no home and no LB.
+  Both fail on a retired or older-than-newest id and on the factory rules `implement-head`, `off-default`,
+  `audit-cross-vendor`, `review-policy`, `stage-effort`, `second-opinion`, `routing-doc`, `seat-definitions`,
+  `public-text`.

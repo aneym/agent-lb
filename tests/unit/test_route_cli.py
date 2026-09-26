@@ -1009,3 +1009,48 @@ def test_a_fallback_whose_auditor_pool_is_critical_is_skipped(tmp_path: Path) ->
     # Opus is critical, so it neither implements nor audits Codex Sol's work.
     assert result.returncode == 2
     assert "its auditor's pool anthropic-general is critical: 1 eligible" in result.stderr
+
+@pytest.mark.parametrize(
+    ("status", "eligible", "recorded_down", "expected_seat", "expected_error"),
+    [
+        ("ok", 4, False, "gpt-implementer", None),
+        ("low", 2, False, "gpt-implementer", None),
+        ("low", 1, False, "gpt-implementer", None),
+        ("exhausted", 0, False, None, "gpt-implementer (pool openai-codex exhausted)"),
+        ("ok", 4, True, "opus-seat", None),
+        ("low", 1, True, None, None),
+    ],
+)
+def test_canonical_implement_admission_by_codex_pool(
+    tmp_path: Path, status: str, eligible: int, recorded_down: bool,
+    expected_seat: str | None, expected_error: str | None,
+) -> None:
+    fixtures = tmp_path / "fixtures"
+    reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_fixture(
+        fixtures,
+        "api_pools.json",
+        {"pools": [
+            {"id": "anthropic-general", "status": "ok", "eligibleAccounts": 4,
+             "weeklyPacePercent": 10, "aggregateRemainingPercent": 60.0, "resetAt": reset},
+            {"id": "openai-codex", "status": status, "eligibleAccounts": eligible,
+             "weeklyPacePercent": 10, "aggregateRemainingPercent": 0.0 if eligible == 0 else 60.0,
+             "resetAt": reset},
+        ]},
+    )
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    if recorded_down:
+        (tmp_path / ".claude").mkdir()
+        routing_state(tmp_path, age_seconds=60, seats={"gpt-implementer": {"ok": False, "error": "unavailable"}})
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
+    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert result.returncode == (0 if expected_seat else 2), result.stdout + result.stderr
+    if expected_seat:
+        picked = json.loads(result.stdout)
+        assert picked["seat"] == expected_seat
+        if expected_seat == "opus-seat":
+            assert picked["audit"]["alias"] == "sol-latest"
+        if eligible == 1 and not recorded_down:
+            assert "its auditor's pool openai-codex is critical" in picked["reason"]
+    if expected_error:
+        assert expected_error in result.stderr
