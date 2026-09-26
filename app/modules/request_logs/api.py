@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+from app.core.utils.time import utcnow
 from app.dependencies import RequestLogsContext, get_request_logs_context
 from app.modules.request_logs.schemas import (
     RequestLogApiKeyOption,
@@ -21,6 +22,26 @@ router = APIRouter(
 )
 
 _MODEL_OPTION_DELIMITER = ":::"
+
+
+@router.get("/anthropic-cache-summary")
+async def anthropic_cache_summary(context: RequestLogsContext = Depends(get_request_logs_context)) -> dict:
+    now = utcnow()
+    (
+        request_count,
+        incomplete_count,
+        input_tokens,
+        creation_tokens,
+        read_tokens,
+    ) = await context.repository.anthropic_cache_tokens_since(now - timedelta(hours=1), now)
+    return {
+        "window_minutes": 60,
+        "request_count": request_count,
+        "incomplete_request_count": incomplete_count,
+        "input_tokens": input_tokens,
+        "cache_creation_tokens": creation_tokens,
+        "cache_read_tokens": read_tokens,
+    }
 
 
 def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:

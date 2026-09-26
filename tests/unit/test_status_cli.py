@@ -63,6 +63,17 @@ def _set_routes(accounts: list[dict]) -> None:
     _Handler.routes = {
         "/health/ready": (200, {"status": "ready"}),
         "/api/accounts": (200, {"accounts": accounts}),
+        "/api/request-logs/anthropic-cache-summary": (
+            200,
+            {
+                "window_minutes": 60,
+                "request_count": 0,
+                "incomplete_request_count": 0,
+                "input_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cache_read_tokens": 0,
+            },
+        ),
     }
 
 
@@ -72,7 +83,8 @@ def test_status_uses_only_read_only_endpoints_and_redacts_account_identity(servi
     cli.main(["status", "--json", "--base-url", service])
 
     payload = json.loads(capsys.readouterr().out)
-    assert _Handler.requests == ["/health/ready", "/api/accounts"]
+    assert _Handler.requests == ["/health/ready", "/api/accounts", "/api/request-logs/anthropic-cache-summary"]
+
     assert payload["schema_version"] == 1
     assert payload["accounts"][0]["account_id"] == "acc-safe-id"
     assert "secret@example.test" not in json.dumps(payload)
@@ -100,13 +112,70 @@ def test_reset_credits_are_account_specific_nullable_and_use_existing_request(se
         "missing": None,
         "invalid": None,
     }
-    assert _Handler.requests == ["/health/ready", "/api/accounts"]
+    assert _Handler.requests == ["/health/ready", "/api/accounts", "/api/request-logs/anthropic-cache-summary"]
 
     cli.main(["status", "--base-url", service])
     output = capsys.readouterr().out
     assert "positive [active/usable]: primary 53%; weekly 37%; banked resets 3" in output
     assert "zero [active/usable]: primary 53%; weekly 37%; banked resets 0" in output
     assert "unknown [active/usable]: primary 53%; weekly 37%; banked resets unknown" in output
+
+
+@pytest.mark.parametrize(("read", "state"), [(49, "alert"), (50, "ok"), (75, "ok")])
+def test_anthropic_cache_ratio_threshold(service, capsys, read, state):
+    _set_routes([_account()])
+    _Handler.routes["/api/request-logs/anthropic-cache-summary"] = (
+        200,
+        {
+            "window_minutes": 60,
+            "request_count": 2,
+            "incomplete_request_count": 0,
+            "input_tokens": 100 - read,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": read,
+        },
+    )
+
+    cli.main(["status", "--json", "--base-url", service])
+    assert json.loads(capsys.readouterr().out)["anthropic_cache"] == {
+        "state": state,
+        "ratio_percent": float(read),
+        "window_minutes": 60,
+        "request_count": 2,
+    }
+    cli.main(["status", "--base-url", service])
+    output = capsys.readouterr().out
+    assert ("ALERT Anthropic cache-read ratio" in output) is (state == "alert")
+
+
+@pytest.mark.parametrize("count,incomplete,tokens", [(0, 0, 0), (1, 0, 0), (1, 1, 100)])
+def test_anthropic_cache_unknown_does_not_alert(service, capsys, count, incomplete, tokens):
+    _set_routes([_account()])
+    _Handler.routes["/api/request-logs/anthropic-cache-summary"] = (
+        200,
+        {
+            "window_minutes": 60,
+            "request_count": count,
+            "incomplete_request_count": incomplete,
+            "input_tokens": tokens,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        },
+    )
+    cli.main(["status", "--base-url", service])
+    output = capsys.readouterr().out
+    assert "Anthropic cache-read ratio (last hour): unknown" in output
+    assert "ALERT" not in output
+
+
+def test_cache_summary_failure_does_not_fail_status(service, capsys):
+    _set_routes([_account()])
+    _Handler.routes["/api/request-logs/anthropic-cache-summary"] = (503, {"secret": "must-not-print"})
+    cli.main(["status", "--json", "--base-url", service])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["health"]["state"] == "ready"
+    assert payload["anthropic_cache"]["state"] == "unknown"
+    assert "must-not-print" not in json.dumps(payload)
 
 
 def test_exhausted_quota_is_a_successful_snapshot(service, capsys):

@@ -80,11 +80,45 @@ def observe(
         "accounts": accounts,
         "availability_note": "Snapshot only; it is not a dispatch reservation or availability guarantee.",
     }
+    try:
+        cache_summary = _get_json(base_url + "/api/request-logs/anthropic-cache-summary", timeout)
+        result["anthropic_cache"] = _anthropic_cache_observation(cache_summary)
+    except StatusObservationError:
+        result["anthropic_cache"] = _unknown_anthropic_cache()
     if provider:
         result["provider_filter"] = provider
     if model:
         result["model"] = {"name": model, "thinking": thinking, **_model_observation(accounts, model, thinking)}
     return result
+
+
+def _unknown_anthropic_cache() -> dict[str, Any]:
+    return {"state": "unknown", "ratio_percent": None, "window_minutes": 60, "request_count": None}
+
+
+def _anthropic_cache_observation(summary: Any) -> dict[str, Any]:
+    if not isinstance(summary, dict) or summary.get("window_minutes") != 60:
+        return _unknown_anthropic_cache()
+    values = [
+        summary.get(key)
+        for key in (
+            "request_count",
+            "incomplete_request_count",
+            "input_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+        )
+    ]
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in values):
+        return _unknown_anthropic_cache()
+    count, incomplete, uncached, creation, read = values
+    observation = {"state": "unknown", "ratio_percent": None, "window_minutes": 60, "request_count": count}
+    denominator = uncached + creation + read
+    if not count or incomplete or incomplete > count or not denominator:
+        return observation
+    observation["ratio_percent"] = 100 * read / denominator
+    observation["state"] = "alert" if 2 * read < denominator else "ok"
+    return observation
 
 
 def _validated_base_url(value: str) -> str:
@@ -416,6 +450,14 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
         print(f"model {model['name']}: {model['status']}")
         for reason in model["reasons"]:
             print(f"  - {reason}")
+    cache = payload.get("anthropic_cache")
+    if cache:
+        if cache["state"] == "alert":
+            print(f"ALERT Anthropic cache-read ratio (last hour): {cache['ratio_percent']}% (<50%)")
+        elif cache["state"] == "ok":
+            print(f"Anthropic cache-read ratio (last hour): {cache['ratio_percent']}%")
+        else:
+            print("Anthropic cache-read ratio (last hour): unknown")
     print(payload["availability_note"])
 
 
