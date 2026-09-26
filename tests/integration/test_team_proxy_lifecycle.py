@@ -141,16 +141,28 @@ async def test_untrusted_member_lifecycle_through_proxy_routes(async_client, app
         assert (await member.get("/v1/models")).status_code == 200
         member.headers["x-api-key"] = "sk-clb-invalid"
         assert (await member.get("/v1/models")).status_code == 401
+        member.headers["Authorization"] = "Bearer sk-clb-invalid"
+        member.headers["x-api-key"] = keys[0]["key"]
+        assert (await member.get("/v1/models")).status_code == 401
+        member.headers["Authorization"] = "Bearer junk"
         revoked = await async_client.patch(f"/api/api-keys/{keys[0]['id']}", json={"isActive": False})
         assert revoked.status_code == 200, revoked.text
         member.headers["x-api-key"] = keys[0]["key"]
         assert (await member.get("/v1/models")).status_code == 401
+        member.headers["Authorization"] = f"Bearer {keys[0]['key']}"
+        member.headers["x-api-key"] = keys[1]["key"]
+        assert (await member.get("/v1/models")).status_code == 401
+        member.headers["Authorization"] = "Bearer junk"
         expired = await async_client.patch(
             f"/api/api-keys/{keys[1]['id']}", json={"expiresAt": datetime(2020, 1, 1, tzinfo=UTC).isoformat()}
         )
         assert expired.status_code == 200, expired.text
         member.headers["x-api-key"] = keys[1]["key"]
         assert (await member.get("/v1/models")).status_code == 401
+        member.headers["Authorization"] = f"Bearer {keys[1]['key']}"
+        member.headers["x-api-key"] = "sk-clb-invalid"
+        assert (await member.get("/v1/models")).status_code == 401
+        member.headers["Authorization"] = "Bearer junk"
         del member.headers["x-api-key"]
         assert (await member.get("/v1/models")).status_code == 200
         assert (await member.get("/api/team/members")).status_code == 200
