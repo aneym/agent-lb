@@ -179,6 +179,86 @@ async def _bearer_credentials(request: Request):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trusted", "authorization", "header_key", "expected_token"),
+    [
+        (False, "Bearer chatgpt-oauth", "sk-clb-member-key", "sk-clb-member-key"),
+        (False, "Bearer sk-clb-bearer-key", "sk-clb-header-key", "sk-clb-bearer-key"),
+        (True, "Bearer chatgpt-oauth", None, None),
+        (True, "Bearer chatgpt-oauth", "ordinary-key", None),
+        (True, None, "ordinary-key", None),
+    ],
+)
+async def test_member_header_selection_at_http_auth_boundary(
+    monkeypatch, trusted, authorization, header_key, expected_token
+):
+    _patch_settings(monkeypatch, team_mode_enabled=True)
+    _patch_client_trust(monkeypatch, trusted=trusted)
+    seen = _patch_token_validation(monkeypatch)
+    headers = []
+    if authorization is not None:
+        headers.append(("authorization", authorization))
+    if header_key is not None:
+        headers.append(("x-api-key", header_key))
+    request = Request(_make_connection("127.0.0.1" if trusted else "203.0.113.5", headers=headers).scope)
+
+    result = await auth_dependencies.validate_proxy_api_key(request, await _bearer_credentials(request))
+
+    assert (result.member_id if result is not None else None) == ("member-1" if expected_token else None)
+    assert seen == ([expected_token] if expected_token else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("authorization", "expected_token"),
+    [("Bearer chatgpt-oauth", "chatgpt-oauth"), (None, "ordinary-key")],
+)
+async def test_non_prefixed_header_keeps_existing_bearer_precedence(monkeypatch, authorization, expected_token):
+    settings_cache = AsyncMock()
+    settings_cache.get.return_value = SimpleNamespace(api_key_auth_enabled=True, team_mode_enabled=True)
+    monkeypatch.setattr(auth_dependencies, "get_settings_cache", lambda: settings_cache)
+    seen = _patch_token_validation(monkeypatch)
+    headers = [("x-api-key", "ordinary-key")]
+    if authorization is not None:
+        headers.append(("authorization", authorization))
+    request = Request(_make_connection(headers=headers).scope)
+
+    result = await auth_dependencies.validate_proxy_api_key(request, await _bearer_credentials(request))
+
+    assert result is not None and result.member_id == "member-1"
+    assert seen == [expected_token]
+
+
+@pytest.mark.asyncio
+async def test_untrusted_chatgpt_bearer_without_member_header_is_rejected(monkeypatch):
+    _patch_settings(monkeypatch, team_mode_enabled=True)
+    _patch_client_trust(monkeypatch, trusted=False)
+    request = Request(_make_connection(headers=[("authorization", "Bearer chatgpt-oauth")]).scope)
+
+    with pytest.raises(ProxyAuthError, match="Proxy authentication must be configured"):
+        await auth_dependencies.validate_proxy_api_key(request, await _bearer_credentials(request))
+
+
+@pytest.mark.asyncio
+async def test_revoked_member_header_is_rejected_on_trusted_client(monkeypatch):
+    _patch_settings(monkeypatch, team_mode_enabled=True)
+    _patch_client_trust(monkeypatch, trusted=True)
+
+    async def _revoked(_token: str) -> ApiKeyData:
+        raise ProxyAuthError("Invalid API key")
+
+    monkeypatch.setattr(auth_dependencies, "_validate_api_key_token", _revoked)
+    request = Request(
+        _make_connection(
+            "127.0.0.1", headers=[("authorization", "Bearer chatgpt-oauth"), ("x-api-key", "sk-clb-revoked")]
+        ).scope
+    )
+
+    with pytest.raises(ProxyAuthError, match="Invalid API key"):
+        await auth_dependencies.validate_proxy_api_key(request, await _bearer_credentials(request))
+
+
+@pytest.mark.asyncio
 async def test_team_mode_off_keeps_old_behaviour(monkeypatch):
     _patch_settings(monkeypatch, team_mode_enabled=False)
     _patch_client_trust(monkeypatch, trusted=False)
