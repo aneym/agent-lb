@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import anyio
 
-from app.core.auth.dependencies import select_proxy_authorization
+from app.core.auth.dependencies import select_member_key_authorization
 from app.core.clients.files import create_file as core_create_file  # noqa: F401
 from app.core.clients.files import finalize_file as core_finalize_file  # noqa: F401
 from app.core.clients.proxy import CodexControlResponse as CodexControlResponse
@@ -222,9 +222,10 @@ class _HTTPBridgeStreamingMixin:
         client_session_id: str | None = None,
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream_http", payload, headers)
-        # Forward the credential this request was authenticated with, so an owner
-        # instance sees the member key rather than a ChatGPT bearer beside it.
-        proxy_api_authorization = select_proxy_authorization(
+        # Forward only the agent-lb key this request was authenticated with, so an
+        # owner instance attributes it to the member; a client's ChatGPT bearer
+        # never leaves this instance.
+        proxy_api_authorization = select_member_key_authorization(
             _header_value_case_insensitive(headers, "authorization"),
             _header_value_case_insensitive(headers, "x-api-key"),
         )

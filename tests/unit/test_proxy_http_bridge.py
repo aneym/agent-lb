@@ -2101,11 +2101,13 @@ def test_headers_with_authorization_restores_missing_proxy_api_header() -> None:
     [
         ({"Authorization": "Bearer chatgpt-token", "x-api-key": "sk-clb-member"}, "Bearer sk-clb-member"),
         ({"Authorization": "Bearer sk-clb-bearer", "x-api-key": "sk-clb-member"}, "Bearer sk-clb-bearer"),
-        ({"Authorization": "Bearer chatgpt-token"}, "Bearer chatgpt-token"),
+        ({"Authorization": "Bearer chatgpt-token"}, None),
+        ({"x-api-key": "not-a-member-key"}, None),
+        ({}, None),
     ],
 )
 def test_stream_http_responses_forwards_the_selected_proxy_credential(
-    headers: dict[str, str], expected: str
+    headers: dict[str, str], expected: str | None
 ) -> None:
     captured: dict[str, Any] = {}
 

@@ -261,6 +261,45 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("valid", [True, False])
+async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_key_when_auth_disabled(
+    monkeypatch, valid: bool
+):
+    async def fake_settings():
+        return SimpleNamespace(api_key_auth_enabled=False)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/internal/bridge/responses",
+            "headers": [(b"authorization", b"Bearer sk-clb-member")],
+            "client": ("10.0.0.12", 12345),
+        }
+    )
+    member_key = SimpleNamespace(id="member-key")
+
+    async def validate(authorization: str | None, *, request: Request | None = None):
+        assert authorization == "Bearer sk-clb-member"
+        assert request is None
+        if not valid:
+            raise ProxyAuthError("Invalid API key")
+        return member_key
+
+    monkeypatch.setattr(proxy_api_module, "get_settings_cache", lambda: SimpleNamespace(get=fake_settings))
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", validate)
+
+    api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)
+
+    if valid:
+        assert api_key is member_key
+        assert response is None
+    else:
+        assert api_key is None
+        assert response is not None and response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_validate_internal_bridge_api_key_preserves_local_request_exemption(monkeypatch):
     async def fake_settings():
         return SimpleNamespace(api_key_auth_enabled=True)
