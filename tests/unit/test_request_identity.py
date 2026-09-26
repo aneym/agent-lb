@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 
 import pytest
@@ -23,9 +24,9 @@ LOOPBACK = "127.0.0.1"
 NODES = {TAIL_A: "laptop", TAIL_B: "peer-1", V6_A: "laptop"}
 BASE_SETTINGS = {
     "identity_owner": "owner-a",
-    "identity_owner_machines": "box-1,book",
+    "identity_owner_machines": "box-1,box-2",
     "identity_local_machine": "box-1",
-    "identity_machine_aliases": "laptop=book",
+    "identity_machine_aliases": "laptop=box-2",
     "firewall_trust_proxy_headers": True,
 }
 
@@ -59,10 +60,10 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             member=("member-id-gone", None),
         ),
         _case(
-            "member-named-with-email-keeps-local-part",
+            "member-named-with-email-is-unknown",
             {},
             LOOPBACK,
-            ("member-b", "member", "box-1", "local"),
+            ("unknown", "unknown", "box-1", "local"),
             member=("member-id-b", "Member.B@example.com"),
         ),
         # Machine (spec change 2)
@@ -70,7 +71,7 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             "keyless-owner-tailnet-via-alias",
             {"x-forwarded-for": TAIL_A},
             LOOPBACK,
-            ("owner-a", "owner-machine", "book", "tailnet"),
+            ("owner-a", "owner-machine", "box-2", "tailnet"),
         ),
         _case(
             "keyless-non-owner-tailnet-is-unknown",
@@ -84,12 +85,12 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             LOOPBACK,
             ("unknown", "unknown", "tailnet-unknown", "tailnet"),
         ),
-        _case("ipv6-tailnet", {"x-forwarded-for": V6_A}, LOOPBACK, ("owner-a", "owner-machine", "book", "tailnet")),
+        _case("ipv6-tailnet", {"x-forwarded-for": V6_A}, LOOPBACK, ("owner-a", "owner-machine", "box-2", "tailnet")),
         _case(
             "multi-hop-xff-uses-hop-next-to-trusted-proxy",
             {"x-forwarded-for": f"{TAIL_B}, {TAIL_A}"},
             LOOPBACK,
-            ("owner-a", "owner-machine", "book", "tailnet"),
+            ("owner-a", "owner-machine", "box-2", "tailnet"),
         ),
         _case(
             "multi-hop-xff-through-trusted-tailnet-proxy",
@@ -102,7 +103,7 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             "xff-ignored-when-proxy-headers-untrusted",
             {"x-forwarded-for": TAIL_A},
             LOOPBACK,
-            OWNER_LOCAL,
+            ("unknown", "unknown", "remote", "remote"),
             settings={"firewall_trust_proxy_headers": False},
         ),
         _case(
@@ -142,9 +143,16 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
         ),
         _case(
             "claimed-owner-machine",
-            {"x-agent-lb-machine": "book"},
+            {"x-agent-lb-machine": "box-2"},
             LOOPBACK,
-            ("owner-a", "owner-machine", "book", "claimed"),
+            ("owner-a", "owner-machine", "box-2", "claimed"),
+        ),
+        _case(
+            "owner-machine-config-slugified",
+            {"x-agent-lb-machine": "my-box"},
+            LOOPBACK,
+            ("owner-a", "owner-machine", "my-box", "claimed"),
+            settings={"identity_owner_machines": "my_box"},
         ),
         _case("claimed-invalid-characters", {"x-agent-lb-machine": "Bad!"}, LOOPBACK, OWNER_LOCAL),
         _case("claimed-too-long", {"x-agent-lb-machine": "a" * 49}, LOOPBACK, OWNER_LOCAL),
@@ -190,23 +198,37 @@ def test_resolve_identity(headers, socket_ip, member, overrides, expected):
         pytest.param(True, {"x-forwarded-for": LOOPBACK}, LOOPBACK, "local", id="xff-says-loopback"),
         pytest.param(True, {"x-real-ip": TAIL_B}, TAIL_B, "tailnet", id="x-real-ip-without-xff"),
         pytest.param(True, {"forwarded": f"for={TAIL_A}"}, TAIL_A, "tailnet", id="forwarded-header"),
-        pytest.param(False, {"x-forwarded-for": PUBLIC}, LOOPBACK, "local", id="untrusted-proxy-headers"),
+        pytest.param(False, {"x-forwarded-for": PUBLIC}, LOOPBACK, "remote", id="untrusted-proxy-headers"),
     ],
 )
 def test_forged_forwarding_on_loopback_follows_the_auth_resolver(monkeypatch, trust, headers, auth_ip, machine_source):
-    monkeypatch.setenv("AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS", "true" if trust else "false")
-    monkeypatch.setenv("AGENT_LB_IDENTITY_LOCAL_MACHINE", "box-1")
-    get_settings.cache_clear()
-    scope = {
-        "type": "http",
-        "client": (LOOPBACK, 50000),
-        "server": ("127.0.0.1", 2455),
-        "headers": [(name.encode(), value.encode()) for name, value in headers.items()],
-    }
+    try:
+        with monkeypatch.context() as env:
+            env.setenv("AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS", "true" if trust else "false")
+            env.setenv("AGENT_LB_IDENTITY_LOCAL_MACHINE", "box-1")
+            get_settings.cache_clear()
+            scope = {
+                "type": "http",
+                "client": (LOOPBACK, 50000),
+                "server": ("127.0.0.1", 2455),
+                "headers": [(name.encode(), value.encode()) for name, value in headers.items()],
+            }
+            assert resolve_request_client_host(HTTPConnection(scope)) == auth_ip
+            resolved = resolve_identity(headers, LOOPBACK, node_cache=NODES, settings=get_settings())
+            assert resolved.caller_machine_source == machine_source
+    finally:
+        # The context has restored the environment; discard the now-stale Settings too.
+        get_settings.cache_clear()
 
-    assert resolve_request_client_host(HTTPConnection(scope)) == auth_ip
-    resolved = resolve_identity(headers, LOOPBACK, node_cache=NODES, settings=get_settings())
-    assert resolved.caller_machine_source == machine_source
+
+def test_missing_local_machine_never_exposes_os_hostname():
+    settings = Settings(**{**BASE_SETTINGS, "identity_local_machine": None})
+    assert resolve_identity({}, LOOPBACK, settings=settings).caller_machine == "local"
+
+
+def test_bad_machine_alias_entry_does_not_prevent_settings_loading():
+    settings = Settings(**{**BASE_SETTINGS, "identity_machine_aliases": "broken,laptop=box-2,=empty"})
+    assert settings.identity_machine_aliases == {"laptop": "box-2"}
 
 
 @pytest.mark.asyncio
@@ -220,3 +242,34 @@ async def test_member_lookup_failure_records_unknown_and_does_not_raise(monkeypa
     resolved = await attach_member(local, "member-id-lookup-failure")
 
     assert resolved == RequestIdentity("unknown", "unknown", "box-1", "local")
+    assert await attach_member(local, "member-id-lookup-failure") == resolved
+
+
+@pytest.mark.asyncio
+async def test_member_lookup_is_bounded_and_shared(monkeypatch):
+    calls = 0
+    release = asyncio.Event()
+
+    class SlowSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def scalar(self, statement):
+            nonlocal calls
+            calls += 1
+            await release.wait()
+            return "member-a"
+
+    monkeypatch.setattr(identity_module, "get_background_session", SlowSession)
+    monkeypatch.setattr(identity_module, "_MEMBER_LOOKUP_TIMEOUT_SECONDS", 0.02)
+    local = RequestIdentity("owner-a", "owner-machine", "box-1", "local")
+    # Concurrent writes to the same member share the one pending lookup.
+    callers = [asyncio.create_task(attach_member(local, "member-id-slow")) for _ in range(10)]
+    results = await asyncio.gather(*callers)
+    assert calls == 1
+    assert results == [RequestIdentity("unknown", "unknown", "box-1", "local")] * 10
+    assert await attach_member(local, "member-id-slow") == results[0]
+    assert calls == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import socket
 from collections.abc import Mapping
@@ -24,6 +25,7 @@ ENV_FILES = (BASE_DIR / ".env", BASE_DIR / ".env.local")
 
 DOCKER_DATA_DIR = Path("/var/lib/agent-lb")
 DOCKER_CALLBACK_HOST = "0.0.0.0"
+logger = logging.getLogger(__name__)
 
 
 def _in_container() -> bool:
@@ -549,18 +551,20 @@ class Settings(BaseSettings):
             return {}
         if isinstance(value, str):
             pairs = [entry.partition("=") for entry in value.split(",") if entry.strip()]
-            if any(not separator for _, separator, _ in pairs):
-                raise ValueError("identity_machine_aliases entries must be node=alias")
-            items = [(node, alias) for node, _, alias in pairs]
+            items = [(node, alias) for node, separator, alias in pairs if separator]
+            if len(items) != len(pairs):
+                logger.warning("Ignoring malformed identity machine alias entries")
         elif isinstance(value, Mapping):
             items = list(value.items())
         else:
-            raise TypeError("identity_machine_aliases must be a mapping or node=alias list")
+            logger.warning("Ignoring malformed identity machine aliases")
+            return {}
         result: dict[str, str] = {}
         for node, alias in items:
             node_key, alias_value = str(node).strip().lower(), str(alias).strip().lower()
             if not node_key or not alias_value:
-                raise ValueError("identity_machine_aliases entries must be node=alias")
+                logger.warning("Ignoring malformed identity machine alias entry")
+                continue
             result[node_key] = alias_value
         return result
 

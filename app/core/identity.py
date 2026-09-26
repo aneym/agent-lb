@@ -15,9 +15,9 @@ lookup runs inside the request-log write, is cached, and a failure records ``unk
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-import socket
 import time
 import unicodedata
 from collections.abc import Mapping
@@ -63,6 +63,7 @@ _CLAIM_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 _OWNER_MACHINE_SOURCES = frozenset({MACHINE_LOCAL, MACHINE_TAILNET, MACHINE_CLAIMED})
 _MEMBER_CACHE_TTL_SECONDS = 60.0
 _MEMBER_CACHE_MAX_ENTRIES = 512
+_MEMBER_LOOKUP_TIMEOUT_SECONDS = 0.75
 _WARNING_INTERVAL_SECONDS = 3600.0
 
 
@@ -93,6 +94,7 @@ class _NoNodes:
 _node_lookup: NodeLookup = _NoNodes()
 _request_identity: ContextVar[RequestIdentity | None] = ContextVar("request_identity", default=None)
 _member_names: dict[str, tuple[float, str | None]] = {}
+_member_lookups: dict[str, asyncio.Task[str | None]] = {}
 _last_warning_at: dict[str, float] = {}
 
 
@@ -166,7 +168,8 @@ def resolve_identity(
         return DISABLED_IDENTITY
     nodes = node_cache if node_cache is not None else _node_lookup
     machine, machine_source = _resolve_machine(headers, socket_ip, settings, nodes)
-    if machine_source in _OWNER_MACHINE_SOURCES and machine in settings.identity_owner_machines:
+    owner_machines = {_handle(name, MACHINE_MAX_LENGTH) for name in settings.identity_owner_machines}
+    if machine_source in _OWNER_MACHINE_SOURCES and machine in owner_machines:
         owner = _handle(settings.identity_owner, USER_MAX_LENGTH) or "owner"
         identity = RequestIdentity(owner, USER_OWNER_MACHINE, machine, machine_source)
     else:
@@ -185,7 +188,7 @@ def apply_member(identity: RequestIdentity, *, member_id: str | None, member_nam
 
 
 def local_machine_handle(settings: Settings) -> str:
-    return _handle(settings.identity_local_machine, MACHINE_MAX_LENGTH) or _host_short_name() or MACHINE_LOCAL
+    return _handle(settings.identity_local_machine, MACHINE_MAX_LENGTH) or MACHINE_LOCAL
 
 
 def _resolve_machine(
@@ -209,6 +212,11 @@ def _resolve_machine(
     if address is None:
         return MACHINE_REMOTE, MACHINE_REMOTE
     if address.is_loopback:
+        # Auth refuses local trust when forwarding is hinted but proxy headers are
+        # untrusted. Do not attribute such a request to the owner machine either.
+        forwarding_headers = ("x-forwarded-for", "forwarded", "x-real-ip", "true-client-ip", "cf-connecting-ip")
+        if not settings.firewall_trust_proxy_headers and any(headers.get(name) for name in forwarding_headers):
+            return MACHINE_REMOTE, MACHINE_REMOTE
         claim = (headers.get(_CLAIM_HEADER) or "").strip()
         if _CLAIM_PATTERN.fullmatch(claim):
             return claim, MACHINE_CLAIMED
@@ -246,14 +254,9 @@ def _trusted_proxy_networks(cidrs: tuple[str, ...]) -> tuple[IPv4Network | IPv6N
     return parse_trusted_proxy_networks(list(cidrs))
 
 
-@lru_cache(maxsize=1)
-def _host_short_name() -> str | None:
-    return _handle(socket.gethostname().split(".", 1)[0], MACHINE_MAX_LENGTH)
-
-
 def _member_handle(name: str | None) -> str | None:
-    # A member named with an email address keeps only the local part: no domain is stored.
-    return _handle(name.split("@", 1)[0], USER_MAX_LENGTH) if name else None
+    # Email-shaped names are not handles, including their local parts.
+    return _handle(name, USER_MAX_LENGTH) if name and "@" not in name else None
 
 
 def _handle(value: str | None, limit: int) -> str | None:
@@ -279,16 +282,31 @@ async def _member_name(member_id: str) -> str | None:
     cached = _member_names.get(member_id)
     if cached is not None and now - cached[0] < _MEMBER_CACHE_TTL_SECONDS:
         return cached[1]
+    task = _member_lookups.get(member_id)
+    if task is None:
+        task = asyncio.create_task(_lookup_member_name(member_id))
+        _member_lookups[member_id] = task
+        task.add_done_callback(
+            lambda completed: (
+                _member_lookups.pop(member_id, None) if _member_lookups.get(member_id) is completed else None
+            )
+        )
+    # A cancelled request cannot cancel the lookup being shared by other requests.
+    return await asyncio.shield(task)
+
+
+async def _lookup_member_name(member_id: str) -> str | None:
     try:
-        async with get_background_session() as session:
-            # Only the name: the member's email is never read.
-            name = await session.scalar(select(TeamMember.name).where(TeamMember.id == member_id))
+        async with asyncio.timeout(_MEMBER_LOOKUP_TIMEOUT_SECONDS):
+            async with get_background_session() as session:
+                # Only the name: the member's email is never read.
+                name = await session.scalar(select(TeamMember.name).where(TeamMember.id == member_id))
     except Exception:
         _warn_hourly("member", "team member lookup failed; recording unknown user", exc_info=True)
-        return None
+        name = None
     if len(_member_names) >= _MEMBER_CACHE_MAX_ENTRIES:
         _member_names.clear()
-    _member_names[member_id] = (now, name)
+    _member_names[member_id] = (time.monotonic(), name)
     return name
 
 

@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 import app.modules.proxy.anthropic_service as anthropic_proxy_module
 from app.core.config.settings import get_settings
-from app.core.identity import RequestIdentity
+from app.core.identity import RequestIdentity, reset_request_identity, set_request_identity
 from app.core.utils.time import utcnow
 from app.db.models import RequestLog, TeamMember
 from app.db.session import SessionLocal
@@ -176,3 +176,29 @@ async def test_add_log_identity_outside_a_request(db_setup, identity_env, monkey
             await session.execute(select(RequestLog).where(RequestLog.request_id == "identity-outside-request"))
         ).scalar_one()
     assert _caller(row) == expected
+
+
+@pytest.mark.asyncio
+async def test_add_log_without_explicit_identity_uses_request_context(db_setup, identity_env):
+    del db_setup, identity_env
+    caller = RequestIdentity("member-a", "member", "box-2", "tailnet")
+    token = set_request_identity(caller)
+    try:
+        async with SessionLocal() as session:
+            await RequestLogsRepository(session).add_log(
+                account_id=None,
+                request_id="identity-context-request",
+                model="example-model",
+                input_tokens=None,
+                output_tokens=None,
+                latency_ms=None,
+                status="error",
+                error_code=None,
+            )
+            await session.commit()
+            row = (
+                await session.execute(select(RequestLog).where(RequestLog.request_id == "identity-context-request"))
+            ).scalar_one()
+        assert _caller(row) == ("member-a", "member", "box-2", "tailnet")
+    finally:
+        reset_request_identity(token)

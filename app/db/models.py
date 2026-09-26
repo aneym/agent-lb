@@ -245,6 +245,10 @@ class RequestLog(Base):
     api_key_id: Mapped[str | None] = mapped_column(String, nullable=True)
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     client_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    caller_user: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    caller_user_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    caller_machine: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    caller_machine_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     request_id: Mapped[str] = mapped_column(String, nullable=False)
     request_kind: Mapped[str] = mapped_column(
         String,
