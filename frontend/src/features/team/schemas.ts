@@ -30,6 +30,13 @@ export const TeamMemberKeySchema = z.object({
   lastUsedAt: z.string().nullable().default(null),
 });
 
+export const TeamPoolWindowSchema = z.object({
+  window: z.string(),
+  usedPercent: z.number(),
+  limitPercent: z.number(),
+  resetAt: z.string(),
+});
+
 export const TeamMemberSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -47,6 +54,9 @@ export const TeamMemberSchema = z.object({
   updatedAt: z.string(),
   usage: TeamUsageSchema,
   gate: z.enum(TEAM_GATES),
+  poolSharePercent: z.number().nullable().default(null),
+  poolShare: z.array(TeamPoolWindowSchema).default([]),
+  poolShareKnown: z.boolean().default(false),
   keys: z.array(TeamMemberKeySchema).default([]),
 });
 
@@ -59,6 +69,7 @@ const capsShape = {
   tokenCapDay: z.number().int().positive().nullable().optional(),
   tokenCapWeek: z.number().int().positive().nullable().optional(),
   tokenCapMonth: z.number().int().positive().nullable().optional(),
+  poolSharePercent: z.number().positive().max(100).nullable().optional(),
 };
 
 export const TeamMemberCreateRequestSchema = z.object({
@@ -117,6 +128,7 @@ export const TeamOnboardingSchema = z.object({
 
 export const TeamMemberKeyCreateResponseSchema = ApiKeyCreateResponseSchema;
 
+export type TeamPoolWindow = z.infer<typeof TeamPoolWindowSchema>;
 export type TeamMember = z.infer<typeof TeamMemberSchema>;
 export type TeamMemberKey = z.infer<typeof TeamMemberKeySchema>;
 export type TeamUsageWindow = z.infer<typeof TeamUsageWindowSchema>;

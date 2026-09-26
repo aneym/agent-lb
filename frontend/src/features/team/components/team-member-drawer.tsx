@@ -42,6 +42,7 @@ type FormState = {
   notes: string;
   active: boolean;
   allowedModels: string[];
+  poolSharePercent: string;
   caps: Record<CapField["key"], string>;
 };
 
@@ -56,7 +57,7 @@ const EMPTY_CAPS: Record<CapField["key"], string> = {
 
 function toFormState(member: TeamMember | null): FormState {
   if (member === null) {
-    return { name: "", email: "", notes: "", active: true, allowedModels: [], caps: { ...EMPTY_CAPS } };
+    return { name: "", email: "", notes: "", active: true, allowedModels: [], poolSharePercent: "", caps: { ...EMPTY_CAPS } };
   }
   return {
     name: member.name,
@@ -64,6 +65,7 @@ function toFormState(member: TeamMember | null): FormState {
     notes: member.notes ?? "",
     active: member.status === "active",
     allowedModels: member.allowedModels ?? [],
+    poolSharePercent: member.poolSharePercent === null ? "" : String(member.poolSharePercent),
     caps: {
       costCapDayUsd: member.costCapDayUsd === null ? "" : String(member.costCapDayUsd),
       costCapWeekUsd: member.costCapWeekUsd === null ? "" : String(member.costCapWeekUsd),
@@ -119,7 +121,10 @@ export function TeamMemberDrawer({
   const invalidCaps = [...COST_CAPS, ...TOKEN_CAPS].filter(
     ({ key }) => !validCap(form.caps[key], key.startsWith("token")),
   );
-  const canSubmit = form.name.trim().length > 0 && invalidCaps.length === 0 && !busy;
+  const poolSharePercent = parseCap(form.poolSharePercent);
+  const validPoolShare = poolSharePercent === null ||
+    (Number.isFinite(poolSharePercent) && poolSharePercent > 0 && poolSharePercent <= 100);
+  const canSubmit = form.name.trim().length > 0 && invalidCaps.length === 0 && validPoolShare && !busy;
 
   const submit = async () => {
     if (!canSubmit) {
@@ -131,6 +136,7 @@ export function TeamMemberDrawer({
       notes: form.notes.trim() === "" ? null : form.notes.trim(),
       status: form.active ? "active" : "suspended",
       allowedModels: form.allowedModels.length === 0 ? null : form.allowedModels,
+      poolSharePercent,
       costCapDayUsd: parseCap(form.caps.costCapDayUsd),
       costCapWeekUsd: parseCap(form.caps.costCapWeekUsd),
       costCapMonthUsd: parseCap(form.caps.costCapMonthUsd),
@@ -226,6 +232,28 @@ export function TeamMemberDrawer({
               Caps must be greater than zero. Token caps must be whole numbers. Leave a field blank for no cap.
             </p>
           ) : null}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="team-pool-share-percent">Share of pool (%)</Label>
+            <Input
+              id="team-pool-share-percent"
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              inputMode="decimal"
+              value={form.poolSharePercent}
+              aria-invalid={!validPoolShare}
+              aria-describedby={!validPoolShare ? "team-pool-share-error" : undefined}
+              disabled={busy}
+              onChange={(event) => setForm((current) => ({ ...current, poolSharePercent: event.target.value }))}
+            />
+            {!validPoolShare ? (
+              <p id="team-pool-share-error" role="alert" className="text-sm text-destructive">
+                Share must be greater than zero and at most 100%. Leave blank for no share limit.
+              </p>
+            ) : null}
+          </div>
 
           <div className="space-y-1.5">
             <Label>Allowed models</Label>
