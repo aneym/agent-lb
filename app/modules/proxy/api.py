@@ -34,7 +34,7 @@ from app.core import usage as usage_core
 from app.core.anthropic.models import AnthropicDefinedToolDefinition, AnthropicMessageRequest
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import (
-    API_KEY_TOKEN_PREFIX,
+    select_member_key_authorization,
     select_proxy_authorization,
     set_openai_error_format,
     validate_codex_usage_identity,
@@ -3628,11 +3628,10 @@ async def _validate_internal_bridge_api_key(
         if not dashboard_settings.api_key_auth_enabled:
             # Peers stay keyless, but a forwarded member key is still validated so the
             # owner attributes the request to it (team usage and pool share).
-            authorization = request.headers.get("authorization")
-            token = authorization.partition(" ")[2].strip() if authorization else ""
-            if not token.startswith(API_KEY_TOKEN_PREFIX):
+            member_authorization = select_member_key_authorization(request.headers.get("authorization"), None)
+            if member_authorization is None:
                 return None, None
-            return await validate_proxy_api_key_authorization(authorization), None
+            return await validate_proxy_api_key_authorization(member_authorization), None
         api_key = await _validate_proxy_api_key_authorization_for_connection(
             request.headers.get("authorization"),
             request,
