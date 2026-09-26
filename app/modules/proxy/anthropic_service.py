@@ -107,6 +107,80 @@ def _default_overloaded_backoff_jitter() -> float:
 
 # Injection points so tests drive 529 failover without real sleeps.
 _OVERLOADED_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
+
+# Upstream connect failures (DNS, refused, connect timeout) happen before any
+# bytes reach the provider, so they are safe to retry on the same account.
+# Under host load the LB's own event loop can starve long enough to trip the
+# 8s connect timeout; before this, every such blip surfaced to the client as
+# an unhandled 500 ("Connection timeout to host ...", 2026-09-16).
+_CONNECT_RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
+_CONNECT_ERRORS: tuple[type[BaseException], ...] = (
+    aiohttp.ClientConnectorError,
+    aiohttp.ServerTimeoutError,
+    aiohttp.ClientOSError,
+    asyncio.TimeoutError,
+)
+_CONNECT_BACKOFF_BASE_SECONDS = 0.5
+_CONNECT_BACKOFF_MAX_SECONDS = 4.0
+
+
+def _connect_backoff_seconds(attempt: int) -> float:
+    return min(_CONNECT_BACKOFF_BASE_SECONDS * (2**attempt), _CONNECT_BACKOFF_MAX_SECONDS)
+
+
+class _ConnectRetryingResponse:
+    """Async context manager that retries the upstream *connect* phase.
+
+    Only errors raised while entering the wrapped response context (DNS,
+    refused, connect timeout) are retried; anything after headers arrive is
+    the caller's responsibility. Exhausting the attempts raises a 503
+    ``upstream_unreachable`` proxy error so clients retry instead of seeing a
+    generic 500.
+    """
+
+    def __init__(
+        self,
+        open_response: Callable[[], AsyncContextManager[aiohttp.ClientResponse]],
+        *,
+        attempts: int,
+        label: str,
+    ) -> None:
+        self._open_response = open_response
+        self._attempts = max(1, attempts)
+        self._label = label
+        self._context: AsyncContextManager[aiohttp.ClientResponse] | None = None
+
+    async def __aenter__(self) -> aiohttp.ClientResponse:
+        last_error: BaseException | None = None
+        for attempt in range(self._attempts):
+            context = self._open_response()
+            try:
+                response = await context.__aenter__()
+            except _CONNECT_ERRORS as exc:
+                last_error = exc
+                logger.warning(
+                    "upstream_connect_failed provider=%s attempt=%d/%d error=%s",
+                    self._label,
+                    attempt + 1,
+                    self._attempts,
+                    exc,
+                )
+                if attempt + 1 < self._attempts:
+                    await _CONNECT_RETRY_SLEEP(_connect_backoff_seconds(attempt))
+                continue
+            self._context = context
+            return response
+        raise AnthropicProxyError(
+            503,
+            f"{self._label} upstream unreachable after {self._attempts} connect attempts: {last_error}",
+            code="upstream_unreachable",
+        ) from last_error
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool | None:
+        if self._context is None:
+            return None
+        return await self._context.__aexit__(exc_type, exc, tb)
+
 _OVERLOADED_RETRY_JITTER: Callable[[], float] = _default_overloaded_backoff_jitter
 
 
@@ -304,11 +378,15 @@ class AnthropicProxyService:
                         body_payload = payload.model_dump(mode="json", exclude_none=True)
 
                         async with lease_http_session() as session:
-                            async with self._open_upstream_response(
-                                session,
-                                provider_name=provider_name,
-                                headers=headers,
-                                json_body=body_payload,
+                            async with _ConnectRetryingResponse(
+                                lambda: self._open_upstream_response(
+                                    session,
+                                    provider_name=provider_name,
+                                    headers=headers,
+                                    json_body=body_payload,
+                                ),
+                                attempts=get_settings().upstream_connect_attempts,
+                                label=_provider_label(provider_name),
                             ) as resp:
                                 if resp.status in {401, 403}:
                                     error_message = await _read_error_message(resp)

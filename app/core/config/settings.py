@@ -162,6 +162,7 @@ class Settings(BaseSettings):
     upstream_base_url: str = "https://chatgpt.com/backend-api"
     upstream_stream_transport: Literal["http", "websocket", "auto"] = "auto"
     upstream_connect_timeout_seconds: float = 8.0
+    upstream_connect_attempts: int = Field(default=3, ge=1)
     upstream_compact_timeout_seconds: float | None = None
     upstream_websocket_trust_env: bool = Field(default_factory=_default_upstream_websocket_trust_env)
     proxy_request_budget_seconds: float = Field(default=600.0, gt=0)
