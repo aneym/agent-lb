@@ -156,7 +156,7 @@ function AccountRow({
         <div className="t">
           <span className="n">{accountLabel(a, hideEmails)}</span>
           <span className="s">
-            <span className="privacy-blur">{a.email}</span>
+            <span className={hideEmails ? "privacy-blur" : undefined}>{a.email}</span>
             <span className="mono id"> · {a.accountId.slice(0, 6)}</span>
           </span>
         </div>

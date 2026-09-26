@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { z } from "zod";
 import { post } from "@/lib/api-client";
+import { usePrivacyStore } from "@/hooks/use-privacy";
 import { useAccounts } from "@/features/accounts/hooks/use-accounts";
 import { useOauth } from "@/features/accounts/hooks/use-oauth";
 import { OauthDialog } from "@/features/accounts/components/oauth-dialog";
@@ -50,6 +51,7 @@ const Imported = z.object({ accountId: z.string(), email: z.string(), planType: 
 const isKeyProvider = (value: Provider) => ["kimi", "glm", "openrouter"].includes(value);
 
 export function AddAccountPage() {
+  const hideEmails = usePrivacyStore((state) => state.blurred);
   const [params] = useSearchParams();
   const initial = params.get("provider");
   const [selected, setSelected] = useState<Provider>(
@@ -180,7 +182,7 @@ export function AddAccountPage() {
                 <span className="sn">✓</span>
                 <b>{isKeyProvider(selected) ? "Key saved" : "Signed in"}</b>
                 <div className="sb">
-                  <span className="muted privacy-blur">{added?.email || "Account connected"}</span>
+                  <span className={hideEmails ? "muted privacy-blur" : "muted"}>{added?.email || "Account connected"}</span>
                 </div>
               </div>
               <div className="step now">

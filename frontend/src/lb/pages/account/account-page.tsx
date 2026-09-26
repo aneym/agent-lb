@@ -468,7 +468,7 @@ export function AccountPage() {
           <h1>{name}</h1>
           <span className="meta">
             {account.planType.replace(/^./, (first) => first.toUpperCase())} ·{" "}
-            <span className="privacy-blur">{account.email}</span>
+            <span className={hideEmails ? "privacy-blur" : undefined}>{account.email}</span>
             {addedAt && !Number.isNaN(new Date(addedAt).getTime()) && (
               <>
                 {" "}
