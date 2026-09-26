@@ -1,0 +1,9 @@
+{
+  "status": "tested source only; runtime deployment deferred by the operator",
+  "runtime_changed": false,
+  "restart_performed": false,
+  "source_sha256": "3b2a1d86cdc9b1085d134ee0ed10bb58f6bd59bf9d00e8d3c74664f7e1ab1935",
+  "runtime_sha256": "d8122c2040b84e4ad2bd1d5241f31fd8a7fbdbf06289ffe3c8e8e8d88ba80fa6",
+  "checks": "34 targeted tests passed; scoped Ruff passed",
+  "rollback_file": "/Volumes/StudioExt/repos/agent-lb/openspec/changes/fix-codex-image-tool-alias/checkpoint/path_rewrite.before.py"
+}

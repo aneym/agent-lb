@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROBE_MODEL = "gpt-5.5"
 DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = "claude-haiku-4-5"
 DEFAULT_GLM_PROBE_MODEL = "glm-5.2"
+DEFAULT_KIMI_PROBE_MODEL = "kimi-k3"
 PROBE_REQUEST_TIMEOUT_SECONDS = 30.0
 PROBE_CONNECT_TIMEOUT_SECONDS = 10.0
 # Sentinel status for transport-level probe failures (DNS, TLS, timeout): no

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import cast
 
 from pydantic import ValidationError
@@ -18,19 +18,19 @@ from app.core.auth import (
 )
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
-from app.core.clients import rate_limit_resets
+from app.core.clients import anthropic_resets, rate_limit_resets
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
 from app.core.providers import (
+    ANTHROPIC_COMPAT_PROFILES,
     ANTHROPIC_PROVIDER_NAME,
-    GLM_DEFAULT_PLAN,
-    GLM_PROVIDER_NAME,
     OPENAI_PROVIDER_NAME,
+    get_anthropic_compat_profile,
     get_provider,
     normalize_provider_name,
 )
-from app.core.providers.openrouter import OPENROUTER_DEFAULT_PLAN, OPENROUTER_PROVIDER_NAME
+from app.core.providers.openrouter import OPENROUTER_PROVIDER_NAME
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.modules.accounts import probes, reset_credit_cache
@@ -94,6 +94,7 @@ _DETAIL_BUCKET_SECONDS = 3600  # 1h → 168 points
 DEFAULT_PROBE_MODEL = probes.DEFAULT_PROBE_MODEL
 DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL
 DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
+DEFAULT_KIMI_PROBE_MODEL = probes.DEFAULT_KIMI_PROBE_MODEL
 PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
 PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
@@ -460,26 +461,31 @@ class AccountsService:
 
     async def import_api_key_account(self, payload: AccountApiKeyImportRequest) -> AccountImportResponse:
         provider_name = normalize_provider_name(payload.provider)
-        if provider_name not in (GLM_PROVIDER_NAME, OPENROUTER_PROVIDER_NAME):
+        try:
+            profile = get_anthropic_compat_profile(provider_name)
+        except ValueError as exc:
+            raise ValueError(f"Provider {provider_name} does not support API-key account import") from exc
+        defaults = profile.import_defaults
+        if defaults is None:
             raise ValueError(f"Provider {provider_name} does not support API-key account import")
         provider = get_provider(provider_name)
         api_key = payload.api_key.get_secret_value().strip()
         if not api_key:
             raise ValueError("apiKey is required")
-        email = payload.email.strip().lower()
-        alias = payload.alias
-        plan_type_raw = payload.plan_type
-        raw_account_id = (payload.account_id or "").strip()
+        if payload.refresh_token is None:
+            refresh_material = api_key
+        else:
+            if not profile.supports_oauth_bundle_import:
+                raise ValueError(f"Provider {provider_name} does not accept refreshToken on API-key import")
+            refresh_material = payload.refresh_token.get_secret_value().strip()
+            if not refresh_material:
+                raise ValueError("refreshToken must not be blank")
+        email = (payload.email or defaults.email).strip().lower()
+        raw_account_id = (payload.account_id or defaults.account_id_seed).strip()
+        account_id = generate_unique_account_id(raw_account_id, email)
+        plan_type = coerce_account_plan_type(payload.plan_type, defaults.plan_type)
         credits_window = None
         if provider_name == OPENROUTER_PROVIDER_NAME:
-            if email == "glm@z.ai":
-                email = "openrouter@openrouter.ai"
-            if alias == "GLM Coding Plan":
-                alias = "OpenRouter"
-            if plan_type_raw == GLM_DEFAULT_PLAN:
-                plan_type_raw = OPENROUTER_DEFAULT_PLAN
-            if not raw_account_id:
-                raw_account_id = OPENROUTER_PROVIDER_NAME
             credits_window = window_from_parts(
                 balance=payload.credits_balance,
                 cap=payload.credits_cap,
@@ -487,11 +493,6 @@ class AccountsService:
             )
             if credits_window is None:
                 credits_window = await fetch_openrouter_credits(api_key)
-        elif not raw_account_id:
-            raw_account_id = "zai_glm_coding"
-        account_id = generate_unique_account_id(raw_account_id, email)
-        default_plan = OPENROUTER_DEFAULT_PLAN if provider_name == OPENROUTER_PROVIDER_NAME else GLM_DEFAULT_PLAN
-        plan_type = coerce_account_plan_type(plan_type_raw, default_plan)
         status = AccountStatus.ACTIVE
         if credits_window is not None and credits_exhausted(credits_window):
             status = AccountStatus.QUOTA_EXCEEDED
@@ -506,7 +507,7 @@ class AccountsService:
             seat_type=None,
             plan_type=plan_type,
             access_token_encrypted=self._encryptor.encrypt(api_key),
-            refresh_token_encrypted=self._encryptor.encrypt(api_key),
+            refresh_token_encrypted=self._encryptor.encrypt(refresh_material),
             id_token_encrypted=None,
             last_refresh=utcnow(),
             status=status,
@@ -514,10 +515,11 @@ class AccountsService:
         )
 
         saved = await self._repo.upsert_account_slot(account, preserve_unknown_workspace_duplicates=False)
-        if alias is not None:
-            stored_alias = alias.strip() or None
-            await self._repo.update_alias(saved.id, stored_alias)
-            saved.alias = stored_alias
+        alias_source = payload.alias if "alias" in payload.model_fields_set else defaults.alias
+        if alias_source is not None:
+            alias = alias_source.strip() or None
+            await self._repo.update_alias(saved.id, alias)
+            saved.alias = alias
         if credits_window is not None and self._usage_repo is not None:
             await self._usage_repo.add_entry(
                 saved.id,
@@ -776,17 +778,17 @@ class AccountsService:
         access_token = self._encryptor.decrypt(probe_account.access_token_encrypted)
         probe_model = model or DEFAULT_PROBE_MODEL
         provider = normalize_provider_name(probe_account.provider)
-        if provider == GLM_PROVIDER_NAME:
+        compat_profiles = {profile.provider_name: profile for profile in ANTHROPIC_COMPAT_PROFILES}
+        compat_profile = compat_profiles.get(provider)
+        if compat_profile is not None:
+            base_url = compat_profile.upstream_base_url
+            if base_url is None:
+                assert compat_profile.upstream_settings_attr is not None
+                base_url = str(getattr(get_settings(), compat_profile.upstream_settings_attr))
             probe_status, _ = await self._send_messages_probe_request(
                 access_token=access_token,
-                base_url=get_settings().glm_anthropic_upstream_base_url,
-                model=model or DEFAULT_GLM_PROBE_MODEL,
-            )
-        elif provider == ANTHROPIC_PROVIDER_NAME:
-            probe_status, _ = await self._send_messages_probe_request(
-                access_token=access_token,
-                base_url=get_settings().anthropic_upstream_base_url,
-                model=model or DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL,
+                base_url=base_url,
+                model=model or compat_profile.default_probe_model,
             )
         else:
             probe_status = await self._send_probe_request(
@@ -795,7 +797,7 @@ class AccountsService:
                 model=probe_model,
             )
 
-        if self._usage_repo and self._usage_updater and provider != GLM_PROVIDER_NAME:
+        if self._usage_repo and self._usage_updater and provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME}:
             await self._usage_updater.force_refresh(probe_account)
             get_account_selection_cache().invalidate()
 
@@ -820,6 +822,35 @@ class AccountsService:
             return None
         credit_account = await self._reset_credit_account(account)
         access_token = self._encryptor.decrypt(credit_account.access_token_encrypted)
+        if normalize_provider_name(credit_account.provider) == ANTHROPIC_PROVIDER_NAME:
+            try:
+                inventory = await anthropic_resets.fetch_status(access_token=access_token)
+            except rate_limit_resets.ResetCreditsError:
+                reset_credit_cache.clear(account_id)
+                raise
+            now = datetime.now(timezone.utc)
+            credits = [
+                AccountResetCredit(
+                    id=grant.id,
+                    reset_type="claude_banked",
+                    status="available"
+                    if (
+                        grant.resets_left > 0
+                        and (grant.ends_at is None or anthropic_resets._utc(grant.ends_at) > now)
+                        and (grant.starts_at is None or anthropic_resets._utc(grant.starts_at) <= now)
+                    )
+                    else "unavailable",
+                    granted_at=grant.starts_at.isoformat() if grant.starts_at else "",
+                    expires_at=grant.ends_at.isoformat() if grant.ends_at else None,
+                    title=grant.label,
+                )
+                for grant in inventory.grants
+            ]
+            available_count = sum(
+                grant.resets_left for grant, credit in zip(inventory.grants, credits) if credit.status == "available"
+            )
+            reset_credit_cache.record_count(account_id, available_count)
+            return AccountResetCreditsResponse(account_id=account_id, available_count=available_count, credits=credits)
         payload = await rate_limit_resets.fetch_reset_credits(
             access_token=access_token,
             chatgpt_account_id=credit_account.chatgpt_account_id,
@@ -850,6 +881,8 @@ class AccountsService:
         if account is None:
             return None
         credit_account = await self._reset_credit_account(account)
+        if normalize_provider_name(credit_account.provider) == ANTHROPIC_PROVIDER_NAME:
+            return await self._redeem_anthropic_reset(credit_account, credit_id, trigger=trigger)
 
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
         access_token = self._encryptor.decrypt(credit_account.access_token_encrypted)
@@ -863,17 +896,25 @@ class AccountsService:
                 raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
         else:
             inventory = await rate_limit_resets.fetch_reset_credits(
-                access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id,
+                access_token=access_token,
+                chatgpt_account_id=credit_account.chatgpt_account_id,
             )
             available = [item for item in inventory.credits if item.status == "available"]
             reset_credit_cache.record_count(account_id, len(available))
-            if inventory.available_count <= 0 or not available or (
-                credit_id is not None and not any(item.id == credit_id for item in available)
+            if (
+                inventory.available_count <= 0
+                or not available
+                or (credit_id is not None and not any(item.id == credit_id for item in available))
             ):
                 return AccountResetCreditConsumeResponse(
-                    status="not_redeemed", account_id=account_id, code="no_credit", windows_reset=0,
-                    primary_used_percent_before=primary_before, secondary_used_percent_before=secondary_before,
-                    primary_used_percent_after=primary_before, secondary_used_percent_after=secondary_before,
+                    status="not_redeemed",
+                    account_id=account_id,
+                    code="no_credit",
+                    windows_reset=0,
+                    primary_used_percent_before=primary_before,
+                    secondary_used_percent_before=secondary_before,
+                    primary_used_percent_after=primary_before,
+                    secondary_used_percent_after=secondary_before,
                 )
             if credit_id is None:
                 credit_id = min(available, key=lambda item: item.expires_at or "9999").id
@@ -883,13 +924,15 @@ class AccountsService:
 
         if attempt.state == "applied":
             payload = rate_limit_resets.ConsumeResetCreditPayload(
-                code="already_redeemed", windows_reset=attempt.windows_reset,
+                code="already_redeemed",
+                windows_reset=attempt.windows_reset,
             )
         else:
             # Inventory and usage must be reconciled before re-sending a
             # pending attempt. The same committed ID protects uncertain calls.
             inventory = await rate_limit_resets.fetch_reset_credits(
-                access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id,
+                access_token=access_token,
+                chatgpt_account_id=credit_account.chatgpt_account_id,
             )
             available = [item for item in inventory.credits if item.status == "available"]
             reset_credit_cache.record_count(account_id, len(available))
@@ -963,16 +1006,94 @@ class AccountsService:
             secondary_used_percent_after=secondary_after,
         )
 
+    async def _redeem_anthropic_reset(
+        self,
+        account: Account,
+        credit_id: str | None,
+        *,
+        trigger: str,
+    ) -> AccountResetCreditConsumeResponse:
+        account_id = account.id
+        token = self._encryptor.decrypt(account.access_token_encrypted)
+        attempts = self._reset_attempts or ResetCreditAttemptsRepository(self._repo.session)
+        primary_before, secondary_before = await self._latest_usage_percents(account_id)
+        attempt = await attempts.active()
+        if attempt is not None:
+            if attempt.account_id != account_id or (credit_id is not None and credit_id != attempt.credit_id):
+                raise AccountResetCreditsUnavailableError("Another reset attempt requires reconciliation")
+            if not await attempts.acquire(attempt):
+                raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
+            if attempt.state != "applied":
+                # Unlike Codex, Claude's already_used is not an idempotent
+                # success receipt. Do not retry an indeterminate POST.
+                raise AccountResetCreditsUnavailableError(
+                    "Claude reset outcome is unresolved; no additional credit will be consumed"
+                )
+            result_code = attempt.result_code or "reset"
+            windows_reset = attempt.windows_reset
+        else:
+            inventory = await anthropic_resets.fetch_status(access_token=token)
+            grant = inventory.usable_grant(datetime.now(timezone.utc), credit_id)
+            if grant is None:
+                return AccountResetCreditConsumeResponse(
+                    status="not_redeemed",
+                    account_id=account_id,
+                    code="not_eligible",
+                    windows_reset=0,
+                    primary_used_percent_before=primary_before,
+                    primary_used_percent_after=primary_before,
+                    secondary_used_percent_before=secondary_before,
+                    secondary_used_percent_after=secondary_before,
+                )
+            # The globally unique active slot serializes manual and automatic
+            # requests before checking the rolling daily spend allowance.
+            attempt = await attempts.create(account_id, grant.id, trigger)
+            if attempt is None:
+                raise AccountResetCreditsUnavailableError("Another reset attempt is already running")
+            if await attempts.anthropic_applied_since(utcnow() - timedelta(days=1)):
+                await attempts.settle(attempt, "daily_limit")
+                raise AccountResetCreditsUnavailableError("One Claude reset was already used in the last 24 hours")
+            result = await anthropic_resets.redeem(access_token=token, grant_id=grant.id, request_id=attempt.id)
+            result_code = result.result
+            windows_reset = len(result.cleared)
+            if result.result == "reset":
+                await attempts.applied(attempt, result_code, windows_reset)
+            elif result.result == "unavailable":
+                raise AccountResetCreditsUnavailableError("Claude reset outcome is unresolved; reconciliation required")
+            else:
+                await attempts.settle(attempt, result_code)
+                return AccountResetCreditConsumeResponse(
+                    status="not_redeemed",
+                    account_id=account_id,
+                    code=result_code,
+                    windows_reset=0,
+                    primary_used_percent_before=primary_before,
+                    secondary_used_percent_before=secondary_before,
+                )
+        reset_credit_cache.clear(account_id)
+        if self._usage_repo and self._usage_updater:
+            recovered = await refresh_standard_capacity(account, self._usage_updater, self._usage_repo)
+            get_account_selection_cache().invalidate()
+            if recovered is True:
+                await attempts.settle(attempt, result_code)
+        primary_after, secondary_after = await self._latest_usage_percents(account_id)
+        return AccountResetCreditConsumeResponse(
+            status="redeemed",
+            account_id=account_id,
+            code=result_code,
+            windows_reset=windows_reset,
+            primary_used_percent_before=primary_before,
+            primary_used_percent_after=primary_after,
+            secondary_used_percent_before=secondary_before,
+            secondary_used_percent_after=secondary_after,
+        )
+
     async def _reset_credit_account(self, account: Account) -> Account:
         provider = normalize_provider_name(account.provider)
-        if provider != OPENAI_PROVIDER_NAME:
-            raise AccountResetCreditsUnavailableError(
-                f"Provider {provider} does not support rate-limit reset credits"
-            )
+        if provider not in (OPENAI_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME):
+            raise AccountResetCreditsUnavailableError(f"Provider {provider} does not support rate-limit reset credits")
         if account.status in (AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
-            raise AccountResetCreditsUnavailableError(
-                f"Account is {account.status.value} and cannot use reset credits"
-            )
+            raise AccountResetCreditsUnavailableError(f"Account is {account.status.value} and cannot use reset credits")
         if not is_subscription_usable(account):
             raise AccountResetCreditsUnavailableError("Account subscription cannot use reset credits")
         if self._auth_manager is not None:

@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "name": "open-factory",
+  "updated": "2026-09-17",
+  "policy": {
+    "pin_main_thread": true,
+    "classify_new_turns_only": true,
+    "fail_open_seat": "implementer-speed",
+    "designer_never": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna"],
+    "designer_models": ["claude-fable-5-1", "claude-opus-5"],
+    "primary_exhausted_blocks": true,
+    "budget_heavy_jobs_not_agents": true,
+    "no_litellm_second_brain": true,
+    "substrates": {"worktrees": "herdr", "subscription_routing": "agent-lb"}
+  },
+  "seats": [
+    {
+      "id": "orchestrator",
+      "role": "brain",
+      "purpose": "Plan, decompose, dispatch, accept, merge-order. Never grind files.",
+      "claude_agent": null,
+      "models": ["claude-fable-5-1[1m]", "claude-opus-5", "gpt-5.6-sol"],
+      "effort": "high",
+      "when": ["new project", "ambiguous goal", "accept closeouts", "owner questions"],
+      "when_not": ["bulk edits", "test runs", "mechanical refactors"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "planner",
+      "role": "lane-lead",
+      "purpose": "One brain per lane: decompose, brief seats, reconcile closeouts.",
+      "claude_agent": "planner",
+      "models": ["claude-planner", "claude-fable-5-1", "claude-opus-5"],
+      "effort": "high",
+      "when": ["multi-seat workstream"],
+      "when_not": ["single-file fix", "spawn another planner"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "plan-reviewer",
+      "role": "adversary",
+      "purpose": "Read-only adversarial check of a plan before implement seats.",
+      "claude_agent": "plan-reviewer",
+      "models": ["claude-planner", "claude-fable-5-1", "claude-opus-5"],
+      "effort": "high",
+      "when": ["plan drafted", "before fan-out"],
+      "when_not": ["rewrite the plan", "implement"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "designer",
+      "role": "design",
+      "purpose": "UI/UX specs, look-checks, visual canon. Product feel.",
+      "claude_agent": "frontend-designer",
+      "models": ["claude-fable-5-1", "claude-opus-5"],
+      "effort": "high",
+      "when": ["new screens", "look-check screenshots", "design specs"],
+      "when_not": ["product code", "Astra/Sol as designer"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "implementer-quality",
+      "role": "hands",
+      "purpose": "Write code with top hand quality. Sticky warm session.",
+      "claude_agent": "implementer",
+      "models": ["gpt-6-astra", "gpt-5.6-sol-ultrafast", "gpt-5.6-sol", "claude-opus-5"],
+      "effort": "medium",
+      "when": ["unread contracts", "simulator", "hard rebase", "human waiting + need Sol quality"],
+      "when_not": ["pure mechanical edits when speed hand is enough"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "implementer-speed",
+      "role": "hands-fast",
+      "purpose": "Closed briefs where decode speed wins. Cerebras-first.",
+      "claude_agent": "opus-seat",
+      "models": [
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.8-27b",
+        "gpt-5.6-luna",
+        "glm-5.2",
+        "kimi-k3",
+        "local/qwen3.8-27b"
+      ],
+      "effort": "medium",
+      "when": ["Astra dry", "bounded known-contract code", "volume fan-out"],
+      "when_not": ["open-ended design", "architecture", "security-sensitive without review"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "implementer-opus",
+      "role": "hands-claude",
+      "purpose": "Claude Opus seat when Codex/Astra refuse and speed hand is too weak.",
+      "claude_agent": "opus-seat",
+      "models": ["claude-opus-5"],
+      "effort": "high",
+      "when": ["Astra exhausted", "need Claude tool loop", "finish partial speed-hand work"],
+      "when_not": ["default when Astra available"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "explore",
+      "role": "scout",
+      "purpose": "Cheap repo inventory and research. Disposable context.",
+      "claude_agent": "Explore",
+      "models": ["gpt-5.6-sol-medium", "openai/gpt-oss-120b", "local/qwen3.8-27b"],
+      "effort": "medium",
+      "when": ["inventory", "find files", "cite evidence"],
+      "when_not": ["write product code"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "verifier",
+      "role": "checker",
+      "purpose": "Independent read-only acceptance. Defaults to not-ok when uncertain.",
+      "claude_agent": "verifier",
+      "models": ["gpt-5.6-sol-xhigh", "claude-opus-5"],
+      "effort": "xhigh",
+      "when": ["every closeout", "before merge"],
+      "when_not": ["verify own lane inline", "unbounded suites"],
+      "requires_human_waiting": false,
+      "wall_clock_budget_minutes": 45
+    },
+    {
+      "id": "security-reviewer",
+      "role": "security",
+      "purpose": "Adversarial security review of a diff or merge range.",
+      "claude_agent": "security-reviewer",
+      "models": ["claude-opus-5", "claude-fable-5-1", "gpt-5.6-sol-xhigh"],
+      "effort": "high",
+      "when": ["auth", "secrets", "connectors", "multi-tenant"],
+      "when_not": ["style nits"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "computer-use",
+      "role": "probe",
+      "purpose": "Read-only desktop/browser evidence via Codex computer-use path.",
+      "claude_agent": "computer-use",
+      "models": ["gpt-6-astra"],
+      "effort": "medium",
+      "when": ["UI evidence", "Argent/sim validation contracts"],
+      "when_not": ["write code", "grant access"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "release-captain",
+      "role": "ship",
+      "purpose": "Land, release, migrations. Only role that ships.",
+      "claude_agent": "opus-seat",
+      "models": ["claude-opus-5", "claude-fable-5-1"],
+      "effort": "high",
+      "when": ["merge-ready heads", "TestFlight/deploy cuts"],
+      "when_not": ["implement features"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "copywriter",
+      "role": "copy",
+      "purpose": "User-facing prose, App Store, emails. Not code.",
+      "claude_agent": "copywriter",
+      "models": ["claude-opus-5", "claude-fable-5-1", "gpt-5.6-sol"],
+      "effort": "medium",
+      "when": ["marketing copy", "empty states", "onboarding text"],
+      "when_not": ["implement UI"],
+      "requires_human_waiting": false
+    },
+    {
+      "id": "classify",
+      "role": "router",
+      "purpose": "Sub-second triage of new human turns into a seat id.",
+      "claude_agent": null,
+      "models": ["jev-latest"],
+      "effort": "n/a",
+      "when": ["every new user turn", "mailbox triage"],
+      "when_not": ["tool continuations", "main-thread model swap"],
+      "requires_human_waiting": false
+    }
+  ],
+  "jev_remap": {
+    "haiku_direct": "explore",
+    "sonnet": "implementer-speed",
+    "opus": "implementer-opus",
+    "opus_subagents": "planner",
+    "external_harness": "implementer-quality",
+    "human_clarify": "orchestrator"
+  }
+}

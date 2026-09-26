@@ -8,9 +8,29 @@ import sys
 from pathlib import Path
 
 
+def build_args(argv: list[str]) -> list[str]:
+    """Keep ordinary cc unchanged except for the approved auto-mode default.
+
+    --codex-lane explicitly loads the reviewed local plugin for this session.
+    This never installs a plugin, accepts folder trust, or changes credentials.
+    """
+    args = list(argv)
+    lane = "--codex-lane" in args
+    if lane:
+        args.remove("--codex-lane")
+        plugin = Path.home() / ".agent-lb/plugins/codex-plugin-cc/plugins/codex"
+        if not (plugin / ".claude-plugin/plugin.json").is_file():
+            raise SystemExit(f"cc: reviewed Codex plugin is missing at {plugin}; stop and restore it")
+        args = ["--plugin-dir", str(plugin), *args]
+    if not any(arg == "--permission-mode" or arg.startswith("--permission-mode=")
+               or arg == "--dangerously-skip-permissions" for arg in args):
+        args = ["--permission-mode", "auto", *args]
+    return args
+
+
 def main() -> None:
     fable = Path(__file__).resolve().with_name("fable")
-    os.execv(fable, [str(fable), *sys.argv[1:]])
+    os.execv(fable, [str(fable), *build_args(sys.argv[1:])])
 
 
 if __name__ == "__main__":

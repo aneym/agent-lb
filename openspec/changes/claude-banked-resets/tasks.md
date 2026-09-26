@@ -1,0 +1,8 @@
+- [x] Preserve existing edits in isolated integration branch.
+- [x] Implement typed Claude grant client and fail-closed grant selection.
+- [ ] Verify durable redemption, rolling daily cap, and post-reset recovery.
+- [ ] Integrate pre-existing source changes without regressing committed features.
+- [ ] Show banked counts in menubar and dashboard with unknown/zero distinction.
+- [ ] Verify Opus routing and model-specific cooldown recovery.
+- [ ] Run backend, frontend, Swift and live operator checks.
+- [ ] Deploy verified artifacts with rollback and exact hashes.

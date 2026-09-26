@@ -18,6 +18,9 @@ import {
   AccountTrendsResponseSchema,
   AccountProbeRequestSchema,
   AccountProbeResponseSchema,
+  AccountResetCreditConsumeRequestSchema,
+  AccountResetCreditConsumeResponseSchema,
+  AccountResetCreditsResponseSchema,
   ManualOauthCallbackRequestSchema,
   ManualOauthCallbackResponseSchema,
   OauthCompleteRequestSchema,
@@ -133,6 +136,32 @@ export function probeAccount(accountId: string, payload?: unknown) {
     `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/probe`,
     AccountProbeResponseSchema,
     validated ? { body: validated } : undefined,
+  );
+}
+
+export function listAccountResetCredits(accountId: string) {
+  return get(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/rate-limit-reset-credits`,
+    AccountResetCreditsResponseSchema,
+  );
+}
+
+/**
+ * Spends one banked upstream reset credit, wiping the account's exhausted
+ * usage windows. Credits are scarce and non-refundable, so callers must
+ * confirm with the operator before firing this.
+ */
+export function consumeAccountResetCredit(
+  accountId: string,
+  creditId?: string,
+) {
+  const validated = AccountResetCreditConsumeRequestSchema.parse(
+    creditId ? { creditId } : {},
+  );
+  return post(
+    `${ACCOUNTS_BASE_PATH}/${encodeURIComponent(accountId)}/rate-limit-reset-credits/consume`,
+    AccountResetCreditConsumeResponseSchema,
+    { body: validated },
   );
 }
 

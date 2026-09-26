@@ -87,6 +87,114 @@ async def test_import_glm_api_key_account(async_client):
 
 
 @pytest.mark.asyncio
+async def test_import_glm_api_key_account_uses_unchanged_defaults(async_client):
+    response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={"provider": "glm", "apiKey": "zai-default-key"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    expected_account_id = generate_unique_account_id("zai_glm_coding", "glm@z.ai")
+    assert data == {
+        "accountId": expected_account_id,
+        "email": "glm@z.ai",
+        "workspaceId": None,
+        "workspaceLabel": None,
+        "seatType": None,
+        "planType": "glm-coding",
+        "status": "active",
+    }
+    accounts = (await async_client.get("/api/accounts")).json()["accounts"]
+    imported = next(account for account in accounts if account["accountId"] == expected_account_id)
+    assert imported["alias"] == "GLM Coding Plan"
+
+
+@pytest.mark.asyncio
+async def test_import_glm_api_key_account_rejects_refresh_token(async_client):
+    # GLM is a static-API-key provider: the key is both access and refresh, so
+    # a caller must not be able to split them via the generalized endpoint.
+    response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={"provider": "glm", "apiKey": "zai-key", "refreshToken": "zai-other"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_api_key_account"
+
+    accounts = (await async_client.get("/api/accounts")).json()["accounts"]
+    assert all(account["provider"] != "glm" for account in accounts)
+
+
+@pytest.mark.asyncio
+async def test_import_glm_api_key_account_explicit_null_alias_leaves_alias_unset(async_client):
+    # Pre-generalization the alias default lived on the schema field, so an
+    # explicitly null alias skipped the alias write entirely.
+    response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={"provider": "glm", "apiKey": "zai-null-alias-key", "alias": None},
+    )
+
+    assert response.status_code == 200
+    expected_account_id = generate_unique_account_id("zai_glm_coding", "glm@z.ai")
+    accounts = (await async_client.get("/api/accounts")).json()["accounts"]
+    imported = next(account for account in accounts if account["accountId"] == expected_account_id)
+    assert imported["alias"] is None
+
+
+@pytest.mark.asyncio
+async def test_import_kimi_oauth_bundle_and_static_api_key(async_client):
+    oauth_response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={
+            "provider": "kimi",
+            "apiKey": "oauth-access-token",
+            "refreshToken": "oauth-refresh-token",
+        },
+    )
+    static_response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={
+            "provider": "kimi",
+            "apiKey": "sk-static-token",
+            "email": "static@example.com",
+            "accountId": "kimi_static",
+        },
+    )
+
+    assert oauth_response.status_code == 200
+    assert static_response.status_code == 200
+    oauth_id = generate_unique_account_id("kimi_coding", "kimi@moonshot.ai")
+    static_id = generate_unique_account_id("kimi_static", "static@example.com")
+    assert oauth_response.json()["accountId"] == oauth_id
+    assert oauth_response.json()["planType"] == "kimi-coding"
+
+    async with SessionLocal() as session:
+        accounts = (
+            await session.execute(select(Account).where(Account.id.in_([oauth_id, static_id])))
+        ).scalars().all()
+    by_id = {account.id: account for account in accounts}
+    encryptor = TokenEncryptor()
+    assert encryptor.decrypt(by_id[oauth_id].access_token_encrypted) == "oauth-access-token"
+    assert encryptor.decrypt(by_id[oauth_id].refresh_token_encrypted) == "oauth-refresh-token"
+    assert encryptor.decrypt(by_id[static_id].refresh_token_encrypted) == "sk-static-token"
+    assert by_id[oauth_id].id_token_encrypted is None
+
+
+@pytest.mark.asyncio
+async def test_api_key_import_rejects_openai_provider(async_client):
+    response = await async_client.post(
+        "/api/accounts/import/api-key",
+        json={"provider": "openai", "apiKey": "must-not-store"},
+    )
+
+    assert response.status_code == 422
+    async with SessionLocal() as session:
+        accounts = (await session.execute(select(Account))).scalars().all()
+    assert accounts == []
+
+
+@pytest.mark.asyncio
 async def test_reactivate_missing_account_returns_404(async_client):
     response = await async_client.post("/api/accounts/missing/reactivate")
     assert response.status_code == 404

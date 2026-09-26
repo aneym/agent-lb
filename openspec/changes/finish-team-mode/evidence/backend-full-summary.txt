@@ -1,0 +1,42 @@
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_migrations.py:263: PostgreSQL-only migration contract test
+SKIPPED [1] tests/integration/test_migrations.py:277: PostgreSQL-only empty database migration test
+SKIPPED [1] tests/integration/test_migrations.py:297: PostgreSQL-only migration remap test
+SKIPPED [1] tests/integration/test_usage_repository.py:248: PostgreSQL-only query plan test
+SKIPPED [36] tests/unit/test_helm_external_secrets.py:37: helm is required for chart rendering tests
+SKIPPED [1] tests/unit/test_proxy_load_balancer_refresh.py:1957: T21 per-account locking eliminates version conflicts that this test was designed to catch
+SKIPPED [1] tests/unit/test_proxy_load_balancer_refresh.py:2027: T21 per-account locking eliminates version conflicts that this test was designed to catch
+SKIPPED [1] tests/unit/test_proxy_load_balancer_refresh.py:2099: T21 per-account locking eliminates version conflicts that this test was designed to catch
+FAILED tests/integration/test_additional_usage_flow.py::test_accounts_list_returns_additional_quotas
+FAILED tests/integration/test_anthropic_proxy.py::test_anthropic_messages_returns_error_when_no_accounts_available
+FAILED tests/integration/test_http_responses_bridge.py::test_v1_responses_http_bridge_codex_session_uses_extended_idle_ttl
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_preserves_unknown_plan_types
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_bootstraps_legacy_history
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_skips_legacy_stamp_when_required_tables_missing
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_handles_unknown_legacy_rows
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_auto_remaps_legacy_alembic_revision_ids
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_auto_remaps_firewall_legacy_revision_id
+FAILED tests/integration/test_migrations.py::test_run_startup_migrations_handles_legacy_schema_table_and_legacy_alembic_id_together
+FAILED tests/integration/test_settings_api.py::test_settings_api_returns_known_additional_quota_policies
+FAILED tests/integration/test_v1_models.py::test_v1_models_uses_bootstrap_models_when_registry_not_populated
+FAILED tests/integration/test_v1_models.py::test_backend_codex_models_uses_bootstrap_upstream_metadata
+FAILED tests/integration/test_v1_models.py::test_backend_codex_models_uses_bootstrap_models_when_registry_not_populated
+FAILED tests/unit/test_account_mappers.py::test_account_to_summary_surfaces_owner_instance
+FAILED tests/unit/test_account_mappers.py::test_account_to_summary_exposes_cached_reset_credits_for_openai_only
+FAILED tests/unit/test_account_mappers.py::test_account_to_summary_openai_without_primary_usage_has_no_primary_gauge
+FAILED tests/unit/test_db_migrate.py::test_schema_migration_contract_matches_after_upgrade
+FAILED tests/unit/test_db_migrate.py::test_check_schema_drift_detects_rogue_table
+FAILED tests/unit/test_db_migrate.py::test_check_schema_drift_ignores_legacy_live_extra_request_log_column
+FAILED tests/unit/test_db_migrate.py::test_run_upgrade_auto_remaps_legacy_revision_ids
+FAILED tests/unit/test_db_migrate.py::test_run_upgrade_auto_remaps_legacy_routing_security_merge_head
+FAILED tests/unit/test_opus_runtime_doctor.py::test_installer_rejects_external_volume_launcher
+FAILED tests/unit/test_provider_registry.py::test_openai_provider_is_default_registered_provider
+FAILED tests/unit/test_proxy_load_balancer_refresh.py::test_round_robin_does_not_serialize_concurrent_selection
+FAILED tests/unit/test_proxy_load_balancer_refresh.py::test_select_account_does_not_clobber_concurrent_error_state
+FAILED tests/unit/test_proxy_load_balancer_refresh.py::test_select_account_retries_after_post_persist_permanent_failure
+FAILED tests/unit/test_proxy_load_balancer_refresh.py::test_select_account_retries_after_post_persist_quota_exceeded
+FAILED tests/unit/test_proxy_load_balancer_refresh.py::test_select_account_sticky_does_not_return_stale_selection_at_retry_cap
+FAILED tests/unit/test_proxy_load_balancer_refresh.py::test_select_account_retries_no_accounts_after_runtime_recovery
+FAILED tests/unit/test_public_release_docs.py::test_active_openspec_unchecked_tasks_are_pr_head_gates
+FAILED tests/unit/test_public_release_docs.py::test_active_openspec_changes_have_spec_deltas
+32 failed, 4297 passed, 43 skipped, 4 warnings in 338.98s (0:05:38)

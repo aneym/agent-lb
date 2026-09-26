@@ -62,9 +62,9 @@ extension Account {
     guard let remaining = fableRemainingPercent else { return availability.label }
     switch availability {
     case .available:
-      return "FABLE \(Format.percent(remaining))"
+      return "FABLE WK \(Format.percent(remaining))"
     case .out:
-      return "FABLE OUT \(Format.percent(remaining))"
+      return "FABLE WK OUT \(Format.percent(remaining))"
     }
   }
 
@@ -73,9 +73,9 @@ extension Account {
     guard let remaining = fableRemainingPercent else { return availability.help }
     switch availability {
     case .available:
-      return "Fable usage available (\(Format.percent(remaining)) remaining)"
+      return "Fable weekly usage available (\(Format.percent(remaining)) remaining)"
     case .out:
-      return "Out of Fable usage (\(Format.percent(remaining)) remaining)"
+      return "Fable weekly usage exhausted (\(Format.percent(remaining)) remaining); Opus availability is separate"
     }
   }
 
@@ -94,6 +94,18 @@ extension Account {
   var isRoutable: Bool {
     isHeadlineCountable && status != "paused"
   }
+
+  /// True when spending a banked reset credit would actually buy capacity: a
+  /// supported-provider row that is limit-blocked and holds a credit. Paused, disconnected
+  /// and unsubscribed rows cannot serve traffic, so a reset there would waste
+  /// a scarce credit; an already-active row has nothing to reset (upstream
+  /// answers `nothing_to_reset` and keeps the credit banked).
+  var canRedeemResetCredit: Bool {
+    guard ["openai", "anthropic"].contains(provider.lowercased()) else { return false }
+    guard (resetCreditsAvailable ?? 0) > 0 else { return false }
+    guard isRoutable else { return false }
+    return status == "rate_limited" || status == "quota_exceeded"
+  }
 }
 
 enum FableAvailability: Sendable, Equatable {
@@ -102,15 +114,15 @@ enum FableAvailability: Sendable, Equatable {
 
   var label: String {
     switch self {
-    case .available: return "FABLE"
-    case .out: return "FABLE OUT"
+    case .available: return "FABLE WK"
+    case .out: return "FABLE WK OUT"
     }
   }
 
   var help: String {
     switch self {
-    case .available: return "Fable usage available"
-    case .out: return "Out of Fable usage"
+    case .available: return "Fable weekly usage available"
+    case .out: return "Fable weekly usage exhausted; Opus availability is separate"
     }
   }
 }
@@ -166,6 +178,19 @@ struct AccountProbeResponse: Decodable, Sendable, Equatable {
   let status: String
   let accountId: String
   let probeStatusCode: Int
+}
+
+/// Result of spending one banked rate-limit reset credit. `code` carries the
+/// upstream verdict — `reset` wiped windows, `already_redeemed` is idempotent
+/// success, `nothing_to_reset` left the credit banked, `no_credit` means the
+/// bank was empty — so the row must read it rather than the HTTP status.
+struct AccountResetCreditConsumeResponse: Decodable, Sendable, Equatable {
+  let status: String
+  let accountId: String
+  let code: String
+  let windowsReset: Int
+
+  var didReset: Bool { status == "redeemed" }
 }
 
 struct AccountSubscriptionCheckResponse: Decodable, Sendable, Equatable {

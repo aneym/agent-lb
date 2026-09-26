@@ -223,10 +223,10 @@ async def test_quota_cooldown_probe_sender_uses_exact_request_shape(monkeypatch:
     await _default_quota_cooldown_probe_sender(account, "token", "anthropic_top")
     await _default_quota_cooldown_probe_sender(account, "token", "anthropic_top_thinking")
 
-    assert calls[0]["model"] == "claude-fable-5"
+    assert calls[0]["model"] == "claude-fable-5-1"
     assert calls[0]["thinking"] is None
     assert calls[0]["max_tokens"] == 4
-    assert calls[1]["model"] == "claude-fable-5"
+    assert calls[1]["model"] == "claude-fable-5-1"
     assert calls[1]["thinking"] == {"type": "adaptive"}
     assert calls[1]["max_tokens"] == 32
 

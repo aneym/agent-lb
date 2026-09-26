@@ -86,6 +86,170 @@ describe("AccountActions", () => {
     expect(onProbe).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a banked count and offers reset limits for limited OpenAI accounts", async () => {
+    const user = userEvent.setup();
+    const account = createAccountSummary({
+      provider: "openai",
+      status: "rate_limited",
+      resetCreditsAvailable: 2,
+    });
+    const onRedeemResetCredit = vi.fn();
+
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onRedeemResetCredit={onRedeemResetCredit}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reset limits (2)" }));
+
+    expect(onRedeemResetCredit).toHaveBeenCalledWith(account.accountId);
+    expect(onRedeemResetCredit).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a known empty bank without offering a redemption", () => {
+    const account = createAccountSummary({
+      provider: "openai",
+      resetCreditsAvailable: 0,
+    });
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onRedeemResetCredit={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Banked resets: 0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reset limits/ })).not.toBeInTheDocument();
+  });
+
+  it("shows unknown inventory without treating it as zero", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      resetCreditsAvailable: null,
+    });
+
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onRedeemResetCredit={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Banked resets: unknown")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reset limits/ })).not.toBeInTheDocument();
+  });
+
+  it("offers reset limits for limit-blocked Anthropic accounts with a banked credit", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      status: "quota_exceeded",
+      resetCreditsAvailable: 3,
+    });
+
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onRedeemResetCredit={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Banked resets: 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset limits (3)" })).toBeEnabled();
+  });
+
+  it("does not offer redemption to active accounts with banked credits", () => {
+    const account = createAccountSummary({
+      provider: "openai",
+      status: "active",
+      resetCreditsAvailable: 3,
+    });
+
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onRedeemResetCredit={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Banked resets: 3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reset limits/ })).not.toBeInTheDocument();
+  });
+
+  it("does not offer redemption to canceled subscriptions", () => {
+    const account = createAccountSummary({
+      provider: "anthropic",
+      status: "quota_exceeded",
+      resetCreditsAvailable: 3,
+      subscription: { status: "canceled" },
+    });
+
+    render(
+      <AccountActions
+        account={account}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onProbe={vi.fn()}
+        onRedeemResetCredit={vi.fn()}
+        onDelete={vi.fn()}
+        onReauth={vi.fn()}
+        onExportAuth={vi.fn()}
+        onLimitWarmupChange={vi.fn()}
+        onRoutingPolicyChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Banked resets: 3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reset limits/ })).not.toBeInTheDocument();
+  });
+
   it.each(["paused", "deactivated"] as const)(
     "disables force probe for %s accounts",
     async (status) => {

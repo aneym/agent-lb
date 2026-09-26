@@ -125,6 +125,7 @@ async def refresh_anthropic_access_token(
     *,
     token_url: str | None = None,
     client_id: str | None = None,
+    scope: str | None = None,
     session: aiohttp.ClientSession | None = None,
 ) -> TokenRefreshResult:
     settings = get_settings()
@@ -132,12 +133,13 @@ async def refresh_anthropic_access_token(
         "grant_type": "refresh_token",
         "client_id": client_id or settings.anthropic_oauth_client_id,
         "refresh_token": refresh_token,
+        "scope": scope or settings.anthropic_oauth_scope,
     }
     try:
         payload_data = await _post_token_request(
             token_url=token_url or settings.anthropic_oauth_token_url,
             payload=payload,
-            timeout_seconds=settings.token_refresh_timeout_seconds,
+            timeout_seconds=settings.oauth_timeout_seconds,
             session=session,
             error_prefix="Token refresh",
         )
@@ -149,13 +151,13 @@ async def refresh_anthropic_access_token(
             transport_error=exc.code == "transport_error",
         ) from exc
 
-    if not payload_data.access_token or not payload_data.refresh_token:
-        raise RefreshError("invalid_response", "Refresh response missing tokens", False)
+    if not payload_data.access_token:
+        raise RefreshError("invalid_response", "Refresh response missing access token", False)
 
     metadata = _metadata_from_payload(payload_data)
     return TokenRefreshResult(
         access_token=payload_data.access_token,
-        refresh_token=payload_data.refresh_token,
+        refresh_token=payload_data.refresh_token or refresh_token,
         id_token=None,
         account_id=metadata.account_id,
         plan_type=metadata.plan_type,

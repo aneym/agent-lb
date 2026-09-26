@@ -16,15 +16,6 @@ _MAIN_CHECKOUT = Path("/Volumes/StudioExt/repos/agent-lb")
 _TEST_DIR = Path(tempfile.mkdtemp(prefix="agent-lb-openrouter-"))
 _DB_PATH = _TEST_DIR / "store.db"
 
-os.environ["AGENT_LB_DATABASE_URL"] = f"sqlite+aiosqlite:///{_DB_PATH}"
-os.environ["AGENT_LB_UPSTREAM_BASE_URL"] = "https://example.invalid/backend-api"
-os.environ["AGENT_LB_USAGE_REFRESH_ENABLED"] = "false"
-os.environ["AGENT_LB_MODEL_REGISTRY_ENABLED"] = "false"
-os.environ["AGENT_LB_STICKY_SESSION_CLEANUP_ENABLED"] = "false"
-os.environ["AGENT_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED"] = "false"
-os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
-os.environ["AGENT_LB_ENCRYPTION_KEY_FILE"] = str(_TEST_DIR / f"encryption-{uuid4().hex}.key")
-
 
 def worktree_root() -> Path:
     return _WORKTREE
@@ -76,4 +67,13 @@ async def app_client():
 
 
 def run(coro):
+    # Pytest collection must keep the database configured by tests/conftest.py.
+    os.environ["AGENT_LB_DATABASE_URL"] = f"sqlite+aiosqlite:///{_DB_PATH}"
+    os.environ["AGENT_LB_UPSTREAM_BASE_URL"] = "https://example.invalid/backend-api"
+    os.environ["AGENT_LB_USAGE_REFRESH_ENABLED"] = "false"
+    os.environ["AGENT_LB_MODEL_REGISTRY_ENABLED"] = "false"
+    os.environ["AGENT_LB_STICKY_SESSION_CLEANUP_ENABLED"] = "false"
+    os.environ["AGENT_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED"] = "false"
+    os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
+    os.environ["AGENT_LB_ENCRYPTION_KEY_FILE"] = str(_TEST_DIR / f"encryption-{uuid4().hex}.key")
     return asyncio.run(coro)

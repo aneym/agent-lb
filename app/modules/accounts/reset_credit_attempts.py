@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
-from app.db.models import ResetCreditAttempt
+from app.db.models import Account, ResetCreditAttempt
 from app.db.session import sqlite_writer_section
 
 RESET_ATTEMPT_LEASE_SECONDS = 120
@@ -33,6 +33,33 @@ class ResetCreditAttemptsRepository:
             select(func.max(ResetCreditAttempt.applied_at)).where(ResetCreditAttempt.trigger == "auto")
         )
         return result.scalar_one()
+
+    async def count_applied_since(self, since: datetime) -> int:
+        """Automatic redemptions applied since ``since`` (the daily allowance).
+
+        Counts ``trigger="auto"`` rows only: expiry-sweep redemptions are
+        use-it-or-lose-it and operator-initiated ones are a human decision, so
+        neither spends the automatic allowance.
+        """
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(ResetCreditAttempt)
+            .where(
+                ResetCreditAttempt.trigger == "auto",
+                ResetCreditAttempt.applied_at.is_not(None),
+                ResetCreditAttempt.applied_at >= since,
+            )
+        )
+        return int(result.scalar_one() or 0)
+
+    async def anthropic_applied_since(self, since: datetime) -> bool:
+        result = await self._session.execute(
+            select(ResetCreditAttempt.id)
+            .join(Account, Account.id == ResetCreditAttempt.account_id)
+            .where(Account.provider == "anthropic", ResetCreditAttempt.applied_at >= since)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def create(self, account_id: str, credit_id: str | None, trigger: str) -> ResetCreditAttempt | None:
         now = utcnow()
