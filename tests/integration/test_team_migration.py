@@ -24,9 +24,7 @@ def test_team_upgrade_downgrade_preserves_existing_key_and_settings(tmp_path):
                     "VALUES ('existing', 'Existing', 'hash', 'sk-clb-existing', 1, CURRENT_TIMESTAMP)"
                 )
             )
-            connection.execute(
-                text("UPDATE dashboard_settings SET api_key_auth_enabled=1 WHERE id=1")
-            )
+            connection.execute(text("UPDATE dashboard_settings SET api_key_auth_enabled=1 WHERE id=1"))
         run_upgrade(db_url, head, bootstrap_legacy=False)
         assert check_migration_policy(db_url) == ()
         with engine.begin() as connection:
@@ -50,5 +48,41 @@ def test_team_upgrade_downgrade_preserves_existing_key_and_settings(tmp_path):
         run_upgrade(db_url, head, bootstrap_legacy=False)
         with engine.connect() as connection:
             assert connection.execute(text("SELECT member_id FROM api_keys WHERE id='existing'")).scalar_one() is None
+    finally:
+        engine.dispose()
+
+
+def test_pool_share_upgrade_downgrade_keeps_member(tmp_path):
+    db_path = tmp_path / "pool-share-migration.sqlite"
+    db_url = f"sqlite+aiosqlite:///{db_path}"
+    parent = "20260925_020000_add_account_resume_schedules"
+    head = "20260926_200000_add_team_pool_share"
+    run_upgrade(db_url, parent, bootstrap_legacy=False)
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("INSERT INTO team_members (id, name) VALUES ('member', 'Member')"))
+            assert "pool_share_percent" not in {
+                column["name"] for column in inspect(connection).get_columns("team_members")
+            }
+        run_upgrade(db_url, head, bootstrap_legacy=False)
+        with engine.begin() as connection:
+            assert (
+                connection.execute(text("SELECT pool_share_percent FROM team_members WHERE id='member'")).scalar_one()
+                is None
+            )
+            connection.execute(text("UPDATE team_members SET pool_share_percent=12.5 WHERE id='member'"))
+            assert (
+                connection.execute(text("SELECT pool_share_percent FROM team_members WHERE id='member'")).scalar_one()
+                == 12.5
+            )
+        command.downgrade(_build_alembic_config(db_url), parent)
+        with engine.connect() as connection:
+            assert "pool_share_percent" not in {
+                column["name"] for column in inspect(connection).get_columns("team_members")
+            }
+            assert connection.execute(text("SELECT name FROM team_members WHERE id='member'")).scalar_one() == "Member"
+        run_upgrade(db_url, head, bootstrap_legacy=False)
+        assert check_migration_policy(db_url) == ()
     finally:
         engine.dispose()

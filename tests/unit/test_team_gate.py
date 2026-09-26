@@ -14,6 +14,7 @@ from app.core.exceptions import (
 from app.core.utils.time import utcnow
 from app.db.models import TeamMember, TeamMemberStatus
 from app.modules.api_keys.service import ApiKeyData
+from app.modules.team.pool_share import PoolWindow
 from app.modules.team.repository import TeamUsageTotals
 from app.modules.team.service import TeamService, reset_team_usage_cache
 from app.modules.team.windows import window_end, window_start
@@ -160,6 +161,26 @@ async def test_under_cap_passes():
     await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
 
     assert repository.aggregate_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_pool_gate_uses_window_label_and_advisory_reset(monkeypatch):
+    member = _make_member(pool_share_percent=10)
+    repository = _FakeTeamRepository(member)
+    service = TeamService(repository)
+    reset = datetime(2026, 9, 27, 12, 0)
+
+    async def windows(_session, member_id, limit, *, now):
+        assert (member_id, limit) == ("member-1", 10)
+        return [PoolWindow("pool_week", 10, 10, reset)]
+
+    repository._session = object()
+    monkeypatch.setattr(team_service_module, "pool_share_windows", windows)
+    with pytest.raises(TeamMemberOverCapError) as excinfo:
+        await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
+    assert excinfo.value.window == "pool_week"
+    assert excinfo.value.reset_at == reset
+    assert excinfo.value.headers["X-Team-Reset"] == "2026-09-27T12:00:00Z"
 
 
 @pytest.mark.asyncio
