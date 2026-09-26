@@ -21,7 +21,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-FORWARDER_SEATS = {"astra", "implementer", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat"}
+FORWARDER_SEATS = {"astra", "implementer", "codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat"}
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
 SNAPSHOT_MAX_FUTURE_SECONDS = 60
@@ -268,6 +268,10 @@ def main() -> None:
             advisories.append(capacity_advisory)
     elif requires_snapshot:
         record["anthropic_override"] = True
+    if subagent in FORWARDER_SEATS and os.environ.get("BASH_BACKGROUND_AVAILABLE", "1") == "1":
+        command = "cx-bg <name> <worktree> <brief-file>" if record["task_class"] == "implement" else "cx-ask <name> <cwd> <brief-file>"
+        record["direct_codex_advisory"] = command
+        advisories.append(f"native Codex available through {command}; forwarder is fallback")
     if not append(record, ledger):
         emit_advisory("could not record routing telemetry; dispatch was not blocked")
     elif advisories:

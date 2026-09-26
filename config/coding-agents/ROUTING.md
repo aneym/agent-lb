@@ -120,8 +120,7 @@ fallback chain, and `route pools` shows what is left in each pool. Classes:
 `plan`, `review`, `explore`, `research`, `implement`, `mechanical`,
 `verify`, `computer`, `council`.
 
-`implementer`, `codex-sol`, `computer-use`, `cursor-seat`, `codex-verifier`
-and `codex-test-runner` are thin forwarders: the work runs on Cursor's and OpenAI's quotas, not on ours.
+For an Anthropic coordinator with background Bash, native Codex is first for implement, explore, research and cross-vendor verify: `cx-bg <name> <worktree> <brief-file>` writes; `cx-ask <name> <cwd> <brief-file>` reads and saves `~/.agent-rails/jobs/<name>.answer.md`. Start with Bash `run_in_background` and use its exit notification. Read the answer, diff and receipts, not the full log. Every Codex closeout gets an Opus audit. The Sonnet forwarder seats (`implementer`, `codex-sol`, `codex-verifier`, `codex-test-runner`, `computer-use`, `cursor-seat`) are fallback only when background Bash is unavailable; their Claude wrapper consumes Claude tokens while waiting. The `ccgpt` bridge teammate remains experimental.
 
 ## Enforcement
 

@@ -34,6 +34,12 @@
     "explore": {
       "chain": [
         {
+          "seat": "codex-native",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
+        {
           "seat": "codex-sol",
           "model": "sol-latest",
           "vendor": "openai",
@@ -54,6 +60,12 @@
     "research": {
       "chain": [
         {
+          "seat": "codex-native",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        },
+        {
           "seat": "codex-sol",
           "model": "sol-latest",
           "vendor": "openai",
@@ -73,6 +85,12 @@
     },
     "implement": {
       "chain": [
+        {
+          "seat": "codex-native",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "medium"
+        },
         {
           "seat": "opus-seat",
           "model": "opus-latest",
@@ -124,7 +142,7 @@
           }
         }
       },
-      "note": "Correctness-sensitive core code (balancer, routing, state, auth, money paths). Opus while its pool is on weekly pace in the ok band, else Codex Sol; Grok is not used here."
+      "note": "Native Codex first for Anthropic authors with background Bash; forwarder seats are fallback only. Every closeout requires Opus audit."
     },
     "mechanical": {
       "chain": [
@@ -171,6 +189,12 @@
     "verify": {
       "cross_vendor": true,
       "chain": [
+        {
+          "seat": "codex-native",
+          "model": "sol-latest",
+          "vendor": "openai",
+          "effort": "high"
+        },
         {
           "seat": "verifier",
           "model": "opus-latest",

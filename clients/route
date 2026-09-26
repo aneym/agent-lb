@@ -855,6 +855,9 @@ def command_pick(args: argparse.Namespace) -> int:
             {"seat": entry["seat"], "model": entry["model"], "pool": entry["pool"]} for entry in routable[1:]
         ],
     }
+    if chosen["seat"] == "codex-native":
+        command = "cx-bg <name> <worktree> <brief-file>" if args.task_class == "implement" else "cx-ask <name> <cwd> <brief-file>"
+        result["command"] = command
     _print_pick(result, as_json=args.json)
     return EXIT_OK
 
@@ -864,6 +867,8 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
     print(f"seat      {result['seat']}")
+    if result.get("command"):
+        print(f"command   {result['command']}")
     alias = result.get("alias")
     shown = result["model"] or "-"
     if alias and alias != result["model"]:
@@ -1301,8 +1306,10 @@ def aggregate(dispatches: list[dict[str, Any]], closeouts: list[dict[str, Any]])
         origin = queue.pop(0) if queue else None
         merged = dict(record)
         if origin is not None:
-            merged.setdefault("task_class", origin.get("task_class"))
-            merged.setdefault("subagent_type", origin.get("subagent_type"))
+            if not merged.get("task_class"):
+                merged["task_class"] = origin.get("task_class")
+            if not merged.get("subagent_type"):
+                merged["subagent_type"] = origin.get("subagent_type")
         # Group a closeout under the model its dispatch asked for, like the dispatch
         # row itself; since 2026-09-22 the closeout's own `model` is what answered.
         requested = merged.get("dispatch_model") or (origin or {}).get("model")
