@@ -262,17 +262,17 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("header", "valid", "expected_key"),
+    ("header", "valid", "expected"),
     [
-        ("Bearer sk-clb-member", True, True),
-        ("  bearer   sk-clb-member ", True, True),
-        ("Bearer sk-clb-member", False, False),
-        ("Basic sk-clb-member", True, False),
-        ("Bearer chatgpt-token", True, False),
+        ("Bearer sk-clb-member", True, "attributed"),
+        ("  bearer   sk-clb-member ", True, "attributed"),
+        ("Bearer sk-clb-member", False, "refused"),
+        ("Basic sk-clb-member", True, "keyless"),
+        ("Bearer chatgpt-token", True, "keyless"),
     ],
 )
 async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_key_when_auth_disabled(
-    monkeypatch, header: str, valid: bool, expected_key: bool
+    monkeypatch, header: str, valid: bool, expected: str
 ):
     async def fake_settings():
         return SimpleNamespace(api_key_auth_enabled=False)
@@ -301,11 +301,12 @@ async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_ke
 
     api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)
 
-    if expected_key:
+    if expected == "attributed":
         assert api_key is member_key
         assert response is None
-    elif seen and not valid:
+    elif expected == "refused":
         # A forwarded member key that fails validation is refused, never downgraded to keyless.
+        assert seen == ["Bearer sk-clb-member"]
         assert api_key is None
         assert response is not None and response.status_code == 401
     else:
