@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import timedelta
 
 import pytest
 
@@ -337,8 +338,8 @@ async def test_lost_lock_checkout_before_intent_cannot_spend_exported_token(db_s
 
 
 @pytest.mark.asyncio
-async def test_operator_reset_requires_relogin_before_refresh(async_client, db_setup):
-    """An unresolved request can be explicitly retired without activating a spent token."""
+async def test_operator_reset_waits_for_window_then_replays(async_client, db_setup):
+    """An operator cannot reset until the provider's old exchange window has passed."""
     from app.db.models import AccountExchangeIntent
 
     encryptor = TokenEncryptor()
@@ -361,15 +362,24 @@ async def test_operator_reset_requires_relogin_before_refresh(async_client, db_s
 
         fingerprint = _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted)
         assert await repo.begin_exchange("reset-account", fingerprint, account.refresh_token_encrypted)
-        await repo.mark_exchange_uncertain("reset-account", fingerprint)
+        await repo.mark_exchange_uncertain("reset-account", fingerprint, account.refresh_token_encrypted)
     assert (await async_client.post("/api/accounts/reset-account/reactivate")).status_code == 409
     response = await async_client.post("/api/accounts/reset-account/exchange-reset")
-    assert response.status_code == 200
-    assert response.json()["status"] == "reauth_required"
+    assert response.status_code == 409
+    assert "available at" in response.text
     async with SessionLocal() as session:
-        assert await session.get(AccountExchangeIntent, "reset-account") is None
-        assert (await session.get(Account, "reset-account")).status == AccountStatus.REAUTH_REQUIRED
-    assert (await async_client.post("/api/accounts/reset-account/exchange-reset")).status_code == 409
+        assert await session.get(AccountExchangeIntent, "reset-account") is not None
+        assert (await session.get(Account, "reset-account")).status == AccountStatus.EXCHANGE_UNCERTAIN
+        intent = await session.get(AccountExchangeIntent, "reset-account")
+        intent.started_at = utcnow() - timedelta(seconds=1000)
+        await session.commit()
+    response = await async_client.post("/api/accounts/reset-account/exchange-reset")
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+    assert "re-login" in response.json()["message"]
+    async with SessionLocal() as session:
+        assert (await session.get(AccountExchangeIntent, "reset-account")).reason == "operator_reset"
+        assert (await session.get(Account, "reset-account")).status == AccountStatus.ACTIVE
 
 
 @pytest.mark.asyncio

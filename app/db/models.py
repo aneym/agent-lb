@@ -165,6 +165,8 @@ class AccountExchangeIntent(Base):
     account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
     refresh_token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    replay: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class AccountResumeSchedule(Base):

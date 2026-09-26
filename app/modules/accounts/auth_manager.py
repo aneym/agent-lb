@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.auth import DEFAULT_PLAN, token_expiry_epoch_ms
+from app.core.auth.exchange_phase import ExchangePhase
 from app.core.auth.refresh import (
     RefreshError,
     TokenRefreshResult,
@@ -42,9 +43,19 @@ class AccountsRepositoryPort(Protocol):
 
     async def exchange_intent_hash(self, account_id: str) -> str | None: ...
 
-    async def begin_exchange(self, account_id: str, token_hash: str, expected_token: bytes) -> bool: ...
+    async def begin_exchange(
+        self,
+        account_id: str,
+        token_hash: str,
+        expected_token: bytes,
+        *,
+        replay: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> bool: ...
 
-    async def mark_exchange_uncertain(self, account_id: str, token_hash: str) -> None: ...
+    async def mark_exchange_uncertain(
+        self, account_id: str, token_hash: str, expected_token: bytes, *, reason: str | None = None
+    ) -> None: ...
 
     async def abort_exchange(self, account_id: str, token_hash: str) -> None: ...
 
@@ -297,9 +308,8 @@ class AuthManager:
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
             return await self._ensure_chatgpt_account_id(account)
         if account.status == AccountStatus.EXCHANGE_UNCERTAIN:
-            raise RefreshError(
-                "exchange_uncertain", "Refresh exchange outcome uncertain; operator action required", False
-            )
+            if not force and not access_token_hard_expired(self._encryptor, account):
+                return await self._ensure_chatgpt_account_id(account)
         if force or _account_needs_refresh(self._encryptor, account):
             account = await _REFRESH_SINGLEFLIGHT.run(
                 _refresh_singleflight_key(self._encryptor, account),
@@ -346,8 +356,6 @@ class AuthManager:
         ):
             if not is_locally_owned(latest, get_settings()):
                 raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
-            if latest.status == AccountStatus.EXCHANGE_UNCERTAIN:
-                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
             # A delayed caller must not replay a token already rotated by another request.
             if hasattr(self._repo, "session"):
                 return Account(**{column.key: getattr(latest, column.key) for column in Account.__table__.columns})
@@ -360,23 +368,38 @@ class AuthManager:
             raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
         account = latest
         expected_refresh_token_encrypted = latest.refresh_token_encrypted
-        if account.status == AccountStatus.EXCHANGE_UNCERTAIN:
-            raise RefreshError(
-                "exchange_uncertain", "Refresh exchange outcome uncertain; operator action required", False
-            )
         token_hash = _refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
         intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
+        replay = False
         if intent_supported:
-            intent = await self._repo.exchange_intent_hash(account.id)
+            timeout = max(
+                get_settings().oauth_timeout_seconds,
+                get_settings().token_refresh_timeout_seconds,
+                30.0,  # CodexClient's refresh-request timeout is bounded by the configured token timeout.
+            )
+            intent = await self._repo.exchange_intent_window(account.id, timeout)
             if intent is not None:
-                if intent == token_hash:
-                    await self._repo.mark_exchange_uncertain(account.id, token_hash)
-                    get_account_selection_cache().invalidate()
-                    raise RefreshError(
-                        "exchange_uncertain", "Refresh exchange outcome uncertain; operator action required", False
-                    )
-                raise RefreshError("exchange_intent_conflict", "A previous exchange is unresolved", False)
-            if not await self._repo.begin_exchange(account.id, token_hash, expected_refresh_token_encrypted):
+                if intent.token_hash != token_hash:
+                    raise RefreshError("exchange_intent_conflict", "A previous exchange is unresolved", False)
+                if not intent.ready or (
+                    intent.reason != "operator_reset" and (intent.replay or intent.reason == "unsaved")
+                ):
+                    if account.status != AccountStatus.EXCHANGE_UNCERTAIN:
+                        await self._repo.mark_exchange_uncertain(
+                            account.id, token_hash, expected_refresh_token_encrypted
+                        )
+                        get_account_selection_cache().invalidate()
+                    raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
+                replay = True
+            elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
+                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
+            if not await self._repo.begin_exchange(
+                account.id,
+                token_hash,
+                expected_refresh_token_encrypted,
+                replay=replay,
+                timeout_seconds=timeout if replay else None,
+            ):
                 latest = await self._repo.reload_by_id(account.id)
                 if latest is not None and not is_locally_owned(latest, get_settings()):
                     raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
@@ -385,11 +408,11 @@ class AuthManager:
                 ):
                     return latest
                 if await self._repo.exchange_intent_hash(account.id) == token_hash:
-                    await self._repo.mark_exchange_uncertain(account.id, token_hash)
+                    await self._repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
                     get_account_selection_cache().invalidate()
-                raise RefreshError(
-                    "exchange_uncertain", "Refresh exchange outcome uncertain; operator action required", False
-                )
+                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
+        elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
+            raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
         exchange_started = False
 
         def mark_exchange_started() -> None:
@@ -403,16 +426,46 @@ class AuthManager:
             )
         except BaseException as exc:
             if intent_supported:
-                if exchange_started:
-                    await self._repo.mark_exchange_uncertain(account.id, token_hash)
-                    get_account_selection_cache().invalidate()
-                    raise RefreshError(
-                        "exchange_uncertain", "Refresh exchange outcome uncertain; operator action required", False
-                    ) from exc
-                await self._repo.abort_exchange(account.id, token_hash)
-                if not isinstance(exc, RefreshError):
+                phase = exc.phase if isinstance(exc, RefreshError) else ExchangePhase.AMBIGUOUS
+                if (
+                    not exchange_started
+                    or phase == ExchangePhase.PRE_SEND
+                    or (
+                        phase == ExchangePhase.ANSWERED
+                        and isinstance(exc, RefreshError)
+                        and not exc.is_permanent
+                        and not (exc.status_code is not None and exc.status_code >= 500)
+                    )
+                ):
+                    await self._repo.abort_exchange(account.id, token_hash)
+                    if replay:
+                        await self._repo.update_status(
+                            account.id,
+                            AccountStatus.ACTIVE,
+                            expected_refresh_token_encrypted=expected_refresh_token_encrypted,
+                        )
+                    if isinstance(exc, RefreshError):
+                        raise
                     raise
-                raise
+                if phase == ExchangePhase.ANSWERED and isinstance(exc, RefreshError) and exc.is_permanent:
+                    await self._repo.abort_exchange(account.id, token_hash)
+                    status = account_status_for_permanent_failure(exc.code)
+                    await self._repo.update_status(
+                        account.id,
+                        status,
+                        permanent_failure_reason(exc.code),
+                        expected_refresh_token_encrypted=expected_refresh_token_encrypted,
+                    )
+                    logger.info("Refresh exchange resolved account_id=%s outcome=reauth_required", account.id)
+                    raise
+                await self._repo.mark_exchange_uncertain(
+                    account.id,
+                    token_hash,
+                    expected_refresh_token_encrypted,
+                    reason="unsaved" if isinstance(exc, RefreshError) and exc.code == "invalid_response" else None,
+                )
+                get_account_selection_cache().invalidate()
+                raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False) from exc
             if not isinstance(exc, RefreshError):
                 raise
             is_permanent = exc.is_permanent or classify_refresh_error(exc.code)
@@ -454,12 +507,19 @@ class AuthManager:
                 )
             raise
 
-        account.access_token_encrypted = self._encryptor.encrypt(result.access_token)
-        account.refresh_token_encrypted = self._encryptor.encrypt(result.refresh_token)
+        if provider.requires_id_token and not result.id_token:
+            if intent_supported:
+                await self._repo.mark_exchange_uncertain(
+                    account.id, token_hash, expected_refresh_token_encrypted, reason="unsaved"
+                )
+            raise RefreshError("invalid_response", "Refresh response missing id token", False)
+
+        new_access_token_encrypted = self._encryptor.encrypt(result.access_token)
+        new_refresh_token_encrypted = self._encryptor.encrypt(result.refresh_token)
+        account.access_token_encrypted = new_access_token_encrypted
+        account.refresh_token_encrypted = new_refresh_token_encrypted
         if result.id_token:
             account.id_token_encrypted = self._encryptor.encrypt(result.id_token)
-        elif provider.requires_id_token:
-            raise RefreshError("invalid_response", "Refresh response missing id token", False)
         else:
             account.id_token_encrypted = None
         account.last_refresh = utcnow()
@@ -510,37 +570,55 @@ class AuthManager:
         if workspace_matches_current_slot and result.seat_type:
             account.seat_type = result.seat_type
 
+        # A failed write must never flush the rotated in-memory tokens on a later commit.
+        if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
+            self._repo.session.expunge(account)
         # A durable fence may be marked uncertain by a new worker after lock loss.
-        # The conditional write must not overwrite that operator-visible state.
-        tokens_updated = await self._repo.update_tokens(
-            account.id,
-            access_token_encrypted=account.access_token_encrypted,
-            refresh_token_encrypted=account.refresh_token_encrypted,
-            id_token_encrypted=account.id_token_encrypted,
-            last_refresh=account.last_refresh,
-            plan_type=account.plan_type,
-            email=account.email,
-            chatgpt_account_id=account.chatgpt_account_id,
-            workspace_id=next_workspace_id,
-            workspace_label=account.workspace_label,
-            seat_type=account.seat_type,
-            expected_refresh_token_encrypted=expected_refresh_token_encrypted,
-            access_expires_at=account.access_expires_at if intent_supported else None,
-            exchange_token_hash=token_hash if intent_supported else None,
-        )
-        if not tokens_updated:
-            latest = await self._repo.reload_by_id(account.id)
-            if latest is not None and latest.status == AccountStatus.EXCHANGE_UNCERTAIN:
-                raise RefreshError(
-                    "exchange_uncertain", "Refresh exchange outcome uncertain; operator action required", False
+        tokens_updated = False
+        for attempt in range(3):
+            try:
+                tokens_updated = await self._repo.update_tokens(
+                    account.id,
+                    access_token_encrypted=account.access_token_encrypted,
+                    refresh_token_encrypted=account.refresh_token_encrypted,
+                    id_token_encrypted=account.id_token_encrypted,
+                    last_refresh=account.last_refresh,
+                    plan_type=account.plan_type,
+                    email=account.email,
+                    chatgpt_account_id=account.chatgpt_account_id,
+                    workspace_id=next_workspace_id,
+                    workspace_label=account.workspace_label,
+                    seat_type=account.seat_type,
+                    expected_refresh_token_encrypted=expected_refresh_token_encrypted,
+                    access_expires_at=account.access_expires_at,
+                    exchange_token_hash=token_hash if intent_supported else None,
                 )
-            if latest is not None and latest.refresh_token_encrypted != expected_refresh_token_encrypted:
+            except Exception:
+                if attempt == 2:
+                    if intent_supported:
+                        await self._repo.mark_exchange_uncertain(
+                            account.id, token_hash, expected_refresh_token_encrypted, reason="unsaved"
+                        )
+                    raise RefreshError("refresh_unsaved", "Refreshed tokens could not be stored", False) from None
+                await asyncio.sleep(0)
+                continue
+            if tokens_updated:
+                break
+            latest = await self._repo.reload_by_id(account.id)
+            if latest is not None and _refresh_token_material_changed(
+                self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
+            ):
                 return latest
-            raise RefreshError(
-                "refresh_persistence_conflict",
-                "Refreshed credentials could not be stored because the account changed concurrently",
-                False,
-            )
+            if attempt < 2:
+                await asyncio.sleep(0)
+        if replay and tokens_updated:
+            logger.info("Refresh exchange resolved account_id=%s outcome=active", account.id)
+        if not tokens_updated:
+            if intent_supported:
+                await self._repo.mark_exchange_uncertain(
+                    account.id, token_hash, expected_refresh_token_encrypted, reason="unsaved"
+                )
+            raise RefreshError("refresh_unsaved", "Refreshed tokens could not be stored", False)
         get_account_selection_cache().invalidate()
         if hasattr(self._repo, "session"):
             stored = await self._repo.reload_by_id(account.id)

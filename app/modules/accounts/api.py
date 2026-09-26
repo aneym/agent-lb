@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.auth.refresh import RefreshError
 from app.core.clients.rate_limit_resets import ResetCreditsError
+from app.core.config.settings import get_settings
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.dependencies import AccountsContext, get_accounts_context
@@ -240,11 +243,20 @@ async def import_api_key_account(
 async def reset_uncertain_exchange(
     account_id: str, context: AccountsContext = Depends(get_accounts_context)
 ) -> dict[str, str]:
-    """Discard an unresolved exchange only after the operator commits to re-login."""
+    """Allow a deliberate retry after the provider can no longer process the prior exchange."""
+    settings = get_settings()
+    timeout_seconds = max(settings.oauth_timeout_seconds, settings.token_refresh_timeout_seconds, 30.0)
     async with _cross_process_refresh_lock(account_id):
-        if not await context.repository.clear_exchange_intent(account_id):
+        outcome = await context.repository.clear_exchange_intent(account_id, timeout_seconds)
+        if isinstance(outcome, datetime):
+            raise DashboardConflictError(f"Exchange reset becomes available at {outcome.isoformat()} UTC")
+        if not outcome:
             raise DashboardConflictError("Account is not exchange-uncertain")
-    return {"account_id": account_id, "status": "reauth_required"}
+    return {
+        "account_id": account_id,
+        "status": "active",
+        "message": "Next refresh replays the token once; re-login may be required",
+    }
 
 
 @router.post("/{account_id}/reactivate", response_model=AccountReactivateResponse)
