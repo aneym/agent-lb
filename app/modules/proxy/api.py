@@ -34,6 +34,7 @@ from app.core import usage as usage_core
 from app.core.anthropic.models import AnthropicDefinedToolDefinition, AnthropicMessageRequest
 from app.core.audit.service import AuditService
 from app.core.auth.dependencies import (
+    select_proxy_authorization,
     set_openai_error_format,
     validate_codex_usage_identity,
     validate_proxy_api_key,
@@ -3574,7 +3575,7 @@ async def _validate_proxy_websocket_request(
         return None, denial
     try:
         api_key = await _validate_proxy_api_key_authorization_for_connection(
-            websocket.headers.get("authorization"),
+            select_proxy_authorization(websocket.headers.get("authorization"), websocket.headers.get("x-api-key")),
             websocket,
         )
     except ProxyAuthError as exc:

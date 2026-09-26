@@ -195,6 +195,8 @@ async def test_connect_responses_websocket_uses_websockets_transport(monkeypatch
             "User-Agent": "Codex CLI Test",
             "Origin": "https://chatgpt.com",
             "Cookie": "dashboard_session=secret",
+            "X-Api-Key": "sk-clb-member-key",
+            "authorization": "Bearer chatgpt-SENTINEL-abc123",
         },
         "access-token",
         "account-123",
@@ -221,6 +223,8 @@ async def test_connect_responses_websocket_uses_websockets_transport(monkeypatch
     assert additional_headers["openai-beta"] == "responses_websockets=2026-02-06"
     assert additional_headers["session_id"] == "session-1"
     assert "Cookie" not in additional_headers
+    assert "X-Api-Key" not in additional_headers
+    assert "authorization" not in additional_headers
     assert "User-Agent" not in additional_headers
     assert "Origin" not in additional_headers
 
