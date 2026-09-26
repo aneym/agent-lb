@@ -1,7 +1,7 @@
 """Add nullable caller identity fields to request logs.
 
 Revision ID: 20260926_210000_add_request_log_identity
-Revises: 20260925_020000_add_account_resume_schedules
+Revises: 20260926_200000_add_team_pool_share
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260926_210000_add_request_log_identity"
-down_revision = "20260925_020000_add_account_resume_schedules"
+down_revision = "20260926_200000_add_team_pool_share"
 branch_labels = None
 depends_on = None
 
