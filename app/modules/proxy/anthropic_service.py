@@ -34,6 +34,7 @@ from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
+from app.core.identity import attach_member, get_request_identity
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
     get_anthropic_compat_profile,
@@ -1449,8 +1450,10 @@ class AnthropicProxyService:
         usage: AnthropicUsage | None = None,
     ) -> None:
         try:
+            identity = await attach_member(get_request_identity(), api_key.member_id if api_key else None)
             async with self._repo_factory() as repos:
                 await repos.request_logs.add_log(
+                    identity=identity,
                     account_id=account.id if account else None,
                     api_key_id=api_key.id if api_key else None,
                     request_id=request_id,

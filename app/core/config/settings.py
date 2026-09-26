@@ -389,6 +389,13 @@ class Settings(BaseSettings):
     model_registry_client_version: str = "0.101.0"
     model_context_window_overrides: Annotated[dict[str, int], NoDecode] = Field(default_factory=dict)
     proxy_unauthenticated_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Request-log attribution (app/core/identity.py). Real handles go in the instance env file, not the repo.
+    identity_enabled: bool = True
+    identity_owner: str = "owner"
+    identity_owner_machines: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    identity_local_machine: str | None = None
+    identity_machine_aliases: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
+    identity_tailscale_bin: str = "tailscale"
     firewall_trust_proxy_headers: bool = False
     firewall_trusted_proxy_cidrs: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["127.0.0.1/32", "::1/128"]
@@ -527,6 +534,35 @@ class Settings(BaseSettings):
                         normalized.append(host)
             return normalized
         raise TypeError("image_inline_allowed_hosts must be a list or comma-separated string")
+
+    @field_validator("identity_owner_machines", mode="before")
+    @classmethod
+    def _normalize_identity_owner_machines(cls, value: StringListInput) -> list[str]:
+        entries = value.split(",") if isinstance(value, str) else (value or [])
+        return [entry.strip().lower() for entry in entries if entry.strip()]
+
+    @field_validator("identity_machine_aliases", mode="before")
+    @classmethod
+    def _normalize_identity_machine_aliases(cls, value: str | Mapping[str, str] | None) -> dict[str, str]:
+        """Node handle to reported machine, from ``node=alias,node=alias``."""
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            pairs = [entry.partition("=") for entry in value.split(",") if entry.strip()]
+            if any(not separator for _, separator, _ in pairs):
+                raise ValueError("identity_machine_aliases entries must be node=alias")
+            items = [(node, alias) for node, _, alias in pairs]
+        elif isinstance(value, Mapping):
+            items = list(value.items())
+        else:
+            raise TypeError("identity_machine_aliases must be a mapping or node=alias list")
+        result: dict[str, str] = {}
+        for node, alias in items:
+            node_key, alias_value = str(node).strip().lower(), str(alias).strip().lower()
+            if not node_key or not alias_value:
+                raise ValueError("identity_machine_aliases entries must be node=alias")
+            result[node_key] = alias_value
+        return result
 
     @field_validator("firewall_trusted_proxy_cidrs", mode="before")
     @classmethod

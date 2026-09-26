@@ -38,6 +38,7 @@ from app.core.middleware import (
     add_request_id_middleware,
 )
 from app.core.middleware.client_session import ClientSessionMiddleware
+from app.core.middleware.identity import IdentityMiddleware
 from app.core.middleware.inflight import InFlightMiddleware
 from app.core.openai.model_refresh_scheduler import build_model_refresh_scheduler
 from app.core.resilience.backpressure import BackpressureMiddleware
@@ -412,6 +413,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(cast(Any, InFlightMiddleware))
     app.add_middleware(cast(Any, ClientSessionMiddleware))
+    app.add_middleware(cast(Any, IdentityMiddleware))
     add_dashboard_auth_proxy_middleware(app)
     add_request_decompression_middleware(app)
     add_request_id_middleware(app)

@@ -11,6 +11,7 @@ from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.identity import RequestIdentity, identity_for_log
 from app.core.usage.logs import RequestLogLike, calculated_cost_from_log
 from app.core.usage.types import (
     BucketModelAggregate,
@@ -366,7 +367,9 @@ class RequestLogsRepository:
         provider: str = "openai",
         cache_creation_tokens: int | None = None,
         cache_read_tokens: int | None = None,
+        identity: RequestIdentity | None = None,
     ) -> RequestLog:
+        caller = identity_for_log(identity)
         async with sqlite_writer_section():
             resolved_request_id = ensure_request_id(request_id)
             resolved_plan_type = plan_type
@@ -382,6 +385,10 @@ class RequestLogsRepository:
                 api_key_id=api_key_id,
                 session_id=session_id,
                 client_session_id=get_client_session_id(),
+                caller_user=caller.caller_user,
+                caller_user_source=caller.caller_user_source,
+                caller_machine=caller.caller_machine,
+                caller_machine_source=caller.caller_machine_source,
                 request_id=resolved_request_id,
                 model=model,
                 plan_type=resolved_plan_type,
