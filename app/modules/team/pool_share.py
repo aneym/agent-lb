@@ -186,6 +186,12 @@ async def _aggregate(
             RequestLog,
             and_(RequestLog.account_id == windows.c.account_id, RequestLog.requested_at >= windows.c.start),
         )
+        # Sargable bounds so the planner can use the requested_at / account_id
+        # indexes instead of scanning all of request_logs on the admission path.
+        .where(
+            RequestLog.account_id.in_({snapshot.account_id for snapshot in snapshots}),
+            RequestLog.requested_at >= min(snapshot.start for snapshot in snapshots),
+        )
         .group_by(windows.c.account_id, windows.c.length)
     )
     if member_id is not None:
