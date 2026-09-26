@@ -1,11 +1,11 @@
-"""Estimate pool share using this instance's request logs.
+"""Estimate pool share from this instance's request logs only.
 
 Usage snapshots report global account consumption, but request logs are local.
-When all of a member's traffic lands on this instance, remote traffic only
-increases the true account denominator: the local estimate overstates share.
-Members must use one agent-lb URL without a fallback until federated usage can
-supply both numerator and denominator. A fallback can put member traffic on
-another instance, causing this local estimate to understate the true share.
+ONLY while all of a member's traffic lands on this instance, remote traffic
+increases the true account denominator and the local estimate overstates share
+(the safe direction). Members must use a single LB URL without fallback until
+federation usage reports feed both the numerator and denominator. A fallback
+can put member traffic on another instance and understate the true share.
 """
 
 from __future__ import annotations
