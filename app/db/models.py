@@ -70,7 +70,9 @@ class AccountTransferDirection(str, Enum):
 
 class AccountTransferState(str, Enum):
     PENDING = "pending"
+    ABORTING = "aborting"
     SETTLED = "settled"
+    ABORTED = "aborted"
 
 
 class Account(Base):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,6 +16,8 @@ from app.modules.federation.exceptions import (
 )
 from app.modules.federation.scheduler import FederationMirrorScheduler
 from app.modules.federation.schemas import (
+    FederationAbortRequest,
+    FederationAbortResponse,
     FederationAccountCounts,
     FederationCheckinExecuteRequest,
     FederationCheckinExecuteResponse,
@@ -27,6 +30,7 @@ from app.modules.federation.schemas import (
     FederationMirrorResponse,
     FederationMirrorStatus,
     FederationStatusResponse,
+    FederationTransferStateResponse,
     FederationTransferStatusResponse,
     FederationUsagePushStatus,
     FederationUsageReportRequest,
@@ -41,12 +45,7 @@ async def require_federation_mirror_auth(
 ) -> None:
     settings = get_settings()
     token = settings.effective_federation_mirror_token
-    if (
-        not token
-        or (settings.federation_transfer_token and hmac.compare_digest(token, settings.federation_transfer_token))
-        or credentials is None
-        or not hmac.compare_digest(credentials.credentials, token)
-    ):
+    if not token or credentials is None or not hmac.compare_digest(credentials.credentials, token):
         raise HTTPException(status_code=403, detail="Invalid federation mirror credentials")
 
 
@@ -54,15 +53,12 @@ async def require_federation_transfer_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> None:
     settings = get_settings()
-    # The taker has an outbound credential but no inbound transfer authority.
-    token = settings.federation_transfer_token if settings.federation_taker_instance_ids else None
-    mirror_token = settings.effective_federation_mirror_token
+    inbound = settings.federation_transfer_inbound_sha256
     if (
-        not token
-        or (settings.federation_token and hmac.compare_digest(token, settings.federation_token))
-        or (mirror_token and hmac.compare_digest(token, mirror_token))
+        not settings.federation_taker_instance_ids
+        or not inbound
         or credentials is None
-        or not hmac.compare_digest(credentials.credentials, token)
+        or not hmac.compare_digest(hashlib.sha256(credentials.credentials.encode()).hexdigest(), inbound)
     ):
         raise HTTPException(status_code=403, detail="Invalid federation transfer credentials")
 
@@ -127,8 +123,13 @@ async def post_reclaim(
     account_id: str,
     context: FederationContext = Depends(get_federation_context),
 ) -> dict[str, str]:
-    if not await context.service.reclaim(account_id):
-        raise HTTPException(status_code=409, detail="Account cannot be reclaimed")
+    try:
+        if not await context.service.reclaim(account_id):
+            raise HTTPException(status_code=409, detail="Account cannot be reclaimed")
+    except FederationNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"account_id": account_id, "owner_instance": get_settings().local_instance_id}
 
 
@@ -139,12 +140,50 @@ async def post_checkout(
     request: FederationCheckoutRequest,
     context: FederationContext = Depends(get_federation_context),
 ) -> FederationCheckoutResponse:
-    if request.taker_instance_id not in get_settings().federation_taker_instance_ids:
+    if (
+        request.taker_instance_id == get_settings().local_instance_id
+        or request.taker_instance_id not in get_settings().federation_taker_instance_ids
+    ):
         raise HTTPException(status_code=403, detail="Taker instance is not allowed")
+    if not _valid_nonce(request.nonce):
+        raise HTTPException(status_code=409, detail="Invalid checkout nonce")
     try:
-        return await context.service.checkout(request.account_id, request.taker_instance_id)
+        return await context.service.checkout(request.account_id, request.taker_instance_id, request.nonce)
     except FederationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FederationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _valid_nonce(nonce: str) -> bool:
+    return 24 <= len(nonce) <= 128 and all(c.isalnum() and c.isascii() or c in "-_" for c in nonce)
+
+
+@router.get(
+    "/transfers/{nonce}",
+    dependencies=[Depends(require_federation_transfer_auth)],
+    response_model=FederationTransferStateResponse,
+)
+async def get_transfer_state(
+    nonce: str, context: FederationContext = Depends(get_federation_context)
+) -> FederationTransferStateResponse:
+    return FederationTransferStateResponse(state=await context.service.transfer_status(nonce))
+
+
+@router.post(
+    "/transfers/{nonce}/abort",
+    dependencies=[Depends(require_federation_transfer_auth)],
+    response_model=FederationAbortResponse,
+)
+async def post_abort(
+    nonce: str, body: FederationAbortRequest, context: FederationContext = Depends(get_federation_context)
+) -> FederationAbortResponse:
+    if not _valid_nonce(nonce) or body.caller_instance_id not in get_settings().federation_taker_instance_ids:
+        raise HTTPException(status_code=403, detail="Caller is not allowed")
+    try:
+        return FederationAbortResponse(
+            state=await context.service.abort(nonce, body.account_id, body.direction, body.caller_instance_id)
+        )
     except FederationConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -173,17 +212,23 @@ async def post_checkin(
     request: FederationCheckinRequest,
     context: FederationContext = Depends(get_federation_context),
 ) -> FederationTransferStatusResponse:
+    if (
+        not _valid_nonce(request.nonce)
+        or request.caller_instance_id not in get_settings().federation_taker_instance_ids
+    ):
+        raise HTTPException(status_code=403, detail="Caller is not allowed")
     try:
-        return await context.service.checkin(request.account_id, request.nonce, request.auth)
+        return await context.service.checkin(
+            request.account_id, request.nonce, request.caller_instance_id, request.auth
+        )
     except FederationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FederationConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post(
+@dashboard_router.post(
     "/checkout/execute",
-    dependencies=[Depends(require_federation_transfer_auth)],
     response_model=FederationCheckoutExecuteResponse,
 )
 async def post_checkout_execute(
@@ -194,11 +239,12 @@ async def post_checkout_execute(
         return await context.service.execute_checkout(request.account_id)
     except FederationNotConfiguredError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except FederationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post(
+@dashboard_router.post(
     "/checkin/execute",
-    dependencies=[Depends(require_federation_transfer_auth)],
     response_model=FederationCheckinExecuteResponse,
 )
 async def post_checkin_execute(

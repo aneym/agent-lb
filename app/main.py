@@ -180,7 +180,7 @@ async def lifespan(app: FastAPI):
         account_pulse_scheduler = build_account_pulse_scheduler()
         account_resume_scheduler = build_account_resume_scheduler()
         reset_credit_auto_redeem_scheduler = build_reset_credit_auto_redeem_scheduler()
-        if settings.federation_token and not settings.federation_transfer_token:
+        if settings.federation_token and not settings.federation_transfer_inbound_sha256:
             logger.warning("Federation transfer routes are disabled until a transfer token is set")
         federation_mirror_scheduler = build_federation_mirror_scheduler()
         app.state.federation_mirror_scheduler = federation_mirror_scheduler

@@ -133,6 +133,7 @@ class FederationAuthPayload(BaseModel):
 class FederationCheckoutRequest(BaseModel):
     account_id: str
     taker_instance_id: str
+    nonce: str
 
 
 class FederationCheckoutResponse(BaseModel):
@@ -153,6 +154,7 @@ class FederationTransferStatusResponse(BaseModel):
 
 
 class FederationCheckinRequest(BaseModel):
+    caller_instance_id: str
     account_id: str
     nonce: str
     auth: FederationAuthPayload
@@ -177,3 +179,17 @@ class FederationCheckinExecuteResponse(BaseModel):
     account_id: str
     nonce: str
     settled: bool
+
+
+class FederationAbortResponse(BaseModel):
+    state: str
+
+
+class FederationTransferStateResponse(BaseModel):
+    state: str
+
+
+class FederationAbortRequest(BaseModel):
+    account_id: str
+    direction: str
+    caller_instance_id: str
