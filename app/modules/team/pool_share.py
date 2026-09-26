@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, case, func, literal, select, union_all
+from sqlalchemy import DateTime, Integer, String, and_, case, column, func, select, values
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
@@ -49,19 +49,23 @@ class _Totals:
     unpriced_tokens: int
 
 
-_denominators: dict[tuple[str, int, datetime], tuple[float, _Totals]] = {}
 _members: dict[tuple[str, float], tuple[float, list[PoolWindow]]] = {}
+_cache_generation = 0
 
 
 def reset_pool_share_cache() -> None:
-    _denominators.clear()
+    global _cache_generation
+    _cache_generation += 1
     _members.clear()
 
 
-def _cache_put(cache: dict, key: object, value: object) -> None:
-    if len(cache) >= _CACHE_SIZE:
-        cache.clear()
-    cache[key] = value
+def _cache_put(key: tuple[str, float], value: tuple[float, list[PoolWindow]], now: float) -> None:
+    # Expired entries do not need to consume the bounded cache indefinitely.
+    for expired in [entry for entry, (deadline, _) in _members.items() if deadline <= now]:
+        _members.pop(expired, None)
+    if len(_members) >= _CACHE_SIZE:
+        _members.pop(next(iter(_members)))
+    _members[key] = value
 
 
 def _window_label(length: int) -> str:
@@ -143,9 +147,8 @@ async def _snapshots(session: AsyncSession, account_ids: set[str], now: datetime
             reset_at = datetime.fromtimestamp(reset, tz=timezone.utc).replace(tzinfo=None)
             start = reset_at - timedelta(minutes=length)
             current = reset_at > now and row.recorded_at.replace(tzinfo=None) >= start
-            # A previous-window sample can roll once; obsolete legacy rows cannot
-            # manufacture a window years after that quota disappeared.
-            rolled = reset_at <= now and reset_at + timedelta(minutes=length) > now
+            # A rolled window remains eligible at zero even if the last sample is old.
+            rolled = reset_at <= now
             if not current and not rolled:
                 continue
             snapshot = _Snapshot(row.account_id, length, start, reset_at, row.used_percent, current)
@@ -161,15 +164,12 @@ async def _aggregate(
 ) -> dict[tuple[str, int], _Totals]:
     if not snapshots:
         return {}
-    window_queries = [
-        select(
-            literal(snapshot.account_id).label("account_id"),
-            literal(snapshot.length).label("length"),
-            literal(snapshot.start).label("start"),
-        )
-        for snapshot in snapshots
-    ]
-    windows = union_all(*window_queries).subquery() if len(window_queries) > 1 else window_queries[0].subquery()
+    # VALUES in a CTE avoids SQLite's 500-term limit for compound SELECTs.
+    windows = (
+        values(column("account_id", String), column("length", Integer), column("start", DateTime))
+        .data([(snapshot.account_id, snapshot.length, snapshot.start) for snapshot in snapshots])
+        .cte("pool_windows")
+    )
     tokens = func.coalesce(RequestLog.input_tokens, 0) + func.coalesce(RequestLog.output_tokens, 0)
     stmt = (
         select(
@@ -195,6 +195,7 @@ async def _aggregate(
 
 async def pool_share_windows(session: AsyncSession, member_id: str, limit: float, *, now: datetime) -> list[PoolWindow]:
     clock = time.monotonic()
+    generation = _cache_generation
     cache_key = (member_id, limit)
     cached = _members.get(cache_key)
     if cached is not None and cached[0] > clock and all(window.reset_at > now for window in cached[1]):
@@ -203,30 +204,20 @@ async def pool_share_windows(session: AsyncSession, member_id: str, limit: float
     accounts = await _reachable_accounts(session, member_id)
     snapshots = await _snapshots(session, accounts, now)
     current = [snapshot for snapshot in snapshots if snapshot.current]
-    missing = [
-        snapshot
-        for snapshot in current
-        if (entry := _denominators.get((snapshot.account_id, snapshot.length, snapshot.start))) is None
-        or entry[0] <= clock
-    ]
-    fresh = await _aggregate(session, missing)
-    for snapshot in missing:
-        key = (snapshot.account_id, snapshot.length, snapshot.start)
-        _cache_put(
-            _denominators,
-            key,
-            (clock + _CACHE_SECONDS, fresh.get((snapshot.account_id, snapshot.length), _Totals(0, 0, 0, 0))),
-        )
+    # Keep both aggregates local to this evaluation: invalidation during an await
+    # cannot remove a denominator, and no result can inherit a stale cache TTL.
+    denominators = await _aggregate(session, current)
     members = await _aggregate(session, current, member_id=member_id)
     grouped: dict[int, list[tuple[_Snapshot, float]]] = {}
     for snapshot in snapshots:
         attributed = 0.0
         if snapshot.current:
-            denominator = _denominators[(snapshot.account_id, snapshot.length, snapshot.start)][1]
-            numerator = members.get((snapshot.account_id, snapshot.length), _Totals(0, 0, 0, 0))
+            key = (snapshot.account_id, snapshot.length)
+            denominator = denominators.get(key, _Totals(0, 0, 0, 0))
+            numerator = members.get(key, _Totals(0, 0, 0, 0))
             member_cost, total_cost = _effective_cost(numerator, denominator)
             if total_cost > 0:
-                attributed = min(max(snapshot.used_percent, 0), 100) * member_cost / total_cost
+                attributed = min(max(snapshot.used_percent, 0), 100) * min(max(member_cost / total_cost, 0), 1)
         grouped.setdefault(snapshot.length, []).append((snapshot, attributed))
     result = []
     for length, entries in sorted(grouped.items()):
@@ -237,5 +228,6 @@ async def pool_share_windows(session: AsyncSession, member_id: str, limit: float
         result.append(
             PoolWindow(_window_label(length), sum(value for _, value in entries) / len(entries), limit, reset)
         )
-    _cache_put(_members, cache_key, (clock + _CACHE_SECONDS, result))
+    if generation == _cache_generation:
+        _cache_put(cache_key, (clock + _CACHE_SECONDS, result), clock)
     return result

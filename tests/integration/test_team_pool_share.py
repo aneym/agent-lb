@@ -4,14 +4,14 @@ from datetime import timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from starlette.testclient import WebSocketDenialResponse
 
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 from app.modules.team.pool_share import pool_share_windows, reset_pool_share_cache
-from app.modules.team.service import reset_team_usage_cache
+from app.modules.team.service import invalidate_team_member_caches, reset_team_usage_cache
 
 pytestmark = pytest.mark.integration
 
@@ -81,19 +81,19 @@ async def test_pool_share_cost_math_imputation_rolled_and_cache(db_setup, monkey
         windows = await pool_share_windows(session, "member", 6, now=now)
         assert len(windows) == 1
         assert windows[0].window == "pool_week"
-        assert windows[0].used_percent == pytest.approx(5)
+        assert windows[0].used_percent == pytest.approx(40 * 0.25 / 3)
         assert windows[0].reset_at == now + timedelta(days=3)
 
         session.add(_log("a", "key", now + timedelta(seconds=1), None, 400))
         await session.commit()
-        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(5)
+        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(40 * 0.25 / 3)
         clock[0] += 5.1
-        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(12.5)
+        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(25 / 3)
 
         session.add(_log("a", "key", now + timedelta(seconds=2), None, 100))
         await session.commit()
         reset_pool_share_cache()
-        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent > 12.5
+        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent > 25 / 3
         session.add(
             ApiKey(id="spare", name="other", member_id="member", key_hash="sparehash", key_prefix="sk-clb-spare")
         )
@@ -146,6 +146,46 @@ async def test_pool_share_scoped_reachability_rolled_and_token_fallback(db_setup
 
 
 @pytest.mark.asyncio
+async def test_pool_share_window_start_and_invalidation(db_setup):
+    del db_setup
+    now = utcnow().replace(microsecond=0)
+    from app.db.models import TeamMember
+
+    async with SessionLocal() as session:
+        session.add(TeamMember(id="member", name="Ada", pool_share_percent=20))
+        await _seed_account(session, "a", now, used=60, length=300, reset=now + timedelta(hours=1))
+        await session.flush()
+        session.add(ApiKey(id="key", name="member", member_id="member", key_hash="hash", key_prefix="sk-clb-key"))
+        # This row falls just before the new window; it must not dilute the member's share.
+        session.add(_log("a", None, now - timedelta(hours=4, seconds=1), 90, 0))
+        session.add(_log("a", "key", now, 10, 0))
+        await session.commit()
+        queries = []
+
+        def count_queries(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith(("SELECT", "WITH")):
+                queries.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", count_queries)
+        try:
+            first = await pool_share_windows(session, "member", 20, now=now)
+            assert len(queries) <= 6
+            assert first[0].used_percent == pytest.approx(60)
+            queries.clear()
+            assert (await pool_share_windows(session, "member", 20, now=now))[0].used_percent == pytest.approx(60)
+            assert queries == []
+            session.add(_log("a", None, now + timedelta(seconds=1), 10, 0))
+            await session.commit()
+            invalidate_team_member_caches()
+            queries.clear()
+            assert (await pool_share_windows(session, "member", 20, now=now))[0].used_percent == pytest.approx(30)
+            assert len(queries) <= 6
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_queries)
+    reset_pool_share_cache()
+
+
+@pytest.mark.asyncio
 async def test_pool_share_api_usage_and_websocket_handshake(async_client, app_instance):
     now = utcnow().replace(microsecond=0)
     created = await async_client.post("/api/team/members", json={"name": "Ada", "poolSharePercent": 10})
@@ -153,12 +193,12 @@ async def test_pool_share_api_usage_and_websocket_handshake(async_client, app_in
     member = created.json()
     assert (member["poolSharePercent"], member["poolShare"], member["poolShareKnown"]) == (10, [], False)
     member_id = member["id"]
-    for invalid in (0, -1, 100.001):
+    for invalid in (0, -1, 0.0004, 0.0011, 100.001):
         rejected = await async_client.post(
             "/api/team/members", json={"name": f"Rejected-{invalid}", "poolSharePercent": invalid}
         )
         assert rejected.status_code == 422
-    for invalid in (0, -1, 100.001):
+    for invalid in (0, -1, 0.0004, 0.0011, 100.001):
         response = await async_client.patch(f"/api/team/members/{member_id}", json={"poolSharePercent": invalid})
         assert response.status_code == 422
     key = (await async_client.post(f"/api/team/members/{member_id}/keys", json={})).json()
