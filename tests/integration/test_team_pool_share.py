@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 from starlette.testclient import WebSocketDenialResponse
 
 from app.core.utils.time import utcnow
@@ -88,12 +89,12 @@ async def test_pool_share_cost_math_imputation_rolled_and_cache(db_setup, monkey
         await session.commit()
         assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(40 * 0.25 / 3)
         clock[0] += 5.1
-        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(25 / 3)
+        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(40 / 3)
 
-        session.add(_log("a", "key", now + timedelta(seconds=2), None, 100))
+        session.add(_log("a", None, now + timedelta(seconds=2), None, 400))
         await session.commit()
         reset_pool_share_cache()
-        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent > 25 / 3
+        assert (await pool_share_windows(session, "member", 6, now=now))[0].used_percent == pytest.approx(20 / 3)
         session.add(
             ApiKey(id="spare", name="other", member_id="member", key_hash="sparehash", key_prefix="sk-clb-spare")
         )
@@ -237,6 +238,71 @@ async def test_pool_share_api_usage_and_websocket_handshake(async_client, app_in
     assert cleared.status_code == 200
     assert cleared.json()["poolSharePercent"] is None
     assert cleared.json()["poolShare"] == []
+
+
+@pytest.mark.asyncio
+async def test_pool_share_existing_websocket_emits_over_cap_on_next_turn(async_client, app_instance):
+    now = utcnow().replace(microsecond=0)
+    member = (await async_client.post("/api/team/members", json={"name": "Ada", "poolSharePercent": 10})).json()
+    key = (await async_client.post(f"/api/team/members/{member['id']}/keys", json={})).json()
+    async with SessionLocal() as session:
+        await _seed_account(session, "a", now, used=80, length=300, reset=now + timedelta(hours=2))
+        await session.execute(delete(RequestLog).where(RequestLog.account_id == "a"))
+        await session.commit()
+    assert (await async_client.put("/api/settings", json={"teamModeEnabled": True})).status_code == 200
+    reset_pool_share_cache()
+    for route in ("/backend-api/codex/responses", "/v1/responses"):
+        with TestClient(app_instance, client=("127.0.0.1", 50000)) as client:
+            with client.websocket_connect(route, headers={"Authorization": f"Bearer {key['key']}"}) as websocket:
+                async with SessionLocal() as session:
+                    session.add(_log("a", key["id"], now, 10, 100))
+                    await session.commit()
+                invalidate_team_member_caches()
+                websocket.send_text(json.dumps({"type": "response.create", "model": "gpt-5.4", "input": "hello"}))
+                error = json.loads(websocket.receive_text())
+                assert error["type"] == "error"
+                assert error["status"] == 429
+                assert error["error"]["type"] == "team_member_over_cap"
+        async with SessionLocal() as session:
+            await session.execute(delete(RequestLog).where(RequestLog.account_id == "a"))
+            await session.commit()
+        reset_pool_share_cache()
+    reset_pool_share_cache()
+
+
+@pytest.mark.asyncio
+async def test_pool_share_idle_rolled_window_has_future_advisory_reset_and_uses_cache(db_setup, monkeypatch):
+    del db_setup
+    import app.modules.team.pool_share as pool_module
+    from app.db.models import TeamMember
+
+    now = utcnow().replace(microsecond=0)
+    clock = [1000.0]
+    monkeypatch.setattr(pool_module.time, "monotonic", lambda: clock[0])
+    async with SessionLocal() as session:
+        session.add(TeamMember(id="member", name="Ada", pool_share_percent=25))
+        await _seed_account(session, "rolled", now, used=90, length=300, reset=now - timedelta(minutes=1))
+        await session.flush()
+        session.add(ApiKey(id="idle-key", name="member", member_id="member", key_hash="idlehash", key_prefix="sk-clb"))
+        await session.commit()
+        reset_pool_share_cache()
+        queries = []
+
+        def count_queries(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith(("SELECT", "WITH")):
+                queries.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", count_queries)
+        try:
+            first = (await pool_share_windows(session, "member", 25, now=now))[0]
+            assert first.used_percent == 0
+            assert first.reset_at > now
+            queries.clear()
+            assert (await pool_share_windows(session, "member", 25, now=now))[0] == first
+            assert queries == []
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count_queries)
+    reset_pool_share_cache()
 
 
 @pytest.mark.asyncio

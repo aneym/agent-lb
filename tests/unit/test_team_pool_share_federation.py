@@ -12,22 +12,22 @@ from app.modules.team.pool_share import pool_share_windows, reset_pool_share_cac
 pytestmark = pytest.mark.unit
 
 
+# Each tuple is (priced cost, priced tokens, unpriced tokens). Remote rows
+# belong to someone else; all member traffic stays on this LB instance.
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    (
-        "priced_member", "priced_other", "unpriced_member_tokens",
-        "unpriced_other_tokens", "remote_extra", "expected_local",
-    ),
+    ("member", "other", "remote"),
     [
-        (20, 80, 0, 0, 100, 8),  # priced rows only; two eligible accounts
-        (20, 80, 20, 80, 100, 8),  # unpriced rows imputed at local priced cost/token
-        (None, None, 20, 80, 100, 8),  # no priced rows: token fallback
-        (20, 40, 0, 0, 0, 80 / 6),
+        ((20, 20, 0), (80, 80, 0), (100, 100, 0)),
+        ((20, 20, 20), (80, 80, 80), (0.01, 1_000_000, 0)),
+        ((10, 10, 0), (0, 0, 1_000), (1, 1_000_000, 0)),
+        ((0, 0, 20), (0, 0, 80), (1, 1_000_000, 0)),
+        ((20, 20, 0), (40, 80, 0), (0, 0, 1_000)),
+        ((20, 20, 20), (40, 80, 80), (0, 0, 1_000)),
+        ((0, 0, 20), (0, 0, 80), (0, 0, 100)),
     ],
 )
-async def test_local_member_share_never_understates_when_all_member_traffic_is_local(
-    db_setup, priced_member, priced_other, unpriced_member_tokens, unpriced_other_tokens, remote_extra, expected_local
-):
+async def test_local_member_share_never_understates_when_all_member_traffic_is_local(db_setup, member, other, remote):
     del db_setup
     now = utcnow().replace(microsecond=0)
     reset = now + timedelta(days=3)
@@ -57,36 +57,44 @@ async def test_local_member_share_never_understates_when_all_member_traffic_is_l
             )
         await session.flush()
         session.add(ApiKey(id="member-key", name="Member", member_id="member", key_hash="hash", key_prefix="sk-clb"))
-        session.add_all(
-            [
-                RequestLog(
-                    account_id="a",
-                    api_key_id="member-key" if member else None,
-                    request_id=f"request-{member}-{kind}",
-                    model="model-alpha",
-                    status="success",
-                    cost_usd=cost,
-                    input_tokens=tokens,
-                    output_tokens=0,
-                    requested_at=now,
+        for label, (cost, priced_tokens, unpriced_tokens), key in (
+            ("member", member, "member-key"),
+            ("other", other, None),
+        ):
+            for kind, value, tokens in (("priced", cost, priced_tokens), ("unpriced", None, unpriced_tokens)):
+                if not tokens and value is None:
+                    continue
+                session.add(
+                    RequestLog(
+                        account_id="a",
+                        api_key_id=key,
+                        request_id=f"{label}-{kind}",
+                        model="model-alpha",
+                        status="success",
+                        cost_usd=value,
+                        input_tokens=tokens,
+                        output_tokens=0,
+                        requested_at=now,
+                    )
                 )
-                for member, kind, cost, tokens in (
-                    (True, "priced", priced_member, 20 if priced_member is not None else unpriced_member_tokens),
-                    (False, "priced", priced_other, 80 if priced_other is not None else unpriced_other_tokens),
-                    (True, "unpriced", None, unpriced_member_tokens if priced_member is not None else 0),
-                    (False, "unpriced", None, unpriced_other_tokens if priced_other is not None else 0),
-                )
-            ]
-        )
         await session.commit()
         reset_pool_share_cache()
-        windows = await pool_share_windows(session, "member", 50, now=now)
-        assert len(windows) == 1
-        assert windows[0].used_percent == pytest.approx(expected_local)
-        # The global snapshot includes remote cost, while every member row is local.
-        # Removing the remote portion only shrinks the observed denominator.
-        member_units = priced_member if priced_member is not None else unpriced_member_tokens
-        other_units = priced_other if priced_other is not None else unpriced_other_tokens
-        true_global_share = 80 * member_units / (member_units + other_units + remote_extra) / 2
-        assert windows[0].used_percent + 1e-9 >= true_global_share
+        local_share = (await pool_share_windows(session, "member", 50, now=now))[0].used_percent
+
+        # Independent global oracle: apply the spec's imputation formula to
+        # the local rows plus the remote instance's priced/unpriced rows.
+        priced_cost = member[0] + other[0] + remote[0]
+        priced_tokens = member[1] + other[1] + remote[1]
+        unpriced_tokens = member[2] + other[2] + remote[2]
+        if priced_tokens:
+            rate = priced_cost / priced_tokens
+            member_cost = member[0] + member[2] * rate
+            total_cost = priced_cost + unpriced_tokens * rate
+        else:
+            member_cost = member[1] + member[2]
+            total_cost = priced_tokens + unpriced_tokens
+        global_share = 80 * member_cost / total_cost / 2 if total_cost else 0
+        assert local_share + 1e-9 >= global_share
+        if member == (10, 10, 0) and other == (0, 0, 1_000):
+            assert global_share > 30  # A naive local-rate estimate would be below 1%.
     reset_pool_share_cache()

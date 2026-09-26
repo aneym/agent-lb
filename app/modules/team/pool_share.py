@@ -1,11 +1,14 @@
 """Estimate pool share from this instance's request logs only.
 
 Usage snapshots report global account consumption, but request logs are local.
-ONLY while all of a member's traffic lands on this instance, remote traffic
-increases the true account denominator and the local estimate overstates share
-(the safe direction). Members must use a single LB URL without fallback until
-federation usage reports feed both the numerator and denominator. A fallback
-can put member traffic on another instance and understate the true share.
+ONLY while all of a member's traffic lands on this instance, the local estimate
+is an upper bound on the share computed with global logs (the safe direction).
+With mixed priced and unpriced rows, remote priced traffic can change the
+imputation rate, so the bound uses the larger of the local priced-cost fraction
+and the local unpriced-token fraction instead of a local blended rate. Members
+must use a single LB URL without fallback until federation usage reports feed
+both the numerator and denominator. A fallback can put member traffic on
+another instance and understate the true share.
 """
 
 from __future__ import annotations
@@ -78,19 +81,17 @@ def _totals(row: tuple[object, ...] | None) -> _Totals:
     return _Totals(float(row[2] or 0), int(row[3] or 0), int(row[4] or 0), int(row[5] or 0))
 
 
-def _effective_cost(member: _Totals, account: _Totals) -> tuple[float, float]:
-    if account.priced_rows > 0 and account.priced_tokens > 0:
-        rate = account.priced_cost / account.priced_tokens
-        return (
-            member.priced_cost + member.unpriced_tokens * rate,
-            account.priced_cost + account.unpriced_tokens * rate,
-        )
-    if account.priced_rows > 0:
-        return member.priced_cost, account.priced_cost
-    return (
-        float(member.priced_tokens + member.unpriced_tokens),
-        float(account.priced_tokens + account.unpriced_tokens),
-    )
+def _local_upper_fraction(member: _Totals, account: _Totals) -> float:
+    # A remote priced row can change the global imputation rate arbitrarily.
+    # The global blended fraction is a weighted average of these two local
+    # fractions (with nonnegative remote traffic added only to its denominator).
+    # Thus their maximum remains an upper bound when the member is local.
+    if account.priced_rows == 0:
+        total = account.priced_tokens + account.unpriced_tokens
+        return (member.priced_tokens + member.unpriced_tokens) / total if total else 0.0
+    priced = member.priced_cost / account.priced_cost if account.priced_cost > 0 else 0.0
+    unpriced = member.unpriced_tokens / account.unpriced_tokens if account.unpriced_tokens > 0 else 0.0
+    return max(priced, unpriced)
 
 
 async def _reachable_accounts(session: AsyncSession, member_id: str) -> set[str]:
@@ -215,15 +216,17 @@ async def pool_share_windows(session: AsyncSession, member_id: str, limit: float
             key = (snapshot.account_id, snapshot.length)
             denominator = denominators.get(key, _Totals(0, 0, 0, 0))
             numerator = members.get(key, _Totals(0, 0, 0, 0))
-            member_cost, total_cost = _effective_cost(numerator, denominator)
-            if total_cost > 0:
-                attributed = min(max(snapshot.used_percent, 0), 100) * min(max(member_cost / total_cost, 0), 1)
+            fraction = _local_upper_fraction(numerator, denominator)
+            attributed = min(max(snapshot.used_percent, 0), 100) * min(max(fraction, 0), 1)
         grouped.setdefault(snapshot.length, []).append((snapshot, attributed))
     result = []
     for length, entries in sorted(grouped.items()):
         reset = min(
             (snapshot.reset_at for snapshot, attributed in entries if attributed > 0),
-            default=min(snapshot.reset_at for snapshot, _ in entries),
+            default=min(
+                (snapshot.reset_at for snapshot, _ in entries if snapshot.current),
+                default=now + timedelta(minutes=length),
+            ),
         )
         result.append(
             PoolWindow(_window_label(length), sum(value for _, value in entries) / len(entries), limit, reset)
