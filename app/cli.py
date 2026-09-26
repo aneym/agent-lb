@@ -66,6 +66,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         if name == "redeem":
             reset_command.add_argument("--credit-id", metavar="ID")
             reset_command.add_argument("--yes", action="store_true", help="Confirm redemption without a prompt.")
+            reset_command.add_argument(
+                "--override-daily-limit",
+                action="store_true",
+                help="Explicitly bypass Agent LB's Claude 24-hour manual reset cap; provider limits still apply.",
+            )
 
     throttle = subparsers.add_parser(
         "throttle",

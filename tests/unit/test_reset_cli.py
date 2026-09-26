@@ -9,7 +9,7 @@ from app import reset_cli
 pytestmark = pytest.mark.unit
 
 
-def _args(*, command="redeem", yes=True, credit_id=None):
+def _args(*, command="redeem", yes=True, credit_id=None, override_daily_limit=False):
     return SimpleNamespace(
         base_url="http://127.0.0.1:2455",
         timeout=3.0,
@@ -17,6 +17,7 @@ def _args(*, command="redeem", yes=True, credit_id=None):
         resets_command=command,
         yes=yes,
         credit_id=credit_id,
+        override_daily_limit=override_daily_limit,
     )
 
 
@@ -111,3 +112,20 @@ def test_noop_exits_nonzero_without_retry(monkeypatch, capsys):
     assert exc.value.code == 1
     assert len(calls) == 3
     assert "code: not_eligible" in capsys.readouterr().out
+
+
+def test_explicit_claude_daily_override_is_sent_once(monkeypatch):
+    calls = []
+
+    def request(_base, path, _timeout, *, body=None):
+        calls.append((path, body))
+        if path == "/api/accounts":
+            return {"accounts": [{**_account(), "provider": "anthropic"}]}
+        if body is None:
+            return _inventory(redeemableNow=True)
+        return {"status": "redeemed", "code": "reset", "windowsReset": 2}
+
+    monkeypatch.setattr(reset_cli, "_request", request)
+    reset_cli.run(_args(override_daily_limit=True))
+    assert calls[-1][1] == {"overrideDailyLimit": True}
+    assert len(calls) == 3
