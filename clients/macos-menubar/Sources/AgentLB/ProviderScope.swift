@@ -95,8 +95,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
         capacity += credits.capacity
         contributed = true
       }
-      if !ResetDisplay.isKnownFull(account, window: window),
-         let reset = windowReset(of: account, window: window), reset > now,
+      if let reset = windowReset(of: account, window: window), reset > now,
          earliestReset.map({ reset < $0 }) ?? true {
         earliestReset = reset
       }
@@ -108,8 +107,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     if let earliest = earliestReset {
       let bucketEnd = earliest.addingTimeInterval(60)
       for account in routableAccounts {
-        guard !ResetDisplay.isKnownFull(account, window: window),
-              let reset = windowReset(of: account, window: window),
+        guard let reset = windowReset(of: account, window: window),
               reset > now, reset < bucketEnd,
               let credits = windowCredits(of: account, window: window)
         else { continue }
@@ -138,8 +136,7 @@ enum ProviderScope: String, CaseIterable, Sendable {
     accounts
       .filter { $0.isRoutable }
       .compactMap { account -> AccountReset? in
-        guard !ResetDisplay.isKnownFull(account, window: window),
-              let reset = windowReset(of: account, window: window), reset > now else {
+        guard let reset = windowReset(of: account, window: window), reset > now else {
           return nil
         }
         let recovery = windowCredits(of: account, window: window)

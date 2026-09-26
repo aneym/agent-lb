@@ -13,7 +13,6 @@ struct AccountFilter: Equatable, Sendable {
 
   enum Sort: String, CaseIterable, Sendable {
     case resetSoonest, resetLatest, nameAsc, nameDesc
-    case remainingAsc, remainingDesc
   }
 
   var provider: Provider = .all
@@ -109,10 +108,6 @@ struct AccountFilter: Equatable, Sendable {
       return accounts.sorted { byName($0, $1, ascending: true) }
     case .nameDesc:
       return accounts.sorted { byName($0, $1, ascending: false) }
-    case .remainingAsc:
-      return accounts.sorted { byRemaining($0, $1, ascending: true) }
-    case .remainingDesc:
-      return accounts.sorted { byRemaining($0, $1, ascending: false) }
     }
   }
 
@@ -127,23 +122,6 @@ struct AccountFilter: Equatable, Sendable {
       if l != r { return ascending ? l < r : l > r }
       return byName(lhs, rhs, ascending: true)
     }
-  }
-
-  /// Weekly usage only: missing weekly telemetry sorts last even when
-  /// monthly or primary telemetry is known. Zero is a known depleted value.
-  private func byRemaining(_ lhs: Account, _ rhs: Account, ascending: Bool) -> Bool {
-    switch (remainingPercent(of: lhs), remainingPercent(of: rhs)) {
-    case (nil, nil): return byName(lhs, rhs, ascending: true)
-    case (nil, _): return false
-    case (_, nil): return true
-    case (let l?, let r?):
-      if l != r { return ascending ? l < r : l > r }
-      return byName(lhs, rhs, ascending: true)
-    }
-  }
-
-  private func remainingPercent(of account: Account) -> Double? {
-    account.usage.secondaryRemainingPercent
   }
 
   // Plain lowercased comparison (not localized collation) so ordering is

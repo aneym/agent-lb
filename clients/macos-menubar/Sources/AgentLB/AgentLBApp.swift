@@ -17,7 +17,6 @@ struct AgentLBApp: App {
     state.startBackgroundPolling()
     _appState = State(initialValue: state)
     Self.scheduleWindowDiagnostics(state)
-    StatusItemWatch.schedule()
   }
 
   // AGENTLB_DEBUG_WINDOWS=1: dump NSApp.windows + AppState data counts so a

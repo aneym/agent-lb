@@ -7,9 +7,9 @@ import SwiftUI
 //
 // Sizing-relevant state (status filter, query, search visibility) is OWNED
 // BY ROOTVIEW and passed as bindings: the panel height is a pure function of
-// that state (PanelLayout), so RootView must see every input. Sort mode is
-// height-neutral and persisted separately for the All and provider scopes.
-// `listHeight` is the exact PanelLayout-computed frame for the scroll area.
+// that state (PanelLayout), so RootView must see every input. The sort mode
+// (height-neutral) stays here via @AppStorage("accountSort"). `listHeight`
+// is the exact PanelLayout-computed frame for the scroll area.
 struct AccountsSection: View {
   @Environment(AppState.self) private var appState
   let accounts: [Account]
@@ -23,13 +23,9 @@ struct AccountsSection: View {
 
   @FocusState private var searchFocused: Bool
   @AppStorage("accountSort") private var sortRaw = AccountFilter.Sort.resetSoonest.rawValue
-  @AppStorage("allAccountSort") private var allSortRaw = AccountFilter.Sort.remainingAsc.rawValue
 
   private var sort: AccountFilter.Sort {
-    if isScoped {
-      return AccountFilter.Sort(rawValue: sortRaw) ?? .resetSoonest
-    }
-    return AccountFilter.Sort(rawValue: allSortRaw) ?? .remainingAsc
+    AccountFilter.Sort(rawValue: sortRaw) ?? .resetSoonest
   }
 
   private var filter: AccountFilter {
@@ -106,16 +102,8 @@ struct AccountsSection: View {
       Divider()
       Picker("Sort", selection: Binding(
         get: { sort },
-        set: {
-          if isScoped {
-            sortRaw = $0.rawValue
-          } else {
-            allSortRaw = $0.rawValue
-          }
-        }
+        set: { sortRaw = $0.rawValue }
       )) {
-        Text("Weekly remaining (lowest)").tag(AccountFilter.Sort.remainingAsc)
-        Text("Weekly remaining (highest)").tag(AccountFilter.Sort.remainingDesc)
         Text("Reset (soonest)").tag(AccountFilter.Sort.resetSoonest)
         Text("Reset (latest)").tag(AccountFilter.Sort.resetLatest)
         Text("Name A-Z").tag(AccountFilter.Sort.nameAsc)
@@ -322,9 +310,6 @@ struct AccountRow: View {
   }
 
   private var isCodex: Bool { account.provider.lowercased() == "openai" }
-  private var supportsBankedResetCredits: Bool {
-    ["openai", "anthropic"].contains(account.provider.lowercased())
-  }
 
   private var ringPercent: Double? {
     isCodex
@@ -410,33 +395,20 @@ struct AccountRow: View {
 
   @ViewBuilder
   private var resetCreditsChip: some View {
-    if supportsBankedResetCredits {
-      if let count = account.resetCreditsAvailable {
-        if account.canRedeemResetCredit {
-          Button {
-            runRedeemResetCredit()
-          } label: {
-            resetCreditsChipLabel(count: count)
-          }
-          .buttonStyle(.plain)
-          .disabled(resetPhase != .idle)
-          .help("Spend one banked credit to reset this account's rate limits now")
-          .accessibilityLabel("Reset rate limits now")
-        } else {
+    if isCodex, let count = account.resetCreditsAvailable {
+      if account.canRedeemResetCredit {
+        Button {
+          runRedeemResetCredit()
+        } label: {
           resetCreditsChipLabel(count: count)
-            .help("Banked rate-limit reset credits")
         }
+        .buttonStyle(.plain)
+        .disabled(resetPhase != .idle)
+        .help("Spend one banked credit to reset this account's rate limits now")
+        .accessibilityLabel("Reset rate limits now")
       } else {
-        Text("⟲ ?")
-          .font(.system(size: 9, weight: .medium))
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 5)
-          .padding(.vertical, 1)
-          .background(Capsule().fill(.quaternary.opacity(0.5)))
-          .lineLimit(1)
-          .fixedSize()
-          .help("Banked reset-credit inventory is unknown")
-          .accessibilityLabel("Banked reset-credit inventory unknown")
+        resetCreditsChipLabel(count: count)
+          .help("Banked rate-limit reset credits")
       }
     }
   }
@@ -604,7 +576,6 @@ struct AccountRow: View {
         WindowCell(
           label: "5H",
           percent: account.usage.primaryRemainingPercent,
-          knownFull: ResetDisplay.isKnownFull(account, window: .primary),
           resetAt: account.resetAtPrimary,
           now: now
         )
@@ -612,7 +583,6 @@ struct AccountRow: View {
       WindowCell(
         label: "WK",
         percent: account.usage.secondaryRemainingPercent,
-        knownFull: ResetDisplay.isKnownFull(account, window: .secondary),
         resetAt: account.resetAtSecondary,
         now: now
       )
@@ -670,7 +640,6 @@ struct AccountRow: View {
 private struct WindowCell: View {
   let label: String
   let percent: Double?
-  let knownFull: Bool
   let resetAt: Date?
   let now: Date
 
@@ -701,7 +670,7 @@ private struct WindowCell: View {
   private var detail: String {
     var parts: [String] = []
     if let percent { parts.append(Format.percent(percent)) }
-    if !knownFull, let resetAt, resetAt > now {
+    if let resetAt, resetAt > now {
       parts.append(Format.countdownCompact(to: resetAt, relativeTo: now))
     }
     return parts.isEmpty ? "—" : parts.joined(separator: " · ")

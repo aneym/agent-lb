@@ -33,20 +33,6 @@ final class ResetCreditRedeemTests: XCTestCase {
     XCTAssertFalse(codex(status: "quota_exceeded", credits: nil).canRedeemResetCredit)
   }
 
-  func testQuotaExceededClaudeAccountWithBankedResetCanRedeem() {
-    let account = makeTestAccount(
-      provider: "anthropic",
-      status: "quota_exceeded",
-      resetCreditsAvailable: 1
-    )
-    XCTAssertTrue(account.canRedeemResetCredit)
-  }
-
-  func testProviderWithoutBankedResetsCannotRedeem() {
-    let account = makeTestAccount(provider: "glm", status: "quota_exceeded", resetCreditsAvailable: 1)
-    XCTAssertFalse(account.canRedeemResetCredit)
-  }
-
   func testPausedAccountCannotRedeem() {
     XCTAssertFalse(codex(status: "paused", credits: 2).canRedeemResetCredit)
   }
@@ -78,13 +64,10 @@ final class ResetCreditRedeemTests: XCTestCase {
     XCTAssertFalse(account.canRedeemResetCredit)
   }
 
-  func testAnthropicLimitBlockedAccountWithCreditCanRedeem() {
-    let account = makeTestAccount(
-      provider: "anthropic",
-      status: "quota_exceeded",
-      resetCreditsAvailable: 2
-    )
-    XCTAssertTrue(account.canRedeemResetCredit)
+  /// Banked resets are a Codex feature; Anthropic rows must never offer it.
+  func testAnthropicAccountCannotRedeem() {
+    let account = makeTestAccount(status: "quota_exceeded", resetCreditsAvailable: 2)
+    XCTAssertFalse(account.canRedeemResetCredit)
   }
 
   // MARK: - Consume response

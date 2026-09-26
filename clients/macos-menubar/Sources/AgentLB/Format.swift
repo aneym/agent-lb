@@ -84,13 +84,9 @@ enum Format {
     return String(format: "%.1f", truncated) + "k"
   }
 
-  // "95%" — integer percent per design §1.1 / §2.2 ("62%", "95%").
-  // A positive deficit must not be rounded up into a false 100% full state.
+  // "95%" — integer percent per design §1.1 / §2.2 ("62%", "95%")
   static func percent(_ value: Double) -> String {
-    if value < 100, value.rounded() >= 100 {
-      return String(format: "%.1f%%", floor(value * 10) / 10)
-    }
-    return String(format: "%.0f%%", value)
+    String(format: "%.0f%%", value)
   }
 
   // "12.2s" (>= 1000 ms) or "840ms" (< 1000 ms)

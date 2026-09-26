@@ -24,19 +24,13 @@ final class AccountFilterTests: XCTestCase {
     resetAtSecondary: Date? = nil,
     rateLimitResetAt: Date? = nil,
     deactivationReason: String? = nil,
-    subscription: AccountSubscriptionLedger? = nil,
-    primaryRemainingPercent: Double? = nil,
-    secondaryRemainingPercent: Double? = nil,
-    monthlyRemainingPercent: Double? = nil
+    subscription: AccountSubscriptionLedger? = nil
   ) -> Account {
     makeTestAccount(
       id: id,
       provider: provider,
       displayName: displayName,
       status: status,
-      primaryRemainingPercent: primaryRemainingPercent,
-      secondaryRemainingPercent: secondaryRemainingPercent,
-      monthlyRemainingPercent: monthlyRemainingPercent,
       resetAtPrimary: resetAtPrimary,
       resetAtSecondary: resetAtSecondary,
       rateLimitResetAt: rateLimitResetAt,
@@ -270,60 +264,6 @@ final class AccountFilterTests: XCTestCase {
     let desc = AccountFilter(sort: .nameDesc).apply(to: accounts, now: now)
     XCTAssertEqual(desc.first?.displayName, "aneym1@yahoo.com")
     XCTAssertEqual(desc.last?.displayName, "a.neyman17@gmail.com")
-  }
-
-  func testSortRemainingUsesOnlyWeeklyAcrossProviders() {
-    let weekly = makeAccount(
-      id: "weekly", provider: "openai", displayName: "weekly@example.com",
-      primaryRemainingPercent: 1, secondaryRemainingPercent: 40
-    )
-    let monthly = makeAccount(
-      id: "monthly", provider: "anthropic", displayName: "monthly@example.com",
-      primaryRemainingPercent: 2, monthlyRemainingPercent: 20
-    )
-    let primary = makeAccount(
-      id: "primary", provider: "anthropic", displayName: "primary@example.com",
-      primaryRemainingPercent: 30
-    )
-    let lowerWeekly = makeAccount(
-      id: "lower-weekly", provider: "anthropic", displayName: "lower@example.com",
-      primaryRemainingPercent: 100, secondaryRemainingPercent: 9
-    )
-    let input = [weekly, monthly, primary, lowerWeekly]
-    XCTAssertEqual(
-      AccountFilter(sort: .remainingAsc).apply(to: input, now: now).map(\.accountId),
-      ["lower-weekly", "weekly", "monthly", "primary"]
-    )
-    XCTAssertEqual(
-      AccountFilter(sort: .remainingDesc).apply(to: input, now: now).map(\.accountId),
-      ["weekly", "lower-weekly", "monthly", "primary"]
-    )
-  }
-
-  func testSortRemainingTreatsZeroAsKnownAndUnknownAsLast() {
-    let unknown = makeAccount(id: "unknown", displayName: "unknown@example.com")
-    let zero = makeAccount(id: "zero", displayName: "zero@example.com", secondaryRemainingPercent: 0)
-    let positive = makeAccount(id: "positive", displayName: "positive@example.com", secondaryRemainingPercent: 1)
-
-    XCTAssertEqual(
-      AccountFilter(sort: .remainingAsc).apply(to: [unknown, positive, zero], now: now).map(\.accountId),
-      ["zero", "positive", "unknown"]
-    )
-    XCTAssertEqual(
-      AccountFilter(sort: .remainingDesc).apply(to: [unknown, positive, zero], now: now).map(\.accountId),
-      ["positive", "zero", "unknown"]
-    )
-  }
-
-  func testSortRemainingTiesUseNameThenAccountIdDeterministically() {
-    let beta = makeAccount(id: "b", displayName: "Beta@example.com", secondaryRemainingPercent: 10)
-    let alphaSecond = makeAccount(id: "z", displayName: "alpha@example.com", secondaryRemainingPercent: 10)
-    let alphaFirst = makeAccount(id: "a", displayName: "Alpha@example.com", secondaryRemainingPercent: 10)
-
-    XCTAssertEqual(
-      AccountFilter(sort: .remainingAsc).apply(to: [beta, alphaSecond, alphaFirst], now: now).map(\.accountId),
-      ["a", "z", "b"]
-    )
   }
 
   // MARK: - Provider counts

@@ -12,9 +12,6 @@ func makeTestAccount(
   fableEligible: Bool? = nil,
   resetCreditsAvailable: Int? = nil,
   additionalQuotas: [AccountAdditionalQuota]? = nil,
-  primaryRemainingPercent: Double? = nil,
-  secondaryRemainingPercent: Double? = nil,
-  monthlyRemainingPercent: Double? = nil,
   remainingCreditsPrimary: Double? = nil,
   capacityCreditsPrimary: Double? = nil,
   remainingCreditsSecondary: Double? = nil,
@@ -39,9 +36,9 @@ func makeTestAccount(
     resetCreditsAvailable: resetCreditsAvailable,
     additionalQuotas: additionalQuotas,
     usage: AccountUsage(
-      primaryRemainingPercent: primaryRemainingPercent,
-      secondaryRemainingPercent: secondaryRemainingPercent,
-      monthlyRemainingPercent: monthlyRemainingPercent
+      primaryRemainingPercent: nil,
+      secondaryRemainingPercent: nil,
+      monthlyRemainingPercent: nil
     ),
     remainingCreditsPrimary: remainingCreditsPrimary,
     capacityCreditsPrimary: capacityCreditsPrimary,

@@ -62,9 +62,9 @@ extension Account {
     guard let remaining = fableRemainingPercent else { return availability.label }
     switch availability {
     case .available:
-      return "FABLE WK \(Format.percent(remaining))"
+      return "FABLE \(Format.percent(remaining))"
     case .out:
-      return "FABLE WK OUT \(Format.percent(remaining))"
+      return "FABLE OUT \(Format.percent(remaining))"
     }
   }
 
@@ -73,9 +73,9 @@ extension Account {
     guard let remaining = fableRemainingPercent else { return availability.help }
     switch availability {
     case .available:
-      return "Fable weekly usage available (\(Format.percent(remaining)) remaining)"
+      return "Fable usage available (\(Format.percent(remaining)) remaining)"
     case .out:
-      return "Fable weekly usage exhausted (\(Format.percent(remaining)) remaining); Opus availability is separate"
+      return "Out of Fable usage (\(Format.percent(remaining)) remaining)"
     }
   }
 
@@ -96,12 +96,12 @@ extension Account {
   }
 
   /// True when spending a banked reset credit would actually buy capacity: a
-  /// supported-provider row that is limit-blocked and holds a credit. Paused, disconnected
+  /// Codex row that is limit-blocked and holds a credit. Paused, disconnected
   /// and unsubscribed rows cannot serve traffic, so a reset there would waste
   /// a scarce credit; an already-active row has nothing to reset (upstream
   /// answers `nothing_to_reset` and keeps the credit banked).
   var canRedeemResetCredit: Bool {
-    guard ["openai", "anthropic"].contains(provider.lowercased()) else { return false }
+    guard provider.lowercased() == "openai" else { return false }
     guard (resetCreditsAvailable ?? 0) > 0 else { return false }
     guard isRoutable else { return false }
     return status == "rate_limited" || status == "quota_exceeded"
@@ -114,15 +114,15 @@ enum FableAvailability: Sendable, Equatable {
 
   var label: String {
     switch self {
-    case .available: return "FABLE WK"
-    case .out: return "FABLE WK OUT"
+    case .available: return "FABLE"
+    case .out: return "FABLE OUT"
     }
   }
 
   var help: String {
     switch self {
-    case .available: return "Fable weekly usage available"
-    case .out: return "Fable weekly usage exhausted; Opus availability is separate"
+    case .available: return "Fable usage available"
+    case .out: return "Out of Fable usage"
     }
   }
 }

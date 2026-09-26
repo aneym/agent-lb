@@ -37,7 +37,6 @@ final class AppState {
   private let controller = ServiceController()
   private var closedTask: Task<Void, Never>?
   private var openTask: Task<Void, Never>?
-  private var resetCreditAccountsInFlight: Set<String> = []
   private var popoverIsOpen = false
   private var frontmostObserver: (any NSObjectProtocol)?
 
@@ -346,10 +345,6 @@ final class AppState {
   /// the operator does not read a no-op as recovered capacity.
   @discardableResult
   func redeemResetCredit(accountId: String) async -> Bool {
-    guard resetCreditAccountsInFlight.insert(accountId).inserted else {
-      return false
-    }
-    defer { resetCreditAccountsInFlight.remove(accountId) }
     let verdict: Bool
     do {
       verdict = try await client.redeemResetCredit(accountId).didReset
