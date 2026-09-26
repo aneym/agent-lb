@@ -4,7 +4,7 @@
 - [x] Pool share computation with a short shared cache, and the gate.
 - [x] Dashboard API create/update/list fields and validation.
 - [x] `/v1/usage` member block carries the pool share.
-- [ ] Team page: drawer field and table column.
+- [x] Team page: drawer field and table column.
 
 ## Verification
 
