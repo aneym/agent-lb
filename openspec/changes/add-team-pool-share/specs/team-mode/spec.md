@@ -61,7 +61,7 @@ A Codex client configured like the operator's (`/backend-api/codex`, `requires_o
 - The selected key SHALL be validated for trusted and untrusted clients alike. An invalid, revoked or expired selected key SHALL be rejected; it SHALL NOT fall back to trusted keyless access.
 - A non-`sk-clb-` bearer is never validated as a proxy key.
 - An `x-api-key` without the prefix does not override a present bearer, and with no bearer it keeps today's behavior.
-- The member header SHALL NOT be forwarded upstream. The internal bridge SHALL NOT start trusting `x-api-key`.
+- The member header SHALL NOT be forwarded upstream. The internal bridge SHALL NOT start trusting `x-api-key`: when the origin forwards a request to an owner instance, it SHALL send only the selected `sk-clb-` key, as an `Authorization` bearer (never a client's ChatGPT bearer), and the owner SHALL validate that key and attribute the request to it even when API-key auth is disabled.
 
 #### Scenario: Codex app signed in to ChatGPT sends the member key as a header
 
