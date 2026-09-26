@@ -96,6 +96,29 @@ async def test_run_startup_migrations_preserves_unknown_plan_types(db_setup):
 
 
 @pytest.mark.asyncio
+async def test_startup_migrations_preserve_existing_reset_credit_attempts(db_setup):
+    async with SessionLocal() as session:
+        await session.execute(
+            text(
+                "INSERT INTO reset_credit_attempts "
+                "(id, active_slot, account_id, trigger, state, windows_reset, created_at, lease_until, lease_owner) "
+                "VALUES ('attempt-1', 1, 'account-1', 'manual', 'pending', 0, "
+                "'2026-09-19 00:00:00', '2026-09-19 00:05:00', 'owner-1')"
+            )
+        )
+        await session.commit()
+
+    for _ in range(2):
+        result = await run_startup_migrations(_DATABASE_URL)
+        assert result.current_revision == _HEAD_REVISION
+        async with SessionLocal() as session:
+            row = (
+                await session.execute(text("SELECT id, active_slot, state, lease_owner FROM reset_credit_attempts"))
+            ).one()
+            assert tuple(row) == ("attempt-1", 1, "pending", "owner-1")
+
+
+@pytest.mark.asyncio
 async def test_run_startup_migrations_bootstraps_legacy_history(db_setup):
     async with SessionLocal() as session:
         await session.execute(

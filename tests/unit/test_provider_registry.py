@@ -15,6 +15,7 @@ from app.core.providers import (
     get_provider,
     list_provider_names,
 )
+from app.core.providers.openrouter import OPENROUTER_PROVIDER_NAME
 
 pytestmark = pytest.mark.unit
 
@@ -24,7 +25,12 @@ def test_openai_provider_is_default_registered_provider() -> None:
 
     assert provider.name == OPENAI_PROVIDER_NAME
     assert provider.requires_id_token is True
-    assert list_provider_names() == (ANTHROPIC_PROVIDER_NAME, GLM_PROVIDER_NAME, OPENAI_PROVIDER_NAME)
+    assert list_provider_names() == (
+        ANTHROPIC_PROVIDER_NAME,
+        GLM_PROVIDER_NAME,
+        OPENAI_PROVIDER_NAME,
+        OPENROUTER_PROVIDER_NAME,
+    )
     assert provider.model_registry is not None
     assert provider.pricing is not None
     assert provider.sse_parser is not None

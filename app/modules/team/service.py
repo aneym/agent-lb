@@ -24,7 +24,7 @@ from app.modules.team.repository import (
 )
 from app.modules.team.windows import TEAM_WINDOWS, window_end, window_start
 
-_AGGREGATE_CACHE_TTL_SECONDS = 1.0
+_AGGREGATE_CACHE_TTL_SECONDS = 5.0
 _NEAR_CAP_RATIO = 0.8
 
 GATE_OK = "ok"
@@ -45,7 +45,7 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
-_aggregate_cache: dict[tuple[str, str], tuple[float, TeamUsageTotals]] = {}
+_aggregate_cache: dict[tuple[str, str], tuple[float, datetime, TeamUsageTotals]] = {}
 
 
 def reset_team_usage_cache() -> None:
@@ -215,11 +215,12 @@ class TeamService:
         cache_key = (member_id, window)
         cached = _aggregate_cache.get(cache_key)
         clock = _monotonic()
-        if cached is not None and clock < cached[0]:
-            return cached[1]
+        since = window_start(window, now)
+        if cached is not None and clock < cached[0] and cached[1] == since:
+            return cached[2]
 
-        totals = await self._repository.aggregate_usage(member_id, since=window_start(window, now))
-        _aggregate_cache[cache_key] = (clock + _AGGREGATE_CACHE_TTL_SECONDS, totals)
+        totals = await self._repository.aggregate_usage(member_id, since=since)
+        _aggregate_cache[cache_key] = (clock + _AGGREGATE_CACHE_TTL_SECONDS, since, totals)
         return totals
 
     # ── CRUD ──

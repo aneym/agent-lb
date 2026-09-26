@@ -30,9 +30,7 @@ class CheckinPeerResult:
 class FederationPeerClient(Protocol):
     async def fetch_mirror(self, *, peer_url: str, token: str) -> FederationMirrorResponse: ...
 
-    async def push_usage_report(
-        self, *, peer_url: str, token: str, report: FederationUsageReportRequest
-    ) -> None: ...
+    async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None: ...
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str
@@ -66,9 +64,7 @@ class AiohttpFederationPeerClient:
                 data = await _json_or_raise(response)
         return FederationMirrorResponse.model_validate(data)
 
-    async def push_usage_report(
-        self, *, peer_url: str, token: str, report: FederationUsageReportRequest
-    ) -> None:
+    async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None:
         async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
             async with session.post(
                 f"{peer_url}/api/federation/usage-report",

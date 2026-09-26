@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+import sqlalchemy as sa
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
@@ -83,6 +84,7 @@ _MANUAL_DRIFT_INDEX_REQUIREMENTS: dict[str, frozenset[str]] = {
             "idx_logs_status_error_time",
             "idx_logs_api_key_time_account",
             "idx_logs_source_requested_at",
+            "idx_logs_session_time",
         }
     ),
     "account_limit_warmups": frozenset(
@@ -561,7 +563,21 @@ def _manual_schema_drift_diffs(connection: Connection) -> tuple[str, ...]:
         existing_indexes = _read_index_names_for_drift(connection, table_name)
         for index_name in sorted(required_indexes - existing_indexes):
             diffs.append(repr(("missing_index", table_name, index_name)))
+    if connection.dialect.name == "sqlite" and not _sqlite_session_time_index_matches(connection):
+        diffs.append(repr(("invalid_index", "request_logs", "idx_logs_session_time")))
     return tuple(diffs)
+
+
+def _sqlite_session_time_index_matches(connection: Connection) -> bool:
+    indexes = connection.execute(text('PRAGMA index_list("request_logs")')).fetchall()
+    matching = [row for row in indexes if row[1] == "idx_logs_session_time"]
+    if not matching or matching[0][2] or matching[0][4]:
+        return False
+    columns = connection.execute(text('PRAGMA index_xinfo("idx_logs_session_time")')).fetchall()
+    return [(row[2], row[3], row[4]) for row in columns if row[5]] == [
+        ("session_id", 0, "BINARY"),
+        ("requested_at", 1, "BINARY"),
+    ]
 
 
 def _unwrap_schema_drift_diff(diff: object) -> object:
@@ -574,6 +590,13 @@ def _is_ignored_schema_drift(connection: Connection, diff: object) -> bool:
     diff = _unwrap_schema_drift_diff(diff)
     if not isinstance(diff, tuple) or not diff:
         return False
+
+    if connection.dialect.name == "sqlite" and diff[0] in {"add_index", "remove_index"} and len(diff) == 2:
+        index = diff[1]
+        if isinstance(index, sa.Index) and index.name == "idx_logs_session_time" and index.table.name == "request_logs":
+            # SQLite reflection loses DESC for this text expression. Check the
+            # physical index before ignoring Alembic's approximate signature.
+            return _sqlite_session_time_index_matches(connection)
 
     if diff[0] == "remove_column" and len(diff) >= 4:
         column = diff[3]
@@ -652,6 +675,47 @@ def _revision_is_pending(current_revision: str | None, revision: str) -> bool:
     return current_revision < revision
 
 
+def _existing_reset_credit_table_matches(sync_database_url: str) -> bool:
+    # Freeze the schema-only revision's shape; future ORM fields must not make
+    # an incompatible historical table eligible for stamping.
+    metadata = sa.MetaData()
+    table = sa.Table(
+        "reset_credit_attempts",
+        metadata,
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("active_slot", sa.Integer(), nullable=True, unique=True),
+        sa.Column("account_id", sa.String(), nullable=False),
+        sa.Column("credit_id", sa.String(), nullable=True),
+        sa.Column("trigger", sa.String(20), nullable=False),
+        sa.Column("state", sa.String(20), nullable=False),
+        sa.Column("result_code", sa.String(30), nullable=True),
+        sa.Column("windows_reset", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("applied_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("lease_until", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("lease_owner", sa.String(36), nullable=False),
+    )
+    with _sync_connection(sync_database_url) as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table(table.name):
+            return False
+        context = MigrationContext.configure(
+            connection=connection,
+            opts={
+                "compare_type": True,
+                "compare_server_default": True,
+                "include_name": lambda name, type_, parent_names: name == table.name if type_ == "table" else True,
+            },
+        )
+        if compare_metadata(context, metadata) or inspector.get_pk_constraint(table.name)["constrained_columns"] != [
+            "id"
+        ]:
+            raise MigrationBootstrapError(
+                "Existing reset_credit_attempts table does not match its migration; manual intervention required"
+            )
+    return True
+
+
 def _upgrade_with_existing_column_revision_skips(
     config: Config,
     *,
@@ -679,6 +743,15 @@ def _upgrade_with_existing_column_revision_skips(
                 skip_revision,
             )
             command.stamp(config, skip_revision)
+
+    reset_credit_revision = "20260909_120000_add_reset_credit_attempts"
+    if _revision_is_pending(_read_current_revision(sync_database_url), reset_credit_revision):
+        if _existing_reset_credit_table_matches(sync_database_url):
+            command.upgrade(config, "20260729_000000_add_federation_usage_daily")
+            logger.info(
+                "Stamping Alembic revision because its physical table already exists revision=%s", reset_credit_revision
+            )
+            command.stamp(config, reset_credit_revision)
 
     command.upgrade(config, revision)
 

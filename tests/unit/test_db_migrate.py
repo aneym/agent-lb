@@ -201,6 +201,77 @@ def test_schema_migration_contract_matches_after_upgrade(tmp_path: Path) -> None
     assert check_schema_drift(url) == ()
 
 
+@pytest.mark.parametrize(
+    ("definition", "suffix", "unique"),
+    [
+        ("session_id, requested_at ASC", "", False),
+        ("requested_at DESC, session_id", "", False),
+        ("session_id COLLATE NOCASE, requested_at DESC", "", False),
+        ("session_id, requested_at DESC", "WHERE session_id IS NOT NULL", False),
+        ("session_id, requested_at DESC", "", True),
+    ],
+)
+def test_schema_drift_rejects_incorrect_session_time_index(
+    tmp_path: Path, definition: str, suffix: str, unique: bool
+) -> None:
+    url = _db_url(tmp_path / "wrong-session-index.db")
+    run_upgrade(url, "head", bootstrap_legacy=False)
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP INDEX idx_logs_session_time"))
+            modifier = "UNIQUE" if unique else ""
+            connection.execute(
+                text(f"CREATE {modifier} INDEX idx_logs_session_time ON request_logs ({definition}) {suffix}")
+            )
+        assert any("idx_logs_session_time" in diff for diff in check_schema_drift(url))
+    finally:
+        engine.dispose()
+
+
+def test_schema_drift_detects_missing_session_time_index(tmp_path: Path) -> None:
+    url = _db_url(tmp_path / "missing-session-index.db")
+    run_upgrade(url, "head", bootstrap_legacy=False)
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP INDEX idx_logs_session_time"))
+        assert any("idx_logs_session_time" in diff for diff in check_schema_drift(url))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("defect", ["missing_column", "wrong_type", "nullable", "missing_unique", "wrong_primary_key"])
+def test_upgrade_rejects_incompatible_existing_reset_credit_table(tmp_path: Path, defect: str) -> None:
+    url = _db_url(tmp_path / "incompatible-reset-credit.db")
+    parent = "20260729_000000_add_federation_usage_daily"
+    run_upgrade(url, parent, bootstrap_legacy=False)
+    table = Base.metadata.tables["reset_credit_attempts"].to_metadata(sa.MetaData())
+    if defect == "missing_column":
+        table._columns.remove(table.c.lease_owner)
+    elif defect == "wrong_type":
+        table.c.windows_reset.type = sa.String()
+    elif defect == "nullable":
+        table.c.lease_owner.nullable = True
+    elif defect == "missing_unique":
+        table.constraints = {
+            constraint for constraint in table.constraints if not isinstance(constraint, sa.UniqueConstraint)
+        }
+    else:
+        table.constraints.remove(table.primary_key)
+        table.c.id.primary_key = False
+        table.append_constraint(sa.PrimaryKeyConstraint("account_id"))
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            table.create(connection)
+        with pytest.raises(MigrationBootstrapError, match="reset_credit_attempts table does not match"):
+            run_upgrade(url, "head", bootstrap_legacy=False)
+        assert inspect_migration_state(url).current_revision == parent
+    finally:
+        engine.dispose()
+
+
 def test_reauth_required_status_migration_downgrade_remaps_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "reauth-status.db"
     url = _db_url(db_path)

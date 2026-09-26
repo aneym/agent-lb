@@ -15,6 +15,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.exceptions import DashboardBadRequestError
 from app.db.models import Account, AccountProxyBinding, ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.dependencies import SettingsContext, get_settings_context
+from app.modules.accounts.service import clear_account_caches
 from app.modules.settings.schemas import (
     AccountProxyBindingRequest,
     AccountProxyBindingResponse,
@@ -562,6 +563,8 @@ async def update_settings(
         raise DashboardBadRequestError(str(exc), code="invalid_totp_config") from exc
 
     await get_settings_cache().invalidate()
+    if payload.additional_quota_routing_policies is not None:
+        clear_account_caches()
     changed_fields = [
         field_name
         for field_name in (

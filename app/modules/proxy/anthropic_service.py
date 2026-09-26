@@ -1046,9 +1046,7 @@ class AnthropicProxyService:
                     # for this account, even when primary has a known reset.
                     if secondary_reset_at is not None:
                         blocked_reset_by_account_id[account_id] = max(
-                            reset_at
-                            for reset_at in (primary_reset_at, secondary_reset_at)
-                            if reset_at is not None
+                            reset_at for reset_at in (primary_reset_at, secondary_reset_at) if reset_at is not None
                         )
                 elif primary_reset_at is not None:
                     blocked_reset_by_account_id[account_id] = primary_reset_at
@@ -1151,6 +1149,7 @@ class AnthropicProxyService:
 
         burn_first_account_ids: frozenset[str] = frozenset()
         if fable_routing and not fable_request and eligible_account_ids:
+
             def _is_over_fable_threshold(account_id: str) -> bool:
                 scoped_percent = _fresh_scoped_percent(account_id)
                 if scoped_percent is not None:
@@ -1158,9 +1157,7 @@ class AnthropicProxyService:
                 return _weekly_used(account_id) >= threshold
 
             burn_first_account_ids = frozenset(
-                account_id
-                for account_id in eligible_account_ids
-                if _is_over_fable_threshold(account_id)
+                account_id for account_id in eligible_account_ids if _is_over_fable_threshold(account_id)
             )
 
         if not eligible_account_ids and hard_excluded_fable_account_ids:

@@ -130,10 +130,10 @@ class FederationRepository:
     async def list_stored_usage_rollups(self, *, window_days: int) -> list[StoredFederationUsageRollup]:
         earliest_day = (utcnow() - timedelta(days=window_days)).date()
         rows = (
-            await self._session.execute(
-                select(FederationUsageDaily).where(FederationUsageDaily.day >= earliest_day)
-            )
-        ).scalars().all()
+            (await self._session.execute(select(FederationUsageDaily).where(FederationUsageDaily.day >= earliest_day)))
+            .scalars()
+            .all()
+        )
         return [
             StoredFederationUsageRollup(
                 instance_id=row.instance_id,
@@ -156,14 +156,14 @@ class FederationRepository:
 
     async def count_accounts_by_ownership(self, local_instance_id: str) -> tuple[int, int]:
         owned = await self._session.scalar(
-            select(func.count()).select_from(Account).where(
-                or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id)
-            )
+            select(func.count())
+            .select_from(Account)
+            .where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
         )
         mirrored = await self._session.scalar(
-            select(func.count()).select_from(Account).where(
-                and_(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id)
-            )
+            select(func.count())
+            .select_from(Account)
+            .where(and_(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id))
         )
         return int(owned or 0), int(mirrored or 0)
 

@@ -180,10 +180,10 @@ def test_account_to_summary_surfaces_owner_instance(monkeypatch: pytest.MonkeyPa
     mirrored.owner_instance = "other-instance"
 
     owned_summary = mappers._account_to_summary(
-        owned, None, None, None, None, None, None, encryptor, include_auth=False
+        owned, None, None, None, None, None, None, None, encryptor, include_auth=False
     )
     mirrored_summary = mappers._account_to_summary(
-        mirrored, None, None, None, None, None, None, encryptor, include_auth=False
+        mirrored, None, None, None, None, None, None, None, encryptor, include_auth=False
     )
 
     assert owned_summary.owner_instance is None
@@ -204,10 +204,10 @@ def test_account_to_summary_exposes_cached_reset_credits_for_openai_only() -> No
     reset_credit_cache.record_count(anthropic.id, 4)
     try:
         openai_summary = mappers._account_to_summary(
-            openai, None, None, None, None, None, None, encryptor, include_auth=False
+            openai, None, None, None, None, None, None, None, encryptor, include_auth=False
         )
         anthropic_summary = mappers._account_to_summary(
-            anthropic, None, None, None, None, None, None, encryptor, include_auth=False
+            anthropic, None, None, None, None, None, None, None, encryptor, include_auth=False
         )
 
         assert openai_summary.reset_credits_available == 2
@@ -216,7 +216,7 @@ def test_account_to_summary_exposes_cached_reset_credits_for_openai_only() -> No
 
         reset_credit_cache.clear(openai.id)
         unknown_summary = mappers._account_to_summary(
-            openai, None, None, None, None, None, None, encryptor, include_auth=False
+            openai, None, None, None, None, None, None, None, encryptor, include_auth=False
         )
         assert unknown_summary.reset_credits_available is None
     finally:
@@ -229,7 +229,9 @@ def test_account_to_summary_openai_without_primary_usage_has_no_primary_gauge() 
     encryptor = TokenEncryptor()
     openai = _account(AccountStatus.ACTIVE)
     openai.provider = "openai"
-    summary = mappers._account_to_summary(openai, None, None, None, None, None, None, encryptor, include_auth=False)
+    summary = mappers._account_to_summary(
+        openai, None, None, None, None, None, None, None, encryptor, include_auth=False
+    )
     assert summary.usage.primary_remaining_percent is None
     assert summary.usage.secondary_remaining_percent is None
 

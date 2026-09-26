@@ -1050,9 +1050,7 @@ class AdditionalUsageRepository:
                 tuple(scope.quota_key_match_values or {scope.quota_key})
             )
             accounts = (
-                select(Account.id.label("account_id"))
-                .where(Account.id.in_(account_ids))
-                .subquery("quota_accounts")
+                select(Account.id.label("account_id")).where(Account.id.in_(account_ids)).subquery("quota_accounts")
             )
             latest = (
                 select(AdditionalUsageHistory.id.label("usage_id"))

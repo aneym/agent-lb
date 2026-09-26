@@ -39,9 +39,7 @@ from app.modules.usage.updater import UsageUpdater
 
 logger = logging.getLogger(__name__)
 
-_SERVING_STATUSES = frozenset(
-    {AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED}
-)
+_SERVING_STATUSES = frozenset({AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED})
 # ISO timestamps sort lexicographically; missing expiry sorts last.
 _NO_EXPIRY_SORT_KEY = "9999"
 
@@ -148,7 +146,9 @@ class ResetCreditAutoRedeemScheduler:
                 service = _build_accounts_service(repo, session)
                 try:
                     await service.redeem_rate_limit_reset_credit(
-                        active.account_id, credit_id=active.credit_id, trigger=active.trigger,
+                        active.account_id,
+                        credit_id=active.credit_id,
+                        trigger=active.trigger,
                     )
                 except Exception:
                     logger.warning("Reset recovery remains pending attempt=%s", active.id, exc_info=True)
@@ -213,9 +213,7 @@ class ResetCreditAutoRedeemScheduler:
                 continue
             available = [credit for credit in payload.credits if credit.status == "available"]
             reset_credit_cache.record_count(account.id, len(available))
-            expiring = [
-                credit for credit in available if _expires_within(credit.expires_at, now, window)
-            ]
+            expiring = [credit for credit in available if _expires_within(credit.expires_at, now, window)]
             for credit in expiring:
                 await self._redeem_expiring(service, account, credit.id, credit.expires_at)
                 # A second expiry reset needs a new inventory/usage sweep.

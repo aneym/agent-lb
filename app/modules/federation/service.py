@@ -80,8 +80,7 @@ class FederationService:
         return FederationUsageInstancesResponse(
             window_days=window_days,
             instances=[
-                self._build_usage_instance(instance_id, rows)
-                for instance_id, rows in sorted(by_instance.items())
+                self._build_usage_instance(instance_id, rows) for instance_id, rows in sorted(by_instance.items())
             ],
         )
 

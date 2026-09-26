@@ -174,11 +174,30 @@ async def test_aggregate_cache_is_reused_then_expires(monkeypatch):
     await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
     assert repository.aggregate_calls == 1
 
-    clock["now"] += 0.5
+    clock["now"] += 4.9
     await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
     assert repository.aggregate_calls == 1
 
-    clock["now"] += 0.6  # past the 1s TTL
+    clock["now"] += 0.2
+    await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
+    assert repository.aggregate_calls == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", ["day", "week", "month"])
+async def test_cached_over_cap_usage_does_not_cross_calendar_boundary(monkeypatch, window):
+    member = _make_member(**{f"cost_cap_{window}_usd": 5.0})
+    repository = _FakeTeamRepository(member, TeamUsageTotals(cost_usd=5.0, tokens=100))
+    service = TeamService(repository)
+    now = datetime(2026, 9, 30, 23, 59, 59)
+    monkeypatch.setattr(team_service_module, "_monotonic", lambda: 1000.0)
+    monkeypatch.setattr(team_service_module, "utcnow", lambda: now)
+
+    with pytest.raises(TeamMemberOverCapError):
+        await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
+
+    now = window_end(window, now)
+    repository._totals = TeamUsageTotals(cost_usd=0.0, tokens=0)
     await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
     assert repository.aggregate_calls == 2
 

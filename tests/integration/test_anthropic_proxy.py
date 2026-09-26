@@ -52,9 +52,7 @@ async def test_anthropic_messages_returns_error_when_no_accounts_available(async
         "type": "error",
         "error": {
             "type": "no_available_anthropic_accounts",
-            "message": (
-                "No available accounts. Service is operating in degraded mode: all upstream accounts are unavailable"
-            ),
+            "message": "No available Anthropic accounts",
         },
     }
 
@@ -1768,9 +1766,7 @@ async def _insert_weekly_usage(
 ) -> None:
     from app.db.models import UsageHistory
 
-    effective_reset_at = reset_at or int(
-        (utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp()
-    )
+    effective_reset_at = reset_at or int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
     async with SessionLocal() as session:
         session.add(
             UsageHistory(
@@ -2419,9 +2415,7 @@ async def test_fable_scoped_exhaustion_with_elapsed_reset_remains_in_model_scope
         reset_at=paid_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -2474,9 +2468,7 @@ async def test_all_active_fable_scoped_exhaustions_return_earliest_reset(
             reset_at=reset_at,
         )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -2864,9 +2856,7 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(
         reset_at=blocked_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -2972,9 +2962,7 @@ async def test_fable_paid_fallback_uses_model_scope_and_request_scoped_status_by
             reset_at=reset_at,
         )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3039,9 +3027,7 @@ async def test_fable_soft_headroom_blocks_paid_fallback(async_client, monkeypatc
     await _insert_primary_usage(account_id="anthropic-fable-soft-headroom", used_percent=10.0)
     await _insert_weekly_usage(account_id="anthropic-fable-soft-headroom", used_percent=80.0)
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3109,9 +3095,7 @@ async def test_fable_secondary_exhausted_preference_does_not_hide_soft_headroom(
         reset_at=weekly_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3161,9 +3145,7 @@ async def test_route_to_extra_usage_paid_only_eligibility_has_no_blocked_reset(a
         reset_at=reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",
@@ -3293,9 +3275,7 @@ async def test_route_to_extra_usage_does_not_bypass_secondary_exhaustion(async_c
         reset_at=primary_reset_at,
     )
 
-    eligibility = await anthropic_proxy_module.AnthropicProxyService(
-        _proxy_repo_context
-    )._provider_quota_eligibility(
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(_proxy_repo_context)._provider_quota_eligibility(
         "anthropic",
         "anthropic_top_thinking",
         model="claude-fable-5",

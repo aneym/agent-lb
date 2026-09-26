@@ -1,0 +1,16 @@
+........................................................sss.......       [100%]
+=============================== warnings summary ===============================
+tests/unit/test_db_migrate.py::test_raw_usage_window_latest_index_migration_is_idempotent
+  /Volumes/StudioExt/repos/agent-lb-worktrees/team-mode/tests/unit/test_db_migrate.py:608: SAWarning: Skipped unsupported reflection of expression-based index idx_usage_window_account_time
+    index_names = {index["name"] for index in inspect(connection).get_indexes("usage_history")}
+
+tests/unit/test_db_migrate.py::test_raw_usage_window_latest_index_migration_is_idempotent
+  /Volumes/StudioExt/repos/agent-lb-worktrees/team-mode/tests/unit/test_db_migrate.py:608: SAWarning: Skipped unsupported reflection of expression-based index idx_usage_window_account_latest
+    index_names = {index["name"] for index in inspect(connection).get_indexes("usage_history")}
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_migrations.py:286: PostgreSQL-only migration contract test
+SKIPPED [1] tests/integration/test_migrations.py:300: PostgreSQL-only empty database migration test
+SKIPPED [1] tests/integration/test_migrations.py:320: PostgreSQL-only migration remap test
+63 passed, 3 skipped, 2 warnings in 22.38s

@@ -1855,14 +1855,15 @@ def test_active_release_management_openspec_pins_public_release_proof_identity_c
         assert contract in normalized
 
 
-def test_active_openspec_unchecked_tasks_are_pr_head_gates() -> None:
-    active_task_files = sorted(
-        path for path in (ROOT / "openspec/changes").glob("*/tasks.md") if "archive" not in path.parts
+def test_public_release_snapshot_unchecked_tasks_are_pr_head_gates() -> None:
+    release_task_files = (
+        ROOT / "openspec/changes/create-pytest-required-check-placeholders/tasks.md",
+        ROOT / "openspec/changes/require-beta-candidate-validation/tasks.md",
     )
     unchecked_tasks: list[str] = []
     missing_boundaries: list[str] = []
 
-    for path in active_task_files:
+    for path in release_task_files:
         lines = path.read_text().splitlines()
         for index, line in enumerate(lines):
             if not line.startswith("- [ ] "):

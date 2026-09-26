@@ -142,9 +142,7 @@ class SessionsRepository:
             .group_by(RequestLog.session_id)
             .subquery()
         )
-        total = int(
-            (await self._session.execute(select(func.count()).select_from(aggregate))).scalar_one()
-        )
+        total = int((await self._session.execute(select(func.count()).select_from(aggregate))).scalar_one())
         statement = (
             select(
                 aggregate,
@@ -294,9 +292,7 @@ class SessionsRepository:
             SessionSeriesRow(
                 bucket_start=row.bucket_start,
                 model=str(row.model),
-                reasoning_effort=(
-                    str(row.reasoning_effort) if row.reasoning_effort is not None else None
-                ),
+                reasoning_effort=(str(row.reasoning_effort) if row.reasoning_effort is not None else None),
                 requests=int(row.requests),
                 output_tokens=int(row.output_tokens),
                 cached_input_tokens=int(row.cached_input_tokens),
@@ -339,9 +335,7 @@ class SessionsRepository:
         return [
             SessionSeatRow(
                 model=str(row.model),
-                reasoning_effort=(
-                    str(row.reasoning_effort) if row.reasoning_effort is not None else None
-                ),
+                reasoning_effort=(str(row.reasoning_effort) if row.reasoning_effort is not None else None),
                 requests=int(row.requests),
                 input_tokens=int(row.input_tokens),
                 output_tokens=int(row.output_tokens),
@@ -414,9 +408,7 @@ class SessionsRepository:
 
     async def resolve_session_id(self, value: str) -> list[str]:
         exact_statement = (
-            select(RequestLog.session_id)
-            .where(self._eligible_clause(), RequestLog.session_id == value)
-            .limit(1)
+            select(RequestLog.session_id).where(self._eligible_clause(), RequestLog.session_id == value).limit(1)
         )
         exact = (await self._session.execute(exact_statement)).scalar_one_or_none()
         if exact is not None:
@@ -429,10 +421,7 @@ class SessionsRepository:
             .order_by(RequestLog.session_id.asc())
             .limit(2)
         )
-        return [
-            str(session_id)
-            for session_id in (await self._session.execute(prefix_statement)).scalars().all()
-        ]
+        return [str(session_id) for session_id in (await self._session.execute(prefix_statement)).scalars().all()]
 
     async def _histogram(
         self,
@@ -509,22 +498,26 @@ class SessionsRepository:
             .limit(1)
             .scalar_subquery()
         )
-        statement = select(
-            RequestLog.session_id.label("session_id"),
-            provider.label("provider"),
-            useragent_group.label("useragent_group"),
-            func.count().label("requests"),
-            func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
-            func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
-            func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
-            func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
-            func.coalesce(
-                func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)),
-                0,
-            ).label("errors"),
-            func.min(RequestLog.requested_at).label("first_seen"),
-            func.max(RequestLog.requested_at).label("last_seen"),
-        ).where(conditions).group_by(RequestLog.session_id)
+        statement = (
+            select(
+                RequestLog.session_id.label("session_id"),
+                provider.label("provider"),
+                useragent_group.label("useragent_group"),
+                func.count().label("requests"),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
+                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+                func.coalesce(
+                    func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)),
+                    0,
+                ).label("errors"),
+                func.min(RequestLog.requested_at).label("first_seen"),
+                func.max(RequestLog.requested_at).label("last_seen"),
+            )
+            .where(conditions)
+            .group_by(RequestLog.session_id)
+        )
         row = (await self._session.execute(statement)).first()
         return self._aggregate_row(row) if row is not None else None
 

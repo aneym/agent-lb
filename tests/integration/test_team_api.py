@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -224,13 +224,81 @@ async def test_onboarding_payload_uses_configured_base_url(async_client, db_setu
 
     zsh = payload["snippets"]["macosZsh"]
     powershell = payload["snippets"]["windowsPowershell"]
-    assert 'export ANTHROPIC_BASE_URL="https://lb.example.com"' in zsh
+    assert "export ANTHROPIC_BASE_URL='https://lb.example.com'" in zsh
     assert 'export ANTHROPIC_AUTH_TOKEN="<key>"' in zsh
-    assert 'export OPENAI_BASE_URL="https://lb.example.com/v1"' in zsh
+    assert "export OPENAI_BASE_URL='https://lb.example.com/v1'" in zsh
     assert 'export OPENAI_API_KEY="<key>"' in zsh
-    assert '$env:ANTHROPIC_BASE_URL = "https://lb.example.com"' in powershell
-    assert '$env:OPENAI_BASE_URL = "https://lb.example.com/v1"' in powershell
+    assert "$env:ANTHROPIC_BASE_URL = 'https://lb.example.com'" in powershell
+    assert "$env:OPENAI_BASE_URL = 'https://lb.example.com/v1'" in powershell
     assert "sk-clb-" not in zsh and "sk-clb-" not in powershell
 
     missing = await async_client.get("/api/team/members/does-not-exist/onboarding")
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_calendar_usage_across_keys_at_exact_window_boundaries(async_client, db_setup, monkeypatch):
+    import app.modules.team.service as team_service
+
+    now = datetime(2026, 9, 23, 12)
+    monkeypatch.setattr(team_service, "utcnow", lambda: now)
+    member = await _create_member(async_client, name="Calendar")
+    keys = [await _issue_key(async_client, member["id"], name=name) for name in ("laptop", "desktop")]
+    rows = [
+        (datetime(2026, 8, 31, 23, 59, 59), 100.0),
+        (datetime(2026, 9, 1), 1.0),
+        (datetime(2026, 9, 20, 23, 59, 59), 2.0),
+        (datetime(2026, 9, 21), 4.0),
+        (datetime(2026, 9, 22, 23, 59, 59), 8.0),
+        (datetime(2026, 9, 23), 16.0),
+    ]
+    for index, (at, cost) in enumerate(rows):
+        await _seed_request_log(
+            api_key_id=keys[index % 2]["id"], created_at=at, cost_usd=cost, input_tokens=10, output_tokens=5
+        )
+    for window, cost, tokens, days in (("day", 16.0, 15, 1), ("week", 28.0, 45, 3), ("month", 31.0, 75, 5)):
+        response = await async_client.get(f"/api/team/members/{member['id']}/usage", params={"window": window})
+        assert response.status_code == 200
+        usage = response.json()
+        assert usage["totals"] == {"costUsd": cost, "tokens": tokens}
+        assert len(usage["series"]) == days
+        assert sum(row["costUsd"] for row in usage["series"]) == cost
+        assert sum(row["tokens"] for row in usage["models"]) == tokens
+
+
+@pytest.mark.asyncio
+async def test_reassigning_key_invalidates_cached_member_identity(async_client, db_setup):
+    from app.core.auth.dependencies import _validate_api_key_token
+    from app.modules.api_keys.repository import ApiKeysRepository
+    from app.modules.api_keys.service import ApiKeysService, ApiKeyUpdateData
+
+    original = await _create_member(async_client, name="Original")
+    replacement = await _create_member(async_client, name="Replacement")
+    issued = await _issue_key(async_client, original["id"])
+    cached = await _validate_api_key_token(issued["key"])
+    assert cached.member_id == original["id"]
+
+    async with SessionLocal() as session:
+        await ApiKeysService(ApiKeysRepository(session)).update_key(
+            issued["id"], ApiKeyUpdateData(member_id=replacement["id"], member_id_set=True)
+        )
+    refreshed = await _validate_api_key_token(issued["key"])
+    assert refreshed.member_id == replacement["id"]
+
+
+@pytest.mark.asyncio
+async def test_member_key_expiration_is_preserved_and_enforced(async_client, db_setup, monkeypatch):
+    from app.core.auth import dependencies as auth
+    from app.core.exceptions import ProxyAuthError
+
+    member = await _create_member(async_client, name="Expiring")
+    expires = utcnow().replace(microsecond=0) + timedelta(hours=1)
+    issued = await _issue_key(async_client, member["id"], expiresAt=expires.isoformat() + "Z")
+    assert (await auth._validate_api_key_token(issued["key"])).expires_at == expires
+    after_expiry = expires + timedelta(microseconds=1)
+    monkeypatch.setattr(auth, "utcnow", lambda: after_expiry)
+    import app.modules.api_keys.service as api_keys_service
+
+    monkeypatch.setattr(api_keys_service, "utcnow", lambda: after_expiry)
+    with pytest.raises(ProxyAuthError):
+        await auth._validate_api_key_token(issued["key"])

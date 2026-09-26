@@ -177,4 +177,35 @@ describe("TeamPage", () => {
 
     expect(screen.getByText("boom list")).toBeInTheDocument();
   });
+
+  it.each(["0", "-5"])("does not silently remove a cap when the operator enters %s", async (value) => {
+    const user = userEvent.setup();
+    const updateMutation = createMutationMock();
+    renderTeamPage({ updateMutation });
+    await user.click(screen.getByRole("button", { name: "Actions for Ada" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const drawer = await screen.findByRole("dialog", { name: "Edit team member" });
+    const cap = within(drawer).getByLabelText("Cost cap / day ($)");
+    await user.clear(cap);
+    await user.type(cap, value);
+    expect(within(drawer).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(within(drawer).getByRole("alert")).toHaveTextContent("Caps must be greater than zero");
+    expect(updateMutation.mutateAsync).not.toHaveBeenCalled();
+    await user.clear(cap);
+    await user.click(within(drawer).getByRole("button", { name: "Save" }));
+    expect(updateMutation.mutateAsync).toHaveBeenCalledWith({
+      memberId: "member-1", payload: expect.objectContaining({ costCapDayUsd: null }),
+    });
+  });
+
+  it("requires whole token caps before submitting", async () => {
+    const user = userEvent.setup();
+    renderTeamPage();
+    await user.click(screen.getByRole("button", { name: "Add member" }));
+    const drawer = await screen.findByRole("dialog", { name: "Add team member" });
+    await user.type(within(drawer).getByLabelText("Name"), "Grace");
+    await user.type(within(drawer).getByLabelText("Token cap / day"), "1.5");
+    expect(within(drawer).getByRole("button", { name: "Add member" })).toBeDisabled();
+    expect(within(drawer).getByLabelText("Token cap / day")).toHaveAttribute("aria-invalid", "true");
+  });
 });

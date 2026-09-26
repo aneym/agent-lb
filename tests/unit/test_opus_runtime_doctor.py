@@ -46,7 +46,7 @@ def valid_stream(nonce: str, *, second_model: str = "claude-opus-5", terminal: b
                 type="assistant",
                 message={
                     "model": "claude-fable-5-1",
-                    "content":[{"type": "tool_use", "id": agent_id, "name": "Agent", "input": inputs}],
+                    "content": [{"type": "tool_use", "id": agent_id, "name": "Agent", "input": inputs}],
                 },
                 parent_tool_use_id=None,
             )
@@ -56,7 +56,7 @@ def valid_stream(nonce: str, *, second_model: str = "claude-opus-5", terminal: b
                 type="assistant",
                 message={
                     "model": model,
-                    "content":[{"type": "tool_use", "id": read_id, "name": "Read", "input": {}}],
+                    "content": [{"type": "tool_use", "id": read_id, "name": "Read", "input": {}}],
                 },
                 parent_tool_use_id=agent_id,
             )
@@ -477,9 +477,11 @@ def test_installer_rejects_external_volume_launcher(tmp_path: Path) -> None:
     launcher = tmp_path / "claude-lb-launch"
     launcher.write_text("#!/bin/sh\n")
     launcher.chmod(0o755)
+    external_launcher = f"/Volumes/..{launcher}"
+    assert Path(external_launcher).is_file()
     completed = subprocess.run(
         [str(ROOT / "scripts" / "install-opus-doctor.sh")],
-        env={**os.environ, "AGENT_LB_DOCTOR_HOME": str(tmp_path), "AGENT_LB_DOCTOR_LAUNCHER": str(launcher)},
+        env={**os.environ, "AGENT_LB_DOCTOR_HOME": str(tmp_path), "AGENT_LB_DOCTOR_LAUNCHER": external_launcher},
         text=True,
         capture_output=True,
         check=False,

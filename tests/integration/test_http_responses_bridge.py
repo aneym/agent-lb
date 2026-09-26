@@ -1596,12 +1596,14 @@ async def test_v1_responses_http_bridge_codex_session_uses_extended_idle_ttl(asy
         max_sessions=8,
     )
 
-    session.last_used_at = time.monotonic() - 300.0
+    session.last_used_at = time.monotonic()
+    prune_time = session.last_used_at + 300.0
+    monkeypatch.setattr(proxy_module, "time", SimpleNamespace(monotonic=lambda: prune_time, time=time.time))
     async with service._http_bridge_lock:
         service._prune_http_bridge_sessions_locked()
         assert key in service._http_bridge_sessions
 
-    session.last_used_at = time.monotonic() - 601.0
+    prune_time = session.last_used_at + 601.0
     async with service._http_bridge_lock:
         service._prune_http_bridge_sessions_locked()
         assert key not in service._http_bridge_sessions

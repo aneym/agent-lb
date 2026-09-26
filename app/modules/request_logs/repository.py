@@ -254,9 +254,9 @@ class RequestLogsRepository:
 
         overall_stmt = select(
             func.count().label("request_count"),
-            func.coalesce(
-                func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)), 0
-            ).label("error_count"),
+            func.coalesce(func.sum(cast(RequestLog.status != literal_column("'success'"), Integer)), 0).label(
+                "error_count"
+            ),
             func.coalesce(func.sum(tokens_expr), 0).label("tokens_sum"),
             func.coalesce(func.sum(cached_expr), 0).label("cached_tokens_sum"),
         ).where(and_(*conditions))

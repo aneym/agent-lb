@@ -863,17 +863,25 @@ class AccountsService:
                 raise AccountResetCreditsUnavailableError("Reset recovery is already running or cooling down")
         else:
             inventory = await rate_limit_resets.fetch_reset_credits(
-                access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id,
+                access_token=access_token,
+                chatgpt_account_id=credit_account.chatgpt_account_id,
             )
             available = [item for item in inventory.credits if item.status == "available"]
             reset_credit_cache.record_count(account_id, len(available))
-            if inventory.available_count <= 0 or not available or (
-                credit_id is not None and not any(item.id == credit_id for item in available)
+            if (
+                inventory.available_count <= 0
+                or not available
+                or (credit_id is not None and not any(item.id == credit_id for item in available))
             ):
                 return AccountResetCreditConsumeResponse(
-                    status="not_redeemed", account_id=account_id, code="no_credit", windows_reset=0,
-                    primary_used_percent_before=primary_before, secondary_used_percent_before=secondary_before,
-                    primary_used_percent_after=primary_before, secondary_used_percent_after=secondary_before,
+                    status="not_redeemed",
+                    account_id=account_id,
+                    code="no_credit",
+                    windows_reset=0,
+                    primary_used_percent_before=primary_before,
+                    secondary_used_percent_before=secondary_before,
+                    primary_used_percent_after=primary_before,
+                    secondary_used_percent_after=secondary_before,
                 )
             if credit_id is None:
                 credit_id = min(available, key=lambda item: item.expires_at or "9999").id
@@ -883,13 +891,15 @@ class AccountsService:
 
         if attempt.state == "applied":
             payload = rate_limit_resets.ConsumeResetCreditPayload(
-                code="already_redeemed", windows_reset=attempt.windows_reset,
+                code="already_redeemed",
+                windows_reset=attempt.windows_reset,
             )
         else:
             # Inventory and usage must be reconciled before re-sending a
             # pending attempt. The same committed ID protects uncertain calls.
             inventory = await rate_limit_resets.fetch_reset_credits(
-                access_token=access_token, chatgpt_account_id=credit_account.chatgpt_account_id,
+                access_token=access_token,
+                chatgpt_account_id=credit_account.chatgpt_account_id,
             )
             available = [item for item in inventory.credits if item.status == "available"]
             reset_credit_cache.record_count(account_id, len(available))
@@ -966,13 +976,9 @@ class AccountsService:
     async def _reset_credit_account(self, account: Account) -> Account:
         provider = normalize_provider_name(account.provider)
         if provider != OPENAI_PROVIDER_NAME:
-            raise AccountResetCreditsUnavailableError(
-                f"Provider {provider} does not support rate-limit reset credits"
-            )
+            raise AccountResetCreditsUnavailableError(f"Provider {provider} does not support rate-limit reset credits")
         if account.status in (AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
-            raise AccountResetCreditsUnavailableError(
-                f"Account is {account.status.value} and cannot use reset credits"
-            )
+            raise AccountResetCreditsUnavailableError(f"Account is {account.status.value} and cannot use reset credits")
         if not is_subscription_usable(account):
             raise AccountResetCreditsUnavailableError("Account subscription cannot use reset credits")
         if self._auth_manager is not None:

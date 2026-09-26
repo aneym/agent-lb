@@ -164,8 +164,7 @@ def _parse_server_timeout_graceful_shutdown(raw_timeout: str) -> int:
         return int(raw_timeout)
     except ValueError as exc:
         message = (
-            "--timeout-graceful-shutdown/UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN must be an "
-            f"integer, got {raw_timeout!r}."
+            f"--timeout-graceful-shutdown/UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN must be an integer, got {raw_timeout!r}."
         )
         raise SystemExit(message) from exc
 
