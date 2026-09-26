@@ -2096,6 +2096,33 @@ def test_headers_with_authorization_restores_missing_proxy_api_header() -> None:
     assert headers["x-request-id"] == "req-1"
 
 
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"Authorization": "Bearer chatgpt-token", "x-api-key": "sk-clb-member"}, "Bearer sk-clb-member"),
+        ({"Authorization": "Bearer sk-clb-bearer", "x-api-key": "sk-clb-member"}, "Bearer sk-clb-bearer"),
+        ({"Authorization": "Bearer chatgpt-token"}, "Bearer chatgpt-token"),
+    ],
+)
+def test_stream_http_responses_forwards_the_selected_proxy_credential(
+    headers: dict[str, str], expected: str
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_stream(_payload: Any, filtered: dict[str, str], **kwargs: Any) -> str:
+        captured["filtered"] = filtered
+        captured["authorization"] = kwargs["proxy_api_authorization"]
+        return "stream"
+
+    service = SimpleNamespace(_stream_http_bridge_or_retry=fake_stream)
+    payload = ResponsesRequest.model_validate({"model": "gpt-6-sol", "instructions": "", "input": []})
+
+    proxy_service.ProxyService.stream_http_responses(cast(Any, service), payload, headers)
+
+    assert captured["authorization"] == expected
+    assert {key.lower() for key in captured["filtered"]}.isdisjoint({"authorization", "x-api-key"})
+
+
 def test_headers_with_authorization_does_not_override_existing_value() -> None:
     headers = proxy_service._headers_with_authorization({"authorization": "Bearer existing"}, "Bearer proxy-key")
 
