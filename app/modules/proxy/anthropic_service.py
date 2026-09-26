@@ -42,7 +42,7 @@ from app.core.providers import (
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, StickySessionKind
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     OPENROUTER_CREDITS_QUOTA_KEY,
@@ -51,6 +51,7 @@ from app.modules.accounts.credits import (
     window_from_usage,
 )
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
+from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
@@ -483,6 +484,8 @@ class AnthropicProxyService:
                                         useragent=useragent,
                                         useragent_group=useragent_group,
                                     )
+                                    if error_code == "mirror_token_unavailable":
+                                        raise AnthropicProxyError(503, error_message, code=error_code)
                                     last_error_status = resp.status
                                     last_error_message = error_message
                                     continue
@@ -1403,7 +1406,24 @@ class AnthropicProxyService:
                 )
                 fresh = await manager.ensure_fresh(latest, force=force)
                 return self._encryptor.decrypt(fresh.access_token_encrypted)
+        except AccountNotOwnedError as exc:
+            if rejected_access_token is not None:
+                try:
+                    await build_federation_mirror_scheduler().mirror_once()
+                    async with self._repo_factory() as repos:
+                        latest = await repos.accounts.reload_by_id(account.id)
+                        if latest is not None and not is_locally_owned(latest, get_settings()):
+                            updated = self._encryptor.decrypt(latest.access_token_encrypted)
+                            if updated != rejected_access_token:
+                                return updated
+                except Exception:
+                    logger.warning("Mirror pull after upstream 401 failed account_id=%s", account.id, exc_info=True)
+            raise AnthropicProxyError(
+                503, "Mirror access token unavailable after pull", code="mirror_token_unavailable"
+            ) from exc
         except RefreshError as exc:
+            if exc.code == "exchange_uncertain":
+                raise AnthropicProxyError(503, exc.message, code=exc.code) from exc
             # AuthManager already conditionally persists permanent failures against
             # the exchanged token version. Repeating that write here can disable a
             # concurrently reauthorized account using this request's stale snapshot.

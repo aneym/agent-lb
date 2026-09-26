@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Iterable, Literal
 from uuid import uuid4
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core import usage as usage_core
 from app.core.audit.service import AuditService
 from app.core.balancer import (
@@ -57,7 +59,7 @@ from app.core.resilience.degradation import set_degraded, set_normal
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
-from app.modules.accounts.auth_manager import access_token_hard_expired, is_locally_owned
+from app.modules.accounts.auth_manager import _access_token_needs_refresh, access_token_hard_expired, is_locally_owned
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.additional_model_limits import get_additional_quota_key_for_model_id
@@ -845,7 +847,25 @@ class LoadBalancer:
         )
         cached = await self._selection_inputs_cache.get(cache_key)
         if cached is not None:
-            return _clone_selection_inputs(cached)
+            # Tests and non-SQL consumers keep their short-lived snapshot;
+            # SQL-backed paths reload only the account rows, not quota joins.
+            async with self._repo_factory() as repos:
+                if not isinstance(getattr(repos.accounts, "session", None), AsyncSession):
+                    return _clone_selection_inputs(cached)
+                fresh_accounts = {account.id: account for account in await repos.accounts.list_accounts()}
+                selection_settings = get_settings()
+                encryptor = TokenEncryptor()
+                accounts = [
+                    _clone_account(fresh_accounts[account.id])
+                    for account in cached.accounts
+                    if account.id in fresh_accounts
+                    and fresh_accounts[account.id] in selectable_accounts([fresh_accounts[account.id]])
+                    and (
+                        is_locally_owned(fresh_accounts[account.id], selection_settings)
+                        or not _access_token_needs_refresh(encryptor, fresh_accounts[account.id])
+                    )
+                ]
+            return replace(_clone_selection_inputs(cached), accounts=accounts)
 
         load_generation = self._selection_inputs_cache.generation
 
@@ -862,7 +882,9 @@ class LoadBalancer:
             excluded_mirror_count = 0
             eligible_accounts = []
             for account in all_accounts:
-                if not is_locally_owned(account, selection_settings) and access_token_hard_expired(encryptor, account):
+                if not is_locally_owned(account, selection_settings) and (
+                    access_token_hard_expired(encryptor, account) or _access_token_needs_refresh(encryptor, account)
+                ):
                     excluded_mirror_count += 1
                     continue
                 eligible_accounts.append(account)
@@ -2416,7 +2438,13 @@ def selectable_accounts(accounts: list[Account]) -> list[Account]:
     return [
         account
         for account in accounts
-        if account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
+        if account.status
+        not in (
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.EXCHANGE_UNCERTAIN,
+            AccountStatus.DEACTIVATED,
+            AccountStatus.PAUSED,
+        )
         and is_subscription_usable(account)
     ]
 

@@ -330,10 +330,16 @@ class Settings(BaseSettings):
     # opposite deployment model (one DB per instance here, vs. many pods on
     # one shared DB there). Do not reuse or wire the two together.
     local_instance_id: str = Field(default_factory=_default_local_instance_id)
-    # Instance-federation peer surface (/api/federation/*): off by default.
-    # federation_token gates every peer endpoint (403 when unset) and is a
-    # distinct trust domain from proxy API keys / dashboard sessions.
+    # Legacy token remains mirror-only; transfers require a separate credential.
     federation_token: str | None = None
+    federation_mirror_token: str | None = None
+    federation_transfer_token: str | None = None
+    federation_taker_instance_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @property
+    def effective_federation_mirror_token(self) -> str | None:
+        return self.federation_mirror_token or self.federation_token
+
     federation_peer_url: str | None = None
     federation_mirror_interval_seconds: int = Field(default=300, gt=0)
     federation_usage_window_days: int = Field(default=7, gt=0)
@@ -581,7 +587,18 @@ class Settings(BaseSettings):
             return stripped or None
         raise TypeError("federation_peer_url must be a string")
 
-    @field_validator("federation_token", mode="before")
+    @field_validator("federation_taker_instance_ids", mode="before")
+    @classmethod
+    def _normalize_federation_taker_instance_ids(cls, value: StringListInput) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            return [item.strip() for item in value if item.strip()]
+        raise TypeError("federation_taker_instance_ids must be a comma-separated string or list of strings")
+
+    @field_validator("federation_token", "federation_mirror_token", "federation_transfer_token", mode="before")
     @classmethod
     def _normalize_federation_token(cls, value: OptionalStringInput) -> str | None:
         if value is None:

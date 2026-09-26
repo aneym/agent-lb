@@ -14,11 +14,11 @@
 #   clients/agent-lb-federation status
 #   clients/agent-lb-federation checkout <account-id> [<account-id>...]
 #   clients/agent-lb-federation checkin  <account-id> [<account-id>...]
+#   clients/agent-lb-federation reclaim  <account-id>
 #
 # Env:
 #   CLAUDE_LB_LOCAL_URL          local instance base URL (default http://127.0.0.1:2455)
-#   AGENT_LB_FEDERATION_TOKEN    REQUIRED for checkout/checkin — bearer secret gating
-#                                every /api/federation/* endpoint (never printed)
+#   AGENT_LB_FEDERATION_TRANSFER_TOKEN REQUIRED for checkout/checkin (never printed)
 #   AGENT_LB_FEDERATION_PEER_URL peer instance base URL, used for the peer /health
 #                                preflight (no local endpoint advertises it)
 #   CLAUDE_LB_FEDERATION_TIMEOUT per-request timeout seconds (default 10)
@@ -54,7 +54,7 @@ def peer_url() -> str | None:
 
 
 def federation_token() -> str | None:
-    value = (os.environ.get("AGENT_LB_FEDERATION_TOKEN") or "").strip()
+    value = (os.environ.get("AGENT_LB_FEDERATION_TRANSFER_TOKEN") or "").strip()
     return value or None
 
 
@@ -145,7 +145,7 @@ def _require_token() -> str | None:
     token = federation_token()
     if token is None:
         print(
-            "error: AGENT_LB_FEDERATION_TOKEN is not set; it is required to call "
+            "error: AGENT_LB_FEDERATION_TRANSFER_TOKEN is not set; it is required to call "
             "the federation endpoints. Aborting without contacting any endpoint.",
             file=sys.stderr,
         )
@@ -246,6 +246,15 @@ def cmd_checkin(args: argparse.Namespace) -> int:
     return _run_transfer("checkin", args.account_ids)
 
 
+def cmd_reclaim(args: argparse.Namespace) -> int:
+    result = _http("POST", f"{local_url()}/api/federation/reclaim/{args.account_id}", token=None, payload={})
+    if not result.ok:
+        print(f"reclaim {args.account_id}: FAILED (HTTP {result.status}) — {result.error}", file=sys.stderr)
+        return EXIT_FAILURE
+    print(f"reclaim {args.account_id}: local ownership restored")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-lb-federation",
@@ -269,6 +278,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     checkin.add_argument("account_ids", metavar="account-id", nargs="+", help="Account id(s) to check in.")
     checkin.set_defaults(func=cmd_checkin)
+
+    reclaim = sub.add_parser("reclaim", help="Disabled: a pending checkout may already be owned by the peer.")
+    reclaim.add_argument("account_id", metavar="account-id")
+    reclaim.set_defaults(func=cmd_reclaim)
 
     return parser
 

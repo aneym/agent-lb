@@ -46,6 +46,7 @@ class OAuthTokens:
     account_id: str | None = None
     email: str | None = None
     plan_type: str | None = None
+    expires_in: int | None = None
 
 
 class OAuthError(Exception):

@@ -102,7 +102,12 @@ from app.db.models import (
     StickySessionKind,
 )
 from app.db.session import SessionLocal as SessionLocal
-from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
+from app.modules.accounts.auth_manager import (
+    AccountNotOwnedError,
+    AccountsRepositoryPort,
+    AuthManager,
+    is_locally_owned,
+)
 from app.modules.api_keys.service import (
     API_KEY_USAGE_RESERVATION_DEFAULT_INPUT_TOKENS,
     API_KEY_USAGE_RESERVATION_DEFAULT_OUTPUT_TOKENS,
@@ -114,6 +119,7 @@ from app.modules.api_keys.service import (
 from app.modules.api_keys.service import (
     ApiKeysService as ApiKeysService,
 )
+from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.api_key_usage import (
     _API_KEY_RESERVATION_HEARTBEAT_SECONDS as _API_KEY_RESERVATION_HEARTBEAT_SECONDS,
 )
@@ -1413,6 +1419,23 @@ class ProxyService(
                     refresh_repo_factory=self._accounts_refresh_scope,
                 )
                 return await auth_manager.ensure_fresh(account, force=force)
+        except AccountNotOwnedError as exc:
+            if force:
+                try:
+                    await build_federation_mirror_scheduler().mirror_once()
+                    async with self._repo_factory() as repos:
+                        latest = await repos.accounts.reload_by_id(account.id)
+                        if latest is not None and not is_locally_owned(latest, get_settings()):
+                            if latest.access_token_encrypted != account.access_token_encrypted:
+                                return Account(
+                                    **{col.key: getattr(latest, col.key) for col in Account.__table__.columns}
+                                )
+                except Exception:
+                    logger.warning("Mirror pull after upstream 401 failed account_id=%s", account.id, exc_info=True)
+            raise ProxyResponseError(
+                503,
+                openai_error("mirror_token_unavailable", "Mirror access token unavailable after pull"),
+            ) from exc
         finally:
             pop_token_refresh_timeout_override(token)
 

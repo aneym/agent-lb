@@ -41,6 +41,7 @@ from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteErr
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus
 from app.db.session import get_background_session
+from app.modules.accounts.auth_manager import _expiry_datetime
 from app.modules.accounts.repository import AccountIdentityConflictError, AccountsRepository
 from app.modules.oauth.schemas import (
     ManualCallbackResponse,
@@ -763,6 +764,7 @@ class OauthService:
             refresh_token_encrypted=self._encryptor.encrypt(tokens.refresh_token),
             id_token_encrypted=id_token_encrypted,
             last_refresh=utcnow(),
+            access_expires_at=_expiry_datetime(tokens.access_token, tokens.expires_in),
             status=AccountStatus.ACTIVE,
             deactivation_reason=None,
         )

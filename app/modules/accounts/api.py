@@ -9,6 +9,7 @@ from app.core.clients.rate_limit_resets import ResetCreditsError
 from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.dependencies import AccountsContext, get_accounts_context
+from app.modules.accounts.auth_manager import _cross_process_refresh_lock
 from app.modules.accounts.repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountAliasRequest,
@@ -233,6 +234,17 @@ async def import_api_key_account(
         details={"account_id": response.account_id, "provider": payload.provider},
     )
     return response
+
+
+@router.post("/{account_id}/exchange-reset")
+async def reset_uncertain_exchange(
+    account_id: str, context: AccountsContext = Depends(get_accounts_context)
+) -> dict[str, str]:
+    """Discard an unresolved exchange only after the operator commits to re-login."""
+    async with _cross_process_refresh_lock(account_id):
+        if not await context.repository.clear_exchange_intent(account_id):
+            raise DashboardConflictError("Account is not exchange-uncertain")
+    return {"account_id": account_id, "status": "reauth_required"}
 
 
 @router.post("/{account_id}/reactivate", response_model=AccountReactivateResponse)

@@ -4,14 +4,15 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import TokenEncryptor
-from app.core.utils.time import utcnow
+from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import (
     Account,
+    AccountExchangeIntent,
     AccountStatus,
     AccountTransfer,
     AccountTransferDirection,
@@ -19,7 +20,7 @@ from app.db.models import (
     FederationUsageDaily,
     RequestLog,
 )
-from app.modules.federation.schemas import FederationUsageDayRollup
+from app.modules.federation.schemas import FederationAuthPayload, FederationUsageDayRollup
 
 # Mirrored-only rows never carry a real refresh token (the owner never exports
 # one over /mirror), but the column is NOT NULL. This placeholder is inert:
@@ -42,6 +43,12 @@ class FederationRepository:
     async def get_account(self, account_id: str) -> Account | None:
         return await self._session.get(Account, account_id)
 
+    async def reload_account(self, account_id: str) -> Account | None:
+        return await self._session.get(Account, account_id, populate_existing=True)
+
+    async def has_exchange_intent(self, account_id: str) -> bool:
+        return (await self._session.get(AccountExchangeIntent, account_id)) is not None
+
     async def upsert_usage_report(
         self,
         instance_id: str,
@@ -63,7 +70,7 @@ class FederationRepository:
                 "cache_read_tokens": rollup.cache_read_tokens,
                 "cost": rollup.cost,
                 "session_count": rollup.session_count,
-                "last_request_at": rollup.last_request_at,
+                "last_request_at": to_utc_naive(rollup.last_request_at) if rollup.last_request_at else None,
                 "reported_at": reported_at,
             }
             primary_key = tuple(key.values())
@@ -130,10 +137,10 @@ class FederationRepository:
     async def list_stored_usage_rollups(self, *, window_days: int) -> list[StoredFederationUsageRollup]:
         earliest_day = (utcnow() - timedelta(days=window_days)).date()
         rows = (
-            await self._session.execute(
-                select(FederationUsageDaily).where(FederationUsageDaily.day >= earliest_day)
-            )
-        ).scalars().all()
+            (await self._session.execute(select(FederationUsageDaily).where(FederationUsageDaily.day >= earliest_day)))
+            .scalars()
+            .all()
+        )
         return [
             StoredFederationUsageRollup(
                 instance_id=row.instance_id,
@@ -156,14 +163,14 @@ class FederationRepository:
 
     async def count_accounts_by_ownership(self, local_instance_id: str) -> tuple[int, int]:
         owned = await self._session.scalar(
-            select(func.count()).select_from(Account).where(
-                or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id)
-            )
+            select(func.count())
+            .select_from(Account)
+            .where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
         )
         mirrored = await self._session.scalar(
-            select(func.count()).select_from(Account).where(
-                and_(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id)
-            )
+            select(func.count())
+            .select_from(Account)
+            .where(and_(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id))
         )
         return int(owned or 0), int(mirrored or 0)
 
@@ -172,54 +179,143 @@ class FederationRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def set_owner_instance(self, account_id: str, owner_instance: str | None) -> None:
-        await self._session.execute(
-            update(Account).where(Account.id == account_id).values(owner_instance=owner_instance)
-        )
-        await self._session.commit()
+    async def release_for_checkout(
+        self, account_id: str, taker_instance_id: str, *, local_instance_id: str, nonce: str
+    ) -> AccountTransfer | None:
+        """Publish the owner gate and retryable transfer together, or neither."""
+        try:
+            # Both the intent insert and this handoff lock the account row.
+            # Recheck the fence *after* acquiring that lock (including after a
+            # lost advisory lock), not in an earlier request-scoped snapshot.
+            locked = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
+            if locked is None or await self.has_exchange_intent(account_id):
+                await self._session.rollback()
+                return None
+            result = await self._session.execute(
+                update(Account)
+                .where(Account.id == account_id)
+                .where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
+                .values(owner_instance=taker_instance_id)
+                .returning(Account.id)
+            )
+            if result.scalar_one_or_none() is None:
+                await self._session.rollback()
+                return None
+            transfer = AccountTransfer(
+                id=str(uuid.uuid4()),
+                account_id=account_id,
+                nonce=nonce,
+                direction=AccountTransferDirection.CHECKOUT,
+                counterparty_instance_id=taker_instance_id,
+                state=AccountTransferState.PENDING,
+            )
+            self._session.add(transfer)
+            await self._session.commit()
+            return transfer
+        except BaseException:
+            await self._session.rollback()
+            raise
 
-    async def set_owner_instance_if_locally_owned(
-        self, account_id: str, new_owner: str, *, local_instance_id: str
-    ) -> bool:
-        """Atomic compare-and-set for the checkout release step.
+    async def release_for_checkin(
+        self, account_id: str, counterparty: str, *, local_instance_id: str, nonce: str
+    ) -> tuple[Account | None, str]:
+        """Fence refresh and persist a retryable return in one transaction."""
+        try:
+            account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
+            if account is None or await self.has_exchange_intent(account_id):
+                await self._session.rollback()
+                return None, nonce
+            pending = await self.get_pending_transfer(
+                account_id, direction=AccountTransferDirection.CHECKIN, counterparty_instance_id=counterparty
+            )
+            if pending and account.owner_instance == counterparty:
+                return account, pending.nonce
+            if account.owner_instance not in (None, local_instance_id):
+                await self._session.rollback()
+                return None, nonce
+            account.owner_instance = counterparty
+            self._session.add(
+                AccountTransfer(
+                    id=str(uuid.uuid4()),
+                    account_id=account_id,
+                    nonce=nonce,
+                    direction=AccountTransferDirection.CHECKIN,
+                    counterparty_instance_id=counterparty,
+                    state=AccountTransferState.PENDING,
+                )
+            )
+            await self._session.commit()
+            return account, nonce
+        except BaseException:
+            await self._session.rollback()
+            raise
 
-        A plain read-check-then-write would leave a window where two
-        concurrent checkouts (by different takers) both observe "locally
-        owned" and both write, producing a double owner. This folds the
-        check into the UPDATE's WHERE clause so only one concurrent caller
-        can ever match and win.
-        """
-        result = await self._session.execute(
-            update(Account)
-            .where(Account.id == account_id)
-            .where(or_(Account.owner_instance.is_(None), Account.owner_instance == local_instance_id))
-            .values(owner_instance=new_owner)
-            .returning(Account.id)
-        )
-        await self._session.commit()
-        return result.scalar_one_or_none() is not None
-
-    async def import_tokens(
+    async def import_checkout(
         self,
         account_id: str,
+        nonce: str,
+        peer_id: str,
+        auth: FederationAuthPayload,
         *,
+        local_instance_id: str,
         encryptor: TokenEncryptor,
-        access_token: str,
-        refresh_token: str,
-        id_token: str | None,
-        last_refresh: datetime,
     ) -> None:
-        await self._session.execute(
-            update(Account)
-            .where(Account.id == account_id)
-            .values(
-                access_token_encrypted=encryptor.encrypt(access_token),
-                refresh_token_encrypted=encryptor.encrypt(refresh_token),
-                id_token_encrypted=encryptor.encrypt(id_token) if id_token else None,
-                last_refresh=last_refresh,
+        """Import the live token, local owner gate and retry nonce atomically."""
+        try:
+            account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
+            transfer = await self.get_transfer_by_nonce(nonce)
+            if transfer is not None:
+                # Another request imported while we waited; never regress it.
+                if account is None or account.owner_instance != local_instance_id:
+                    raise ValueError("checkout nonce belongs to another owner")
+                await self._session.rollback()
+                return
+            if account is None:
+                account = Account(
+                    id=account_id,
+                    provider=auth.provider,
+                    email=auth.email,
+                    alias=auth.alias,
+                    status=_coerce_account_status(auth.status),
+                    plan_type=auth.plan_type,
+                    chatgpt_account_id=auth.chatgpt_account_id,
+                    access_token_encrypted=encryptor.encrypt(auth.access_token),
+                    refresh_token_encrypted=encryptor.encrypt(auth.refresh_token),
+                    id_token_encrypted=encryptor.encrypt(auth.id_token) if auth.id_token else None,
+                    last_refresh=utcnow(),
+                    access_expires_at=_expiry_from_ms(auth.expires_at_ms),
+                    owner_instance=local_instance_id,
+                )
+                self._session.add(account)
+            else:
+                if account.owner_instance in (None, local_instance_id):
+                    raise ValueError("checkout would overwrite a locally owned token")
+                account.provider = auth.provider
+                account.email = auth.email
+                account.alias = auth.alias
+                account.status = _coerce_account_status(auth.status)
+                account.plan_type = auth.plan_type
+                account.chatgpt_account_id = auth.chatgpt_account_id
+                account.access_token_encrypted = encryptor.encrypt(auth.access_token)
+                account.refresh_token_encrypted = encryptor.encrypt(auth.refresh_token)
+                account.id_token_encrypted = encryptor.encrypt(auth.id_token) if auth.id_token else None
+                account.last_refresh = utcnow()
+                account.access_expires_at = _expiry_from_ms(auth.expires_at_ms)
+                account.owner_instance = local_instance_id
+            self._session.add(
+                AccountTransfer(
+                    id=str(uuid.uuid4()),
+                    account_id=account_id,
+                    nonce=nonce,
+                    direction=AccountTransferDirection.CHECKOUT,
+                    counterparty_instance_id=peer_id,
+                    state=AccountTransferState.PENDING,
+                )
             )
-        )
-        await self._session.commit()
+            await self._session.commit()
+        except BaseException:
+            await self._session.rollback()
+            raise
 
     async def upsert_mirror_account(
         self,
@@ -235,6 +331,7 @@ class FederationRepository:
         owner_instance_id: str,
         local_instance_id: str,
         encryptor: TokenEncryptor,
+        expires_at_ms: int | None = None,
     ) -> bool:
         """Create-or-update a mirrored row. Returns False (no-op) when the row
         is locally owned — a checkout must never be clobbered by a stale
@@ -245,15 +342,46 @@ class FederationRepository:
 
         resolved_status = _coerce_account_status(status)
         if existing is not None:
-            existing.provider = provider
-            existing.email = email
-            existing.alias = alias
-            existing.status = resolved_status
-            existing.plan_type = plan_type
-            existing.chatgpt_account_id = chatgpt_account_id
-            existing.access_token_encrypted = encryptor.encrypt(access_token)
-            existing.owner_instance = owner_instance_id
-            existing.last_refresh = utcnow()
+            # Never overwrite a token in an unconfirmed checkout: its owner
+            # must still be able to resend the original payload on retry.
+            pending_checkout = (
+                select(AccountTransfer.id)
+                .where(
+                    AccountTransfer.account_id == account_id,
+                    AccountTransfer.direction == AccountTransferDirection.CHECKOUT,
+                    AccountTransfer.state == AccountTransferState.PENDING,
+                )
+                .exists()
+            )
+            result = await self._session.execute(
+                update(Account)
+                .where(Account.id == account_id, Account.owner_instance == existing.owner_instance)
+                .where(Account.owner_instance.is_not(None), Account.owner_instance != local_instance_id)
+                .values(
+                    provider=provider,
+                    email=email,
+                    alias=alias,
+                    status=resolved_status,
+                    plan_type=plan_type,
+                    chatgpt_account_id=chatgpt_account_id,
+                    access_token_encrypted=encryptor.encrypt(access_token),
+                    refresh_token_encrypted=case(
+                        # When the checkout has not yet settled, this copy is
+                        # the only payload its owner can resend. After the
+                        # handshake, keep the inert placeholder on mirror
+                        # cycles; the peer never exports its rotated token.
+                        (pending_checkout, Account.refresh_token_encrypted),
+                        else_=encryptor.encrypt(_MIRROR_REFRESH_TOKEN_PLACEHOLDER),
+                    ),
+                    owner_instance=owner_instance_id,
+                    last_refresh=utcnow(),
+                    access_expires_at=_expiry_from_ms(expires_at_ms),
+                )
+                .returning(Account.id)
+            )
+            if result.scalar_one_or_none() is None:
+                await self._session.rollback()
+                return False
         else:
             self._session.add(
                 Account(
@@ -268,6 +396,7 @@ class FederationRepository:
                     refresh_token_encrypted=encryptor.encrypt(_MIRROR_REFRESH_TOKEN_PLACEHOLDER),
                     id_token_encrypted=None,
                     last_refresh=utcnow(),
+                    access_expires_at=_expiry_from_ms(expires_at_ms),
                     owner_instance=owner_instance_id,
                 )
             )
@@ -335,6 +464,72 @@ class FederationRepository:
         await self._session.refresh(transfer)
         return transfer
 
+    async def settle_checkout_and_blank_refresh(
+        self, nonce: str, *, encryptor: TokenEncryptor
+    ) -> AccountTransfer | None:
+        """Only erase the exported refresh token after the taker confirms import."""
+        transfer = await self.get_transfer_by_nonce(nonce)
+        if transfer is None or transfer.direction != AccountTransferDirection.CHECKOUT:
+            return None
+        try:
+            account = await self._session.get(Account, transfer.account_id, with_for_update=True)
+            # Serialize with ownership changes before blanking the old copy.
+            transfer = await self.get_transfer_by_nonce(nonce)
+            if transfer is None or account is None or account.owner_instance != transfer.counterparty_instance_id:
+                await self._session.rollback()
+                return None
+            if transfer.state != AccountTransferState.SETTLED:
+                account.refresh_token_encrypted = encryptor.encrypt(_MIRROR_REFRESH_TOKEN_PLACEHOLDER)
+                transfer.state = AccountTransferState.SETTLED
+                transfer.settled_at = utcnow()
+                await self._session.commit()
+            return transfer
+        except BaseException:
+            await self._session.rollback()
+            raise
+
+    async def accept_checkin(
+        self, account_id: str, nonce: str, auth: FederationAuthPayload, *, encryptor: TokenEncryptor
+    ) -> AccountTransfer:
+        """Import the returned token and reopen the local gate in one commit."""
+        try:
+            account = await self._session.get(Account, account_id, with_for_update=True)
+            if account is None:
+                raise ValueError("account missing")
+            transfer = await self.get_transfer_by_nonce(nonce)
+            if transfer is not None:
+                if transfer.account_id != account_id or transfer.direction != AccountTransferDirection.CHECKIN:
+                    raise ValueError("nonce belongs to another transfer")
+                if transfer.state == AccountTransferState.SETTLED:
+                    return transfer
+                if account.owner_instance != transfer.counterparty_instance_id:
+                    raise ValueError("checkin owner does not match pending transfer")
+            else:
+                if account.owner_instance is None:
+                    raise ValueError("account is already locally owned")
+                transfer = AccountTransfer(
+                    id=str(uuid.uuid4()),
+                    account_id=account_id,
+                    nonce=nonce,
+                    direction=AccountTransferDirection.CHECKIN,
+                    counterparty_instance_id=account.owner_instance,
+                    state=AccountTransferState.PENDING,
+                )
+                self._session.add(transfer)
+            account.access_token_encrypted = encryptor.encrypt(auth.access_token)
+            account.refresh_token_encrypted = encryptor.encrypt(auth.refresh_token)
+            account.id_token_encrypted = encryptor.encrypt(auth.id_token) if auth.id_token else None
+            account.last_refresh = utcnow()
+            account.access_expires_at = _expiry_from_ms(auth.expires_at_ms)
+            account.owner_instance = None
+            transfer.state = AccountTransferState.SETTLED
+            transfer.settled_at = utcnow()
+            await self._session.commit()
+            return transfer
+        except BaseException:
+            await self._session.rollback()
+            raise
+
     async def mark_transfer_settled(self, nonce: str) -> AccountTransfer | None:
         transfer = await self.get_transfer_by_nonce(nonce)
         if transfer is None:
@@ -352,3 +547,7 @@ def _coerce_account_status(value: str) -> AccountStatus:
         return AccountStatus(value)
     except ValueError:
         return AccountStatus.ACTIVE
+
+
+def _expiry_from_ms(expires_at_ms: int | None) -> datetime | None:
+    return datetime.utcfromtimestamp(expires_at_ms / 1000) if expires_at_ms is not None else None

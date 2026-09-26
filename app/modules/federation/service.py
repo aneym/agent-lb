@@ -7,8 +7,9 @@ from datetime import datetime
 from app.core.auth import token_expiry_epoch_ms
 from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
-from app.core.utils.time import utcnow
+from app.core.utils.time import naive_utc_to_epoch, utcnow
 from app.db.models import Account, AccountTransferDirection
+from app.modules.accounts.auth_manager import _cross_process_refresh_lock
 from app.modules.federation.exceptions import (
     FederationConflictError,
     FederationNotConfiguredError,
@@ -80,8 +81,7 @@ class FederationService:
         return FederationUsageInstancesResponse(
             window_days=window_days,
             instances=[
-                self._build_usage_instance(instance_id, rows)
-                for instance_id, rows in sorted(by_instance.items())
+                self._build_usage_instance(instance_id, rows) for instance_id, rows in sorted(by_instance.items())
             ],
         )
 
@@ -101,16 +101,23 @@ class FederationService:
                     plan_type=account.plan_type,
                     chatgpt_account_id=account.chatgpt_account_id,
                     access_token=access_token,
-                    expires_at_ms=token_expiry_epoch_ms(access_token),
+                    expires_at_ms=_account_expiry_ms(account, access_token),
                 )
             )
         return FederationMirrorResponse(instance_id=local_id, accounts=mirror_accounts)
 
     async def checkout(self, account_id: str, taker_instance_id: str) -> FederationCheckoutResponse:
+        async with _cross_process_refresh_lock(account_id):
+            return await self._checkout_locked(account_id, taker_instance_id)
+
+    async def _checkout_locked(self, account_id: str, taker_instance_id: str) -> FederationCheckoutResponse:
         local_id = self._settings.local_instance_id
-        account = await self._repo.get_account(account_id)
+        # Discard the request-scoped identity map after waiting for a refresh.
+        account = await self._repo.reload_account(account_id)
         if account is None:
             raise FederationNotFoundError(account_id)
+        if await self._repo.has_exchange_intent(account_id):
+            raise FederationConflictError(account_id, current_owner=account.owner_instance)
 
         # Guarded UPDATE, not read-then-write: the ownership check is folded
         # into the UPDATE's WHERE clause so two concurrent checkouts by
@@ -118,16 +125,10 @@ class FederationService:
         # (that would double-own the account). Owner's gate closes the
         # instant this commits, before the payload is read back and
         # returned — design.md ordering.
-        won_race = await self._repo.set_owner_instance_if_locally_owned(
-            account_id, taker_instance_id, local_instance_id=local_id
+        transfer = await self._repo.release_for_checkout(
+            account_id, taker_instance_id, local_instance_id=local_id, nonce=secrets.token_urlsafe(32)
         )
-        if won_race:
-            transfer = await self._repo.create_transfer(
-                account_id=account_id,
-                direction=AccountTransferDirection.CHECKOUT,
-                counterparty_instance_id=taker_instance_id,
-                nonce=secrets.token_urlsafe(32),
-            )
+        if transfer is not None:
             account = await self._repo.get_account(account_id)
             assert account is not None
             return FederationCheckoutResponse(
@@ -151,6 +152,8 @@ class FederationService:
                 counterparty_instance_id=taker_instance_id,
             )
             if pending is not None:
+                # A retry may happen after the taker rotated its token. Never
+                # import the original payload over a locally owned live copy.
                 return FederationCheckoutResponse(
                     account_id=account_id,
                     nonce=pending.nonce,
@@ -161,7 +164,7 @@ class FederationService:
         raise FederationConflictError(account_id, current_owner=account.owner_instance)
 
     async def confirm_checkout(self, nonce: str) -> FederationTransferStatusResponse:
-        transfer = await self._repo.mark_transfer_settled(nonce)
+        transfer = await self._repo.settle_checkout_and_blank_refresh(nonce, encryptor=self._encryptor)
         if transfer is None:
             raise FederationNotFoundError(nonce)
         return FederationTransferStatusResponse(account_id=transfer.account_id, nonce=nonce, state=transfer.state.value)
@@ -169,45 +172,19 @@ class FederationService:
     async def checkin(
         self, account_id: str, nonce: str, auth: FederationAuthPayload
     ) -> FederationTransferStatusResponse:
-        existing_transfer = await self._repo.get_transfer_by_nonce(nonce)
-        if existing_transfer is not None and existing_transfer.state.value == "settled":
-            # Idempotent retry after success: never re-import a (possibly
-            # stale) payload once the owner has already accepted one.
-            return FederationTransferStatusResponse(
-                account_id=existing_transfer.account_id, nonce=nonce, state="settled"
-            )
-
         account = await self._repo.get_account(account_id)
         if account is None:
             raise FederationNotFoundError(account_id)
-
-        if existing_transfer is None:
-            # account.owner_instance is still the returning instance (T) at
-            # this point — the real counterparty, not a guess. The "unknown"
-            # fallback only fires in the degenerate case where this instance
-            # already considers the account locally owned (e.g. a checkin
-            # replayed after it was already processed some other way); the
-            # field is bookkeeping/visibility only and never gates a
-            # decision, so a placeholder there is harmless.
-            await self._repo.create_transfer(
-                account_id=account_id,
-                direction=AccountTransferDirection.CHECKIN,
-                counterparty_instance_id=account.owner_instance or "unknown",
-                nonce=nonce,
-            )
-
-        await self._repo.import_tokens(
-            account_id,
-            encryptor=self._encryptor,
-            access_token=auth.access_token,
-            refresh_token=auth.refresh_token,
-            id_token=auth.id_token,
-            last_refresh=utcnow(),
-        )
-        await self._repo.set_owner_instance(account_id, None)
-        settled = await self._repo.mark_transfer_settled(nonce)
-        assert settled is not None
+        try:
+            settled = await self._repo.accept_checkin(account_id, nonce, auth, encryptor=self._encryptor)
+        except ValueError as exc:
+            raise FederationConflictError(account_id, current_owner=account.owner_instance) from exc
         return FederationTransferStatusResponse(account_id=account_id, nonce=nonce, state=settled.state.value)
+
+    async def reclaim(self, account_id: str) -> bool:
+        # A pending transfer does not prove the peer never imported the token.
+        # Without peer acknowledgement, reopening ownership double-spends it.
+        return False
 
     # --- taker-side: operator-triggered, calls the configured peer ---
 
@@ -224,16 +201,22 @@ class FederationService:
         # Durably import + assume BEFORE confirming with the peer: safe
         # because the peer's gate already closed when it returned this
         # payload (design.md). A confirm failure below must not undo this.
-        await self._import_auth_payload(account_id, result.auth, owner_instance=local_id)
-
         transfer = await self._repo.get_transfer_by_nonce(result.nonce)
         if transfer is None:
-            transfer = await self._repo.create_transfer(
-                account_id=account_id,
-                direction=AccountTransferDirection.CHECKOUT,
-                counterparty_instance_id=result.owner_instance_id,
-                nonce=result.nonce,
+            await self._repo.import_checkout(
+                account_id,
+                result.nonce,
+                result.owner_instance_id,
+                result.auth,
+                local_instance_id=local_id,
+                encryptor=self._encryptor,
             )
+        else:
+            existing = await self._repo.reload_account(account_id)
+            if existing is None or existing.owner_instance != local_id:
+                raise FederationConflictError(account_id, current_owner=existing.owner_instance if existing else None)
+            # Already imported this nonce. Do not replace a rotated token with
+            # the peer's stale snapshot (or the peer's mirror placeholder).
 
         confirmed = False
         try:
@@ -252,47 +235,26 @@ class FederationService:
 
         return FederationCheckoutExecuteResponse(
             account_id=account_id,
-            nonce=transfer.nonce,
+            nonce=result.nonce,
             owner_instance=local_id,
             confirmed=confirmed,
         )
 
     async def execute_checkin(self, account_id: str) -> FederationCheckinExecuteResponse:
         peer_url, token = self._require_peer_config()
-        counterparty = await self._resolve_checkin_target(account_id)
-        if counterparty is None:
-            raise FederationConflictError(account_id, current_owner=None)
-
-        # Local gate closes FIRST — nobody refreshes from this instant
-        # (design.md). Never unilaterally reclaimed after this point.
-        await self._repo.set_owner_instance(account_id, counterparty)
-
-        account = await self._repo.get_account(account_id)
-        if account is None:
-            raise FederationNotFoundError(account_id)
-        auth = self._auth_payload(account)
-
-        # Reuse a nonce only while a checkin for this counterparty is still
-        # PENDING (a genuine lost-response retry). A SETTLED transfer from a
-        # prior round trip must never be reused: the owner's nonce
-        # idempotency would answer "settled" without re-importing, silently
-        # dropping this round's (possibly rotated) tokens while the local
-        # gate has already closed — stranding the account unowned nowhere.
-        pending_transfer = await self._repo.get_pending_transfer(
-            account_id,
-            direction=AccountTransferDirection.CHECKIN,
-            counterparty_instance_id=counterparty,
-        )
-        if pending_transfer is not None:
-            nonce = pending_transfer.nonce
-        else:
-            nonce = secrets.token_urlsafe(32)
-            await self._repo.create_transfer(
-                account_id=account_id,
-                direction=AccountTransferDirection.CHECKIN,
-                counterparty_instance_id=counterparty,
-                nonce=nonce,
+        async with _cross_process_refresh_lock(account_id):
+            counterparty = await self._resolve_checkin_target(account_id)
+            if counterparty is None:
+                raise FederationConflictError(account_id, current_owner=None)
+            account, nonce = await self._repo.release_for_checkin(
+                account_id,
+                counterparty,
+                local_instance_id=self._settings.local_instance_id,
+                nonce=secrets.token_urlsafe(32),
             )
+            if account is None:
+                raise FederationConflictError(account_id, current_owner=None)
+            auth = self._auth_payload(account)
 
         result = await self._peer_client.checkin(
             peer_url=peer_url,
@@ -351,7 +313,7 @@ class FederationService:
             access_token=access_token,
             refresh_token=refresh_token,
             id_token=id_token,
-            expires_at_ms=token_expiry_epoch_ms(access_token),
+            expires_at_ms=_account_expiry_ms(account, access_token),
             provider=account.provider,
             email=account.email,
             alias=account.alias,
@@ -359,32 +321,6 @@ class FederationService:
             plan_type=account.plan_type,
             chatgpt_account_id=account.chatgpt_account_id,
         )
-
-    async def _import_auth_payload(self, account_id: str, auth: FederationAuthPayload, *, owner_instance: str) -> None:
-        existing = await self._repo.get_account(account_id)
-        if existing is None:
-            await self._repo.upsert_mirror_account(
-                account_id=account_id,
-                provider=auth.provider,
-                email=auth.email,
-                alias=auth.alias,
-                status=auth.status,
-                plan_type=auth.plan_type,
-                chatgpt_account_id=auth.chatgpt_account_id,
-                access_token=auth.access_token,
-                owner_instance_id=owner_instance,
-                local_instance_id=self._settings.local_instance_id,
-                encryptor=self._encryptor,
-            )
-        await self._repo.import_tokens(
-            account_id,
-            encryptor=self._encryptor,
-            access_token=auth.access_token,
-            refresh_token=auth.refresh_token,
-            id_token=auth.id_token,
-            last_refresh=utcnow(),
-        )
-        await self._repo.set_owner_instance(account_id, owner_instance)
 
     async def _resolve_checkin_target(self, account_id: str) -> str | None:
         transfer = await self._repo.get_latest_transfer(account_id, direction=AccountTransferDirection.CHECKOUT)
@@ -394,7 +330,17 @@ class FederationService:
 
     def _require_peer_config(self) -> tuple[str, str]:
         peer_url = self._settings.federation_peer_url
-        token = self._settings.federation_token
+        token = self._settings.federation_transfer_token
         if not peer_url or not token:
             raise FederationNotConfiguredError()
         return peer_url, token
+
+
+def _account_expiry_ms(account: Account, token: str) -> int | None:
+    if account.access_expires_at is not None:
+        return naive_utc_to_epoch(account.access_expires_at) * 1000
+    return token_expiry_epoch_ms(token)
+
+
+def _expiry_from_ms(expires_at_ms: int | None) -> datetime | None:
+    return datetime.utcfromtimestamp(expires_at_ms / 1000) if expires_at_ms is not None else None

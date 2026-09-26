@@ -73,7 +73,7 @@ def _settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = {
         "local_instance_id": _LOCAL_INSTANCE_ID,
         "federation_peer_url": "https://owner.example.internal",
-        "federation_token": "peer-secret",
+        "federation_transfer_token": "peer-secret",
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -330,3 +330,26 @@ async def test_execute_checkin_second_round_trip_mints_fresh_nonce(db_setup: boo
 
     assert len(checkin_nonces_seen) == 2
     assert checkin_nonces_seen[0] != checkin_nonces_seen[1]
+
+
+@pytest.mark.asyncio
+async def test_checkout_retry_does_not_overwrite_rotated_taker_token(db_setup: bool) -> None:
+    """Lost confirm plus a peer retry cannot replace the taker's live token."""
+    del db_setup
+    peer = _FakePeerClient(
+        checkout_result=_checkout_result(nonce="retry-nonce"), checkout_confirm_error=RuntimeError("confirm lost")
+    )
+    async with SessionLocal() as session:
+        await FederationService(FederationRepository(session), settings=_settings(), peer_client=peer).execute_checkout(
+            "retry-account"
+        )
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        account = await session.get(Account, "retry-account")
+        account.refresh_token_encrypted = encryptor.encrypt("rotated-live")
+        await session.commit()
+    async with SessionLocal() as session:
+        await FederationService(FederationRepository(session), settings=_settings(), peer_client=peer).execute_checkout(
+            "retry-account"
+        )
+    assert encryptor.decrypt((await _get_account("retry-account")).refresh_token_encrypted) == "rotated-live"

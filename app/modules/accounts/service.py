@@ -36,7 +36,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts import probes, reset_credit_cache
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AuthManager, _expiry_datetime
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     credits_exhausted,
@@ -489,6 +489,7 @@ class AccountsService:
             refresh_token_encrypted=self._encryptor.encrypt(auth.tokens.refresh_token),
             id_token_encrypted=self._encryptor.encrypt(auth.tokens.id_token),
             last_refresh=last_refresh,
+            access_expires_at=_expiry_datetime(auth.tokens.access_token),
             status=AccountStatus.ACTIVE,
             deactivation_reason=None,
         )
@@ -604,6 +605,8 @@ class AccountsService:
             return False
         if account.status == AccountStatus.REAUTH_REQUIRED:
             raise AccountStateTransitionError("Account requires re-authentication and cannot be reactivated directly")
+        if account.status == AccountStatus.EXCHANGE_UNCERTAIN:
+            raise AccountStateTransitionError("Refresh exchange is unresolved; reset and re-login before reactivation")
         result = await self._repo.update_status_if_current(
             account_id,
             AccountStatus.ACTIVE,
@@ -625,7 +628,11 @@ class AccountsService:
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return False
-        if account.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+        if account.status in (
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.DEACTIVATED,
+            AccountStatus.EXCHANGE_UNCERTAIN,
+        ):
             raise AccountStateTransitionError(f"Account is {account.status.value} and cannot be paused")
         result = await self._repo.update_status_if_current(
             account_id,
@@ -814,7 +821,12 @@ class AccountsService:
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return None
-        if account.status in (AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+        if account.status in (
+            AccountStatus.PAUSED,
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.DEACTIVATED,
+            AccountStatus.EXCHANGE_UNCERTAIN,
+        ):
             raise AccountNotProbableError(f"Account is {account.status.value} and cannot be probed")
 
         primary_before, secondary_before = await self._latest_usage_percents(account_id)
@@ -1157,7 +1169,12 @@ class AccountsService:
         provider = normalize_provider_name(account.provider)
         if provider not in (OPENAI_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME):
             raise AccountResetCreditsUnavailableError(f"Provider {provider} does not support rate-limit reset credits")
-        if account.status in (AccountStatus.PAUSED, AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+        if account.status in (
+            AccountStatus.PAUSED,
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.DEACTIVATED,
+            AccountStatus.EXCHANGE_UNCERTAIN,
+        ):
             raise AccountResetCreditsUnavailableError(f"Account is {account.status.value} and cannot use reset credits")
         if not is_subscription_usable(account):
             raise AccountResetCreditsUnavailableError("Account subscription cannot use reset credits")

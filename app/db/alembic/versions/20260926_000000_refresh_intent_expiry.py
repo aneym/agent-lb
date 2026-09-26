@@ -1,0 +1,57 @@
+"""Fence token exchanges and preserve OAuth access expiry.
+
+Revision ID: 20260926_000000_refresh_intent_expiry
+Revises: 20260925_020000_add_account_resume_schedules
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from alembic import op
+
+revision = "20260926_000000_refresh_intent_expiry"
+down_revision = "20260925_020000_add_account_resume_schedules"
+branch_labels = None
+depends_on = None
+
+_OLD = ("active", "rate_limited", "quota_exceeded", "paused", "reauth_required", "deactivated")
+_NEW = (*_OLD, "exchange_uncertain")
+
+
+def _enum(values: tuple[str, ...]) -> sa.Enum:
+    return sa.Enum(*values, name="account_status", validate_strings=True, create_type=False)
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        with op.get_context().autocommit_block():
+            op.execute("ALTER TYPE account_status ADD VALUE IF NOT EXISTS 'exchange_uncertain'")
+    else:
+        with op.batch_alter_table("accounts") as batch:
+            batch.alter_column("status", existing_type=_enum(_OLD), type_=_enum(_NEW), existing_nullable=False)
+    inspector = sa.inspect(op.get_bind())
+    if "access_expires_at" not in {column["name"] for column in inspector.get_columns("accounts")}:
+        op.add_column("accounts", sa.Column("access_expires_at", sa.DateTime(), nullable=True))
+    if not inspector.has_table("account_exchange_intents"):
+        op.create_table(
+            "account_exchange_intents",
+            sa.Column("account_id", sa.String(), sa.ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("refresh_token_sha256", sa.String(length=64), nullable=False),
+            sa.Column("started_at", sa.DateTime(), nullable=False),
+        )
+
+
+def downgrade() -> None:
+    op.drop_table("account_exchange_intents")
+    op.drop_column("accounts", "access_expires_at")
+    op.execute("UPDATE accounts SET status = 'deactivated' WHERE status = 'exchange_uncertain'")
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table("accounts") as batch:
+            batch.alter_column("status", existing_type=_enum(_NEW), type_=_enum(_OLD), existing_nullable=False)
+    elif bind.dialect.name == "postgresql":
+        op.execute("ALTER TYPE account_status RENAME TO account_status_old")
+        op.execute("CREATE TYPE account_status AS ENUM (" + ", ".join("'" + v + "'" for v in _OLD) + ")")
+        op.execute("ALTER TABLE accounts ALTER COLUMN status TYPE account_status USING status::text::account_status")
+        op.execute("DROP TYPE account_status_old")

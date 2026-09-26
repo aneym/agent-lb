@@ -42,6 +42,7 @@ class AccountStatus(str, Enum):
     QUOTA_EXCEEDED = "quota_exceeded"
     PAUSED = "paused"
     REAUTH_REQUIRED = "reauth_required"
+    EXCHANGE_UNCERTAIN = "exchange_uncertain"
     DEACTIVATED = "deactivated"
 
 
@@ -96,6 +97,7 @@ class Account(Base):
     id_token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     last_refresh: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    access_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     status: Mapped[AccountStatus] = mapped_column(
@@ -155,6 +157,14 @@ class Account(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+
+
+class AccountExchangeIntent(Base):
+    __tablename__ = "account_exchange_intents"
+
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True)
+    refresh_token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class AccountResumeSchedule(Base):

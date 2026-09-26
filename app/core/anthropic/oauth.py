@@ -117,6 +117,7 @@ async def exchange_anthropic_authorization_code(
         account_id=metadata.account_id,
         email=metadata.email,
         plan_type=metadata.plan_type,
+        expires_in=payload_data.expires_in,
     )
 
 
@@ -162,6 +163,7 @@ async def refresh_anthropic_access_token(
         account_id=metadata.account_id,
         plan_type=metadata.plan_type,
         email=metadata.email,
+        expires_in=payload_data.expires_in,
     )
 
 

@@ -747,6 +747,22 @@ def current_revision(database_url: str) -> str | None:
     return state.current_revision
 
 
+def downgrade_refresh_intent_for_rollback(database_url: str) -> str:
+    """Undo this migration with the new build before booting an older build.
+
+    Only the exact stage-1 head is eligible; an older build cannot recognize
+    that revision, while a generic downgrade command could discard unrelated
+    future schema or data.
+    """
+    config = _build_alembic_config(database_url)
+    revision = "20260926_000000_refresh_intent_expiry"
+    parent = "20260925_020000_add_account_resume_schedules"
+    if _read_current_revision(_required_sqlalchemy_url(config)) != revision:
+        raise MigrationBootstrapError("Refresh-intent rollback requires its exact migration head")
+    command.downgrade(config, parent)
+    return parent
+
+
 def stamp_revision(database_url: str, revision: str) -> None:
     config = _build_alembic_config(database_url)
     _ensure_alembic_version_table_capacity(config)
@@ -844,6 +860,9 @@ def _parse_args() -> argparse.Namespace:
     subparsers.add_parser("current", help="Print current alembic revision.")
 
     subparsers.add_parser("check", help="Check Alembic policy and model/schema drift.")
+    subparsers.add_parser(
+        "rollback-refresh-intent", help="Downgrade the stage-1 refresh-intent migration before reverting the build."
+    )
 
     wait_parser = subparsers.add_parser(
         "wait-for-head",
@@ -899,6 +918,11 @@ def main() -> None:
         print(f"current_revision={result.current_revision or 'none'}")
         if result.bootstrap.stamped_revision:
             print(f"legacy_bootstrap_stamped={result.bootstrap.stamped_revision}")
+        return
+
+    if args.command == "rollback-refresh-intent":
+        parent = downgrade_refresh_intent_for_rollback(database_url)
+        print(f"current_revision={parent}")
         return
 
     if args.command == "current":

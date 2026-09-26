@@ -50,6 +50,7 @@ class TokenRefreshResult:
     workspace_id: str | None = None
     workspace_label: str | None = None
     seat_type: str | None = None
+    expires_in: int | None = None
 
 
 class RefreshError(Exception):

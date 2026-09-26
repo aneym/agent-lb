@@ -16,6 +16,7 @@ from app.modules.federation.schemas import FederationUsageDayRollup
 pytestmark = pytest.mark.integration
 
 _FEDERATION_TOKEN = "peer-secret-token"
+_TRANSFER_TOKEN = "transfer-test-token"
 _LOCAL_INSTANCE_ID = "studio-test"
 _TAKER_INSTANCE_ID = "laptop-test"
 _OTHER_INSTANCE_ID = "other-instance-test"
@@ -23,12 +24,18 @@ _OTHER_INSTANCE_ID = "other-instance-test"
 
 def _enable_federation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_LB_FEDERATION_TOKEN", _FEDERATION_TOKEN)
+    monkeypatch.setenv("AGENT_LB_FEDERATION_TRANSFER_TOKEN", _TRANSFER_TOKEN)
+    monkeypatch.setenv("AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS", _TAKER_INSTANCE_ID)
     monkeypatch.setenv("AGENT_LB_LOCAL_INSTANCE_ID", _LOCAL_INSTANCE_ID)
     get_settings.cache_clear()
 
 
 def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {_FEDERATION_TOKEN}"}
+
+
+def _transfer_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {_TRANSFER_TOKEN}"}
 
 
 async def _seed_account(
@@ -391,7 +398,7 @@ async def test_checkout_happy_path_and_idempotent_retry(async_client, monkeypatc
     first = await async_client.post(
         "/api/federation/checkout",
         json={"account_id": "acc_checkout", "taker_instance_id": _TAKER_INSTANCE_ID},
-        headers=_auth_headers(),
+        headers=_transfer_headers(),
     )
     assert first.status_code == 200
     first_body = first.json()
@@ -405,7 +412,7 @@ async def test_checkout_happy_path_and_idempotent_retry(async_client, monkeypatc
     second = await async_client.post(
         "/api/federation/checkout",
         json={"account_id": "acc_checkout", "taker_instance_id": _TAKER_INSTANCE_ID},
-        headers=_auth_headers(),
+        headers=_transfer_headers(),
     )
     assert second.status_code == 200
     second_body = second.json()
@@ -421,7 +428,7 @@ async def test_checkout_from_non_owner_returns_409(async_client, monkeypatch: py
     response = await async_client.post(
         "/api/federation/checkout",
         json={"account_id": "acc_conflict", "taker_instance_id": _TAKER_INSTANCE_ID},
-        headers=_auth_headers(),
+        headers=_transfer_headers(),
     )
 
     assert response.status_code == 409
@@ -435,18 +442,18 @@ async def test_checkout_confirm_is_idempotent(async_client, monkeypatch: pytest.
     checkout = await async_client.post(
         "/api/federation/checkout",
         json={"account_id": "acc_confirm", "taker_instance_id": _TAKER_INSTANCE_ID},
-        headers=_auth_headers(),
+        headers=_transfer_headers(),
     )
     nonce = checkout.json()["nonce"]
 
     first_confirm = await async_client.post(
-        "/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_auth_headers()
+        "/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_transfer_headers()
     )
     assert first_confirm.status_code == 200
     assert first_confirm.json()["state"] == "settled"
 
     second_confirm = await async_client.post(
-        "/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_auth_headers()
+        "/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_transfer_headers()
     )
     assert second_confirm.status_code == 200
     assert second_confirm.json()["state"] == "settled"
@@ -475,7 +482,7 @@ async def test_checkin_happy_path(async_client, monkeypatch: pytest.MonkeyPatch)
                 "chatgpt_account_id": None,
             },
         },
-        headers=_auth_headers(),
+        headers=_transfer_headers(),
     )
 
     assert response.status_code == 200
@@ -509,7 +516,7 @@ async def test_checkin_retry_after_success_does_not_reimport(async_client, monke
             "chatgpt_account_id": None,
         },
     }
-    first = await async_client.post("/api/federation/checkin", json=payload_a, headers=_auth_headers())
+    first = await async_client.post("/api/federation/checkin", json=payload_a, headers=_transfer_headers())
     assert first.status_code == 200
     assert first.json()["state"] == "settled"
 
@@ -524,9 +531,378 @@ async def test_checkin_retry_after_success_does_not_reimport(async_client, monke
     payload_b["auth"] = dict(payload_a["auth"])
     payload_b["auth"]["access_token"] = "payload-b-access-should-not-apply"
 
-    second = await async_client.post("/api/federation/checkin", json=payload_b, headers=_auth_headers())
+    second = await async_client.post("/api/federation/checkin", json=payload_b, headers=_transfer_headers())
     assert second.status_code == 200
     assert second.json()["state"] == "settled"
 
     account_after_second = await _get_account("acc_checkin_retry")
     assert encryptor.decrypt(account_after_second.access_token_encrypted) == "payload-a-access"
+
+
+@pytest.mark.asyncio
+async def test_legacy_mirror_credential_cannot_transfer_and_checkout_requires_allowed_taker(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enable_federation(monkeypatch)
+    await _seed_account("scoped-account", owner_instance=None)
+    for route, payload in (
+        ("checkout", {"account_id": "scoped-account", "taker_instance_id": _TAKER_INSTANCE_ID}),
+        ("checkout/confirm", {"nonce": "arbitrary"}),
+        ("checkin", {}),
+        ("checkout/execute", {"account_id": "scoped-account"}),
+        ("checkin/execute", {"account_id": "scoped-account"}),
+    ):
+        denied = await async_client.post(f"/api/federation/{route}", json=payload, headers=_auth_headers())
+        assert denied.status_code == 403, route
+    denied_taker = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "scoped-account", "taker_instance_id": _OTHER_INSTANCE_ID},
+        headers=_transfer_headers(),
+    )
+    assert denied_taker.status_code == 403
+    assert (await _get_account("scoped-account")).owner_instance is None
+
+    monkeypatch.delenv("AGENT_LB_FEDERATION_TRANSFER_TOKEN")
+    get_settings.cache_clear()
+    legacy_denied = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "scoped-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_auth_headers(),
+    )
+    assert legacy_denied.status_code == 403
+    assert (await async_client.get("/api/federation/mirror", headers=_auth_headers())).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_confirm_blanks_old_refresh_only_after_confirmation(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enable_federation(monkeypatch)
+    await _seed_account("confirmed-account", owner_instance=None, refresh_token="handoff-refresh")
+    checkout = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "confirmed-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_transfer_headers(),
+    )
+    assert checkout.status_code == 200
+    encryptor = TokenEncryptor()
+    assert encryptor.decrypt((await _get_account("confirmed-account")).refresh_token_encrypted) == "handoff-refresh"
+    nonce = checkout.json()["nonce"]
+    assert (
+        await async_client.post("/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_transfer_headers())
+    ).status_code == 200
+    assert encryptor.decrypt((await _get_account("confirmed-account")).refresh_token_encrypted) == ""
+    assert (
+        await async_client.post("/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_transfer_headers())
+    ).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_reclaim_only_unsettled_handoff(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_federation(monkeypatch)
+    await _seed_account("reclaim-account", owner_instance=None)
+    checkout = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "reclaim-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_transfer_headers(),
+    )
+    nonce = checkout.json()["nonce"]
+    # Pending does not tell us whether the peer has already imported.
+    assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 409
+    assert (await _get_account("reclaim-account")).owner_instance == _TAKER_INSTANCE_ID
+    assert (
+        await async_client.post("/api/federation/checkout/confirm", json={"nonce": nonce}, headers=_transfer_headers())
+    ).status_code == 200
+    retry = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "reclaim-account", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_transfer_headers(),
+    )
+    assert retry.status_code == 409
+    assert (await async_client.post("/api/federation/reclaim/reclaim-account", json={})).status_code == 409
+    assert (await _get_account("reclaim-account")).owner_instance == _TAKER_INSTANCE_ID
+
+
+@pytest.mark.asyncio
+async def test_postgres_checkout_crash_before_and_after_commit_retries_without_double_ownership(
+    db_setup: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del db_setup
+    from app.core.config.settings import Settings
+    from app.db.models import AccountTransfer, AccountTransferDirection
+    from app.modules.federation.service import FederationService
+
+    if SessionLocal.kw["bind"].dialect.name != "postgresql":
+        pytest.skip("Requires disposable Postgres to verify durable transaction boundaries")
+    await _seed_account("checkout-crash", owner_instance=None, refresh_token="live-refresh")
+    settings = Settings(local_instance_id=_LOCAL_INSTANCE_ID)
+    encryptor = TokenEncryptor()
+    for crash_before_commit in (True, False):
+        # The first attempt crashes either before the only commit or just
+        # after it; a new session models the next process on retry.
+        async with SessionLocal() as session:
+            repo = FederationRepository(session)
+            original_commit = session.commit
+
+            async def crash_commit() -> None:
+                if crash_before_commit:
+                    await session.flush()
+                    raise RuntimeError("process interrupted before commit")
+                await original_commit()
+                raise RuntimeError("response lost after commit")
+
+            monkeypatch.setattr(session, "commit", crash_commit)
+            with pytest.raises(RuntimeError, match="interrupted|response lost"):
+                await FederationService(repo, settings=settings, encryptor=encryptor).checkout(
+                    "checkout-crash", _TAKER_INSTANCE_ID
+                )
+        async with SessionLocal() as session:
+            repo = FederationRepository(session)
+            if crash_before_commit:
+                assert (await repo.get_account("checkout-crash")).owner_instance is None
+            retry = await FederationService(repo, settings=settings, encryptor=encryptor).checkout(
+                "checkout-crash", _TAKER_INSTANCE_ID
+            )
+            assert retry.auth.refresh_token == "live-refresh"
+            rows = (
+                (
+                    await session.execute(
+                        select(AccountTransfer).where(
+                            AccountTransfer.account_id == "checkout-crash",
+                            AccountTransfer.direction == AccountTransferDirection.CHECKOUT,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(rows) == 1
+            assert rows[0].nonce == retry.nonce
+            assert (await repo.get_account("checkout-crash")).owner_instance == _TAKER_INSTANCE_ID
+        if crash_before_commit:
+            # Prepare the second scenario from the pristine state again.
+            async with SessionLocal() as session:
+                from sqlalchemy import delete
+
+                await session.execute(delete(AccountTransfer).where(AccountTransfer.account_id == "checkout-crash"))
+                (await session.get(Account, "checkout-crash")).owner_instance = None
+                await session.commit()
+
+    async with SessionLocal() as session:
+        service = FederationService(FederationRepository(session), settings=settings, encryptor=encryptor)
+        await service.confirm_checkout(retry.nonce)
+    assert encryptor.decrypt((await _get_account("checkout-crash")).refresh_token_encrypted) == ""
+
+
+@pytest.mark.asyncio
+async def test_postgres_checkin_crash_before_commit_preserves_owner_and_old_token(
+    db_setup: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    del db_setup
+    from app.core.config.settings import Settings
+    from app.db.models import AccountTransfer, AccountTransferDirection
+    from app.modules.federation.schemas import FederationAuthPayload
+    from app.modules.federation.service import FederationService
+
+    if SessionLocal.kw["bind"].dialect.name != "postgresql":
+        pytest.skip("Requires disposable Postgres")
+    await _seed_account("checkin-crash", owner_instance=_TAKER_INSTANCE_ID)
+    payload = FederationAuthPayload(
+        access_token="new-access",
+        refresh_token="new-refresh",
+        id_token=None,
+        expires_at_ms=None,
+        provider="anthropic",
+        email="checkin-crash@example.com",
+        alias=None,
+        status="active",
+        plan_type="claude",
+        chatgpt_account_id=None,
+    )
+    async with SessionLocal() as session:
+
+        async def crash_commit() -> None:
+            await session.flush()
+            raise RuntimeError("process interrupted before commit")
+
+        monkeypatch.setattr(session, "commit", crash_commit)
+        with pytest.raises(RuntimeError, match="interrupted"):
+            await FederationService(
+                FederationRepository(session), settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID)
+            ).checkin("checkin-crash", "return-nonce", payload)
+    account = await _get_account("checkin-crash")
+    assert account.owner_instance == _TAKER_INSTANCE_ID
+    assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "seed-refresh"
+    # On the pre-fix path the first commit happens *before* import, so this
+    # assertion exposes the real crash window rather than passing vacuously.
+    async with SessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AccountTransfer).where(
+                        AccountTransfer.account_id == "checkin-crash",
+                        AccountTransfer.direction == AccountTransferDirection.CHECKIN,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows == []
+        await FederationService(
+            FederationRepository(session), settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID)
+        ).checkin("checkin-crash", "return-nonce", payload)
+    account = await _get_account("checkin-crash")
+    assert account.owner_instance is None
+    assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "new-refresh"
+
+
+@pytest.mark.asyncio
+async def test_pending_checkout_mirror_keeps_retryable_token(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The mirror is not the confirmation; only confirmation erases the exported token."""
+    _enable_federation(monkeypatch)
+    await _seed_account("pending-mirror", owner_instance=None, refresh_token="still-live")
+    first = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "pending-mirror", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_transfer_headers(),
+    )
+    assert first.status_code == 200
+    async with SessionLocal() as session:
+        assert await FederationRepository(session).upsert_mirror_account(
+            account_id="pending-mirror",
+            provider="anthropic",
+            email="pending-mirror@example.com",
+            alias=None,
+            status="active",
+            plan_type="claude",
+            chatgpt_account_id=None,
+            access_token="mirror-access",
+            owner_instance_id=_TAKER_INSTANCE_ID,
+            local_instance_id=_LOCAL_INSTANCE_ID,
+            encryptor=TokenEncryptor(),
+        )
+    retry = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "pending-mirror", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_transfer_headers(),
+    )
+    assert retry.status_code == 200
+    assert retry.json()["nonce"] == first.json()["nonce"]
+    assert retry.json()["auth"]["refresh_token"] == "still-live"
+
+
+@pytest.mark.asyncio
+async def test_outbound_transfer_token_does_not_enable_inbound_routes(
+    async_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enable_federation(monkeypatch)
+    monkeypatch.setenv("AGENT_LB_FEDERATION_MIRROR_TOKEN", "dedicated-mirror")
+    monkeypatch.setenv("AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS", "")
+    get_settings.cache_clear()
+    for token in (_TRANSFER_TOKEN, "dedicated-mirror", _FEDERATION_TOKEN):
+        denied = await async_client.post(
+            "/api/federation/checkin/execute",
+            json={"account_id": "any"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert denied.status_code == 403
+    # A renamed legacy mirror credential must not become a transfer credential.
+    monkeypatch.setenv("AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS", _TAKER_INSTANCE_ID)
+    monkeypatch.setenv("AGENT_LB_FEDERATION_TRANSFER_TOKEN", _FEDERATION_TOKEN)
+    get_settings.cache_clear()
+    denied = await async_client.post(
+        "/api/federation/checkout",
+        json={"account_id": "any", "taker_instance_id": _TAKER_INSTANCE_ID},
+        headers=_auth_headers(),
+    )
+    assert denied.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_postgres_checkin_has_no_committed_import_before_owner_change(
+    db_setup: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash on the old second commit cannot expose a new token with the old owner."""
+    from app.core.config.settings import Settings
+    from app.modules.federation.schemas import FederationAuthPayload
+    from app.modules.federation.service import FederationService
+
+    if SessionLocal.kw["bind"].dialect.name != "postgresql":
+        pytest.skip("Requires disposable Postgres")
+    await _seed_account("checkin-one-commit", owner_instance=_TAKER_INSTANCE_ID)
+    payload = FederationAuthPayload(
+        access_token="new-access",
+        refresh_token="new-refresh",
+        id_token=None,
+        expires_at_ms=None,
+        provider="anthropic",
+        email="checkin-one-commit@example.com",
+        alias=None,
+        status="active",
+        plan_type="claude",
+        chatgpt_account_id=None,
+    )
+    async with SessionLocal() as session:
+        original_commit = session.commit
+        commits = 0
+
+        async def fail_on_second_commit() -> None:
+            nonlocal commits
+            commits += 1
+            if commits == 2:
+                await session.flush()
+                raise RuntimeError("interrupted between import and owner change")
+            await original_commit()
+
+        monkeypatch.setattr(session, "commit", fail_on_second_commit)
+        try:
+            await FederationService(
+                FederationRepository(session), settings=Settings(local_instance_id=_LOCAL_INSTANCE_ID)
+            ).checkin("checkin-one-commit", "single-nonce", payload)
+        except RuntimeError:
+            pass
+    account = await _get_account("checkin-one-commit")
+    assert not (
+        account.owner_instance == _TAKER_INSTANCE_ID
+        and TokenEncryptor().decrypt(account.refresh_token_encrypted) == "new-refresh"
+    )
+    assert account.owner_instance is None
+    assert TokenEncryptor().decrypt(account.refresh_token_encrypted) == "new-refresh"
+
+
+@pytest.mark.asyncio
+async def test_mirror_snapshot_cannot_overwrite_concurrent_local_checkout(db_setup: bool) -> None:
+    """A stale mirror read must not blank a token after the owner changes."""
+    from sqlalchemy import update
+
+    if SessionLocal.kw["bind"].dialect.name != "postgresql":
+        pytest.skip("Requires concurrent transactions on disposable Postgres")
+    await _seed_account("mirror-owner-race", owner_instance="peer", refresh_token="local-live")
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as mirror_session:
+        # Hold an old identity-map snapshot while another transaction takes
+        # ownership, then exercise the real mirror update with that session.
+        await mirror_session.get(Account, "mirror-owner-race")
+        async with SessionLocal() as owner_session:
+            await owner_session.execute(
+                update(Account).where(Account.id == "mirror-owner-race").values(owner_instance=_LOCAL_INSTANCE_ID)
+            )
+            await owner_session.commit()
+        applied = await FederationRepository(mirror_session).upsert_mirror_account(
+            account_id="mirror-owner-race",
+            provider="anthropic",
+            email="mirror-owner-race@example.com",
+            alias=None,
+            status="active",
+            plan_type="claude",
+            chatgpt_account_id=None,
+            access_token="stale-mirror",
+            owner_instance_id="peer",
+            local_instance_id=_LOCAL_INSTANCE_ID,
+            encryptor=encryptor,
+        )
+        assert applied is False
+    current = await _get_account("mirror-owner-race")
+    assert current.owner_instance == _LOCAL_INSTANCE_ID
+    assert encryptor.decrypt(current.refresh_token_encrypted) == "local-live"

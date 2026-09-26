@@ -1083,3 +1083,38 @@ def test_routing_policy_persistence_downgrade_does_not_drop_shared_columns(monke
     monkeypatch.setattr(migration, "op", _OpMustNotAlter())
 
     migration.downgrade()
+
+
+def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> None:
+    """The pre-pin schema is bootable only after the new build removes its Alembic head."""
+    url = _db_url(tmp_path / "refresh-rollback.db")
+    parent = "20260925_020000_add_account_resume_schedules"
+    run_upgrade(url, "head", bootstrap_legacy=False)
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO accounts (id, email, plan_type, access_token_encrypted, refresh_token_encrypted, "
+                    "last_refresh, status) VALUES ('uncertain', 'uncertain@example.com', 'plus', "
+                    "X'61', X'62', '2026-09-26 00:00:00', 'exchange_uncertain')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO account_exchange_intents (account_id, refresh_token_sha256, started_at) "
+                    "VALUES ('uncertain', 'hash', '2026-09-26 00:00:00')"
+                )
+            )
+        assert migrate_module.downgrade_refresh_intent_for_rollback(url) == parent
+        assert migrate_module.current_revision(url) == parent
+        with engine.connect() as connection:
+            assert (
+                connection.execute(text("SELECT status FROM accounts WHERE id='uncertain'")).scalar_one()
+                == "deactivated"
+            )
+            assert not inspect(connection).has_table("account_exchange_intents")
+        with pytest.raises(migrate_module.MigrationBootstrapError):
+            migrate_module.downgrade_refresh_intent_for_rollback(url)
+    finally:
+        engine.dispose()

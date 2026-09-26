@@ -36,21 +36,38 @@ from app.modules.federation.schemas import (
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def require_federation_peer_auth(
+async def require_federation_mirror_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> None:
-    token = get_settings().federation_token
-    if not token:
-        raise HTTPException(status_code=403, detail="Federation is not enabled on this instance")
-    if credentials is None or not hmac.compare_digest(credentials.credentials, token):
-        raise HTTPException(status_code=403, detail="Invalid federation peer credentials")
+    settings = get_settings()
+    token = settings.effective_federation_mirror_token
+    if (
+        not token
+        or (settings.federation_transfer_token and hmac.compare_digest(token, settings.federation_transfer_token))
+        or credentials is None
+        or not hmac.compare_digest(credentials.credentials, token)
+    ):
+        raise HTTPException(status_code=403, detail="Invalid federation mirror credentials")
 
 
-router = APIRouter(
-    prefix="/api/federation",
-    tags=["federation"],
-    dependencies=[Depends(require_federation_peer_auth)],
-)
+async def require_federation_transfer_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> None:
+    settings = get_settings()
+    # The taker has an outbound credential but no inbound transfer authority.
+    token = settings.federation_transfer_token if settings.federation_taker_instance_ids else None
+    mirror_token = settings.effective_federation_mirror_token
+    if (
+        not token
+        or (settings.federation_token and hmac.compare_digest(token, settings.federation_token))
+        or (mirror_token and hmac.compare_digest(token, mirror_token))
+        or credentials is None
+        or not hmac.compare_digest(credentials.credentials, token)
+    ):
+        raise HTTPException(status_code=403, detail="Invalid federation transfer credentials")
+
+
+router = APIRouter(prefix="/api/federation", tags=["federation"])
 
 dashboard_router = APIRouter(
     prefix="/api/federation",
@@ -59,12 +76,16 @@ dashboard_router = APIRouter(
 )
 
 
-@router.get("/mirror", response_model=FederationMirrorResponse)
+@router.get("/mirror", response_model=FederationMirrorResponse, dependencies=[Depends(require_federation_mirror_auth)])
 async def get_mirror(context: FederationContext = Depends(get_federation_context)) -> FederationMirrorResponse:
     return await context.service.build_mirror_response()
 
 
-@router.post("/usage-report", response_model=FederationUsageReportResponse)
+@router.post(
+    "/usage-report",
+    response_model=FederationUsageReportResponse,
+    dependencies=[Depends(require_federation_mirror_auth)],
+)
 async def post_usage_report(
     request: FederationUsageReportRequest,
     context: FederationContext = Depends(get_federation_context),
@@ -80,10 +101,10 @@ async def get_status(
     settings = get_settings()
     scheduler: FederationMirrorScheduler | None = getattr(request.app.state, "federation_mirror_scheduler", None)
     owned, mirrored = await context.repository.count_accounts_by_ownership(settings.local_instance_id)
-    is_enabled = bool(settings.federation_peer_url and settings.federation_token)
+    is_enabled = bool(settings.federation_peer_url and settings.effective_federation_mirror_token)
     return FederationStatusResponse(
         local_instance_id=settings.local_instance_id,
-        token_configured=bool(settings.federation_token),
+        token_configured=bool(settings.effective_federation_mirror_token),
         peer_url=settings.federation_peer_url,
         mirror=FederationMirrorStatus(
             enabled=is_enabled,
@@ -101,11 +122,25 @@ async def get_status(
     )
 
 
-@router.post("/checkout", response_model=FederationCheckoutResponse)
+@dashboard_router.post("/reclaim/{account_id}")
+async def post_reclaim(
+    account_id: str,
+    context: FederationContext = Depends(get_federation_context),
+) -> dict[str, str]:
+    if not await context.service.reclaim(account_id):
+        raise HTTPException(status_code=409, detail="Account cannot be reclaimed")
+    return {"account_id": account_id, "owner_instance": get_settings().local_instance_id}
+
+
+@router.post(
+    "/checkout", dependencies=[Depends(require_federation_transfer_auth)], response_model=FederationCheckoutResponse
+)
 async def post_checkout(
     request: FederationCheckoutRequest,
     context: FederationContext = Depends(get_federation_context),
 ) -> FederationCheckoutResponse:
+    if request.taker_instance_id not in get_settings().federation_taker_instance_ids:
+        raise HTTPException(status_code=403, detail="Taker instance is not allowed")
     try:
         return await context.service.checkout(request.account_id, request.taker_instance_id)
     except FederationNotFoundError as exc:
@@ -114,7 +149,11 @@ async def post_checkout(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/checkout/confirm", response_model=FederationTransferStatusResponse)
+@router.post(
+    "/checkout/confirm",
+    dependencies=[Depends(require_federation_transfer_auth)],
+    response_model=FederationTransferStatusResponse,
+)
 async def post_checkout_confirm(
     request: FederationCheckoutConfirmRequest,
     context: FederationContext = Depends(get_federation_context),
@@ -125,7 +164,11 @@ async def post_checkout_confirm(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.post("/checkin", response_model=FederationTransferStatusResponse)
+@router.post(
+    "/checkin",
+    dependencies=[Depends(require_federation_transfer_auth)],
+    response_model=FederationTransferStatusResponse,
+)
 async def post_checkin(
     request: FederationCheckinRequest,
     context: FederationContext = Depends(get_federation_context),
@@ -134,9 +177,15 @@ async def post_checkin(
         return await context.service.checkin(request.account_id, request.nonce, request.auth)
     except FederationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FederationConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/checkout/execute", response_model=FederationCheckoutExecuteResponse)
+@router.post(
+    "/checkout/execute",
+    dependencies=[Depends(require_federation_transfer_auth)],
+    response_model=FederationCheckoutExecuteResponse,
+)
 async def post_checkout_execute(
     request: FederationCheckoutExecuteRequest,
     context: FederationContext = Depends(get_federation_context),
@@ -147,7 +196,11 @@ async def post_checkout_execute(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/checkin/execute", response_model=FederationCheckinExecuteResponse)
+@router.post(
+    "/checkin/execute",
+    dependencies=[Depends(require_federation_transfer_auth)],
+    response_model=FederationCheckinExecuteResponse,
+)
 async def post_checkin_execute(
     request: FederationCheckinExecuteRequest,
     context: FederationContext = Depends(get_federation_context),
