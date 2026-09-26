@@ -261,9 +261,18 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("valid", [True, False])
+@pytest.mark.parametrize(
+    ("header", "valid", "expected_key"),
+    [
+        ("Bearer sk-clb-member", True, True),
+        ("  bearer   sk-clb-member ", True, True),
+        ("Bearer sk-clb-member", False, False),
+        ("Basic sk-clb-member", True, False),
+        ("Bearer chatgpt-token", True, False),
+    ],
+)
 async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_key_when_auth_disabled(
-    monkeypatch, valid: bool
+    monkeypatch, header: str, valid: bool, expected_key: bool
 ):
     async def fake_settings():
         return SimpleNamespace(api_key_auth_enabled=False)
@@ -273,14 +282,15 @@ async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_ke
             "type": "http",
             "method": "POST",
             "path": "/internal/bridge/responses",
-            "headers": [(b"authorization", b"Bearer sk-clb-member")],
+            "headers": [(b"authorization", header.encode())],
             "client": ("10.0.0.12", 12345),
         }
     )
     member_key = SimpleNamespace(id="member-key")
+    seen: list[str | None] = []
 
     async def validate(authorization: str | None, *, request: Request | None = None):
-        assert authorization == "Bearer sk-clb-member"
+        seen.append(authorization)
         assert request is None
         if not valid:
             raise ProxyAuthError("Invalid API key")
@@ -291,12 +301,16 @@ async def test_validate_internal_bridge_api_key_attributes_a_forwarded_member_ke
 
     api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)
 
-    if valid:
+    if expected_key:
         assert api_key is member_key
         assert response is None
-    else:
+    elif seen and not valid:
+        # A forwarded member key that fails validation is refused, never downgraded to keyless.
         assert api_key is None
         assert response is not None and response.status_code == 401
+    else:
+        # Anything that is not a bearer sk-clb key stays keyless for peers.
+        assert (api_key, response, seen) == (None, None, [])
 
 
 @pytest.mark.asyncio
