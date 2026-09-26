@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+<<<<<<< HEAD
 """opus: Claude Code harness on the newest Opus (5.5) with genuine 1M context."""
+=======
+"""opus: Claude Code harness using the latest available Opus model."""
+>>>>>>> 18dd75e3 (clients: use latest Claude model class aliases by default)
 
 from __future__ import annotations
 
@@ -8,7 +12,11 @@ import shutil
 import sys
 from pathlib import Path
 
+<<<<<<< HEAD
 MODEL = "claude-opus-5-5[1m]"
+=======
+MODEL = "opus"
+>>>>>>> 18dd75e3 (clients: use latest Claude model class aliases by default)
 
 
 def main() -> None:
