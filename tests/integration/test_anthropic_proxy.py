@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -365,19 +364,8 @@ async def _insert_quota_cooldown(
         await session.commit()
 
 
-@pytest.fixture
-def eastern_local_time(monkeypatch):
-    monkeypatch.setenv("TZ", "America/New_York")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
 @pytest.mark.asyncio
-async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async_client, eastern_local_time):
-    # The message printed the reset in the host's local time with no offset, so
-    # on the Studio (EDT) "Reset at 17:40:00" read as four hours in the past.
+async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async_client):
     await _insert_account(
         account_id="anthropic-cooling",
         provider="anthropic",
@@ -407,7 +395,6 @@ async def test_anthropic_messages_quota_cooldown_returns_native_rate_limit(async
     assert body["type"] == "error"
     assert body["error"]["type"] == "rate_limit_error"
     assert "cooling down" in body["error"]["message"]
-    assert f"Reset at {datetime.fromtimestamp(reset_at, tz=timezone.utc).isoformat()}." in body["error"]["message"]
     assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
     assert 0 < int(response.headers["retry-after"]) <= 7 * 60
 

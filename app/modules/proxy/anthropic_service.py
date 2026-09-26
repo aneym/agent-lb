@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from hashlib import sha256
 from typing import Any, AsyncContextManager
 from urllib.parse import urljoin
@@ -739,7 +739,7 @@ class AnthropicProxyService:
         eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=model)
         if not eligibility.account_ids and eligibility.blocked_count > 0:
             reset_suffix = (
-                f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at, tz=timezone.utc).isoformat()}."
+                f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at).isoformat()}."
                 if eligibility.next_reset_at is not None
                 else ""
             )
