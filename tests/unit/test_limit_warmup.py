@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, AsyncIterator, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -115,11 +116,17 @@ class FakeWarmupRepo:
         return result
 
     async def claim_continuous_attempt(
-        self, *, account_id: str, reset_at: int, model: str, now: datetime
+        self,
+        *,
+        account_id: str,
+        reset_at: int,
+        model: str,
+        now: datetime,
+        window: str = "anthropic_primary_continuous",
     ) -> AccountLimitWarmup | None:
         return await self.try_create_attempt(
             account_id=account_id,
-            window="anthropic_primary_continuous",
+            window=window,
             reset_at=reset_at,
             model=model,
             attempted_at=now,
@@ -806,6 +813,329 @@ async def test_disabled_or_account_opt_out_does_not_send() -> None:
 
     assert sender.calls == []
     assert repo.rows == []
+
+
+def _openai_sample(
+    account_id: str,
+    *,
+    used_percent: float,
+    reset_at: int | None,
+    recorded_at: datetime,
+    window: str = "primary",
+    window_minutes: int = 10_080,
+) -> UsageHistory:
+    return UsageHistory(
+        account_id=account_id,
+        used_percent=used_percent,
+        reset_at=reset_at,
+        recorded_at=recorded_at,
+        window=window,
+        window_minutes=window_minutes,
+    )
+
+
+@asynccontextmanager
+async def _openai_sessions() -> AsyncIterator[async_sessionmaker]:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        await engine.dispose()
+
+
+def _unstarted_openai_sample(account_id: str, now: datetime, **kwargs: Any) -> UsageHistory:
+    window_minutes = kwargs.pop("window_minutes", 10_080)
+    return _openai_sample(
+        account_id,
+        used_percent=0,
+        reset_at=int((now + timedelta(minutes=window_minutes)).timestamp()),
+        recorded_at=now,
+        window_minutes=window_minutes,
+        **kwargs,
+    )
+
+
+async def _openai_tick(
+    sessions: async_sessionmaker,
+    account: Account,
+    sender: FakeSender,
+    now: datetime,
+    primary: UsageHistory | None,
+    *,
+    secondary: UsageHistory | None = None,
+    before: UsageHistory | None = None,
+    settings: DashboardSettings | None = None,
+    logs: FakeRequestLogsRepo | None = None,
+) -> AccountLimitWarmup | None:
+    async with sessions() as session:
+        repo = LimitWarmupRepository(session)
+        service = LimitWarmupService(repo, logs or FakeRequestLogsRepo(), sender=sender)
+        if account.provider is None:
+            account.provider = "openai"
+        await service.run_after_usage_refresh(
+            accounts=[account],
+            settings=settings or _settings(),
+            before_primary={account.id: before} if before is not None else {},
+            before_secondary={},
+            after_primary={account.id: primary} if primary is not None else {},
+            after_secondary={account.id: secondary} if secondary is not None else {},
+            planner_settings=_planner(timezone="America/New_York"),
+            now=now,
+        )
+        return (await repo.latest_by_account([account.id])).get(account.id)
+
+
+@pytest.mark.asyncio
+async def test_openai_partial_reset_primes_outside_working_hours_once_then_stops_when_started() -> None:
+    account = _account()
+    sender = FakeSender()
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)  # 03:00 America/New_York
+    before = _openai_sample(
+        account.id,
+        used_percent=60,
+        reset_at=int((initial - timedelta(minutes=1)).timestamp()),
+        recorded_at=initial - timedelta(minutes=1),
+    )
+    async with _openai_sessions() as sessions:
+        first = await _openai_tick(
+            sessions, account, sender, initial, _unstarted_openai_sample(account.id, initial), before=before
+        )
+        assert first is not None
+        assert (first.window, first.status) == ("openai_weekly_continuous", "succeeded")
+        assert sender.calls == [(account.id, "gpt-5.1-codex-mini")]
+        for minutes in (1, 10):
+            current = initial + timedelta(minutes=minutes)
+            await _openai_tick(sessions, account, sender, current, _unstarted_openai_sample(account.id, current))
+        started = _openai_sample(
+            account.id,
+            used_percent=0,
+            reset_at=int((initial + timedelta(weeks=1)).timestamp()),
+            recorded_at=initial + timedelta(minutes=10),
+        )
+        await _openai_tick(sessions, account, sender, initial + timedelta(minutes=10), started)
+        assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_started_or_used_window_is_not_primed() -> None:
+    account = _account()
+    sender = FakeSender()
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        started = _openai_sample(
+            account.id,
+            used_percent=0,
+            reset_at=int((now + timedelta(weeks=1) - timedelta(hours=2)).timestamp()),
+            recorded_at=now,
+        )
+        await _openai_tick(sessions, account, sender, now, started)
+        used = _openai_sample(
+            account.id,
+            used_percent=3,
+            reset_at=int((now + timedelta(weeks=1)).timestamp()),
+            recorded_at=now,
+        )
+        assert await _openai_tick(sessions, account, sender, now, used) is None
+        assert sender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_primer_requires_fresh_available_telemetry_and_opt_in_active_account() -> None:
+    account = _account()
+    sender = FakeSender()
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    fresh = _unstarted_openai_sample(account.id, now, window_minutes=300)
+    exhausted_weekly = _openai_sample(
+        account.id,
+        used_percent=100,
+        reset_at=int((now + timedelta(weeks=1)).timestamp()),
+        recorded_at=now,
+        window="secondary",
+    )
+    stale = _unstarted_openai_sample(account.id, now - timedelta(seconds=601))
+    async with _openai_sessions() as sessions:
+        assert await _openai_tick(sessions, account, sender, now, fresh, secondary=exhausted_weekly) is None
+        assert await _openai_tick(sessions, account, sender, now, stale) is None
+        assert (
+            await _openai_tick(sessions, account, sender, now, fresh, settings=_settings(limit_warmup_enabled=False))
+            is None
+        )
+        account.limit_warmup_enabled = False
+        assert await _openai_tick(sessions, account, sender, now, fresh) is None
+        account.limit_warmup_enabled = True
+        account.status = AccountStatus.PAUSED
+        assert await _openai_tick(sessions, account, sender, now, fresh) is None
+        assert sender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_stale_secondary_does_not_block_fresh_unstarted_primary() -> None:
+    account = _account()
+    sender = FakeSender()
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    stale_secondary = _openai_sample(
+        account.id,
+        used_percent=22,
+        reset_at=int((now + timedelta(weeks=1)).timestamp()),
+        recorded_at=now - timedelta(days=3),
+        window="secondary",
+    )
+    async with _openai_sessions() as sessions:
+        assert await _openai_tick(sessions, account, sender, now, None, secondary=stale_secondary) is None
+        attempt = await _openai_tick(
+            sessions, account, sender, now, _unstarted_openai_sample(account.id, now), secondary=stale_secondary
+        )
+        assert attempt is not None and attempt.status == "succeeded"
+        assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_failed_primer_retries_after_backoff_and_pending_is_not_retried() -> None:
+    account = _account()
+    sender = FakeSender(success=False, error_code="insufficient_quota")
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        first = await _openai_tick(sessions, account, sender, initial, _unstarted_openai_sample(account.id, initial))
+        assert first is not None and (first.status, first.error_code) == ("failed", "quota_still_exhausted")
+        for seconds in (10, 29):
+            current = initial + timedelta(seconds=seconds)
+            await _openai_tick(sessions, account, sender, current, _unstarted_openai_sample(account.id, current))
+        assert len(sender.calls) == 1
+        retry_at = initial + timedelta(seconds=31)
+        retry = await _openai_tick(sessions, account, sender, retry_at, _unstarted_openai_sample(account.id, retry_at))
+        assert retry is not None and (retry.id, retry.retry_count, retry.status) == (first.id, 1, "failed")
+        assert len(sender.calls) == 2
+        async with sessions() as session:
+            repo = LimitWarmupRepository(session)
+            await repo.complete_attempt(retry.id, status="pending", completed_at=retry_at)
+        later = initial + timedelta(minutes=3)
+        pending = await _openai_tick(sessions, account, sender, later, _unstarted_openai_sample(account.id, later))
+        assert pending is not None and pending.status == "pending"
+        assert len(sender.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_openai_succeeded_primer_spacing_allows_hourly_repeat_after_thirty_minutes() -> None:
+    account = _account()
+    sender = FakeSender()
+    initial = datetime(2026, 9, 25, 7, 50, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        first = await _openai_tick(sessions, account, sender, initial, _unstarted_openai_sample(account.id, initial))
+        assert first is not None and first.status == "succeeded"
+        within_spacing = initial + timedelta(minutes=20)
+        await _openai_tick(
+            sessions, account, sender, within_spacing, _unstarted_openai_sample(account.id, within_spacing)
+        )
+        assert len(sender.calls) == 1
+        after_spacing = initial + timedelta(minutes=32)
+        await _openai_tick(
+            sessions, account, sender, after_spacing, _unstarted_openai_sample(account.id, after_spacing)
+        )
+        assert len(sender.calls) == 2
+        async with sessions() as session:
+            repo = LimitWarmupRepository(session)
+            rows = (await repo.latest_by_account([account.id]))[account.id]
+            assert rows.reset_at == int(datetime(2026, 9, 25, 8, 0, tzinfo=timezone.utc).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_openai_request_log_failure_after_success_keeps_attempt_succeeded() -> None:
+    class FailingLogsRepo(FakeRequestLogsRepo):
+        async def add_log(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("sensitive upstream response")
+
+    account = _account()
+    sender = FakeSender()
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        first = await _openai_tick(
+            sessions, account, sender, initial, _unstarted_openai_sample(account.id, initial), logs=FailingLogsRepo()
+        )
+        assert first is not None and first.status == "succeeded"
+        current = initial + timedelta(minutes=1)
+        second = await _openai_tick(sessions, account, sender, current, _unstarted_openai_sample(account.id, current))
+        assert second is not None and second.id == first.id and second.status == "succeeded"
+        assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_weekly_secondary_primes_with_started_five_hour_primary() -> None:
+    account = _account()
+    sender = FakeSender()
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    primary = _openai_sample(
+        account.id,
+        used_percent=14,
+        reset_at=int((now + timedelta(hours=3)).timestamp()),
+        recorded_at=now,
+        window_minutes=300,
+    )
+    async with _openai_sessions() as sessions:
+        attempt = await _openai_tick(
+            sessions,
+            account,
+            sender,
+            now,
+            primary,
+            secondary=_unstarted_openai_sample(account.id, now, window="secondary"),
+        )
+        assert attempt is not None and attempt.status == "succeeded"
+        assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_exhausted_retry_bucket_brakes_new_bucket_for_six_hours() -> None:
+    account = _account()
+    sender = FakeSender()
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        async with sessions() as session:
+            repo = LimitWarmupRepository(session)
+            attempt = await repo.try_create_attempt(
+                account_id=account.id,
+                window="openai_weekly_continuous",
+                reset_at=int(initial.timestamp()),
+                model="gpt-5.1-codex-mini",
+                attempted_at=initial,
+            )
+            assert attempt is not None
+            attempt.retry_count = 5
+            await session.commit()
+            await repo.complete_attempt(attempt.id, status="failed", completed_at=initial)
+        early = initial + timedelta(hours=1)
+        assert (
+            await _openai_tick(sessions, account, sender, early, _unstarted_openai_sample(account.id, early))
+            is not None
+        )
+        assert sender.calls == []
+        after_brake = initial + timedelta(hours=6, seconds=1)
+        fresh = await _openai_tick(
+            sessions, account, sender, after_brake, _unstarted_openai_sample(account.id, after_brake)
+        )
+        assert fresh is not None and fresh.status == "succeeded"
+        assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_send_exception_retains_only_exception_type() -> None:
+    class RaisingSender:
+        async def send(self, account: Account, *, model: str, prompt: str) -> LimitWarmupSendResult:
+            raise RuntimeError("sensitive upstream response")
+
+    account = _account()
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        attempt = await _openai_tick(
+            sessions, account, cast(Any, RaisingSender()), initial, _unstarted_openai_sample(account.id, initial)
+        )
+        assert attempt is not None
+        assert (attempt.status, attempt.error_code, attempt.error_message) == (
+            "failed",
+            "warmup_send_failed",
+            "RuntimeError",
+        )
 
 
 def _anthropic_sample(
