@@ -661,7 +661,19 @@ class UsageUpdater:
             exc.message,
             get_request_id(),
         )
-        await self._auth_manager._repo.update_status(account.id, status, reason)
+        repo = cast(AccountsRepositoryWithStatusComparePort, self._auth_manager._repo)
+        updated = await repo.update_status_if_current(
+            account.id,
+            status,
+            reason,
+            expected_status=account.status,
+            expected_deactivation_reason=account.deactivation_reason,
+            expected_reset_at=account.reset_at,
+            expected_blocked_at=account.blocked_at,
+        )
+        if not updated:
+            await self._sync_account_from_repo(account)
+            return
         account.status = status
         account.deactivation_reason = reason
 

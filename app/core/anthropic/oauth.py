@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlencode
 
@@ -129,6 +129,7 @@ async def refresh_anthropic_access_token(
     client_id: str | None = None,
     scope: str | None = None,
     session: aiohttp.ClientSession | None = None,
+    on_exchange_start: Callable[[], None] | None = None,
 ) -> TokenRefreshResult:
     settings = get_settings()
     payload = {
@@ -144,6 +145,7 @@ async def refresh_anthropic_access_token(
             timeout_seconds=settings.oauth_timeout_seconds,
             session=session,
             error_prefix="Token refresh",
+            on_exchange_start=on_exchange_start,
         )
     except OAuthError as exc:
         raise RefreshError(
@@ -183,6 +185,7 @@ async def _post_token_request(
     timeout_seconds: float | None,
     session: aiohttp.ClientSession | None,
     error_prefix: str,
+    on_exchange_start: Callable[[], None] | None = None,
 ) -> AnthropicOAuthTokenPayload:
     settings = get_settings()
     # Claude Code posts the token request as JSON; Anthropic rejects a
@@ -197,13 +200,20 @@ async def _post_token_request(
     request_id = get_request_id()
     if request_id:
         headers["x-request-id"] = request_id
+    exchange_started = False
+
+    def start_exchange() -> None:
+        nonlocal exchange_started
+        exchange_started = True
+        if on_exchange_start:
+            on_exchange_start()
+
     try:
         async with lease_http_session(session) as client_session:
+            start_exchange()
             async with client_session.post(token_url, data=encoded, headers=headers, timeout=timeout) as resp:
                 try:
                     data = await _safe_json(resp)
-                except (aiohttp.ClientError, asyncio.TimeoutError):
-                    raise
                 except Exception as exc:
                     if resp.status >= 400:
                         raise OAuthError(
@@ -221,6 +231,10 @@ async def _post_token_request(
                 except ValidationError as exc:
                     raise OAuthError("invalid_response", f"{error_prefix} response invalid") from exc
     except OAuthError:
+        raise
+    except RuntimeError as exc:
+        if not exchange_started:
+            raise OAuthError("transport_error", "HTTP client unavailable", phase=ExchangePhase.PRE_SEND) from exc
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
         message = str(exc) or exc.__class__.__name__

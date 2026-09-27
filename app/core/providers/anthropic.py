@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import aiohttp
@@ -48,6 +49,7 @@ class AnthropicProvider:
         refresh_token: str,
         *,
         session: aiohttp.ClientSession | None = None,
+        on_exchange_start: Callable[[], None] | None = None,
     ) -> TokenRefreshResult:
         oauth_config = self.oauth_config()
         return await refresh_anthropic_access_token(
@@ -56,6 +58,7 @@ class AnthropicProvider:
             client_id=oauth_config.client_id,
             scope=get_settings().anthropic_oauth_refresh_scope,
             session=session,
+            on_exchange_start=on_exchange_start,
         )
 
     def account_metadata_from_id_token(self, id_token: str | None) -> AccountMetadata:

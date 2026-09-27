@@ -18,6 +18,7 @@ from app.db.models import Account, AccountStatus
 from app.modules.accounts import auth_manager as auth_manager_module
 from app.modules.accounts import pulse as pulse_module
 from app.modules.accounts.auth_manager import (
+    _ACCESS_TOKEN_SERVING_MARGIN_SECONDS,
     AccountNotOwnedError,
     AuthManager,
     access_token_hard_expired,
@@ -182,13 +183,10 @@ async def test_non_owner_fresh_token_skips_refresh_without_error(
 async def test_non_owner_within_margin_unexpired_token_returns_unrefreshed(
     monkeypatch: pytest.MonkeyPatch, _oauth_call_spy: list[str]
 ) -> None:
-    # Expires in 100s: within the 300s proactive _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS
-    # (which would trigger an owner refresh) but well outside the 30s hard-expiry
-    # skew — a non-owner must still be able to serve this token.
     _patch_local_instance_id(monkeypatch, _LOCAL_INSTANCE_ID)
     account = _account(
         owner_instance=_OTHER_INSTANCE_ID,
-        access_token=_jwt_with_exp(time.time() + 100),
+        access_token=_jwt_with_exp(time.time() + _ACCESS_TOKEN_SERVING_MARGIN_SECONDS + 60),
     )
     original_access_token_encrypted = account.access_token_encrypted
     manager = AuthManager(_Repo([account]))
@@ -196,6 +194,11 @@ async def test_non_owner_within_margin_unexpired_token_returns_unrefreshed(
     returned = await manager.ensure_fresh(account, force=False)
 
     assert returned.access_token_encrypted == original_access_token_encrypted
+    account.access_token_encrypted = TokenEncryptor().encrypt(
+        _jwt_with_exp(time.time() + _ACCESS_TOKEN_SERVING_MARGIN_SECONDS - 60)
+    )
+    with pytest.raises(AccountNotOwnedError):
+        await manager.ensure_fresh(account, force=False)
     assert _oauth_call_spy == []
 
 
@@ -288,13 +291,19 @@ def test_is_locally_owned_helper(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_access_token_hard_expired_helper() -> None:
     encryptor = TokenEncryptor()
-    within_margin_account = _account(access_token=_jwt_with_exp(time.time() + 100))
+    outside_margin_account = _account(
+        access_token=_jwt_with_exp(time.time() + _ACCESS_TOKEN_SERVING_MARGIN_SECONDS + 60)
+    )
+    within_margin_account = _account(
+        access_token=_jwt_with_exp(time.time() + _ACCESS_TOKEN_SERVING_MARGIN_SECONDS - 60)
+    )
     hard_expired_account = _account(access_token=_jwt_with_exp(time.time() - 10))
     no_expiry_claim_account = _account(access_token="opaque-token-without-exp-claim")
     missing_token_account = _account()
     missing_token_account.access_token_encrypted = b""
 
-    assert not access_token_hard_expired(encryptor, within_margin_account)
+    assert not access_token_hard_expired(encryptor, outside_margin_account)
+    assert access_token_hard_expired(encryptor, within_margin_account)
     assert access_token_hard_expired(encryptor, hard_expired_account)
     assert not access_token_hard_expired(encryptor, no_expiry_claim_account)
     assert access_token_hard_expired(encryptor, missing_token_account)

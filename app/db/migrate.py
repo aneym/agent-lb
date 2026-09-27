@@ -756,7 +756,9 @@ def downgrade_refresh_intent_for_rollback(database_url: str) -> str:
     """
     config = _build_alembic_config(database_url)
     revision = "20260926_000000_refresh_intent_expiry"
-    parent = "20260925_020000_add_account_resume_schedules"
+    parent = ScriptDirectory.from_config(config).get_revision(revision).down_revision
+    if not isinstance(parent, str):
+        raise MigrationBootstrapError("Refresh-intent rollback requires a single parent revision")
     if _read_current_revision(_required_sqlalchemy_url(config)) != revision:
         raise MigrationBootstrapError("Refresh-intent rollback requires its exact migration head")
     command.downgrade(config, parent)

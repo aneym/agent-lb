@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -100,6 +101,7 @@ async def refresh_access_token(
     route: ResolvedUpstreamRoute | None = None,
     codex_client: CodexClient | None = None,
     allow_direct_egress: bool = False,
+    on_exchange_start: Callable[[], None] | None = None,
 ) -> TokenRefreshResult:
     settings = get_settings()
     url = f"{settings.auth_base_url.rstrip('/')}/oauth/token"
@@ -120,11 +122,20 @@ async def refresh_access_token(
         allow_direct_egress=allow_direct_egress,
         operation="token refresh",
     )
+    exchange_started = False
+
+    def start_exchange() -> None:
+        nonlocal exchange_started
+        exchange_started = True
+        if on_exchange_start:
+            on_exchange_start()
+
     try:
         if route is not None:
             owns_codex_client = codex_client is None
             active_codex_client = codex_client or CodexClient(create_codex_session())
             try:
+                start_exchange()
                 resp = await active_codex_client.request(
                     "POST",
                     url,
@@ -153,28 +164,44 @@ async def refresh_access_token(
                 if owns_codex_client:
                     await active_codex_client.close()
         else:
-            async with lease_http_session(session) as client_session:
-                async with client_session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                    try:
-                        data = await _safe_json(resp)
-                    except (aiohttp.ClientError, asyncio.TimeoutError):
-                        raise
-                    except Exception as exc:
+            try:
+                async with lease_http_session(session) as client_session:
+                    start_exchange()
+                    async with client_session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                        try:
+                            data = await _safe_json(resp)
+                        except Exception as exc:
+                            if resp.status >= 400:
+                                raise RefreshError(
+                                    f"http_{resp.status}",
+                                    f"Token refresh failed ({resp.status})",
+                                    False,
+                                    phase=ExchangePhase.ANSWERED,
+                                    status_code=resp.status,
+                                ) from exc
+                            raise RefreshError("invalid_response", "Refresh response unreadable", False) from exc
                         if resp.status >= 400:
-                            raise RefreshError(
-                                f"http_{resp.status}",
-                                f"Token refresh failed ({resp.status})",
-                                False,
-                                phase=ExchangePhase.ANSWERED,
-                                status_code=resp.status,
-                            ) from exc
-                        raise RefreshError("invalid_response", "Refresh response unreadable", False) from exc
-                    if resp.status >= 400:
-                        raise _refresh_error_from_data(data, resp.status)
-                    payload_data = _validate_token_payload(data)
+                            raise _refresh_error_from_data(data, resp.status)
+                        payload_data = _validate_token_payload(data)
+            except RuntimeError as exc:
+                if not exchange_started:
+                    raise RefreshError(
+                        "transport_error", "HTTP client unavailable", False, phase=ExchangePhase.PRE_SEND
+                    ) from exc
+                raise
     except RefreshError:
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError, CodexTransportError) as exc:
+        if isinstance(exc, CodexTransportError) and exc.status_code is not None and exc.status_code >= 200:
+            if exc.status_code < 400:
+                raise RefreshError("invalid_response", "Refresh response unreadable", False) from exc
+            raise RefreshError(
+                f"http_{exc.status_code}",
+                f"Token refresh failed ({exc.status_code})",
+                False,
+                phase=ExchangePhase.ANSWERED,
+                status_code=exc.status_code,
+            ) from exc
         message = str(exc) or exc.__class__.__name__
         raise RefreshError(
             "transport_error",
@@ -242,9 +269,8 @@ async def _safe_codex_json(resp: object) -> JsonObject:
             import json
 
             data = json.loads(text_value)
-    except Exception:
-        text_value = getattr(resp, "text", "")
-        return {"error": {"message": str(text_value).strip()}}
+    except Exception as exc:
+        raise ValueError("Token response could not be parsed") from exc
     return data if isinstance(data, dict) else {"error": {"message": str(data)}}
 
 

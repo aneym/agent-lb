@@ -67,15 +67,25 @@ class _Repo:
     async def get_by_id(self, account_id: str) -> Account | None:
         return self._accounts.get(account_id)
 
-    async def update_status(
+    async def update_status_if_current(
         self,
         account_id: str,
         status: AccountStatus,
         deactivation_reason: str | None = None,
         reset_at: int | None = None,
+        *,
+        expected_status: AccountStatus,
+        expected_deactivation_reason: str | None = None,
+        expected_reset_at: int | None = None,
+        expected_blocked_at: int | None = None,
     ) -> bool:
-        del reset_at
+        del reset_at, expected_reset_at, expected_blocked_at
+        current = self._accounts[account_id]
+        if current.status != expected_status or current.deactivation_reason != expected_deactivation_reason:
+            return False
         self.status_updates.append((account_id, status, deactivation_reason))
+        current.status = status
+        current.deactivation_reason = deactivation_reason
         return True
 
     async def update_subscription_ledger(self, account_id: str, **kwargs: Any) -> bool:
@@ -325,6 +335,33 @@ def _quiet_side_effects(monkeypatch: pytest.MonkeyPatch) -> _SelectionCache:
         staticmethod(lambda *args, **kwargs: None),
     )
     return cache
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("initial_status", "initial_reason", "verdict"),
+    [
+        (AccountStatus.DEACTIVATED, None, ProbeVerdict.HEALTHY),
+        (AccountStatus.ACTIVE, "stale", ProbeVerdict.HEALTHY),
+        (AccountStatus.REAUTH_REQUIRED, None, ProbeVerdict.UNSUBSCRIBED),
+        (AccountStatus.ACTIVE, None, ProbeVerdict.DISCONNECTED),
+    ],
+)
+async def test_pulse_status_writes_do_not_clear_concurrent_exchange(
+    initial_status: AccountStatus, initial_reason: str | None, verdict: ProbeVerdict
+) -> None:
+    snapshot = _account(status=initial_status)
+    snapshot.deactivation_reason = initial_reason
+    stored = _account(status=AccountStatus.EXCHANGE_UNCERTAIN)
+    stored.deactivation_reason = "Refresh exchange outcome uncertain"
+    repo = _Repo([stored])
+    scheduler = _build_scheduler(repo, probe_results={snapshot.id: (200, None)})
+
+    await scheduler._apply_verdict(repo, snapshot, verdict, 401 if verdict is ProbeVerdict.DISCONNECTED else 200, None)
+
+    assert stored.status == AccountStatus.EXCHANGE_UNCERTAIN
+    assert stored.deactivation_reason == "Refresh exchange outcome uncertain"
+    assert repo.status_updates == []
 
 
 def test_classify_probe_result_covers_all_verdicts() -> None:

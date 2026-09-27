@@ -1866,8 +1866,9 @@ async def test_select_account_skips_stale_persistence_after_terminal_status_upda
         expected_reset_at: int | None = None,
         expected_blocked_at: int | None | object = _UNSET,
     ) -> bool:
-        persist_blocked.set()
-        await release_persist.wait()
+        if asyncio.current_task() is select_task:
+            persist_blocked.set()
+            await release_persist.wait()
         return await original_update_status_if_current(
             account_id,
             status,

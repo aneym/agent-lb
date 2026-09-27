@@ -509,6 +509,9 @@ class AccountsRepository:
         stmt = update(Account).where(Account.id == account_id)
         if expected_refresh_token_encrypted is not None:
             stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
+        elif status != AccountStatus.EXCHANGE_UNCERTAIN:
+            # Only exchange resolution may clear an uncertain refresh outcome.
+            stmt = stmt.where(Account.status != AccountStatus.EXCHANGE_UNCERTAIN)
         result = await self._session.execute(stmt.values(**values).returning(Account.id))
         await self._session.commit()
         return result.scalar_one_or_none() is not None
@@ -550,6 +553,8 @@ class AccountsRepository:
             .values(**values)
             .returning(Account.id)
         )
+        if expected_status == AccountStatus.EXCHANGE_UNCERTAIN and status != expected_status:
+            return False
         if expected_deactivation_reason is None:
             stmt = stmt.where(Account.deactivation_reason.is_(None))
         else:

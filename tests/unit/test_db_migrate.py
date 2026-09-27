@@ -1101,7 +1101,7 @@ def test_routing_policy_persistence_downgrade_does_not_drop_shared_columns(monke
 def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> None:
     """The pre-pin schema is bootable only after the new build removes its Alembic head."""
     url = _db_url(tmp_path / "refresh-rollback.db")
-    parent = "20260925_020000_add_account_resume_schedules"
+    parent = "20260926_200000_add_team_pool_share"
     run_upgrade(url, "head", bootstrap_legacy=False)
     engine = create_engine(to_sync_database_url(url))
     try:
@@ -1119,13 +1119,23 @@ def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> N
                     "VALUES ('uncertain', 'hash', '2026-09-26 00:00:00')"
                 )
             )
+            connection.execute(
+                text("INSERT INTO team_members (id, name, pool_share_percent) VALUES ('member', 'member', 37.5)")
+            )
         assert migrate_module.downgrade_refresh_intent_for_rollback(url) == parent
         assert migrate_module.current_revision(url) == parent
         with engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT status FROM accounts WHERE id='uncertain'")).scalar_one()
-                == "deactivated"
+                == "reauth_required"
             )
+            assert (
+                connection.execute(text("SELECT pool_share_percent FROM team_members WHERE id='member'")).scalar_one()
+                == 37.5
+            )
+            assert "pool_share_percent" in {
+                column["name"] for column in inspect(connection).get_columns("team_members")
+            }
             assert not inspect(connection).has_table("account_exchange_intents")
         with pytest.raises(migrate_module.MigrationBootstrapError):
             migrate_module.downgrade_refresh_intent_for_rollback(url)
@@ -1136,7 +1146,7 @@ def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> N
 def test_transfer_abort_states_upgrade_and_downgrade(tmp_path: Path) -> None:
     """Both transfer states survive upgrade and map to a compatible old state on rollback."""
     url = _db_url(tmp_path / "transfer-abort.db")
-    parent = "20260925_020000_add_account_resume_schedules"
+    parent = "20260926_200000_add_team_pool_share"
     head = "20260926_000000_refresh_intent_expiry"
     run_upgrade(url, parent, bootstrap_legacy=False)
     run_upgrade(url, head, bootstrap_legacy=False)

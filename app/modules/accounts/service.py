@@ -36,7 +36,7 @@ from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts import probes, reset_credit_cache
-from app.modules.accounts.auth_manager import AuthManager, _expiry_datetime
+from app.modules.accounts.auth_manager import AuthManager, _expiry_datetime, is_locally_owned
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     credits_exhausted,
@@ -949,6 +949,8 @@ class AccountsService:
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return None
+        if not is_locally_owned(account, get_settings()):
+            raise AccountResetCreditsUnavailableError("Account is not locally owned and cannot use reset credits")
         if override_daily_limit and trigger != "manual":
             raise AccountResetCreditsUnavailableError("Only manual redemption may override the Claude daily limit")
         if override_daily_limit and normalize_provider_name(account.provider) != ANTHROPIC_PROVIDER_NAME:
@@ -1089,6 +1091,8 @@ class AccountsService:
         trigger: str,
         override_daily_limit: bool,
     ) -> AccountResetCreditConsumeResponse:
+        if not is_locally_owned(account, get_settings()):
+            raise AccountResetCreditsUnavailableError("Account is not locally owned and cannot use reset credits")
         account_id = account.id
         token = self._encryptor.decrypt(account.access_token_encrypted)
         attempts = self._reset_attempts or ResetCreditAttemptsRepository(self._repo.session)
