@@ -207,6 +207,10 @@ class ApiKeyValidationError(ValueError):
     pass
 
 
+class MemberKeyScopeRequiredError(ApiKeyValidationError):
+    """A key that belongs to a team member must keep at least one assigned account."""
+
+
 class ApiKeyRateLimitExceededError(ValueError):
     def __init__(self, *, message: str, reset_at: datetime) -> None:
         super().__init__(message)
@@ -420,6 +424,8 @@ class ApiKeysService:
         plain_key = _generate_plain_key()
         normalized_allowed_models = _normalize_allowed_models(payload.allowed_models)
         assigned_account_ids = await self._resolve_assigned_account_ids(payload.assigned_account_ids)
+        if payload.member_id is not None and not assigned_account_ids:
+            raise MemberKeyScopeRequiredError("A team member key needs at least one assigned account")
         enforced_model = _normalize_model_slug(payload.enforced_model)
         enforced_reasoning_effort = _normalize_reasoning_effort(payload.enforced_reasoning_effort)
         enforced_service_tier = _normalize_service_tier(payload.enforced_service_tier)
@@ -515,6 +521,8 @@ class ApiKeysService:
             allowed_models = None
         if payload.assigned_account_ids_set:
             assigned_account_ids = await self._resolve_assigned_account_ids(payload.assigned_account_ids)
+            if existing.member_id is not None and not assigned_account_ids:
+                raise MemberKeyScopeRequiredError("A team member key needs at least one assigned account")
             account_assignment_scope_enabled: bool | _Unset = bool(assigned_account_ids)
         else:
             assigned_account_ids = None

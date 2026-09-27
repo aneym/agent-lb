@@ -52,9 +52,17 @@ async def test_untrusted_member_lifecycle_through_proxy_routes(async_client, app
     created = await async_client.post("/api/team/members", json={"name": "Member", "costCapDayUsd": 5})
     assert created.status_code == 200, created.text
     member_id = created.json()["id"]
+    auth_json = _account_auth_json()
+    imported = await async_client.post(
+        "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    )
+    assert imported.status_code == 200, imported.text
+    account_id = imported.json()["accountId"]
     keys = []
     for name in ("laptop", "desktop"):
-        issued = await async_client.post(f"/api/team/members/{member_id}/keys", json={"name": name})
+        issued = await async_client.post(
+            f"/api/team/members/{member_id}/keys", json={"name": name, "assignedAccountIds": [account_id]}
+        )
         assert issued.status_code == 200, issued.text
         keys.append(issued.json())
 
@@ -190,14 +198,17 @@ async def test_member_header_chatgpt_bearer_is_not_upstream_or_persisted(
     assert (await async_client.put("/api/settings", json={"teamModeEnabled": True})).status_code == 200
     created = await async_client.post("/api/team/members", json={"name": "Member"})
     assert created.status_code == 200, created.text
-    issued = await async_client.post(f"/api/team/members/{created.json()['id']}/keys", json={"name": "Desktop"})
-    assert issued.status_code == 200, issued.text
-    key = issued.json()
     auth_json = _account_auth_json()
     imported = await async_client.post(
         "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     )
     assert imported.status_code == 200, imported.text
+    issued = await async_client.post(
+        f"/api/team/members/{created.json()['id']}/keys",
+        json={"name": "Desktop", "assignedAccountIds": [imported.json()["accountId"]]},
+    )
+    assert issued.status_code == 200, issued.text
+    key = issued.json()
 
     captured_headers: list[dict[str, str]] = []
 
@@ -291,14 +302,17 @@ async def test_member_header_websocket_bearer_is_not_upstream_or_persisted(
     assert (await async_client.put("/api/settings", json={"teamModeEnabled": True})).status_code == 200
     created = await async_client.post("/api/team/members", json={"name": "Member"})
     assert created.status_code == 200, created.text
-    issued = await async_client.post(f"/api/team/members/{created.json()['id']}/keys", json={"name": "Desktop"})
-    assert issued.status_code == 200, issued.text
-    key = issued.json()
     auth_json = _account_auth_json()
     imported = await async_client.post(
         "/api/accounts/import", files={"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
     )
     assert imported.status_code == 200, imported.text
+    issued = await async_client.post(
+        f"/api/team/members/{created.json()['id']}/keys",
+        json={"name": "Desktop", "assignedAccountIds": [imported.json()["accountId"]]},
+    )
+    assert issued.status_code == 200, issued.text
+    key = issued.json()
 
     captured_headers: list[dict[str, str]] = []
 

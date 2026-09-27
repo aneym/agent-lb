@@ -9,7 +9,7 @@ from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
 from app.dependencies import TeamContext, get_team_context
 from app.modules.api_keys.api import _to_response as _api_key_to_response
 from app.modules.api_keys.schemas import ApiKeyCreateResponse
-from app.modules.api_keys.service import ApiKeyCreateData, ApiKeyValidationError
+from app.modules.api_keys.service import ApiKeyCreateData, ApiKeyValidationError, MemberKeyScopeRequiredError
 from app.modules.team.schemas import (
     TeamMemberCreateRequest,
     TeamMemberKeyCreateRequest,
@@ -249,8 +249,11 @@ async def create_team_member_key(
                 allowed_models=None,
                 expires_at=payload.expires_at,
                 member_id=member.id,
+                assigned_account_ids=payload.assigned_account_ids,
             )
         )
+    except MemberKeyScopeRequiredError as exc:
+        raise DashboardBadRequestError(str(exc), code="member_key_scope_required") from exc
     except ApiKeyValidationError as exc:
         raise DashboardBadRequestError(str(exc), code="invalid_api_key_payload") from exc
 
@@ -259,7 +262,11 @@ async def create_team_member_key(
     AuditService.log_async(
         "team_member_key_created",
         actor_ip=request.client.host if request.client else None,
-        details={"member_id": member.id, "key_id": created.id},
+        details={
+            "member_id": member.id,
+            "key_id": created.id,
+            "assigned_account_count": len(created.assigned_account_ids),
+        },
     )
     response = _api_key_to_response(created)
     return ApiKeyCreateResponse(**response.model_dump(), key=created.key)

@@ -47,7 +47,15 @@ def identity_env(monkeypatch):
     get_settings.cache_clear()
 
 
-async def _create_key(*, name: str, member_name: str | None = None) -> str:
+async def _create_key(*, name: str, member_name: str | None = None, account_id: str | None = None) -> str:
+    if member_name is not None and account_id is None:
+        account_id = f"account-{uuid4().hex}"
+        await _insert_account(
+            account_id=account_id,
+            provider="openai",
+            access_token="example-access",
+            email=f"{account_id}@example.com",
+        )
     async with SessionLocal() as session:
         member_id = None
         if member_name is not None:
@@ -56,7 +64,13 @@ async def _create_key(*, name: str, member_name: str | None = None) -> str:
             session.add(TeamMember(id=member_id, name=member_name, created_at=utcnow(), updated_at=utcnow()))
             await session.commit()
         created = await ApiKeysService(ApiKeysRepository(session)).create_key(
-            ApiKeyCreateData(name=name, allowed_models=None, expires_at=None, member_id=member_id)
+            ApiKeyCreateData(
+                name=name,
+                allowed_models=None,
+                expires_at=None,
+                member_id=member_id,
+                assigned_account_ids=[account_id] if member_id is not None and account_id is not None else None,
+            )
         )
     return created.key
 
@@ -259,13 +273,13 @@ async def test_owner_forward_without_identity_records_no_machine(identity_env, a
 
 @pytest.mark.asyncio
 async def test_anthropic_request_log_names_the_member(identity_env, async_client, monkeypatch):
-    member_key = await _create_key(name="key-label-3", member_name="member-c")
     await _insert_account(
         account_id="anthropic-account",
         provider="anthropic",
         access_token="anthropic-access",
         email="claude@example.com",
     )
+    member_key = await _create_key(name="key-label-3", member_name="member-c", account_id="anthropic-account")
 
     def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
         del self, session, provider_name, json_body

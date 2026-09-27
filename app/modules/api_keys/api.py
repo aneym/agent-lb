@@ -26,6 +26,7 @@ from app.modules.api_keys.service import (
     ApiKeyUpdateData,
     ApiKeyValidationError,
     LimitRuleInput,
+    MemberKeyScopeRequiredError,
 )
 
 router = APIRouter(
@@ -213,6 +214,8 @@ async def update_api_key(
         row = await context.service.update_key(key_id, update)
     except ApiKeyNotFoundError as exc:
         raise DashboardNotFoundError(str(exc)) from exc
+    except MemberKeyScopeRequiredError as exc:
+        raise DashboardBadRequestError(str(exc), code="member_key_scope_required") from exc
     except ApiKeyValidationError as exc:
         raise DashboardBadRequestError(str(exc), code="invalid_api_key_payload") from exc
     if "is_active" in fields and payload.is_active is False and row.is_active is False:

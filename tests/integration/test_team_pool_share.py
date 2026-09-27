@@ -202,9 +202,11 @@ async def test_pool_share_api_usage_and_websocket_handshake(async_client, app_in
     for invalid in (0, -1, 0.0004, 0.0011, 100.001):
         response = await async_client.patch(f"/api/team/members/{member_id}", json={"poolSharePercent": invalid})
         assert response.status_code == 422
-    key = (await async_client.post(f"/api/team/members/{member_id}/keys", json={})).json()
     async with SessionLocal() as session:
         await _seed_account(session, "a", now, used=80, length=300, reset=now + timedelta(hours=2))
+        await session.commit()
+    key = (await async_client.post(f"/api/team/members/{member_id}/keys", json={"assignedAccountIds": ["a"]})).json()
+    async with SessionLocal() as session:
         session.add(_log("a", key["id"], now, 10, 100))
         await session.commit()
     reset_pool_share_cache()
@@ -244,11 +246,11 @@ async def test_pool_share_api_usage_and_websocket_handshake(async_client, app_in
 async def test_pool_share_existing_websocket_emits_over_cap_on_next_turn(async_client, app_instance):
     now = utcnow().replace(microsecond=0)
     member = (await async_client.post("/api/team/members", json={"name": "Ada", "poolSharePercent": 10})).json()
-    key = (await async_client.post(f"/api/team/members/{member['id']}/keys", json={})).json()
     async with SessionLocal() as session:
         await _seed_account(session, "a", now, used=80, length=300, reset=now + timedelta(hours=2))
         await session.execute(delete(RequestLog).where(RequestLog.account_id == "a"))
         await session.commit()
+    key = (await async_client.post(f"/api/team/members/{member['id']}/keys", json={"assignedAccountIds": ["a"]})).json()
     assert (await async_client.put("/api/settings", json={"teamModeEnabled": True})).status_code == 200
     reset_pool_share_cache()
     for route in ("/backend-api/codex/responses", "/v1/responses"):
