@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from unittest.mock import patch
@@ -834,3 +836,58 @@ async def test_relogin_during_exchange_returns_rotated_account(db_setup, monkeyp
     async with SessionLocal() as session:
         stored = await session.get(Account, account_id)
         assert encryptor.decrypt(stored.refresh_token_encrypted) == "relogin-refresh"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_account(db_setup, monkeypatch, session_kind):
+    # ensure_fresh backfills chatgpt_account_id from the id token; a token rotation that lands
+    # first makes that compare-and-swap lose, and the rotated account comes back instead.
+    account_id = f"backfill-race-{session_kind}"
+    encryptor = TokenEncryptor()
+    claims = base64.urlsafe_b64encode(json.dumps({"chatgpt_account_id": "acct-backfill"}).encode()).decode().rstrip("=")
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(
+            Account(
+                id=account_id,
+                provider="openai",
+                email=f"{account_id}@example.invalid",
+                plan_type="plus",
+                access_token_encrypted=encryptor.encrypt("access"),
+                refresh_token_encrypted=encryptor.encrypt("refresh"),
+                id_token_encrypted=encryptor.encrypt(f"header.{claims}.signature"),
+                last_refresh=utcnow(),
+                access_expires_at=utcnow() + timedelta(hours=1),
+                status=AccountStatus.ACTIVE,
+            )
+        )
+        await session.execute(text("UPDATE accounts SET chatgpt_account_id = NULL WHERE id = :id"), {"id": account_id})
+        await session.commit()
+    original_update_tokens = AccountsRepository.update_tokens
+    rotated = False
+
+    async def rotate_then_update(self, *args, **kwargs):
+        nonlocal rotated
+        if not rotated:
+            rotated = True
+            async with SessionLocal() as other:
+                assert await original_update_tokens(
+                    AccountsRepository(other),
+                    account_id,
+                    encryptor.encrypt("rotated-access"),
+                    encryptor.encrypt("rotated-refresh"),
+                    None,
+                    utcnow(),
+                )
+        return await original_update_tokens(self, *args, **kwargs)
+
+    monkeypatch.setattr(AccountsRepository, "update_tokens", rotate_then_update)
+    session_scope = get_background_session() if session_kind == "background" else SessionLocal()
+    async with session_scope as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert account is not None and account.chatgpt_account_id is None
+        fresh = await AuthManager(repo).ensure_fresh(account)
+    assert rotated
+    assert encryptor.decrypt(fresh.refresh_token_encrypted) == "rotated-refresh"
+    assert fresh.status == AccountStatus.ACTIVE

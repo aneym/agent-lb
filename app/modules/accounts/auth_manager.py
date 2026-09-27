@@ -724,7 +724,7 @@ class AuthManager:
             if not updated:
                 latest = await self._repo.reload_by_id(account.id)
                 if latest is not None:
-                    return latest
+                    return _snapshot(self._repo, latest)
         except Exception:
             logger.warning("Failed to persist chatgpt_account_id account_id=%s", account.id, exc_info=True)
         return account
