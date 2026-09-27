@@ -370,7 +370,11 @@ def test_pools_exits_one_when_neither_endpoint_answers(home: Path) -> None:
     assert "/api/pools unavailable" in result.stderr
 
 
-FAST_PROBES = {"ROUTE_CURSOR_CMD": "/bin/echo cursor-ok", "ROUTE_CODEX_CMD": "/bin/echo codex-ok"}
+FAST_PROBES = {
+    "ROUTE_CURSOR_CMD": "/bin/echo cursor-ok",
+    "ROUTE_DEVIN_CMD": "/bin/echo devin-ok",
+    "ROUTE_CODEX_CMD": "/bin/echo codex-ok",
+}
 
 BUSY_429 = {
     "__status": 429,
@@ -538,7 +542,7 @@ def test_doctor_write_against_an_unreachable_lb_exits_one_and_writes_the_alert(h
         "doctor",
         "--write",
         home=home,
-        extra={"ROUTE_CURSOR_CMD": "/bin/echo cursor-ok", "ROUTE_CODEX_CMD": "/bin/echo codex-ok"},
+        extra=FAST_PROBES,
     )
 
     assert result.returncode == 1, result.stdout + result.stderr
@@ -566,7 +570,7 @@ def test_doctor_clears_the_alert_when_every_probe_passes(home: Path, tmp_path: P
         "--write",
         home=home,
         fixtures=fixtures,
-        extra={"ROUTE_CURSOR_CMD": "/bin/echo cursor-ok", "ROUTE_CODEX_CMD": "/bin/echo codex-ok"},
+        extra=FAST_PROBES,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -576,11 +580,23 @@ def test_doctor_clears_the_alert_when_every_probe_passes(home: Path, tmp_path: P
     assert state["seats"]["opus-seat"]["ok"] is True
 
 
+def test_doctor_never_runs_the_host_cursor_or_devin_cli(home: Path) -> None:
+    # 2026-09-27: doctor tests ran the host's real cursor-agent under a temporary HOME, and its keychain
+    # probe popped macOS "Keychain Not Found" dialogs. conftest puts failing stand-ins first on PATH.
+    from tests.conftest import VENDOR_CLI_STUB_EXIT
+
+    result = run("doctor", home=home, extra={"ROUTE_CODEX_CMD": "/bin/echo codex-ok"})
+
+    probes = {probe["name"]: probe for probe in json.loads(result.stdout)["probes"]}
+    assert probes["cursor-agent"]["error"] == f"exit {VENDOR_CLI_STUB_EXIT}"
+    assert probes["devin"]["error"] == f"exit {VENDOR_CLI_STUB_EXIT}"
+
+
 def test_doctor_without_write_prints_the_state_and_touches_nothing(home: Path) -> None:
     result = run(
         "doctor",
         home=home,
-        extra={"ROUTE_CURSOR_CMD": "/bin/echo cursor-ok", "ROUTE_CODEX_CMD": "/bin/echo codex-ok"},
+        extra=FAST_PROBES,
     )
 
     assert result.returncode == 1
@@ -1250,7 +1266,7 @@ def test_seats_lists_data_without_lb(tmp_path: Path) -> None:
 
 def test_doctor_reports_applied_rules(tmp_path: Path) -> None:
     p = policy_clone(tmp_path)
-    env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
+    env = {"AGENT_LB_POLICY_SRC": str(p["clone"]), **FAST_PROBES}
     result = run("doctor", home=tmp_path, fixtures=p["fixtures"], extra=env)
     assert result.returncode == 1
     assert json.loads(result.stdout)["rules"] == {

@@ -25,6 +25,20 @@ os.environ["AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED"] = "false"
 os.environ["AGENT_LB_ACCOUNTS_CACHE_WARMER_ENABLED"] = "false"
 # The seat CLI state on the host (registered Cursor/Devin accounts) must not leak into /api/pools.
 os.environ["AGENT_LB_SEAT_STATE"] = str(Path(tempfile.gettempdir()) / "agent-lb-tests-no-seat-state.json")
+# Tests never run the host's real Cursor or Devin CLI. Under a test's temporary HOME, cursor-agent's startup
+# keychain probe finds no default keychain and macOS pops a "Keychain Not Found" dialog on the host (2026-09-27).
+# These stand-ins come first on PATH and fail the same way on every machine, so a test that forgets to set its
+# command (ROUTE_CURSOR_CMD, ROUTE_DEVIN_CMD, SEAT_CURSOR_BIN, ...) fails visibly instead of reaching the host CLI.
+VENDOR_CLI_STUBS = Path(tempfile.mkdtemp(prefix="agent-lb-vendor-cli-stubs-"))
+VENDOR_CLI_STUB_EXIT = 97
+for _name in ("cursor-agent", "agent", "devin"):
+    _stub = VENDOR_CLI_STUBS / _name
+    _stub.write_text(
+        f"#!/bin/sh\necho 'agent-lb tests never run the real {_name} CLI; set its command in the test' >&2\n"
+        f"exit {VENDOR_CLI_STUB_EXIT}\n"
+    )
+    _stub.chmod(0o755)
+os.environ["PATH"] = f"{VENDOR_CLI_STUBS}{os.pathsep}{os.environ.get('PATH', '')}"
 
 from app.db.models import Base  # noqa: E402
 from app.db.session import engine  # noqa: E402
