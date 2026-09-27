@@ -897,7 +897,9 @@ async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_accou
 @pytest.mark.parametrize("session_kind", ["session_local", "background"])
 async def test_account_deleted_before_ensure_fresh_returns_detached_copy(db_setup, session_kind):
     # The row loaded by the caller's session disappears before ensure_fresh reloads it;
-    # the account handed back must stay readable after that session closes.
+    # the account handed back must stay readable after that session closes. This pins
+    # readability only: ensure_fresh serving a just-deleted account is unchanged from
+    # before this fix, and whether it should refuse one instead is a separate decision.
     account_id = f"deleted-before-fresh-{session_kind}"
     encryptor = TokenEncryptor()
     async with SessionLocal() as session:
@@ -924,6 +926,5 @@ async def test_account_deleted_before_ensure_fresh_returns_detached_copy(db_setu
         async with SessionLocal() as other:
             assert await AccountsRepository(other).delete(account_id)
         fresh = await AuthManager(repo).ensure_fresh(account)
-    assert fresh.id == account_id
-    assert fresh.status == AccountStatus.ACTIVE
-    assert encryptor.decrypt(fresh.refresh_token_encrypted) == "refresh"
+    columns = {column.key: getattr(fresh, column.key) for column in Account.__table__.columns}
+    assert columns["id"] == account_id
