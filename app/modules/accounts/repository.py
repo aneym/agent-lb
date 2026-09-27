@@ -744,6 +744,31 @@ class AccountsRepository:
             )
         ).scalar_one_or_none()
 
+    async def drop_stale_exchange_intent(self, account_id: str, stale_hash: str, expected_token: bytes) -> bool:
+        """Retire a fence for a token the account no longer holds, under the account lock."""
+        account = (
+            await self._session.execute(
+                select(Account.refresh_token_encrypted, Account.status)
+                .where(Account.id == account_id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if (
+            account is None
+            or account.refresh_token_encrypted != expected_token
+            or account.status == AccountStatus.EXCHANGE_UNCERTAIN
+        ):
+            await self._session.rollback()
+            return False
+        result = await self._session.execute(
+            delete(AccountExchangeIntent).where(
+                AccountExchangeIntent.account_id == account_id,
+                AccountExchangeIntent.refresh_token_sha256 == stale_hash,
+            )
+        )
+        await self._session.commit()
+        return result.rowcount == 1
+
     async def begin_exchange(
         self,
         account_id: str,

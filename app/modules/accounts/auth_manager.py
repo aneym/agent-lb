@@ -50,6 +50,8 @@ class AccountsRepositoryPort(Protocol):
 
     async def exchange_intent_hash(self, account_id: str) -> str | None: ...
 
+    async def drop_stale_exchange_intent(self, account_id: str, stale_hash: str, expected_token: bytes) -> bool: ...
+
     async def begin_exchange(
         self,
         account_id: str,
@@ -385,9 +387,15 @@ class AuthManager:
                 30.0,  # CodexClient's refresh-request timeout is bounded by the configured token timeout.
             )
             intent = await self._repo.exchange_intent_window(account.id, timeout)
-            if intent is not None:
-                if intent.token_hash != token_hash:
+            if intent is not None and intent.token_hash != token_hash:
+                if account.status != AccountStatus.EXCHANGE_UNCERTAIN and await self._repo.drop_stale_exchange_intent(
+                    account.id, intent.token_hash, expected_refresh_token_encrypted
+                ):
+                    logger.info("Dropped stale exchange intent account_id=%s", account.id)
+                    intent = None
+                else:
                     raise RefreshError("exchange_intent_conflict", "A previous exchange is unresolved", False)
+            if intent is not None:
                 if not intent.ready or (
                     intent.reason != "operator_reset" and (intent.replay or intent.reason == "unsaved")
                 ):
