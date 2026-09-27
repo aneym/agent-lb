@@ -11,4 +11,4 @@ entry cites evidence that anyone can open.
 Rule: Before a failed probe changes stored state, confirm the failure with a separate call that tests only that claim, for example an auth-only call before marking an account disconnected. If the confirming call does not agree, the result is inconclusive and nothing is written.
 Why: The pulse took one 401 from the Codex responses probe as a rejected credential and marked every OpenAI account reauth_required, emptying the pool while the tokens still worked.
 Evidence: 2026-09-25 22:42Z incident, fixed in eba3de08: codex/responses returned 401 invalid_api_key for all three OpenAI accounts at once while /wham/usage and /codex/models still accepted the same tokens. The fix marks an OpenAI account disconnected only when an auth-only /wham/usage call also returns 401; any other answer leaves the verdict inconclusive and writes nothing.
-Kind: judgment · floor: no · Added: 2026-09-27 seed (Opus) · Seen: 1
+Kind: judgment · floor: yes · Added: 2026-09-27 seed (Opus) · Seen: 1
