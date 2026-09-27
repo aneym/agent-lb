@@ -56,5 +56,6 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
     auth layer resolves. Short handles only, never emails; the relay's own
     work is `internal`. Details in the long form.
 
+Coding standards: reviewers read CODING_STANDARDS.md and treat a breach as a must-fix; implementers read the entries their spec cites.
 Coding-agent routing canon: `config/coding-agents/ROUTING.md`. Quota snapshots
 are advisory (`agent-lb status --json`); never deny a launch on an estimate.
