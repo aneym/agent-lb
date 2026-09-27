@@ -216,3 +216,38 @@ All small n.
 ### How it changes
 
 A new entry with new evidence supersedes this one. This entry is not edited.
+
+## ADR-0004: Seats, their boxes and the implement escalation are routing data resolved at a pinned commit
+
+- **Date:** 2026-09-27
+- **Status:** Accepted
+- **Scope:** config/coding-agents/**, clients/route
+
+### Context
+
+The owner's 2026-09-27 steer: "sol wont be the only implementer option, we just have our sync'd routing rules. so that when we update them, all machines get them". Four seats existed on one machine only, and workflow templates hardcode seat sets.
+
+### Decision
+
+Every definition has one seat entry naming its vendor, box adapter or local-only status, and (for seats without class entries) its model alias and effort. Auditors carry `needs_test_run`. The implement escalation seat and fix round are routing data. The installer manages all definitions and the verifier checks their consistency. `route seat` and `route seats` resolve from a pinned or applied commit of the policy clone, falling back to the installed table without APPLIED. Doctor reports the applied commit and distance from origin.
+
+### Evidence
+
+- Only gpt-implementer has a box proven by factory E2 and E9; it alone starts with a box adapter.
+- The fold pipeline escalates at fix round 2. The factory scoreboard found 18 of 32 pieces ended needs_orchestrator in 24 h; a second failure goes to the escalation seat instead of a third cheap round.
+
+### Alternatives
+
+- Read the managed table by default: rejected because it can be half-installed and has no commit. It remains the fallback without APPLIED, labelled `source: installed` with its hash (owner steer, 2026-09-27).
+- Push rules to machines: rejected; each machine pulls.
+- Keep a model or seat list in each template: rejected as the drift this removes.
+
+### Consequences
+
+- Every machine installs four more managed seats. A differing local copy is checkpointed before replacement.
+- `route seat` follows APPLIED after sync and answers from the installed table elsewhere; it fails only when neither exists.
+- An adapter beyond codex, claude-code, cursor and devin needs a `BOX_ADAPTERS` edit.
+
+### How it changes
+
+A new entry with new evidence supersedes this one. This entry is not edited.

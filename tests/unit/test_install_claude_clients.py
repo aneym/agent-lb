@@ -618,7 +618,7 @@ def test_policy_installer_registers_the_seat_guard_once(tmp_path: Path) -> None:
     assert sum("hooks/subagent-closeout.py" in command for command in stop_commands) == 1
 
 
-def test_policy_installer_manages_default_ccgpt_seats_and_keeps_off_default_ones(tmp_path: Path) -> None:
+def test_policy_installer_manages_every_seat_definition(tmp_path: Path) -> None:
     home = tmp_path / "home"
     agents = home / ".claude" / "agents"
     agents.mkdir(parents=True)
@@ -650,7 +650,13 @@ def test_policy_installer_manages_default_ccgpt_seats_and_keeps_off_default_ones
     assert (home / ".agent-lb" / "managed" / "coding-agents" / "gpt-implementer").read_text() == (
         "agent-lb:gpt-implementer:v1\n"
     )
-    assert (agents / "luna-implementer.md").read_text() == local["luna-implementer"]
+    assert (agents / "luna-implementer.md").read_bytes() == (
+        POLICY_INSTALLER.parent / "agents" / "luna-implementer.md"
+    ).read_bytes()
+    assert (checkpoint / ".claude" / "agents" / "luna-implementer.md").read_text() == local["luna-implementer"]
+    assert (home / ".agent-lb" / "managed" / "coding-agents" / "luna-implementer").read_text() == (
+        "agent-lb:luna-implementer:v1\n"
+    )
 
 
 def test_policy_installer_replaces_a_symlinked_policy_dir_with_a_full_copy(tmp_path: Path) -> None:

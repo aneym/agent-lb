@@ -138,13 +138,13 @@ broke for 43 h on 2026-09-21 and 12 h on 2026-09-23). Run `scripts/claude_cache_
 The factory's doctor, map, hourly canary and scoreboard are planned, not built. agent-lb's per-account status line is
 the doctor's accounts component.
 
-## Enforcement (2026-09-26)
+## Enforcement (2026-09-26; seats 2026-09-27)
 
 - `hooks/seat-guard.py` denies a retired model on a subagent, its definition or a forwarder's brief, and logs the
   rest; `hooks/subagent-closeout.py` closes the ledger line.
-- `install-policy.py` installs the seat definitions (now with the managed ccgpt seats gpt-implementer, gpt-explorer
-  and sol-consult), `routing-table.json` (keeping live `overrides`), the seat guard and the CLAUDE.md block.
+- `install-policy.py` installs every seat definition in `agents/` (off-default seats too), `routing-table.json`
+  (keeping live `overrides`), the seat guard and the CLAUDE.md block. `route seat` resolves one seat at a commit.
 - `verify-routing` checks an install; `verify-routing --source-only` checks this directory with no home and no LB.
   Both fail on a retired or older-than-newest id and on the factory rules `implement-head`, `off-default`,
   `audit-cross-vendor`, `review-policy`, `stage-effort`, `second-opinion`, `routing-doc`, `seat-definitions`,
-  `public-text`.
+  `public-text`, `seats-map`, `escalation`.

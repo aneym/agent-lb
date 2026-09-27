@@ -47,6 +47,10 @@ MANAGED = (
     ("gpt-implementer", ".claude/agents/gpt-implementer.md", "agents/gpt-implementer.md"),
     ("gpt-explorer", ".claude/agents/gpt-explorer.md", "agents/gpt-explorer.md"),
     ("sol-consult", ".claude/agents/sol-consult.md", "agents/sol-consult.md"),
+    ("sonnet-implementer", ".claude/agents/sonnet-implementer.md", "agents/sonnet-implementer.md"),
+    ("luna-implementer", ".claude/agents/luna-implementer.md", "agents/luna-implementer.md"),
+    ("effort-xhigh", ".claude/agents/effort-xhigh.md", "agents/effort-xhigh.md"),
+    ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
     ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
     ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
 )
@@ -150,10 +154,10 @@ classes = source_table.get("classes", {})
 chain_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
 check(bool(chain_models) and not any(forbidden(m) for m in chain_models), "no routing-table class runs on Fable")
 check(not any(forbidden(key) for key in source_table.get("pools", {})), "no routing-table pool maps a Fable model")
-# Every seat the router can name has a definition here; the ccgpt seats
-# (gpt-implementer, luna-implementer, ...) are local and unmanaged.
+# Every seat the table names (chains and the seats map) has an installed definition.
 if not SOURCE_ONLY:
-    chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])})
+    chain_seats = sorted({entry.get("seat", "") for spec in classes.values() for entry in spec.get("chain", [])}
+        | set(source_table.get("seats", {})))
     missing_seats = [seat for seat in chain_seats if not (HOME / ".claude" / "agents" / f"{seat}.md").is_file()]
     check(
         not missing_seats,
@@ -234,6 +238,10 @@ factory(
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
 forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat"}
+VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi")
+BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}
+EFFORTS = ("low", "medium", "high", "xhigh")
+SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def valid_effort(entry: dict, band: str) -> bool:
@@ -288,6 +296,101 @@ factory(
     "seat-definitions", not missing,
     f"source defines every chain, auditor and second-opinion seat; missing {missing}",
 )
+
+# Validate the seat map against every dispatch path and each source definition.
+seat_map = source_table.get("seats")
+problems: list[str] = []
+if not isinstance(seat_map, dict) or not seat_map:
+    problems.append("seats must be a non-empty object")
+    seat_map = {}
+class_entries = []
+auditor_seats = set()
+for task_class, spec in classes.items():
+    for entry in spec.get("chain", []):
+        if isinstance(entry, dict) and isinstance(entry.get("seat"), str):
+            class_entries.append((task_class, entry))
+    opinion = spec.get("second_opinion")
+    if isinstance(opinion, dict) and isinstance(opinion.get("seat"), str):
+        class_entries.append((task_class, opinion))
+    for entry in spec.get("audit", {}).get("by_author_vendor", {}).values():
+        if isinstance(entry, dict) and isinstance(entry.get("seat"), str):
+            class_entries.append((task_class, entry))
+            auditor_seats.add(entry["seat"])
+class_seats = {entry["seat"] for _, entry in class_entries}
+definitions = {path.stem for path in (SOURCE / "agents").glob("*.md")}
+if set(seat_map) != definitions:
+    problems.append(
+        f"definitions differ: missing {sorted(definitions - set(seat_map))}, "
+        f"extra {sorted(set(seat_map) - definitions)}"
+    )
+named = class_seats | off_seats | {classes.get("implement", {}).get("escalation", {}).get("seat")}
+for name in named - set(seat_map):
+    problems.append(f"missing referenced seat {name}")
+if any(isinstance(value, dict) and value.get("needs_test_run") is True for value in seat_map.values()):
+    if "codex-test-runner" not in seat_map:
+        problems.append("needs_test_run requires codex-test-runner")
+for name, value in seat_map.items():
+    if not isinstance(name, str) or not SEAT_NAME.fullmatch(name):
+        problems.append(f"invalid seat name {name!r}")
+        continue
+    if not isinstance(value, dict):
+        problems.append(f"{name} is not an object")
+        continue
+    if not {"vendor", "box"} <= value.keys() or value.keys() - {"vendor", "box", "model", "effort", "needs_test_run"}:
+        problems.append(f"{name} has invalid fields")
+    if value.get("vendor") not in VENDORS:
+        problems.append(f"{name} has invalid vendor")
+    box = value.get("box")
+    if box is not None and (not isinstance(box, dict) or set(box) != {"adapter"}
+                            or not isinstance(box.get("adapter"), str)
+                            or BOX_ADAPTERS.get(box["adapter"]) != value.get("vendor")):
+        problems.append(f"{name} has invalid box adapter")
+    if name in auditor_seats:
+        if type(value.get("needs_test_run")) is not bool:
+            problems.append(f"{name} auditor needs boolean needs_test_run")
+    elif "needs_test_run" in value:
+        problems.append(f"{name} is not an auditor")
+    if name in class_seats:
+        if "model" in value or "effort" in value:
+            problems.append(f"{name} class seat has model or effort")
+    else:
+        if value.get("model") not in source_table.get("aliases", {}) or value.get("effort") not in EFFORTS:
+            problems.append(f"{name} needs model alias and effort")
+        if name not in forwarders and (SOURCE / "agents" / f"{name}.md").is_file():
+            head = read(SOURCE / "agents" / f"{name}.md").split("\n---", 1)[0]
+            fields = dict(line.split(":", 1) for line in head.splitlines() if ":" in line)
+            model = fields.get("model", "").strip()
+            match = re.fullmatch(r"(sol|luna)-latest-(low|medium|high|xhigh)", model)
+            if match and (value.get("model") != match.group(1) + "-latest"
+                          or value.get("effort") != match.group(2)):
+                problems.append(f"{name} model effort disagrees with definition")
+            elif not match and "effort" in fields and value.get("effort") != fields["effort"].strip():
+                problems.append(f"{name} effort disagrees with definition")
+for task_class, entry in class_entries:
+    name = entry["seat"]
+    if isinstance(seat_map.get(name), dict) and seat_map[name].get("vendor") != entry.get("vendor"):
+        problems.append(f"{name} vendor disagrees with {task_class}")
+factory("seats-map", not problems, "seats map: " + "; ".join(problems[:5]) if problems else
+        "every dispatchable seat has one seats entry that agrees with its chains and definition")
+
+escalation = classes.get("implement", {}).get("escalation")
+implement = classes.get("implement", {})
+chain = implement.get("chain", [])
+review = source_table.get("policy", {}).get("review", {})
+valid_escalation = isinstance(escalation, dict) and set(escalation) == {"seat", "at_fix_round", "since", "evidence"}
+if valid_escalation:
+    target = escalation["seat"]
+    valid_escalation = (isinstance(target, str) and target in seat_map and bool(chain)
+        and any(entry.get("seat") == target for entry in chain) and target != chain[0].get("seat")
+        and isinstance(seat_map.get(target), dict)
+        and seat_map[target].get("vendor") in implement.get("audit", {}).get("by_author_vendor", {})
+        and type(escalation["at_fix_round"]) is int
+        and type(review.get("max_fix_rounds")) is int
+        and 1 <= escalation["at_fix_round"] <= review["max_fix_rounds"]
+        and isinstance(escalation["since"], str) and re.fullmatch(r"20\d\d-\d\d-\d\d", escalation["since"])
+        and isinstance(escalation["evidence"], str) and bool(escalation["evidence"].strip()))
+factory("escalation", valid_escalation, "implement escalates to an audited chain seat within max_fix_rounds")
+
 # Names of people and machines stay out of this public file too: each operator lists their own private literals
 # (people, machines, hosts), one per line, in the file named by AGENT_LB_PRIVATE_LITERALS. Unset means only the
 # generic patterns run; set but unreadable or empty is a failed check, not a silent pass.

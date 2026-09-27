@@ -51,6 +51,16 @@ def test_source_canon_passes_verify_routing(tmp_path: Path) -> None:
         ("missing-definition", "factory:seat-definitions"),
         ("private-path", "factory:public-text"),
         ("retired", "retired"),
+        ("seat-missing", "factory:seats-map"),
+        ("seat-vendor", "factory:seats-map"),
+        ("seat-model-on-chain-seat", "factory:seats-map"),
+        ("seat-box-vendor", "factory:seats-map"),
+        ("definition-without-seat", "factory:seats-map"),
+        ("seat-effort-vs-definition", "factory:seats-map"),
+        ("auditor-without-test-run-flag", "factory:seats-map"),
+        ("test-run-flag-on-non-auditor", "factory:seats-map"),
+        ("escalation-not-audited-chain-seat", "factory:escalation"),
+        ("escalation-round", "factory:escalation"),
     ],
 )
 def test_verify_routing_rejects_each_factory_violation(
@@ -81,7 +91,26 @@ def test_verify_routing_rejects_each_factory_violation(
         del classes["plan"]["second_opinion"]
     elif violation == "retired":
         classes["implement"]["chain"][0]["model"] = "gpt-5.6-sol"
-    if violation in ("forwarder-effort", "undated-heading", "oversized-doc", "missing-definition", "private-path"):
+    elif violation == "seat-missing":
+        del table["seats"]["verifier"]
+    elif violation == "seat-vendor":
+        table["seats"]["codex-sol"]["vendor"] = "anthropic"
+    elif violation == "seat-model-on-chain-seat":
+        table["seats"]["opus-seat"].update(model="opus-latest", effort="medium")
+    elif violation == "seat-box-vendor":
+        table["seats"]["opus-seat"]["box"] = {"adapter": "codex"}
+    elif violation == "seat-effort-vs-definition":
+        table["seats"]["luna-implementer"]["effort"] = "high"
+    elif violation == "auditor-without-test-run-flag":
+        del table["seats"]["codex-verifier"]["needs_test_run"]
+    elif violation == "test-run-flag-on-non-auditor":
+        table["seats"]["opus-seat"]["needs_test_run"] = False
+    elif violation == "escalation-not-audited-chain-seat":
+        classes["implement"]["escalation"]["seat"] = "verifier"
+    elif violation == "escalation-round":
+        classes["implement"]["escalation"]["at_fix_round"] = 3
+    if violation in ("forwarder-effort", "undated-heading", "oversized-doc", "missing-definition", "private-path",
+                     "definition-without-seat"):
         if violation == "forwarder-effort":
             path = source / "agents" / "codex-sol.md"
             path.write_text(path.read_text().replace("effort: low", "effort: high"))
@@ -93,6 +122,11 @@ def test_verify_routing_rejects_each_factory_violation(
             path.write_text(path.read_text() + "\n" * (152 - len(path.read_text().splitlines())))
         elif violation == "missing-definition":
             (source / "agents" / "sol-consult.md").unlink()
+        elif violation == "definition-without-seat":
+            definition = (source / "agents" / "gpt-implementer.md").read_text()
+            (source / "agents" / "extra-seat.md").write_text(
+                definition.replace("name: gpt-implementer", "name: extra-seat")
+            )
         else:
             with (source / "agents" / "opus-seat.md").open("a") as f:
                 f.write("\n/Users/someone/x\n")

@@ -1054,3 +1054,268 @@ def test_canonical_implement_admission_by_codex_pool(
             assert "its auditor's pool openai-codex is critical" in picked["reason"]
     if expected_error:
         assert expected_error in result.stderr
+
+# The seat CLI reads committed rules, not the local ROUTE_TABLE fixture.
+def policy_clone(tmp_path: Path) -> dict:
+    import copy
+
+    clone = tmp_path / "lb" / ".agent-lb" / "policy-src"
+    clone.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(clone)], check=True)
+    policy = clone / "config" / "coding-agents"
+    agents = policy / "agents"
+    agents.mkdir(parents=True)
+    original = json.loads((REPO / "tests" / "fixtures" / "route" / "seats-table.json").read_text())
+    table_path = policy / "routing-table.json"
+
+    def commit(message: str) -> str:
+        subprocess.run(["git", "-C", str(clone), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(clone), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-qm", message], check=True)
+        return subprocess.check_output(["git", "-C", str(clone), "rev-parse", "HEAD"], text=True).strip()
+
+    old = copy.deepcopy(original)
+    del old["seats"]
+    table_path.write_text(json.dumps(old) + "\n")
+    c0 = commit("old")
+    table_path.write_text(json.dumps(original) + "\n")
+    for name in original["seats"]:
+        (agents / f"{name}.md").write_text(f"---\nname: {name}\n---\n{name} v1\n")
+    c1 = commit("seats")
+    newer = copy.deepcopy(original)
+    newer["classes"]["implement"]["chain"][0]["effort"] = "high"
+    table_path.write_text(json.dumps(newer) + "\n")
+    (agents / "coder.md").write_text("---\nname: coder\n---\ncoder v2\n")
+    c2 = commit("newer")
+    subprocess.run(["git", "-C", str(clone), "update-ref", "refs/remotes/origin/main", c2], check=True)
+    applied = clone.parent / "managed" / "coding-agents" / "APPLIED"
+    applied.parent.mkdir(parents=True)
+    applied.write_text(json.dumps({"commit": c1, "source_table_sha256": "x", "applied_at": "2026-09-27T00:00:00Z",
+                                   "host": "h", "result": "applied"}))
+    fixtures = tmp_path / "fx"
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-7-fam"}, {"id": "gpt-6-fam"}]})
+    return {"clone": clone, "applied": applied, "fixtures": fixtures, "table": original,
+            "c0": c0, "c1": c1, "c2": c2}
+
+
+def test_seat_reads_applied_and_pinned_commit(tmp_path: Path) -> None:
+    import hashlib
+
+    p = policy_clone(tmp_path)
+    env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
+    c1 = p["c1"]
+    first = run("seat", "coder", "--json", home=tmp_path, fixtures=p["fixtures"], extra=env)
+    assert first.returncode == 0, first.stderr
+    table = subprocess.check_output(["git", "-C", str(p["clone"]), "show",
+                                     f"{c1}:config/coding-agents/routing-table.json"])
+    assert json.loads(first.stdout) == {
+        "seat": "coder", "class": "implement", "vendor": "vendor-b", "box": {"adapter": "codex"},
+        "model_alias": "fam-latest", "model": "gpt-7-fam", "effort": "medium",
+        "definition_sha256": hashlib.sha256(b"---\nname: coder\n---\ncoder v1\n").hexdigest(),
+        "rules": {"commit": c1, "source": "applied", "table_sha256": hashlib.sha256(table).hexdigest()},
+    }
+    pinned = run("seat", "coder", "--class", "implement", "--rules", p["c2"][:12], "--json", home=tmp_path,
+                 fixtures=p["fixtures"], extra=env)
+    assert pinned.returncode == 0, pinned.stderr
+    answer = json.loads(pinned.stdout)
+    table = subprocess.check_output(["git", "-C", str(p["clone"]), "show",
+                                     f"{p['c2']}:config/coding-agents/routing-table.json"])
+    assert answer["rules"] == {"commit": p["c2"], "source": "pinned",
+                               "table_sha256": hashlib.sha256(table).hexdigest()}
+    assert answer["effort"] == "high"
+    assert answer["definition_sha256"] == hashlib.sha256(b"---\nname: coder\n---\ncoder v2\n").hexdigest()
+
+
+def test_seat_installed_fallback_and_pin(tmp_path: Path) -> None:
+    import hashlib
+
+    p = policy_clone(tmp_path)
+    p["applied"].unlink()
+    installed = p["applied"].with_name("routing-table.json")
+    table = dict(p["table"], overrides={"implement": ["thinker"]})
+    installed.write_text(json.dumps(table) + "\n")
+    home = tmp_path / "home"
+    agents = home / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    definition = b"---\nname: coder\n---\ncoder installed\n"
+    (agents / "coder.md").write_bytes(definition)
+    env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
+    first = run("seat", "coder", "--json", home=home, fixtures=p["fixtures"], extra=env)
+    assert first.returncode == 0, first.stderr
+    answer = json.loads(first.stdout)
+    expected = {"commit": None, "source": "installed", "table_sha256": hashlib.sha256(installed.read_bytes()).hexdigest()}
+    assert answer["rules"] == expected and answer["effort"] == "medium"
+    assert answer["class"] == "implement" and answer["definition_sha256"] == hashlib.sha256(definition).hexdigest()
+    absent = run("seat", "thinker", "--class", "implement", "--json", home=home,
+                 fixtures=p["fixtures"], extra=env)
+    assert absent.returncode == 3 and json.loads(absent.stdout)["error"] == "unknown_rules"
+    listed = run("seats", "--json", home=home, extra=env)
+    assert listed.returncode == 0 and json.loads(listed.stdout)["rules"] == expected
+    env["AGENT_LB_POLICY_SRC"] = str(p["clone"].parent / "missing")
+    missing_clone = run("seat", "coder", "--json", home=home, fixtures=p["fixtures"], extra=env)
+    assert missing_clone.returncode == 0 and json.loads(missing_clone.stdout)["rules"] == expected
+    env["AGENT_LB_POLICY_SRC"] = str(p["clone"])
+    pinned = run("seat", "coder", "--rules", p["c1"], "--json", home=home, fixtures=p["fixtures"], extra=env)
+    assert pinned.returncode == 0 and json.loads(pinned.stdout)["rules"]["source"] == "pinned"
+
+
+@pytest.mark.parametrize(("name", "task_class", "selected", "effort", "model"), [
+    ("thinker", "implement", "implement", "medium", "big"),
+    ("thinker", "research", "research", "high", "big"),
+    ("sage", None, "plan", "high", "big"),
+    ("tool-seat", None, "mechanical", None, "tool-model"),
+    ("checker", None, "implement", "high", "big"),
+    ("worker", "explore", "explore", "low", "gpt-7-fam"),
+    ("tool-seat", "mechanical", "mechanical", None, "tool-model"),
+    ("relay-seat", None, None, "low", "big"),
+    ("relay-seat", "implement", None, "low", "big"),
+])
+def test_seat_class_choice(tmp_path: Path, name: str, task_class: str | None,
+                           selected: str | None, effort: str | None, model: str) -> None:
+    p = policy_clone(tmp_path)
+    args = ("seat", name, "--class", task_class, "--json") if task_class else ("seat", name, "--json")
+    result = run(*args, home=tmp_path, fixtures=p["fixtures"], extra={"AGENT_LB_POLICY_SRC": str(p["clone"])})
+    assert result.returncode == 0, result.stderr
+    answer = json.loads(result.stdout)
+    assert (answer["class"], answer["effort"], answer["model"]) == (selected, effort, model)
+    if name == "tool-seat":
+        assert answer["box"] is None
+    if name == "relay-seat":
+        assert answer["model_alias"] == "big-latest"
+
+
+@pytest.mark.parametrize(("args", "error"), [
+    (("seat", "worker"), "ambiguous_class"),
+    (("seat", "thinker"), "ambiguous_class"),
+    (("seat", "thinker", "--class", "plan"), "unknown_class"),
+    (("seat", "thinker", "--class", "nope"), "unknown_class"),
+    (("seat", "nobody"), "unknown_seat"),
+    (("seat", "../coder"), "unknown_seat"),
+    (("seat", "coder", "--rules", "0123456789ab"), "unknown_rules"),
+    (("seat", "coder", "--rules", "ZZ"), "unknown_rules"),
+])
+def test_seat_typed_errors(tmp_path: Path, args: tuple[str, ...], error: str) -> None:
+    p = policy_clone(tmp_path)
+    result = run(*args, "--json", home=tmp_path, fixtures=p["fixtures"],
+                 extra={"AGENT_LB_POLICY_SRC": str(p["clone"])})
+    assert result.returncode == 3 and result.stderr.startswith("route: ")
+    assert json.loads(result.stdout)["error"] == error
+    assert json.loads(result.stdout)["message"]
+    assert len(result.stdout.splitlines()) == 1
+
+
+def test_seat_source_errors_and_unresolved_model(tmp_path: Path) -> None:
+    p = policy_clone(tmp_path)
+    env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
+    cases = [(dict(env, AGENT_LB_POLICY_SRC=str(p["clone"].parent / "missing")), ("seat", "coder", "--rules", p["c1"]), "no_rules"),
+             (env, ("seat", "coder", "--rules", p["c0"]), "unknown_rules")]
+    for extra, args, error in cases:
+        result = run(*args, "--json", home=tmp_path, fixtures=p["fixtures"], extra=extra)
+        assert result.returncode == 3 and json.loads(result.stdout)["error"] == error
+    for contents in (None, {"commit": "0" * 40}):
+        if contents is None:
+            p["applied"].unlink(missing_ok=True)
+        else:
+            p["applied"].write_text(json.dumps(contents))
+        result = run("seat", "coder", "--json", home=tmp_path, fixtures=p["fixtures"], extra=env)
+        assert result.returncode == 3 and json.loads(result.stdout)["error"] == "no_rules"
+    missing = run("seat", "coder", "--json", home=tmp_path,
+                  extra={"AGENT_LB_POLICY_SRC": str(p["clone"].parent / "missing")})
+    assert missing.returncode == 3 and json.loads(missing.stdout)["error"] == "no_rules"
+    p["applied"].write_text(json.dumps({"commit": p["c1"]}))
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    unresolved = run("seat", "coder", "--json", home=empty_home, extra=env)
+    assert unresolved.returncode == 3 and json.loads(unresolved.stdout)["error"] == "unresolved_model"
+
+
+def test_seats_lists_data_without_lb(tmp_path: Path) -> None:
+    p = policy_clone(tmp_path)
+    env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
+    result = run("seats", "--json", home=tmp_path, extra=env)
+    assert result.returncode == 0, result.stderr
+    answer = json.loads(result.stdout)
+    assert answer["rules"]["commit"] == p["c1"] and answer["rules"]["source"] == "applied"
+    assert answer["seats"] == p["table"]["seats"]
+    assert list(answer["classes"]) == ["plan", "explore", "implement", "research", "mechanical"]
+    assert answer["classes"]["mechanical"]["chain"][1] == {
+        "seat": "tool-seat", "model": "tool-model", "vendor": "vendor-c", "effort": None}
+    assert answer["audit"]["by_author_vendor"]["vendor-a"]["seat"] == "checker-b"
+    assert answer["escalation"] == {"implement": {"seat": "thinker", "at_fix_round": 2}}
+    assert answer["seats"]["checker-b"]["needs_test_run"] is True
+    assert answer["seats"]["checker"]["needs_test_run"] is False
+    old = run("seats", "--rules", p["c0"], "--json", home=tmp_path, extra=env)
+    assert old.returncode == 3 and json.loads(old.stdout)["error"] == "unknown_rules"
+
+
+def test_doctor_reports_applied_rules(tmp_path: Path) -> None:
+    p = policy_clone(tmp_path)
+    env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
+    result = run("doctor", home=tmp_path, fixtures=p["fixtures"], extra=env)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["rules"] == {
+        "applied": p["c1"], "applied_at": "2026-09-27T00:00:00Z", "result": "applied",
+        "origin": p["c2"], "behind": 1, "diverged": False, "error": None,
+    }
+    p["applied"].unlink()
+    absent = run("doctor", home=tmp_path, fixtures=p["fixtures"], extra=env)
+    assert json.loads(absent.stdout)["rules"]["error"] == "no_rules"
+
+
+def test_route_seats_on_the_canonical_rules_meets_the_workflow_preflight(tmp_path: Path) -> None:
+    import re
+    import shutil
+
+    clone = tmp_path / "lb" / ".agent-lb" / "policy-src"
+    clone.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(clone)], check=True)
+    shutil.copytree(REPO / "config" / "coding-agents", clone / "config" / "coding-agents")
+    subprocess.run(["git", "-C", str(clone), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(clone), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                    "commit", "-qm", "rules"], check=True)
+    commit = subprocess.check_output(["git", "-C", str(clone), "rev-parse", "HEAD"], text=True).strip()
+    applied = clone.parent / "managed" / "coding-agents" / "APPLIED"
+    applied.parent.mkdir(parents=True)
+    applied.write_text(json.dumps({"commit": commit}))
+    fixtures = tmp_path / "fx"
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-9-sol"}]})
+    env = {"AGENT_LB_POLICY_SRC": str(clone)}
+    result = run("seats", "--json", home=tmp_path, extra=env)
+    assert result.returncode == 0, result.stderr
+    r = json.loads(result.stdout)
+    efforts = ("low", "medium", "high", "xhigh", "max")
+    assert re.fullmatch(r"[0-9a-f]{7,64}", r["rules"]["commit"])
+    assert r["rules"]["source"] == "applied"
+    assert re.fullmatch(r"[0-9a-f]{64}", r["rules"]["table_sha256"])
+    seats = r["seats"]
+    for seat in seats.values():
+        assert isinstance(seat["vendor"], str) and seat["vendor"]
+        assert seat["box"] is None or re.fullmatch(r"[a-z0-9-]+", seat["box"]["adapter"])
+        assert "effort" not in seat or seat["effort"] in efforts
+    auditors = r["audit"]["by_author_vendor"]
+    assert auditors
+    for vendor, auditor in auditors.items():
+        assert auditor["seat"] in seats and auditor["effort"] in efforts
+        assert seats[auditor["seat"]]["vendor"] != vendor
+        assert isinstance(seats[auditor["seat"]]["needs_test_run"], bool)
+    assert r["classes"]["verify"]["chain"][0]["seat"] in seats
+    for entry in r["classes"]["implement"]["chain"]:
+        assert isinstance(entry["seat"], str) and entry["effort"] in efforts
+    escalation = r["escalation"]["implement"]
+    assert escalation["seat"] in seats and type(escalation["at_fix_round"]) is int
+    assert escalation["at_fix_round"] >= 1 and "codex-test-runner" in seats
+    assert seats[escalation["seat"]]["vendor"] in auditors
+    assert seats["codex-verifier"]["needs_test_run"] is True
+    assert seats["verifier"]["needs_test_run"] is False
+    ambiguous = run("seat", "opus-seat", "--json", home=tmp_path, fixtures=fixtures, extra=env)
+    assert ambiguous.returncode == 3 and json.loads(ambiguous.stdout)["error"] == "ambiguous_class"
+    opus = run("seat", "opus-seat", "--class", "implement", "--json", home=tmp_path,
+               fixtures=fixtures, extra=env)
+    assert opus.returncode == 0, opus.stderr
+    assert (json.loads(opus.stdout)["class"], json.loads(opus.stdout)["effort"],
+            json.loads(opus.stdout)["box"]) == ("implement", "medium", None)
+    coder = run("seat", "gpt-implementer", "--class", "implement", "--json", home=tmp_path,
+                fixtures=fixtures, extra=env)
+    assert coder.returncode == 0, coder.stderr
+    assert (json.loads(coder.stdout)["model"], json.loads(coder.stdout)["effort"],
+            json.loads(coder.stdout)["box"]) == ("gpt-9-sol", "medium", {"adapter": "codex"})

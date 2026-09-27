@@ -14,6 +14,8 @@
 #   route learn  [--apply]                       propose (or write) chain demotions from outcomes
 #   route record --class C --seat S --model M ...  log one implement outcome (tokens, time, audit)
 #   route resolve <alias> [<alias> ...]          newest served model for the first resolvable family alias
+#   route seat <name> [--class C] [--rules COMMIT] [--json]   one seat at a pinned rules commit
+#   route seats [--rules COMMIT] [--json]   seats, chains, audit and escalation at a pinned rules commit
 #   route models [--json]                        every family alias with what it resolves to now
 #
 # Env:
@@ -43,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -64,6 +67,7 @@ DEFAULT_CODEX_COMPANION = "~/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scr
 EXIT_OK = 0
 EXIT_DEGRADED = 1
 EXIT_UNROUTABLE = 2
+EXIT_SETUP = 3
 
 POOL_OK_HEADROOM = 25.0
 POOL_LOW_HEADROOM = 5.0
@@ -176,6 +180,209 @@ def atomic_write(path: Path, text: str) -> None:
             temporary.unlink()
         except FileNotFoundError:
             pass
+
+
+# --- versioned seat rules ----------------------------------------------------
+
+SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+COMMIT_NAME = re.compile(r"^[0-9a-f]{7,64}$")
+FULL_COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+
+
+def setup_error(kind: str, message: str, as_json: bool) -> Any:
+    print(f"route: {message}", file=sys.stderr)
+    if as_json:
+        print(json.dumps({"error": kind, "message": message}, sort_keys=True))
+    raise SystemExit(EXIT_SETUP)
+
+
+def policy_paths() -> tuple[Path, Path, Path]:
+    clone = _env_path("AGENT_LB_POLICY_SRC", Path.home() / ".agent-lb" / "policy-src")
+    managed = clone.parent / "managed" / "coding-agents"
+    return clone, managed / "APPLIED", managed / "routing-table.json"
+
+
+def policy_git(clone: Path, *args: str, binary: bool = False) -> subprocess.CompletedProcess[Any] | None:
+    try:
+        result = subprocess.run(["git", "-C", str(clone), *args], capture_output=True,
+                                text=not binary, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result if result.returncode == 0 else None
+
+
+def applied_record(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) and isinstance(value.get("commit"), str) and FULL_COMMIT.fullmatch(value["commit"]) else None
+
+
+def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    clone, applied_path, installed_path = policy_paths()
+    git_ready = clone.is_dir() and policy_git(clone, "rev-parse", "--git-dir") is not None
+    source = "installed"
+    commit = None
+    if pin is not None:
+        if not git_ready:
+            setup_error("no_rules", f"no policy clone {clone}; APPLIED {applied_path}; installed {installed_path}", as_json)
+        if not COMMIT_NAME.fullmatch(pin):
+            setup_error("unknown_rules", f"invalid rules commit {pin!r}", as_json)
+        source = "pinned"
+        revision = policy_git(clone, "rev-parse", "--verify", "--quiet", f"{pin}^{{commit}}")
+        if revision is None:
+            setup_error("unknown_rules", f"unknown rules commit {pin}", as_json)
+        commit = revision.stdout.strip()
+    elif git_ready:
+        applied = applied_record(applied_path)
+        if applied:
+            revision = policy_git(clone, "rev-parse", "--verify", "--quiet", f"{applied['commit']}^{{commit}}")
+            if revision is not None:
+                source = "applied"
+                commit = revision.stdout.strip()
+    if commit:
+        result = policy_git(clone, "show", f"{commit}:config/coding-agents/routing-table.json", binary=True)
+        if result is None:
+            setup_error("unknown_rules", f"routing table missing at commit {commit}", as_json)
+        data = result.stdout
+    else:
+        try:
+            data = installed_path.read_bytes()
+        except OSError:
+            setup_error("no_rules", f"no policy clone/APPLIED {clone}, {applied_path} or installed table {installed_path}", as_json)
+    try:
+        table = json.loads(data)
+    except (UnicodeError, ValueError):
+        table = None
+    if not isinstance(table, dict) or not isinstance(table.get("classes"), dict) or not isinstance(table.get("seats"), dict):
+        setup_error("unknown_rules", f"invalid routing table at {commit or installed_path}", as_json)
+    return table, {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()}, clone
+
+
+def class_seat_entries(classes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    entries = []
+    for task_class, spec in classes.items():
+        if not isinstance(spec, dict):
+            continue
+        candidates = list(spec.get("chain", [])) if isinstance(spec.get("chain"), list) else []
+        candidates.append(spec.get("second_opinion"))
+        audit = spec.get("audit", {})
+        if isinstance(audit, dict) and isinstance(audit.get("by_author_vendor"), dict):
+            candidates.extend(audit["by_author_vendor"].values())
+        entries.extend((task_class, entry) for entry in candidates if isinstance(entry, dict) and isinstance(entry.get("seat"), str))
+    return entries
+
+
+def command_seat(args: argparse.Namespace) -> int:
+    table, rules, clone = versioned_rules(args.rules, args.json)
+    seats = table["seats"]
+    name = args.name
+    if not SEAT_NAME.fullmatch(name) or name not in seats:
+        setup_error("unknown_seat", f"unknown seat {name!r}", args.json)
+    named = [(task_class, entry) for task_class, entry in class_seat_entries(table["classes"])
+             if entry["seat"] == name]
+    if args.task_class is not None:
+        if args.task_class not in table["classes"]:
+            setup_error("unknown_class", f"unknown class {args.task_class!r} for seat {name}", args.json)
+        chosen = [(task_class, entry) for task_class, entry in named if task_class == args.task_class]
+        if not chosen and named:
+            setup_error("unknown_class", f"class {args.task_class!r} does not name seat {name}", args.json)
+    else:
+        chosen = named
+    if chosen:
+        if len({(entry.get("model"), entry.get("effort")) for _, entry in chosen}) != 1:
+            setup_error("ambiguous_class", f"seat {name} disagrees across classes {', '.join(dict.fromkeys(c for c, _ in chosen))}", args.json)
+        task_class = ("implement" if any(c == "implement" for c, _ in chosen) else chosen[0][0])
+        entry = next(entry for c, entry in chosen if c == task_class)
+        model_alias, effort = entry.get("model"), entry.get("effort")
+    else:
+        task_class = None
+        model_alias, effort = seats[name].get("model"), seats[name].get("effort")
+        if not isinstance(model_alias, str):
+            setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
+    served = ServedModels().get() if model_alias in table.get("aliases", {}) else []
+    model, reason = resolve_alias(table, model_alias, served)
+    if model is None:
+        setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)
+    if rules["commit"]:
+        result = policy_git(clone, "show", f"{rules['commit']}:config/coding-agents/agents/{name}.md", binary=True)
+        if result is None:
+            setup_error("unknown_rules", f"missing definition agents/{name}.md at {rules['commit']}", args.json)
+        definition = result.stdout
+    else:
+        definition_path = Path.home() / ".claude" / "agents" / f"{name}.md"
+        try:
+            definition = definition_path.read_bytes()
+        except OSError:
+            setup_error("unknown_rules", f"missing installed definition {definition_path}", args.json)
+    seat = seats[name]
+    answer = {"seat": name, "class": task_class, "vendor": seat["vendor"], "box": seat["box"],
+              "model_alias": model_alias, "model": model, "effort": effort,
+              "definition_sha256": hashlib.sha256(definition).hexdigest(), "rules": rules}
+    if args.json:
+        print(json.dumps(answer, sort_keys=True))
+    else:
+        box = seat["box"]["adapter"] if isinstance(seat["box"], dict) else "studio only"
+        revision = rules["commit"][:12] if rules["commit"] else "installed:" + rules["table_sha256"][:12]
+        print(f"{name}: {model} ({model_alias}), effort {effort or '-'}, vendor {seat['vendor']}, box {box}, rules {revision}")
+    return EXIT_OK
+
+
+def reduced_entry(entry: dict[str, Any], table: dict[str, Any]) -> dict[str, Any]:
+    seat = entry.get("seat")
+    model = entry.get("model")
+    vendor = entry.get("vendor")
+    if not isinstance(vendor, str):
+        vendor = table["seats"].get(seat, {}).get("vendor") or vendor_for(entry, pool_for_model(table, model))
+    return {"seat": seat, "model": model, "vendor": vendor, "effort": entry.get("effort")}
+
+
+def command_seats(args: argparse.Namespace) -> int:
+    table, rules, _ = versioned_rules(args.rules, args.json)
+    classes = {name: {"chain": [reduced_entry(entry, table) for entry in spec["chain"] if isinstance(entry, dict)]}
+               for name, spec in table["classes"].items()
+               if isinstance(spec, dict) and isinstance(spec.get("chain"), list)}
+    implement = table["classes"].get("implement", {})
+    audit = implement.get("audit", {}).get("by_author_vendor", {})
+    escalation = implement.get("escalation")
+    if (not isinstance(escalation, dict) or not isinstance(escalation.get("seat"), str)
+            or type(escalation.get("at_fix_round")) is not int):
+        setup_error("unknown_rules", f"invalid classes.implement.escalation: {escalation!r}", args.json)
+    answer = {"rules": rules, "seats": table["seats"], "classes": classes,
+              "audit": {"by_author_vendor": {name: reduced_entry(entry, table) for name, entry in audit.items()}},
+              "escalation": {"implement": {"seat": escalation["seat"], "at_fix_round": escalation["at_fix_round"]}}}
+    if args.json:
+        print(json.dumps(answer))
+    else:
+        for name, spec in table["seats"].items():
+            box = spec.get("box")
+            print(f"{name} vendor={spec['vendor']} box={box['adapter'] if isinstance(box, dict) else 'studio'}")
+    return EXIT_OK
+
+
+def rules_status() -> dict[str, Any]:
+    clone, applied_path, _ = policy_paths()
+    state: dict[str, Any] = {"applied": None, "applied_at": None, "result": None,
+                             "origin": None, "behind": None, "diverged": None, "error": "no_rules"}
+    applied = applied_record(applied_path) if clone.is_dir() and policy_git(clone, "rev-parse", "--git-dir") else None
+    if not applied:
+        return state
+    revision = policy_git(clone, "rev-parse", "--verify", "--quiet", f"{applied['commit']}^{{commit}}")
+    if not revision:
+        return state
+    state.update(applied=revision.stdout.strip(), applied_at=applied.get("applied_at"), result=applied.get("result"))
+    origin = policy_git(clone, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main")
+    if not origin:
+        state["error"] = "no_origin"
+        return state
+    state.update(origin=origin.stdout.strip(), error=None)
+    ancestor = policy_git(clone, "merge-base", "--is-ancestor", state["applied"], state["origin"])
+    state["diverged"] = ancestor is None
+    if ancestor is not None:
+        count = policy_git(clone, "rev-list", "--count", f"{state['applied']}..{state['origin']}")
+        state["behind"] = int(count.stdout.strip()) if count else None
+    return state
 
 
 # --- HTTP --------------------------------------------------------------------
@@ -1404,6 +1611,7 @@ def command_doctor(args: argparse.Namespace) -> int:
         "probes": probes,
         "trafficWindowMinutes": SESSION_WINDOW_MINUTES,
         "auth": "loopback_unauthenticated",
+        "rules": rules_status(),
         "elapsed_s": round(time.monotonic() - started, 2),
     }
     degraded = any(not probe["ok"] for probe in probes)
@@ -1776,6 +1984,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     menu.add_argument("--class", dest="task_class", default=None, help="one class only")
     menu.add_argument("--json", action="store_true")
     menu.set_defaults(handler=command_menu)
+
+    seat = sub.add_parser("seat", help="resolve one seat at a rules version")
+    seat.add_argument("name")
+    seat.add_argument("--class", dest="task_class", default=None)
+    seat.add_argument("--rules", default=None)
+    seat.add_argument("--json", action="store_true")
+    seat.set_defaults(handler=command_seat)
+
+    seats = sub.add_parser("seats", help="list seats, chains and auditors at a rules version")
+    seats.add_argument("--rules", default=None)
+    seats.add_argument("--json", action="store_true")
+    seats.set_defaults(handler=command_seats)
 
     doctor = sub.add_parser("doctor", help="probe seats and pools")
     doctor.add_argument("--write", action="store_true", help="write routing-state.json and the alert")

@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "classes": {
+    "plan": {"chain": [
+      {"seat": "sage", "model": "big-latest", "vendor": "vendor-a", "effort": "high"},
+      {"seat": "worker", "model": "fam-latest", "vendor": "vendor-b", "effort": "high"}]},
+    "explore": {"chain": [
+      {"seat": "worker", "model": "fam-latest", "vendor": "vendor-b", "effort": "low"}]},
+    "implement": {
+      "chain": [
+        {"seat": "coder", "model": "fam-latest", "vendor": "vendor-b", "effort": "medium"},
+        {"seat": "thinker", "model": "big-latest", "vendor": "vendor-a", "effort": "medium"}],
+      "audit": {"by_author_vendor": {
+        "vendor-b": {"seat": "checker", "model": "big-latest", "vendor": "vendor-a", "effort": "high"},
+        "vendor-a": {"seat": "checker-b", "model": "fam-latest", "vendor": "vendor-b", "effort": "xhigh"}}},
+      "escalation": {"seat": "thinker", "at_fix_round": 2, "since": "2026-09-27", "evidence": "fixture"}},
+    "research": {"chain": [
+      {"seat": "sage", "model": "big-latest", "vendor": "vendor-a", "effort": "high"},
+      {"seat": "thinker", "model": "big-latest", "vendor": "vendor-a", "effort": "high"}]},
+    "mechanical": {"chain": [
+      {"seat": "coder", "model": "fam-latest", "vendor": "vendor-b", "effort": "medium"},
+      {"seat": "tool-seat", "model": "tool-model", "vendor": "vendor-c"}]}
+  },
+  "seats": {
+    "sage": {"vendor": "vendor-a", "box": null},
+    "worker": {"vendor": "vendor-b", "box": null},
+    "coder": {"vendor": "vendor-b", "box": {"adapter": "codex"}},
+    "thinker": {"vendor": "vendor-a", "box": null},
+    "checker": {"vendor": "vendor-a", "box": null, "needs_test_run": false},
+    "checker-b": {"vendor": "vendor-b", "box": null, "needs_test_run": true},
+    "tool-seat": {"vendor": "vendor-c", "box": null},
+    "relay-seat": {"vendor": "vendor-a", "box": null, "model": "big-latest", "effort": "low"}
+  },
+  "aliases": {
+    "big-latest": {"vendor": "vendor-a", "harness": "big", "note": "fixture harness alias"},
+    "fam-latest": {"vendor": "vendor-b", "family": "fam", "note": "fixture family alias"}
+  },
+  "pools": {"big-latest": "vendor-a-general", "fam-latest": "vendor-b-pool"},
+  "retired": []
+}

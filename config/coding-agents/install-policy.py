@@ -107,6 +107,30 @@ MANAGED_AGENTS = (
         Path("agents/sol-consult.md"),
     ),
     (
+        Path(".claude/agents/sonnet-implementer.md"),
+        Path(".agent-lb/managed/coding-agents/sonnet-implementer"),
+        "agent-lb:sonnet-implementer:v1\n",
+        Path("agents/sonnet-implementer.md"),
+    ),
+    (
+        Path(".claude/agents/luna-implementer.md"),
+        Path(".agent-lb/managed/coding-agents/luna-implementer"),
+        "agent-lb:luna-implementer:v1\n",
+        Path("agents/luna-implementer.md"),
+    ),
+    (
+        Path(".claude/agents/effort-xhigh.md"),
+        Path(".agent-lb/managed/coding-agents/effort-xhigh"),
+        "agent-lb:effort-xhigh:v1\n",
+        Path("agents/effort-xhigh.md"),
+    ),
+    (
+        Path(".claude/agents/host-relay.md"),
+        Path(".agent-lb/managed/coding-agents/host-relay"),
+        "agent-lb:host-relay:v1\n",
+        Path("agents/host-relay.md"),
+    ),
+    (
         Path(".claude/hooks/subagent-closeout.py"),
         Path(".agent-lb/managed/coding-agents/subagent-closeout"),
         "agent-lb:subagent-closeout:v1\n",
