@@ -155,12 +155,13 @@ class FederationService:
             raise FederationNotFoundError(account_id)
         if caller_instance_id not in self._settings.federation_taker_instance_ids:
             raise FederationConflictError(account_id, current_owner=account.owner_instance)
+        current_owner = account.owner_instance
         try:
             settled = await self._repo.accept_checkin(
                 account_id, nonce, caller_instance_id, auth, encryptor=self._encryptor
             )
         except ValueError as exc:
-            raise FederationConflictError(account_id, current_owner=account.owner_instance) from exc
+            raise FederationConflictError(account_id, current_owner=current_owner) from exc
         return FederationTransferStatusResponse(account_id=account_id, nonce=nonce, state=settled.state.value)
 
     async def transfer_status(self, nonce: str) -> str:
@@ -197,6 +198,9 @@ class FederationService:
         nonce = transfer.nonce
         if transfer.direction == AccountTransferDirection.CHECKOUT:
             transfer = await self._repo.begin_checkout_abort(nonce)
+            if transfer.state == AccountTransferState.SETTLED:
+                await self._peer_client.checkout_confirm(peer_url=peer_url, token=token, nonce=nonce)
+                return True
         state = await self._peer_client.abort(
             peer_url=peer_url,
             token=token,
@@ -306,6 +310,11 @@ class FederationService:
                 await self.reclaim(account_id)
             except Exception as reclaim_error:
                 raise RuntimeError(f"Checkin unresolved; reclaim {account_id} to retry") from reclaim_error
+            # A lost reply may have followed a committed peer import. Reclaim
+            # settles and blanks this copy in that case, so report success.
+            latest = await self._repo.get_transfer_by_nonce(nonce)
+            if latest is not None and latest.state == AccountTransferState.SETTLED:
+                return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=True)
             raise FederationConflictError(account_id, current_owner=self._settings.local_instance_id) from exc
         await self._repo.settle_checkin_and_blank(nonce, encryptor=self._encryptor)
         return FederationCheckinExecuteResponse(account_id=account_id, nonce=nonce, settled=True)
