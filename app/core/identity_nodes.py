@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import time
+from collections.abc import Mapping
 from ipaddress import ip_address
 from typing import Any
 
@@ -21,6 +23,20 @@ logger = logging.getLogger(__name__)
 _REFRESH_SECONDS = 60
 _TIMEOUT_SECONDS = 5
 _WARNING_SECONDS = 3600
+
+
+class _StatusCommandError(RuntimeError):
+    pass
+
+
+def _subprocess_env(base: Mapping[str, str]) -> dict[str, str]:
+    env = dict(base)
+    path = [part for part in env.get("PATH", "").split(os.pathsep) if part]
+    for directory in ("/usr/sbin", "/usr/bin", "/bin"):
+        if directory not in path:
+            path.append(directory)
+    env["PATH"] = os.pathsep.join(path)
+    return env
 
 
 def _nodes_from_status(raw: bytes) -> dict[str, str]:
@@ -85,7 +101,12 @@ class IdentityNodeCache:
 
     async def _refresh(self) -> None:
         process = await asyncio.create_subprocess_exec(
-            self._bin, "status", "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+            self._bin,
+            "status",
+            "--json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=_subprocess_env(os.environ),
         )
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=_TIMEOUT_SECONDS)
@@ -95,7 +116,7 @@ class IdentityNodeCache:
             await process.communicate()
             raise
         if process.returncode != 0:
-            raise RuntimeError("status command failed")
+            raise _StatusCommandError(f"status command exited {process.returncode}")
         nodes = _nodes_from_status(stdout)
         self._nodes = nodes
         set_node_lookup(nodes)
@@ -106,9 +127,14 @@ class IdentityNodeCache:
                 await self._refresh()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 now = time.monotonic()
                 if now - self._last_warning >= _WARNING_SECONDS:
-                    logger.warning("Tailnet node cache refresh failed; keeping last good snapshot")
+                    cause = str(exc) if isinstance(exc, _StatusCommandError) else type(exc).__name__
+                    logger.warning(
+                        "Tailnet node cache refresh failed (%s: %s); keeping last good snapshot",
+                        type(exc).__name__,
+                        cause,
+                    )
                     self._last_warning = now
             await asyncio.sleep(_REFRESH_SECONDS)
