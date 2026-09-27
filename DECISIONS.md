@@ -277,3 +277,5 @@ A long-lived key leaves this machine for the length of an attempt. The bundle us
 ### How it changes
 
 A new entry with new evidence supersedes this one. This entry is not edited.
+
+- 2026-09-27 21:55 UTC (F10d): Cursor and Devin forwarder definitions now carry a separate factory-box prompt; Studio forwarders ignore it and retain their existing routing metadata.
