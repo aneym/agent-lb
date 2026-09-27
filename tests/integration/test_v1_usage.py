@@ -34,8 +34,24 @@ async def _create_member_key(async_client, **member_overrides) -> tuple[dict, st
     created = await async_client.post("/api/team/members", json=payload)
     assert created.status_code == 200, created.text
     member = created.json()
+    account_id = f"account-{member['id']}"
+    async with SessionLocal() as session:
+        session.add(
+            Account(
+                id=account_id,
+                email=f"{account_id}@example.com",
+                plan_type="plus",
+                access_token_encrypted=b"a",
+                refresh_token_encrypted=b"b",
+                last_refresh=utcnow(),
+                status=AccountStatus.ACTIVE,
+            )
+        )
+        await session.commit()
 
-    issued = await async_client.post(f"/api/team/members/{member['id']}/keys", json={})
+    issued = await async_client.post(
+        f"/api/team/members/{member['id']}/keys", json={"assignedAccountIds": [account_id]}
+    )
     assert issued.status_code == 200, issued.text
     reset_team_usage_cache()
     return member, issued.json()["key"]

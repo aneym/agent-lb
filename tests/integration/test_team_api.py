@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.utils.time import utcnow
-from app.db.models import ApiKey, RequestLog
+from app.db.models import Account, ApiKey, ApiKeyAccountAssignment, RequestLog
 from app.db.session import SessionLocal
 from app.modules.team.windows import window_start
 
@@ -21,8 +21,27 @@ async def _create_member(async_client, **overrides) -> dict:
     return response.json()
 
 
+async def _seed_account(account_id: str) -> str:
+    async with SessionLocal() as session:
+        session.add(
+            Account(
+                id=account_id,
+                email=f"{account_id}@example.com",
+                plan_type="plus",
+                access_token_encrypted=b"a",
+                refresh_token_encrypted=b"b",
+                last_refresh=utcnow(),
+            )
+        )
+        await session.commit()
+    return account_id
+
+
 async def _issue_key(async_client, member_id: str, **overrides) -> dict:
-    response = await async_client.post(f"/api/team/members/{member_id}/keys", json=dict(overrides))
+    account_id = await _seed_account(f"account-{member_id}")
+    response = await async_client.post(
+        f"/api/team/members/{member_id}/keys", json={"assignedAccountIds": [account_id], **overrides}
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -127,11 +146,115 @@ async def test_issue_key_attaches_member_and_delete_detaches(async_client, db_se
 
 
 @pytest.mark.asyncio
-async def test_issue_key_without_payload_uses_member_name(async_client, db_setup):
-    member = await _create_member(async_client, name="Katherine")
-    response = await async_client.post(f"/api/team/members/{member['id']}/keys")
+async def test_issue_key_with_scope_defaults_to_member_name(async_client, db_setup):
+    member = await _create_member(async_client, name="Member")
+    account_id = await _seed_account("account-member-name")
+    response = await async_client.post(
+        f"/api/team/members/{member['id']}/keys", json={"assignedAccountIds": [account_id]}
+    )
     assert response.status_code == 200, response.text
-    assert response.json()["name"] == "Katherine"
+    assert response.json()["name"] == "Member"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [None, {}, {"assignedAccountIds": []}])
+async def test_issue_key_requires_account_scope(async_client, db_setup, payload):
+    member = await _create_member(async_client, name="Second person")
+    path = f"/api/team/members/{member['id']}/keys"
+    response = await async_client.post(path) if payload is None else await async_client.post(path, json=payload)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "member_key_scope_required"
+
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(ApiKey).where(ApiKey.member_id == member["id"]))).scalars().all()
+        assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_issue_key_with_account_scope_persists_assignments(async_client, db_setup):
+    member = await _create_member(async_client, name="Second person")
+    account_id = await _seed_account("account-assigned")
+    response = await async_client.post(
+        f"/api/team/members/{member['id']}/keys", json={"assignedAccountIds": [account_id]}
+    )
+    assert response.status_code == 200, response.text
+    issued = response.json()
+    assert issued["accountAssignmentScopeEnabled"] is True
+    assert issued["assignedAccountIds"] == [account_id]
+
+    async with SessionLocal() as session:
+        row = (await session.execute(select(ApiKey).where(ApiKey.id == issued["id"]))).scalar_one()
+        assert row.member_id == member["id"]
+        assert row.account_assignment_scope_enabled is True
+        assignments = (
+            (
+                await session.execute(
+                    select(ApiKeyAccountAssignment.account_id).where(ApiKeyAccountAssignment.api_key_id == row.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert assignments == [account_id]
+
+
+@pytest.mark.asyncio
+async def test_issue_key_rejects_unknown_account_without_persisting_key(async_client, db_setup):
+    member = await _create_member(async_client, name="Second person")
+    response = await async_client.post(
+        f"/api/team/members/{member['id']}/keys", json={"assignedAccountIds": ["missing-account"]}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_api_key_payload"
+
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(ApiKey).where(ApiKey.member_id == member["id"]))).scalars().all()
+        assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_member_key_cannot_clear_assignments_but_can_change_name(async_client, db_setup):
+    member = await _create_member(async_client, name="Second person")
+    account_id = await _seed_account("account-to-keep")
+    issued = (
+        await async_client.post(f"/api/team/members/{member['id']}/keys", json={"assignedAccountIds": [account_id]})
+    ).json()
+    key_id = issued["id"]
+
+    rejected = await async_client.patch(f"/api/api-keys/{key_id}", json={"assignedAccountIds": []})
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "member_key_scope_required"
+
+    async with SessionLocal() as session:
+        row = (await session.execute(select(ApiKey).where(ApiKey.id == key_id))).scalar_one()
+        assert row.account_assignment_scope_enabled is True
+        assignments = (
+            (
+                await session.execute(
+                    select(ApiKeyAccountAssignment.account_id).where(ApiKeyAccountAssignment.api_key_id == key_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert assignments == [account_id]
+
+    renamed = await async_client.patch(f"/api/api-keys/{key_id}", json={"name": "Second person's laptop"})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "Second person's laptop"
+    assert renamed.json()["assignedAccountIds"] == [account_id]
+
+
+@pytest.mark.asyncio
+async def test_non_member_key_can_clear_assignments(async_client, db_setup):
+    account_id = await _seed_account("account-non-member")
+    created = await async_client.post("/api/api-keys/", json={"name": "Owner key", "assignedAccountIds": [account_id]})
+    assert created.status_code == 200, created.text
+
+    cleared = await async_client.patch(f"/api/api-keys/{created.json()['id']}", json={"assignedAccountIds": []})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["accountAssignmentScopeEnabled"] is False
+    assert cleared.json()["assignedAccountIds"] == []
 
 
 @pytest.mark.asyncio

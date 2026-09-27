@@ -101,6 +101,7 @@ class TeamMemberUpdateRequest(_PoolShareRequest):
 class TeamMemberKeyCreateRequest(DashboardModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     expires_at: datetime | None = None
+    assigned_account_ids: list[str] | None = None
 
 
 class TeamUsageModelResponse(DashboardModel):
