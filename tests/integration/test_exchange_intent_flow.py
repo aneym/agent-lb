@@ -891,3 +891,39 @@ async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_accou
     assert rotated
     assert encryptor.decrypt(fresh.refresh_token_encrypted) == "rotated-refresh"
     assert fresh.status == AccountStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_account_deleted_before_ensure_fresh_returns_detached_copy(db_setup, session_kind):
+    # The row loaded by the caller's session disappears before ensure_fresh reloads it;
+    # the account handed back must stay readable after that session closes.
+    account_id = f"deleted-before-fresh-{session_kind}"
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(
+            Account(
+                id=account_id,
+                provider="openai",
+                email=f"{account_id}@example.invalid",
+                plan_type="plus",
+                chatgpt_account_id="acct-present",
+                access_token_encrypted=encryptor.encrypt("access"),
+                refresh_token_encrypted=encryptor.encrypt("refresh"),
+                id_token_encrypted=encryptor.encrypt("id"),
+                last_refresh=utcnow(),
+                access_expires_at=utcnow() + timedelta(hours=1),
+                status=AccountStatus.ACTIVE,
+            )
+        )
+    session_scope = get_background_session() if session_kind == "background" else SessionLocal()
+    async with session_scope as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert account is not None
+        async with SessionLocal() as other:
+            assert await AccountsRepository(other).delete(account_id)
+        fresh = await AuthManager(repo).ensure_fresh(account)
+    assert fresh.id == account_id
+    assert fresh.status == AccountStatus.ACTIVE
+    assert encryptor.decrypt(fresh.refresh_token_encrypted) == "refresh"

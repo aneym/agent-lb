@@ -307,9 +307,9 @@ class AuthManager:
         latest = await self._repo.reload_by_id(account.id)
         if latest is not None:
             account = latest
-            # Return an independent snapshot: request-scoped rollback on close
-            # expires the ORM instance loaded in this repository session.
-            account = _snapshot(self._repo, account)
+        # Return an independent snapshot, also when the row is gone: request-scoped
+        # rollback on close expires the ORM instance loaded in this repository session.
+        account = _snapshot(self._repo, account)
         if not is_locally_owned(account, settings):
             # A mirror cannot refresh; stop serving before its token expires.
             if force or access_token_hard_expired(self._encryptor, account):
