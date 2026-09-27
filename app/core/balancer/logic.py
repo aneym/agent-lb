@@ -491,7 +491,7 @@ def select_account(
             or bypass_quota_exceeded
             or (bypass_account_ids is not None and state.account_id in bypass_account_ids)
         )
-        if state.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED):
+        if state.status in (AccountStatus.REAUTH_REQUIRED, AccountStatus.EXCHANGE_UNCERTAIN, AccountStatus.DEACTIVATED):
             continue
         if state.status == AccountStatus.PAUSED:
             continue

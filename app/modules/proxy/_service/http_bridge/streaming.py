@@ -38,6 +38,12 @@ from app.core.errors import (
     openai_error,
     response_failed_event,
 )
+from app.core.identity import (
+    UNATTRIBUTED_FORWARD_IDENTITY,
+    RequestIdentity,
+    reset_request_identity,
+    set_request_identity,
+)
 from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
     bridge_durable_recover_total,
@@ -216,6 +222,7 @@ class _HTTPBridgeStreamingMixin:
         suppress_text_done_events: bool = False,
         downstream_turn_state: str | None = None,
         forwarded_request: bool = False,
+        forwarded_identity: RequestIdentity | None = None,
         forwarded_affinity_kind: str | None = None,
         forwarded_affinity_key: str | None = None,
         retry_protocol_only_failures: bool = False,
@@ -230,7 +237,7 @@ class _HTTPBridgeStreamingMixin:
             _header_value_case_insensitive(headers, "x-api-key"),
         )
         filtered = filter_inbound_headers(headers)
-        return self._stream_http_bridge_or_retry(
+        stream = self._stream_http_bridge_or_retry(
             payload,
             filtered,
             codex_session_affinity=codex_session_affinity,
@@ -247,6 +254,33 @@ class _HTTPBridgeStreamingMixin:
             retry_protocol_only_failures=retry_protocol_only_failures,
             client_session_id=client_session_id,
         )
+        if forwarded_request:
+            identity = forwarded_identity if forwarded_identity is not None else UNATTRIBUTED_FORWARD_IDENTITY
+            return self._stream_with_forwarded_identity(stream, identity)
+        return stream
+
+    @staticmethod
+    async def _stream_with_forwarded_identity(
+        stream: AsyncIterator[str], identity: RequestIdentity
+    ) -> AsyncIterator[str]:
+        # Startup probing and StreamingResponse may resume this generator in
+        # different tasks. Set/reset around each step, not across a yield.
+        try:
+            while True:
+                token = set_request_identity(identity)
+                try:
+                    item = await stream.__anext__()
+                except StopAsyncIteration:
+                    return
+                finally:
+                    reset_request_identity(token)
+                yield item
+        finally:
+            token = set_request_identity(identity)
+            try:
+                await stream.aclose()
+            finally:
+                reset_request_identity(token)
 
     async def _stream_http_bridge_or_retry(
         self: Any,

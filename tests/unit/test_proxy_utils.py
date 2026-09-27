@@ -202,6 +202,11 @@ def test_filter_inbound_headers_strips_proxy_identity_headers():
         "CF-Connecting-IP": "1.2.3.4",
         "CF-Ray": "ray123",
         "True-Client-IP": "1.2.3.4",
+        "X-Agent-LB-Machine": "box-1",
+        "Tailscale-User-Login": "fake@example.invalid",
+        "Tailscale-User-Name": "Fake Member",
+        "Tailscale-User-Profile-Pic": "https://example.invalid/pic",
+        "Tailscale-Headers-Info": "present",
         "User-Agent": "codex-test",
         "Accept": "text/event-stream",
     }
@@ -215,6 +220,8 @@ def test_filter_inbound_headers_strips_proxy_identity_headers():
     assert "CF-Connecting-IP" not in filtered
     assert "CF-Ray" not in filtered
     assert "True-Client-IP" not in filtered
+    assert "X-Agent-LB-Machine" not in filtered
+    assert not any(key.lower().startswith("tailscale-") for key in filtered)
     assert filtered["User-Agent"] == "codex-test"
     assert filtered["Accept"] == "text/event-stream"
 
@@ -3643,7 +3650,14 @@ async def test_stream_responses_falls_back_to_http_post_without_native_codex_hea
         event
         async for event in proxy_module.stream_responses(
             payload,
-            headers={},
+            headers=filter_inbound_headers(
+                {
+                    "Tailscale-User-Login": "fake@example.invalid",
+                    "Tailscale-User-Name": "Fake Member",
+                    "Tailscale-User-Profile-Pic": "https://example.invalid/pic",
+                    "X-Agent-LB-Machine": "box-1",
+                }
+            ),
             access_token="token",
             account_id="acc_1",
             session=cast(proxy_module.aiohttp.ClientSession, session),
@@ -3652,6 +3666,10 @@ async def test_stream_responses_falls_back_to_http_post_without_native_codex_hea
 
     assert session.ws_calls == []
     assert len(session.post_calls) == 1
+    upstream_headers = cast(dict[str, str], session.post_calls[0]["headers"])
+    assert not any(
+        key.lower().startswith("tailscale-") or key.lower() == "x-agent-lb-machine" for key in upstream_headers
+    )
     assert events == ['data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n']
 
 
@@ -15689,6 +15707,14 @@ async def test_stream_selection_budget_exhaustion_emits_timeout_event(monkeypatc
 
 @pytest.mark.asyncio
 async def test_stream_refresh_timeout_before_visible_output_fails_over(monkeypatch):
+    from app.core.identity import RequestIdentity
+
+    first_identity = RequestIdentity("member-a", "member", "box-1", "local")
+    second_identity = RequestIdentity("member-b", "member", "box-2", "tailnet")
+    turn_identities = iter((first_identity, second_identity))
+    monkeypatch.setattr(
+        "app.modules.proxy._service.streaming.mixin.get_request_identity", lambda: next(turn_identities)
+    )
     settings = _make_proxy_settings(log_proxy_service_tier_trace=False)
     request_logs = _RequestLogsRecorder()
     service = proxy_service.ProxyService(_repo_factory(request_logs))
@@ -15733,7 +15759,10 @@ async def test_stream_refresh_timeout_before_visible_output_fails_over(monkeypat
     assert seen_excluded_account_ids == [set(), {account_a.id}]
     assert stream_account_ids == [account_b.chatgpt_account_id]
     assert request_logs.calls[-1]["account_id"] == account_b.id
+    assert request_logs.calls[-1]["identity"] == first_identity
     assert request_logs.calls[-1]["status"] == "success"
+    _ = [chunk async for chunk in service.stream_responses(payload, {"session_id": "sid-stream-second"})]
+    assert request_logs.calls[-1]["identity"] == second_identity
 
 
 @pytest.mark.asyncio

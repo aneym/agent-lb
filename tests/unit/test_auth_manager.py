@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from app.core.auth import refresh as openai_refresh
 from app.core.auth.refresh import RefreshError, TokenRefreshResult
 from app.core.crypto import TokenEncryptor
 from app.core.upstream_proxy import UpstreamProxyRouteError
@@ -21,8 +22,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _clear_refresh_state() -> None:
+def _clear_refresh_state(monkeypatch) -> None:
     auth_manager_module._clear_refresh_singleflight_state()
+
+    @asynccontextmanager
+    async def leased_session():
+        yield object()
+
+    monkeypatch.setattr(openai_refresh, "lease_http_session", leased_session)
 
 
 class _DummyRepo:
@@ -76,6 +83,8 @@ class _DummyRepo:
         seat_type: str | None = None,
         *,
         expected_refresh_token_encrypted: bytes | None = None,
+        access_expires_at: datetime | None = None,
+        exchange_token_hash: str | None = None,
     ) -> bool:
         self.tokens_payload = {
             "account_id": account_id,
@@ -90,6 +99,8 @@ class _DummyRepo:
             "workspace_label": workspace_label,
             "seat_type": seat_type,
             "expected_refresh_token_encrypted": expected_refresh_token_encrypted,
+            "access_expires_at": access_expires_at,
+            "exchange_token_hash": exchange_token_hash,
         }
         return self.tokens_update_result
 
@@ -103,6 +114,42 @@ class _DummyRepo:
     ) -> bool:
         del account_id
         return (email, chatgpt_account_id, workspace_id) in self.taken_workspace_slots
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_instance", ["other-instance", None])
+@pytest.mark.parametrize("remaining_minutes", [4, 6])
+async def test_unrefreshable_account_serving_margin(monkeypatch, owner_instance, remaining_minutes):
+    monkeypatch.setenv("AGENT_LB_LOCAL_INSTANCE_ID", "this-instance")
+    auth_manager_module.get_settings.cache_clear()
+    encryptor = TokenEncryptor()
+    account = Account(
+        id="unrefreshable-account",
+        provider="anthropic",
+        email="account@example.invalid",
+        plan_type="pro",
+        owner_instance=owner_instance,
+        access_token_encrypted=encryptor.encrypt("access"),
+        refresh_token_encrypted=encryptor.encrypt("refresh"),
+        access_expires_at=utcnow() + timedelta(minutes=remaining_minutes),
+        last_refresh=utcnow(),
+        status=AccountStatus.EXCHANGE_UNCERTAIN if owner_instance is None else AccountStatus.ACTIVE,
+    )
+    repo = _DummyRepo()
+    repo.accounts_by_id[account.id] = account
+
+    try:
+        if remaining_minutes == 4:
+            if owner_instance is None:
+                with pytest.raises(RefreshError, match="Refresh exchange outcome uncertain"):
+                    await AuthManager(cast(AccountsRepositoryPort, repo)).ensure_fresh(account)
+            else:
+                with pytest.raises(auth_manager_module.AccountNotOwnedError):
+                    await AuthManager(cast(AccountsRepositoryPort, repo)).ensure_fresh(account)
+        else:
+            assert await AuthManager(cast(AccountsRepositoryPort, repo)).ensure_fresh(account) is account
+    finally:
+        auth_manager_module.get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -829,9 +876,7 @@ async def test_refresh_account_preserves_token_rotated_after_permanent_failure_r
         status=AccountStatus.ACTIVE,
         deactivation_reason=None,
     )
-    same_version = Account(
-        **{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns}
-    )
+    same_version = Account(**{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns})
     winning_account = Account(
         **{column.name: getattr(stale_account, column.name) for column in Account.__table__.columns}
     )
@@ -892,9 +937,7 @@ async def test_refresh_account_preserves_newer_tokens_when_conditional_write_los
         deactivation_reason=None,
     )
     expected_refresh_token_encrypted = account.refresh_token_encrypted
-    latest_account = Account(
-        **{column.name: getattr(account, column.name) for column in Account.__table__.columns}
-    )
+    latest_account = Account(**{column.name: getattr(account, column.name) for column in Account.__table__.columns})
     latest_account.access_token_encrypted = encryptor.encrypt("winning-access")
     latest_account.refresh_token_encrypted = encryptor.encrypt("winning-refresh")
 

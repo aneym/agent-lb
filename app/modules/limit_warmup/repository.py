@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import AccountLimitWarmup
 from app.db.session import sqlite_writer_section
 
+ANTHROPIC_CONTINUOUS_WINDOW = "anthropic_primary_continuous"
+OPENAI_CONTINUOUS_WINDOW = "openai_weekly_continuous"
+
 # Failed primers for one window bucket stop retrying after this many retries.
 _MAX_CONTINUOUS_RETRIES = 5
 
@@ -48,7 +51,7 @@ class LimitWarmupRepository:
             select(AccountLimitWarmup.account_id, func.max(AccountLimitWarmup.completed_at))
             .where(
                 AccountLimitWarmup.account_id.in_(account_ids),
-                AccountLimitWarmup.window == "anthropic_primary_continuous",
+                AccountLimitWarmup.window.in_((ANTHROPIC_CONTINUOUS_WINDOW, OPENAI_CONTINUOUS_WINDOW)),
                 AccountLimitWarmup.status == "succeeded",
             )
             .group_by(AccountLimitWarmup.account_id)
@@ -66,7 +69,13 @@ class LimitWarmupRepository:
         return result.scalar_one_or_none()
 
     async def claim_continuous_attempt(
-        self, *, account_id: str, reset_at: int, model: str, now: datetime
+        self,
+        *,
+        account_id: str,
+        reset_at: int,
+        model: str,
+        now: datetime,
+        window: str = ANTHROPIC_CONTINUOUS_WINDOW,
     ) -> AccountLimitWarmup | None:
         """Claim a window bucket or retry its failed send after a bounded backoff.
 
@@ -74,7 +83,6 @@ class LimitWarmupRepository:
         pending send is never retried automatically: its upstream outcome is
         uncertain after a crash, so a duplicate could spend credits.
         """
-        window = "anthropic_primary_continuous"
         existing = await self._existing_attempt(account_id=account_id, window=window, reset_at=reset_at)
         if existing is None:
             return await self.try_create_attempt(

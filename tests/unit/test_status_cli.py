@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app import cli
+from app import cli, status_cli
 
 pytestmark = pytest.mark.unit
 
@@ -131,6 +131,7 @@ def test_status_reports_last_confirmed_anthropic_prime(service, capsys):
 
     cli.main(["status", "--base-url", service])
     assert f"last primed {primed_at}" in capsys.readouterr().out
+
 
 @pytest.mark.parametrize(
     ("read", "count", "state"),
@@ -368,7 +369,11 @@ def test_openai_weekly_only_usage_and_malformed_quota_are_safe(service, capsys):
             _account(
                 provider="openai",
                 # Shape the live API sends since OpenAI dropped the 5h window (2026-09-25).
-                usage={"primaryRemainingPercent": None, "secondaryRemainingPercent": 25, "monthlyRemainingPercent": None},
+                usage={
+                    "primaryRemainingPercent": None,
+                    "secondaryRemainingPercent": 25,
+                    "monthlyRemainingPercent": None,
+                },
                 additionalQuotas=[{"quotaKey": "codex", "modelIds": None, "primaryWindow": "bad"}],
             )
         ]
@@ -397,3 +402,14 @@ def test_invalid_inputs_fail_safely_and_human_output_has_account_windows(service
     with pytest.raises(SystemExit) as result:
         cli.main(["status", "--json", "--base-url", "http://127.0.0.1:bad"])
     assert result.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("exchange_uncertain", ("blocked", ["account status is exchange_uncertain"])),
+        ("no_such_status", ("unknown", ["account status is unknown"])),
+    ],
+)
+def test_account_usability_knows_exchange_uncertain(status, expected):
+    assert status_cli._account_usability(status, "active", {}) == expected

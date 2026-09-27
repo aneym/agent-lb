@@ -3,18 +3,20 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import delete, func, insert, literal, or_, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.config.settings import get_settings
 from app.core.providers import normalize_provider_name
 from app.core.utils.time import utcnow
 from app.db.models import (
     Account,
+    AccountExchangeIntent,
     AccountLimitWarmup,
     AccountStatus,
     AdditionalUsageHistory,
@@ -30,6 +32,17 @@ from app.modules.usage.additional_quota_keys import normalize_additional_quota_r
 _SETTINGS_ROW_ID = 1
 _DUPLICATE_ACCOUNT_SUFFIX = "__copy"
 _UNSET = object()
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeIntentWindow:
+    token_hash: str
+    replay: bool
+    reason: str | None
+    available_at: datetime
+    ready: bool
+
+
 # Replayed request_ids are looked up in chunks to keep the IN list bounded.
 _REPLAYED_REQUEST_ID_CHUNK = 500
 
@@ -251,6 +264,7 @@ class AccountsRepository:
             )
             if canonical is not None:
                 _apply_account_updates(canonical, account)
+                await self._clear_exchange_intent_for_reauth(canonical.id)
                 await self._reconcile_chatgpt_identity_duplicates(
                     canonical=canonical,
                     chatgpt_account_id=account.chatgpt_account_id,
@@ -268,6 +282,7 @@ class AccountsRepository:
                 merge_by_chatgpt_identity=merge_by_chatgpt_identity,
             ):
                 _apply_account_updates(existing, account)
+                await self._clear_exchange_intent_for_reauth(existing.id)
                 await self._session.commit()
                 await self._session.refresh(existing)
                 return existing
@@ -277,6 +292,7 @@ class AccountsRepository:
             existing_by_email = await self._single_account_by_email(account.email)
             if existing_by_email:
                 _apply_account_updates(existing_by_email, account)
+                await self._clear_exchange_intent_for_reauth(existing_by_email.id)
                 await self._session.commit()
                 await self._session.refresh(existing_by_email)
                 return existing_by_email
@@ -314,6 +330,7 @@ class AccountsRepository:
         existing = await self._account_by_slot_identity(account)
         if existing:
             _apply_account_updates(existing, account)
+            await self._clear_exchange_intent_for_reauth(existing.id)
             await self._session.commit()
             await self._session.refresh(existing)
             return existing
@@ -322,6 +339,7 @@ class AccountsRepository:
         if existing_by_id:
             if _same_unknown_workspace_identity(existing_by_id, account) and not preserve_unknown_workspace_duplicates:
                 _apply_account_updates(existing_by_id, account)
+                await self._clear_exchange_intent_for_reauth(existing_by_id.id)
                 await self._session.commit()
                 await self._session.refresh(existing_by_id)
                 return existing_by_id
@@ -338,6 +356,7 @@ class AccountsRepository:
                 existing_by_email = None
             if existing_by_email:
                 _apply_account_updates(existing_by_email, account)
+                await self._clear_exchange_intent_for_reauth(existing_by_email.id)
                 await self._session.commit()
                 await self._session.refresh(existing_by_email)
                 return existing_by_email
@@ -490,6 +509,9 @@ class AccountsRepository:
         stmt = update(Account).where(Account.id == account_id)
         if expected_refresh_token_encrypted is not None:
             stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
+        elif status != AccountStatus.EXCHANGE_UNCERTAIN:
+            # Only exchange resolution may clear an uncertain refresh outcome.
+            stmt = stmt.where(Account.status != AccountStatus.EXCHANGE_UNCERTAIN)
         result = await self._session.execute(stmt.values(**values).returning(Account.id))
         await self._session.commit()
         return result.scalar_one_or_none() is not None
@@ -531,6 +553,8 @@ class AccountsRepository:
             .values(**values)
             .returning(Account.id)
         )
+        if expected_status == AccountStatus.EXCHANGE_UNCERTAIN and status != expected_status:
+            return False
         if expected_deactivation_reason is None:
             stmt = stmt.where(Account.deactivation_reason.is_(None))
         else:
@@ -627,6 +651,8 @@ class AccountsRepository:
         workspace_label: str | None = None,
         seat_type: str | None = None,
         *,
+        access_expires_at: datetime | None | object = _UNSET,
+        exchange_token_hash: str | None = None,
         expected_refresh_token_encrypted: bytes | None = None,
     ) -> bool:
         values: dict[str, bytes | datetime | str | None] = {
@@ -635,6 +661,11 @@ class AccountsRepository:
             "id_token_encrypted": id_token_encrypted,
             "last_refresh": last_refresh,
         }
+        if access_expires_at is not _UNSET:
+            values["access_expires_at"] = access_expires_at
+        if exchange_token_hash is not None:
+            values["status"] = AccountStatus.ACTIVE
+            values["deactivation_reason"] = None
         if plan_type is not None:
             values["plan_type"] = plan_type
         if email is not None:
@@ -650,13 +681,236 @@ class AccountsRepository:
         stmt = update(Account).where(Account.id == account_id)
         if expected_refresh_token_encrypted is not None:
             stmt = stmt.where(Account.refresh_token_encrypted == expected_refresh_token_encrypted)
+        if exchange_token_hash is not None:
+            stmt = stmt.where(
+                Account.id.in_(
+                    select(Account.id).where(
+                        or_(
+                            Account.owner_instance.is_(None), Account.owner_instance == get_settings().local_instance_id
+                        )
+                    )
+                )
+            ).where(
+                Account.id.in_(
+                    select(AccountExchangeIntent.account_id).where(
+                        AccountExchangeIntent.account_id == account_id,
+                        AccountExchangeIntent.refresh_token_sha256 == exchange_token_hash,
+                    )
+                )
+            )
         with self._session.no_autoflush:
             result = await self._session.execute(stmt.values(**values).returning(Account.id))
         if result.scalar_one_or_none() is None:
             await self._session.rollback()
             return False
+        if exchange_token_hash is not None:
+            await self._session.execute(
+                delete(AccountExchangeIntent).where(
+                    AccountExchangeIntent.account_id == account_id,
+                    AccountExchangeIntent.refresh_token_sha256 == exchange_token_hash,
+                )
+            )
         await self._session.commit()
         return True
+
+    async def exchange_intent_window(self, account_id: str, timeout_seconds: float) -> ExchangeIntentWindow | None:
+        row = (
+            await self._session.execute(
+                select(
+                    AccountExchangeIntent.refresh_token_sha256,
+                    AccountExchangeIntent.replay,
+                    AccountExchangeIntent.reason,
+                    AccountExchangeIntent.started_at,
+                    func.timezone("UTC", func.clock_timestamp())
+                    if self._session.bind.dialect.name == "postgresql"
+                    else func.current_timestamp(),
+                ).where(AccountExchangeIntent.account_id == account_id)
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        token_hash, replay, reason, started_at, database_now = row
+        available_at = started_at + timedelta(seconds=timeout_seconds + 900)
+        if available_at.tzinfo is not None and database_now.tzinfo is None:
+            available_at = available_at.replace(tzinfo=None)
+        if database_now.tzinfo is not None and available_at.tzinfo is None:
+            database_now = database_now.replace(tzinfo=None)
+        return ExchangeIntentWindow(token_hash, replay, reason, available_at, database_now >= available_at)
+
+    async def exchange_intent_hash(self, account_id: str) -> str | None:
+        return (
+            await self._session.execute(
+                select(AccountExchangeIntent.refresh_token_sha256).where(AccountExchangeIntent.account_id == account_id)
+            )
+        ).scalar_one_or_none()
+
+    async def drop_stale_exchange_intent(self, account_id: str, stale_hash: str, expected_token: bytes) -> bool:
+        """Retire a fence for a token the account no longer holds, under the account lock."""
+        account = (
+            await self._session.execute(
+                select(Account.refresh_token_encrypted, Account.status)
+                .where(Account.id == account_id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if (
+            account is None
+            or account.refresh_token_encrypted != expected_token
+            or account.status == AccountStatus.EXCHANGE_UNCERTAIN
+        ):
+            await self._session.rollback()
+            return False
+        result = await self._session.execute(
+            delete(AccountExchangeIntent).where(
+                AccountExchangeIntent.account_id == account_id,
+                AccountExchangeIntent.refresh_token_sha256 == stale_hash,
+            )
+        )
+        await self._session.commit()
+        return result.rowcount == 1
+
+    async def begin_exchange(
+        self,
+        account_id: str,
+        token_hash: str,
+        expected_token: bytes,
+        *,
+        replay: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> bool:
+        """Atomically fence a locally owned token before it can reach the provider."""
+        from sqlalchemy.exc import IntegrityError
+
+        source = (
+            select(
+                Account.id,
+                literal(token_hash),
+                func.timezone("UTC", func.clock_timestamp())
+                if self._session.bind.dialect.name == "postgresql"
+                else func.current_timestamp(),
+                literal(replay),
+            )
+            .where(
+                Account.id == account_id,
+                Account.refresh_token_encrypted == expected_token,
+                or_(Account.owner_instance.is_(None), Account.owner_instance == get_settings().local_instance_id),
+                or_(Account.status != AccountStatus.EXCHANGE_UNCERTAIN, literal(replay)),
+            )
+            .with_for_update()
+        )
+        try:
+            async with self._session.begin_nested():
+                eligible = not replay or timeout_seconds is not None
+                if replay:
+                    # Serialize replacement with token rotation even if the advisory lock is lost.
+                    account_row = await self._session.execute(
+                        select(Account.id)
+                        .where(
+                            Account.id == account_id,
+                            Account.refresh_token_encrypted == expected_token,
+                            or_(
+                                Account.owner_instance.is_(None),
+                                Account.owner_instance == get_settings().local_instance_id,
+                            ),
+                        )
+                        .with_for_update()
+                    )
+                    eligible = account_row.scalar_one_or_none() is not None
+                    if eligible and timeout_seconds is not None:
+                        window = await self.exchange_intent_window(account_id, timeout_seconds)
+                        eligible = window is not None and window.token_hash == token_hash and window.ready
+                        if eligible and window.reason != "operator_reset":
+                            eligible = not window.replay and window.reason != "unsaved"
+                    if eligible:
+                        retired = await self._session.execute(
+                            delete(AccountExchangeIntent).where(
+                                AccountExchangeIntent.account_id == account_id,
+                                AccountExchangeIntent.refresh_token_sha256 == token_hash,
+                            )
+                        )
+                        eligible = retired.rowcount == 1
+                inserted = False
+                if eligible:
+                    result = await self._session.execute(
+                        insert(AccountExchangeIntent)
+                        .from_select(("account_id", "refresh_token_sha256", "started_at", "replay"), source)
+                        .returning(AccountExchangeIntent.account_id),
+                    )
+                    inserted = result.scalar_one_or_none() is not None
+        except IntegrityError:
+            await self._session.rollback()
+            return False
+        if not inserted:
+            await self._session.rollback()
+            return False
+        await self._session.commit()
+        return True
+
+    async def abort_exchange(self, account_id: str, token_hash: str) -> None:
+        """Release a fence only when the provider could not have seen the token."""
+        await self._session.execute(
+            delete(AccountExchangeIntent).where(
+                AccountExchangeIntent.account_id == account_id,
+                AccountExchangeIntent.refresh_token_sha256 == token_hash,
+            )
+        )
+        await self._session.commit()
+
+    async def clear_exchange_intent(self, account_id: str, timeout_seconds: float) -> bool | datetime:
+        """Allow an operator-directed replay only after the provider's processing window."""
+        window = await self.exchange_intent_window(account_id, timeout_seconds)
+        if window is None:
+            return False
+        if not window.ready:
+            return window.available_at
+        result = await self._session.execute(
+            update(Account)
+            .where(Account.id == account_id, Account.status == AccountStatus.EXCHANGE_UNCERTAIN)
+            .values(status=AccountStatus.ACTIVE, deactivation_reason=None)
+            .returning(Account.id)
+        )
+        if result.scalar_one_or_none() is None:
+            await self._session.rollback()
+            return False
+        await self._session.execute(
+            update(AccountExchangeIntent)
+            .where(AccountExchangeIntent.account_id == account_id)
+            .values(reason="operator_reset")
+        )
+        await self._session.commit()
+        return True
+
+    async def _clear_exchange_intent_for_reauth(self, account_id: str) -> None:
+        await self._session.execute(delete(AccountExchangeIntent).where(AccountExchangeIntent.account_id == account_id))
+
+    async def mark_exchange_uncertain(
+        self, account_id: str, token_hash: str, expected_token: bytes, *, reason: str | None = None
+    ) -> None:
+        result = await self._session.execute(
+            update(Account)
+            .where(Account.id == account_id)
+            .where(
+                Account.id.in_(
+                    select(AccountExchangeIntent.account_id).where(
+                        AccountExchangeIntent.account_id == account_id,
+                        AccountExchangeIntent.refresh_token_sha256 == token_hash,
+                    )
+                )
+            )
+            .where(Account.refresh_token_encrypted == expected_token)
+            .values(status=AccountStatus.EXCHANGE_UNCERTAIN, deactivation_reason="Refresh exchange outcome uncertain")
+            .returning(Account.id)
+        )
+        if result.scalar_one_or_none() is not None and reason is not None:
+            await self._session.execute(
+                update(AccountExchangeIntent)
+                .where(
+                    AccountExchangeIntent.account_id == account_id,
+                    AccountExchangeIntent.refresh_token_sha256 == token_hash,
+                )
+                .values(reason=reason)
+            )
+        await self._session.commit()
 
     async def workspace_slot_taken(
         self,
@@ -804,6 +1058,7 @@ def _apply_account_updates(target: Account, source: Account) -> None:
     target.refresh_token_encrypted = source.refresh_token_encrypted
     target.id_token_encrypted = source.id_token_encrypted
     target.last_refresh = source.last_refresh
+    target.access_expires_at = source.access_expires_at
     target.status = source.status
     target.deactivation_reason = source.deactivation_reason
     target.reset_at = source.reset_at

@@ -54,6 +54,7 @@ from app.core.errors import (
     response_failed_event,
 )
 from app.core.exceptions import ProxyAuthError, ProxyRateLimitError, TeamMemberOverCapError, TeamMemberSuspendedError
+from app.core.identity import RequestIdentity
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, bridge_public_contract_error_total
 from app.core.middleware.api_firewall import _parse_trusted_proxy_networks, resolve_connection_client_ip
 from app.core.openai.chat_requests import ChatCompletionsRequest
@@ -1159,6 +1160,7 @@ async def internal_bridge_responses(
         api_key_reservation_override=forwarded_request_context.context.reservation,
         include_rate_limit_headers=False,
         forwarded_request=True,
+        forwarded_identity=forwarded_request_context.context.identity,
         forwarded_headers=forwarded_headers,
         forwarded_downstream_turn_state=forwarded_request_context.context.downstream_turn_state,
         forwarded_affinity_kind=forwarded_request_context.context.original_affinity_kind,
@@ -2666,6 +2668,7 @@ async def _stream_responses(
     api_key_reservation_override: ApiKeyUsageReservationData | None = None,
     include_rate_limit_headers: bool = True,
     forwarded_request: bool = False,
+    forwarded_identity: RequestIdentity | None = None,
     forwarded_headers: Mapping[str, str] | None = None,
     forwarded_downstream_turn_state: str | None = None,
     forwarded_affinity_kind: str | None = None,
@@ -2727,6 +2730,7 @@ async def _stream_responses(
             suppress_text_done_events=suppress_text_done_events,
             downstream_turn_state=downstream_turn_state,
             forwarded_request=forwarded_request,
+            forwarded_identity=forwarded_identity,
             forwarded_affinity_kind=forwarded_affinity_kind,
             forwarded_affinity_key=forwarded_affinity_key,
             retry_protocol_only_failures=enforce_openai_sdk_contract,

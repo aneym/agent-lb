@@ -41,16 +41,23 @@ class _FakePeerClient:
         raise NotImplementedError
 
     async def checkout(
-        self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str
+        self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str
     ) -> CheckoutPeerResult:
         assert self.checkout_result is not None
-        return self.checkout_result
+        return CheckoutPeerResult(
+            nonce=nonce, owner_instance_id=self.checkout_result.owner_instance_id, auth=self.checkout_result.auth
+        )
 
     async def checkout_confirm(self, *, peer_url: str, token: str, nonce: str) -> None:
         assert self.confirm_calls is not None
         self.confirm_calls.append(nonce)
         if self.checkout_confirm_error is not None:
             raise self.checkout_confirm_error
+
+    async def abort(
+        self, *, peer_url: str, token: str, nonce: str, account_id: str, direction: str, caller_instance_id: str
+    ) -> str:
+        return "aborted"
 
     async def checkin(
         self,
@@ -60,6 +67,7 @@ class _FakePeerClient:
         account_id: str,
         nonce: str,
         auth: FederationAuthPayload,
+        caller_instance_id: str,
     ) -> CheckinPeerResult:
         assert self.checkin_calls is not None
         self.checkin_calls.append((account_id, nonce))
@@ -73,7 +81,8 @@ def _settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = {
         "local_instance_id": _LOCAL_INSTANCE_ID,
         "federation_peer_url": "https://owner.example.internal",
-        "federation_token": "peer-secret",
+        "federation_transfer_outbound_token": "peer-secret",
+        "federation_taker_instance_ids": [_LOCAL_INSTANCE_ID],
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -130,6 +139,7 @@ def _checkout_result(*, nonce: str = "peer-nonce-1") -> CheckoutPeerResult:
 @pytest.mark.asyncio
 async def test_execute_checkout_happy_path(db_setup: bool) -> None:
     del db_setup
+    await _seed_account("acc_execute", owner_instance=_OWNER_INSTANCE_ID)
     peer = _FakePeerClient(checkout_result=_checkout_result(), checkin_result=None)
     async with SessionLocal() as session:
         service = FederationService(FederationRepository(session), settings=_settings(), peer_client=peer)
@@ -153,6 +163,7 @@ async def test_execute_checkout_happy_path(db_setup: bool) -> None:
 @pytest.mark.asyncio
 async def test_execute_checkout_confirm_failure_leaves_account_owned_and_unconfirmed(db_setup: bool) -> None:
     del db_setup
+    await _seed_account("acc_execute_unconfirmed", owner_instance=_OWNER_INSTANCE_ID)
     peer = _FakePeerClient(
         checkout_result=_checkout_result(nonce="peer-nonce-2"),
         checkout_confirm_error=RuntimeError("peer unreachable"),
@@ -173,7 +184,7 @@ async def test_execute_checkout_confirm_failure_leaves_account_owned_and_unconfi
     async with SessionLocal() as session:
         transfer = await FederationRepository(session).get_transfer_by_nonce(result.nonce)
     assert transfer is not None
-    assert transfer.state == AccountTransferState.PENDING
+    assert transfer.state == AccountTransferState.SETTLED  # import committed before confirm
     assert transfer.direction == AccountTransferDirection.CHECKOUT
     assert transfer.counterparty_instance_id == _OWNER_INSTANCE_ID
 
@@ -192,6 +203,9 @@ async def test_execute_checkin_closes_local_gate_before_calling_peer(db_setup: b
             counterparty_instance_id=_OWNER_INSTANCE_ID,
             nonce="prior-checkout-nonce",
         )
+
+    async with SessionLocal() as session:
+        await FederationRepository(session).mark_transfer_settled("prior-checkout-nonce")
 
     owner_instance_when_peer_called: list[str | None] = []
 
@@ -222,7 +236,7 @@ async def test_checkout_race_exactly_one_taker_wins(db_setup: bool) -> None:
         try:
             async with SessionLocal() as session:
                 service = FederationService(FederationRepository(session), settings=_settings())
-                return await service.checkout("acc_checkout_race", taker)
+                return await service.checkout("acc_checkout_race", taker, f"race-nonce-{taker}-12345678901234567890")
         except FederationConflictError as exc:
             return exc
 
@@ -248,17 +262,20 @@ async def test_double_checkout_checkin_round_trip_reimports_on_second_checkin(db
     del db_setup
     account_id = "acc_double_round_trip"
     taker = "taker-round-trip"
-    owner_settings = _settings(local_instance_id=_OWNER_INSTANCE_ID)
+    owner_settings = _settings(local_instance_id=_OWNER_INSTANCE_ID, federation_taker_instance_ids=[taker])
     await _seed_account(account_id, owner_instance=None)
 
     async def _round_trip(*, access_token: str, refresh_token: str, checkin_nonce: str) -> None:
         async with SessionLocal() as session:
             service = FederationService(FederationRepository(session), settings=owner_settings)
-            checkout_response = await service.checkout(account_id, taker)
+            checkout_response = await service.checkout(
+                account_id, taker, f"checkout-{checkin_nonce}-12345678901234567890"
+            )
             await service.confirm_checkout(checkout_response.nonce)
             checkin_response = await service.checkin(
                 account_id,
                 checkin_nonce,
+                taker,
                 FederationAuthPayload(
                     access_token=access_token,
                     refresh_token=refresh_token,
@@ -306,6 +323,13 @@ async def test_execute_checkin_second_round_trip_mints_fresh_nonce(db_setup: boo
         checkin_nonces_seen.append(nonce)
 
     async def _do_checkout(peer_nonce: str) -> None:
+        if peer_nonce.endswith("round-1"):
+            await _seed_account(account_id, owner_instance=_OWNER_INSTANCE_ID)
+        else:
+            async with SessionLocal() as session:
+                account = await session.get(Account, account_id)
+                account.owner_instance = _OWNER_INSTANCE_ID
+                await session.commit()
         peer = _FakePeerClient(checkout_result=_checkout_result(nonce=peer_nonce))
         async with SessionLocal() as session:
             service = FederationService(FederationRepository(session), settings=_settings(), peer_client=peer)
@@ -330,3 +354,28 @@ async def test_execute_checkin_second_round_trip_mints_fresh_nonce(db_setup: boo
 
     assert len(checkin_nonces_seen) == 2
     assert checkin_nonces_seen[0] != checkin_nonces_seen[1]
+
+
+@pytest.mark.asyncio
+async def test_checkout_retry_does_not_overwrite_rotated_taker_token(db_setup: bool) -> None:
+    """Lost confirm plus a peer retry cannot replace the taker's live token."""
+    del db_setup
+    await _seed_account("retry-account", owner_instance=_OWNER_INSTANCE_ID)
+    peer = _FakePeerClient(
+        checkout_result=_checkout_result(nonce="retry-nonce"), checkout_confirm_error=RuntimeError("confirm lost")
+    )
+    async with SessionLocal() as session:
+        await FederationService(FederationRepository(session), settings=_settings(), peer_client=peer).execute_checkout(
+            "retry-account"
+        )
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        account = await session.get(Account, "retry-account")
+        account.refresh_token_encrypted = encryptor.encrypt("rotated-live")
+        await session.commit()
+    async with SessionLocal() as session:
+        with pytest.raises(FederationConflictError):
+            await FederationService(
+                FederationRepository(session), settings=_settings(), peer_client=peer
+            ).execute_checkout("retry-account")
+    assert encryptor.decrypt((await _get_account("retry-account")).refresh_token_encrypted) == "rotated-live"

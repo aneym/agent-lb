@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import logging
 import os
+import re
 import socket
+import unicodedata
 from collections.abc import Mapping
 from functools import lru_cache
 from ipaddress import ip_address, ip_network
@@ -22,6 +27,7 @@ ENV_FILES = (BASE_DIR / ".env", BASE_DIR / ".env.local")
 
 DOCKER_DATA_DIR = Path("/var/lib/agent-lb")
 DOCKER_CALLBACK_HOST = "0.0.0.0"
+logger = logging.getLogger(__name__)
 
 
 def _in_container() -> bool:
@@ -76,6 +82,15 @@ DEFAULT_DATABASE_URL = f"sqlite+aiosqlite:///{DEFAULT_DB_PATH}"
 type StringListInput = str | list[str] | None
 type OptionalStringInput = str | None
 type ModelContextWindowOverridesInput = str | dict[str, int] | None
+
+
+def identity_handle(value: str | None, limit: int) -> str | None:
+    """Normalize attribution handles consistently for settings and resolved nodes."""
+    if not value:
+        return None
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")[:limit].rstrip("-")
+    return slug or None
 
 
 def _validate_context_window_entries(data: Mapping[str, object]) -> dict[str, int]:
@@ -330,10 +345,18 @@ class Settings(BaseSettings):
     # opposite deployment model (one DB per instance here, vs. many pods on
     # one shared DB there). Do not reuse or wire the two together.
     local_instance_id: str = Field(default_factory=_default_local_instance_id)
-    # Instance-federation peer surface (/api/federation/*): off by default.
-    # federation_token gates every peer endpoint (403 when unset) and is a
-    # distinct trust domain from proxy API keys / dashboard sessions.
+    # Legacy token remains mirror-only; transfers require a separate credential.
     federation_token: str | None = None
+    federation_mirror_token: str | None = None
+    federation_transfer_token: str | None = None  # rejected explicitly for safe upgrades
+    federation_transfer_inbound_sha256: str | None = None
+    federation_transfer_outbound_token: str | None = None
+    federation_taker_instance_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @property
+    def effective_federation_mirror_token(self) -> str | None:
+        return self.federation_mirror_token or self.federation_token
+
     federation_peer_url: str | None = None
     federation_mirror_interval_seconds: int = Field(default=300, gt=0)
     federation_usage_window_days: int = Field(default=7, gt=0)
@@ -379,6 +402,13 @@ class Settings(BaseSettings):
     model_registry_client_version: str = "0.101.0"
     model_context_window_overrides: Annotated[dict[str, int], NoDecode] = Field(default_factory=dict)
     proxy_unauthenticated_client_cidrs: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Request-log attribution (app/core/identity.py). Real handles go in the instance env file, not the repo.
+    identity_enabled: bool = True
+    identity_owner: str = "owner"
+    identity_owner_machines: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    identity_local_machine: str | None = None
+    identity_machine_aliases: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
+    identity_tailscale_bin: str = "tailscale"
     firewall_trust_proxy_headers: bool = False
     firewall_trusted_proxy_cidrs: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["127.0.0.1/32", "::1/128"]
@@ -518,6 +548,38 @@ class Settings(BaseSettings):
             return normalized
         raise TypeError("image_inline_allowed_hosts must be a list or comma-separated string")
 
+    @field_validator("identity_owner_machines", mode="before")
+    @classmethod
+    def _normalize_identity_owner_machines(cls, value: StringListInput) -> list[str]:
+        entries = value.split(",") if isinstance(value, str) else (value or [])
+        return [handle for entry in entries if (handle := identity_handle(entry, 48)) is not None]
+
+    @field_validator("identity_machine_aliases", mode="before")
+    @classmethod
+    def _normalize_identity_machine_aliases(cls, value: str | Mapping[str, str] | None) -> dict[str, str]:
+        """Node handle to reported machine, from ``node=alias,node=alias``."""
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            pairs = [entry.partition("=") for entry in value.split(",") if entry.strip()]
+            items = [(node, alias) for node, separator, alias in pairs if separator]
+            if len(items) != len(pairs):
+                logger.warning("Ignoring malformed identity machine alias entries")
+        elif isinstance(value, Mapping):
+            items = list(value.items())
+        else:
+            logger.warning("Ignoring malformed identity machine aliases")
+            return {}
+        result: dict[str, str] = {}
+        for node, alias in items:
+            node_key = identity_handle(str(node), 48)
+            alias_value = identity_handle(str(alias), 48)
+            if not node_key or not alias_value:
+                logger.warning("Ignoring malformed identity machine alias entry")
+                continue
+            result[node_key] = alias_value
+        return result
+
     @field_validator("firewall_trusted_proxy_cidrs", mode="before")
     @classmethod
     def _normalize_firewall_trusted_proxy_cidrs(cls, value: StringListInput) -> list[str]:
@@ -581,7 +643,25 @@ class Settings(BaseSettings):
             return stripped or None
         raise TypeError("federation_peer_url must be a string")
 
-    @field_validator("federation_token", mode="before")
+    @field_validator("federation_taker_instance_ids", mode="before")
+    @classmethod
+    def _normalize_federation_taker_instance_ids(cls, value: StringListInput) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            return [item.strip() for item in value if item.strip()]
+        raise TypeError("federation_taker_instance_ids must be a comma-separated string or list of strings")
+
+    @field_validator(
+        "federation_token",
+        "federation_mirror_token",
+        "federation_transfer_token",
+        "federation_transfer_inbound_sha256",
+        "federation_transfer_outbound_token",
+        mode="before",
+    )
     @classmethod
     def _normalize_federation_token(cls, value: OptionalStringInput) -> str | None:
         if value is None:
@@ -626,6 +706,29 @@ class Settings(BaseSettings):
         if not normalized:
             raise ValueError("warmup_model must not be blank")
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_transfer_credentials(self) -> "Settings":
+        if self.federation_transfer_token is not None:
+            raise ValueError(
+                "federation_transfer_token is obsolete; use federation_transfer_inbound_sha256 "
+                "and federation_transfer_outbound_token"
+            )
+        inbound = self.federation_transfer_inbound_sha256
+        outbound = self.federation_transfer_outbound_token
+        if inbound is not None and (len(inbound) != 64 or any(c not in "0123456789abcdef" for c in inbound)):
+            raise ValueError("federation_transfer_inbound_sha256 must be 64 lowercase hex characters")
+        other = [value for value in (self.federation_token, self.federation_mirror_token) if value]
+        if outbound and any(hmac.compare_digest(outbound, value) for value in other):
+            raise ValueError("federation_transfer_outbound_token must differ from mirror and legacy credentials")
+        if inbound and any(
+            hmac.compare_digest(inbound, hashlib.sha256(value.encode()).hexdigest())
+            for value in ([outbound] if outbound else []) + other
+        ):
+            raise ValueError(
+                "federation_transfer_inbound_sha256 must differ from outbound, mirror and legacy credentials"
+            )
+        return self
 
     @model_validator(mode="after")
     def _apply_data_dir_defaults(self) -> "Settings":

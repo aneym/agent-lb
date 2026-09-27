@@ -27,6 +27,7 @@ from app.core.config.settings import _bridge_advertise_hostname_is_replica_speci
 from app.core.config.settings_cache import get_settings_cache
 from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
+from app.core.identity_nodes import IdentityNodeCache
 from app.core.metrics.middleware import MetricsMiddleware
 from app.core.metrics.prometheus import MULTIPROCESS_MODE, PROMETHEUS_AVAILABLE, make_scrape_registry, mark_process_dead
 from app.core.middleware import (
@@ -38,6 +39,7 @@ from app.core.middleware import (
     add_request_id_middleware,
 )
 from app.core.middleware.client_session import ClientSessionMiddleware
+from app.core.middleware.identity import IdentityMiddleware
 from app.core.middleware.inflight import InFlightMiddleware
 from app.core.openai.model_refresh_scheduler import build_model_refresh_scheduler
 from app.core.resilience.backpressure import BackpressureMiddleware
@@ -151,6 +153,7 @@ async def lifespan(app: FastAPI):
         await get_rate_limit_headers_cache().invalidate()
         reload_additional_quota_registry()
         settings = get_settings()
+    node_cache = IdentityNodeCache(settings)
     bridge_endpoint_base_url = settings.http_responses_session_bridge_advertise_base_url
     if settings.otel_enabled:
         from app.core.tracing.otel import init_tracing
@@ -180,6 +183,8 @@ async def lifespan(app: FastAPI):
         account_pulse_scheduler = build_account_pulse_scheduler()
         account_resume_scheduler = build_account_resume_scheduler()
         reset_credit_auto_redeem_scheduler = build_reset_credit_auto_redeem_scheduler()
+        if settings.federation_token and not settings.federation_transfer_inbound_sha256:
+            logger.warning("Federation transfer routes are disabled until a transfer token is set")
         federation_mirror_scheduler = build_federation_mirror_scheduler()
         app.state.federation_mirror_scheduler = federation_mirror_scheduler
         event_loop_lag_monitor = build_event_loop_lag_monitor(
@@ -311,6 +316,7 @@ async def lifespan(app: FastAPI):
     ring_service = RingMembershipService(SessionLocal)
     instance_id = settings.http_responses_session_bridge_instance_id
     heartbeat_task = asyncio.create_task(_register_and_heartbeat(ring_service, instance_id))
+    await node_cache.start()
     startup_module._startup_complete = True
     startup_recorder.complete("ok")
 
@@ -387,6 +393,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.exception("Metrics server stopped with an error")
             finally:
+                await node_cache.stop()
                 shutdown_state.reset()
                 mark_process_dead()
                 await close_db()
@@ -410,6 +417,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(cast(Any, InFlightMiddleware))
     app.add_middleware(cast(Any, ClientSessionMiddleware))
+    app.add_middleware(cast(Any, IdentityMiddleware))
     add_dashboard_auth_proxy_middleware(app)
     add_request_decompression_middleware(app)
     add_request_id_middleware(app)

@@ -14,6 +14,7 @@ from app.core.balancer import failover_decision
 from app.core.balancer.types import UpstreamError
 from app.core.clients.proxy import ProxyResponseError, pop_stream_timeout_overrides
 from app.core.errors import openai_error, response_failed_event
+from app.core.identity import get_request_identity
 from app.core.openai.requests import ResponsesRequest
 from app.core.upstream_proxy import UpstreamProxyRouteError
 from app.core.utils.request_id import ensure_request_id
@@ -114,6 +115,7 @@ class _StreamingRetryMixin:
         proxy = cast(_StreamingServiceProtocol, self)
         useragent, useragent_group = _request_log_useragent_fields(headers)
         request_id = ensure_request_id()
+        request_identity = get_request_identity()
         start = time.monotonic()
         base_settings = _facade().get_settings()
         settings = await _facade().get_settings_cache().get()
@@ -220,6 +222,7 @@ class _StreamingRetryMixin:
                         )
                         yield format_sse_event(event)
                         await proxy._write_request_log(
+                            identity=request_identity,
                             account_id=None,
                             api_key=api_key,
                             request_id=request_id,
@@ -380,6 +383,7 @@ class _StreamingRetryMixin:
                         )
                         yield format_sse_event(event)
                         await proxy._write_request_log(
+                            identity=request_identity,
                             account_id=preferred_account_id,
                             api_key=api_key,
                             request_id=request_id,
@@ -410,6 +414,7 @@ class _StreamingRetryMixin:
                         )
                         yield format_sse_event(event)
                         await proxy._write_request_log(
+                            identity=request_identity,
                             account_id=None,
                             api_key=api_key,
                             request_id=request_id,
@@ -438,6 +443,7 @@ class _StreamingRetryMixin:
                         )
                         yield format_sse_event(event)
                         await proxy._write_request_log(
+                            identity=request_identity,
                             account_id=None,
                             api_key=api_key,
                             request_id=request_id,
@@ -464,6 +470,7 @@ class _StreamingRetryMixin:
                     event["response"]["error"].update(selection_error_extras(selection, requested_model=payload.model))
                     yield format_sse_event(event)
                     await proxy._write_request_log(
+                        identity=request_identity,
                         account_id=None,
                         api_key=api_key,
                         request_id=request_id,
@@ -502,6 +509,7 @@ class _StreamingRetryMixin:
                     )
                     yield format_sse_event(event)
                     await proxy._write_request_log(
+                        identity=request_identity,
                         account_id=preferred_account_id,
                         api_key=api_key,
                         request_id=request_id,
@@ -1321,6 +1329,7 @@ class _StreamingRetryMixin:
                 yield format_sse_event(event)
                 if not any_attempt_logged:
                     await proxy._write_request_log(
+                        identity=request_identity,
                         account_id=None,
                         api_key=api_key,
                         request_id=request_id,
@@ -1357,6 +1366,7 @@ class _StreamingRetryMixin:
             yield format_sse_event(event)
             if not any_attempt_logged:
                 await proxy._write_request_log(
+                    identity=request_identity,
                     account_id=None,
                     api_key=api_key,
                     request_id=request_id,

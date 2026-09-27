@@ -45,6 +45,7 @@ from app.core.errors import (
 from app.core.errors import (
     response_failed_event,
 )
+from app.core.identity import get_request_identity
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
@@ -524,6 +525,7 @@ class _StreamingMixin(_StreamingRetryMixin):
         reasoning_effort = payload.reasoning.effort if payload.reasoning else None
         session_id = _owner_lookup_session_id_from_headers(headers)
         start = time.monotonic()
+        request_identity = get_request_identity()
         status = "success"
         error_code = None
         error_message = None
@@ -999,6 +1001,7 @@ class _StreamingMixin(_StreamingRetryMixin):
                 else (False if route is not None else None)
             )
             await proxy._write_request_log(
+                identity=request_identity,
                 account_id=account_id_value,
                 api_key=api_key,
                 request_id=response_id,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -12,13 +13,15 @@ from typing import AsyncContextManager, Awaitable, Callable, Protocol
 from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
 from app.core.clients.proxy import UpstreamProxyRouteTrace, override_stream_timeouts, stream_responses
+from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
+from app.core.identity import RequestIdentity, internal_identity
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIError, ResponseUsage
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import ResponsesRequest
 from app.core.plan_types import account_plan_matches_allowed
-from app.core.providers import ANTHROPIC_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.upstream_proxy import ResolvedUpstreamRoute, UpstreamProxyRouteError, resolve_upstream_route
 from app.core.usage.pricing import get_pricing_for_model
 from app.core.utils.time import to_utc_naive, utcnow
@@ -30,10 +33,15 @@ from app.db.models import (
     DashboardSettings,
     UsageHistory,
 )
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer
+from app.modules.limit_warmup.repository import (
+    _MAX_CONTINUOUS_RETRIES,
+    ANTHROPIC_CONTINUOUS_WINDOW,
+    OPENAI_CONTINUOUS_WINDOW,
+)
 from app.modules.quota_planner.logic import PlannerSettings, _parse_hhmm, _to_planner_tz
 from app.modules.usage.mappers import usage_history_to_window_row
 
@@ -51,7 +59,14 @@ _DEFAULT_WORKING_HOURS_END = dt_time(18, 0)
 _TERMINAL_ERROR_EVENTS = {"response.failed", "response.incomplete", "error"}
 _QUOTA_ERROR_CODES = {"insufficient_quota", "quota_exceeded", "rate_limit_exceeded", "usage_limit_reached"}
 _MAX_CONCURRENT_WARMUP_SENDS = 4
-_ANTHROPIC_CONTINUOUS_WINDOW = "anthropic_primary_continuous"
+_ANTHROPIC_CONTINUOUS_WINDOW = ANTHROPIC_CONTINUOUS_WINDOW
+_OPENAI_CONTINUOUS_WINDOW = OPENAI_CONTINUOUS_WINDOW
+_OPENAI_TELEMETRY_MAX_AGE_SECONDS = 600
+_OPENAI_UNSTARTED_LEAD_SLACK_SECONDS = 300
+_OPENAI_PRIME_BUCKET_SECONDS = 3600
+_OPENAI_PRIME_SPACING_SECONDS = 1800
+_OPENAI_FAILURE_BRAKE_SECONDS = 6 * 3600
+_OPENAI_LOG_ERROR_CODE = re.compile(r"[a-z0-9_.:-]{1,64}", re.IGNORECASE)
 _ANTHROPIC_PRIMER_PROMPT = "OK"
 _ANTHROPIC_RESET_GRACE_SECONDS = 3
 # Usage telemetry older than this cannot prove the primary window is closed.
@@ -96,7 +111,13 @@ class LimitWarmupAttemptsRepository(Protocol):
     async def latest_by_account(self, account_ids: list[str]) -> dict[str, AccountLimitWarmup]: ...
 
     async def claim_continuous_attempt(
-        self, *, account_id: str, reset_at: int, model: str, now: datetime
+        self,
+        *,
+        account_id: str,
+        reset_at: int,
+        model: str,
+        now: datetime,
+        window: str = _ANTHROPIC_CONTINUOUS_WINDOW,
     ) -> AccountLimitWarmup | None: ...
 
     async def try_create_attempt(
@@ -160,6 +181,8 @@ class LimitWarmupRequestLogRepository(Protocol):
         upstream_proxy_endpoint_id: str | None = None,
         upstream_proxy_fallback_used: bool | None = None,
         upstream_proxy_fail_closed_reason: str | None = None,
+        *,
+        identity: RequestIdentity | None = None,
     ) -> object: ...
 
 
@@ -401,7 +424,7 @@ class LimitWarmupService:
         if (
             not selected_windows
             and planner_settings is None
-            and not any(account.provider == ANTHROPIC_PROVIDER_NAME for account in accounts)
+            and not any(account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME} for account in accounts)
         ):
             return
         current = now or utcnow()
@@ -464,6 +487,25 @@ class LimitWarmupService:
                 continue
             if not settings.limit_warmup_enabled:
                 continue
+            if account.provider == OPENAI_PROVIDER_NAME and is_locally_owned(account, get_settings()):
+                prime_key = _openai_prime_key(
+                    after_primary.get(account.id), after_secondary.get(account.id), latest_attempt, current
+                )
+                if prime_key is not None:
+                    enqueued = await self._enqueue_warmup_send(
+                        account=account,
+                        window=_OPENAI_CONTINUOUS_WINDOW,
+                        reset_at=prime_key,
+                        settings=settings,
+                        sender=sender,
+                        semaphore=send_semaphore,
+                        latest_attempts=latest_attempts,
+                        now=current,
+                    )
+                    if enqueued is not None:
+                        send_task, attempt = enqueued
+                        send_tasks[send_task] = attempt
+                    continue
             if _in_cooldown(
                 latest_attempt,
                 cooldown_seconds=settings.limit_warmup_cooldown_seconds,
@@ -592,9 +634,11 @@ class LimitWarmupService:
         latest_attempts: dict[str, AccountLimitWarmup],
         now: datetime | None = None,
     ) -> tuple[asyncio.Task[LimitWarmupSendOutcome], AccountLimitWarmup] | None:
-        continuous = window == _ANTHROPIC_CONTINUOUS_WINDOW
+        continuous = window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}
         model = (
-            _DEFAULT_ANTHROPIC_WARMUP_MODEL if continuous else self._resolve_model(settings.limit_warmup_model, account)
+            _DEFAULT_ANTHROPIC_WARMUP_MODEL
+            if window == _ANTHROPIC_CONTINUOUS_WINDOW
+            else self._resolve_model(settings.limit_warmup_model, account)
         )
         if model is None:
             skipped = await self._warmup_repo.try_create_attempt(
@@ -621,6 +665,7 @@ class LimitWarmupService:
                 reset_at=reset_at,
                 model=model,
                 now=to_utc_naive(now) if now is not None else utcnow(),
+                window=window,
             )
         else:
             attempt = await self._warmup_repo.try_create_attempt(
@@ -629,15 +674,19 @@ class LimitWarmupService:
         if attempt is None:
             return None
 
-        if continuous:
+        if window == _ANTHROPIC_CONTINUOUS_WINDOW:
             logger.info("Anthropic primer attempt account_id=%s reset_at=%s", account.id, reset_at)
+        elif window == _OPENAI_CONTINUOUS_WINDOW:
+            logger.info("OpenAI primer attempt account_id=%s bucket=%s", account.id, reset_at)
 
         send_task = asyncio.create_task(
             self._send_warmup(
                 attempt,
                 account=account,
                 model=model,
-                prompt=_ANTHROPIC_PRIMER_PROMPT if continuous else settings.limit_warmup_prompt,
+                prompt=(
+                    _ANTHROPIC_PRIMER_PROMPT if window == _ANTHROPIC_CONTINUOUS_WINDOW else settings.limit_warmup_prompt
+                ),
                 sender=sender,
                 semaphore=semaphore,
             ),
@@ -687,11 +736,10 @@ class LimitWarmupService:
             async with semaphore:
                 result = await sender.send(account, model=model, prompt=prompt)
         except Exception as exc:
-            if attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
+            if attempt.window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}:
+                provider = "Anthropic" if attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW else "OpenAI"
                 logger.warning(
-                    "Anthropic primer send exception account_id=%s error_type=%s",
-                    account.id,
-                    type(exc).__name__,
+                    "%s primer send exception account_id=%s error_type=%s", provider, account.id, type(exc).__name__
                 )
             else:
                 logger.warning(
@@ -702,7 +750,11 @@ class LimitWarmupService:
                 account=account,
                 model=model,
                 result=None,
-                error_message=type(exc).__name__ if attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW else str(exc),
+                error_message=(
+                    type(exc).__name__
+                    if attempt.window in {_ANTHROPIC_CONTINUOUS_WINDOW, _OPENAI_CONTINUOUS_WINDOW}
+                    else str(exc)
+                ),
             )
 
         return LimitWarmupSendOutcome(attempt=attempt, account=account, model=model, result=result)
@@ -710,6 +762,8 @@ class LimitWarmupService:
     async def _complete_warmup(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
         if outcome.attempt.window == _ANTHROPIC_CONTINUOUS_WINDOW:
             return await self._complete_continuous_anthropic(outcome)
+        if outcome.attempt.window == _OPENAI_CONTINUOUS_WINDOW:
+            return await self._complete_continuous_openai(outcome)
         if outcome.result is None:
             return await self._warmup_repo.complete_attempt(
                 outcome.attempt.id,
@@ -799,6 +853,49 @@ class LimitWarmupService:
         )
         return completed
 
+    async def _complete_continuous_openai(self, outcome: LimitWarmupSendOutcome) -> AccountLimitWarmup | None:
+        result = outcome.result
+        if result is None:
+            logger.warning(
+                "OpenAI primer result account_id=%s bucket=%s status=failed error_code=warmup_send_failed",
+                outcome.account.id,
+                outcome.attempt.reset_at,
+            )
+            return await self._warmup_repo.complete_attempt(
+                outcome.attempt.id,
+                status="failed",
+                completed_at=utcnow(),
+                error_code="warmup_send_failed",
+                error_message=_truncate(outcome.error_message),
+            )
+
+        status = "succeeded" if result.success else "failed"
+        error_code = "quota_still_exhausted" if result.error_code in _QUOTA_ERROR_CODES else result.error_code
+        completed = await self._warmup_repo.complete_attempt(
+            outcome.attempt.id,
+            status=status,
+            completed_at=utcnow(),
+            error_code=error_code,
+            error_message=_truncate(result.error_message),
+        )
+        try:
+            await self._record_request_log(account=outcome.account, model=outcome.model, result=result)
+        except Exception as exc:
+            logger.warning(
+                "OpenAI primer request log failed account_id=%s error_type=%s",
+                outcome.account.id,
+                type(exc).__name__,
+            )
+        logger.log(
+            logging.INFO if result.success else logging.WARNING,
+            "OpenAI primer result account_id=%s bucket=%s status=%s error_code=%s",
+            outcome.account.id,
+            outcome.attempt.reset_at,
+            status,
+            _safe_openai_log_error_code(result.error_code),
+        )
+        return completed
+
     async def _mark_aborted_warmup(
         self,
         attempt: AccountLimitWarmup,
@@ -855,6 +952,7 @@ class LimitWarmupService:
             else None
         )
         await self._request_logs_repo.add_log(
+            identity=internal_identity(),
             account_id=account.id,
             request_id=result.request_id,
             model=model,
@@ -948,6 +1046,57 @@ def _anthropic_prime_key(
         if since_prime < window_seconds - _ANTHROPIC_PRIME_SPACING_SLACK:
             return None
     return int(now_epoch // window_seconds) * window_seconds
+
+
+def _safe_openai_log_error_code(code: str | None) -> str:
+    return code if isinstance(code, str) and _OPENAI_LOG_ERROR_CODE.fullmatch(code) else "unrecognized"
+
+
+def _openai_prime_key(
+    primary: UsageHistory | None,
+    secondary: UsageHistory | None,
+    latest_attempt: AccountLimitWarmup | None,
+    now: datetime,
+) -> int | None:
+    """Return an hourly claim key for an unstarted OpenAI quota window.
+
+    An unstarted window reports zero usage and a reset that drifts forward with
+    each sample, about one full window length after its recorded time. A started
+    window has a fixed reset, whose lead shrinks. Hourly buckets permit another
+    primer after a later reset in the same week (including reset credits), while
+    repeating a 2xx that did not start the window at most hourly. This path
+    intentionally ignores working hours and prior exhaustion.
+    """
+    now_epoch = _as_utc(now).timestamp()
+    fresh = [
+        sample
+        for sample in (primary, secondary)
+        if sample is not None
+        and 0 <= now_epoch - _as_utc(sample.recorded_at).timestamp() <= _OPENAI_TELEMETRY_MAX_AGE_SECONDS
+    ]
+    if not fresh or any(sample.used_percent >= 100 for sample in fresh):
+        return None
+    if not any(
+        sample.used_percent == 0
+        and sample.reset_at is not None
+        and sample.window_minutes
+        and sample.reset_at - _as_utc(sample.recorded_at).timestamp()
+        >= sample.window_minutes * 60 - _OPENAI_UNSTARTED_LEAD_SLACK_SECONDS
+        for sample in fresh
+    ):
+        return None
+    if latest_attempt is not None:
+        since_attempt = now_epoch - _as_utc(latest_attempt.attempted_at).timestamp()
+        if latest_attempt.status != "failed" and since_attempt < _OPENAI_PRIME_SPACING_SECONDS:
+            return None
+        if (
+            latest_attempt.window == _OPENAI_CONTINUOUS_WINDOW
+            and latest_attempt.status == "failed"
+            and latest_attempt.retry_count >= _MAX_CONTINUOUS_RETRIES
+            and since_attempt < _OPENAI_FAILURE_BRAKE_SECONDS
+        ):
+            return None
+    return int(now_epoch // _OPENAI_PRIME_BUCKET_SECONDS) * _OPENAI_PRIME_BUCKET_SECONDS
 
 
 def _opened_by_prime(attempt: AccountLimitWarmup, reset_at: int) -> bool:

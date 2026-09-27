@@ -355,6 +355,26 @@ def _make_account(
     )
 
 
+@pytest.mark.asyncio
+async def test_usage_client_error_cannot_clear_concurrent_uncertain_exchange() -> None:
+    snapshot = _make_account("acc_usage_exchange_race", "workspace")
+    stored = _make_account(snapshot.id, "workspace")
+    stored.status = AccountStatus.EXCHANGE_UNCERTAIN
+    stored.deactivation_reason = "Refresh exchange outcome uncertain"
+    repo = StubAccountsRepository()
+    repo.accounts_by_id[stored.id] = stored
+    updater = UsageUpdater(StubUsageRepository(), accounts_repo=repo)
+
+    from app.core.clients.usage import UsageFetchError
+
+    await updater._deactivate_for_client_error(snapshot, UsageFetchError(403, "rejected"))
+
+    assert stored.status == AccountStatus.EXCHANGE_UNCERTAIN
+    assert stored.deactivation_reason == "Refresh exchange outcome uncertain"
+    assert snapshot.status == AccountStatus.EXCHANGE_UNCERTAIN
+    assert repo.status_updates == []
+
+
 def _route() -> ResolvedUpstreamRoute:
     return ResolvedUpstreamRoute(
         mode="account_bound",

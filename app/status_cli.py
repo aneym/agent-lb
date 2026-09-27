@@ -275,7 +275,15 @@ def _quota_cooldowns(quotas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _account_usability(status: str, subscription: str | None, account: dict[str, Any]) -> tuple[str, list[str]]:
-    known_statuses = {"active", "rate_limited", "quota_exceeded", "paused", "reauth_required", "deactivated"}
+    known_statuses = {
+        "active",
+        "rate_limited",
+        "quota_exceeded",
+        "paused",
+        "reauth_required",
+        "exchange_uncertain",
+        "deactivated",
+    }
     if status not in known_statuses:
         return "unknown", ["account status is unknown"]
     if status != "active":
