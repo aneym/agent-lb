@@ -1,7 +1,7 @@
 """Add nullable caller identity fields to request logs.
 
 Revision ID: 20260926_210000_add_request_log_identity
-Revises: 20260926_200000_add_team_pool_share
+Revises: 20260926_000000_refresh_intent_expiry
 """
 
 from __future__ import annotations
