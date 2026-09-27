@@ -12,11 +12,21 @@ import pytest
 import app.core.identity_nodes as nodes_module
 from app.core.config.settings import Settings
 from app.core.identity import resolve_identity, set_node_lookup
-from app.core.identity_nodes import IdentityNodeCache
+from app.core.identity_nodes import IdentityNodeCache, _subprocess_env
 
 TAIL_A = str(ipaddress.ip_network("100.64.0.0/10")[7])
 TAIL_MISS = str(ipaddress.ip_network("100.64.0.0/10")[8])
 FAKE_LOGIN = "fake-login@invalid.test"
+
+
+def test_subprocess_env_preserves_path_and_appends_missing_system_dirs():
+    original = {"PATH": "/opt/tools:/usr/bin:/opt/other", "HOME": "/home/test"}
+    result = _subprocess_env(original)
+    assert result == {"PATH": "/opt/tools:/usr/bin:/opt/other:/usr/sbin:/bin", "HOME": "/home/test"}
+    assert original["PATH"] == "/opt/tools:/usr/bin:/opt/other"
+    assert _subprocess_env({}) == {"PATH": "/usr/sbin:/usr/bin:/bin"}
+    assert _subprocess_env({"PATH": ""}) == {"PATH": "/usr/sbin:/usr/bin:/bin"}
+    assert _subprocess_env({"PATH": "/bin:/usr/sbin:/usr/bin"}) == {"PATH": "/bin:/usr/sbin:/usr/bin"}
 
 
 class FakeProcess:
@@ -49,6 +59,7 @@ async def test_refresh_keeps_only_node_handles_and_last_good_snapshot(monkeypatc
     async def fake_exec(*args, **kwargs):
         nonlocal calls
         assert args[1:] == ("status", "--json")
+        assert "/usr/sbin" in kwargs["env"]["PATH"].split(":")
         calls += 1
         return FakeProcess(payload if calls == 1 else b"", 0 if calls == 1 else 1)
 
@@ -66,7 +77,7 @@ async def test_refresh_keeps_only_node_handles_and_last_good_snapshot(monkeypatc
                 ).caller_machine
                 == "tailnet-unknown"
             )
-            with pytest.raises(RuntimeError, match="status command failed"):
+            with pytest.raises(RuntimeError, match="status command exited 1"):
                 await cache._refresh()
             assert resolve_identity(headers, "127.0.0.1", settings=settings).caller_machine == "box-1"
         assert FAKE_LOGIN not in str(cache._nodes)
@@ -112,6 +123,28 @@ async def test_refresh_failure_warns_once_per_hour(monkeypatch, caplog):
     monkeypatch.setattr(nodes_module.asyncio, "sleep", finish_after_three)
     with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
         await cache._run()
-    assert len([record for record in caplog.records if record.name == nodes_module.__name__]) == 2
-    assert all(FAKE_LOGIN not in record.getMessage() for record in caplog.records)
+    warnings = [record.getMessage() for record in caplog.records if record.name == nodes_module.__name__]
+    assert len(warnings) == 2
+    assert all("RuntimeError" in warning and FAKE_LOGIN not in warning for warning in warnings)
+    set_node_lookup(None)
+
+
+@pytest.mark.asyncio
+async def test_nonzero_status_logs_exit_code_without_status_output(monkeypatch, caplog):
+    cache = IdentityNodeCache(Settings())
+
+    async def fake_exec(*args, **kwargs):
+        return FakeProcess(FAKE_LOGIN.encode(), 3)
+
+    async def stop_after_warning(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(nodes_module.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(nodes_module.asyncio, "sleep", stop_after_warning)
+    with caplog.at_level(logging.WARNING), pytest.raises(asyncio.CancelledError):
+        await cache._run()
+    warnings = [record.getMessage() for record in caplog.records if record.name == nodes_module.__name__]
+    assert len(warnings) == 1
+    assert "_StatusCommandError: status command exited 3" in warnings[0]
+    assert FAKE_LOGIN not in warnings[0]
     set_node_lookup(None)
