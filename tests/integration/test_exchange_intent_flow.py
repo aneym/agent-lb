@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from unittest.mock import patch
@@ -18,9 +20,9 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import kimi as kimi_provider
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountExchangeIntent, AccountStatus
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_background_session
 from app.modules.accounts import auth_manager as auth_manager_module
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AuthManager, _refresh_token_material_fingerprint
 from app.modules.accounts.repository import AccountsRepository
 
 pytestmark = pytest.mark.integration
@@ -46,6 +48,16 @@ async def _account(account_id: str) -> None:
 
 async def _refresh(account_id: str) -> Account:
     async with SessionLocal() as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert account is not None
+        return await AuthManager(repo).refresh_account(account)
+
+
+async def _refresh_in_background_session(account_id: str) -> Account:
+    # Production lifecycle: get_background_session rolls back an open
+    # transaction before closing, which expires every row it loaded.
+    async with get_background_session() as session:
         repo = AccountsRepository(session)
         account = await repo.get_by_id(account_id)
         assert account is not None
@@ -660,3 +672,259 @@ async def test_status_update_without_token_cannot_clear_uncertain(db_setup):
         stored = await repo.reload_by_id(account_id)
         assert stored.status == AccountStatus.EXCHANGE_UNCERTAIN
         assert stored.deactivation_reason == "Refresh exchange outcome uncertain"
+
+
+@pytest.mark.asyncio
+async def test_uncertain_account_does_not_drop_matching_token_intent(db_setup):
+    account_id = "uncertain-drop"
+    await _account(account_id)
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        stale_hash = _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted)
+        assert await repo.begin_exchange(account_id, stale_hash, account.refresh_token_encrypted)
+        await session.execute(
+            text("UPDATE accounts SET status = 'exchange_uncertain' WHERE id = :id"), {"id": account_id}
+        )
+        await session.commit()
+        assert not await repo.drop_stale_exchange_intent(account_id, stale_hash, account.refresh_token_encrypted)
+    async with SessionLocal() as session:
+        assert (await session.get(Account, account_id)).status == AccountStatus.EXCHANGE_UNCERTAIN
+        assert await session.get(AccountExchangeIntent, account_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_lost_lock_does_not_drop_new_exchange_intent(db_setup, monkeypatch):
+    account_id = "lost-lock"
+    await _account(account_id)
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert await repo.begin_exchange(
+            account_id,
+            _refresh_token_material_fingerprint(encryptor, account.refresh_token_encrypted),
+            account.refresh_token_encrypted,
+        )
+        await session.execute(
+            text("UPDATE accounts SET refresh_token_encrypted = :token WHERE id = :id"),
+            {"token": encryptor.encrypt("current-refresh"), "id": account_id},
+        )
+        await session.commit()
+
+    @asynccontextmanager
+    async def no_lock(_account_id):
+        yield
+
+    monkeypatch.setattr(auth_manager_module, "_cross_process_refresh_lock", no_lock)
+    both_read = asyncio.Barrier(2)
+    first_in_provider = asyncio.Event()
+    second_finished = asyncio.Event()
+    original_window = AccountsRepository.exchange_intent_window
+    original_drop = AccountsRepository.drop_stale_exchange_intent
+    workers = {}
+    provider_tokens = []
+
+    async def window(self, account_id, timeout):
+        result = await original_window(self, account_id, timeout)
+        await asyncio.wait_for(both_read.wait(), 10)
+        return result
+
+    async def drop(self, account_id, stale_hash, expected_token):
+        if workers[id(self)] == "second":
+            await asyncio.wait_for(first_in_provider.wait(), 10)
+        return await original_drop(self, account_id, stale_hash, expected_token)
+
+    async def transport(self, refresh_token, **kwargs):
+        provider_tokens.append(refresh_token)
+        kwargs["on_exchange_start"]()
+        first_in_provider.set()
+        await asyncio.wait_for(second_finished.wait(), 10)
+        return TokenRefreshResult("rotated-access", "rotated-refresh", None, None, None, None)
+
+    monkeypatch.setattr(AccountsRepository, "exchange_intent_window", window)
+    monkeypatch.setattr(AccountsRepository, "drop_stale_exchange_intent", drop)
+    monkeypatch.setattr(AuthManager, "_refresh_tokens", transport)
+
+    async def worker(name):
+        async with SessionLocal() as session:
+            repo = AccountsRepository(session)
+            workers[id(repo)] = name
+            account = await repo.get_by_id(account_id)
+            snapshot = Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
+            try:
+                return await AuthManager(repo).refresh_account(snapshot)
+            finally:
+                if name == "second":
+                    second_finished.set()
+
+    first, second = await asyncio.gather(worker("first"), worker("second"), return_exceptions=True)
+    assert isinstance(first, Account)
+    assert isinstance(second, RefreshError)
+    assert second.code == "exchange_intent_conflict"
+    assert provider_tokens == ["current-refresh"]
+    async with SessionLocal() as session:
+        account = await session.get(Account, account_id)
+        assert account.status == AccountStatus.ACTIVE
+        assert encryptor.decrypt(account.refresh_token_encrypted) == "rotated-refresh"
+        assert await session.get(AccountExchangeIntent, account_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_relogin_between_reload_and_begin_returns_rotated_account(db_setup, monkeypatch, session_kind):
+    account_id = f"relogin-before-begin-{session_kind}"
+    await _account(account_id)
+    encryptor = TokenEncryptor()
+    original_begin = AccountsRepository.begin_exchange
+    provider_calls = 0
+
+    async def relogin_then_begin(self, account_id, token_hash, expected_token, **kwargs):
+        async with SessionLocal() as session:
+            assert await AccountsRepository(session).update_tokens(
+                account_id,
+                encryptor.encrypt("relogin-access"),
+                encryptor.encrypt("relogin-refresh"),
+                None,
+                utcnow(),
+            )
+        return await original_begin(self, account_id, token_hash, expected_token, **kwargs)
+
+    async def transport(self, refresh_token, **kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("relogin must not refresh the stale token")
+
+    monkeypatch.setattr(AccountsRepository, "begin_exchange", relogin_then_begin)
+    monkeypatch.setattr(AuthManager, "_refresh_tokens", transport)
+    refresh = _refresh_in_background_session if session_kind == "background" else _refresh
+    refreshed = await refresh(account_id)
+    assert refreshed.status == AccountStatus.ACTIVE
+    assert encryptor.decrypt(refreshed.refresh_token_encrypted) == "relogin-refresh"
+    assert provider_calls == 0
+    async with SessionLocal() as session:
+        assert await session.get(AccountExchangeIntent, account_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_relogin_during_exchange_returns_rotated_account(db_setup, monkeypatch, session_kind):
+    # The provider answers, but a re-login stored new tokens first, so update_tokens
+    # loses its compare-and-swap and the refresh returns the re-login's account.
+    account_id = f"relogin-during-exchange-{session_kind}"
+    await _account(account_id)
+    encryptor = TokenEncryptor()
+
+    async def relogin_then_answer(self, refresh_token, **kwargs):
+        kwargs["on_exchange_start"]()
+        async with SessionLocal() as session:
+            assert await AccountsRepository(session).update_tokens(
+                account_id,
+                encryptor.encrypt("relogin-access"),
+                encryptor.encrypt("relogin-refresh"),
+                None,
+                utcnow(),
+            )
+        return TokenRefreshResult("new-access", "new-refresh", None, None, None, None)
+
+    monkeypatch.setattr(AuthManager, "_refresh_tokens", relogin_then_answer)
+    refresh = _refresh_in_background_session if session_kind == "background" else _refresh
+    refreshed = await refresh(account_id)
+    assert refreshed.status == AccountStatus.ACTIVE
+    assert encryptor.decrypt(refreshed.refresh_token_encrypted) == "relogin-refresh"
+    async with SessionLocal() as session:
+        stored = await session.get(Account, account_id)
+        assert encryptor.decrypt(stored.refresh_token_encrypted) == "relogin-refresh"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_rotation_during_chatgpt_account_id_backfill_returns_rotated_account(db_setup, monkeypatch, session_kind):
+    # ensure_fresh backfills chatgpt_account_id from the id token; a token rotation that lands
+    # first makes that compare-and-swap lose, and the rotated account comes back instead.
+    account_id = f"backfill-race-{session_kind}"
+    encryptor = TokenEncryptor()
+    claims = base64.urlsafe_b64encode(json.dumps({"chatgpt_account_id": "acct-backfill"}).encode()).decode().rstrip("=")
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(
+            Account(
+                id=account_id,
+                provider="openai",
+                email=f"{account_id}@example.invalid",
+                plan_type="plus",
+                access_token_encrypted=encryptor.encrypt("access"),
+                refresh_token_encrypted=encryptor.encrypt("refresh"),
+                id_token_encrypted=encryptor.encrypt(f"header.{claims}.signature"),
+                last_refresh=utcnow(),
+                access_expires_at=utcnow() + timedelta(hours=1),
+                status=AccountStatus.ACTIVE,
+            )
+        )
+        await session.execute(text("UPDATE accounts SET chatgpt_account_id = NULL WHERE id = :id"), {"id": account_id})
+        await session.commit()
+    original_update_tokens = AccountsRepository.update_tokens
+    rotated = False
+
+    async def rotate_then_update(self, *args, **kwargs):
+        nonlocal rotated
+        if not rotated:
+            rotated = True
+            async with SessionLocal() as other:
+                assert await original_update_tokens(
+                    AccountsRepository(other),
+                    account_id,
+                    encryptor.encrypt("rotated-access"),
+                    encryptor.encrypt("rotated-refresh"),
+                    None,
+                    utcnow(),
+                )
+        return await original_update_tokens(self, *args, **kwargs)
+
+    monkeypatch.setattr(AccountsRepository, "update_tokens", rotate_then_update)
+    session_scope = get_background_session() if session_kind == "background" else SessionLocal()
+    async with session_scope as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert account is not None and account.chatgpt_account_id is None
+        fresh = await AuthManager(repo).ensure_fresh(account)
+    assert rotated
+    assert encryptor.decrypt(fresh.refresh_token_encrypted) == "rotated-refresh"
+    assert fresh.status == AccountStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_account_deleted_before_ensure_fresh_returns_detached_copy(db_setup, session_kind):
+    # The row loaded by the caller's session disappears before ensure_fresh reloads it;
+    # the account handed back must stay readable after that session closes. This pins
+    # readability only: ensure_fresh serving a just-deleted account is unchanged from
+    # before this fix, and whether it should refuse one instead is a separate decision.
+    account_id = f"deleted-before-fresh-{session_kind}"
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        await AccountsRepository(session).upsert(
+            Account(
+                id=account_id,
+                provider="openai",
+                email=f"{account_id}@example.invalid",
+                plan_type="plus",
+                chatgpt_account_id="acct-present",
+                access_token_encrypted=encryptor.encrypt("access"),
+                refresh_token_encrypted=encryptor.encrypt("refresh"),
+                id_token_encrypted=encryptor.encrypt("id"),
+                last_refresh=utcnow(),
+                access_expires_at=utcnow() + timedelta(hours=1),
+                status=AccountStatus.ACTIVE,
+            )
+        )
+    session_scope = get_background_session() if session_kind == "background" else SessionLocal()
+    async with session_scope as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert account is not None
+        async with SessionLocal() as other:
+            assert await AccountsRepository(other).delete(account_id)
+        fresh = await AuthManager(repo).ensure_fresh(account)
+    columns = {column.key: getattr(fresh, column.key) for column in Account.__table__.columns}
+    assert columns["id"] == account_id

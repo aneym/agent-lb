@@ -307,10 +307,9 @@ class AuthManager:
         latest = await self._repo.reload_by_id(account.id)
         if latest is not None:
             account = latest
-            # Return an independent snapshot: request-scoped rollback on close
-            # expires the ORM instance loaded in this repository session.
-            if hasattr(self._repo, "session"):
-                account = Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
+        # Return an independent snapshot, also when the row is gone: request-scoped
+        # rollback on close expires the ORM instance loaded in this repository session.
+        account = _snapshot(self._repo, account)
         if not is_locally_owned(account, settings):
             # A mirror cannot refresh; stop serving before its token expires.
             if force or access_token_hard_expired(self._encryptor, account):
@@ -366,9 +365,7 @@ class AuthManager:
             if not is_locally_owned(latest, get_settings()):
                 raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
             # A delayed caller must not replay a token already rotated by another request.
-            if hasattr(self._repo, "session"):
-                return Account(**{column.key: getattr(latest, column.key) for column in Account.__table__.columns})
-            return latest
+            return _snapshot(self._repo, latest)
         if latest is None:
             if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
                 raise RefreshError("account_missing", "Account no longer exists", False)
@@ -376,6 +373,7 @@ class AuthManager:
         if not is_locally_owned(latest, get_settings()):
             raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
         account = latest
+        account_id = account.id
         expected_refresh_token_encrypted = latest.refresh_token_encrypted
         token_hash = _refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
         intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
@@ -409,21 +407,21 @@ class AuthManager:
             elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
                 raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
             if not await self._repo.begin_exchange(
-                account.id,
+                account_id,
                 token_hash,
                 expected_refresh_token_encrypted,
                 replay=replay,
                 timeout_seconds=timeout if replay else None,
             ):
-                latest = await self._repo.reload_by_id(account.id)
+                latest = await self._repo.reload_by_id(account_id)
                 if latest is not None and not is_locally_owned(latest, get_settings()):
                     raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
                 if latest is not None and _refresh_token_material_changed(
                     self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
                 ):
-                    return latest
-                if await self._repo.exchange_intent_hash(account.id) == token_hash:
-                    await self._repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
+                    return _snapshot(self._repo, latest)  # a re-login rotated the token first
+                if await self._repo.exchange_intent_hash(account_id) == token_hash:
+                    await self._repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
                     get_account_selection_cache().invalidate()
                 raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
         elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
@@ -492,7 +490,7 @@ class AuthManager:
                     latest.refresh_token_encrypted,
                     expected_refresh_token_encrypted,
                 ):
-                    return latest
+                    return _snapshot(self._repo, latest)
                 reason = permanent_failure_reason(exc.code)
                 status = account_status_for_permanent_failure(exc.code)
                 status_updated = await self._repo.update_status(
@@ -510,7 +508,7 @@ class AuthManager:
                         current.refresh_token_encrypted,
                         expected_refresh_token_encrypted,
                     ):
-                        return current
+                        return _snapshot(self._repo, current)
                     raise
                 account.status = status
                 account.deactivation_reason = reason
@@ -623,7 +621,7 @@ class AuthManager:
             if latest is not None and _refresh_token_material_changed(
                 self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
             ):
-                return latest
+                return _snapshot(self._repo, latest)
             if attempt < 2:
                 await asyncio.sleep(0)
         if replay and tokens_updated:
@@ -638,8 +636,8 @@ class AuthManager:
         if hasattr(self._repo, "session"):
             stored = await self._repo.reload_by_id(account.id)
             if stored is not None:
-                return Account(**{column.key: getattr(stored, column.key) for column in Account.__table__.columns})
-        return account
+                account = stored
+        return _snapshot(self._repo, account)
 
     async def _refresh_tokens(
         self,
@@ -726,7 +724,7 @@ class AuthManager:
             if not updated:
                 latest = await self._repo.reload_by_id(account.id)
                 if latest is not None:
-                    return latest
+                    return _snapshot(self._repo, latest)
         except Exception:
             logger.warning("Failed to persist chatgpt_account_id account_id=%s", account.id, exc_info=True)
         return account
@@ -795,6 +793,19 @@ def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: 
         last = to_utc_naive(account.last_refresh)
         return current - last > timedelta(seconds=interval_seconds)
     return should_refresh(account.last_refresh, now=current)
+
+
+def _snapshot(repo: object, account: Account) -> Account:
+    """Copy a row out of a session-backed repository before returning it.
+
+    Background and request sessions roll back an open transaction before they
+    close, which expires every row they loaded; a caller that reads the row
+    afterwards raises DetachedInstanceError. Rows from repositories without a
+    session (test fakes) are returned as they are.
+    """
+    if not hasattr(repo, "session"):
+        return account
+    return Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
 
 
 def _refresh_token_material_changed(
