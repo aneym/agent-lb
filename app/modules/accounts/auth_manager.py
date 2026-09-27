@@ -376,6 +376,7 @@ class AuthManager:
         if not is_locally_owned(latest, get_settings()):
             raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
         account = latest
+        account_id = account.id
         expected_refresh_token_encrypted = latest.refresh_token_encrypted
         token_hash = _refresh_token_material_fingerprint(self._encryptor, expected_refresh_token_encrypted)
         intent_supported = isinstance(getattr(self._repo, "session", None), db_session.AsyncSession)
@@ -409,21 +410,21 @@ class AuthManager:
             elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
                 raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
             if not await self._repo.begin_exchange(
-                account.id,
+                account_id,
                 token_hash,
                 expected_refresh_token_encrypted,
                 replay=replay,
                 timeout_seconds=timeout if replay else None,
             ):
-                latest = await self._repo.reload_by_id(account.id)
+                latest = await self._repo.reload_by_id(account_id)
                 if latest is not None and not is_locally_owned(latest, get_settings()):
                     raise AccountNotOwnedError(latest.id, latest.owner_instance, get_settings().local_instance_id)
                 if latest is not None and _refresh_token_material_changed(
                     self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
                 ):
                     return latest
-                if await self._repo.exchange_intent_hash(account.id) == token_hash:
-                    await self._repo.mark_exchange_uncertain(account.id, token_hash, expected_refresh_token_encrypted)
+                if await self._repo.exchange_intent_hash(account_id) == token_hash:
+                    await self._repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
                     get_account_selection_cache().invalidate()
                 raise RefreshError("exchange_uncertain", "Refresh exchange outcome uncertain", False)
         elif account.status == AccountStatus.EXCHANGE_UNCERTAIN:
