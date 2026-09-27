@@ -78,12 +78,22 @@ def downgrade() -> None:
                 existing_nullable=False,
             )
     elif bind.dialect.name == "postgresql":
+        transfer_default = bind.execute(
+            sa.text(
+                "SELECT column_default FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'account_transfers' AND column_name = 'state'"
+            )
+        ).scalar_one()
+        if transfer_default is not None:
+            op.execute("ALTER TABLE account_transfers ALTER COLUMN state DROP DEFAULT")
         op.execute("ALTER TYPE account_transfer_state RENAME TO account_transfer_state_old")
         op.execute("CREATE TYPE account_transfer_state AS ENUM ('pending', 'settled')")
         op.execute(
             "ALTER TABLE account_transfers ALTER COLUMN state TYPE account_transfer_state "
             "USING state::text::account_transfer_state"
         )
+        if transfer_default is not None:
+            op.execute("ALTER TABLE account_transfers ALTER COLUMN state SET DEFAULT " + transfer_default)
         op.execute("DROP TYPE account_transfer_state_old")
     op.drop_table("account_exchange_intents")
     op.drop_column("accounts", "access_expires_at")
@@ -93,7 +103,17 @@ def downgrade() -> None:
         with op.batch_alter_table("accounts") as batch:
             batch.alter_column("status", existing_type=_enum(_NEW), type_=_enum(_OLD), existing_nullable=False)
     elif bind.dialect.name == "postgresql":
+        status_default = bind.execute(
+            sa.text(
+                "SELECT column_default FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'accounts' AND column_name = 'status'"
+            )
+        ).scalar_one()
+        if status_default is not None:
+            op.execute("ALTER TABLE accounts ALTER COLUMN status DROP DEFAULT")
         op.execute("ALTER TYPE account_status RENAME TO account_status_old")
         op.execute("CREATE TYPE account_status AS ENUM (" + ", ".join("'" + v + "'" for v in _OLD) + ")")
         op.execute("ALTER TABLE accounts ALTER COLUMN status TYPE account_status USING status::text::account_status")
+        if status_default is not None:
+            op.execute("ALTER TABLE accounts ALTER COLUMN status SET DEFAULT " + status_default)
         op.execute("DROP TYPE account_status_old")
