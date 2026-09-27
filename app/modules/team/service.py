@@ -263,9 +263,10 @@ class TeamService:
             await self._check_member_gate(api_key, model)
         except (TeamMemberSuspendedError, TeamModelNotAllowedError, TeamMemberOverCapError) as exc:
             # Websocket refusals never reach the HTTP error handler or request_logs; this line is
-            # the one record of every gate refusal, whatever the transport.
+            # the one record of every gate refusal, whatever the transport. %r keeps a client-sent
+            # model name with a newline on one log line.
             logger.warning(
-                "team_gate_refused key_id=%s model=%s code=%s message=%s",
+                "team_gate_refused key_id=%s model=%r code=%s message=%r",
                 getattr(api_key, "id", None),
                 model,
                 exc.code,

@@ -113,13 +113,17 @@ async def test_model_outside_member_allowlist_is_rejected(caplog):
 
     with caplog.at_level("WARNING", logger="app.modules.team.service"):
         with pytest.raises(TeamModelNotAllowedError) as excinfo:
-            await service.check_member_gate(_make_api_key("member-1"), "model-beta")
+            await service.check_member_gate(_make_api_key("member-1"), "model-beta\nforged line")
 
     assert excinfo.value.status_code == 403
     assert excinfo.value.error_type == "team_model_not_allowed"
-    # Websocket refusals have no other record, so the refusal itself must be logged.
-    assert "team_gate_refused key_id=key-1 model=model-beta code=team_model_not_allowed" in caplog.text
-    assert "not allowed for team member 'Ada'" in caplog.text
+    # Websocket refusals have no other record, so the refusal itself must be logged, on one line
+    # even when the client-sent model name carries a newline.
+    [line] = caplog.messages
+    assert line.startswith(
+        "team_gate_refused key_id=key-1 model='model-beta\\nforged line' code=team_model_not_allowed"
+    )
+    assert "\n" not in line
 
     await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
 
