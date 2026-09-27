@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing import AsyncContextManager, Awaitable, Callable, Protocol
 from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
 from app.core.clients.proxy import UpstreamProxyRouteTrace, override_stream_timeouts, stream_responses
+from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.identity import RequestIdentity, internal_identity
 from app.core.openai.model_registry import get_model_registry
@@ -31,7 +33,7 @@ from app.db.models import (
     DashboardSettings,
     UsageHistory,
 )
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AuthManager, is_locally_owned
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.subscription_status import is_subscription_usable
 from app.modules.limit_warmup.anthropic_primer import send_anthropic_primer
@@ -64,6 +66,7 @@ _OPENAI_UNSTARTED_LEAD_SLACK_SECONDS = 300
 _OPENAI_PRIME_BUCKET_SECONDS = 3600
 _OPENAI_PRIME_SPACING_SECONDS = 1800
 _OPENAI_FAILURE_BRAKE_SECONDS = 6 * 3600
+_OPENAI_LOG_ERROR_CODE = re.compile(r"[a-z0-9_.:-]{1,64}", re.IGNORECASE)
 _ANTHROPIC_PRIMER_PROMPT = "OK"
 _ANTHROPIC_RESET_GRACE_SECONDS = 3
 # Usage telemetry older than this cannot prove the primary window is closed.
@@ -484,7 +487,7 @@ class LimitWarmupService:
                 continue
             if not settings.limit_warmup_enabled:
                 continue
-            if account.provider == OPENAI_PROVIDER_NAME:
+            if account.provider == OPENAI_PROVIDER_NAME and is_locally_owned(account, get_settings()):
                 prime_key = _openai_prime_key(
                     after_primary.get(account.id), after_secondary.get(account.id), latest_attempt, current
                 )
@@ -889,7 +892,7 @@ class LimitWarmupService:
             outcome.account.id,
             outcome.attempt.reset_at,
             status,
-            error_code,
+            _safe_openai_log_error_code(result.error_code),
         )
         return completed
 
@@ -1045,6 +1048,10 @@ def _anthropic_prime_key(
     return int(now_epoch // window_seconds) * window_seconds
 
 
+def _safe_openai_log_error_code(code: str | None) -> str:
+    return code if isinstance(code, str) and _OPENAI_LOG_ERROR_CODE.fullmatch(code) else "unrecognized"
+
+
 def _openai_prime_key(
     primary: UsageHistory | None,
     secondary: UsageHistory | None,
@@ -1078,12 +1085,13 @@ def _openai_prime_key(
         for sample in fresh
     ):
         return None
-    if latest_attempt is not None and latest_attempt.window == _OPENAI_CONTINUOUS_WINDOW:
+    if latest_attempt is not None:
         since_attempt = now_epoch - _as_utc(latest_attempt.attempted_at).timestamp()
         if latest_attempt.status != "failed" and since_attempt < _OPENAI_PRIME_SPACING_SECONDS:
             return None
         if (
-            latest_attempt.status == "failed"
+            latest_attempt.window == _OPENAI_CONTINUOUS_WINDOW
+            and latest_attempt.status == "failed"
             and latest_attempt.retry_count >= _MAX_CONTINUOUS_RETRIES
             and since_attempt < _OPENAI_FAILURE_BRAKE_SECONDS
         ):

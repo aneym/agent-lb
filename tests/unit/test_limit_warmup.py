@@ -919,6 +919,22 @@ async def test_openai_partial_reset_primes_outside_working_hours_once_then_stops
 
 
 @pytest.mark.asyncio
+async def test_openai_primer_only_sends_for_locally_owned_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    account = _account()
+    sender = FakeSender()
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(limit_warmup_service, "get_settings", lambda: SimpleNamespace(local_instance_id="local"))
+    async with _openai_sessions() as sessions:
+        account.owner_instance = "remote"
+        assert await _openai_tick(sessions, account, sender, now, _unstarted_openai_sample(account.id, now)) is None
+        assert sender.calls == []
+        account.owner_instance = "local"
+        attempt = await _openai_tick(sessions, account, sender, now, _unstarted_openai_sample(account.id, now))
+        assert attempt is not None and attempt.window == "openai_weekly_continuous"
+        assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_openai_started_or_used_window_is_not_primed() -> None:
     account = _account()
     sender = FakeSender()
@@ -1010,7 +1026,7 @@ async def test_openai_failed_primer_retries_after_backoff_and_pending_is_not_ret
         async with sessions() as session:
             repo = LimitWarmupRepository(session)
             await repo.complete_attempt(retry.id, status="pending", completed_at=retry_at)
-        later = initial + timedelta(minutes=3)
+        later = initial + timedelta(minutes=31)
         pending = await _openai_tick(sessions, account, sender, later, _unstarted_openai_sample(account.id, later))
         assert pending is not None and pending.status == "pending"
         assert len(sender.calls) == 2
@@ -1038,6 +1054,52 @@ async def test_openai_succeeded_primer_spacing_allows_hourly_repeat_after_thirty
             repo = LimitWarmupRepository(session)
             rows = (await repo.latest_by_account([account.id]))[account.id]
             assert rows.reset_at == int(datetime(2026, 9, 25, 8, 0, tzinfo=timezone.utc).timestamp())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["unexpected response @ upstream", "x" * 200, "usage_limit_reached"])
+async def test_openai_primer_logs_only_structured_error_codes(code: str, caplog: pytest.LogCaptureFixture) -> None:
+    account = _account()
+    sender = FakeSender(success=False, error_code=code)
+    now = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)
+    async with _openai_sessions() as sessions:
+        with caplog.at_level("WARNING", logger="app.modules.limit_warmup.service"):
+            attempt = await _openai_tick(sessions, account, sender, now, _unstarted_openai_sample(account.id, now))
+        assert attempt is not None
+        assert attempt.error_code == ("quota_still_exhausted" if code == "usage_limit_reached" else code)
+        results = [record.message for record in caplog.records if "OpenAI primer result" in record.message]
+        assert len(results) == 1
+        expected = code if code == "usage_limit_reached" else "unrecognized"
+        assert results[0].endswith(f"error_code={expected}")
+        if expected == "unrecognized":
+            assert code not in results[0]
+
+
+@pytest.mark.asyncio
+async def test_openai_seed_primer_spaces_continuous_primer_for_thirty_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account = _account()
+    sender = FakeSender()
+    initial = datetime(2026, 9, 25, 7, 0, tzinfo=timezone.utc)  # 03:00 America/New_York
+    monkeypatch.setattr(limit_warmup_service, "utcnow", lambda: initial.replace(tzinfo=None))
+    cold = _openai_sample(
+        account.id,
+        used_percent=60,
+        reset_at=int((initial - timedelta(minutes=1)).timestamp()),
+        recorded_at=initial,
+    )
+    async with _openai_sessions() as sessions:
+        seed = await _openai_tick(sessions, account, sender, initial, cold)
+        assert seed is not None and (seed.window, seed.status) == ("primary", "succeeded")
+        assert len(sender.calls) == 1
+        soon = initial + timedelta(minutes=1)
+        await _openai_tick(sessions, account, sender, soon, _unstarted_openai_sample(account.id, soon))
+        assert len(sender.calls) == 1
+        later = initial + timedelta(minutes=31)
+        primed = await _openai_tick(sessions, account, sender, later, _unstarted_openai_sample(account.id, later))
+        assert primed is not None and primed.window == "openai_weekly_continuous"
+        assert len(sender.calls) == 2
 
 
 @pytest.mark.asyncio
