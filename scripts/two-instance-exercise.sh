@@ -189,6 +189,22 @@ abort_state=$(curl -s -X POST -H "Authorization: Bearer $TRANSFER" -H 'Content-T
   "http://127.0.0.1:$PORT_A/api/federation/transfers/$ABORT_NONCE/abort" \
   | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("state"))' 2>/dev/null)
 assert_eq "g: missing nonce becomes aborted tombstone" "aborted" "$abort_state"
+before_owner=$(db_owner "$DB_A")
+late_checkout=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TRANSFER" \
+  -H 'Content-Type: application/json' \
+  -d "{\"account_id\":\"$ACCT\",\"taker_instance_id\":\"beta\",\"nonce\":\"$ABORT_NONCE\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/checkout")
+assert_eq "g: late checkout denied" "409" "$late_checkout"
+late_confirm=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TRANSFER" \
+  -H 'Content-Type: application/json' -d "{\"nonce\":\"$ABORT_NONCE\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/checkout/confirm")
+assert_eq "g: late confirm denied" "404" "$late_confirm"
+assert_eq "g: owner unchanged after late requests" "$before_owner" "$(db_owner "$DB_A")"
+repeat_state=$(curl -s -X POST -H "Authorization: Bearer $TRANSFER" -H 'Content-Type: application/json' \
+  -d "{\"account_id\":\"$ACCT\",\"direction\":\"checkout\",\"caller_instance_id\":\"beta\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/transfers/$ABORT_NONCE/abort" \
+  | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("state"))' 2>/dev/null)
+assert_eq "g: tombstone unchanged after late requests" "aborted" "$repeat_state"
 
 RUNTIME=$(( $(date +%s) - START ))
 echo

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -13,6 +14,7 @@ from app.modules.federation.exceptions import (
     FederationConflictError,
     FederationNotConfiguredError,
     FederationNotFoundError,
+    FederationPeerRequestError,
 )
 from app.modules.federation.scheduler import FederationMirrorScheduler
 from app.modules.federation.schemas import (
@@ -259,3 +261,14 @@ async def post_checkin_execute(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FederationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FederationPeerRequestError as exc:
+        raise HTTPException(
+            status_code=409, detail=f"Checkin unresolved; reclaim {request.account_id} to retry"
+        ) from exc
+    except (OSError, TimeoutError, aiohttp.ClientError) as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Checkin unresolved; reclaim {request.account_id} to retry"
+        ) from exc
+    except RuntimeError as exc:
+        unreachable = isinstance(exc.__cause__, (OSError, TimeoutError, aiohttp.ClientError))
+        raise HTTPException(status_code=503 if unreachable else 409, detail=str(exc)) from exc

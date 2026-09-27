@@ -106,6 +106,15 @@ def _http(method: str, url: str, *, token: str | None, payload: dict | None) -> 
         return HttpResult(ok=False, status=None, body=None, error=str(reason or error) or error.__class__.__name__)
 
 
+def _operator_error(result: HttpResult) -> str:
+    if result.status in (401, 403):
+        return (
+            "operator access denied; use a dashboard session, or make a local request "
+            "on an instance that does not trust proxy headers"
+        )
+    return result.error or "invalid response"
+
+
 def _detail(body: object) -> str | None:
     if isinstance(body, dict):
         detail = body.get("detail")
@@ -186,7 +195,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
         return EXIT_CONFIG
     result = _http("GET", f"{local}/api/federation/status", token=None, payload=None)
     if not result.ok or not isinstance(result.body, dict):
-        print(f"error: federation status unavailable — {result.error or 'invalid response'}", file=sys.stderr)
+        print(f"error: federation status unavailable — {_operator_error(result)}", file=sys.stderr)
         return EXIT_FAILURE
 
     body = result.body
@@ -231,7 +240,7 @@ def _run_transfer(command: str, account_ids: list[str]) -> int:
         if not result.ok:
             failures += 1
             status = f" (HTTP {result.status})" if result.status is not None else ""
-            print(f"  {account_id}: FAILED{status} — {result.error}")
+            print(f"  {account_id}: FAILED{status} — {_operator_error(result)}")
             continue
         body = result.body if isinstance(result.body, dict) else {}
         if command == "checkout":
@@ -270,7 +279,7 @@ def cmd_reclaim(args: argparse.Namespace) -> int:
         return EXIT_CONFIG
     result = _http("POST", f"{local}/api/federation/reclaim/{args.account_id}", token=None, payload={})
     if not result.ok:
-        print(f"reclaim {args.account_id}: FAILED (HTTP {result.status}) — {result.error}", file=sys.stderr)
+        print(f"reclaim {args.account_id}: FAILED (HTTP {result.status}) — {_operator_error(result)}", file=sys.stderr)
         return EXIT_FAILURE
     print(f"reclaim {args.account_id}: peer acknowledged transfer resolution")
     return EXIT_OK

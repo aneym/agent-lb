@@ -419,26 +419,44 @@ class FederationRepository:
         ).scalar_one_or_none()
 
     async def reserve_checkout(self, account_id: str, counterparty: str, nonce: str) -> AccountTransfer:
-        if await self.get_open_transfer(account_id) is not None:
-            raise ValueError("account already has an open transfer")
-        return await self.create_transfer(
-            account_id=account_id,
-            direction=AccountTransferDirection.CHECKOUT,
-            counterparty_instance_id=counterparty,
-            nonce=nonce,
-        )
+        try:
+            account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
+            if account is None or account.owner_instance != counterparty:
+                raise ValueError("checkout owner changed")
+            if await self.get_open_transfer(account_id) is not None:
+                raise ValueError("account already has an open transfer")
+            transfer = AccountTransfer(
+                id=str(uuid.uuid4()),
+                account_id=account_id,
+                nonce=nonce,
+                direction=AccountTransferDirection.CHECKOUT,
+                counterparty_instance_id=counterparty,
+                state=AccountTransferState.PENDING,
+            )
+            self._session.add(transfer)
+            await self._session.commit()
+            return transfer
+        except BaseException:
+            await self._session.rollback()
+            raise
 
     async def begin_checkout_abort(self, nonce: str) -> AccountTransfer:
         try:
             transfer = (
                 await self._session.execute(
-                    select(AccountTransfer).where(AccountTransfer.nonce == nonce).with_for_update()
+                    select(AccountTransfer)
+                    .where(AccountTransfer.nonce == nonce)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one()
-            if transfer.direction != AccountTransferDirection.CHECKOUT or transfer.state not in (
-                AccountTransferState.PENDING,
-                AccountTransferState.ABORTING,
-            ):
+            if transfer.direction != AccountTransferDirection.CHECKOUT:
+                raise ValueError("checkout reservation cannot be aborted")
+            if transfer.state == AccountTransferState.SETTLED:
+                self._session.expunge(transfer)
+                await self._session.rollback()
+                return transfer
+            if transfer.state not in (AccountTransferState.PENDING, AccountTransferState.ABORTING):
                 raise ValueError("checkout reservation cannot be aborted")
             transfer.state = AccountTransferState.ABORTING
             await self._session.commit()
@@ -451,7 +469,10 @@ class FederationRepository:
         try:
             transfer = (
                 await self._session.execute(
-                    select(AccountTransfer).where(AccountTransfer.nonce == nonce).with_for_update()
+                    select(AccountTransfer)
+                    .where(AccountTransfer.nonce == nonce)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one()
             if transfer.state not in (AccountTransferState.PENDING, AccountTransferState.ABORTING):
@@ -473,7 +494,10 @@ class FederationRepository:
         try:
             transfer = (
                 await self._session.execute(
-                    select(AccountTransfer).where(AccountTransfer.nonce == nonce).with_for_update()
+                    select(AccountTransfer)
+                    .where(AccountTransfer.nonce == nonce)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one()
             if transfer.direction != AccountTransferDirection.CHECKIN or transfer.state not in (
@@ -510,7 +534,10 @@ class FederationRepository:
                 raise ValueError("account missing")
             transfer = (
                 await self._session.execute(
-                    select(AccountTransfer).where(AccountTransfer.nonce == nonce).with_for_update()
+                    select(AccountTransfer)
+                    .where(AccountTransfer.nonce == nonce)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one_or_none()
             if transfer is None:
@@ -617,9 +644,13 @@ class FederationRepository:
         if transfer is None or transfer.direction != AccountTransferDirection.CHECKOUT:
             return None
         try:
-            account = await self._session.get(Account, transfer.account_id, with_for_update=True)
+            account = await self._session.get(
+                Account, transfer.account_id, with_for_update=True, populate_existing=True
+            )
             # Serialize with ownership changes before blanking the old copy.
-            transfer = await self.get_transfer_by_nonce(nonce)
+            transfer = await self._session.get(
+                AccountTransfer, transfer.id, with_for_update=True, populate_existing=True
+            )
             if (
                 transfer is None
                 or account is None
@@ -652,6 +683,8 @@ class FederationRepository:
             account = await self._session.get(Account, account_id, with_for_update=True, populate_existing=True)
             if account is None:
                 raise ValueError("account missing")
+            if await self.has_exchange_intent(account_id):
+                raise ValueError("account has an exchange in progress")
             transfer = await self.get_transfer_by_nonce(nonce)
             if transfer is not None:
                 if transfer.account_id != account_id or transfer.direction != AccountTransferDirection.CHECKIN:

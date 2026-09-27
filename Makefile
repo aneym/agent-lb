@@ -16,6 +16,9 @@ POSTGRES_PYTEST_TARGETS := \
 	tests/integration/test_proxy_api_extended.py::test_proxy_stream_usage_limit_returns_http_error \
 	tests/integration/test_repositories.py::test_accounts_upsert_with_merge_disabled_uses_identity_lock_on_postgresql \
 	tests/integration/test_refresh_cross_process.py \
+	tests/integration/test_exchange_uncertain_selection.py \
+	tests/integration/test_migration_lock_timeout.py \
+	tests/integration/test_federation_custody_races.py \
 	tests/integration/test_federation_api.py::test_postgres_checkout_crash_before_and_after_commit_retries_without_double_ownership \
 	tests/integration/test_federation_api.py::test_postgres_checkin_crash_before_commit_preserves_owner_and_old_token \
 	tests/integration/test_federation_api.py::test_postgres_checkin_has_no_committed_import_before_owner_change \
