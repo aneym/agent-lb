@@ -422,7 +422,9 @@ class AuthManager:
                 if latest is not None and _refresh_token_material_changed(
                     self._encryptor, latest.refresh_token_encrypted, expected_refresh_token_encrypted
                 ):
-                    return latest
+                    # A re-login rotated the token first. Return a snapshot: the
+                    # background session rolls back on close, expiring this row.
+                    return Account(**{column.key: getattr(latest, column.key) for column in Account.__table__.columns})
                 if await self._repo.exchange_intent_hash(account_id) == token_hash:
                     await self._repo.mark_exchange_uncertain(account_id, token_hash, expected_refresh_token_encrypted)
                     get_account_selection_cache().invalidate()

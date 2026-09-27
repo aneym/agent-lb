@@ -18,7 +18,7 @@ from app.core.crypto import TokenEncryptor
 from app.core.providers import kimi as kimi_provider
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountExchangeIntent, AccountStatus
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_background_session
 from app.modules.accounts import auth_manager as auth_manager_module
 from app.modules.accounts.auth_manager import AuthManager, _refresh_token_material_fingerprint
 from app.modules.accounts.repository import AccountsRepository
@@ -46,6 +46,16 @@ async def _account(account_id: str) -> None:
 
 async def _refresh(account_id: str) -> Account:
     async with SessionLocal() as session:
+        repo = AccountsRepository(session)
+        account = await repo.get_by_id(account_id)
+        assert account is not None
+        return await AuthManager(repo).refresh_account(account)
+
+
+async def _refresh_in_background_session(account_id: str) -> Account:
+    # Production lifecycle: get_background_session rolls back an open
+    # transaction before closing, which expires every row it loaded.
+    async with get_background_session() as session:
         repo = AccountsRepository(session)
         account = await repo.get_by_id(account_id)
         assert account is not None
@@ -760,8 +770,9 @@ async def test_lost_lock_does_not_drop_new_exchange_intent(db_setup, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_relogin_between_reload_and_begin_returns_rotated_account(db_setup, monkeypatch):
-    account_id = "relogin-before-begin"
+@pytest.mark.parametrize("session_kind", ["session_local", "background"])
+async def test_relogin_between_reload_and_begin_returns_rotated_account(db_setup, monkeypatch, session_kind):
+    account_id = f"relogin-before-begin-{session_kind}"
     await _account(account_id)
     encryptor = TokenEncryptor()
     original_begin = AccountsRepository.begin_exchange
@@ -785,7 +796,8 @@ async def test_relogin_between_reload_and_begin_returns_rotated_account(db_setup
 
     monkeypatch.setattr(AccountsRepository, "begin_exchange", relogin_then_begin)
     monkeypatch.setattr(AuthManager, "_refresh_tokens", transport)
-    refreshed = await _refresh(account_id)
+    refresh = _refresh_in_background_session if session_kind == "background" else _refresh
+    refreshed = await refresh(account_id)
     assert refreshed.status == AccountStatus.ACTIVE
     assert encryptor.decrypt(refreshed.refresh_token_encrypted) == "relogin-refresh"
     assert provider_calls == 0
