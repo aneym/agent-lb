@@ -1102,7 +1102,7 @@ def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> N
     """The pre-pin schema is bootable only after the new build removes its Alembic head."""
     url = _db_url(tmp_path / "refresh-rollback.db")
     parent = "20260926_200000_add_team_pool_share"
-    run_upgrade(url, "head", bootstrap_legacy=False)
+    run_upgrade(url, "20260926_000000_refresh_intent_expiry", bootstrap_legacy=False)
     engine = create_engine(to_sync_database_url(url))
     try:
         with engine.begin() as connection:
@@ -1172,7 +1172,8 @@ def test_transfer_abort_states_upgrade_and_downgrade(tmp_path: Path) -> None:
         with engine.connect() as connection:
             states = connection.execute(text("SELECT state FROM account_transfers ORDER BY id")).scalars().all()
         assert states == ["settled", "settled"]
-        run_upgrade(url, head, bootstrap_legacy=False)
+        # The models describe the latest head, so compare the schema there.
+        run_upgrade(url, "head", bootstrap_legacy=False)
         assert check_schema_drift(url) == ()
     finally:
         engine.dispose()
