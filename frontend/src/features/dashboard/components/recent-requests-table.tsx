@@ -179,7 +179,7 @@ export function RecentRequestsTable({
     <div className="space-y-3">
       <div className="rounded-xl border bg-card">
         <div className="relative overflow-x-auto">
-          <Table className="min-w-[1240px] table-fixed">
+          <Table className="min-w-[1640px] table-fixed">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-28 pl-4 text-xs font-medium text-muted-foreground">
@@ -193,6 +193,18 @@ export function RecentRequestsTable({
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
                   API Key
+                </TableHead>
+                <TableHead className="w-24 text-xs font-medium text-muted-foreground">
+                  Caller
+                </TableHead>
+                <TableHead className="w-28 text-xs font-medium text-muted-foreground">
+                  User source
+                </TableHead>
+                <TableHead className="w-28 text-xs font-medium text-muted-foreground">
+                  Machine
+                </TableHead>
+                <TableHead className="w-24 text-xs font-medium text-muted-foreground">
+                  Machine source
                 </TableHead>
                 <TableHead className="text-xs font-medium text-muted-foreground">
                   Model
@@ -263,6 +275,18 @@ export function RecentRequestsTable({
                     </TableCell>
                     <TableCell className="truncate align-top text-xs text-muted-foreground">
                       {request.apiKeyName || "--"}
+                    </TableCell>
+                    <TableCell className="truncate align-top text-xs" title={request.callerUser ?? undefined}>
+                      {request.callerUser ?? "Unattributed"}
+                    </TableCell>
+                    <TableCell className="truncate align-top text-xs text-muted-foreground">
+                      {request.callerUserSource ?? "--"}
+                    </TableCell>
+                    <TableCell className="truncate align-top text-xs" title={request.callerMachine ?? undefined}>
+                      {request.callerMachine ?? "Unattributed"}
+                    </TableCell>
+                    <TableCell className="truncate align-top text-xs text-muted-foreground">
+                      {request.callerMachineSource ?? "--"}
                     </TableCell>
                     <TableCell className="truncate align-top">
                       <div className="leading-tight">

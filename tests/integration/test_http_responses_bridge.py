@@ -19,9 +19,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 import app.modules.proxy.service as proxy_module
-from app.core.config.settings import Settings
+from app.core.config.settings import Settings, get_settings
 from app.core.utils.request_id import reset_request_id, set_request_id
-from app.db.models import Account, AccountStatus, DashboardSettings
+from app.db.models import Account, AccountStatus, DashboardSettings, RequestLog
 from app.db.session import SessionLocal
 from app.dependencies import get_proxy_service_for_app
 from app.modules.proxy._service.http_bridge.mixin import _HTTP_BRIDGE_IDLE_PRUNE_MIN_INTERVAL_SECONDS
@@ -3913,16 +3913,45 @@ async def test_v1_responses_http_bridge_reuses_upstream_websocket_and_preserves_
         "input": "hello",
         "prompt_cache_key": "http-bridge-thread-1",
     }
-    first = await async_client.post("/v1/responses", json=payload)
+    monkeypatch.setenv("AGENT_LB_IDENTITY_OWNER", "owner-a")
+    monkeypatch.setenv("AGENT_LB_IDENTITY_OWNER_MACHINES", "box-1")
+    monkeypatch.setenv("AGENT_LB_IDENTITY_LOCAL_MACHINE", "box-1")
+    get_settings.cache_clear()
+    first = await async_client.post("/v1/responses", json=payload, headers={"x-agent-lb-machine": "box-1"})
     assert first.status_code == 200
     first_body = first.json()
 
     second = await async_client.post(
         "/v1/responses",
         json={**payload, "previous_response_id": first_body["id"]},
+        headers={"x-agent-lb-machine": "box-2"},
     )
+    get_settings.cache_clear()
     assert second.status_code == 200
     second_body = second.json()
+
+    # Request-log persistence can finish after the SSE terminal event.
+    for _ in range(50):
+        async with SessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(RequestLog).where(RequestLog.request_id.in_(("resp_bridge_1", "resp_bridge_2")))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        if len(rows) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert {
+        row.request_id: (row.caller_user, row.caller_user_source, row.caller_machine, row.caller_machine_source)
+        for row in rows
+    } == {
+        "resp_bridge_1": ("owner-a", "owner-machine", "box-1", "claimed"),
+        "resp_bridge_2": ("unknown", "unknown", "box-2", "claimed"),
+    }
 
     assert first_body["id"] == "resp_bridge_1"
     assert second_body["id"] == "resp_bridge_2"

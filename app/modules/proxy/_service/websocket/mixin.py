@@ -54,6 +54,7 @@ from app.core.errors import (
     response_failed_event,
 )
 from app.core.exceptions import AppError, ProxyAuthError
+from app.core.identity import get_request_identity
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.openai.models import OpenAIEvent
 from app.core.openai.parsing import parse_sse_event
@@ -1226,6 +1227,7 @@ class _WebSocketMixin:
         except ProxyResponseError:
             await proxy._release_websocket_reservation(reservation)
             raise
+        request_state.identity = get_request_identity()
         request_state.useragent = useragent
         request_state.useragent_group = useragent_group
         request_state.expose_stale_previous_response_classifier = codex_session_affinity
@@ -3251,6 +3253,7 @@ class _WebSocketMixin:
                 _websocket_downstream_response_id(request_state) if settlement.record_success else response_id
             )
             await proxy._write_request_log(
+                identity=request_state.identity,
                 account_id=account_id_value,
                 api_key=api_key,
                 request_id=request_log_response_id,
@@ -3295,6 +3298,7 @@ class _WebSocketMixin:
         if request_state.skip_request_log:
             return
         await proxy._write_request_log(
+            identity=request_state.identity,
             account_id=account_id,
             api_key=api_key,
             request_id=request_state.request_log_id or request_state.request_id,
@@ -3495,6 +3499,7 @@ class _WebSocketMixin:
                 continue
             latency_ms = int((time.monotonic() - request_state.started_at) * 1000)
             await proxy._write_request_log(
+                identity=request_state.identity,
                 account_id=account_id_value,
                 api_key=api_key,
                 request_id=request_state.response_id or request_state.request_log_id or request_state.request_id,

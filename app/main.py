@@ -27,6 +27,7 @@ from app.core.config.settings import _bridge_advertise_hostname_is_replica_speci
 from app.core.config.settings_cache import get_settings_cache
 from app.core.forensics import register_stack_dump_signal
 from app.core.handlers import add_exception_handlers
+from app.core.identity_nodes import IdentityNodeCache
 from app.core.metrics.middleware import MetricsMiddleware
 from app.core.metrics.prometheus import MULTIPROCESS_MODE, PROMETHEUS_AVAILABLE, make_scrape_registry, mark_process_dead
 from app.core.middleware import (
@@ -152,6 +153,7 @@ async def lifespan(app: FastAPI):
         await get_rate_limit_headers_cache().invalidate()
         reload_additional_quota_registry()
         settings = get_settings()
+    node_cache = IdentityNodeCache(settings)
     bridge_endpoint_base_url = settings.http_responses_session_bridge_advertise_base_url
     if settings.otel_enabled:
         from app.core.tracing.otel import init_tracing
@@ -314,6 +316,7 @@ async def lifespan(app: FastAPI):
     ring_service = RingMembershipService(SessionLocal)
     instance_id = settings.http_responses_session_bridge_instance_id
     heartbeat_task = asyncio.create_task(_register_and_heartbeat(ring_service, instance_id))
+    await node_cache.start()
     startup_module._startup_complete = True
     startup_recorder.complete("ok")
 
@@ -390,6 +393,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.exception("Metrics server stopped with an error")
             finally:
+                await node_cache.stop()
                 shutdown_state.reset()
                 mark_process_dead()
                 await close_db()

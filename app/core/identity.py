@@ -7,6 +7,8 @@ label and a tailnet login never do. Everything else is ``unknown``.
 The machine comes from the client IP auth already trusts: request_locality's
 ``resolve_connection_client_ip`` with the firewall settings. There is no second
 forwarded-header parser, so attribution can never disagree with auth about who called.
+The owner (and a local caller) also needs that address first hand, from a direct connection
+or the local Serve: a non-loopback trusted proxy's word names the machine, never the owner.
 
 Request-path cost is header parsing only. The tailnet node cache is filled in the
 background (``set_node_lookup``) and a miss records ``tailnet-unknown``. The member name
@@ -29,7 +31,7 @@ from typing import Protocol
 
 from sqlalchemy import select
 
-from app.core.config.settings import Settings, get_settings
+from app.core.config.settings import Settings, get_settings, identity_handle
 from app.core.request_locality import parse_trusted_proxy_networks, resolve_connection_client_ip
 from app.db.models import TeamMember
 from app.db.session import get_background_session
@@ -55,13 +57,15 @@ USER_MAX_LENGTH = 32
 MACHINE_MAX_LENGTH = 48
 
 _TAILNET_NETWORKS = (ip_network("100.64.0.0/10"), ip_network("fd7a:115c:a1e0::/48"))
+_LOOPBACK_PROXY_CIDRS = ("127.0.0.0/8", "::1/128")
 _FUNNEL_HEADER = "tailscale-funnel-request"
 _CLAIM_HEADER = "x-agent-lb-machine"
 _CLAIM_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
-# A machine name only makes the owner when it came from a trusted source; a funnel or
-# remote caller never does, even if the owner list is misconfigured to name one.
+# A claim can name an owner machine only when the same loopback caller without
+# the claim would already be attributed to the owner. Funnel and remote never qualify.
 _OWNER_MACHINE_SOURCES = frozenset({MACHINE_LOCAL, MACHINE_TAILNET, MACHINE_CLAIMED})
 _MEMBER_CACHE_TTL_SECONDS = 60.0
+_MEMBER_FAILURE_CACHE_TTL_SECONDS = 10.0
 _MEMBER_CACHE_MAX_ENTRIES = 512
 _MEMBER_LOOKUP_TIMEOUT_SECONDS = 0.75
 _WARNING_INTERVAL_SECONDS = 3600.0
@@ -78,6 +82,9 @@ class RequestIdentity:
 DISABLED_IDENTITY = RequestIdentity(None, None, None, None)
 # Used only if resolution itself fails: attributes nobody and names no machine.
 _UNRESOLVED_IDENTITY = RequestIdentity(USER_UNKNOWN, USER_UNKNOWN, MACHINE_REMOTE, MACHINE_REMOTE)
+# A bridge forward that carried no identity (the origin runs an older build or has identity off).
+# This instance's own resolution would name the relaying instance, not the caller, so record nobody.
+UNATTRIBUTED_FORWARD_IDENTITY = _UNRESOLVED_IDENTITY
 
 
 class NodeLookup(Protocol):
@@ -93,7 +100,7 @@ class _NoNodes:
 
 _node_lookup: NodeLookup = _NoNodes()
 _request_identity: ContextVar[RequestIdentity | None] = ContextVar("request_identity", default=None)
-_member_names: dict[str, tuple[float, str | None]] = {}
+_member_names: dict[str, tuple[float, str | None, float]] = {}
 _member_lookups: dict[str, asyncio.Task[str | None]] = {}
 _last_warning_at: dict[str, float] = {}
 
@@ -167,9 +174,15 @@ def resolve_identity(
     if not settings.identity_enabled:
         return DISABLED_IDENTITY
     nodes = node_cache if node_cache is not None else _node_lookup
-    machine, machine_source = _resolve_machine(headers, socket_ip, settings, nodes)
-    owner_machines = {_handle(name, MACHINE_MAX_LENGTH) for name in settings.identity_owner_machines}
-    if machine_source in _OWNER_MACHINE_SOURCES and machine in owner_machines:
+    first_hand = _seen_first_hand(headers, socket_ip, settings)
+    machine, machine_source = _resolve_machine(headers, socket_ip, settings, nodes, first_hand=first_hand)
+    owner_machines = set(settings.identity_owner_machines)
+    if (
+        first_hand
+        and machine_source in _OWNER_MACHINE_SOURCES
+        and machine in owner_machines
+        and (machine_source != MACHINE_CLAIMED or local_machine_handle(settings) in owner_machines)
+    ):
         owner = _handle(settings.identity_owner, USER_MAX_LENGTH) or "owner"
         identity = RequestIdentity(owner, USER_OWNER_MACHINE, machine, machine_source)
     else:
@@ -191,11 +204,35 @@ def local_machine_handle(settings: Settings) -> str:
     return _handle(settings.identity_local_machine, MACHINE_MAX_LENGTH) or MACHINE_LOCAL
 
 
+def _seen_first_hand(headers: Mapping[str, str], socket_ip: str | None, settings: Settings) -> bool:
+    """True when no non-loopback trusted proxy stands between the caller and this instance.
+
+    Only a direct connection or the local Serve (a loopback proxy) vouches for the caller's
+    address. A non-loopback trusted proxy may still name the machine, but its word alone never
+    makes the owner or a local caller.
+    """
+    configured = resolve_connection_client_ip(
+        headers,
+        socket_ip,
+        trust_proxy_headers=settings.firewall_trust_proxy_headers,
+        trusted_proxy_networks=_trusted_proxy_networks(tuple(settings.firewall_trusted_proxy_cidrs)),
+    )
+    loopback_only = resolve_connection_client_ip(
+        headers,
+        socket_ip,
+        trust_proxy_headers=settings.firewall_trust_proxy_headers,
+        trusted_proxy_networks=_trusted_proxy_networks(_LOOPBACK_PROXY_CIDRS),
+    )
+    return configured == loopback_only
+
+
 def _resolve_machine(
     headers: Mapping[str, str],
     socket_ip: str | None,
     settings: Settings,
     nodes: NodeLookup,
+    *,
+    first_hand: bool,
 ) -> tuple[str, str]:
     # Serve sets this only on public Funnel traffic. It can only lower attribution, so it
     # wins even when proxy headers are untrusted and the request looks loopback.
@@ -212,6 +249,12 @@ def _resolve_machine(
     if address is None:
         return MACHINE_REMOTE, MACHINE_REMOTE
     if address.is_loopback:
+        # A non-loopback peer must not become a local owner through a trusted
+        # proxy's forwarded loopback address, whether or not it sent a claim: not
+        # as the socket peer, and not as a trusted hop behind the local Serve.
+        peer = _client_address(socket_ip)
+        if peer is None or not peer.is_loopback or not first_hand:
+            return MACHINE_REMOTE, MACHINE_REMOTE
         # Auth refuses local trust when forwarding is hinted but proxy headers are
         # untrusted. Do not attribute such a request to the owner machine either.
         forwarding_headers = ("x-forwarded-for", "forwarded", "x-real-ip", "true-client-ip", "cf-connecting-ip")
@@ -244,8 +287,6 @@ def _client_address(client_ip: str | None) -> IPv4Address | IPv6Address | None:
         address = ip_address(client_ip)
     except ValueError:
         return None
-    if isinstance(address, IPv6Address) and address.ipv4_mapped is not None:
-        return address.ipv4_mapped
     return address
 
 
@@ -256,15 +297,11 @@ def _trusted_proxy_networks(cidrs: tuple[str, ...]) -> tuple[IPv4Network | IPv6N
 
 def _member_handle(name: str | None) -> str | None:
     # Email-shaped names are not handles, including their local parts.
-    return _handle(name, USER_MAX_LENGTH) if name and "@" not in name else None
+    return _handle(name, USER_MAX_LENGTH) if name and "@" not in unicodedata.normalize("NFKC", name) else None
 
 
 def _handle(value: str | None, limit: int) -> str | None:
-    if not value:
-        return None
-    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")[:limit].rstrip("-")
-    return slug or None
+    return identity_handle(value, limit)
 
 
 # --- member lookup (runs inside the request-log write, never at connect) --------------
@@ -280,7 +317,7 @@ async def attach_member(identity: RequestIdentity | None, member_id: str | None)
 async def _member_name(member_id: str) -> str | None:
     now = time.monotonic()
     cached = _member_names.get(member_id)
-    if cached is not None and now - cached[0] < _MEMBER_CACHE_TTL_SECONDS:
+    if cached is not None and now - cached[0] < cached[2]:
         return cached[1]
     task = _member_lookups.get(member_id)
     if task is None:
@@ -303,11 +340,15 @@ async def _lookup_member_name(member_id: str) -> str | None:
                 name = await session.scalar(select(TeamMember.name).where(TeamMember.id == member_id))
     except Exception:
         _warn_hourly("member", "team member lookup failed; recording unknown user", exc_info=True)
-        name = None
+        handle = None
+        ttl = _MEMBER_FAILURE_CACHE_TTL_SECONDS
+    else:
+        handle = _member_handle(name)
+        ttl = _MEMBER_CACHE_TTL_SECONDS
     if len(_member_names) >= _MEMBER_CACHE_MAX_ENTRIES:
         _member_names.clear()
-    _member_names[member_id] = (time.monotonic(), name)
-    return name
+    _member_names[member_id] = (time.monotonic(), handle, ttl)
+    return handle
 
 
 def _warn_hourly(key: str, message: str, *, exc_info: bool = False) -> None:

@@ -326,6 +326,53 @@ class RequestLogsRepository:
 
         return metrics, cost
 
+    async def aggregate_callers_window(
+        self,
+        since: datetime,
+        until: datetime,
+        *,
+        account_ids: Collection[str],
+    ) -> list[tuple[str, str, int, int, int, float]]:
+        """Group the dashboard's request metrics by caller without hydrating log rows.
+
+        Like aggregate_usage_window, this excludes warmups and out-of-scope
+        accounts, includes unassigned accounts, and retains soft-deleted logs.
+        """
+        caller_user = func.coalesce(RequestLog.caller_user, "unattributed")
+        caller_machine = func.coalesce(RequestLog.caller_machine, "unattributed")
+        stmt = (
+            select(
+                caller_user,
+                caller_machine,
+                func.count().label("requests"),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                func.coalesce(
+                    func.sum(func.coalesce(RequestLog.output_tokens, RequestLog.reasoning_tokens, 0)), 0
+                ).label("output_tokens"),
+                func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
+            )
+            .where(
+                RequestLog.requested_at >= since,
+                RequestLog.requested_at <= until,
+                self._exclude_warmup_clause(),
+                _account_scope_clause(account_ids, include_unattributed=True),
+            )
+            .group_by(caller_user, caller_machine)
+            .order_by(caller_user, caller_machine)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            (
+                user or "unattributed",
+                machine or "unattributed",
+                int(requests),
+                int(input_tokens),
+                int(output_tokens),
+                round(float(cost_usd), 6),
+            )
+            for user, machine, requests, input_tokens, output_tokens, cost_usd in rows
+        ]
+
     async def add_log(
         self,
         account_id: str | None,

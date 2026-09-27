@@ -66,6 +66,13 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             ("unknown", "unknown", "box-1", "local"),
             member=("member-id-b", "Member.B@example.com"),
         ),
+        _case(
+            "member-named-with-compatibility-at-sign-is-unknown",
+            {},
+            LOOPBACK,
+            ("unknown", "unknown", "box-1", "local"),
+            member=("member-id-c", "Member.B＠example.com"),
+        ),
         # Machine (spec change 2)
         _case(
             "keyless-owner-tailnet-via-alias",
@@ -126,17 +133,36 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
         ),
         _case("remote-socket", {}, PUBLIC, ("unknown", "unknown", "remote", "remote")),
         _case(
+            "ipv4-mapped-loopback-follows-auth",
+            {"x-agent-lb-machine": "box-2"},
+            "::ffff:127.0.0.1",
+            ("owner-a", "owner-machine", "box-2", "claimed"),
+        ),
+        _case(
+            "ipv4-mapped-tailnet-not-promoted-above-auth",
+            {"x-forwarded-for": f"::ffff:{TAIL_A}"},
+            LOOPBACK,
+            ("unknown", "unknown", "remote", "remote"),
+        ),
+        _case(
             "remote-through-trusted-proxy",
             {"x-forwarded-for": PUBLIC},
             LOOPBACK,
             ("unknown", "unknown", "remote", "remote"),
         ),
         _case(
-            "owner-list-never-covers-remote-or-funnel",
-            {},
+            "owner-list-never-covers-remote",
+            {"x-agent-lb-machine": "box-2"},
             PUBLIC,
             ("unknown", "unknown", "remote", "remote"),
-            settings={"identity_owner_machines": "remote,public"},
+            settings={"identity_owner_machines": "remote,public,box-2"},
+        ),
+        _case(
+            "owner-list-never-covers-funnel",
+            {"tailscale-funnel-request": "?1", "x-agent-lb-machine": "box-2"},
+            LOOPBACK,
+            ("unknown", "unknown", "public", "funnel"),
+            settings={"identity_owner_machines": "public,box-2"},
         ),
         _case(
             "claimed-valid", {"x-agent-lb-machine": "tunnel-1"}, LOOPBACK, ("unknown", "unknown", "tunnel-1", "claimed")
@@ -148,11 +174,25 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             ("owner-a", "owner-machine", "box-2", "claimed"),
         ),
         _case(
+            "claim-cannot-raise-non-owner-local",
+            {"x-agent-lb-machine": "box-2"},
+            LOOPBACK,
+            ("unknown", "unknown", "box-2", "claimed"),
+            settings={"identity_local_machine": "guest-box"},
+        ),
+        _case(
+            "non-owner-local-without-claim",
+            {},
+            LOOPBACK,
+            ("unknown", "unknown", "guest-box", "local"),
+            settings={"identity_local_machine": "guest-box"},
+        ),
+        _case(
             "owner-machine-config-slugified",
             {"x-agent-lb-machine": "my-box"},
             LOOPBACK,
             ("owner-a", "owner-machine", "my-box", "claimed"),
-            settings={"identity_owner_machines": "my_box"},
+            settings={"identity_owner_machines": "my_box,box-1"},
         ),
         _case("claimed-invalid-characters", {"x-agent-lb-machine": "Bad!"}, LOOPBACK, OWNER_LOCAL),
         _case("claimed-too-long", {"x-agent-lb-machine": "a" * 49}, LOOPBACK, OWNER_LOCAL),
@@ -161,6 +201,44 @@ def _case(case_id, headers, socket_ip, expected, *, member=None, settings=None):
             {"x-forwarded-for": TAIL_B, "x-agent-lb-machine": "box-1"},
             LOOPBACK,
             ("unknown", "unknown", "peer-1", "tailnet"),
+        ),
+        _case(
+            "claim-ignored-from-non-loopback-socket-even-if-forwarded-ip-is-loopback",
+            {"x-forwarded-for": LOOPBACK, "x-agent-lb-machine": "box-2"},
+            TAIL_B,
+            ("unknown", "unknown", "remote", "remote"),
+            settings={"firewall_trusted_proxy_cidrs": f"{TAIL_B}/32"},
+        ),
+        _case(
+            "non-loopback-socket-forwarding-loopback-cannot-name-owner",
+            {"x-forwarded-for": LOOPBACK},
+            TAIL_B,
+            ("unknown", "unknown", "remote", "remote"),
+            settings={"firewall_trusted_proxy_cidrs": f"{TAIL_B}/32"},
+        ),
+        _case(
+            "direct-tailnet-connection-from-owner-node", {}, TAIL_A, ("owner-a", "owner-machine", "box-2", "tailnet")
+        ),
+        _case(
+            "owner-node-address-from-non-loopback-trusted-proxy-is-not-owner",
+            {"x-forwarded-for": TAIL_A},
+            TAIL_B,
+            ("unknown", "unknown", "box-2", "tailnet"),
+            settings={"firewall_trusted_proxy_cidrs": f"{TAIL_B}/32"},
+        ),
+        _case(
+            "owner-node-address-behind-serve-and-a-trusted-tailnet-proxy-is-not-owner",
+            {"x-forwarded-for": f"{TAIL_A}, {TAIL_B}"},
+            LOOPBACK,
+            ("unknown", "unknown", "box-2", "tailnet"),
+            settings={"firewall_trusted_proxy_cidrs": f"{LOOPBACK}/32,{TAIL_B}/32"},
+        ),
+        _case(
+            "loopback-behind-serve-and-a-trusted-tailnet-proxy-is-remote-even-with-a-claim",
+            {"x-forwarded-for": f"{LOOPBACK}, {TAIL_B}", "x-agent-lb-machine": "box-2"},
+            LOOPBACK,
+            ("unknown", "unknown", "remote", "remote"),
+            settings={"firewall_trusted_proxy_cidrs": f"{LOOPBACK}/32,{TAIL_B}/32"},
         ),
         _case(
             "disabled-records-nothing",
@@ -221,9 +299,30 @@ def test_forged_forwarding_on_loopback_follows_the_auth_resolver(monkeypatch, tr
         get_settings.cache_clear()
 
 
-def test_missing_local_machine_never_exposes_os_hostname():
-    settings = Settings(**{**BASE_SETTINGS, "identity_local_machine": None})
+def test_missing_local_machine_never_exposes_os_hostname(monkeypatch):
+    monkeypatch.delenv("AGENT_LB_IDENTITY_LOCAL_MACHINE", raising=False)
+    monkeypatch.setattr("socket.gethostname", lambda: "private-persons-laptop")
+    settings = Settings(**{key: value for key, value in BASE_SETTINGS.items() if key != "identity_local_machine"})
+    assert settings.identity_local_machine is None
     assert resolve_identity({}, LOOPBACK, settings=settings).caller_machine == "local"
+
+
+def test_alias_keys_and_values_use_node_and_owner_handle_normalization():
+    settings = Settings(
+        **{
+            **BASE_SETTINGS,
+            "identity_machine_aliases": "my_laptop=OWNER_BOX,peer-1=Peer Device",
+            "identity_owner_machines": "owner_box",
+        }
+    )
+    assert settings.identity_machine_aliases == {"my-laptop": "owner-box", "peer-1": "peer-device"}
+    resolved = resolve_identity(
+        {"x-forwarded-for": TAIL_A},
+        LOOPBACK,
+        node_cache={TAIL_A: "my-laptop"},
+        settings=settings,
+    )
+    assert resolved == RequestIdentity("owner-a", "owner-machine", "owner-box", "tailnet")
 
 
 def test_bad_machine_alias_entry_does_not_prevent_settings_loading():
@@ -233,7 +332,11 @@ def test_bad_machine_alias_entry_does_not_prevent_settings_loading():
 
 @pytest.mark.asyncio
 async def test_member_lookup_failure_records_unknown_and_does_not_raise(monkeypatch):
+    calls = 0
+
     def broken_session():
+        nonlocal calls
+        calls += 1
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(identity_module, "get_background_session", broken_session)
@@ -243,6 +346,77 @@ async def test_member_lookup_failure_records_unknown_and_does_not_raise(monkeypa
 
     assert resolved == RequestIdentity("unknown", "unknown", "box-1", "local")
     assert await attach_member(local, "member-id-lookup-failure") == resolved
+    assert calls == 1
+    # A failure is remembered for 10 s, not the 60 s a found name gets; age only the timestamp.
+    stored_at, handle, ttl = identity_module._member_names["member-id-lookup-failure"]
+    assert (handle, ttl) == (None, 10.0)
+    identity_module._member_names["member-id-lookup-failure"] = (stored_at - 11, handle, ttl)
+    assert await attach_member(local, "member-id-lookup-failure") == resolved
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_member_waiter_does_not_cancel_shared_lookup(monkeypatch):
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    class MemberSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def scalar(self, statement):
+            nonlocal calls
+            calls += 1
+            started.set()
+            await release.wait()
+            return "member-a"
+
+    monkeypatch.setattr(identity_module, "get_background_session", MemberSession)
+    caller = RequestIdentity("unknown", "unknown", "box-2", "tailnet")
+    first = asyncio.create_task(attach_member(caller, "member-id-cancel"))
+    await started.wait()
+    second = asyncio.create_task(attach_member(caller, "member-id-cancel"))
+    await asyncio.sleep(0)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    release.set()
+    assert await second == RequestIdentity("member-a", "member", "box-2", "tailnet")
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_member_cache_keeps_only_recordable_handles(monkeypatch):
+    class MemberSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def scalar(self, statement):
+            return names.pop(0)
+
+    names = ["Member.B@example.com", "Member.B＠example.com", "Member A"]
+    monkeypatch.setattr(identity_module, "get_background_session", MemberSession)
+    local = RequestIdentity("owner-a", "owner-machine", "box-1", "local")
+
+    assert await attach_member(local, "member-id-email-cache") == RequestIdentity(
+        "unknown", "unknown", "box-1", "local"
+    )
+    assert await attach_member(local, "member-id-compat-email-cache") == RequestIdentity(
+        "unknown", "unknown", "box-1", "local"
+    )
+    assert await attach_member(local, "member-id-handle-cache") == RequestIdentity(
+        "member-a", "member", "box-1", "local"
+    )
+    assert identity_module._member_names["member-id-email-cache"][1] is None
+    assert identity_module._member_names["member-id-compat-email-cache"][1] is None
+    assert identity_module._member_names["member-id-handle-cache"][1] == "member-a"
+    assert all("@" not in (value or "") for _, value, _ in identity_module._member_names.values())
 
 
 @pytest.mark.asyncio
@@ -271,5 +445,32 @@ async def test_member_lookup_is_bounded_and_shared(monkeypatch):
     results = await asyncio.gather(*callers)
     assert calls == 1
     assert results == [RequestIdentity("unknown", "unknown", "box-1", "local")] * 10
+    # A timeout is negatively cached while the database is degraded.
     assert await attach_member(local, "member-id-slow") == results[0]
     assert calls == 1
+    stored_at, handle, ttl = identity_module._member_names["member-id-slow"]
+    assert (handle, ttl) == (None, 10.0)
+    identity_module._member_names["member-id-slow"] = (stored_at - 11, handle, ttl)
+    release.set()
+    assert await attach_member(local, "member-id-slow") == RequestIdentity("member-a", "member", "box-1", "local")
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_member_cache_clears_when_full(monkeypatch):
+    class MemberSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def scalar(self, statement):
+            return "member-a"
+
+    monkeypatch.setattr(identity_module, "get_background_session", MemberSession)
+    identity_module._member_names.clear()
+    identity_module._member_names.update({f"member-{index}": (0.0, "member-b", 60.0) for index in range(512)})
+    local = RequestIdentity("unknown", "unknown", "box-1", "local")
+    assert await attach_member(local, "new-member") == RequestIdentity("member-a", "member", "box-1", "local")
+    assert list(identity_module._member_names) == ["new-member"]

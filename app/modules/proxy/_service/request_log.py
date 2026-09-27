@@ -110,10 +110,11 @@ class _RequestLogMixin:
         upstream_proxy_fail_closed_reason: str | None = None,
         useragent: str | None = None,
         useragent_group: str | None = None,
+        identity: RequestIdentity | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._persist_request_log(
-                identity=get_request_identity(),
+                identity=identity if identity is not None else get_request_identity(),
                 api_key_member_id=api_key.member_id if api_key else None,
                 account_id=account_id,
                 api_key_id=api_key.id if api_key else None,

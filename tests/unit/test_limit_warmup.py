@@ -238,10 +238,12 @@ class FakeRequestLogsRepo:
         upstream_proxy_endpoint_id: str | None = None,
         upstream_proxy_fallback_used: bool | None = None,
         upstream_proxy_fail_closed_reason: str | None = None,
+        identity: object | None = None,
     ) -> None:
         self.logs.append(
             {
                 "account_id": account_id,
+                "identity": identity,
                 "request_id": request_id,
                 "model": model,
                 "input_tokens": input_tokens,
@@ -301,6 +303,7 @@ async def test_fake_request_logs_repo_accepts_useragent_fields() -> None:
     assert repo.logs == [
         {
             "account_id": None,
+            "identity": None,
             "request_id": "req_limit_warmup_contract",
             "model": "gpt-5.1",
             "input_tokens": 1,
@@ -664,6 +667,8 @@ async def test_warmup_request_log_persists_route_metadata() -> None:
         after_secondary={},
     )
 
+    identity = logs.logs[0]["identity"]
+    assert identity.caller_user_source == identity.caller_machine_source == "internal"
     assert logs.logs[0]["upstream_proxy_route_mode"] == "account_bound"
     assert logs.logs[0]["upstream_proxy_pool_id"] == "pool_1"
     assert logs.logs[0]["upstream_proxy_endpoint_id"] == "ep_1"

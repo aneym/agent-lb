@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
+from threading import Event
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from starlette.testclient import WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect
 
@@ -16,6 +18,8 @@ import app.modules.proxy.api as proxy_api_module
 import app.modules.proxy.service as proxy_module
 from app.core.exceptions import ProxyAuthError
 from app.core.utils.client_session import get_client_session_id
+from app.db.models import RequestLog
+from app.db.session import SessionLocal
 
 pytestmark = pytest.mark.integration
 
@@ -729,6 +733,10 @@ def test_backend_responses_websocket_proxies_upstream_and_persists_log(app_insta
                 "chatgpt-account-id": "external-account",
                 "session_id": "thread-ws-1",
                 "openai-beta": "responses_websockets=2026-02-06",
+                "Tailscale-User-Login": "fake@example.invalid",
+                "Tailscale-User-Name": "Fake Member",
+                "Tailscale-User-Profile-Pic": "https://example.invalid/pic",
+                "X-Agent-LB-Machine": "box-1",
             },
         ) as websocket:
             websocket.send_text(json.dumps(request_payload))
@@ -739,6 +747,7 @@ def test_backend_responses_websocket_proxies_upstream_and_persists_log(app_insta
     assert second["type"] == "response.completed"
     seen_headers = cast(dict[str, str], seen["headers"])
     assert seen_headers["session_id"] == "thread-ws-1"
+    assert not any(key.lower().startswith("tailscale-") or key.lower() == "x-agent-lb-machine" for key in seen_headers)
     assert seen_headers["openai-beta"] == "responses_websockets=2026-02-06"
     assert seen_headers["x-codex-turn-state"] == cast(str, seen["sticky_key"])
     assert seen["sticky_kind"] == proxy_module.StickySessionKind.CODEX_SESSION
@@ -1261,7 +1270,15 @@ def test_backend_responses_websocket_echoes_existing_turn_state_header(app_insta
 
 
 def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_instance, monkeypatch):
-    first_upstream = _SequencedUpstreamWebSocket(
+    class _DeferredSecondTurnUpstream(_SequencedUpstreamWebSocket):
+        async def send_text(self, text: str) -> None:
+            self.sent_text.append(text)
+            if self._deferred_message_batches:
+                batch = self._deferred_message_batches.popleft()
+                loop = asyncio.get_running_loop()
+                loop.call_later(0.05, lambda: [self._messages.put_nowait(message) for message in batch])
+
+    first_upstream = _DeferredSecondTurnUpstream(
         [
             _FakeUpstreamMessage(
                 "text",
@@ -1313,6 +1330,24 @@ def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_inst
     )
     connect_calls: list[dict[str, object]] = []
 
+    async def add_test_account():
+        async with SessionLocal() as session:
+            session.add(
+                proxy_module.Account(
+                    id="acct_ws_proxy_1",
+                    chatgpt_account_id="acct_ws_proxy_1",
+                    email="invented@example.invalid",
+                    plan_type="plus",
+                    access_token_encrypted=b"access",
+                    refresh_token_encrypted=b"refresh",
+                    last_refresh=proxy_module.utcnow(),
+                    status=proxy_module.AccountStatus.ACTIVE,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(add_test_account())
+
     class _FakeSettingsCache:
         async def get(self):
             return _websocket_settings()
@@ -1354,14 +1389,31 @@ def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_inst
         )
         return SimpleNamespace(id=f"acct_ws_proxy_{len(connect_calls)}"), first_upstream
 
-    async def fake_write_request_log(self, **kwargs):
-        del self, kwargs
+    first_logged = Event()
+    second_logged = Event()
+
+    async def write_request_log(self, **kwargs):
+        await proxy_module._RequestLogMixin._write_request_log(self, **kwargs)
+        if not first_logged.is_set():
+            first_logged.set()
+        else:
+            second_logged.set()
+
+    async def persisted_turns():
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(RequestLog).where(RequestLog.request_id.in_(("resp_ws_first", "resp_ws_second")))
+            )
+            return {
+                row.request_id: (row.caller_user, row.caller_user_source, row.caller_machine, row.caller_machine_source)
+                for row in result.scalars()
+            }
 
     monkeypatch.setattr(proxy_api_module, "_websocket_firewall_denial_response", allow_firewall)
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", allow_proxy_api_key)
     monkeypatch.setattr(proxy_module, "get_settings_cache", lambda: _FakeSettingsCache())
     monkeypatch.setattr(proxy_module.ProxyService, "_connect_proxy_websocket", fake_connect_proxy_websocket)
-    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", fake_write_request_log)
+    monkeypatch.setattr(proxy_module.ProxyService, "_write_request_log", write_request_log)
 
     first_request = {
         "type": "response.create",
@@ -1385,12 +1437,20 @@ def test_v1_responses_websocket_reuses_upstream_for_sequential_requests(app_inst
             turn_state = extra_headers["x-codex-turn-state"]
             websocket.send_text(json.dumps(first_request))
             first_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+            assert first_logged.wait(timeout=5), "first websocket turn log was not persisted"
 
             websocket.send_text(json.dumps(second_request))
             second_events = [json.loads(websocket.receive_text()) for _ in range(2)]
+            # The upstream terminal event can arrive before its log write finishes.
+            assert second_logged.wait(timeout=5), "second websocket turn log was not persisted"
 
     assert [event["type"] for event in first_events] == ["response.created", "response.completed"]
     assert [event["type"] for event in second_events] == ["response.created", "response.completed"]
+    # Both turns retain the websocket connection's real middleware identity.
+    assert asyncio.run(persisted_turns()) == {
+        "resp_ws_first": ("unknown", "unknown", "remote", "remote"),
+        "resp_ws_second": ("unknown", "unknown", "remote", "remote"),
+    }
     assert len(connect_calls) == 1
     assert connect_calls[0]["sticky_key"] == turn_state
     assert connect_calls[0]["sticky_kind"] == proxy_module.StickySessionKind.CODEX_SESSION
@@ -6299,6 +6359,17 @@ def test_backend_responses_websocket_emits_no_accounts_error(app_instance, monke
 
 
 def test_backend_responses_websocket_matches_terminal_events_by_response_id(app_instance, monkeypatch):
+    from app.core.identity import RequestIdentity
+
+    turn_identities = iter(
+        (
+            RequestIdentity("member-a", "member", "box-1", "local"),
+            RequestIdentity("member-b", "member", "box-2", "tailnet"),
+        )
+    )
+    monkeypatch.setattr(
+        "app.modules.proxy._service.websocket.mixin.get_request_identity", lambda: next(turn_identities)
+    )
     fake_upstream = _SequencedUpstreamWebSocket(
         [],
         deferred_message_batches=[
@@ -6436,9 +6507,11 @@ def test_backend_responses_websocket_matches_terminal_events_by_response_id(app_
     ]
     assert len(log_calls) == 2
     assert log_calls[0]["request_id"] == "resp_ws_b"
+    assert log_calls[0]["identity"] == RequestIdentity("member-b", "member", "box-2", "tailnet")
     assert log_calls[0]["model"] == "gpt-5.2"
     assert log_calls[0]["input_tokens"] == 7
     assert log_calls[1]["request_id"] == "resp_ws_a"
+    assert log_calls[1]["identity"] == RequestIdentity("member-a", "member", "box-1", "local")
     assert log_calls[1]["model"] == "gpt-5.1"
     assert log_calls[1]["input_tokens"] == 3
 

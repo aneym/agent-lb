@@ -5,7 +5,9 @@ import hmac
 import json
 import logging
 import os
+import re
 import socket
+import unicodedata
 from collections.abc import Mapping
 from functools import lru_cache
 from ipaddress import ip_address, ip_network
@@ -80,6 +82,15 @@ DEFAULT_DATABASE_URL = f"sqlite+aiosqlite:///{DEFAULT_DB_PATH}"
 type StringListInput = str | list[str] | None
 type OptionalStringInput = str | None
 type ModelContextWindowOverridesInput = str | dict[str, int] | None
+
+
+def identity_handle(value: str | None, limit: int) -> str | None:
+    """Normalize attribution handles consistently for settings and resolved nodes."""
+    if not value:
+        return None
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")[:limit].rstrip("-")
+    return slug or None
 
 
 def _validate_context_window_entries(data: Mapping[str, object]) -> dict[str, int]:
@@ -541,7 +552,7 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_identity_owner_machines(cls, value: StringListInput) -> list[str]:
         entries = value.split(",") if isinstance(value, str) else (value or [])
-        return [entry.strip().lower() for entry in entries if entry.strip()]
+        return [handle for entry in entries if (handle := identity_handle(entry, 48)) is not None]
 
     @field_validator("identity_machine_aliases", mode="before")
     @classmethod
@@ -561,7 +572,8 @@ class Settings(BaseSettings):
             return {}
         result: dict[str, str] = {}
         for node, alias in items:
-            node_key, alias_value = str(node).strip().lower(), str(alias).strip().lower()
+            node_key = identity_handle(str(node), 48)
+            alias_value = identity_handle(str(alias), 48)
             if not node_key or not alias_value:
                 logger.warning("Ignoring malformed identity machine alias entry")
                 continue

@@ -374,7 +374,9 @@ async def test_quota_planner_warm_now_executes_when_explicitly_gated(monkeypatch
     assert payload["status"] == "executed"
     async with SessionLocal() as session:
         logs = await session.execute(select(RequestLog).where(RequestLog.request_kind == "warmup"))
-        assert logs.scalar_one().request_id == payload["requestId"]
+        row = logs.scalar_one()
+        assert row.request_id == payload["requestId"]
+        assert (row.caller_user_source, row.caller_machine_source) == ("internal", "internal")
 
 
 @pytest.mark.asyncio

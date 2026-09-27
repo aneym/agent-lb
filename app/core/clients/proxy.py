@@ -84,6 +84,7 @@ IGNORE_INBOUND_HEADERS = {
     "forwarded",
     "x-real-ip",
     "true-client-ip",
+    "x-agent-lb-machine",
 }
 
 _ERROR_TYPE_CODE_MAP = {
@@ -450,7 +451,7 @@ def _should_drop_inbound_header(name: str) -> bool:
         return True
     if normalized.startswith("x-forwarded-"):
         return True
-    if normalized.startswith("cf-"):
+    if normalized.startswith("cf-") or normalized.startswith("tailscale-"):
         return True
     return False
 

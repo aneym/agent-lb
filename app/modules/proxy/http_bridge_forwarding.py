@@ -15,6 +15,7 @@ from app.core.clients.proxy import ProxyResponseError
 from app.core.config.settings import get_settings
 from app.core.crypto import get_or_create_key
 from app.core.errors import OpenAIErrorEnvelope, openai_error, response_failed_event
+from app.core.identity import RequestIdentity
 from app.core.openai.requests import ResponsesRequest
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
@@ -32,6 +33,8 @@ HTTP_BRIDGE_RESERVATION_MODEL_HEADER = "x-codex-bridge-reservation-model"
 HTTP_BRIDGE_AFFINITY_KIND_HEADER = "x-codex-bridge-affinity-kind"
 HTTP_BRIDGE_AFFINITY_KEY_HEADER = "x-codex-bridge-affinity-key"
 HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
+HTTP_BRIDGE_IDENTITY_HEADER = "x-codex-bridge-identity"
+HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER = "x-codex-bridge-identity-signature"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,7 @@ class HTTPBridgeForwardContext:
     original_affinity_kind: str | None = None
     original_affinity_key: str | None = None
     reservation: ApiKeyUsageReservationData | None = None
+    identity: RequestIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,13 +133,23 @@ class HTTPBridgeOwnerClient:
                     )
 
 
+_OWNER_FORWARD_DROP_PREFIXES = ("x-codex-bridge-", "tailscale-", "x-forwarded-", "cf-")
+_OWNER_FORWARD_DROP_HEADERS = frozenset({"x-agent-lb-machine", "forwarded", "x-real-ip", "true-client-ip"})
+
+
 def build_owner_forward_headers(
     *,
     headers: Mapping[str, str],
     payload: ResponsesRequest,
     context: HTTPBridgeForwardContext,
 ) -> dict[str, str]:
-    forwarded = dict(headers)
+    # The owner attributes from the signed identity only, so no caller-identity or client-address header travels
+    # with the forward, whatever the caller already filtered.
+    forwarded = {
+        key: value
+        for key, value in headers.items()
+        if not key.lower().startswith(_OWNER_FORWARD_DROP_PREFIXES) and key.lower() not in _OWNER_FORWARD_DROP_HEADERS
+    }
     forwarded.pop("host", None)
     forwarded.pop("content-length", None)
     forwarded[HTTP_BRIDGE_FORWARDED_HEADER] = "1"
@@ -151,7 +165,12 @@ def build_owner_forward_headers(
         forwarded[HTTP_BRIDGE_RESERVATION_ID_HEADER] = context.reservation.reservation_id
         forwarded[HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER] = context.reservation.key_id
         forwarded[HTTP_BRIDGE_RESERVATION_MODEL_HEADER] = context.reservation.model
-    forwarded[HTTP_BRIDGE_SIGNATURE_HEADER] = _bridge_forward_signature(payload=payload, context=context)
+    signature = _bridge_forward_signature(payload=payload, context=context)
+    forwarded[HTTP_BRIDGE_SIGNATURE_HEADER] = signature
+    if context.identity is not None:
+        identity_value = _identity_json(context.identity)
+        forwarded[HTTP_BRIDGE_IDENTITY_HEADER] = identity_value
+        forwarded[HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER] = _identity_signature(signature, identity_value)
     return forwarded
 
 
@@ -180,6 +199,10 @@ def parse_forwarded_request(
                 error_type="server_error",
             ),
         )
+    identity_value = headers.get(HTTP_BRIDGE_IDENTITY_HEADER)
+    identity = _parse_identity(identity_value) if identity_value is not None else None
+    if identity_value is not None and identity is None:
+        return None, _invalid_forward_identity()
     context = HTTPBridgeForwardContext(
         origin_instance=headers.get(HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER, "").strip() or "unknown",
         target_instance=target_instance,
@@ -188,6 +211,7 @@ def parse_forwarded_request(
         original_affinity_kind=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KIND_HEADER)),
         original_affinity_key=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KEY_HEADER)),
         reservation=_reservation_from_headers(headers),
+        identity=identity,
     )
     signature = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_HEADER))
     expected_signature = _bridge_forward_signature(payload=payload, context=context)
@@ -200,6 +224,12 @@ def parse_forwarded_request(
                 error_type="invalid_request_error",
             ),
         )
+    identity_signature = headers.get(HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER)
+    if identity_value is not None and (
+        identity_signature is None
+        or not hmac.compare_digest(identity_signature, _identity_signature(signature, identity_value))
+    ):
+        return None, _invalid_forward_identity()
     return HTTPBridgeForwardedRequest(context=context), None
 
 
@@ -237,6 +267,49 @@ def _optional_header(value: str | None) -> str | None:
     return stripped or None
 
 
+def _identity_json(identity: RequestIdentity) -> str:
+    return json.dumps(
+        [identity.caller_user, identity.caller_user_source, identity.caller_machine, identity.caller_machine_source],
+        separators=(",", ":"),
+    )
+
+
+def _parse_identity(value: str) -> RequestIdentity | None:
+    if len(value) > 256:
+        return None
+    try:
+        fields = json.loads(value)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(fields, list) or len(fields) != 4:
+        return None
+    user, user_source, machine, machine_source = fields
+    if not all(isinstance(item, str) for item in fields):
+        return None
+    if user_source not in {"member", "owner-machine", "unknown"} or machine_source not in {
+        "local",
+        "claimed",
+        "tailnet",
+        "funnel",
+        "remote",
+    }:
+        return None
+    if not (1 <= len(user) <= 32 and 1 <= len(machine) <= 48):
+        return None
+    if not all(all(char.isascii() and (char.isalnum() or char == "-") for char in item) for item in (user, machine)):
+        return None
+    return RequestIdentity(user, user_source, machine, machine_source)
+
+
+def _invalid_forward_identity() -> ProxyResponseError:
+    return ProxyResponseError(
+        400,
+        openai_error(
+            "bridge_forward_invalid", "Internal bridge forward identity is invalid", error_type="invalid_request_error"
+        ),
+    )
+
+
 def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeForwardContext) -> str:
     payload_json = json.dumps(
         payload.model_dump(mode="json", exclude_none=True),
@@ -261,6 +334,12 @@ def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeF
     )
     secret = get_or_create_key(get_settings().encryption_key_file)
     return hmac.new(secret, signing_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _identity_signature(forward_signature: str, identity_value: str) -> str:
+    """Bind identity to the legacy-signed forward without changing its signing bytes."""
+    secret = get_or_create_key(get_settings().encryption_key_file)
+    return hmac.new(secret, (forward_signature + "|" + identity_value).encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 async def _iter_sse_event_blocks(

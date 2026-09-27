@@ -34,7 +34,7 @@ from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
-from app.core.identity import attach_member, get_request_identity
+from app.core.identity import RequestIdentity, attach_member, get_request_identity
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
     get_anthropic_compat_profile,
@@ -307,6 +307,7 @@ class AnthropicProxyService:
         self._repo_factory = repo_factory
         self._load_balancer = LoadBalancer(repo_factory)
         self._encryptor = TokenEncryptor()
+        self._pending_request_logs: set[asyncio.Task[None]] = set()
 
     async def stream_messages(
         self,
@@ -1449,8 +1450,64 @@ class AnthropicProxyService:
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
     ) -> None:
+        # The member lookup adds an await. Keep the log task alive if the client
+        # disconnects, as the proxy request logger does.
+        task = asyncio.create_task(
+            self._persist_request_log_row(
+                account=account,
+                provider_name=provider_name,
+                request_id=request_id,
+                model=model,
+                started_at=started_at,
+                status=status,
+                api_key=api_key,
+                session_id=session_id,
+                useragent=useragent,
+                useragent_group=useragent_group,
+                error_code=error_code,
+                error_message=error_message,
+                usage=usage,
+                identity=get_request_identity(),
+            )
+        )
         try:
-            identity = await attach_member(get_request_identity(), api_key.member_id if api_key else None)
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Keep a strong reference through completion, and consume any failure.
+            self._pending_request_logs.add(task)
+            task.add_done_callback(self._request_log_finished)
+            raise
+
+    def _request_log_finished(self, task: asyncio.Task[None]) -> None:
+        self._pending_request_logs.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("Anthropic request log task cancelled")
+        except Exception:
+            logger.warning("Anthropic request log task failed", exc_info=True)
+
+    async def _persist_request_log_row(
+        self,
+        *,
+        account: Account | None,
+        provider_name: str,
+        request_id: str,
+        model: str,
+        started_at: float,
+        status: str,
+        api_key: ApiKeyData | None,
+        session_id: str | None,
+        useragent: str | None,
+        useragent_group: str | None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        usage: AnthropicUsage | None = None,
+        identity: RequestIdentity | None = None,
+    ) -> None:
+        try:
+            latency_ms = int((time.monotonic() - started_at) * 1000)
+            identity = await attach_member(identity, api_key.member_id if api_key else None)
             async with self._repo_factory() as repos:
                 await repos.request_logs.add_log(
                     identity=identity,
@@ -1463,7 +1520,7 @@ class AnthropicProxyService:
                     cached_input_tokens=usage.cache_read_input_tokens if usage else None,
                     cache_creation_tokens=usage.cache_creation_input_tokens if usage else None,
                     cache_read_tokens=usage.cache_read_input_tokens if usage else None,
-                    latency_ms=int((time.monotonic() - started_at) * 1000),
+                    latency_ms=latency_ms,
                     status=status,
                     error_code=error_code,
                     error_message=error_message,

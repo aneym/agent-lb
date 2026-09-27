@@ -17,6 +17,8 @@ from app.modules.usage.builders import (
 from app.modules.usage.mappers import usage_history_to_window_row
 from app.modules.usage.repository import UsageRepository
 from app.modules.usage.schemas import (
+    CallerUsageResponse,
+    CallerUsageRow,
     UsageHistoryResponse,
     UsageSummaryResponse,
     UsageWindowResponse,
@@ -107,6 +109,27 @@ class UsageService:
             _LOG_METRICS_CACHE.pop(key, None)
         _LOG_METRICS_CACHE[cache_key] = (mono_now, metrics, cost)
         return metrics, cost
+
+    async def get_usage_callers(self, hours: int) -> CallerUsageResponse:
+        now = utcnow()
+        accounts = subscription_usable_accounts(await self._accounts_repo.list_accounts())
+        rows = await self._logs_repo.aggregate_callers_window(
+            now - timedelta(hours=hours), now, account_ids={account.id for account in accounts}
+        )
+        return CallerUsageResponse(
+            window_hours=hours,
+            callers=[
+                CallerUsageRow(
+                    caller_user=user,
+                    caller_machine=machine,
+                    requests=requests,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost_usd,
+                )
+                for user, machine, requests, input_tokens, output_tokens, cost_usd in rows
+            ],
+        )
 
     async def get_usage_history(self, hours: int) -> UsageHistoryResponse:
         now = utcnow()

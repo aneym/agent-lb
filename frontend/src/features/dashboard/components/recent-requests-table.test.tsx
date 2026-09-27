@@ -101,6 +101,10 @@ describe("RecentRequestsTable", () => {
             planType: "plus",
             apiKeyName: "Key Alpha",
             apiKeyId: "key-alpha",
+            callerUser: "owner-a",
+            callerUserSource: "owner-machine",
+            callerMachine: "box-1",
+            callerMachineSource: "tailnet",
             sessionId: null,
             requestId: "req-1",
             requestKind: "normal",
@@ -136,6 +140,10 @@ describe("RecentRequestsTable", () => {
     expect(screen.getByText("Primary Account")).toBeInTheDocument();
     expect(screen.getByRole("cell", { name: "Plus" })).toBeInTheDocument();
     expect(screen.getByText("Key Alpha")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "owner-a" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "owner-machine" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "box-1" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "tailnet" })).toBeInTheDocument();
     expect(screen.getByText("gpt-5.1 (high, default)")).toBeInTheDocument();
     expect(screen.getByText("Requested priority")).toBeInTheDocument();
     expect(screen.getByText("WS")).toBeInTheDocument();

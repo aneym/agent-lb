@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, Query
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.dependencies import FederationContext, UsageContext, get_federation_context, get_usage_context
 from app.modules.federation.schemas import FederationUsageInstancesResponse
-from app.modules.usage.schemas import UsageHistoryResponse, UsageSummaryResponse, UsageWindowResponse
+from app.modules.usage.schemas import (
+    CallerUsageResponse,
+    UsageHistoryResponse,
+    UsageSummaryResponse,
+    UsageWindowResponse,
+)
 
 router = APIRouter(
     prefix="/api/usage",
@@ -27,6 +32,14 @@ async def get_usage_summary(
     context: UsageContext = Depends(get_usage_context),
 ) -> UsageSummaryResponse:
     return await context.service.get_usage_summary(provider)
+
+
+@router.get("/callers", response_model=CallerUsageResponse)
+async def get_usage_callers(
+    hours: int = Query(24, ge=1, le=168),
+    context: UsageContext = Depends(get_usage_context),
+) -> CallerUsageResponse:
+    return await context.service.get_usage_callers(hours)
 
 
 @router.get("/history", response_model=UsageHistoryResponse)

@@ -5,8 +5,10 @@
 For every new request log the runtime SHALL store `caller_user`,
 `caller_user_source`, `caller_machine`, and `caller_machine_source` at write
 time. A validated key with `member_id` resolves the member name by id using a
-small cached lookup, without editing the team member or key data types; its
-slugified handle is the user with source `member`. Otherwise the user is the
+small cached lookup, without editing the team member or key data types; the
+cache retains only the slugified handle or null (never the raw member name).
+Email-shaped or empty member names resolve to `unknown`. A valid member handle
+is the user with source `member`. Otherwise the user is the
 configured owner with source `owner-machine` ONLY when the resolved machine is
 in the configured owner-machine set; otherwise it is `unknown` with source
 `unknown`. A key name and a tailnet login MUST NOT be treated as a person.
@@ -14,9 +16,11 @@ User handles MUST be at most 32 characters and contain no email address.
 
 The machine IP MUST come from `resolve_connection_client_ip` using the same
 settings as firewall and auth, without an independent forwarded-header parser.
-A loopback IP yields `local` and the configured local machine (or host short
-name); a loopback connection with a valid `X-Agent-LB-Machine` handle yields
-`claimed` and that handle. Valid claimed handles match
+A loopback IP yields `local` and the configured local machine (falling back to
+`local`); a loopback connection with a valid `X-Agent-LB-Machine` handle yields
+`claimed` and that handle. A claimed machine on the owner list attributes the
+owner only if the local machine is also on the owner list; a claim cannot raise
+a loopback caller above their attribution without the header. Valid claimed handles match
 `^[a-z0-9][a-z0-9-]{0,47}$`; invalid claims do not override the local
 identity. An IP in 100.64.0.0/10 or fd7a:115c:a1e0::/48 yields `tailnet`
 and its node-cache handle after aliases, or `tailnet-unknown` on a miss. A
@@ -58,9 +62,11 @@ committed to the public repository.
 
 #### Scenario: Claimed machine is self-reported
 
-- **WHEN** a loopback caller supplies a valid claimed handle such as `box-1`
-- **THEN** the machine is `box-1` with source `claimed`
-- **AND** an invalid handle is not stored
+- **WHEN** a loopback caller supplies a valid claimed handle such as `box-2`
+- **THEN** the machine is `box-2` with source `claimed`
+- **AND** if `box-2` is on the owner list, the user is the owner with source `owner-machine`
+- **AND** a claimed handle not on that list leaves the user `unknown`
+- **AND** an invalid handle is not stored; a remote or funnel caller cannot claim an owner machine
 
 ### Requirement: Tailnet node handles are cached without login data
 
