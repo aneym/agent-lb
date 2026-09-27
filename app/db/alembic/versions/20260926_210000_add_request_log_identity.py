@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260926_210000_add_request_log_identity"
-down_revision = "20260926_200000_add_team_pool_share"
+down_revision = "20260926_000000_refresh_intent_expiry"
 branch_labels = None
 depends_on = None
 

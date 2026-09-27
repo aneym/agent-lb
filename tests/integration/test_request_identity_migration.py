@@ -14,7 +14,7 @@ from app.db.migrate import _build_alembic_config, run_upgrade
 from app.db.migration_url import to_sync_database_url
 
 pytestmark = pytest.mark.integration
-_PARENT = "20260926_200000_add_team_pool_share"
+_PARENT = "20260926_000000_refresh_intent_expiry"
 _FIELDS = {"caller_user", "caller_user_source", "caller_machine", "caller_machine_source"}
 
 
