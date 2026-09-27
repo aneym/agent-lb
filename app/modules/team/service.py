@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import uuid
@@ -26,6 +27,8 @@ from app.modules.team.repository import (
     TeamUsageTotals,
 )
 from app.modules.team.windows import TEAM_WINDOWS, window_end, window_start
+
+logger = logging.getLogger(__name__)
 
 _AGGREGATE_CACHE_TTL_SECONDS = 5.0
 _NEAR_CAP_RATIO = 0.8
@@ -256,6 +259,21 @@ class TeamService:
     # ── Gate ──
 
     async def check_member_gate(self, api_key: ApiKeyData, model: str | None) -> None:
+        try:
+            await self._check_member_gate(api_key, model)
+        except (TeamMemberSuspendedError, TeamModelNotAllowedError, TeamMemberOverCapError) as exc:
+            # Websocket refusals never reach the HTTP error handler or request_logs; this line is
+            # the one record of every gate refusal, whatever the transport.
+            logger.warning(
+                "team_gate_refused key_id=%s model=%s code=%s message=%s",
+                getattr(api_key, "id", None),
+                model,
+                exc.code,
+                exc.message,
+            )
+            raise
+
+    async def _check_member_gate(self, api_key: ApiKeyData, model: str | None) -> None:
         member_id = getattr(api_key, "member_id", None)
         if not member_id:
             return

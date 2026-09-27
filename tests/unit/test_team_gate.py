@@ -107,15 +107,19 @@ async def test_suspended_member_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_model_outside_member_allowlist_is_rejected():
+async def test_model_outside_member_allowlist_is_rejected(caplog):
     repository = _FakeTeamRepository(_make_member(allowed_models=json.dumps(["model-alpha"])))
     service = TeamService(repository)
 
-    with pytest.raises(TeamModelNotAllowedError) as excinfo:
-        await service.check_member_gate(_make_api_key("member-1"), "model-beta")
+    with caplog.at_level("WARNING", logger="app.modules.team.service"):
+        with pytest.raises(TeamModelNotAllowedError) as excinfo:
+            await service.check_member_gate(_make_api_key("member-1"), "model-beta")
 
     assert excinfo.value.status_code == 403
     assert excinfo.value.error_type == "team_model_not_allowed"
+    # Websocket refusals have no other record, so the refusal itself must be logged.
+    assert "team_gate_refused key_id=key-1 model=model-beta code=team_model_not_allowed" in caplog.text
+    assert "not allowed for team member 'Ada'" in caplog.text
 
     await service.check_member_gate(_make_api_key("member-1"), "model-alpha")
 
