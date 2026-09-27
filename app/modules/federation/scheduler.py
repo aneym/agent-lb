@@ -115,6 +115,7 @@ class FederationMirrorScheduler:
                         plan_type=account.plan_type,
                         chatgpt_account_id=account.chatgpt_account_id,
                         access_token=account.access_token,
+                        expires_at_ms=getattr(account, "expires_at_ms", None),
                         owner_instance_id=response.instance_id,
                         local_instance_id=self.local_instance_id,
                         encryptor=self.encryptor,
@@ -157,9 +158,9 @@ def build_federation_mirror_scheduler() -> FederationMirrorScheduler:
     settings = get_settings()
     return FederationMirrorScheduler(
         interval_seconds=settings.federation_mirror_interval_seconds,
-        enabled=bool(settings.federation_peer_url and settings.federation_token),
+        enabled=bool(settings.federation_peer_url and settings.effective_federation_mirror_token),
         peer_url=settings.federation_peer_url,
-        federation_token=settings.federation_token,
+        federation_token=settings.effective_federation_mirror_token,
         local_instance_id=settings.local_instance_id,
         usage_window_days=settings.federation_usage_window_days,
         repo_factory=_default_federation_repo_factory,

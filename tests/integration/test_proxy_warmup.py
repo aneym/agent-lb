@@ -186,6 +186,7 @@ async def test_warmup_normal_mode_uses_configured_model_and_logs_warmup_kind(asy
     assert len(rows) == 1
     assert rows[0].request_kind == "warmup"
     assert rows[0].model == "gpt-5.4-nano"
+    assert (rows[0].caller_user_source, rows[0].caller_machine_source) == ("internal", "internal")
     assert limit.current_value == 0
 
 

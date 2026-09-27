@@ -37,6 +37,20 @@ class UsageSummaryResponse(DashboardModel):
     metrics: UsageMetrics | None = None
 
 
+class CallerUsageRow(DashboardModel):
+    caller_user: str
+    caller_machine: str
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+
+
+class CallerUsageResponse(DashboardModel):
+    window_hours: int
+    callers: list[CallerUsageRow] = Field(default_factory=list)
+
+
 class UsageHistoryItem(DashboardModel):
     account_id: str
     remaining_percent_avg: float | None = None

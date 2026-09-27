@@ -35,6 +35,7 @@ from app.core.clients.proxy import transcribe_audio as core_transcribe_audio  # 
 from app.core.errors import (
     openai_error,
 )
+from app.core.identity import get_request_identity
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import (
     ResponsesRequest,
@@ -288,6 +289,7 @@ class _HTTPBridgeRequestSubmitMixin:
             input_item_count=input_item_count,
             input_full_fingerprint=input_full_fingerprint,
             is_compaction_request=request_input_contains_compaction_trigger(payload.input),
+            identity=get_request_identity(),
         )
         if deduped_replayed_input_count is not None:
             request_state.input_item_count = deduped_replayed_input_count

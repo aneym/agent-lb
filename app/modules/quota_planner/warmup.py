@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clients.proxy import stream_responses
 from app.core.crypto import TokenEncryptor
+from app.core.identity import internal_identity
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import ResponsesRequest
 from app.core.utils.time import utcnow
@@ -213,6 +214,7 @@ class QuotaWarmupService:
                     cached_input_tokens=usage.cached_input_tokens,
                 )
             await self._request_logs.add_log(
+                identity=internal_identity(),
                 account_id=account_id,
                 api_key_id=api_key_id,
                 request_id=request_id,
@@ -267,6 +269,7 @@ class QuotaWarmupService:
                     cached_input_tokens=0,
                 )
             await self._request_logs.add_log(
+                identity=internal_identity(),
                 account_id=account_id,
                 api_key_id=api_key_id,
                 request_id=request_id,

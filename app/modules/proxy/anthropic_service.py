@@ -34,6 +34,7 @@ from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
+from app.core.identity import RequestIdentity, attach_member, get_request_identity
 from app.core.providers import (
     ANTHROPIC_PROVIDER_NAME,
     get_anthropic_compat_profile,
@@ -42,7 +43,7 @@ from app.core.providers import (
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import naive_utc_to_epoch
 from app.db.models import Account, AccountStatus, StickySessionKind
-from app.modules.accounts.auth_manager import AuthManager
+from app.modules.accounts.auth_manager import AccountNotOwnedError, AuthManager, is_locally_owned
 from app.modules.accounts.credits import (
     CREDITS_USAGE_WINDOW,
     OPENROUTER_CREDITS_QUOTA_KEY,
@@ -51,6 +52,7 @@ from app.modules.accounts.credits import (
     window_from_usage,
 )
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
+from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
 from app.modules.proxy.account_cache import get_account_selection_cache
 from app.modules.proxy.claude_codex_bridge import estimate_claude_input_tokens
@@ -305,6 +307,7 @@ class AnthropicProxyService:
         self._repo_factory = repo_factory
         self._load_balancer = LoadBalancer(repo_factory)
         self._encryptor = TokenEncryptor()
+        self._pending_request_logs: set[asyncio.Task[None]] = set()
 
     async def stream_messages(
         self,
@@ -483,6 +486,8 @@ class AnthropicProxyService:
                                         useragent=useragent,
                                         useragent_group=useragent_group,
                                     )
+                                    if error_code == "mirror_token_unavailable":
+                                        raise AnthropicProxyError(503, error_message, code=error_code)
                                     last_error_status = resp.status
                                     last_error_message = error_message
                                     continue
@@ -1403,7 +1408,24 @@ class AnthropicProxyService:
                 )
                 fresh = await manager.ensure_fresh(latest, force=force)
                 return self._encryptor.decrypt(fresh.access_token_encrypted)
+        except AccountNotOwnedError as exc:
+            if rejected_access_token is not None:
+                try:
+                    await build_federation_mirror_scheduler().mirror_once()
+                    async with self._repo_factory() as repos:
+                        latest = await repos.accounts.reload_by_id(account.id)
+                        if latest is not None and not is_locally_owned(latest, get_settings()):
+                            updated = self._encryptor.decrypt(latest.access_token_encrypted)
+                            if updated != rejected_access_token:
+                                return updated
+                except Exception:
+                    logger.warning("Mirror pull after upstream 401 failed account_id=%s", account.id, exc_info=True)
+            raise AnthropicProxyError(
+                503, "Mirror access token unavailable after pull", code="mirror_token_unavailable"
+            ) from exc
         except RefreshError as exc:
+            if exc.code == "exchange_uncertain":
+                raise AnthropicProxyError(503, exc.message, code=exc.code) from exc
             # AuthManager already conditionally persists permanent failures against
             # the exchanged token version. Repeating that write here can disable a
             # concurrently reauthorized account using this request's stale snapshot.
@@ -1428,9 +1450,67 @@ class AnthropicProxyService:
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
     ) -> None:
+        # The member lookup adds an await. Keep the log task alive if the client
+        # disconnects, as the proxy request logger does.
+        task = asyncio.create_task(
+            self._persist_request_log_row(
+                account=account,
+                provider_name=provider_name,
+                request_id=request_id,
+                model=model,
+                started_at=started_at,
+                status=status,
+                api_key=api_key,
+                session_id=session_id,
+                useragent=useragent,
+                useragent_group=useragent_group,
+                error_code=error_code,
+                error_message=error_message,
+                usage=usage,
+                identity=get_request_identity(),
+            )
+        )
         try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Keep a strong reference through completion, and consume any failure.
+            self._pending_request_logs.add(task)
+            task.add_done_callback(self._request_log_finished)
+            raise
+
+    def _request_log_finished(self, task: asyncio.Task[None]) -> None:
+        self._pending_request_logs.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("Anthropic request log task cancelled")
+        except Exception:
+            logger.warning("Anthropic request log task failed", exc_info=True)
+
+    async def _persist_request_log_row(
+        self,
+        *,
+        account: Account | None,
+        provider_name: str,
+        request_id: str,
+        model: str,
+        started_at: float,
+        status: str,
+        api_key: ApiKeyData | None,
+        session_id: str | None,
+        useragent: str | None,
+        useragent_group: str | None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        usage: AnthropicUsage | None = None,
+        identity: RequestIdentity | None = None,
+    ) -> None:
+        try:
+            latency_ms = int((time.monotonic() - started_at) * 1000)
+            identity = await attach_member(identity, api_key.member_id if api_key else None)
             async with self._repo_factory() as repos:
                 await repos.request_logs.add_log(
+                    identity=identity,
                     account_id=account.id if account else None,
                     api_key_id=api_key.id if api_key else None,
                     request_id=request_id,
@@ -1440,7 +1520,7 @@ class AnthropicProxyService:
                     cached_input_tokens=usage.cache_read_input_tokens if usage else None,
                     cache_creation_tokens=usage.cache_creation_input_tokens if usage else None,
                     cache_read_tokens=usage.cache_read_input_tokens if usage else None,
-                    latency_ms=int((time.monotonic() - started_at) * 1000),
+                    latency_ms=latency_ms,
                     status=status,
                     error_code=error_code,
                     error_message=error_message,

@@ -4,13 +4,14 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
+from app.core.auth.exchange_phase import ExchangePhase, aiohttp_exchange_phase
 from app.core.auth.refresh import RefreshError, TokenRefreshResult, classify_refresh_error
 from app.core.clients.http import lease_http_session
 from app.core.clients.oauth import OAuthError, OAuthTokens
@@ -117,6 +118,7 @@ async def exchange_anthropic_authorization_code(
         account_id=metadata.account_id,
         email=metadata.email,
         plan_type=metadata.plan_type,
+        expires_in=payload_data.expires_in,
     )
 
 
@@ -127,6 +129,7 @@ async def refresh_anthropic_access_token(
     client_id: str | None = None,
     scope: str | None = None,
     session: aiohttp.ClientSession | None = None,
+    on_exchange_start: Callable[[], None] | None = None,
 ) -> TokenRefreshResult:
     settings = get_settings()
     payload = {
@@ -142,6 +145,7 @@ async def refresh_anthropic_access_token(
             timeout_seconds=settings.oauth_timeout_seconds,
             session=session,
             error_prefix="Token refresh",
+            on_exchange_start=on_exchange_start,
         )
     except OAuthError as exc:
         raise RefreshError(
@@ -149,6 +153,8 @@ async def refresh_anthropic_access_token(
             exc.message,
             classify_refresh_error(exc.code),
             transport_error=exc.code == "transport_error",
+            phase=exc.phase,
+            status_code=exc.status_code,
         ) from exc
 
     if not payload_data.access_token:
@@ -162,6 +168,7 @@ async def refresh_anthropic_access_token(
         account_id=metadata.account_id,
         plan_type=metadata.plan_type,
         email=metadata.email,
+        expires_in=payload_data.expires_in,
     )
 
 
@@ -178,6 +185,7 @@ async def _post_token_request(
     timeout_seconds: float | None,
     session: aiohttp.ClientSession | None,
     error_prefix: str,
+    on_exchange_start: Callable[[], None] | None = None,
 ) -> AnthropicOAuthTokenPayload:
     settings = get_settings()
     # Claude Code posts the token request as JSON; Anthropic rejects a
@@ -192,40 +200,70 @@ async def _post_token_request(
     request_id = get_request_id()
     if request_id:
         headers["x-request-id"] = request_id
+    exchange_started = False
+
+    def start_exchange() -> None:
+        nonlocal exchange_started
+        exchange_started = True
+        if on_exchange_start:
+            on_exchange_start()
+
     try:
         async with lease_http_session(session) as client_session:
+            start_exchange()
             async with client_session.post(token_url, data=encoded, headers=headers, timeout=timeout) as resp:
-                data = await _safe_json(resp)
+                try:
+                    data = await _safe_json(resp)
+                except Exception as exc:
+                    if resp.status >= 400:
+                        raise OAuthError(
+                            f"http_{resp.status}",
+                            f"{error_prefix} failed ({resp.status})",
+                            resp.status,
+                            phase=ExchangePhase.ANSWERED,
+                        ) from exc
+                    raise OAuthError("invalid_response", f"{error_prefix} response unreadable") from exc
+                if resp.status >= 400:
+                    logger.warning("Anthropic token request failed request_id=%s status=%s", request_id, resp.status)
+                    raise _oauth_error_from_data(data, resp.status, prefix=error_prefix)
                 try:
                     payload_data = AnthropicOAuthTokenPayload.model_validate(data)
                 except ValidationError as exc:
-                    logger.warning(
-                        "Anthropic token response invalid request_id=%s",
-                        request_id,
-                    )
                     raise OAuthError("invalid_response", f"{error_prefix} response invalid") from exc
-                if resp.status >= 400:
-                    logger.warning(
-                        "Anthropic token request failed request_id=%s status=%s",
-                        request_id,
-                        resp.status,
-                    )
-                    raise _oauth_error_from_payload(payload_data, resp.status, prefix=error_prefix)
     except OAuthError:
+        raise
+    except RuntimeError as exc:
+        if not exchange_started:
+            raise OAuthError("transport_error", "HTTP client unavailable", phase=ExchangePhase.PRE_SEND) from exc
         raise
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
         message = str(exc) or exc.__class__.__name__
-        raise OAuthError("transport_error", f"Transport error during {error_prefix.lower()}: {message}") from exc
+        raise OAuthError(
+            "transport_error",
+            f"Transport error during {error_prefix.lower()}: {message}",
+            phase=aiohttp_exchange_phase(exc),
+        ) from exc
     return payload_data
 
 
 async def _safe_json(resp: aiohttp.ClientResponse) -> JsonObject:
     try:
         data = await resp.json(content_type=None)
-    except Exception:
-        text = await resp.text()
-        return {"error": {"message": text.strip()}}
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        raise
+    except Exception as exc:
+        raise ValueError("Token response could not be parsed") from exc
     return data if isinstance(data, dict) else {"error": {"message": str(data)}}
+
+
+def _oauth_error_from_data(data: JsonObject, status_code: int, *, prefix: str) -> OAuthError:
+    try:
+        payload = AnthropicOAuthTokenPayload.model_validate(data)
+    except ValidationError:
+        return OAuthError(
+            f"http_{status_code}", f"{prefix} failed ({status_code})", status_code, phase=ExchangePhase.ANSWERED
+        )
+    return _oauth_error_from_payload(payload, status_code, prefix=prefix)
 
 
 def _oauth_error_from_payload(
@@ -236,7 +274,7 @@ def _oauth_error_from_payload(
 ) -> OAuthError:
     code = _extract_error_code(payload) or f"http_{status_code}"
     message = _extract_error_message(payload) or f"{prefix} request failed ({status_code})"
-    return OAuthError(code, message, status_code)
+    return OAuthError(code, message, status_code, phase=ExchangePhase.ANSWERED)
 
 
 def _extract_error_code(payload: AnthropicOAuthTokenPayload) -> str | None:

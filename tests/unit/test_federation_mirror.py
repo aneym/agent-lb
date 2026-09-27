@@ -146,3 +146,28 @@ async def test_mirror_upsert_does_not_clobber_locally_owned_row(db_setup: bool) 
     assert account_self.owner_instance == _LOCAL_INSTANCE_ID
     assert encryptor.decrypt(account_null.access_token_encrypted) == "pre-existing-access"
     assert encryptor.decrypt(account_self.access_token_encrypted) == "pre-existing-access"
+
+
+@pytest.mark.asyncio
+async def test_mirror_update_erases_old_refresh_token(db_setup: bool) -> None:
+    del db_setup
+    await _seed_locally_owned_account("acc_mirror_old_owner", owner_instance=_OWNER_INSTANCE_ID)
+    encryptor = TokenEncryptor()
+    async with SessionLocal() as session:
+        applied = await FederationRepository(session).upsert_mirror_account(
+            account_id="acc_mirror_old_owner",
+            provider="anthropic",
+            email="acc_mirror_old_owner@example.com",
+            alias="mirrored-alias",
+            status="active",
+            plan_type="claude",
+            chatgpt_account_id=None,
+            access_token="mirrored-access",
+            owner_instance_id=_OWNER_INSTANCE_ID,
+            local_instance_id=_LOCAL_INSTANCE_ID,
+            encryptor=encryptor,
+        )
+    assert applied is True
+    account = await _get_account("acc_mirror_old_owner")
+    assert account.owner_instance == _OWNER_INSTANCE_ID
+    assert encryptor.decrypt(account.refresh_token_encrypted) == ""

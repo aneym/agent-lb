@@ -13,6 +13,7 @@ import anyio
 
 from app.core.balancer.types import UpstreamError
 from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
+from app.core.identity import RequestIdentity
 from app.core.openai.models import OpenAIEvent
 from app.core.types import JsonValue
 from app.core.upstream_proxy import ResolvedUpstreamRoute
@@ -219,6 +220,7 @@ class _WebSocketRequestState:
     started_at: float
     latency_first_token_ms: int | None = None
     request_log_id: str | None = None
+    identity: RequestIdentity | None = None
     requested_service_tier: str | None = None
     actual_service_tier: str | None = None
     response_id: str | None = None

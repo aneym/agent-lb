@@ -14,6 +14,8 @@ ACCT="acct-fed-test"
 PORT_A=3501
 PORT_B=3502
 TOKEN="$("$PY" -c 'import secrets;print(secrets.token_urlsafe(24))')"
+TRANSFER="$("$PY" -c 'import secrets;print(secrets.token_urlsafe(24))')"
+TRANSFER_HASH="$("$PY" -c 'import sys,hashlib;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$TRANSFER")"
 
 A_DIR="$RUN/alpha"
 B_DIR="$RUN/beta"
@@ -31,7 +33,7 @@ START=$(date +%s)
 pass() { echo "PASS: $1"; PASSED=$((PASSED + 1)); }
 fail() { echo "FAIL: $1"; FAILED=$((FAILED + 1)); }
 assert_eq() { # label expected actual
-  if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1 expected=[$2] actual=[$3]"; fi
+  if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1 mismatch"; fi
 }
 
 cleanup() {
@@ -68,6 +70,7 @@ boot() { # dir port instance_id extra_env_file
       AGENT_LB_ENCRYPTION_KEY_FILE="$dir/encryption.key" \
       AGENT_LB_LOCAL_INSTANCE_ID="$iid" \
       AGENT_LB_FEDERATION_TOKEN="$TOKEN" \
+      AGENT_LB_FEDERATION_MIRROR_TOKEN="$TOKEN" \
       AGENT_LB_USAGE_REFRESH_ENABLED=false \
       AGENT_LB_ACCOUNT_PULSE_ENABLED=false \
       AGENT_LB_QUOTA_PLANNER_SCHEDULER_ENABLED=false \
@@ -97,9 +100,12 @@ if lsof -tiTCP:$PORT_A -tiTCP:$PORT_B -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 echo "Booting ALPHA (owner, :$PORT_A) and BETA (taker, :$PORT_B, mirror 2s)..."
-boot "$A_DIR" "$PORT_A" alpha "$LOGS/alpha.log"
+boot "$A_DIR" "$PORT_A" alpha "$LOGS/alpha.log" \
+  AGENT_LB_FEDERATION_TRANSFER_INBOUND_SHA256="$TRANSFER_HASH" \
+  AGENT_LB_FEDERATION_TAKER_INSTANCE_IDS=beta
 PID_A=$!
 boot "$B_DIR" "$PORT_B" beta "$LOGS/beta.log" \
+  AGENT_LB_FEDERATION_TRANSFER_OUTBOUND_TOKEN="$TRANSFER" \
   AGENT_LB_FEDERATION_PEER_URL="http://127.0.0.1:$PORT_A" \
   AGENT_LB_FEDERATION_MIRROR_INTERVAL_SECONDS=2
 PID_B=$!
@@ -116,7 +122,7 @@ hlp seed "$DB_A" "$KEY_A" "$ACCT" "$A_ACCESS0" "$A_REFRESH0" \
 echo
 echo "==== (a) beta mirror pull materializes the account ===="
 mirror_ok=""
-for _ in $(seq 1 12); do
+for _ in $(seq 1 45); do
   if [ "$(hlp exists "$DB_B" "$ACCT")" = "1" ] && [ "$(db_owner "$DB_B")" = "alpha" ]; then mirror_ok=1; break; fi
   sleep 1
 done
@@ -125,7 +131,7 @@ if [ -n "$mirror_ok" ]; then pass "a: beta mirrored account owner_instance=alpha
 
 do_checkout() { # label
   local resp confirmed
-  resp=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  resp=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"account_id\":\"$ACCT\"}" "http://127.0.0.1:$PORT_B/api/federation/checkout/execute")
   confirmed=$(printf '%s' "$resp" | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("confirmed"))' 2>/dev/null)
   assert_eq "$1: checkout confirmed" "True" "$confirmed"
@@ -135,7 +141,7 @@ do_checkout() { # label
 
 do_checkin() { # label exp_access exp_refresh
   local resp settled dec da dr
-  resp=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  resp=$(curl -s -X POST -H 'Content-Type: application/json' \
     -d "{\"account_id\":\"$ACCT\"}" "http://127.0.0.1:$PORT_B/api/federation/checkin/execute")
   settled=$(printf '%s' "$resp" | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("settled"))' 2>/dev/null)
   assert_eq "$1: checkin settled" "True" "$settled"
@@ -143,8 +149,8 @@ do_checkin() { # label exp_access exp_refresh
   assert_eq "$1: DB_B owner=alpha after checkin" "alpha" "$(db_owner "$DB_B")"
   dec=$(hlp decrypt "$DB_A" "$KEY_A" "$ACCT")
   da=$(printf '%s' "$dec" | cut -f1); dr=$(printf '%s' "$dec" | cut -f2)
-  assert_eq "$1: DB_A access decrypts to rotated value" "$2" "$da"
-  assert_eq "$1: DB_A refresh decrypts to rotated value" "$3" "$dr"
+  if [ "$2" = "$da" ]; then pass "$1: DB_A access decrypts to rotated value"; else fail "$1: DB_A access does not match expected"; fi
+  if [ "$3" = "$dr" ]; then pass "$1: DB_A refresh decrypts to rotated value"; else fail "$1: DB_A refresh does not match expected"; fi
 }
 
 echo
@@ -174,6 +180,31 @@ assert_eq "f: no-auth mirror -> 403" "403" "$code_noauth"
 code_wrong=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong-$TOKEN-x" \
   "http://127.0.0.1:$PORT_A/api/federation/mirror")
 assert_eq "f: wrong-bearer mirror -> 403" "403" "$code_wrong"
+
+echo
+ echo "==== (g) caller aborts a never-started checkout (durable tombstone) ===="
+ABORT_NONCE="exercise-abort-nonce-12345678901234567890"
+abort_state=$(curl -s -X POST -H "Authorization: Bearer $TRANSFER" -H 'Content-Type: application/json' \
+  -d "{\"account_id\":\"$ACCT\",\"direction\":\"checkout\",\"caller_instance_id\":\"beta\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/transfers/$ABORT_NONCE/abort" \
+  | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("state"))' 2>/dev/null)
+assert_eq "g: missing nonce becomes aborted tombstone" "aborted" "$abort_state"
+before_owner=$(db_owner "$DB_A")
+late_checkout=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TRANSFER" \
+  -H 'Content-Type: application/json' \
+  -d "{\"account_id\":\"$ACCT\",\"taker_instance_id\":\"beta\",\"nonce\":\"$ABORT_NONCE\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/checkout")
+assert_eq "g: late checkout denied" "409" "$late_checkout"
+late_confirm=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TRANSFER" \
+  -H 'Content-Type: application/json' -d "{\"nonce\":\"$ABORT_NONCE\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/checkout/confirm")
+assert_eq "g: late confirm denied" "404" "$late_confirm"
+assert_eq "g: owner unchanged after late requests" "$before_owner" "$(db_owner "$DB_A")"
+repeat_state=$(curl -s -X POST -H "Authorization: Bearer $TRANSFER" -H 'Content-Type: application/json' \
+  -d "{\"account_id\":\"$ACCT\",\"direction\":\"checkout\",\"caller_instance_id\":\"beta\"}" \
+  "http://127.0.0.1:$PORT_A/api/federation/transfers/$ABORT_NONCE/abort" \
+  | "$PY" -c 'import sys,json;print(json.load(sys.stdin).get("state"))' 2>/dev/null)
+assert_eq "g: tombstone unchanged after late requests" "aborted" "$repeat_state"
 
 RUNTIME=$(( $(date +%s) - START ))
 echo

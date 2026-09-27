@@ -13,6 +13,7 @@ from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
 from app.core.clients.proxy import UpstreamProxyRouteTrace, override_stream_timeouts, stream_responses
 from app.core.crypto import TokenEncryptor
+from app.core.identity import RequestIdentity, internal_identity
 from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIError, ResponseUsage
 from app.core.openai.parsing import parse_sse_event
@@ -160,6 +161,8 @@ class LimitWarmupRequestLogRepository(Protocol):
         upstream_proxy_endpoint_id: str | None = None,
         upstream_proxy_fallback_used: bool | None = None,
         upstream_proxy_fail_closed_reason: str | None = None,
+        *,
+        identity: RequestIdentity | None = None,
     ) -> object: ...
 
 
@@ -855,6 +858,7 @@ class LimitWarmupService:
             else None
         )
         await self._request_logs_repo.add_log(
+            identity=internal_identity(),
             account_id=account.id,
             request_id=result.request_id,
             model=model,

@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.core.auth.exchange_phase import ExchangePhase
 from app.core.clients.codex_tls import codex_tls_kwargs
 from app.core.upstream_proxy import ResolvedUpstreamRoute
 
@@ -18,9 +19,12 @@ class CodexTransportError(RuntimeError):
     instead of the original transport message.
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, phase: ExchangePhase = ExchangePhase.AMBIGUOUS
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.phase = phase
 
 
 def require_route_or_direct_egress_opt_in(
@@ -148,6 +152,7 @@ def _transport_error(operation: str, endpoint_id: str, exc: Exception) -> CodexT
     return CodexTransportError(
         codex_transport_error_message(operation, endpoint_id, exc),
         status_code=_transport_error_status_code(exc),
+        phase=ExchangePhase.PRE_SEND if getattr(exc, "code", None) in {5, 6, 7, 35, 60} else ExchangePhase.AMBIGUOUS,
     )
 
 

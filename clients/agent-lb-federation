@@ -14,11 +14,11 @@
 #   clients/agent-lb-federation status
 #   clients/agent-lb-federation checkout <account-id> [<account-id>...]
 #   clients/agent-lb-federation checkin  <account-id> [<account-id>...]
+#   clients/agent-lb-federation reclaim  <account-id>
 #
 # Env:
 #   CLAUDE_LB_LOCAL_URL          local instance base URL (default http://127.0.0.1:2455)
-#   AGENT_LB_FEDERATION_TOKEN    REQUIRED for checkout/checkin — bearer secret gating
-#                                every /api/federation/* endpoint (never printed)
+#   AGENT_LB_DASHBOARD_PASSWORD    optional dashboard password (never printed)
 #   AGENT_LB_FEDERATION_PEER_URL peer instance base URL, used for the peer /health
 #                                preflight (no local endpoint advertises it)
 #   CLAUDE_LB_FEDERATION_TIMEOUT per-request timeout seconds (default 10)
@@ -31,10 +31,12 @@
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DEFAULT_LOCAL_URL = "http://127.0.0.1:2455"
@@ -50,11 +52,6 @@ def local_url() -> str:
 
 def peer_url() -> str | None:
     value = (os.environ.get("AGENT_LB_FEDERATION_PEER_URL") or "").strip().rstrip("/")
-    return value or None
-
-
-def federation_token() -> str | None:
-    value = (os.environ.get("AGENT_LB_FEDERATION_TOKEN") or "").strip()
     return value or None
 
 
@@ -79,6 +76,10 @@ class HttpResult:
         self.error = error
 
 
+COOKIE_JAR = http.cookiejar.CookieJar()
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(COOKIE_JAR), urllib.request.ProxyHandler({}))
+
+
 def _http(method: str, url: str, *, token: str | None, payload: dict | None) -> HttpResult:
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {"accept": "application/json"}
@@ -89,7 +90,7 @@ def _http(method: str, url: str, *, token: str | None, payload: dict | None) -> 
 
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=request_timeout()) as response:
+        with OPENER.open(request, timeout=request_timeout()) as response:
             raw = response.read().decode("utf-8", errors="replace")
             parsed = json.loads(raw) if raw.strip() else {}
             return HttpResult(ok=True, status=response.status, body=parsed, error=None)
@@ -103,6 +104,15 @@ def _http(method: str, url: str, *, token: str | None, payload: dict | None) -> 
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
         reason = getattr(error, "reason", None)
         return HttpResult(ok=False, status=None, body=None, error=str(reason or error) or error.__class__.__name__)
+
+
+def _operator_error(result: HttpResult) -> str:
+    if result.status in (401, 403):
+        return (
+            "operator access denied; use a dashboard session, or make a local request "
+            "on an instance that does not trust proxy headers"
+        )
+    return result.error or "invalid response"
 
 
 def _detail(body: object) -> str | None:
@@ -141,15 +151,31 @@ def preflight(local: str, peer: str) -> tuple[bool, list[str]]:
     return (local_ok and peer_ok), notes
 
 
-def _require_token() -> str | None:
-    token = federation_token()
-    if token is None:
-        print(
-            "error: AGENT_LB_FEDERATION_TOKEN is not set; it is required to call "
-            "the federation endpoints. Aborting without contacting any endpoint.",
-            file=sys.stderr,
-        )
-    return token
+def _authenticate(local: str) -> bool:
+    parsed = urllib.parse.urlsplit(local)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in ("127.0.0.1", "localhost", "::1")
+        or parsed.username
+        or parsed.password
+    ):
+        print("error: operator CLI requires a local HTTP loopback URL", file=sys.stderr)
+        return False
+    password = os.environ.get("AGENT_LB_DASHBOARD_PASSWORD")
+    if not password:
+        return True
+    result = _http("POST", f"{local}/api/dashboard-auth/password/login", token=None, payload={"password": password})
+    if not result.ok or not isinstance(result.body, dict):
+        print(f"error: dashboard login failed (HTTP {result.status})", file=sys.stderr)
+        return False
+    body = result.body
+    if body.get("totpRequiredOnLogin") or body.get("totp_required_on_login"):
+        print("error: dashboard login requires TOTP; operator CLI cannot continue", file=sys.stderr)
+        return False
+    if not (body.get("passwordSessionActive") or body.get("password_session_active")):
+        print("error: dashboard login did not grant a session", file=sys.stderr)
+        return False
+    return True
 
 
 def _require_peer() -> str | None:
@@ -165,9 +191,11 @@ def _require_peer() -> str | None:
 
 def cmd_status(_args: argparse.Namespace) -> int:
     local = local_url()
+    if not _authenticate(local):
+        return EXIT_CONFIG
     result = _http("GET", f"{local}/api/federation/status", token=None, payload=None)
     if not result.ok or not isinstance(result.body, dict):
-        print(f"error: federation status unavailable — {result.error or 'invalid response'}", file=sys.stderr)
+        print(f"error: federation status unavailable — {_operator_error(result)}", file=sys.stderr)
         return EXIT_FAILURE
 
     body = result.body
@@ -189,14 +217,13 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def _run_transfer(command: str, account_ids: list[str]) -> int:
-    token = _require_token()
-    if token is None:
+    local = local_url()
+    if not _authenticate(local):
         return EXIT_CONFIG
     peer = _require_peer()
     if peer is None:
         return EXIT_CONFIG
 
-    local = local_url()
     ok, notes = preflight(local, peer)
     print("preflight:")
     for note in notes:
@@ -209,11 +236,11 @@ def _run_transfer(command: str, account_ids: list[str]) -> int:
     failures = 0
     print(f"{command}:")
     for account_id in account_ids:
-        result = _http("POST", f"{local}{path}", token=token, payload={"account_id": account_id})
+        result = _http("POST", f"{local}{path}", token=None, payload={"account_id": account_id})
         if not result.ok:
             failures += 1
             status = f" (HTTP {result.status})" if result.status is not None else ""
-            print(f"  {account_id}: FAILED{status} — {result.error}")
+            print(f"  {account_id}: FAILED{status} — {_operator_error(result)}")
             continue
         body = result.body if isinstance(result.body, dict) else {}
         if command == "checkout":
@@ -246,6 +273,18 @@ def cmd_checkin(args: argparse.Namespace) -> int:
     return _run_transfer("checkin", args.account_ids)
 
 
+def cmd_reclaim(args: argparse.Namespace) -> int:
+    local = local_url()
+    if not _authenticate(local):
+        return EXIT_CONFIG
+    result = _http("POST", f"{local}/api/federation/reclaim/{args.account_id}", token=None, payload={})
+    if not result.ok:
+        print(f"reclaim {args.account_id}: FAILED (HTTP {result.status}) — {_operator_error(result)}", file=sys.stderr)
+        return EXIT_FAILURE
+    print(f"reclaim {args.account_id}: peer acknowledged transfer resolution")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-lb-federation",
@@ -269,6 +308,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     checkin.add_argument("account_ids", metavar="account-id", nargs="+", help="Account id(s) to check in.")
     checkin.set_defaults(func=cmd_checkin)
+
+    reclaim = sub.add_parser("reclaim", help="Resolve a pending transfer using the peer abort acknowledgement.")
+    reclaim.add_argument("account_id", metavar="account-id")
+    reclaim.set_defaults(func=cmd_reclaim)
 
     return parser
 

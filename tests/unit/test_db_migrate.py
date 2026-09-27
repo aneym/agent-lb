@@ -41,6 +41,19 @@ def _db_url(path: Path) -> str:
     return f"sqlite+aiosqlite:///{path}"
 
 
+def test_socket_host_url_survives_alembic_config_and_full_upgrade(tmp_path: Path) -> None:
+    # A socket path in the host query is percent-encoded by SQLAlchemy's URL renderer.
+    socket_url = "postgresql+asyncpg://localhost/agentlb_si_r3m?host=/tmp"
+    sync_url = to_sync_database_url(socket_url)
+    assert _build_alembic_config(socket_url).get_main_option("sqlalchemy.url") == sync_url
+    # An encoded query on SQLite exercises the same Alembic offline and online paths
+    # without requiring a Postgres unix socket at a particular location.
+    url = f"sqlite+aiosqlite:///{tmp_path / 'encoded.db'}?timeout=1%2E0"
+    assert _build_alembic_config(url).get_main_option("sqlalchemy.url") == to_sync_database_url(url)
+    upgraded = run_upgrade(url, "head", bootstrap_legacy=False)
+    assert upgraded.current_revision == inspect_migration_state(url).head_revision
+
+
 def test_check_schema_drift_disposes_sync_engine(monkeypatch) -> None:
     class _FakeConnectionContext:
         def __init__(self) -> None:
@@ -1083,3 +1096,84 @@ def test_routing_policy_persistence_downgrade_does_not_drop_shared_columns(monke
     monkeypatch.setattr(migration, "op", _OpMustNotAlter())
 
     migration.downgrade()
+
+
+def test_refresh_intent_rollback_downgrades_only_exact_head(tmp_path: Path) -> None:
+    """The pre-pin schema is bootable only after the new build removes its Alembic head."""
+    url = _db_url(tmp_path / "refresh-rollback.db")
+    parent = "20260926_200000_add_team_pool_share"
+    run_upgrade(url, "20260926_000000_refresh_intent_expiry", bootstrap_legacy=False)
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO accounts (id, email, plan_type, access_token_encrypted, refresh_token_encrypted, "
+                    "last_refresh, status) VALUES ('uncertain', 'uncertain@example.com', 'plus', "
+                    "X'61', X'62', '2026-09-26 00:00:00', 'exchange_uncertain')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO account_exchange_intents (account_id, refresh_token_sha256, started_at) "
+                    "VALUES ('uncertain', 'hash', '2026-09-26 00:00:00')"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO team_members (id, name, pool_share_percent) VALUES ('member', 'member', 37.5)")
+            )
+        assert migrate_module.downgrade_refresh_intent_for_rollback(url) == parent
+        assert migrate_module.current_revision(url) == parent
+        with engine.connect() as connection:
+            assert (
+                connection.execute(text("SELECT status FROM accounts WHERE id='uncertain'")).scalar_one()
+                == "reauth_required"
+            )
+            assert (
+                connection.execute(text("SELECT pool_share_percent FROM team_members WHERE id='member'")).scalar_one()
+                == 37.5
+            )
+            assert "pool_share_percent" in {
+                column["name"] for column in inspect(connection).get_columns("team_members")
+            }
+            assert not inspect(connection).has_table("account_exchange_intents")
+        with pytest.raises(migrate_module.MigrationBootstrapError):
+            migrate_module.downgrade_refresh_intent_for_rollback(url)
+    finally:
+        engine.dispose()
+
+
+def test_transfer_abort_states_upgrade_and_downgrade(tmp_path: Path) -> None:
+    """Both transfer states survive upgrade and map to a compatible old state on rollback."""
+    url = _db_url(tmp_path / "transfer-abort.db")
+    parent = "20260926_200000_add_team_pool_share"
+    head = "20260926_000000_refresh_intent_expiry"
+    run_upgrade(url, parent, bootstrap_legacy=False)
+    run_upgrade(url, head, bootstrap_legacy=False)
+    engine = create_engine(to_sync_database_url(url))
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO accounts (id, provider, email, plan_type, access_token_encrypted, "
+                    "refresh_token_encrypted, last_refresh, status, owner_instance) VALUES "
+                    "('mig-transfer', 'anthropic', 'mig@example.invalid', 'pro', X'6161', X'6262', "
+                    "'2026-09-26 00:00:00', 'active', 'peer')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO account_transfers (id, account_id, nonce, direction, counterparty_instance_id, state) "
+                    "VALUES ('mig-aborting', 'mig-transfer', 'nonce-aborting', 'checkout', 'peer', 'aborting'), "
+                    "('mig-aborted', 'mig-transfer', 'nonce-aborted', 'checkin', 'peer', 'aborted')"
+                )
+            )
+        command.downgrade(_build_alembic_config(url), parent)
+        with engine.connect() as connection:
+            states = connection.execute(text("SELECT state FROM account_transfers ORDER BY id")).scalars().all()
+        assert states == ["settled", "settled"]
+        # The models describe the latest head, so compare the schema there.
+        run_upgrade(url, "head", bootstrap_legacy=False)
+        assert check_schema_drift(url) == ()
+    finally:
+        engine.dispose()

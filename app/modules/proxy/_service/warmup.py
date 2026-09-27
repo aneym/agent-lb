@@ -17,6 +17,7 @@ from app.core.clients.proxy import compact_responses as core_compact_responses
 from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
+from app.core.identity import internal_identity
 from app.core.openai.models import CompactResponsePayload
 from app.core.openai.requests import ResponsesCompactRequest
 from app.db.models import Account, AccountStatus
@@ -369,6 +370,7 @@ class _WarmupMixin:
         finally:
             try:
                 await proxy._write_request_log(
+                    identity=internal_identity(),
                     account_id=account.id,
                     api_key=api_key,
                     request_id=request_id,

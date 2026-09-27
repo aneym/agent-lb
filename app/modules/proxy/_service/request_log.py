@@ -7,6 +7,7 @@ from typing import Protocol, cast
 
 import anyio
 
+from app.core.identity import RequestIdentity, attach_member, get_request_identity
 from app.modules.api_keys.service import ApiKeyData
 from app.modules.proxy.repo_bundle import ProxyRepoFactory
 
@@ -109,9 +110,12 @@ class _RequestLogMixin:
         upstream_proxy_fail_closed_reason: str | None = None,
         useragent: str | None = None,
         useragent_group: str | None = None,
+        identity: RequestIdentity | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._persist_request_log(
+                identity=identity if identity is not None else get_request_identity(),
+                api_key_member_id=api_key.member_id if api_key else None,
                 account_id=account_id,
                 api_key_id=api_key.id if api_key else None,
                 request_id=request_id,
@@ -187,6 +191,8 @@ class _RequestLogMixin:
     async def _persist_request_log(
         self,
         *,
+        identity: RequestIdentity | None = None,
+        api_key_member_id: str | None = None,
         account_id: str | None,
         api_key_id: str | None,
         request_id: str,
@@ -223,8 +229,12 @@ class _RequestLogMixin:
     ) -> None:
         proxy = cast(_RequestLogServiceProtocol, self)
         try:
+            # The member lookup runs here, inside the shielded task, so a cancelled
+            # request still gets its log row.
+            identity = await attach_member(identity, api_key_member_id)
             async with proxy._repo_factory() as repos:
                 await repos.request_logs.add_log(
+                    identity=identity,
                     account_id=account_id,
                     api_key_id=api_key_id,
                     session_id=_normalize_session_id(session_id),

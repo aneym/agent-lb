@@ -133,3 +133,61 @@ async def test_repeated_401_refreshes_once_then_fails_over(async_client, monkeyp
     assert calls == ["Bearer rejected-access", "Bearer rejected-access"]
     async with SessionLocal() as session:
         assert (await session.get(Account, "rejected")).status == AccountStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_expired_mirrored_anthropic_token_is_not_selected(async_client, monkeypatch):
+    from datetime import timedelta
+
+    from app.core.utils.time import utcnow
+
+    await _insert_account(
+        account_id="expired-mirror", provider="anthropic", access_token="opaque-access", email="mirror@example.com"
+    )
+    async with SessionLocal() as session:
+        account = await session.get(Account, "expired-mirror")
+        account.owner_instance = "remote-owner"
+        account.access_expires_at = utcnow() - timedelta(minutes=1)
+        await session.commit()
+
+    upstream = AsyncMock()
+    monkeypatch.setattr(proxy.AnthropicProxyService, "_open_upstream_response", upstream)
+    response = await async_client.post(
+        "/v1/messages",
+        json={"model": "claude-sonnet-4-6", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 503
+    upstream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mirror_401_pulls_once_then_returns_retryable_503(async_client, monkeypatch):
+    await _insert_account(
+        account_id="mirror-401", provider="anthropic", access_token="old-access", email="mirror401@example.com"
+    )
+    async with SessionLocal() as session:
+        account = await session.get(Account, "mirror-401")
+        account.owner_instance = "remote-owner"
+        await session.commit()
+
+    pulls = AsyncMock()
+
+    class Mirror:
+        mirror_once = pulls
+
+    monkeypatch.setattr(proxy, "build_federation_mirror_scheduler", lambda: Mirror())
+    upstream = []
+
+    def open_response(self, session, *, provider_name, headers, json_body):
+        upstream.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(401, b'{"error":{"message":"rejected"}}'))
+
+    monkeypatch.setattr(proxy.AnthropicProxyService, "_open_upstream_response", open_response)
+    response = await async_client.post(
+        "/v1/messages",
+        json={"model": "claude-sonnet-4-6", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "mirror_token_unavailable"
+    assert len(upstream) == 1
+    pulls.assert_awaited_once()

@@ -8,6 +8,7 @@ import aiohttp
 import pytest
 
 from app.core.config.settings import get_settings
+from app.core.identity import RequestIdentity
 from app.core.openai.requests import ResponsesRequest
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy.http_bridge_forwarding import (
@@ -15,6 +16,8 @@ from app.modules.proxy.http_bridge_forwarding import (
     HTTP_BRIDGE_AFFINITY_KIND_HEADER,
     HTTP_BRIDGE_CODEX_AFFINITY_HEADER,
     HTTP_BRIDGE_FORWARDED_HEADER,
+    HTTP_BRIDGE_IDENTITY_HEADER,
+    HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER,
     HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER,
     HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER,
     HTTP_BRIDGE_RESERVATION_MODEL_HEADER,
@@ -67,6 +70,92 @@ def test_parse_forwarded_request_accepts_signed_internal_forward() -> None:
     assert forwarded.context == context
     assert forwarded.context.original_affinity_kind is None
     assert forwarded.context.original_affinity_key is None
+
+
+def test_forwarded_identity_is_authenticated_and_client_header_cannot_override_it() -> None:
+    payload = _payload()
+    origin = RequestIdentity("owner-a", "owner-machine", "box-1", "local")
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=False,
+        downstream_turn_state=None,
+        identity=origin,
+    )
+    headers = build_owner_forward_headers(
+        headers={
+            "x-codex-bridge-unrecognized": "client-forged",
+            HTTP_BRIDGE_IDENTITY_HEADER: '["forged","member","box-2","tailnet"]',
+            HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER: "forged",
+            HTTP_BRIDGE_SIGNATURE_HEADER: "forged",
+            HTTP_BRIDGE_FORWARDED_HEADER: "forged",
+        },
+        payload=payload,
+        context=context,
+    )
+    assert "x-codex-bridge-unrecognized" not in headers
+    assert headers[HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER] != "forged"
+    assert headers[HTTP_BRIDGE_SIGNATURE_HEADER] != "forged"
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="instance-b")
+    assert error is None
+    assert forwarded is not None and forwarded.context.identity == origin
+
+    # The signed identity is bound to the payload and cannot be edited in transit.
+    headers[HTTP_BRIDGE_IDENTITY_HEADER] = '["forged","member","box-2","tailnet"]'
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="instance-b")
+    assert forwarded is None and error is not None and error.status_code == 400
+
+
+def test_bridge_forward_without_identity_uses_legacy_signature() -> None:
+    import hashlib
+    import hmac
+    import json
+
+    from app.core.crypto import get_or_create_key
+
+    payload = _payload()
+    context = HTTPBridgeForwardContext("instance-a", "instance-b", False, None)
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+    body_digest = hashlib.sha256(
+        json.dumps(
+            payload.model_dump(mode="json", exclude_none=True), ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    # Independent protocol contract: the base build signs ten fields, not an empty identity field.
+    legacy_bytes = "|".join(("instance-a", "instance-b", "0", "", "", "", "", "", "", body_digest)).encode()
+    expected = hmac.new(get_or_create_key(get_settings().encryption_key_file), legacy_bytes, hashlib.sha256).hexdigest()
+    assert headers[HTTP_BRIDGE_SIGNATURE_HEADER] == expected
+    assert HTTP_BRIDGE_IDENTITY_HEADER not in headers
+    assert HTTP_BRIDGE_IDENTITY_SIGNATURE_HEADER not in headers
+    forwarded, error = parse_forwarded_request(headers, payload=payload, current_instance="instance-b")
+    assert error is None and forwarded is not None and forwarded.context.identity is None
+
+
+def test_owner_forward_headers_never_carry_caller_identity_headers() -> None:
+    context = HTTPBridgeForwardContext("instance-a", "instance-b", False, None)
+    headers = build_owner_forward_headers(
+        headers={
+            "Tailscale-User-Login": "person@example.test",
+            "Tailscale-User-Name": "Person",
+            "tailscale-funnel-request": "1",
+            "X-Agent-LB-Machine": "box-1",
+            "X-Forwarded-For": "100.64.0.7",
+            "x-forwarded-host": "box-1.example.test",
+            "Forwarded": "for=100.64.0.7",
+            "X-Real-IP": "100.64.0.7",
+            "True-Client-IP": "100.64.0.7",
+            "CF-Connecting-IP": "100.64.0.7",
+            "Authorization": "Bearer member-key",
+            "x-openai-client-version": "1.0",
+        },
+        payload=_payload(),
+        context=context,
+    )
+    lowered = {key.lower() for key in headers}
+    assert not any(key.startswith(("tailscale-", "x-forwarded-", "cf-")) for key in lowered)
+    assert not lowered & {"x-agent-lb-machine", "forwarded", "x-real-ip", "true-client-ip"}
+    assert headers["x-openai-client-version"] == "1.0"
+    assert headers["Authorization"] == "Bearer member-key"
 
 
 def test_build_owner_forward_headers_preserves_original_affinity_key() -> None:

@@ -32,6 +32,7 @@ from app.core.errors import (
     openai_error,
     response_failed_event,
 )
+from app.core.identity import get_request_identity
 from app.core.metrics.prometheus import (
     PROMETHEUS_AVAILABLE,
     bridge_forward_latency_seconds,
@@ -280,8 +281,10 @@ class _HTTPBridgeOwnerForwardingMixin:
     ) -> AsyncIterator[str]:
         current_instance, _ = _normalized_http_bridge_instance_ring(_service_get_settings())
         forwarded_turn_state = _header_value_case_insensitive(headers, "x-codex-turn-state") or downstream_turn_state
+        identity = get_request_identity()
         forward_context = HTTPBridgeForwardContext(
             origin_instance=current_instance,
+            identity=identity if identity is not None and identity.caller_user_source is not None else None,
             target_instance=owner_forward.owner_instance,
             reservation=api_key_reservation,
             codex_session_affinity=codex_session_affinity,

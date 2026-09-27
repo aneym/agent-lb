@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Iterable, Literal
 from uuid import uuid4
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core import usage as usage_core
 from app.core.audit.service import AuditService
 from app.core.balancer import (
@@ -845,7 +847,29 @@ class LoadBalancer:
         )
         cached = await self._selection_inputs_cache.get(cache_key)
         if cached is not None:
-            return _clone_selection_inputs(cached)
+            # Tests and non-SQL consumers keep their short-lived snapshot;
+            # SQL-backed paths reload only the account rows, not quota joins.
+            async with self._repo_factory() as repos:
+                if not isinstance(getattr(repos.accounts, "session", None), AsyncSession):
+                    return _clone_selection_inputs(cached)
+                fresh_accounts = {account.id: account for account in await repos.accounts.list_accounts()}
+                selection_settings = get_settings()
+                encryptor = TokenEncryptor()
+                accounts = [
+                    _clone_account(fresh_accounts[account.id])
+                    for account in cached.accounts
+                    if account.id in fresh_accounts
+                    and fresh_accounts[account.id] in selectable_accounts([fresh_accounts[account.id]])
+                    and (
+                        fresh_accounts[account.id].status != AccountStatus.EXCHANGE_UNCERTAIN
+                        or not access_token_hard_expired(encryptor, fresh_accounts[account.id])
+                    )
+                    and (
+                        is_locally_owned(fresh_accounts[account.id], selection_settings)
+                        or not access_token_hard_expired(encryptor, fresh_accounts[account.id])
+                    )
+                ]
+            return replace(_clone_selection_inputs(cached), accounts=accounts)
 
         load_generation = self._selection_inputs_cache.generation
 
@@ -854,9 +878,8 @@ class LoadBalancer:
             all_accounts = [
                 account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
-            # Non-owned mirrors are unroutable once their access token is actually
-            # expired (federation degraded mode): nobody local can refresh them.
-            # Owned accounts and fresh/within-margin mirrors stay eligible.
+            # Mirrors cannot refresh locally, so stop routing them five minutes before expiry.
+            # Owned accounts remain eligible for refresh on demand.
             selection_settings = get_settings()
             encryptor = TokenEncryptor()
             excluded_mirror_count = 0
@@ -864,6 +887,8 @@ class LoadBalancer:
             for account in all_accounts:
                 if not is_locally_owned(account, selection_settings) and access_token_hard_expired(encryptor, account):
                     excluded_mirror_count += 1
+                    continue
+                if account.status == AccountStatus.EXCHANGE_UNCERTAIN and access_token_hard_expired(encryptor, account):
                     continue
                 eligible_accounts.append(account)
             all_accounts = eligible_accounts
@@ -1790,21 +1815,36 @@ class LoadBalancer:
     ) -> None:
         reset_at_int = int(state.reset_at) if state.reset_at else None
         blocked_at_int = int(state.blocked_at) if state.blocked_at else None
-        status_changed = account.status != state.status
-        reason_changed = account.deactivation_reason != state.deactivation_reason
+        persisted_status = (
+            AccountStatus.EXCHANGE_UNCERTAIN if account.status == AccountStatus.EXCHANGE_UNCERTAIN else state.status
+        )
+        persisted_reason = (
+            account.deactivation_reason
+            if persisted_status == AccountStatus.EXCHANGE_UNCERTAIN
+            else state.deactivation_reason
+        )
+        status_changed = account.status != persisted_status
+        reason_changed = account.deactivation_reason != persisted_reason
         reset_changed = account.reset_at != reset_at_int
         blocked_changed = account.blocked_at != blocked_at_int
 
         if status_changed or reason_changed or reset_changed or blocked_changed:
-            await accounts_repo.update_status(
+            updated = await accounts_repo.update_status_if_current(
                 account.id,
-                state.status,
-                state.deactivation_reason,
+                persisted_status,
+                persisted_reason,
                 reset_at_int,
                 blocked_at=blocked_at_int,
+                expected_status=account.status,
+                expected_deactivation_reason=account.deactivation_reason,
+                expected_reset_at=account.reset_at,
+                expected_blocked_at=account.blocked_at,
             )
-            account.status = state.status
-            account.deactivation_reason = state.deactivation_reason
+            if not updated:
+                await accounts_repo.reload_by_id(account.id)
+                return
+            account.status = persisted_status
+            account.deactivation_reason = persisted_reason
             account.reset_at = reset_at_int
             account.blocked_at = blocked_at_int
 
@@ -1816,16 +1856,24 @@ class LoadBalancer:
     ) -> bool:
         reset_at_int = int(state.reset_at) if state.reset_at else None
         blocked_at_int = int(state.blocked_at) if state.blocked_at else None
-        status_changed = account.status != state.status
-        reason_changed = account.deactivation_reason != state.deactivation_reason
+        persisted_status = (
+            AccountStatus.EXCHANGE_UNCERTAIN if account.status == AccountStatus.EXCHANGE_UNCERTAIN else state.status
+        )
+        persisted_reason = (
+            account.deactivation_reason
+            if persisted_status == AccountStatus.EXCHANGE_UNCERTAIN
+            else state.deactivation_reason
+        )
+        status_changed = account.status != persisted_status
+        reason_changed = account.deactivation_reason != persisted_reason
         reset_changed = account.reset_at != reset_at_int
         blocked_changed = account.blocked_at != blocked_at_int
 
         if status_changed or reason_changed or reset_changed or blocked_changed:
             updated = await accounts_repo.update_status_if_current(
                 account.id,
-                state.status,
-                state.deactivation_reason,
+                persisted_status,
+                persisted_reason,
                 reset_at_int,
                 blocked_at=blocked_at_int,
                 expected_status=account.status,
@@ -1834,8 +1882,8 @@ class LoadBalancer:
                 expected_blocked_at=account.blocked_at,
             )
             if updated:
-                account.status = state.status
-                account.deactivation_reason = state.deactivation_reason
+                account.status = persisted_status
+                account.deactivation_reason = persisted_reason
                 account.reset_at = reset_at_int
                 account.blocked_at = blocked_at_int
             return updated
@@ -2093,7 +2141,7 @@ def _state_from_account(
         primary_window_minutes = None
 
     ignore_zero_capacity_primary_runtime_reset = False
-    status_seed = account.status
+    status_seed = AccountStatus.ACTIVE if account.status == AccountStatus.EXCHANGE_UNCERTAIN else account.status
     if primary_quota_bypassed and account.status == AccountStatus.RATE_LIMITED:
         status_seed = AccountStatus.ACTIVE
     long_window_quota_available = (
@@ -2416,7 +2464,12 @@ def selectable_accounts(accounts: list[Account]) -> list[Account]:
     return [
         account
         for account in accounts
-        if account.status not in (AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
+        if account.status
+        not in (
+            AccountStatus.REAUTH_REQUIRED,
+            AccountStatus.DEACTIVATED,
+            AccountStatus.PAUSED,
+        )
         and is_subscription_usable(account)
     ]
 

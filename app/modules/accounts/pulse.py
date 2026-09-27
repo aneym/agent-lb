@@ -103,12 +103,17 @@ class _AccountsRepositoryLike(Protocol):
 
     async def get_by_id(self, account_id: str) -> Account | None: ...
 
-    async def update_status(
+    async def update_status_if_current(
         self,
         account_id: str,
         status: AccountStatus,
         deactivation_reason: str | None = None,
         reset_at: int | None = None,
+        *,
+        expected_status: AccountStatus,
+        expected_deactivation_reason: str | None = None,
+        expected_reset_at: int | None = None,
+        expected_blocked_at: int | None = None,
     ) -> bool: ...
 
     async def update_subscription_ledger(
@@ -487,7 +492,17 @@ class AccountPulseScheduler:
                 )
                 logger.info("Account pulse restored subscription account_id=%s", account.id)
             if account.status in (AccountStatus.DEACTIVATED, AccountStatus.REAUTH_REQUIRED):
-                await repo.update_status(account.id, AccountStatus.ACTIVE, None)
+                updated = await repo.update_status_if_current(
+                    account.id,
+                    AccountStatus.ACTIVE,
+                    None,
+                    expected_status=account.status,
+                    expected_deactivation_reason=account.deactivation_reason,
+                    expected_reset_at=account.reset_at,
+                    expected_blocked_at=account.blocked_at,
+                )
+                if not updated:
+                    return
                 get_account_selection_cache().invalidate()
                 AuditService.log_async(
                     "account_pulse_reactivated",
@@ -502,7 +517,17 @@ class AccountPulseScheduler:
                 # A healthy probe proves any stored deactivation reason is stale
                 # (a recovery path restored status without clearing it); clients
                 # treat a non-null reason as disconnected, so reconcile it away.
-                await repo.update_status(account.id, AccountStatus.ACTIVE, None)
+                updated = await repo.update_status_if_current(
+                    account.id,
+                    AccountStatus.ACTIVE,
+                    None,
+                    expected_status=account.status,
+                    expected_deactivation_reason=account.deactivation_reason,
+                    expected_reset_at=account.reset_at,
+                    expected_blocked_at=account.blocked_at,
+                )
+                if not updated:
+                    return
                 get_account_selection_cache().invalidate()
                 AuditService.log_async(
                     "account_pulse_cleared_stale_deactivation_reason",
@@ -523,7 +548,17 @@ class AccountPulseScheduler:
                 # The probe authenticated, so a stored auth-failure status is
                 # stale — the account is unsubscribed, not disconnected. The
                 # canceled ledger keeps it out of the routable pool.
-                await repo.update_status(account.id, AccountStatus.ACTIVE, None)
+                updated = await repo.update_status_if_current(
+                    account.id,
+                    AccountStatus.ACTIVE,
+                    None,
+                    expected_status=account.status,
+                    expected_deactivation_reason=account.deactivation_reason,
+                    expected_reset_at=account.reset_at,
+                    expected_blocked_at=account.blocked_at,
+                )
+                if not updated:
+                    return
                 get_account_selection_cache().invalidate()
                 AuditService.log_async(
                     "account_pulse_reactivated",
@@ -589,7 +624,17 @@ class AccountPulseScheduler:
         *,
         reason: str,
     ) -> None:
-        await repo.update_status(account.id, AccountStatus.REAUTH_REQUIRED, reason)
+        updated = await repo.update_status_if_current(
+            account.id,
+            AccountStatus.REAUTH_REQUIRED,
+            reason,
+            expected_status=account.status,
+            expected_deactivation_reason=account.deactivation_reason,
+            expected_reset_at=account.reset_at,
+            expected_blocked_at=account.blocked_at,
+        )
+        if not updated:
+            return
         get_account_selection_cache().invalidate()
         AuditService.log_async(
             "account_pulse_reauth_required",

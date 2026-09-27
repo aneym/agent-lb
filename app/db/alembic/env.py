@@ -26,7 +26,7 @@ def _sync_database_url() -> str:
 
 def run_migrations_offline() -> None:
     url = _sync_database_url()
-    config.set_main_option("sqlalchemy.url", url)
+    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
 
     context.configure(
         url=url,
