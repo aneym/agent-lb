@@ -878,9 +878,8 @@ class LoadBalancer:
             all_accounts = [
                 account for account in all_accounts if normalize_provider_name(account.provider) == provider_name
             ]
-            # Non-owned mirrors are unroutable once their access token is actually
-            # expired (federation degraded mode): nobody local can refresh them.
-            # Owned accounts and mirrors with a still-valid access token stay eligible.
+            # Mirrors cannot refresh locally, so stop routing them five minutes before expiry.
+            # Owned accounts remain eligible for refresh on demand.
             selection_settings = get_settings()
             encryptor = TokenEncryptor()
             excluded_mirror_count = 0
@@ -1816,21 +1815,36 @@ class LoadBalancer:
     ) -> None:
         reset_at_int = int(state.reset_at) if state.reset_at else None
         blocked_at_int = int(state.blocked_at) if state.blocked_at else None
-        status_changed = account.status != state.status
-        reason_changed = account.deactivation_reason != state.deactivation_reason
+        persisted_status = (
+            AccountStatus.EXCHANGE_UNCERTAIN if account.status == AccountStatus.EXCHANGE_UNCERTAIN else state.status
+        )
+        persisted_reason = (
+            account.deactivation_reason
+            if persisted_status == AccountStatus.EXCHANGE_UNCERTAIN
+            else state.deactivation_reason
+        )
+        status_changed = account.status != persisted_status
+        reason_changed = account.deactivation_reason != persisted_reason
         reset_changed = account.reset_at != reset_at_int
         blocked_changed = account.blocked_at != blocked_at_int
 
         if status_changed or reason_changed or reset_changed or blocked_changed:
-            await accounts_repo.update_status(
+            updated = await accounts_repo.update_status_if_current(
                 account.id,
-                state.status,
-                state.deactivation_reason,
+                persisted_status,
+                persisted_reason,
                 reset_at_int,
                 blocked_at=blocked_at_int,
+                expected_status=account.status,
+                expected_deactivation_reason=account.deactivation_reason,
+                expected_reset_at=account.reset_at,
+                expected_blocked_at=account.blocked_at,
             )
-            account.status = state.status
-            account.deactivation_reason = state.deactivation_reason
+            if not updated:
+                await accounts_repo.reload_by_id(account.id)
+                return
+            account.status = persisted_status
+            account.deactivation_reason = persisted_reason
             account.reset_at = reset_at_int
             account.blocked_at = blocked_at_int
 
@@ -1842,16 +1856,24 @@ class LoadBalancer:
     ) -> bool:
         reset_at_int = int(state.reset_at) if state.reset_at else None
         blocked_at_int = int(state.blocked_at) if state.blocked_at else None
-        status_changed = account.status != state.status
-        reason_changed = account.deactivation_reason != state.deactivation_reason
+        persisted_status = (
+            AccountStatus.EXCHANGE_UNCERTAIN if account.status == AccountStatus.EXCHANGE_UNCERTAIN else state.status
+        )
+        persisted_reason = (
+            account.deactivation_reason
+            if persisted_status == AccountStatus.EXCHANGE_UNCERTAIN
+            else state.deactivation_reason
+        )
+        status_changed = account.status != persisted_status
+        reason_changed = account.deactivation_reason != persisted_reason
         reset_changed = account.reset_at != reset_at_int
         blocked_changed = account.blocked_at != blocked_at_int
 
         if status_changed or reason_changed or reset_changed or blocked_changed:
             updated = await accounts_repo.update_status_if_current(
                 account.id,
-                state.status,
-                state.deactivation_reason,
+                persisted_status,
+                persisted_reason,
                 reset_at_int,
                 blocked_at=blocked_at_int,
                 expected_status=account.status,
@@ -1860,8 +1882,8 @@ class LoadBalancer:
                 expected_blocked_at=account.blocked_at,
             )
             if updated:
-                account.status = state.status
-                account.deactivation_reason = state.deactivation_reason
+                account.status = persisted_status
+                account.deactivation_reason = persisted_reason
                 account.reset_at = reset_at_int
                 account.blocked_at = blocked_at_int
             return updated

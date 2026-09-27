@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -8,6 +9,7 @@ import aiohttp
 
 from app.core.anthropic import model_registry, models, parsing
 from app.core.anthropic import pricing as anthropic_pricing
+from app.core.auth.exchange_phase import ExchangePhase, aiohttp_exchange_phase
 from app.core.auth.refresh import RefreshError, TokenRefreshResult
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
@@ -45,6 +47,7 @@ class KimiProvider:
         refresh_token: str,
         *,
         session: aiohttp.ClientSession | None = None,
+        on_exchange_start: Callable[[], None] | None = None,
     ) -> TokenRefreshResult:
         if refresh_token.startswith("sk-"):
             return echo_api_key_refresh(refresh_token, plan_type=KIMI_DEFAULT_PLAN)
@@ -56,21 +59,49 @@ class KimiProvider:
             "refresh_token": refresh_token,
         }
         timeout = aiohttp.ClientTimeout(total=30)
+        exchange_started = False
+
+        def start_exchange() -> None:
+            nonlocal exchange_started
+            exchange_started = True
+            if on_exchange_start:
+                on_exchange_start()
+
         try:
             async with lease_http_session(session) as client_session:
+                start_exchange()
                 async with client_session.post(
                     settings.kimi_oauth_token_url,
                     data=payload,
                     timeout=timeout,
                 ) as response:
-                    data = await response.json(content_type=None)
+                    try:
+                        data = await response.json(content_type=None)
+                    except Exception as exc:
+                        if response.status >= 400:
+                            raise RefreshError(
+                                f"http_{response.status}",
+                                f"Kimi token refresh failed ({response.status})",
+                                response.status in {400, 401, 403},
+                                phase=ExchangePhase.ANSWERED,
+                                status_code=response.status,
+                            ) from exc
+                        raise RefreshError("invalid_response", "Kimi token refresh response unreadable", False) from exc
                     if response.status >= 400:
                         raise RefreshError(
                             f"http_{response.status}",
                             f"Kimi token refresh failed ({response.status})",
                             response.status in {400, 401, 403},
+                            phase=ExchangePhase.ANSWERED,
+                            status_code=response.status,
                         )
         except RefreshError:
+            raise
+        except RuntimeError as exc:
+            if not exchange_started:
+                raise RefreshError(
+                    "transport_error", "HTTP client unavailable", False, phase=ExchangePhase.PRE_SEND
+                ) from exc
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as exc:
             message = str(exc) or exc.__class__.__name__
@@ -79,6 +110,7 @@ class KimiProvider:
                 f"Transport error during Kimi token refresh: {message}",
                 False,
                 transport_error=True,
+                phase=aiohttp_exchange_phase(exc),
             ) from exc
 
         if not isinstance(data, dict):

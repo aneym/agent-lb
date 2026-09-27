@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -45,6 +45,7 @@ class Provider(Protocol):
         refresh_token: str,
         *,
         session: aiohttp.ClientSession | None = None,
+        on_exchange_start: Callable[[], None] | None = None,
     ) -> TokenRefreshResult: ...
 
     def account_metadata_from_id_token(self, id_token: str | None) -> AccountMetadata: ...

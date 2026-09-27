@@ -50,6 +50,8 @@ def upgrade() -> None:
                 type_=_transfer_enum(_TRANSFER_NEW),
                 existing_nullable=False,
             )
+    if bind.dialect.name == "postgresql":
+        op.execute("SET LOCAL lock_timeout = '5s'")
     inspector = sa.inspect(op.get_bind())
     if "access_expires_at" not in {column["name"] for column in inspector.get_columns("accounts")}:
         op.add_column("accounts", sa.Column("access_expires_at", sa.DateTime(), nullable=True))
@@ -85,7 +87,7 @@ def downgrade() -> None:
         op.execute("DROP TYPE account_transfer_state_old")
     op.drop_table("account_exchange_intents")
     op.drop_column("accounts", "access_expires_at")
-    op.execute("UPDATE accounts SET status = 'deactivated' WHERE status = 'exchange_uncertain'")
+    op.execute("UPDATE accounts SET status = 'reauth_required' WHERE status = 'exchange_uncertain'")
     bind = op.get_bind()
     if bind.dialect.name == "sqlite":
         with op.batch_alter_table("accounts") as batch:

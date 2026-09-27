@@ -27,7 +27,14 @@ from app.core.balancer import account_status_for_permanent_failure, permanent_fa
 from app.core.config.settings import Settings, get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.plan_types import coerce_account_plan_type
-from app.core.providers import OPENAI_PROVIDER_NAME, Provider, ProviderLookupError, get_provider
+from app.core.providers import (
+    ANTHROPIC_PROVIDER_NAME,
+    KIMI_PROVIDER_NAME,
+    OPENAI_PROVIDER_NAME,
+    Provider,
+    ProviderLookupError,
+    get_provider,
+)
 from app.core.upstream_proxy import UpstreamProxyRouteError, resolve_upstream_route
 from app.core.utils.time import naive_utc_to_epoch, to_utc_naive, utcnow
 from app.db import session as db_session
@@ -105,9 +112,9 @@ class RefreshAdmissionLeasePort(Protocol):
 
 logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_REFRESH_MARGIN_SECONDS = 300
-# Non-owners cannot refresh, so they use a much smaller bar: still-clock-skew-tolerant,
-# but not the proactive optimization margin above (which only the owner can act on).
-_ACCESS_TOKEN_HARD_EXPIRY_SKEW_SECONDS = 30
+# Mirrors and uncertain exchanges cannot refresh; leave time for an owner or
+# operator to recover before the token expires.
+_ACCESS_TOKEN_SERVING_MARGIN_SECONDS = 300
 
 
 class AccountNotOwnedError(Exception):
@@ -303,7 +310,7 @@ class AuthManager:
             if hasattr(self._repo, "session"):
                 account = Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
         if not is_locally_owned(account, settings):
-            # A mirror may use a token until actual expiry; it cannot refresh it.
+            # A mirror cannot refresh; stop serving before its token expires.
             if force or access_token_hard_expired(self._encryptor, account):
                 raise AccountNotOwnedError(account.id, account.owner_instance, settings.local_instance_id)
             return await self._ensure_chatgpt_account_id(account)
@@ -638,10 +645,16 @@ class AuthManager:
         if self._acquire_refresh_admission is not None:
             refresh_lease = await self._acquire_refresh_admission()
         try:
-            if provider.name != OPENAI_PROVIDER_NAME:
+            if provider.name not in (OPENAI_PROVIDER_NAME, ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME):
                 if on_exchange_start:
                     on_exchange_start()
                 return await provider.refresh_access_token(refresh_token)
+            if provider.name != OPENAI_PROVIDER_NAME:
+                return await _call_with_supported_optional_kwargs(
+                    provider.refresh_access_token,
+                    refresh_token,
+                    optional_kwargs={"on_exchange_start": on_exchange_start},
+                )
             async with get_background_session() as session:
                 try:
                     route = await resolve_upstream_route(
@@ -659,14 +672,13 @@ class AuthManager:
                         transport_error=True,
                         upstream_proxy_fail_closed_reason=exc.reason,
                     ) from exc
-            if on_exchange_start:
-                on_exchange_start()
             return await _call_with_supported_optional_kwargs(
                 refresh_access_token,
                 refresh_token,
                 optional_kwargs={
                     "route": route,
                     "allow_direct_egress": route is None,
+                    "on_exchange_start": on_exchange_start,
                 },
             )
         finally:
@@ -749,15 +761,7 @@ def access_token_hard_expired(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """True when the access token is missing, undecryptable, or has actually passed
-    its expiry (small clock-skew grace only — see _ACCESS_TOKEN_HARD_EXPIRY_SKEW_SECONDS).
-
-    Unlike _access_token_needs_refresh, this ignores the larger proactive-refresh
-    margin, which is an owner-only optimization: a mirrored token within that margin
-    but not yet expired is still perfectly usable by a non-owner that cannot refresh
-    it. This is the bar non-owned accounts (ensure_fresh gate, selection filtering)
-    must clear to stay usable.
-    """
+    """True when a mirror or uncertain exchange cannot safely serve its access token."""
     if not account.access_token_encrypted:
         return True
     try:
@@ -767,7 +771,7 @@ def access_token_hard_expired(
     expires_ms = _stored_expiry_ms(account, access_token)
     if expires_ms is None:
         return False
-    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_HARD_EXPIRY_SKEW_SECONDS, now=now)
+    return _expires_within(expires_ms, margin_seconds=_ACCESS_TOKEN_SERVING_MARGIN_SECONDS, now=now)
 
 
 def _account_needs_refresh(encryptor: TokenEncryptor, account: Account, *, now: datetime | None = None) -> bool:
