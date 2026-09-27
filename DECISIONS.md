@@ -248,6 +248,32 @@ Every definition has one seat entry naming its vendor, box adapter or local-only
 - `route seat` follows APPLIED after sync and answers from the installed table elsewhere; it fails only when neither exists.
 - An adapter beyond codex, claude-code, cursor and devin needs a `BOX_ADAPTERS` edit.
 
+## ADR-0005: Cursor and Devin accounts are leased per attempt from the seat registry
+
+- **Date:** 2026-09-27
+- **Status:** Accepted
+- **Scope:** clients/seat
+
+### Context
+
+The owner said on 2026-09-27, "we want a single source for our credentials and that includes cursor and devin since agent lb is core to this", and later, "make sure we're not arbitrarily making barries to making this work well - we can secure things later."
+
+### Decision
+
+The seat registry remains the single source. A locked state update rereads the registry, merges each writer's changes and prunes leases seven days after release or expiry. Cursor API-key and Devin data-dir accounts may be leased per attempt; keychain logins cannot travel. Active leases count as use and spread account choice. A private per-attempt bundle holds credentials and only metadata is printed or stored. Release records an outcome and updates observed use, cooldown and health. An auth failure requires explicit rejection by an independent auth-only probe before it marks auth false. Logs and probe answers are never stored as diagnostics.
+
+### Evidence
+
+Cursor API-key accounts already use an in-memory credential store (7bad8d3f). The Devin credentials file holds a static key and server URLs, with no refresh token (field names checked 2026-09-27), so a copy elsewhere should not invalidate the source. S-11 requires auth confirmation before a failed call flips durable health.
+
+### Alternatives
+
+Proxying through the LB is impossible because each CLI talks to its own backend. Long-lived copies on other machines lose the single source. Neither vendor currently offers per-attempt scoped tokens; that belongs to later hardening.
+
+### Consequences
+
+A long-lived key leaves this machine for the length of an attempt. The bundle uses 0600 files and 0700 directories; no secret appears in outputs. By the owner's steer this change ships with one cross-vendor reviewer rather than three lenses; the hardening review belongs to the hardening piece.
+
 ### How it changes
 
 A new entry with new evidence supersedes this one. This entry is not edited.

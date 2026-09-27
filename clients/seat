@@ -12,6 +12,8 @@
 #   seat accounts [--json]                       registry, auth, cooldowns, observed usage
 #   seat add <id> --vendor cursor|devin [--api-key-file F | --api-key-prompt] [--data-dir D]
 #   seat probe [--vendor V] [--json]             auth status per account, written to state
+#   seat lease --vendor V --for ID --ttl S --out DIR [--json]
+#   seat release LEASE [--log FILE] [--outcome OUTCOME] [--json]
 #   seat run --vendor V --model M [--account A] [--class C] [--cwd D] [--mode ask|write]
 #            [--timeout S] (--prompt-file F | -- <prompt>)
 #
@@ -34,19 +36,22 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import getpass
 import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator, TypeVar
 
 VENDORS = ("cursor", "devin")
 SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat"}
@@ -59,7 +64,10 @@ PROBE_TIMEOUT_SECONDS = 20.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
 DEFAULT_COOLDOWN = timedelta(hours=1)
 RUNS_KEPT = 200
+LEASES_KEPT = timedelta(days=7)
 ERROR_CHARS = 400
+FOR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
+T = TypeVar("T")
 
 # Devin bills every model except SWE-2 per token; the seat never spends past the subscription.
 DEVIN_FREE_MODEL = re.compile(r"^swe-\d+-(?:high|medium|max)$")
@@ -154,7 +162,36 @@ def load_state() -> dict[str, Any]:
     state.setdefault("version", 1)
     if not isinstance(state.get("accounts"), dict):
         state["accounts"] = {}
+    if not isinstance(state.get("leases"), dict):
+        state["leases"] = {}
     return state
+
+
+@contextmanager
+def state_lock() -> Iterator[None]:
+    path = seat_home() / "state.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def update_state(apply: Callable[[list[dict[str, Any]], dict[str, Any]], T]) -> T:
+    with state_lock():
+        registry = load_registry()
+        state = load_state()
+        result = apply(registry, state)
+        threshold = now() - LEASES_KEPT
+        for lease_id, lease in list(state["leases"].items()):
+            stamp = parse_ts(lease.get("released_at") or lease.get("expires_at"))
+            if stamp is not None and stamp < threshold:
+                del state["leases"][lease_id]
+        save_state(state, registry)
+        return result
 
 
 def save_state(state: dict[str, Any], registry: list[dict[str, Any]]) -> None:
@@ -178,18 +215,29 @@ def expand(value: Any) -> Path | None:
     return Path(value).expanduser() if isinstance(value, str) and value else None
 
 
+def read_cursor_key(account: dict[str, Any]) -> str:
+    key_file = expand(account.get("key_file"))
+    if key_file is None or not key_file.is_file():
+        raise RuntimeError(f"key file missing for {account['id']}")
+    try:
+        key = key_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        raise RuntimeError(f"key file missing for {account['id']}") from None
+    if not key:
+        raise RuntimeError(f"key file empty for {account['id']}")
+    return key
+
+
+def devin_data_dir(account: dict[str, Any]) -> Path:
+    return expand(account.get("data_dir")) or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
 def account_env(account: dict[str, Any]) -> dict[str, str]:
     """The environment that points the vendor CLI at this account and no other."""
     env = dict(os.environ)
     vendor, auth = account.get("vendor"), account.get("auth")
     if vendor == "cursor" and auth == "api-key":
-        key_file = expand(account.get("key_file"))
-        if key_file is None or not key_file.is_file():
-            raise RuntimeError(f"key file missing for {account['id']}")
-        key = key_file.read_text(encoding="utf-8").strip()
-        if not key:
-            raise RuntimeError(f"key file empty for {account['id']}")
-        env["CURSOR_API_KEY"] = key
+        env["CURSOR_API_KEY"] = read_cursor_key(account)
         config_dir = seat_home() / "cursor" / account["id"]
         config_dir.mkdir(parents=True, exist_ok=True)
         env["CURSOR_CONFIG_DIR"] = str(config_dir)
@@ -198,16 +246,13 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
         env.pop("CURSOR_API_KEY", None)
         env.pop("AGENT_CLI_CREDENTIAL_STORE", None)
     elif vendor == "devin":
-        data_dir = expand(account.get("data_dir"))
-        if data_dir is not None:
-            env["XDG_DATA_HOME"] = str(data_dir)
+        if expand(account.get("data_dir")) is not None:
+            env["XDG_DATA_HOME"] = str(devin_data_dir(account))
     return env
 
 
 def devin_trusted(account: dict[str, Any], cwd: Path) -> bool:
-    data_dir = expand(account.get("data_dir")) or Path(
-        os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-    )
+    data_dir = devin_data_dir(account)
     trusted = read_json(data_dir / "devin" / "cli" / "trusted_workspaces.json", {})
     paths = trusted.get("trusted_paths") if isinstance(trusted, dict) else None
     resolved = cwd.resolve()
@@ -224,7 +269,7 @@ def devin_trusted(account: dict[str, Any], cwd: Path) -> bool:
 # --- probe -----------------------------------------------------------------------
 
 
-def probe_account(account: dict[str, Any]) -> dict[str, Any]:
+def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     vendor = account.get("vendor")
     if vendor == "devin":
         command = [cli_bin("devin"), "auth", "status"]
@@ -246,7 +291,7 @@ def probe_account(account: dict[str, Any]) -> dict[str, Any]:
             check=False,
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
-        return {"auth_ok": False, "auth_error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
+        return {"auth_ok": False, "auth_error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}, None
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
     if vendor == "cursor" and account.get("auth") == "api-key":
         ok = completed.returncode == 0 and not AUTH_RE.search(text)
@@ -272,12 +317,23 @@ def probe_account(account: dict[str, Any]) -> dict[str, Any]:
         "identity": identity,
         "auth_error": None if ok else (text.strip().splitlines() or ["no output"])[0][:ERROR_CHARS],
     }
-    return result
+    return result, text
+
+
+def probe_account(account: dict[str, Any]) -> dict[str, Any]:
+    return run_probe(account)[0]
+
+
+def apply_probe(account_id: str, probe: dict[str, Any]) -> None:
+    def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> None:
+        if any(account["id"] == account_id for account in registry):
+            state["accounts"].setdefault(account_id, {}).update(probe)
+
+    update_state(apply)
 
 
 def command_probe(args: argparse.Namespace) -> int:
     registry = load_registry()
-    state = load_state()
     results = {}
     for account in registry:
         if args.vendor and account.get("vendor") != args.vendor:
@@ -285,9 +341,8 @@ def command_probe(args: argparse.Namespace) -> int:
         if account.get("enabled", True) is False:
             continue
         probe = probe_account(account)
-        state["accounts"].setdefault(account["id"], {}).update(probe)
+        apply_probe(account["id"], probe)
         results[account["id"]] = probe
-    save_state(state, registry)
     if args.json:
         print(json.dumps(results, indent=2, sort_keys=True))
     else:
@@ -316,6 +371,16 @@ def cooling(record: dict[str, Any]) -> datetime | None:
     return until if until and until > now() else None
 
 
+def active_leases(state: dict[str, Any], account_id: str, current: datetime) -> list[dict[str, Any]]:
+    return [
+        lease
+        for lease in state.get("leases", {}).values()
+        if lease.get("account") == account_id
+        and lease.get("released_at") is None
+        and (parse_ts(lease.get("expires_at")) or current) > current
+    ]
+
+
 def command_accounts(args: argparse.Namespace) -> int:
     registry = load_registry()
     state = load_state()
@@ -324,6 +389,7 @@ def command_accounts(args: argparse.Namespace) -> int:
     for account in registry:
         record = state["accounts"].get(account["id"], {})
         until = cooling(record)
+        leases = active_leases(state, account["id"], now())
         rows.append(
             {
                 "id": account["id"],
@@ -337,12 +403,19 @@ def command_accounts(args: argparse.Namespace) -> int:
                 "last_error": record.get("last_error"),
                 "last_run_at": record.get("last_run_at"),
                 "last_24h": usage_since(record, day_ago),
+                "leases": {
+                    "active": len(leases),
+                    "next_expiry": min((lease["expires_at"] for lease in leases), default=None),
+                },
             }
         )
     if args.json:
         print(json.dumps({"state": str(state_path()), "accounts": rows}, indent=2, sort_keys=True))
         return EXIT_OK
-    print(f"{'account':<22} {'vendor':<7} {'auth':<8} {'status':<22} {'24h runs':>8} {'tok in':>9} {'tok out':>8}")
+    print(
+        f"{'account':<22} {'vendor':<7} {'auth':<8} {'status':<22} "
+        f"{'24h runs':>8} {'tok in':>9} {'tok out':>8} {'leases':>6}"
+    )
     for row in rows:
         if not row["enabled"]:
             status = "disabled"
@@ -357,7 +430,7 @@ def command_accounts(args: argparse.Namespace) -> int:
         usage = row["last_24h"]
         print(
             f"{row['id']:<22} {row['vendor']:<7} {row['auth']:<8} {status:<22} "
-            f"{usage['runs']:>8} {usage['tokens_in']:>9} {usage['tokens_out']:>8}"
+            f"{usage['runs']:>8} {usage['tokens_in']:>9} {usage['tokens_out']:>8} {row['leases']['active']:>6}"
         )
     return EXIT_OK
 
@@ -365,9 +438,6 @@ def command_accounts(args: argparse.Namespace) -> int:
 def command_add(args: argparse.Namespace) -> int:
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,40}", args.id):
         fail("account id must be lowercase letters, digits and dashes")
-    registry = load_registry()
-    if any(account["id"] == args.id for account in registry):
-        fail(f"account {args.id} already registered")
     account: dict[str, Any] = {"id": args.id, "vendor": args.vendor, "enabled": True, "added_at": iso(now())}
     if args.vendor == "cursor":
         if args.api_key_prompt:
@@ -375,10 +445,6 @@ def command_add(args: argparse.Namespace) -> int:
             if not key:
                 fail("no key entered")
             key_file = seat_home() / "keys" / f"{args.id}.key"
-            key_file.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(key + "\n")
             account.update({"auth": "api-key", "key_file": str(key_file)})
         elif args.api_key_file:
             key_file = Path(args.api_key_file).expanduser()
@@ -388,23 +454,34 @@ def command_add(args: argparse.Namespace) -> int:
                 fail(f"{key_file} is readable by others; chmod 600 it first")
             account.update({"auth": "api-key", "key_file": str(key_file)})
         else:
-            if any(a.get("vendor") == "cursor" and a.get("auth") == "login" for a in registry):
-                fail("a Cursor login account exists already; extra Cursor accounts need --api-key-prompt")
             account["auth"] = "login"
     else:
         account["auth"] = "data-dir"
         if args.data_dir:
             account["data_dir"] = str(Path(args.data_dir).expanduser())
-        elif any(a.get("vendor") == "devin" and not a.get("data_dir") for a in registry):
-            fail("a Devin account on the default data dir exists already; pass --data-dir for this one")
-    registry.append(account)
-    write_json(registry_path(), {"version": 1, "accounts": registry})
-    state = load_state()
-    state["accounts"].setdefault(args.id, {}).update(probe_account(account))
-    save_state(state, registry)
-    record = state["accounts"][args.id]
-    print(f"registered {args.id} ({args.vendor}, {account['auth']}): auth {'ok' if record['auth_ok'] else 'FAILED'}")
-    return EXIT_OK if record["auth_ok"] else EXIT_FAILED
+
+    def add(registry: list[dict[str, Any]], state: dict[str, Any]) -> None:
+        if any(a["id"] == args.id for a in registry):
+            fail(f"account {args.id} already registered")
+        if args.vendor == "cursor" and account["auth"] == "login":
+            if any(a.get("vendor") == "cursor" and a.get("auth") == "login" for a in registry):
+                fail("a Cursor login account exists already; extra Cursor accounts need --api-key-prompt")
+        if args.vendor == "devin" and not account.get("data_dir"):
+            if any(a.get("vendor") == "devin" and not a.get("data_dir") for a in registry):
+                fail("a Devin account on the default data dir exists already; pass --data-dir for this one")
+        if args.vendor == "cursor" and args.api_key_prompt:
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(key + "\n")
+        registry.append(account)
+        write_json(registry_path(), {"version": 1, "accounts": registry})
+
+    update_state(add)
+    probe = probe_account(account)
+    apply_probe(args.id, probe)
+    print(f"registered {args.id} ({args.vendor}, {account['auth']}): auth {'ok' if probe['auth_ok'] else 'FAILED'}")
+    return EXIT_OK if probe["auth_ok"] else EXIT_FAILED
 
 
 # --- run -------------------------------------------------------------------------
@@ -519,8 +596,10 @@ def order_accounts(registry: list[dict[str, Any]], state: dict[str, Any], vendor
         record = state["accounts"].get(account["id"], {})
         if record.get("auth_ok") is False or cooling(record):
             continue
-        recent = usage_since(record, window)["runs"]
-        ready.append((recent, record.get("last_run_at") or "", account))
+        leases = [lease for lease in state.get("leases", {}).values() if lease.get("account") == account["id"]]
+        recent = usage_since(record, window)["runs"] + len(active_leases(state, account["id"], now()))
+        last_use = max([record.get("last_run_at") or ""] + [lease.get("created_at") or "" for lease in leases])
+        ready.append((recent, last_use, account))
     ready.sort(key=lambda item: (item[0], item[1]))
     return [account for _, _, account in ready]
 
@@ -531,6 +610,342 @@ def append_ledger(rows: list[dict[str, Any]]) -> None:
     with path.open("a", encoding="utf-8") as stream:
         for row in rows:
             stream.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def lease_error(
+    code: str, vendor: str, message: str, json_output: bool, skipped: list[dict[str, str]] | None = None
+) -> Any:
+    print(f"seat: {message}", file=sys.stderr)
+    if json_output:
+        result: dict[str, Any] = {"error": code, "vendor": vendor, "message": message}
+        if skipped is not None:
+            result["skipped"] = skipped
+        print(json.dumps(result, sort_keys=True))
+    raise SystemExit(EXIT_NO_ACCOUNT if code in ("no_account", "unknown_account", "not_leasable") else EXIT_FAILED)
+
+
+def leasable(account: dict[str, Any]) -> bool:
+    return (account.get("vendor"), account.get("auth")) in (("cursor", "api-key"), ("devin", "data-dir"))
+
+
+def bundle_secret(account: dict[str, Any]) -> str | bytes:
+    if account["vendor"] == "cursor":
+        return read_cursor_key(account)
+    try:
+        return (devin_data_dir(account) / "devin" / "credentials.toml").read_bytes()
+    except OSError:
+        raise RuntimeError(f"credentials missing for {account['id']}") from None
+
+
+def skip_reason(account: dict[str, Any], state: dict[str, Any]) -> str | None:
+    if not leasable(account):
+        return "login_not_leasable"
+    if account.get("enabled", True) is False:
+        return "disabled"
+    record = state["accounts"].get(account["id"], {})
+    if record.get("auth_ok") is False:
+        return "auth_failed"
+    if cooling(record):
+        return "cooling"
+    try:
+        bundle_secret(account)
+    except RuntimeError as error:
+        return (
+            "key_file_empty"
+            if "empty" in str(error)
+            else ("key_file_missing" if account["vendor"] == "cursor" else "credentials_missing")
+        )
+    return None
+
+
+def private_file(path: Path, content: bytes) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            fd = -1
+            stream.write(content)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def private_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(0o700)
+
+
+def write_bundle(
+    out: Path, account: dict[str, Any], secret: str | bytes, trusts: list[str], meta: dict[str, str]
+) -> None:
+    written: list[Path] = []
+    try:
+        private_dir(out)
+        private_dir(out / "data")
+        if account["vendor"] == "cursor":
+            env = f"CURSOR_API_KEY={shlex.quote(secret)}\nAGENT_CLI_CREDENTIAL_STORE=memory\n".encode()
+        else:
+            env = b""
+            private_dir(out / "data" / "devin")
+            private_dir(out / "data" / "devin" / "cli")
+            credentials = out / "data" / "devin" / "credentials.toml"
+            written.append(credentials)
+            private_file(credentials, secret)
+            trusted = out / "data" / "devin" / "cli" / "trusted_workspaces.json"
+            written.append(trusted)
+            private_file(
+                trusted, (json.dumps({"trusted_paths": list(dict.fromkeys(trusts))}, indent=2) + "\n").encode()
+            )
+        env_path = out / "env"
+        written.append(env_path)
+        private_file(env_path, env)
+        metadata = out / "lease.json"
+        written.append(metadata)
+        private_file(metadata, (json.dumps(meta, indent=2, sort_keys=True) + "\n").encode())
+    except OSError:
+        for path in written:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise RuntimeError("cannot write lease bundle") from None
+
+
+def command_lease(args: argparse.Namespace) -> int:
+    def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> dict[str, Any]:
+        vendor_accounts = [a for a in registry if a.get("vendor") == args.vendor]
+        if args.account:
+            candidates = [a for a in vendor_accounts if a["id"] == args.account]
+            if not candidates:
+                lease_error(
+                    "unknown_account", args.vendor, f"no {args.vendor} account {args.account} registered", args.json
+                )
+            if not leasable(candidates[0]):
+                lease_error("not_leasable", args.vendor, f"account {args.account} is not leasable", args.json)
+        else:
+            candidates = [a for a in order_accounts(registry, state, args.vendor) if leasable(a)]
+        selected = None
+        secret = None
+        for account in candidates:
+            try:
+                secret = bundle_secret(account)
+            except RuntimeError:
+                continue
+            selected = account
+            break
+        if selected is None:
+            skipped = [
+                {"account": a["id"], "reason": skip_reason(a, state) or "credentials_missing"} for a in vendor_accounts
+            ]
+            if args.account:
+                lease_error("no_account", args.vendor, f"no credentials for {args.account}", args.json, skipped)
+            message = f"no {args.vendor} account can be leased"
+            if skipped:
+                message += ": " + ", ".join(f"{s['account']} ({s['reason']})" for s in skipped)
+            if args.vendor == "cursor" and skipped and all(s["reason"] == "login_not_leasable" for s in skipped):
+                message += (
+                    "; keychain login stays on this machine; add an API-key account with "
+                    "seat add <id> --vendor cursor --api-key-prompt"
+                )
+            lease_error("no_account", args.vendor, message, args.json, skipped)
+        created = now()
+        lease_id = "lease-" + uuid.uuid4().hex
+        expiry = iso(created + timedelta(seconds=args.ttl))
+        meta = {"lease": lease_id, "vendor": args.vendor, "account": selected["id"], "expires_at": expiry}
+        try:
+            write_bundle(Path(args.out).expanduser(), selected, secret, args.trust, meta)
+        except RuntimeError:
+            lease_error("out_failed", args.vendor, "cannot write lease bundle", args.json)
+        state["leases"][lease_id] = {
+            "vendor": args.vendor,
+            "account": selected["id"],
+            "for": args.for_id,
+            "created_at": iso(created),
+            "expires_at": expiry,
+            "released_at": None,
+            "outcome": None,
+        }
+        return meta
+
+    try:
+        meta = update_state(apply)
+    except (OSError, ValueError, TypeError) as error:
+        lease_error("state_failed", args.vendor, f"cannot read registry or state: {type(error).__name__}", args.json)
+    lease_id = meta["lease"]
+    append_ledger(
+        [
+            {
+                "ts": iso(now()),
+                "event": "lease",
+                "session_id": lease_id,
+                "lease": lease_id,
+                "subagent_type": SEAT_FOR_VENDOR[args.vendor],
+                "vendor": args.vendor,
+                "account": meta["account"],
+                "for": args.for_id,
+                "expires_at": meta["expires_at"],
+                "source": "seat",
+            }
+        ]
+    )
+    if args.json:
+        print(json.dumps(meta, sort_keys=True))
+    else:
+        print(f"leased {meta['account']} ({args.vendor}) as {lease_id} until {meta['expires_at']}")
+    return EXIT_OK
+
+
+def release_error(lease_id: str, json_output: bool) -> Any:
+    message = f"no lease {lease_id}"
+    print(f"seat: {message}", file=sys.stderr)
+    if json_output:
+        print(json.dumps({"error": "unknown_lease", "message": message}, sort_keys=True))
+    raise SystemExit(EXIT_NO_ACCOUNT)
+
+
+def release_diagnostic(kind: str, text: str, reported: bool) -> str:
+    if reported:
+        return f"outcome {kind} reported by caller"
+    if kind == "error":
+        return "seat failed; no limit or auth text in its log"
+    match = (AUTH_RE if kind == "auth" else LIMIT_RE).search(text)
+    diagnostic = f"{kind} in seat log: {match.group(0)}"
+    retry = RETRY_AFTER_RE.search(text) if kind == "limit" else None
+    return diagnostic + (f"; {retry.group(0)}" if retry else "")
+
+
+def release_log(path: str | None) -> tuple[str, bool]:
+    if path is None:
+        return "", False
+    try:
+        with Path(path).expanduser().open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - 65536))
+            text = stream.read().decode("utf-8", errors="replace")
+        return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text), True
+    except OSError:
+        return "", False
+
+
+def command_release(args: argparse.Namespace) -> int:
+    text, log_read = release_log(args.log)
+    outcome = args.outcome or ((classify(text) or "error") if log_read else "unknown")
+    snapshot = load_state().get("leases", {}).get(args.lease)
+    if snapshot is None:
+        release_error(args.lease, args.json)
+
+    def already(lease: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "lease": args.lease,
+            "released": False,
+            "reason": "already_released",
+            "outcome": lease["outcome"],
+            "released_at": lease["released_at"],
+        }
+
+    if snapshot.get("released_at") is not None:
+        result = already(snapshot)
+    else:
+        probe_status = None
+        if outcome == "auth":
+            account = next((a for a in load_registry() if a["id"] == snapshot["account"]), None)
+            if account is not None:
+                probe, probe_text = run_probe(account)
+                if probe.get("auth_ok") is True:
+                    probe_status = "ok"
+                elif probe_text is not None and classify(probe_text) == "auth" and probe.get("auth_ok") is False:
+                    probe_status = "rejected"
+            probe_status = probe_status or "inconclusive"
+
+        def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> dict[str, Any]:
+            lease = state["leases"].get(args.lease)
+            if lease is None:
+                release_error(args.lease, args.json)
+            if lease.get("released_at") is not None:
+                return already(lease)
+            stamp = now()
+            ts = iso(stamp)
+            wall = round((stamp - (parse_ts(lease["created_at"]) or stamp)).total_seconds(), 1)
+            expired = (parse_ts(lease["expires_at"]) or stamp) <= stamp
+            lease["released_at"] = ts
+            lease["outcome"] = outcome
+            record = None
+            ok = True if outcome == "ok" else (None if outcome == "unknown" else False)
+            if any(a["id"] == lease["account"] for a in registry):
+                record = state["accounts"].setdefault(lease["account"], {})
+                record["last_run_at"] = ts
+                record.setdefault("runs", []).append(
+                    {
+                        "ts": ts,
+                        "model": None,
+                        "ok": ok,
+                        "wall_s": wall,
+                        "tokens_in": None,
+                        "tokens_out": None,
+                        "run_id": args.lease,
+                    }
+                )
+                record["runs"] = record["runs"][-RUNS_KEPT:]
+                if outcome == "ok":
+                    record["last_error"] = None
+                    record["auth_ok"] = True
+                elif outcome in ("limit", "auth", "error"):
+                    kind = "auth_unconfirmed" if outcome == "auth" and probe_status != "rejected" else outcome
+                    record["last_error"] = {
+                        "ts": ts,
+                        "kind": kind,
+                        "text": release_diagnostic(outcome, text, args.outcome is not None),
+                    }
+                    if outcome == "limit":
+                        record["cooldown_until"] = iso(cooldown_until(text))
+                    elif outcome == "auth" and probe_status in ("rejected", "ok"):
+                        record["auth_ok"] = probe_status == "ok"
+                        record["auth_checked_at"] = ts
+                        record["auth_error"] = (
+                            "rejected by probe after a leased run" if probe_status == "rejected" else None
+                        )
+            result = {
+                "lease": args.lease,
+                "vendor": lease["vendor"],
+                "account": lease["account"],
+                "for": lease["for"],
+                "released": True,
+                "outcome": outcome,
+                "expired": expired,
+                "log_read": log_read,
+                "auth_probe": probe_status if outcome == "auth" else None,
+                "auth_confirmed": probe_status == "rejected" if outcome == "auth" else None,
+                "auth_ok": record.get("auth_ok") if record else None,
+                "cooldown_until": record.get("cooldown_until") if record else None,
+            }
+            result["ledger"] = {
+                "ts": ts,
+                "event": "release",
+                "session_id": args.lease,
+                "lease": args.lease,
+                "subagent_type": SEAT_FOR_VENDOR[lease["vendor"]],
+                "vendor": lease["vendor"],
+                "account": lease["account"],
+                "for": lease["for"],
+                "outcome": outcome,
+                "ok": ok,
+                "wall_s": wall,
+                "expired": expired,
+                "source": "seat",
+            }
+            return result
+
+        result = update_state(apply)
+    ledger = result.pop("ledger", None)
+    if ledger:
+        append_ledger([ledger])
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    elif result["released"]:
+        print(f"released {args.lease} ({result['account']}): {outcome}")
+    else:
+        print(f"lease {args.lease} already released")
+    return EXIT_OK
 
 
 def command_run(args: argparse.Namespace) -> int:
@@ -571,6 +986,7 @@ def command_run(args: argparse.Namespace) -> int:
     append_ledger([{**base, "ts": iso(now()), "event": "dispatch", "accounts": [a["id"] for a in candidates]}])
 
     attempts: list[dict[str, Any]] = []
+    changes: dict[str, dict[str, Any]] = {}
     outcome: dict[str, Any] = {}
     account: dict[str, Any] = candidates[0]
     started_all = time.monotonic()
@@ -578,7 +994,6 @@ def command_run(args: argparse.Namespace) -> int:
         prompt_file = Path(scratch) / "prompt.md"
         prompt_file.write_text(prompt, encoding="utf-8")
         for account in candidates:
-            record = state["accounts"].setdefault(account["id"], {})
             if args.vendor == "devin" and not devin_trusted(account, cwd):
                 attempts.append({"account": account["id"], "outcome": "untrusted_workspace"})
                 outcome = {
@@ -608,8 +1023,10 @@ def command_run(args: argparse.Namespace) -> int:
                 outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
             wall = round(time.monotonic() - started, 1)
             kind = None if outcome["ok"] else classify(outcome.get("error") or "")
-            record["last_run_at"] = iso(now())
-            record.setdefault("runs", []).append(
+            change = changes.setdefault(account["id"], {"fields": {}, "runs": []})
+            fields = change["fields"]
+            fields["last_run_at"] = iso(now())
+            change["runs"].append(
                 {
                     "ts": iso(now()),
                     "model": model,
@@ -620,23 +1037,32 @@ def command_run(args: argparse.Namespace) -> int:
                     "run_id": run_id,
                 }
             )
-            record["runs"] = record["runs"][-RUNS_KEPT:]
             attempts.append(
                 {"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"), "wall_s": wall}
             )
             if outcome["ok"]:
-                record["last_error"] = None
-                record["auth_ok"] = True
+                fields["last_error"] = None
+                fields["auth_ok"] = True
                 break
-            record["last_error"] = {"ts": iso(now()), "kind": kind or "error", "text": outcome.get("error")}
+            fields["last_error"] = {"ts": iso(now()), "kind": kind or "error", "text": outcome.get("error")}
             if kind == "limit":
-                record["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
+                fields["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
             elif kind == "auth":
-                record["auth_ok"] = False
+                fields["auth_ok"] = False
             else:
                 # A task failure is not the account's fault; another account would repeat it.
                 break
-    save_state(state, registry)
+
+    def apply_run(fresh_registry: list[dict[str, Any]], fresh: dict[str, Any]) -> None:
+        known = {entry["id"] for entry in fresh_registry}
+        for account_id, change in changes.items():
+            if account_id not in known:
+                continue
+            record = fresh["accounts"].setdefault(account_id, {})
+            record.update(change["fields"])
+            record["runs"] = ((record.get("runs") or []) + change["runs"])[-RUNS_KEPT:]
+
+    update_state(apply_run)
     wall_all = round(time.monotonic() - started_all, 1)
     closeout = {
         **base,
@@ -697,6 +1123,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     probe.add_argument("--json", action="store_true")
     probe.set_defaults(handler=command_probe)
 
+    lease = commands.add_parser("lease", help="lease one account to a remote attempt")
+    lease.add_argument("--vendor", choices=VENDORS, required=True)
+    lease.add_argument("--account", help="pin an account, ignoring its health")
+    lease.add_argument("--for", dest="for_id", required=True)
+    lease.add_argument("--ttl", type=int, required=True)
+    lease.add_argument("--trust", action="append", default=[])
+    lease.add_argument("--out", required=True)
+    lease.add_argument("--json", action="store_true")
+    lease.set_defaults(handler=command_lease)
+
+    release = commands.add_parser("release", help="record the outcome of a leased attempt")
+    release.add_argument("lease")
+    release.add_argument("--log")
+    release.add_argument("--outcome", choices=("ok", "limit", "auth", "error"))
+    release.add_argument("--json", action="store_true")
+    release.set_defaults(handler=command_release)
+
     run = commands.add_parser("run", help="dispatch one task to a vendor seat")
     run.add_argument("--vendor", choices=VENDORS, required=True)
     run.add_argument("--model", required=True, help="model id or family alias (grok-latest, swe-latest)")
@@ -713,7 +1156,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     run.add_argument("--prompt-file")
     run.add_argument("prompt", nargs="*")
     run.set_defaults(handler=command_run)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "lease":
+        if args.ttl < 1:
+            parser.error("--ttl must be at least 1")
+        if not FOR_RE.fullmatch(args.for_id):
+            parser.error("--for must be a valid attempt id")
+        if any(not trust.startswith("/") or "\n" in trust for trust in args.trust):
+            parser.error("--trust must be an absolute path without a newline")
+        if args.vendor == "devin" and not args.trust:
+            parser.error("--vendor devin requires at least one --trust")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
