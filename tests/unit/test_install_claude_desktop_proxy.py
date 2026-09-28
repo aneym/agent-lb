@@ -133,6 +133,8 @@ def test_print_is_non_mutating_and_describes_dedicated_launch_agent(tmp_path: Pa
     assert plist["Label"] == LABEL
     assert plist["RunAtLoad"] is True
     assert plist["KeepAlive"] is True
+    assert plist["ProcessType"] == "Interactive"
+    assert plist["Nice"] == -10
     assert plist["ProgramArguments"] == [
         sys.executable,
         str(ROOT / "clients" / "claude-lb-launch"),

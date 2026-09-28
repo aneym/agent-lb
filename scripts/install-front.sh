@@ -56,6 +56,8 @@ cat >"$PLIST" <<PLIST_EOF
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>Nice</key><integer>-10</integer>
   <key>StandardOutPath</key><string>$LOG_DIR/agent-lb-front.out.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/agent-lb-front.err.log</string>
 </dict></plist>

@@ -119,6 +119,9 @@ plist: dict[str, Any] = {
     "WorkingDirectory": repo_dir,
     "RunAtLoad": True,
     "KeepAlive": True,
+    # launchd applies negative Nice to agents; prioritize the event loop under host load.
+    "ProcessType": existing.get("ProcessType") if isinstance(existing.get("ProcessType"), str) else "Interactive",
+    "Nice": existing.get("Nice") if type(existing.get("Nice")) is int else -10,
     "StandardOutPath": f"{log_dir}/agent-lb.out.log",
     "StandardErrorPath": f"{log_dir}/agent-lb.err.log",
     "EnvironmentVariables": env,

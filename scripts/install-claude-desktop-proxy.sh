@@ -70,6 +70,8 @@ plist = {
     "WorkingDirectory": os.environ["INSTALL_REPO"],
     "RunAtLoad": True,
     "KeepAlive": True,
+    "ProcessType": "Interactive",
+    "Nice": -10,
     "StandardOutPath": f"{state_dir}/claude-desktop-proxy.out.log",
     "StandardErrorPath": f"{state_dir}/claude-desktop-proxy.err.log",
 }
