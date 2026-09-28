@@ -14,18 +14,18 @@ the raw code that comes out of those decisions."
 2. **Every piece names its files, fixed interfaces and one check command.** A seat is trusted only as far as its
    check reaches. A piece with no check gets smaller, or gets its check first. Orch-lab E5 (5 units): an
    end-to-end-only check passed a real regression that existing tests plus an implementer-written test caught.
-3. **`gpt-implementer` (Sol, medium) writes all code to a spec**, mechanical edits included. `opus-seat` takes
-   judgment code and anything Sol fails twice; the driver sends those to it by name. Owner, 2026-09-26: "sol and opus
-   are the right models, since the others just make mistakes? we shouldnt risk mistakes if they're just going to
-   make more work later."
-   Router fallback, measured 2026-09-26: `route pick implement` falls back to opus-seat only when it skips
-   gpt-implementer (seat recorded down, model unserved) and the Anthropic pool is on pace and above low and the
-   Codex pool is above critical, because Opus's work needs a Sol auditor.
-   A low Codex pool does not move implementation to Opus. An exhausted Codex pool leaves nothing routable.
-4. **`luna-implementer` and `sonnet-implementer` are off the default path** (`off_default`). They return only
-   through an eval that matches Sol's accept rate on that kind of task. Orch-lab E6 (2026-09-26, the same 6 units,
-   specs and review template per seat, small n): Sol 6/6 at about 105k tokens per accepted unit; Luna 5/6 at about
-   135k; Sonnet 5/6 at about 284k; Opus 4/6 at about 618k. A miss costs a fix round plus a re-verify.
+3. **`sonnet-implementer` (newest Sonnet, high) writes code to a spec by default**, mechanical edits included, and
+   `codex-verifier` (Sol xhigh) reviews it. Owner, 2026-09-28: "most of our default work should be routed to sonnet in
+   general, just validated by sol and opus; scoping still done in opus." `gpt-implementer` (Sol, medium) implements
+   only when Sonnet is really out: the fold re-seats a piece on Sol after two infra failures (real 429s or
+   usage-limit errors); `route` skips Sonnet when routing state records it down, its pool has no eligible account,
+   or its Sol reviewer's pool is down to one (rule 1). No headroom level moves it. Sol's code gets the fresh Opus
+   `verifier`, so an Anthropic pool at one eligible account or none leaves Sol unaudited and unrouted. `implement_default` in
+   `routing-table.json` is the one-line revert: set it to `gpt-implementer` and Sol leads both chains again.
+   `opus-seat` takes judgment code by name and is the pace-gated last resort (`min_pace` -10).
+4. **`luna-implementer` is off the default path** (`off_default`); it returns only through an eval. Orch-lab E6
+   (2026-09-26, small n): Sol 6/6 at about 105k tokens per accepted unit; Luna 5/6 at about 135k; Sonnet 5 5/6 at
+   about 284k; Opus 4/6 at about 618k. E12 (Sonnet 5.5 high vs Sol medium vs Opus medium) is the check on step 3.
 5. **Read-only lookups go to `gpt-explorer` (Luna, low) or `Explore` (Sonnet, medium).** No decision rides on
    them. First call: about 3.4k tokens for gpt-explorer, 13k for Explore.
 6. Codex CLI, Cursor and Devin are optional capacity; Cursor takes mechanical sweeps, Devin sits behind it.
@@ -58,7 +58,7 @@ approach, which comes from the plan. `verify-routing` checks every chain entry a
 |---|---|
 | Relay a contract (forwarders) | low |
 | Search and read | low to medium |
-| Implement to a spec | medium |
+| Implement to a spec | high on Sonnet, medium on Sol |
 | Plan, spec, second opinion | high |
 | Verify | high; `codex-verifier` xhigh |
 | Money path and security | xhigh |
@@ -114,9 +114,9 @@ Which seat serves which class, on which model and effort, out of which pool, is 
 `route pick <class> [--author-vendor V]` returns the first admitted seat, its chain and its auditor. Chains, best
 first (2026-09-26): plan planner (Opus high), then codex-sol (Sol high), with `sol-consult` (Sol high) as the second
 opinion; review plan-reviewer (Opus high), then codex-sol; explore gpt-explorer (Luna low), Explore (Sonnet medium),
-codex-sol (Sol medium); research codex-sol (Sol high), Explore, opus-seat (Opus high); implement gpt-implementer (Sol
-medium), then opus-seat (Opus medium, `min_pace` -10); mechanical gpt-implementer, then cursor-seat (`grok-latest`),
-devin-seat (`swe-latest`); verify verifier (Opus high), then codex-verifier (Sol xhigh), cross-vendor; computer
+codex-sol (Sol medium); research codex-sol (Sol high), Explore, opus-seat (Opus high); implement sonnet-implementer (Sonnet
+high), gpt-implementer (Sol medium), then opus-seat (Opus medium, `min_pace` -10); mechanical sonnet-implementer,
+gpt-implementer, then cursor-seat (`grok-latest`), devin-seat (`swe-latest`); verify verifier (Opus high), then codex-verifier (Sol xhigh), cross-vendor; computer
 computer-use (Sol medium), then opus-seat; council codex-sol (Sol high), then opus-seat. Implement and mechanical
 units are audited by the other vendor: Anthropic authors get `codex-verifier` (sol-latest, xhigh); openai, cursor,
 devin, glm and kimi authors get `verifier` (opus-latest, high).

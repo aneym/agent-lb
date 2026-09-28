@@ -194,13 +194,24 @@ def factory(rule: str, valid: bool, detail: str) -> None:
     check(valid, f"factory:{rule} {detail}")
 
 
-heads = [classes.get(name, {}).get("chain", [{}])[0] for name in ("implement", "mechanical")]
+# implement_default (2026-09-28) is the revert switch: route moves its seat to the head of both chains, and the
+# other default implementer stays in each chain as the fallback.
+DEFAULT_HEADS = {
+    "sonnet-implementer": {"seat": "sonnet-implementer", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"},
+    "gpt-implementer": {"seat": "gpt-implementer", "model": "sol-latest", "vendor": "openai", "effort": "medium"},
+}
+implement_default = source_table.get("implement_default")
+head_rows = [
+    [{key: entry.get(key) for key in ("seat", "model", "vendor", "effort")}
+     for entry in classes.get(name, {}).get("chain", []) if isinstance(entry, dict)]
+    for name in ("implement", "mechanical")
+]
 factory(
     "implement-head",
-    all({key: head.get(key) for key in ("seat", "model", "vendor", "effort")}
-        == {"seat": "gpt-implementer", "model": "sol-latest", "vendor": "openai", "effort": "medium"}
-        for head in heads),
-    "implement and mechanical heads are gpt-implementer/sol-latest/openai/medium",
+    implement_default in DEFAULT_HEADS
+    and all(DEFAULT_HEADS[implement_default] in rows and all(row in rows for row in DEFAULT_HEADS.values())
+        and rows[0] in DEFAULT_HEADS.values() for rows in head_rows),
+    f"implement and mechanical hold both default implementers with one at the head; implement_default={implement_default}",
 )
 off_default = source_table.get("off_default", [])
 off_seats = {item.get("seat") for item in off_default}

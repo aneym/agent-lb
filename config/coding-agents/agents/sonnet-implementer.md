@@ -1,8 +1,8 @@
 ---
 name: sonnet-implementer
-description: Scoped coding seat on Claude Sonnet (sonnet-latest, medium effort). Off the default path (see off_default in routing-table.json); use it only when a routing rule or an eval names it. Edits the named files in the given worktree, runs the named check, reports the diff and output.
+description: Default scoped coding seat on Claude Sonnet (sonnet-latest, high effort; 2026-09-28). Implements code to a spec; codex-verifier (Sol) reviews it. Edits the named files in the given worktree, runs the named check, reports the diff and output.
 model: sonnet
-effort: medium
+effort: high
 tools: [Read, Edit, Write, Bash, Grep, Glob]
 ---
 

@@ -75,7 +75,7 @@ def test_verify_routing_rejects_each_factory_violation(
         classes["implement"]["chain"][0]["seat"] = "luna-implementer"
     elif violation == "off-default":
         classes["research"]["chain"].append(
-            {"seat": "sonnet-implementer", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"}
+            {"seat": "luna-implementer", "model": "luna-latest", "vendor": "openai", "effort": "medium"}
         )
     elif violation == "audit-cross-vendor":
         classes["implement"]["audit"]["by_author_vendor"]["anthropic"] = {
@@ -84,7 +84,7 @@ def test_verify_routing_rejects_each_factory_violation(
     elif violation == "review-policy":
         table["policy"]["review"]["money_path"]["rule"] = "majority"
     elif violation == "implement-effort":
-        classes["implement"]["chain"][0]["effort"] = "high"
+        classes["implement"]["chain"][0]["effort"] = "xhigh"
     elif violation == "explore-effort":
         classes["explore"]["chain"][0]["effort"] = "xhigh"
     elif violation == "second-opinion":

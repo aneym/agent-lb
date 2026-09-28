@@ -63,7 +63,7 @@ def pools_fixture(directory: Path, statuses: dict[str, str]) -> None:
                     "provider": pool_id.split("-")[0],
                     "kind": "weekly",
                     "accounts": 2,
-                    "eligibleAccounts": 2,
+                    "eligibleAccounts": 0 if status == "exhausted" else 2,
                     "headroomPercent": 0.0 if status == "exhausted" else 60.0,
                     "aggregateRemainingPercent": 0.0 if status == "exhausted" else 60.0,
                     "resetAt": "2026-09-23T11:00:00Z",
@@ -689,12 +689,43 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
 
     assert plan.returncode == 0, plan.stderr
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
-    # Implement leads with gpt-implementer on the newest Sol, whose auditor is Opus.
+    # Implement leads with sonnet-implementer (2026-09-28), whose auditor is the newest Sol.
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
-    assert (picked["seat"], picked["model"]) == ("gpt-implementer", "gpt-6-sol")
-    assert picked["audit"]["alias"] == "opus-latest"
+    assert (picked["seat"], picked["alias"], picked["model"]) == ("sonnet-implementer", "sonnet-latest", "sonnet")
+    assert picked["audit"]["alias"] == "sol-latest"
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
+
+
+def test_canonical_implement_falls_to_sol_only_when_sonnet_is_out(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}, {"id": "gpt-6-luna"}]})
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
+
+    def pick(statuses: dict[str, str], table: Path = CANONICAL_TABLE) -> dict[str, object]:
+        pools_fixture(fixtures, statuses)
+        result = run("pick", "implement", "--json", home=tmp_path, table=table, fixtures=fixtures, extra=extra)
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    # A low Anthropic pool is not "out": Sonnet keeps the work.
+    assert pick({"anthropic-general": "low", "openai-codex": "ok"})["seat"] == "sonnet-implementer"
+    # Sonnet recorded down (its probe hit a 429 or usage limit) is out: Sol implements and Opus audits it.
+    (tmp_path / ".claude").mkdir()
+    routing_state(tmp_path, age_seconds=60, seats={"sonnet-implementer": {"ok": False, "error": "HTTP 429"}})
+    out = pick({"anthropic-general": "ok", "openai-codex": "ok"})
+    assert (out["seat"], out["model"]) == ("gpt-implementer", "gpt-6-sol")
+    assert out["audit"]["alias"] == "opus-latest"
+    (tmp_path / ".claude" / "routing-state.json").unlink()
+
+    # implement_default is the one-line revert switch: Sol leads again and Sonnet follows it.
+    table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    table["implement_default"] = "gpt-implementer"
+    reverted = tmp_path / "reverted-table.json"
+    reverted.write_text(json.dumps(table), encoding="utf-8")
+    back = pick({"anthropic-general": "ok", "openai-codex": "ok"}, reverted)
+    assert back["seat"] == "gpt-implementer"
+    assert [entry["seat"] for entry in back["fallbacks"]][:1] == ["sonnet-implementer"]
 
 
 def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> None:
@@ -1055,9 +1086,12 @@ def test_canonical_implement_admission_by_codex_pool(
         ]},
     )
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
+    # Sonnet leads implement (2026-09-28); it is recorded down here so the rows test Sol's admission behind it.
+    down = {"sonnet-implementer": {"ok": False, "error": "HTTP 429"}}
     if recorded_down:
-        (tmp_path / ".claude").mkdir()
-        routing_state(tmp_path, age_seconds=60, seats={"gpt-implementer": {"ok": False, "error": "unavailable"}})
+        down["gpt-implementer"] = {"ok": False, "error": "unavailable"}
+    (tmp_path / ".claude").mkdir()
+    routing_state(tmp_path, age_seconds=60, seats=down)
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
     result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert result.returncode == (0 if expected_seat else 2), result.stdout + result.stderr

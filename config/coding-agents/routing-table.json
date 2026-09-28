@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "implement_default": "sonnet-implementer",
+  "implement_default_note": "The one-line revert switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. sonnet-implementer (Sonnet high) by default; set it to gpt-implementer to put Sol medium back in front.",
   "classes": {
     "plan": {
       "chain": [
@@ -87,6 +89,12 @@
     "implement": {
       "chain": [
         {
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
+        {
           "seat": "gpt-implementer",
           "model": "sol-latest",
           "vendor": "openai",
@@ -144,7 +152,7 @@
         "fresh_per_unit": true,
         "release_facts": true
       },
-      "note": "Code to a spec with one check. gpt-implementer (newest Sol, medium) writes all code; route falls back to opus-seat only when it skips gpt-implementer and the Anthropic pool is on pace and above low and the Codex pool is above critical. The driver sends judgment code, and anything Sol fails twice, to opus-seat by name. luna-implementer and sonnet-implementer are off the default path (off_default).",
+      "note": "Code to a spec with one check. Alex, 2026-09-28: \"most of our default work should be routed to sonnet in general, just validated by sol and opus; scoping still done in opus.\" sonnet-implementer (newest Sonnet, high) writes code by default and codex-verifier (Sol xhigh) reviews it. gpt-implementer (newest Sol, medium) takes over only when Sonnet is really out: the fold re-seats a piece after two infra failures (real 429s or usage-limit errors), or route skips Sonnet because routing state records it down, its pool has no eligible account, or its Sol reviewer's pool is down to one eligible account (rule 1); then the fresh Opus verifier reviews. An Anthropic pool down to one eligible account or none leaves Sol no auditor (rule 1), so route picks nothing then. No percentage or headroom threshold moves it. opus-seat stays the pace-gated last resort and takes judgment code by name. implement_default is the revert switch.",
       "escalation": {
         "seat": "opus-seat",
         "at_fix_round": 2,
@@ -154,6 +162,12 @@
     },
     "mechanical": {
       "chain": [
+        {
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
+        },
         {
           "seat": "gpt-implementer",
           "model": "sol-latest",
@@ -215,7 +229,7 @@
         "fresh_per_unit": true,
         "release_facts": true
       },
-      "note": "Mechanical edits go to gpt-implementer too (2026-09-26); cursor-seat and devin-seat are optional capacity."
+      "note": "Mechanical edits follow implement (2026-09-28): sonnet-implementer, then gpt-implementer; cursor-seat and devin-seat are optional capacity."
     },
     "verify": {
       "cross_vendor": true,
@@ -284,7 +298,7 @@
     "codex-test-runner": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "medium"},
     "frontend-designer": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "high"},
     "luna-implementer": {"vendor": "openai", "box": null, "model": "luna-latest", "effort": "medium"},
-    "sonnet-implementer": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "medium"},
+    "sonnet-implementer": {"vendor": "anthropic", "box": null},
     "effort-xhigh": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "xhigh"},
     "host-relay": {"vendor": "anthropic", "box": null, "model": "haiku-latest", "effort": "low"}
   },
@@ -321,8 +335,8 @@
       "ok_on_pace": "a min_pace entry passes the pace gate when its pool's pace is known and >= min_pace and the pool's eligibleAccounts count, when present, is above 2",
       "behind_or_low": "a min_pace entry fails the pace gate when its pool's pace is unknown or below min_pace, or when the pool's eligibleAccounts count is present and 2 or less; an entry with no min_pace has no pace gate",
       "critical": "the same pace gate as behind_or_low (a count of 1 is 2 or less)",
-      "exhausted": "an entry whose pool status is exhausted is skipped",
-      "every_entry": "paced or not, an entry is skipped when its model alias does not resolve, its seat is down, or it shares the author's vendor on a cross-vendor class; in a class that declares auditors it is also skipped when no auditor is declared for its vendor, the auditor's model does not resolve, the auditor's pool is exhausted or has an eligibleAccounts count of 1 or less, or the auditor's seat is down"
+      "exhausted": "an entry whose pool is exhausted is skipped: its eligibleAccounts is 0, or, when the pool reports no count, its status is exhausted; a headroom label alone never skips it",
+      "every_entry": "paced or not, an entry is skipped when its model alias does not resolve, its seat is down, or it shares the author's vendor on a cross-vendor class; in a class that declares auditors it is also skipped when no auditor is declared for its vendor, the auditor's model does not resolve, the auditor's pool is exhausted (no eligible account) or has an eligibleAccounts count of 1 or less, or the auditor's seat is down; a pool counts as exhausted only when its eligibleAccounts is 0, or by its status label when it reports no count"
     },
     "judgment_classes": [
       "plan",
@@ -339,7 +353,7 @@
         "sol-latest"
       ],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
-      "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; opus-seat takes judgment code and is the pace-gated implement fallback; luna-implementer and sonnet-implementer are off_default."
+      "implementation": "Opus plans, specs, designs and verifies; sonnet-implementer (sonnet-latest, high) writes code and mechanical edits by default (2026-09-28), gpt-implementer (sol-latest, medium) when Sonnet is really out; opus-seat takes judgment code and is the pace-gated implement fallback; luna-implementer is off_default."
     },
     "review": {
       "owner_date": "2026-09-26",
@@ -370,10 +384,12 @@
           "high"
         ],
         "implement": [
-          "medium"
+          "medium",
+          "high"
         ],
         "mechanical": [
-          "medium"
+          "medium",
+          "high"
         ],
         "plan": [
           "high"
@@ -400,7 +416,7 @@
   },
   "notes": [
     "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
-    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements; the other vendor audits (classes.*.audit).",
+    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements (superseded 2026-09-28: sonnet-implementer implements by default, Sol when Sonnet is out); the other vendor audits (classes.*.audit).",
     "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
   ],
   "aliases": {
@@ -471,12 +487,6 @@
       "seat": "luna-implementer",
       "since": "2026-09-26",
       "evidence": "orch-lab E6: 5/6 accepted, ~135k tokens per accepted unit vs gpt-implementer 6/6 at ~105k",
-      "returns_when": "an eval matches gpt-implementer's accept rate on that kind of task"
-    },
-    {
-      "seat": "sonnet-implementer",
-      "since": "2026-09-26",
-      "evidence": "orch-lab E6: 5/6 accepted, ~284k tokens per accepted unit",
       "returns_when": "an eval matches gpt-implementer's accept rate on that kind of task"
     }
   ]

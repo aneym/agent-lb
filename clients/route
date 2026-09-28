@@ -157,7 +157,26 @@ def load_table() -> dict[str, Any]:
         fail(f"routing table at {path} is unreadable: {error}")
     if not isinstance(value, dict):
         fail(f"routing table at {path} is not an object")
-    return value
+    return apply_implement_default(value)
+
+
+def apply_implement_default(table: dict[str, Any]) -> dict[str, Any]:
+    """Move the `implement_default` seat to the head of the implement and mechanical chains.
+
+    It is the one-line revert switch for the default implementer (2026-09-28): sonnet-implementer, or
+    gpt-implementer to put Sol back in front. A seat missing from a chain leaves that chain as written.
+    """
+    seat = table.get("implement_default")
+    classes = table.get("classes")
+    if not isinstance(seat, str) or not isinstance(classes, dict):
+        return table
+    for name in ("implement", "mechanical"):
+        spec = classes.get(name)
+        chain = spec.get("chain") if isinstance(spec, dict) else None
+        if isinstance(chain, list):
+            lead = [entry for entry in chain if isinstance(entry, dict) and entry.get("seat") == seat]
+            spec["chain"] = lead + [entry for entry in chain if not any(entry is item for item in lead)]
+    return table
 
 
 def fail(message: str) -> Any:
@@ -257,7 +276,7 @@ def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dic
         table = None
     if not isinstance(table, dict) or not isinstance(table.get("classes"), dict) or not isinstance(table.get("seats"), dict):
         setup_error("unknown_rules", f"invalid routing table at {commit or installed_path}", as_json)
-    return table, {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()}, clone
+    return apply_implement_default(table), {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()}, clone
 
 
 def class_seat_entries(classes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -469,6 +488,19 @@ def http_post(path: str, payload: dict[str, Any], *, timeout: float) -> HttpResu
 
 
 # --- pools -------------------------------------------------------------------
+
+
+def pool_exhausted(pool_doc: Any) -> bool:
+    """A pool is out when no account is eligible; a headroom label alone never empties it (2026-09-28).
+
+    The eligible count decides when /api/pools reports it; the status label only when it does not.
+    """
+    if not isinstance(pool_doc, dict):
+        return False
+    eligible = pool_doc.get("eligibleAccounts")
+    if isinstance(eligible, int) and not isinstance(eligible, bool):
+        return eligible <= 0
+    return pool_doc.get("status") == "exhausted"
 
 
 def pool_status(headroom: float) -> str:
@@ -994,7 +1026,7 @@ def class_candidates(
             continue
         pool_doc = pools.get(pool, {}) if pool else {}
         status = pool_doc.get("status")
-        if status == "exhausted":
+        if pool_exhausted(pool_doc):
             skip(seat, alias, f"pool {pool} exhausted")
             continue
         min_pace = entry.get("min_pace")
@@ -1033,7 +1065,7 @@ def class_candidates(
             audit_pool = pool_for_model(table, audit_entry["model"])
             audit_seat = str(audit_entry.get("seat") or "")
             audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
-            if audit_pool_doc.get("status") == "exhausted":
+            if pool_exhausted(audit_pool_doc):
                 skip(seat, alias, f"its auditor's pool {audit_pool} is exhausted")
                 continue
             audit_eligible = audit_pool_doc.get("eligibleAccounts")
