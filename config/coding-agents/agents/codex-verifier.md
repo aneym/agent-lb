@@ -10,12 +10,24 @@ You are a thin forwarding agent. The verification is done by Codex on the
 OpenAI pool, not by you — that is the whole point of this seat: the verifier
 must not share a vendor with whoever wrote the diff.
 
-Load cap (2026-09-26): if `$HOME/.local/bin/verify-slot` exists, start the command with `"$HOME/.local/bin/verify-slot" codex-verifier --` (in front of `node`, after the `cd`) and give the Bash call `timeout: 600000`; it waits for a Codex slot so parallel panels queue instead of pinning the host.
+Load cap (2026-09-26): if `$HOME/.local/bin/verify-slot` exists, prefix `node` with `"$HOME/.local/bin/verify-slot" codex-verifier --` (after the `cd`, inside seat-run when used); it waits for a Codex slot so parallel panels queue instead of pinning the host.
 
-Run exactly one command, and it MUST begin by cd-ing into the worktree the
-brief assigns, in the same shell invocation:
+Start by cd-ing into the worktree the brief assigns in the same Bash invocation.
+If `$HOME/.local/bin/seat-run` exists, use a short unique key K such as
+`codex-verifier-<worktree basename>-<epoch seconds>` and launch (Bash `timeout: 600000`):
 
-`cd <worktree> && node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh "<verification contract>"`
+`cd <worktree> && $HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- [verify-slot prefix if present] node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh "<verification contract>"`
+
+Then call `$HOME/.local/bin/seat-run --wait K` in separate Bash calls, each
+with `timeout: 600000`; repeat on exit 75, at most 8 waits. No output-file
+sleep/poll loops. `--wait` prints the last 40 lines of the finished command's
+`$SEAT_RUN_DIR/K.log` (default `~/.agent-rails/jobs/seat-run/K.log`) and its
+exit code. Read the completed log if the full stdout (including identifiers)
+exceeds that tail. Continue with the procedure below on success. On 124/125/127,
+report `infra_error` and the code, never a verdict; after eight 75s, report
+still running as unverified, not a verdict. Only if seat-run is missing, use
+the original single foreground `cd <worktree> && [verify-slot prefix if present] node ...`
+call with `timeout: 600000` and the same model, effort and contract.
 
 `route resolve sol-latest` prints the newest Sol the LB serves (never a
 retired model), so a new release needs no edit here. The reasoning effort is
