@@ -54,6 +54,34 @@ def test_install_service_plist_preserves_scheduling_priority(tmp_path: Path) -> 
     assert generated["Nice"] == 0
 
 
+def test_install_service_plist_defaults_exit_timeout(tmp_path: Path) -> None:
+    generated = _print_generated_plist(tmp_path)
+
+    assert generated["ExitTimeOut"] == 105
+
+
+def test_install_service_plist_preserves_existing_exit_timeout(tmp_path: Path) -> None:
+    existing_path = _launch_agent_path(tmp_path)
+    existing_path.parent.mkdir(parents=True)
+    existing_path.write_bytes(plistlib.dumps({"Label": LABEL, "ExitTimeOut": 330}))
+
+    generated = _print_generated_plist(tmp_path)
+
+    assert generated["ExitTimeOut"] == 330
+
+
+def test_install_service_plist_uses_graceful_shutdown_from_existing_env(tmp_path: Path) -> None:
+    existing_path = _launch_agent_path(tmp_path)
+    existing_path.parent.mkdir(parents=True)
+    existing_path.write_bytes(
+        plistlib.dumps({"Label": LABEL, "EnvironmentVariables": {"UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": "300"}})
+    )
+
+    generated = _print_generated_plist(tmp_path)
+
+    assert generated["ExitTimeOut"] == 330
+
+
 def test_install_service_plist_defaults_file_limits_above_launchd_256(tmp_path: Path) -> None:
     generated = _print_generated_plist(tmp_path)
 

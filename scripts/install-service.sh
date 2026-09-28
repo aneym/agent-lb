@@ -113,6 +113,11 @@ env.setdefault("AGENT_LB_METRICS_ENABLED", "true")
 env.setdefault("AGENT_LB_METRICS_HOST", "127.0.0.1")
 env.setdefault("AGENT_LB_METRICS_PORT", "9090")
 
+try:
+    graceful_shutdown = int(env.get("UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN", "75"))
+except ValueError:
+    graceful_shutdown = 75
+
 plist: dict[str, Any] = {
     "Label": label,
     "ProgramArguments": _program_args(existing.get("ProgramArguments"), bin_path=bin_path),
@@ -122,6 +127,8 @@ plist: dict[str, Any] = {
     # launchd applies negative Nice to agents; prioritize the event loop under host load.
     "ProcessType": existing.get("ProcessType") if isinstance(existing.get("ProcessType"), str) else "Interactive",
     "Nice": existing.get("Nice") if type(existing.get("Nice")) is int else -10,
+    # lb-restart drains within ExitTimeOut; launchd SIGKILLs after it.
+    "ExitTimeOut": existing.get("ExitTimeOut") if type(existing.get("ExitTimeOut")) is int else graceful_shutdown + 30,
     "StandardOutPath": f"{log_dir}/agent-lb.out.log",
     "StandardErrorPath": f"{log_dir}/agent-lb.err.log",
     "EnvironmentVariables": env,
