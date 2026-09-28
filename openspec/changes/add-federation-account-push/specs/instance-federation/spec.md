@@ -141,7 +141,9 @@ skip (not fail) an account, listing it in `skipped` with a reason:
 The receiver SHALL remove rows whose `owner_instance` equals
 `request.instance_id` and whose id is absent from the push (an empty
 `accounts` list removes them all), list them in `removed`, and never touch
-any other row. An account present in the push but skipped is not removed.
+any other row. Removal deactivates the row (status `deactivated`, access
+token replaced by an encrypted placeholder) and keeps its owner, so a later
+push that includes the id again reactivates it through the upsert. An account present in the push but skipped is not removed.
 When anything was upserted or removed, the account selection cache MUST be
 invalidated.
 
@@ -173,9 +175,10 @@ invalidated.
 - **GIVEN** a source previously pushed accounts `x` and `y`, and account `z`
   is mirrored from `laptop`
 - **WHEN** the source pushes only `x`
-- **THEN** `y` is in `removed` and its row is gone, `x` is updated, and `z`
-  is untouched
-- **AND** a later push with an empty list removes `x` too
+- **THEN** `y` is in `removed` and its row is deactivated with its pushed
+  token replaced, `x` is updated, and `z` is untouched
+- **AND** a later push that includes `y` again makes it active with the new token
+- **AND** a later push with an empty list removes `x` and `y`
 
 #### Scenario: Changes invalidate the selection cache
 

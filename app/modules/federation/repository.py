@@ -90,7 +90,9 @@ class FederationRepository:
                 setattr(existing, field_name, value)
         await self._session.commit()
 
-    async def list_local_usage_rollups(self, *, window_days: int) -> list[FederationUsageDayRollup]:
+    async def list_local_usage_rollups(
+        self, *, window_days: int, account_ids: set[str] | None = None
+    ) -> list[FederationUsageDayRollup]:
         earliest_day = (utcnow() - timedelta(days=window_days)).date()
         since = datetime.combine(earliest_day, datetime.min.time())
         day = func.date(RequestLog.requested_at)
@@ -117,6 +119,8 @@ class FederationRepository:
             .group_by(day, RequestLog.account_id)
             .order_by(day.desc(), RequestLog.account_id.asc())
         )
+        if account_ids is not None:
+            statement = statement.where(RequestLog.account_id.in_(account_ids))
         rows = (await self._session.execute(statement)).all()
         return [
             FederationUsageDayRollup(
@@ -376,6 +380,7 @@ class FederationRepository:
                     access_token_encrypted=encryptor.encrypt(access_token),
                     refresh_token_encrypted=encryptor.encrypt(_MIRROR_REFRESH_TOKEN_PLACEHOLDER),
                     owner_instance=owner_instance_id,
+                    deactivation_reason=None,
                     last_refresh=utcnow(),
                     access_expires_at=_expiry_from_ms(expires_at_ms),
                 )
@@ -404,6 +409,39 @@ class FederationRepository:
             )
         await self._session.commit()
         return True
+
+    async def has_owner_accounts(self, owner_instance_id: str) -> bool:
+        return (await self._session.scalar(
+            select(Account.id).where(Account.owner_instance == owner_instance_id).limit(1)
+        )) is not None
+
+    async def deactivate_mirrored_accounts_not_in(
+        self, *, owner_instance_id: str, keep_ids: set[str], encryptor: TokenEncryptor | None = None
+    ) -> list[str]:
+        """Blank dropped access credentials without changing any other owner's rows."""
+        statement = select(Account.id).where(
+            Account.owner_instance == owner_instance_id,
+            or_(
+                Account.status != AccountStatus.DEACTIVATED,
+                Account.deactivation_reason != "federation_push_removed",
+                Account.deactivation_reason.is_(None),
+            ),
+        )
+        if keep_ids:
+            statement = statement.where(Account.id.not_in(keep_ids))
+        ids = list((await self._session.execute(statement)).scalars())
+        if ids:
+            await self._session.execute(
+                update(Account)
+                .where(Account.id.in_(ids), Account.owner_instance == owner_instance_id)
+                .values(
+                    status=AccountStatus.DEACTIVATED,
+                    deactivation_reason="federation_push_removed",
+                    access_token_encrypted=(encryptor or TokenEncryptor()).encrypt(""),
+                )
+            )
+            await self._session.commit()
+        return ids
 
     async def get_open_transfer(self, account_id: str) -> AccountTransfer | None:
         return (

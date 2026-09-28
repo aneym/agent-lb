@@ -16,6 +16,8 @@ from app.modules.federation.exceptions import (
     FederationNotFoundError,
     FederationPeerRequestError,
 )
+from app.modules.federation.push_auth import PushSource, require_federation_push_source
+from app.modules.federation.push_receiver import FederationPushReceiver
 from app.modules.federation.scheduler import FederationMirrorScheduler
 from app.modules.federation.schemas import (
     FederationAbortRequest,
@@ -31,6 +33,8 @@ from app.modules.federation.schemas import (
     FederationCheckoutResponse,
     FederationMirrorResponse,
     FederationMirrorStatus,
+    FederationPushRequest,
+    FederationPushResponse,
     FederationStatusResponse,
     FederationTransferStateResponse,
     FederationTransferStatusResponse,
@@ -72,6 +76,18 @@ dashboard_router = APIRouter(
     tags=["dashboard"],
     dependencies=[Depends(validate_dashboard_session), Depends(set_dashboard_error_format)],
 )
+
+
+@router.post("/push", response_model=FederationPushResponse)
+async def post_push(
+    request: FederationPushRequest,
+    source: PushSource = Depends(require_federation_push_source),
+    context: FederationContext = Depends(get_federation_context),
+) -> FederationPushResponse:
+    try:
+        return await FederationPushReceiver(context.repository).receive(source, request)
+    except FederationConflictError as exc:
+        raise HTTPException(status_code=409, detail="Federation push owner conflict") from exc
 
 
 @router.get("/mirror", response_model=FederationMirrorResponse, dependencies=[Depends(require_federation_mirror_auth)])

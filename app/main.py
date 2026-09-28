@@ -61,6 +61,7 @@ from app.modules.conversation_archive import api as conversation_archive_api
 from app.modules.dashboard import api as dashboard_api
 from app.modules.dashboard_auth import api as dashboard_auth_api
 from app.modules.federation import api as federation_api
+from app.modules.federation.push import build_federation_push_scheduler
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.firewall import api as firewall_api
 from app.modules.health import api as health_api
@@ -187,6 +188,8 @@ async def lifespan(app: FastAPI):
             logger.warning("Federation transfer routes are disabled until a transfer token is set")
         federation_mirror_scheduler = build_federation_mirror_scheduler()
         app.state.federation_mirror_scheduler = federation_mirror_scheduler
+        federation_push_scheduler = build_federation_push_scheduler()
+        app.state.federation_push_scheduler = federation_push_scheduler
         event_loop_lag_monitor = build_event_loop_lag_monitor(
             warning_threshold_seconds=settings.event_loop_lag_warning_threshold_seconds
         )
@@ -200,6 +203,7 @@ async def lifespan(app: FastAPI):
         await account_resume_scheduler.start()
         await reset_credit_auto_redeem_scheduler.start()
         await federation_mirror_scheduler.start()
+        await federation_push_scheduler.start()
         await event_loop_lag_monitor.start()
     if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
         import uvicorn
@@ -372,6 +376,7 @@ async def lifespan(app: FastAPI):
         await cache_poller.stop()
         await accounts_cache_warmer.stop()
         await event_loop_lag_monitor.stop()
+        await federation_push_scheduler.stop()
         await federation_mirror_scheduler.stop()
         await account_pulse_scheduler.stop()
         await account_resume_scheduler.stop()

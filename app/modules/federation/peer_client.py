@@ -10,6 +10,8 @@ from app.modules.federation.schemas import (
     FederationAuthPayload,
     FederationCheckoutResponse,
     FederationMirrorResponse,
+    FederationPushRequest,
+    FederationPushResponse,
     FederationTransferStatusResponse,
     FederationUsageReportRequest,
 )
@@ -29,6 +31,8 @@ class CheckinPeerResult:
 
 class FederationPeerClient(Protocol):
     async def fetch_mirror(self, *, peer_url: str, token: str) -> FederationMirrorResponse: ...
+
+    async def push_accounts(self, *, url: str, request: FederationPushRequest) -> FederationPushResponse: ...
 
     async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None: ...
 
@@ -68,6 +72,16 @@ class AiohttpFederationPeerClient:
             async with session.get(f"{peer_url}/api/federation/mirror", headers=_bearer_headers(token)) as response:
                 data = await _json_or_raise(response)
         return FederationMirrorResponse.model_validate(data)
+
+    async def push_accounts(self, *, url: str, request: FederationPushRequest) -> FederationPushResponse:
+        # Push authentication is the receiver's Tailscale whois identity, not a bearer token.
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30), trust_env=False) as session:
+            async with session.post(
+                f"{url.rstrip('/')}/api/federation/push",
+                json=request.model_dump(mode="json"),
+            ) as response:
+                data = await _json_or_raise(response)
+        return FederationPushResponse.model_validate(data)
 
     async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None:
         async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
