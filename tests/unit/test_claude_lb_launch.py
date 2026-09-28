@@ -795,25 +795,41 @@ def test_prune_stale_shim_files_only_touches_old_launcher_files(tmp_path) -> Non
     launcher = load_launcher_module()
     now = 1_700_000_000.0
     old = now - launcher.SHIM_READY_FILE_MAX_AGE_SECONDS - 60
-    fresh = now - 60
-    for name, mtime in (
-        ("cc-1-1.proxy", old),
-        ("cc-2-2.proxy", fresh),
-        ("desktop.proxy", old),
-        ("other.proxy", old),
-        ("cc-3-3.proxy.tmp", old),
-    ):
-        path = tmp_path / name
-        path.write_text("1\n")
-        os.utime(path, (mtime, mtime))
+    dead = now - launcher.SHIM_READY_FILE_DEAD_GRACE_SECONDS - 1
+    fresh = now - launcher.SHIM_READY_FILE_DEAD_GRACE_SECONDS + 1
+    with socket.socket() as closed_listener:
+        closed_listener.bind(("127.0.0.1", 0))
+        dead_port = closed_listener.getsockname()[1]
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        live_port = listener.getsockname()[1]
+        for name, mtime, port in (
+            ("cc-1-1.proxy", old, live_port),
+            ("rails-desktop-1.proxy", old, live_port),
+            ("cc-2-2.proxy", dead, dead_port),
+            ("rails-desktop-2.proxy", dead, "65536"),
+            ("rails-desktop-4.proxy", dead, "invalid"),
+            ("cc-3-3.proxy", dead, live_port),
+            ("cc-4-4.proxy", fresh, "invalid"),
+            ("desktop.proxy", old, "invalid"),
+            ("other.proxy", old, "invalid"),
+            ("cc-5-5.proxy.tmp", old, "invalid"),
+            ("rails-desktop-3.proxy.tmp", old, "invalid"),
+        ):
+            path = tmp_path / name
+            path.write_text(f"{port}\n")
+            os.utime(path, (mtime, mtime))
 
-    assert launcher._prune_stale_shim_files(tmp_path, now=now) == 1
-    assert sorted(p.name for p in tmp_path.iterdir()) == [
-        "cc-2-2.proxy",
-        "cc-3-3.proxy.tmp",
-        "desktop.proxy",
-        "other.proxy",
-    ]
+        assert launcher._prune_stale_shim_files(tmp_path, now=now) == 5
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "cc-3-3.proxy",
+            "cc-4-4.proxy",
+            "cc-5-5.proxy.tmp",
+            "desktop.proxy",
+            "other.proxy",
+            "rails-desktop-3.proxy.tmp",
+        ]
     assert launcher._prune_stale_shim_files(tmp_path / "missing", now=now) == 0
 
 

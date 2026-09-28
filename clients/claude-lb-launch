@@ -781,14 +781,16 @@ def _proxy_port_ready(port: int, timeout: float = 0.4) -> bool:
 
 
 SHIM_READY_FILE_MAX_AGE_SECONDS = 24 * 3600
+SHIM_READY_FILE_DEAD_GRACE_SECONDS = 10
 
 
 def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
-    """Drop per-session ready files older than a day. Each launch leaves a
-    `cc-<pid>-<epoch>.proxy` behind when the shim dies with its parent before
-    unlinking (observed 516 files after two months). Best-effort and bounded
-    to launcher-owned names; the shared desktop shim's file is never touched."""
-    cutoff = (time.time() if now is None else now) - SHIM_READY_FILE_MAX_AGE_SECONDS
+    """Remove old per-session ready files, or dead ones after a short grace period.
+    Leave shared and unrelated files alone; skip entries that cannot be inspected.
+    """
+    current_time = time.time() if now is None else now
+    old_cutoff = current_time - SHIM_READY_FILE_MAX_AGE_SECONDS
+    dead_cutoff = current_time - SHIM_READY_FILE_DEAD_GRACE_SECONDS
     removed = 0
     try:
         entries = list(os.scandir(shim_dir))
@@ -796,12 +798,23 @@ def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
         return 0
     for entry in entries:
         name = entry.name
-        if not (name.startswith("cc-") and name.endswith(".proxy")):
+        if not (name.endswith(".proxy") and (name.startswith("cc-") or name.startswith("rails-desktop-"))):
             continue
         try:
-            if entry.is_file(follow_symlinks=False) and entry.stat(follow_symlinks=False).st_mtime < cutoff:
-                os.unlink(entry.path)
-                removed += 1
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            mtime = entry.stat(follow_symlinks=False).st_mtime
+            if mtime >= old_cutoff:
+                if mtime >= dead_cutoff:
+                    continue
+                try:
+                    port = int(Path(entry.path).read_text().strip())
+                except ValueError:
+                    port = 0
+                if 1 <= port <= 65535 and _proxy_port_ready(port, timeout=0.2):
+                    continue
+            os.unlink(entry.path)
+            removed += 1
         except OSError:
             continue
     return removed
