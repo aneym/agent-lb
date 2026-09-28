@@ -360,6 +360,13 @@ class Settings(BaseSettings):
     federation_peer_url: str | None = None
     federation_mirror_interval_seconds: int = Field(default=300, gt=0)
     federation_usage_window_days: int = Field(default=7, gt=0)
+    # Account push (openspec add-federation-account-push). Sender side: which of
+    # this instance's owned accounts to push to which peer LBs. Receiver side:
+    # which Tailscale logins may push, and the tailscale CLI used to identify them.
+    federation_push_path: Path = DEFAULT_HOME_DIR / "federation-push.json"
+    federation_push_interval_seconds: int = Field(default=300, gt=0)
+    federation_push_sources_path: Path = DEFAULT_HOME_DIR / "federation-push-sources.json"
+    federation_tailscale_bin: str | None = None
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
     http_responses_session_bridge_advertise_base_url: str | None = None
     accounts_cache_warmer_enabled: bool = True
@@ -520,6 +527,25 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return Path(value).expanduser()
         raise TypeError("encryption_key_file must be a path")
+
+    @field_validator("federation_push_path", "federation_push_sources_path", mode="before")
+    @classmethod
+    def _expand_federation_push_paths(cls, value: str | Path) -> Path:
+        if isinstance(value, Path):
+            return value.expanduser()
+        if isinstance(value, str):
+            return Path(value.strip()).expanduser()
+        raise TypeError("federation push paths must be paths")
+
+    @field_validator("federation_tailscale_bin", mode="before")
+    @classmethod
+    def _normalize_federation_tailscale_bin(cls, value: OptionalStringInput) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        raise TypeError("federation_tailscale_bin must be a string")
 
     @field_validator("conversation_archive_dir", mode="before")
     @classmethod

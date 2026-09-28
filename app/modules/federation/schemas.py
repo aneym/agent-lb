@@ -39,6 +39,28 @@ class FederationUsageDayRollup(BaseModel):
     last_request_at: datetime | None = None
 
 
+class FederationPushRequest(BaseModel):
+    """A peer LB pushing its owned accounts into this LB (sender owns and refreshes them)."""
+
+    instance_id: str = Field(min_length=1)
+    accounts: list[FederationMirrorAccount]
+
+
+class FederationPushSkip(BaseModel):
+    account_id: str
+    reason: str
+
+
+class FederationPushResponse(BaseModel):
+    """Receiver's answer to a push. NEVER carries an access or refresh token."""
+
+    source: str
+    accepted: list[str]
+    skipped: list[FederationPushSkip]
+    removed: list[str]
+    usage: list[FederationUsageDayRollup]
+
+
 class FederationUsageReportRequest(BaseModel):
     instance_id: str = Field(min_length=1)
     rollups: list[FederationUsageDayRollup]
