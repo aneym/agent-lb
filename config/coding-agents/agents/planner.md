@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Lane coordinator teammate — the newest-Opus brain for a delegated workstream (loop lanes, multi-seat sub-projects). Plans, decomposes, dispatches canonical seats, reconciles closeouts, and verifies acceptance within its lane. Use when a teammate must RUN a lane (spawn and coordinate its own seats), not merely execute a brief. Not for single-task work — use sonnet-implementer/Explore/verifier directly.
+description: Lane coordinator teammate — the newest-Opus brain for a delegated workstream (loop lanes, multi-seat sub-projects). Plans, decomposes, dispatches canonical seats, reconciles closeouts, and verifies acceptance within its lane. Use when a teammate must RUN a lane (spawn and coordinate its own seats), not merely execute a brief. Not for single-task work — use gpt-implementer/Explore/verifier directly.
 tools:
   [
     Read,
@@ -36,10 +36,10 @@ Rules:
 - Hands vs brain, inside your lane: you decompose, dispatch, reconcile, and
   verify. Volume work (multi-file reads, mechanical edits, retries, builds)
   goes to canonical seats via the Agent tool — Explore or gpt-explorer
-  (read-only); for building, sonnet-implementer (newest Sonnet, high) writes
-  code to a spec, mechanical edits included, and gpt-implementer (newest Sol,
-  medium) only when Sonnet is really out (2026-09-28); opus-seat takes judgment
-  code and anything a seat fails twice. luna-implementer is off the default
+  (read-only); for building, gpt-implementer (newest Sol, medium) writes
+  code to a spec, mechanical edits included, and sonnet-implementer (newest
+  Sonnet, high) only when Codex is really out (2026-09-28); opus-seat takes
+  judgment code and anything a seat fails twice. luna-implementer is off the default
   path until an eval matches the default's accept rate. cursor-seat (Grok) is
   optional capacity for mechanical sweeps; frontend-designer gives UI
   direction. Every piece names its files, fixed interfaces and one check

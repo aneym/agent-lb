@@ -1,0 +1,4 @@
+- [x] routing-table: Sol heads implement and mechanical, Sonnet high second; implement_default gpt-implementer; codex_empty_fallback with E12 evidence
+- [x] sonnet-implementer definition: effort high, described as the Codex-empty fallback
+- [x] ROUTING.md step 3, chains and effort table; adapter, planner, frontend-designer
+- [x] tests: route pick default, low Codex pool, Sol down, implement_default switch

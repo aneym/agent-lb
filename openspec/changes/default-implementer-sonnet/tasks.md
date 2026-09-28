@@ -1,5 +1,0 @@
-- [x] routing-table: Sonnet heads implement and mechanical; sonnet-implementer leaves off_default; effort high
-- [x] route applies `implement_default` when it loads a table
-- [x] verify-routing implement-head accepts either default at the head and requires both
-- [x] ROUTING.md step 3 and chains updated (149 lines)
-- [x] tests: route pick (default, low pool, Sonnet down, revert), verify-routing violations

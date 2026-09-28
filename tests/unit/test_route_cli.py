@@ -690,15 +690,16 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
     assert plan.returncode == 0, plan.stderr
     # No Anthropic model list in the fixtures: Claude aliases fall back to their pinned ids.
     assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "claude-opus-5-5")
-    # Implement leads with sonnet-implementer (2026-09-28), whose auditor is the newest Sol.
+    # Implement leads with gpt-implementer on the newest Sol (E12, 2026-09-28), whose auditor is Opus.
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
-    assert (picked["seat"], picked["alias"], picked["model"]) == ("sonnet-implementer", "sonnet-latest", "claude-sonnet-5-5")
-    assert picked["audit"]["alias"] == "sol-latest"
+    assert (picked["seat"], picked["model"]) == ("gpt-implementer", "gpt-6-sol")
+    assert picked["audit"]["alias"] == "opus-latest"
+    assert [entry["seat"] for entry in picked["fallbacks"]][:1] == ["sonnet-implementer"]
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
 
-def test_canonical_implement_falls_to_sol_only_when_sonnet_is_out(tmp_path: Path) -> None:
+def test_canonical_implement_falls_to_sonnet_high_then_opus_only_when_sol_is_out(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}, {"id": "gpt-6-luna"}]})
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
@@ -709,24 +710,27 @@ def test_canonical_implement_falls_to_sol_only_when_sonnet_is_out(tmp_path: Path
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
 
-    # A low Anthropic pool is not "out": Sonnet keeps the work.
-    assert pick({"anthropic-general": "low", "openai-codex": "ok"})["seat"] == "sonnet-implementer"
-    # Sonnet recorded down (its probe hit a 429 or usage limit) is out: Sol implements and Opus audits it.
+    # A low Codex pool is not "out": Sol keeps the work.
+    assert pick({"anthropic-general": "ok", "openai-codex": "low"})["seat"] == "gpt-implementer"
+    # Sol recorded down (a 429 or usage limit) is out: Sonnet high stands in first, and Sol audits it.
     (tmp_path / ".claude").mkdir()
-    routing_state(tmp_path, age_seconds=60, seats={"sonnet-implementer": {"ok": False, "error": "HTTP 429"}})
+    routing_state(tmp_path, age_seconds=60, seats={"gpt-implementer": {"ok": False, "error": "HTTP 429"}})
     out = pick({"anthropic-general": "ok", "openai-codex": "ok"})
-    assert (out["seat"], out["model"]) == ("gpt-implementer", "gpt-6-sol")
-    assert out["audit"]["alias"] == "opus-latest"
+    assert (out["seat"], out["alias"]) == ("sonnet-implementer", "sonnet-latest")
+    chain = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))["classes"]["implement"]["chain"]
+    assert [(e["seat"], e.get("effort")) for e in chain] == [
+        ("gpt-implementer", "medium"), ("sonnet-implementer", "high"), ("opus-seat", "medium")]
+    assert out["audit"]["alias"] == "sol-latest"
     (tmp_path / ".claude" / "routing-state.json").unlink()
 
-    # implement_default is the one-line revert switch: Sol leads again and Sonnet follows it.
+    # implement_default names the seat route puts first; switching it puts Sonnet ahead of Sol.
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
-    table["implement_default"] = "gpt-implementer"
-    reverted = tmp_path / "reverted-table.json"
-    reverted.write_text(json.dumps(table), encoding="utf-8")
-    back = pick({"anthropic-general": "ok", "openai-codex": "ok"}, reverted)
-    assert back["seat"] == "gpt-implementer"
-    assert [entry["seat"] for entry in back["fallbacks"]][:1] == ["sonnet-implementer"]
+    table["implement_default"] = "sonnet-implementer"
+    switched = tmp_path / "switched-table.json"
+    switched.write_text(json.dumps(table), encoding="utf-8")
+    front = pick({"anthropic-general": "ok", "openai-codex": "ok"}, switched)
+    assert front["seat"] == "sonnet-implementer"
+    assert [entry["seat"] for entry in front["fallbacks"]][:1] == ["gpt-implementer"]
 
 
 def test_claude_aliases_resolve_to_the_newest_listed_model_without_a_pin(tmp_path: Path) -> None:
@@ -1122,7 +1126,7 @@ def test_canonical_implement_admission_by_codex_pool(
         ]},
     )
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
-    # Sonnet leads implement (2026-09-28); it is recorded down here so the rows test Sol's admission behind it.
+    # Sonnet is recorded down here so the rows test Sol's admission and the opus-seat fallback alone.
     down = {"sonnet-implementer": {"ok": False, "error": "HTTP 429"}}
     if recorded_down:
         down["gpt-implementer"] = {"ok": False, "error": "unavailable"}

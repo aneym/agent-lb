@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "implement_default": "sonnet-implementer",
-  "implement_default_note": "The one-line revert switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. sonnet-implementer (Sonnet high) by default; set it to gpt-implementer to put Sol medium back in front.",
+  "implement_default": "gpt-implementer",
+  "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; sonnet-implementer is the Codex-empty fallback, not the default.",
   "classes": {
     "plan": {
       "chain": [
@@ -89,16 +89,16 @@
     "implement": {
       "chain": [
         {
-          "seat": "sonnet-implementer",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
           "seat": "gpt-implementer",
           "model": "sol-latest",
           "vendor": "openai",
           "effort": "medium"
+        },
+        {
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
         },
         {
           "seat": "opus-seat",
@@ -152,7 +152,13 @@
         "fresh_per_unit": true,
         "release_facts": true
       },
-      "note": "Code to a spec with one check. Alex, 2026-09-28: \"most of our default work should be routed to sonnet in general, just validated by sol and opus; scoping still done in opus.\" sonnet-implementer (newest Sonnet, high) writes code by default and codex-verifier (Sol xhigh) reviews it. gpt-implementer (newest Sol, medium) takes over only when Sonnet is really out: the fold re-seats a piece after two infra failures (real 429s or usage-limit errors), or route skips Sonnet because routing state records it down, its pool has no eligible account, or its Sol reviewer's pool is down to one eligible account (rule 1); then the fresh Opus verifier reviews. An Anthropic pool down to one eligible account or none leaves Sol no auditor (rule 1), so route picks nothing then. No percentage or headroom threshold moves it. opus-seat stays the pace-gated last resort and takes judgment code by name. implement_default is the revert switch.",
+      "note": "Code to a spec with one check. gpt-implementer (newest Sol, medium) writes all code by default; the Opus verifier reviews it. When Codex is truly empty (real 429s or usage-limit errors, never a low percentage), sonnet-implementer (newest Sonnet, high) stands in first and codex_empty_fallback gives the order; opus-seat takes judgment code by name and whatever Sonnet fails. The factory fold re-seats a piece after two infra failures: Sol or Luna to sonnet-implementer, then opus-seat. route's auditor rule 1 still applies: with the Codex pool empty, Sol is out and no Claude-authored entry has its Sol auditor (a Codex pool at one eligible account already skips the Claude entries), so route picks nothing and the fold's stand-in order decides. orch-lab E12 (2026-09-28, E10 units, n=6 per batch, provisional): Sol medium 6/6 at 379k fresh tokens and $0.86 per accepted unit; Sonnet 5.5 high 8/12 at 565k and $2.76; Opus medium 4/6 at 683k and $3.76.",
+      "codex_empty_fallback": {
+        "order": ["sonnet-implementer", "opus-seat"],
+        "since": "2026-09-28",
+        "trigger": "real Codex 429s or usage-limit errors on the default implementer (the fold re-seats after two infra failures); a low percentage is not a trigger",
+        "evidence": "orch-lab E12 (2026-09-28, E10 units, n=6 per batch, provisional): Sol medium 6/6 at 379k fresh tokens and $0.86 per accepted unit; Sonnet 5.5 high 8/12 at 565k and $2.76; Opus medium 4/6 at 683k and $3.76. Sol stays the default; Sonnet 5.5 high is the first Claude stand-in, ahead of opus-seat, at effort high."
+      },
       "escalation": {
         "seat": "opus-seat",
         "at_fix_round": 2,
@@ -163,16 +169,16 @@
     "mechanical": {
       "chain": [
         {
-          "seat": "sonnet-implementer",
-          "model": "sonnet-latest",
-          "vendor": "anthropic",
-          "effort": "high"
-        },
-        {
           "seat": "gpt-implementer",
           "model": "sol-latest",
           "vendor": "openai",
           "effort": "medium"
+        },
+        {
+          "seat": "sonnet-implementer",
+          "model": "sonnet-latest",
+          "vendor": "anthropic",
+          "effort": "high"
         },
         {
           "seat": "cursor-seat",
@@ -229,7 +235,7 @@
         "fresh_per_unit": true,
         "release_facts": true
       },
-      "note": "Mechanical edits follow implement (2026-09-28): sonnet-implementer, then gpt-implementer; cursor-seat and devin-seat are optional capacity."
+      "note": "Mechanical edits follow implement: gpt-implementer, then sonnet-implementer when Codex is empty (2026-09-28, E12); cursor-seat and devin-seat are optional capacity."
     },
     "verify": {
       "cross_vendor": true,
@@ -353,7 +359,7 @@
         "sol-latest"
       ],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
-      "implementation": "Opus plans, specs, designs and verifies; sonnet-implementer (sonnet-latest, high) writes code and mechanical edits by default (2026-09-28), gpt-implementer (sol-latest, medium) when Sonnet is really out; opus-seat takes judgment code and is the pace-gated implement fallback; luna-implementer is off_default."
+      "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; sonnet-implementer (sonnet-latest, high) stands in when Codex is empty (2026-09-28, E12); opus-seat takes judgment code and is the pace-gated implement fallback; luna-implementer is off_default."
     },
     "review": {
       "owner_date": "2026-09-26",
@@ -416,7 +422,7 @@
   },
   "notes": [
     "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
-    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements (superseded 2026-09-28: sonnet-implementer implements by default, Sol when Sonnet is out); the other vendor audits (classes.*.audit).",
+    "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements (2026-09-28, E12: sonnet-implementer stands in when Codex is empty); the other vendor audits (classes.*.audit).",
     "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
   ],
   "aliases": {

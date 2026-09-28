@@ -1,6 +1,6 @@
 ---
 name: sonnet-implementer
-description: Default scoped coding seat on Claude Sonnet (sonnet-latest, high effort; 2026-09-28). Implements code to a spec; codex-verifier (Sol) reviews it. Edits the named files in the given worktree, runs the named check, reports the diff and output.
+description: Scoped coding seat on Claude Sonnet (sonnet-latest, high effort). The Codex-empty fallback implementer (2026-09-28, E12): it stands in when gpt-implementer hits real 429s or usage limits; codex-verifier (Sol) reviews it. Edits the named files in the given worktree, runs the named check, reports the diff and output.
 model: sonnet
 effort: high
 tools: [Read, Edit, Write, Bash, Grep, Glob]
