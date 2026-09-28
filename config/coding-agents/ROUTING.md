@@ -102,10 +102,10 @@ table together. Log which rung passed which task (`route record`, 2026-09-25) so
 - **Retired**, never resolved, denied by the seat guard, failed by verify-routing: Fable (`claude-fable-*`, `fable`,
   the `claude-planner` alias), the Codex Astra family (`gpt-*-astra`), and the gpt-5.6 generation and older. The
   table's `retired` list is the authority.
-- **Family aliases, never versions:** `opus-latest` and `sonnet-latest` (Claude Code's `opus` and `sonnet`),
+- **Family aliases, never versions:** `opus-latest`, `sonnet-latest` and `haiku-latest` for Claude seats,
   `sol-latest` and `luna-latest` for Codex and ccgpt seats, `grok-latest` for Cursor, `swe-latest` for Devin.
-  `route resolve <alias>` returns the newest non-retired model actually served; `route models` shows the current
-  resolution. Exact ids stay in tests, ledgers and pricing. install-policy pins `sonnet` to claude-sonnet-5-5 (2026-09-28).
+  `route resolve <alias>` returns the newest non-retired model served (Claude: LB `/api/models/anthropic`, else the
+  alias's `pinned` id; 2026-09-28); `route models` shows it. install-policy pins `sonnet` to the resolved Sonnet.
 - Terra is unserved and `implementer` retired (2026-09-25). `cc` and the Claude launcher start `opus[1m]`.
 
 ## The router (owner, 2026-09-20; chains 2026-09-26)

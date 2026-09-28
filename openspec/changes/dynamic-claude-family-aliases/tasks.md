@@ -1,0 +1,5 @@
+- [x] LB endpoint `/api/models/anthropic` with an hour cache and stale fallback
+- [x] route resolves Claude families from the list, then cache, pinned, harness
+- [x] install-policy writes the resolved Sonnet id
+- [x] tests: service cache and fallback, upstream headers, route resolution, install pin
+- [ ] lb-safe-restart, then `route resolve sonnet-latest` on Studio shows the listed source

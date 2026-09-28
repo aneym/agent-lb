@@ -218,6 +218,15 @@ class AvailabilityResponse(DashboardModel):
     providers: dict[str, ProviderAvailability] = Field(default_factory=dict)
 
 
+class AnthropicModelsResponse(DashboardModel):
+    """Upstream Anthropic model ids, so `route` can resolve a Claude family alias to its newest model."""
+
+    models: list[str] = Field(default_factory=list)
+    fetched_at: datetime | None = None
+    stale: bool = False
+    error: str | None = None
+
+
 class AccountImportResponse(DashboardModel):
     account_id: str
     email: str

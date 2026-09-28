@@ -688,11 +688,12 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
     plan, implement, audit = pick("plan"), pick("implement"), pick("verify", "--author-vendor", "anthropic")
 
     assert plan.returncode == 0, plan.stderr
-    assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "opus")
+    # No Anthropic model list in the fixtures: Claude aliases fall back to their pinned ids.
+    assert (json.loads(plan.stdout)["alias"], json.loads(plan.stdout)["model"]) == ("opus-latest", "claude-opus-5-5")
     # Implement leads with sonnet-implementer (2026-09-28), whose auditor is the newest Sol.
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
-    assert (picked["seat"], picked["alias"], picked["model"]) == ("sonnet-implementer", "sonnet-latest", "sonnet")
+    assert (picked["seat"], picked["alias"], picked["model"]) == ("sonnet-implementer", "sonnet-latest", "claude-sonnet-5-5")
     assert picked["audit"]["alias"] == "sol-latest"
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
@@ -726,6 +727,41 @@ def test_canonical_implement_falls_to_sol_only_when_sonnet_is_out(tmp_path: Path
     back = pick({"anthropic-general": "ok", "openai-codex": "ok"}, reverted)
     assert back["seat"] == "gpt-implementer"
     assert [entry["seat"] for entry in back["fallbacks"]][:1] == ["sonnet-implementer"]
+
+
+def test_claude_aliases_resolve_to_the_newest_listed_model_without_a_pin(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    listed = ["claude-sonnet-5", "claude-sonnet-5-5", "claude-sonnet-4-20250514", "claude-opus-5-5", "claude-opus-4-8",
+              "claude-fable-5-1", "claude-haiku-4-5", "claude-haiku-4-5-20251001"]
+    write_fixture(fixtures, "api_models_anthropic.json", {"models": listed})
+    table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    for spec in table["aliases"].values():
+        spec.pop("pinned", None)
+    unpinned = tmp_path / "unpinned-table.json"
+    unpinned.write_text(json.dumps(table), encoding="utf-8")
+    extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json")}
+
+    def resolve(alias: str, source: Path = fixtures) -> str:
+        result = run("resolve", alias, home=tmp_path, table=unpinned, fixtures=source, extra=extra)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    # A dated snapshot never counts as a newer minor version.
+    assert [resolve(a) for a in ("sonnet-latest", "opus-latest", "haiku-latest")] == [
+        "claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-4-5"]
+    write_fixture(fixtures, "api_models_anthropic.json", {"models": [*listed, "claude-sonnet-6"]})
+    (tmp_path / "route-anthropic-models.json").unlink()
+    assert resolve("sonnet-latest") == "claude-sonnet-6"
+    # With the LB list gone, the day-old cache answers; with neither, the harness alias does.
+    empty = tmp_path / "empty-fixtures"
+    empty.mkdir()
+    assert resolve("sonnet-latest", empty) == "claude-sonnet-6"
+    (tmp_path / "route-anthropic-models.json").unlink()
+    assert resolve("sonnet-latest", empty) == "sonnet"
+    # A cache stamp with no timezone is not ours: it is ignored, never a crash.
+    (tmp_path / "route-anthropic-models.json").write_text(
+        json.dumps({"ts": "2026-09-28T12:00:00", "models": ["claude-sonnet-6"]}), encoding="utf-8")
+    assert resolve("sonnet-latest", empty) == "sonnet"
 
 
 def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> None:
@@ -812,7 +848,7 @@ def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
     if expected_seat == "opus-seat":
         assert (auditor["alias"], auditor["model"]) == ("sol-latest", "gpt-6-sol")
     else:
-        assert (auditor["alias"], auditor["model"]) == ("opus-latest", "opus")
+        assert (auditor["alias"], auditor["model"]) == ("opus-latest", "claude-opus-5-5")
 
 
 def test_record_and_report_compare_implement_seats_per_model(tmp_path: Path) -> None:

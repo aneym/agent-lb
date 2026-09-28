@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install-claude-clients.sh"
 POLICY_INSTALLER = ROOT / "config" / "coding-agents" / "install-policy.py"
@@ -18,6 +20,15 @@ MARKER_BLOCK = (
     "## Fable/Codex Routing\n\nretired ccdex adapter\n"
     "<!-- agent-lb:coding-agent-routing:end -->\n"
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_model_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """install-policy resolves sonnet-latest through route; keep that off the live LB and its caches."""
+    monkeypatch.setenv("AGENT_LB_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("ROUTE_MODELS_CACHE", str(tmp_path / "route-cache" / "models.json"))
+    for name in ("ROUTE_FIXTURE_DIR", "ROUTE_TABLE"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_installer_preview_is_non_mutating(tmp_path: Path) -> None:

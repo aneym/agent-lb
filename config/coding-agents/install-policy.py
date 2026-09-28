@@ -6,6 +6,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,8 +19,11 @@ MODEL = "opus"
 EFFORT_LEVEL = "high"
 # Claude Code 2.1.284 still maps its `sonnet` alias to claude-sonnet-5. Pin the alias to
 # the newest Sonnet so every `model: sonnet` seat and sonnet-latest runs it (2026-09-28).
+# The id is what `route resolve sonnet-latest` gives (the newest on the upstream list);
+# SONNET_MODEL is the fallback when route cannot answer.
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
 SONNET_MODEL = "claude-sonnet-5-5"
+SONNET_ID = re.compile(r"claude-sonnet-\d+(?:-\d{1,2})?")
 MANAGED_AGENTS = (
     (
         Path(".claude/agents/computer-use.md"),
@@ -270,7 +275,24 @@ def is_seat_guard_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/seat-guard.py" in command
 
 
-def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, Any]:
+def resolve_sonnet(source: Path, home: Path) -> str:
+    """The newest Sonnet id per `route resolve sonnet-latest` on this source table, else SONNET_MODEL."""
+    route = source.parent.parent / "clients" / "route"
+    if not route.is_file():
+        route = home / ".agent-lb" / "bin" / "route"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(route), "resolve", "sonnet-latest"],
+            capture_output=True, text=True, timeout=60, check=False,
+            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return SONNET_MODEL
+    model = result.stdout.strip() if result.returncode == 0 else ""
+    return model if SONNET_ID.fullmatch(model) else SONNET_MODEL
+
+
+def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
     groups = hooks.get("PreToolUse", [])
@@ -307,7 +329,7 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
             updated.pop("hooks", None)
     env = updated.get("env")
     if uninstall:
-        if isinstance(env, dict) and env.get(SONNET_ENV) == SONNET_MODEL:
+        if isinstance(env, dict) and isinstance(env.get(SONNET_ENV), str) and SONNET_ID.fullmatch(env[SONNET_ENV]):
             env.pop(SONNET_ENV)
             if not env:
                 updated.pop("env", None)
@@ -316,7 +338,7 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
             env = updated["env"] = {}
         elif not isinstance(env, dict):
             raise SystemExit("error: settings.json env is not a JSON object; fix it before installing the policy")
-        env[SONNET_ENV] = SONNET_MODEL
+        env[SONNET_ENV] = sonnet_model
     if not uninstall:
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL
@@ -397,7 +419,8 @@ def main() -> int:
         }
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
-    desired_settings = reconcile_settings(settings, args.uninstall)
+    sonnet_model = SONNET_MODEL if args.uninstall else resolve_sonnet(source, args.home)
+    desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model)
     desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]

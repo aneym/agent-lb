@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+import weakref
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import TypeVar, cast
@@ -67,6 +69,7 @@ from app.modules.accounts.schemas import (
     AccountSubscriptionLedger,
     AccountSummary,
     AccountTrendsResponse,
+    AnthropicModelsResponse,
     CodexAuthJson,
     CodexAuthTokens,
     OpenCodeAuthJson,
@@ -99,6 +102,21 @@ DEFAULT_ANTHROPIC_SUBSCRIPTION_CHECK_MODEL = probes.DEFAULT_ANTHROPIC_SUBSCRIPTI
 DEFAULT_GLM_PROBE_MODEL = probes.DEFAULT_GLM_PROBE_MODEL
 DEFAULT_KIMI_PROBE_MODEL = probes.DEFAULT_KIMI_PROBE_MODEL
 PROBE_REQUEST_TIMEOUT_SECONDS = probes.PROBE_REQUEST_TIMEOUT_SECONDS
+# The upstream Anthropic model list is read through one pooled account and kept an hour; a failed
+# refresh serves the last good list, marked stale (2026-09-28, dynamic `*-latest` aliases).
+ANTHROPIC_MODELS_TTL_SECONDS = 3600.0
+ANTHROPIC_MODELS_MAX_ACCOUNTS = 3
+# A limited account lists with its stored token and is never refreshed here, so listing cannot mark it active.
+_LIMITED_LISTABLE_STATUSES = (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED)
+_anthropic_models: tuple[float, datetime, list[str]] | None = None
+# One lock per live event loop: an asyncio.Lock binds to the loop that first waits on it.
+_anthropic_models_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _anthropic_models_refresh_lock() -> asyncio.Lock:
+    return _anthropic_models_locks.setdefault(asyncio.get_running_loop(), asyncio.Lock())
 PROBE_CONNECT_TIMEOUT_SECONDS = probes.PROBE_CONNECT_TIMEOUT_SECONDS
 PROBE_NETWORK_FAILURE_STATUS = probes.PROBE_NETWORK_FAILURE_STATUS
 
@@ -1211,6 +1229,51 @@ class AccountsService:
             chatgpt_account_id=chatgpt_account_id,
             model=model,
         )
+
+    async def list_anthropic_models(self) -> AnthropicModelsResponse:
+        """Upstream Anthropic model ids, cached for an hour; the last good list when a refresh fails."""
+        cached = _anthropic_models
+        if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
+            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
+        # One refresh at a time: a request that waited reuses the list the first one stored.
+        async with _anthropic_models_refresh_lock():
+            return await self._refresh_anthropic_models()
+
+    async def _refresh_anthropic_models(self) -> AnthropicModelsResponse:
+        global _anthropic_models
+        cached = _anthropic_models
+        if cached is not None and time.monotonic() - cached[0] < ANTHROPIC_MODELS_TTL_SECONDS:
+            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1])
+        error = "no Anthropic account can list models"
+        accounts = [
+            account
+            for account in await self._repo.list_accounts()
+            if normalize_provider_name(account.provider) == ANTHROPIC_PROVIDER_NAME
+            and (account.status == AccountStatus.ACTIVE or account.status in _LIMITED_LISTABLE_STATUSES)
+        ]
+        accounts.sort(key=lambda account: account.status != AccountStatus.ACTIVE)
+        for account in accounts[:ANTHROPIC_MODELS_MAX_ACCOUNTS]:
+            try:
+                fresh = account
+                if account.status == AccountStatus.ACTIVE and self._auth_manager:
+                    fresh = await self._auth_manager.ensure_fresh(account, force=False)
+                    if fresh.status != AccountStatus.ACTIVE:  # paused or sent to re-auth meanwhile
+                        continue
+                access_token = self._encryptor.decrypt(fresh.access_token_encrypted)
+            except Exception as exc:  # a refresh failure moves on to the next account
+                error = f"account token unavailable ({type(exc).__name__})"
+                continue
+            status, ids = await probes.list_anthropic_models(
+                access_token=access_token,
+                base_url=get_settings().anthropic_upstream_base_url,
+            )
+            if ids:
+                _anthropic_models = (time.monotonic(), utcnow(), ids)
+                return AnthropicModelsResponse(models=ids, fetched_at=_anthropic_models[1])
+            error = f"upstream model list returned HTTP {status}"
+        if cached is not None:
+            return AnthropicModelsResponse(models=cached[2], fetched_at=cached[1], stale=True, error=error)
+        return AnthropicModelsResponse(error=error)
 
     async def _send_messages_probe_request(
         self,

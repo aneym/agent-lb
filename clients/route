@@ -693,8 +693,9 @@ def command_pools(args: argparse.Namespace) -> int:
 #
 # Seats name a family alias (opus-latest, sol-latest, ...) instead of a version so a new
 # release is picked up with no edits. OpenAI families resolve against the LB's own model
-# list; Claude families resolve to Claude Code's harness alias (`opus`, `sonnet`), which
-# the installed Claude Code maps to the newest model of that family. Anything matching the
+# list; Claude families resolve against the upstream Anthropic list the LB serves at
+# /api/models/anthropic (cached a day here), then the alias's `pinned` id, then Claude Code's
+# harness alias (`opus`, `sonnet`) as the last resort (2026-09-28). Anything matching the
 # table's `retired` patterns never resolves and is flagged by verify-routing and the seat
 # guard.
 
@@ -751,6 +752,66 @@ def served_models() -> tuple[list[str], str]:
     if (datetime.now(timezone.utc) - stamp).total_seconds() > MODELS_CACHE_MAX_AGE_SECONDS:
         return [], "LB unreachable and the model cache is over a day old"
     return [value for value in ids if isinstance(value, str)], "cache (LB unreachable)"
+
+
+_ANTHROPIC_MODELS: tuple[list[str], str] | None = None
+
+
+def anthropic_models() -> tuple[list[str], str]:
+    """Upstream Anthropic model ids from the LB, falling back to the last good copy (at most a day old)."""
+    global _ANTHROPIC_MODELS
+    if _ANTHROPIC_MODELS is not None:
+        return _ANTHROPIC_MODELS
+    cache = models_cache_path().with_name("route-anthropic-models.json")
+    result = http_get("/api/models/anthropic", timeout=10.0)
+    ids = _model_ids({"models": [{"id": value} for value in result.body.get("models", [])]}) if (
+        result.ok and isinstance(result.body, dict) and isinstance(result.body.get("models"), list)) else []
+    if ids:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
+        except OSError:
+            pass
+        _ANTHROPIC_MODELS = (ids, "lb /api/models/anthropic")
+        return _ANTHROPIC_MODELS
+    _ANTHROPIC_MODELS = ([], "no Anthropic model list from the LB and no cache")
+    try:
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _ANTHROPIC_MODELS
+    stamp = _parse_ts(cached.get("ts")) if isinstance(cached, dict) else None
+    if stamp is not None and stamp.tzinfo is None:  # a hand-edited or foreign stamp: not ours, so not trusted
+        stamp = None
+    listed = cached.get("models") if isinstance(cached, dict) else None
+    if stamp is not None and isinstance(listed, list) and (
+            datetime.now(timezone.utc) - stamp).total_seconds() <= MODELS_CACHE_MAX_AGE_SECONDS:
+        _ANTHROPIC_MODELS = ([value for value in listed if isinstance(value, str)], "cache (LB list unavailable)")
+    return _ANTHROPIC_MODELS
+
+
+def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tuple[str | None, str]:
+    """The newest non-retired `claude-<family>-<major>[-<minor>]` upstream lists, else `pinned`, else the harness alias.
+
+    Dated snapshots (claude-sonnet-4-20250514) never match: a minor version has at most two digits.
+    """
+    family = spec.get("family")
+    if isinstance(family, str) and family:
+        pattern = re.compile(rf"^claude-{re.escape(family)}-(\d+)(?:-(\d{{1,2}}))?$")
+        listed, source = anthropic_models()
+        candidates = []
+        for model in listed:
+            match = pattern.match(model)
+            if match and not is_retired(model, retired):
+                candidates.append(((int(match.group(1)), int(match.group(2) or 0)), model))
+        if candidates:
+            return max(candidates)[1], f"newest listed {family} ({source})"
+    pinned = spec.get("pinned")
+    if isinstance(pinned, str) and pinned and not is_retired(pinned, retired):
+        return pinned, f"pinned fallback {pinned} (no Anthropic model list)"
+    harness = spec.get("harness")
+    if isinstance(harness, str) and harness:
+        return harness, f"Claude Code alias {harness!r} (its newest {harness})"
+    return None, f"alias for {family} has no model list, pin or harness"
 
 
 def cursor_models() -> list[str]:
@@ -823,9 +884,8 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
             # with a served-model source before it can route.
             return None, f"{name} is a wildcard, not a served model"
         return name, "not an alias"
-    harness = spec.get("harness")
-    if isinstance(harness, str) and harness:
-        return harness, f"Claude Code alias {harness!r} (its newest {harness})"
+    if spec.get("vendor") == "anthropic" or (spec.get("harness") and not spec.get("family")):
+        return resolve_claude_family(spec, retired)
     family = spec.get("family")
     if not isinstance(family, str) or not family:
         return None, f"alias {name} has no family"

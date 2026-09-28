@@ -155,3 +155,24 @@ def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> Non
     # The pulse probes the current Fable (5.1); the 5.0 price and fixtures stay.
     assert 'calls[0]["model"] == "claude-fable-5-1"' in pulse_test
     assert '"model":"claude-fable-5"' in fixture
+
+
+def test_install_pins_the_sonnet_alias_to_the_newest_listed_sonnet(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "api_models_anthropic.json").write_text(
+        json.dumps({"models": ["claude-sonnet-5-5", "claude-sonnet-6", "claude-opus-5-5"]}))
+    installer = ROOT / "config" / "coding-agents" / "install-policy.py"
+
+    def install(extra: dict[str, str]) -> str:
+        env = _source_env(home) | {"ROUTE_MODELS_CACHE": str(tmp_path / "cache" / "models.json")} | extra
+        subprocess.run([sys.executable, str(installer), "--home", str(home)], check=True, env=env,
+                       capture_output=True, text=True, timeout=120)
+        return json.loads((home / ".claude" / "settings.json").read_text())["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"]
+
+    assert install({"ROUTE_FIXTURE_DIR": str(fixtures)}) == "claude-sonnet-6"
+    # No list and no cache: the pinned fallback.
+    (tmp_path / "cache" / "route-anthropic-models.json").unlink()
+    assert install({}) == "claude-sonnet-5-5"

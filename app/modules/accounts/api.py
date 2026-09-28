@@ -42,6 +42,7 @@ from app.modules.accounts.schemas import (
     AccountTrendsResponse,
     AccountUpdateRequest,
     AccountUpdateResponse,
+    AnthropicModelsResponse,
     AvailabilityResponse,
     AvailabilityUnavailableAccount,
     DegradationStatus,
@@ -103,6 +104,14 @@ def build_availability_response(accounts: list[AccountSummary]) -> AvailabilityR
         degradation=DegradationStatus(level=status.get("level") or "normal", reason=status.get("reason")),
         providers=providers,
     )
+
+
+@availability_router.get("/models/anthropic", response_model=AnthropicModelsResponse)
+async def list_anthropic_models(
+    context: AccountsContext = Depends(get_accounts_context),
+) -> AnthropicModelsResponse:
+    """Upstream Anthropic model ids (cached an hour), so `route` resolves Claude family aliases."""
+    return await context.service.list_anthropic_models()
 
 
 @availability_router.get("/availability", response_model=AvailabilityResponse)

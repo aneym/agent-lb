@@ -422,15 +422,19 @@
   "aliases": {
     "opus-latest": {
       "vendor": "anthropic",
+      "family": "opus",
+      "pinned": "claude-opus-5-5",
       "harness": "opus",
-      "note": "Claude Code's opus alias: the newest Opus the installed Claude Code serves"
+      "note": "The newest claude-opus-N[-N] on the upstream Anthropic list (LB /api/models/anthropic); pinned, then Claude Code's opus alias, when no list is reachable (2026-09-28)"
     },
     "sonnet-latest": {
       "vendor": "anthropic",
+      "family": "sonnet",
+      "pinned": "claude-sonnet-5-5",
       "harness": "sonnet",
-      "note": "Claude Code's sonnet alias; install-policy pins it to claude-sonnet-5-5 through ANTHROPIC_DEFAULT_SONNET_MODEL (2026-09-28)"
+      "note": "The newest claude-sonnet-N[-N] on the upstream Anthropic list (LB /api/models/anthropic); pinned, then Claude Code's sonnet alias, when no list is reachable. install-policy writes the resolved id to ANTHROPIC_DEFAULT_SONNET_MODEL (2026-09-28)"
     },
-    "haiku-latest": {"vendor": "anthropic", "harness": "haiku", "note": "Claude Code's haiku alias: the newest Haiku the installed Claude Code serves"},
+    "haiku-latest": {"vendor": "anthropic", "family": "haiku", "pinned": "claude-haiku-4-5", "harness": "haiku", "note": "The newest claude-haiku-N[-N] on the upstream Anthropic list; pinned, then Claude Code's haiku alias, when no list is reachable (2026-09-28)"},
     "sol-latest": {
       "vendor": "openai",
       "family": "sol",

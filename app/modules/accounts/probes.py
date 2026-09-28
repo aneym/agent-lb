@@ -10,6 +10,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from app.core.anthropic.identity import CLAUDE_CODE_IDENTITY
+from app.core.anthropic.model_registry import parse_model_list_payload
 from app.core.anthropic.oauth import ANTHROPIC_OAUTH_BETA
 from app.core.clients.http import lease_http_session
 from app.core.config.settings import get_settings
@@ -201,6 +202,37 @@ async def send_messages_probe(
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         logger.warning("Anthropic subscription check failed error=%s", exc)
         return PROBE_NETWORK_FAILURE_STATUS, str(exc)
+
+
+async def list_anthropic_models(*, access_token: str, base_url: str) -> tuple[int, list[str]]:
+    """Upstream ``GET /v1/models`` through one Anthropic account: (HTTP status, model ids).
+
+    Only ids are kept; an error body is never read, so nothing an upstream echoes is logged.
+    """
+    settings = get_settings()
+    url = urljoin(base_url.rstrip("/") + "/", "v1/models?limit=1000")
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "anthropic-version": settings.anthropic_version,
+        "anthropic-beta": ANTHROPIC_OAUTH_BETA,
+        "accept": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=PROBE_REQUEST_TIMEOUT_SECONDS, connect=PROBE_CONNECT_TIMEOUT_SECONDS)
+    try:
+        async with lease_http_session() as session:
+            async with session.get(url, headers=headers, timeout=timeout) as resp:
+                if resp.status >= 400:
+                    return resp.status, []
+                payload = await resp.json(content_type=None)
+                status = resp.status
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        logger.warning("Anthropic model list failed error=%s", type(exc).__name__)
+        return PROBE_NETWORK_FAILURE_STATUS, []
+    try:
+        return status, [model.id for model in parse_model_list_payload(payload).data]
+    except ValueError:
+        logger.warning("Anthropic model list payload did not parse")
+        return PROBE_NETWORK_FAILURE_STATUS, []
 
 
 async def read_probe_error_code(resp: aiohttp.ClientResponse) -> str | None:
