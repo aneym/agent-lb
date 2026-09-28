@@ -40,6 +40,9 @@ final class AppState {
   private var resetCreditAccountsInFlight: Set<String> = []
   private var popoverIsOpen = false
   private var frontmostObserver: (any NSObjectProtocol)?
+  private var lastHealthSuccess: ContinuousClock.Instant?
+
+  nonisolated static let healthFailureGrace: Duration = .seconds(45)
 
   var baseURL: URL { client.base }
   var isRemote: Bool { !["127.0.0.1", "localhost", "::1"].contains(baseURL.host() ?? "") }
@@ -180,15 +183,33 @@ final class AppState {
   private func classify() async {
     do {
       try await client.health()
+      lastHealthSuccess = .now
       let ready = (try? await client.ready()) ?? true
       serviceStatus = ready ? .running : .degraded
     } catch {
-      if isRemote {
-        serviceStatus = .unreachable
-      } else {
-        serviceStatus = await controller.isLoadedWithPID() ? .unreachable : .stopped
-      }
+      let age = lastHealthSuccess.map { $0.duration(to: ContinuousClock.now) }
+      let loaded = isRemote ? false : await controller.isLoadedWithPID()
+      serviceStatus = Self.statusAfterHealthFailure(
+        currentStatus: serviceStatus,
+        lastSuccessAge: age,
+        isRemote: isRemote,
+        isLoaded: loaded
+      )
     }
+  }
+
+  nonisolated static func statusAfterHealthFailure(
+    currentStatus: ServiceStatus,
+    lastSuccessAge: Duration?,
+    isRemote: Bool,
+    isLoaded: Bool
+  ) -> ServiceStatus {
+    if !isRemote && !isLoaded { return .stopped }
+    if (currentStatus == .running || currentStatus == .degraded),
+       let lastSuccessAge, lastSuccessAge < healthFailureGrace {
+      return currentStatus
+    }
+    return .unreachable
   }
 
   // MARK: - Fetches
@@ -368,6 +389,7 @@ final class AppState {
     recomputeStatusIcon()
     do {
       try await controller.start()
+      lastHealthSuccess = nil
     } catch {
       startupError = "Couldn't start the service: \(error.localizedDescription)"
       await classify()
@@ -393,6 +415,7 @@ final class AppState {
   func stopService() async {
     do {
       try await controller.stop()
+      lastHealthSuccess = nil
     } catch {
       startupError = "Couldn't stop the service: \(error.localizedDescription)"
     }
@@ -406,6 +429,7 @@ final class AppState {
     defer { isRestarting = false }
     do {
       try await controller.restart()
+      lastHealthSuccess = nil
     } catch {
       startupError = "Couldn't restart the service: \(error.localizedDescription)"
       return
