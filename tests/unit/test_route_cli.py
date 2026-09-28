@@ -1329,7 +1329,7 @@ def test_route_seats_on_the_canonical_rules_meets_the_workflow_preflight(tmp_pat
                fixtures=fixtures, extra=env)
     assert opus.returncode == 0, opus.stderr
     assert (json.loads(opus.stdout)["class"], json.loads(opus.stdout)["effort"],
-            json.loads(opus.stdout)["box"]) == ("implement", "medium", None)
+            json.loads(opus.stdout)["box"]) == ("implement", "medium", {"adapter": "claude-code"})
     coder = run("seat", "gpt-implementer", "--class", "implement", "--json", home=tmp_path,
                 fixtures=fixtures, extra=env)
     assert coder.returncode == 0, coder.stderr
