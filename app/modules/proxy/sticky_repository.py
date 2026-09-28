@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -14,6 +15,8 @@ from app.core.utils.time import to_utc_naive, utcnow
 from app.db.models import Account, StickySession, StickySessionKind
 from app.db.session import sqlite_writer_section
 from app.modules.sticky_sessions.schemas import StickySessionSortBy, StickySessionSortDir
+
+logger = logging.getLogger(__name__)
 
 # Each (key, kind) pair in delete_entries contributes 2 bind parameters to
 # the underlying DELETE...OR (key=:k AND kind=:t)... statement. SQLite's
@@ -66,14 +69,17 @@ class StickySessionsRepository:
 
     async def upsert(self, key: str, account_id: str, *, kind: StickySessionKind) -> StickySession:
         statement = self._build_upsert_statement(key, account_id, kind)
-        async with sqlite_writer_section():
-            await self._session.execute(statement)
-            await self._session.commit()
-        row = await self.get_entry(key, kind=kind)
-        if row is None:
-            raise RuntimeError(f"StickySession upsert failed for key={key!r} kind={kind.value!r}")
-        await self._session.refresh(row)
-        return row
+        for attempt in range(3):
+            async with sqlite_writer_section():
+                await self._session.execute(statement)
+                await self._session.commit()
+            row = await self.get_entry(key, kind=kind)
+            if row is not None:
+                await self._session.refresh(row)
+                return row
+            if attempt == 0:
+                logger.warning("StickySession upsert read-back missing for kind=%s; retrying", kind.value)
+        raise RuntimeError(f"StickySession upsert failed for key={key!r} kind={kind.value!r}")
 
     async def delete(self, key: str, *, kind: StickySessionKind) -> bool:
         if not key:
