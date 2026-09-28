@@ -105,6 +105,9 @@ if not SOURCE_ONLY:
         check(False, f"{settings_path} contains valid JSON")
     check(settings.get("model") == "opus", "direct Claude Code default model is opus (Opus 5.5)")
     check(settings.get("effortLevel") == "high", "direct Claude Code default effort is high")
+    sonnet_pin = (settings.get("env") or {}).get("ANTHROPIC_DEFAULT_SONNET_MODEL") if isinstance(settings.get("env"), dict) else None
+    check(isinstance(sonnet_pin, str) and re.fullmatch(r"claude-sonnet-\d+(?:-\d+)?", sonnet_pin) is not None,
+          f"settings.json pins Claude Code's sonnet alias (ANTHROPIC_DEFAULT_SONNET_MODEL={sonnet_pin})")
     guard_registered = any(
         "seat-guard.py" in hook.get("command", "")
         for group in settings.get("hooks", {}).get("PreToolUse", [])

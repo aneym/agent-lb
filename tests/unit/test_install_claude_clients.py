@@ -284,7 +284,7 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
     settings = json.loads(settings_path.read_text())
     assert settings["model"] == "opus"
     assert settings["effortLevel"] == "high"
-    assert settings["env"] == {"KEEP": "yes"}
+    assert settings["env"] == {"KEEP": "yes", "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5"}
     assert settings["permissions"] == {"allow": ["keep-me"]}
     assert settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "keep-node-hook"
     commands = [

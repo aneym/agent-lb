@@ -15,6 +15,10 @@ START = "<!-- agent-lb:coding-agent-routing:start -->"
 END = "<!-- agent-lb:coding-agent-routing:end -->"
 MODEL = "opus"
 EFFORT_LEVEL = "high"
+# Claude Code 2.1.284 still maps its `sonnet` alias to claude-sonnet-5. Pin the alias to
+# the newest Sonnet so every `model: sonnet` seat and sonnet-latest runs it (2026-09-28).
+SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
+SONNET_MODEL = "claude-sonnet-5-5"
 MANAGED_AGENTS = (
     (
         Path(".claude/agents/computer-use.md"),
@@ -301,6 +305,18 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool) -> dict[str, A
             hooks.pop("PreToolUse", None)
         if not hooks:
             updated.pop("hooks", None)
+    env = updated.get("env")
+    if uninstall:
+        if isinstance(env, dict) and env.get(SONNET_ENV) == SONNET_MODEL:
+            env.pop(SONNET_ENV)
+            if not env:
+                updated.pop("env", None)
+    else:
+        if "env" not in updated:
+            env = updated["env"] = {}
+        elif not isinstance(env, dict):
+            raise SystemExit("error: settings.json env is not a JSON object; fix it before installing the policy")
+        env[SONNET_ENV] = SONNET_MODEL
     if not uninstall:
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL

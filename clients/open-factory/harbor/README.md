@@ -22,7 +22,7 @@ four things:
 ```bash
 export OF_HARBOR_KEY="$(cat ~/.agent-lb/of/of-harbor.key)"   # optional: the file is the default anyway
 export PYTHONPATH=/Volumes/StudioExt/repos/agent-lb-worktrees/open-factory/clients/open-factory/harbor
-harbor run -p <task-or-dataset> -a agents:PrebakedClaudeCode -m claude-sonnet-5
+harbor run -p <task-or-dataset> -a agents:PrebakedClaudeCode -m claude-sonnet-5-5
 harbor run -p <task-or-dataset> -a agents:PrebakedCodex -m gpt-6-luna
 ```
 

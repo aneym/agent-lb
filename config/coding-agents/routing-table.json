@@ -412,7 +412,7 @@
     "sonnet-latest": {
       "vendor": "anthropic",
       "harness": "sonnet",
-      "note": "Claude Code's sonnet alias"
+      "note": "Claude Code's sonnet alias; install-policy pins it to claude-sonnet-5-5 through ANTHROPIC_DEFAULT_SONNET_MODEL (2026-09-28)"
     },
     "haiku-latest": {"vendor": "anthropic", "harness": "haiku", "note": "Claude Code's haiku alias: the newest Haiku the installed Claude Code serves"},
     "sol-latest": {
@@ -455,6 +455,7 @@
     "claude-planner",
     "claude-opus-5",
     "claude-opus-4-*",
+    "claude-sonnet-5",
     "claude-sonnet-4-*",
     "gpt-*-astra",
     "gpt-*-astra-*",

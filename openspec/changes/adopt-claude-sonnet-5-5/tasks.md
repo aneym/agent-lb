@@ -1,0 +1,5 @@
+- [x] install-policy writes and removes the Sonnet pin
+- [x] retire claude-sonnet-5 in the routing table
+- [x] agent-defs-doctor accepts claude-sonnet-5-5
+- [x] Open Factory arm and README example updated
+- [x] Proof: one real `/v1/messages` call through the LB returns model claude-sonnet-5-5

@@ -15,7 +15,7 @@ Thin subclasses of Harbor's built-in Claude Code and Codex agents that
 Usage (from this directory's parent, or with it on PYTHONPATH):
 
     PYTHONPATH=clients/open-factory/harbor harbor run -p <task> \
-        -a agents:PrebakedClaudeCode -m claude-sonnet-5
+        -a agents:PrebakedClaudeCode -m claude-sonnet-5-5
     PYTHONPATH=clients/open-factory/harbor harbor run -p <task> \
         -a agents:PrebakedCodex -m gpt-6-luna
 
