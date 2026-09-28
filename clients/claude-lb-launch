@@ -42,6 +42,10 @@
 #   CLAUDE_LB_WAIT_MAX_SECONDS    cap on total waiting (default 21600 = 6h)
 #   CLAUDE_LB_AUTO_RESUME         1 (default) auto-resumes headless (-p) runs
 #                                 interrupted by account limits; 0 disables
+#   CLAUDE_LB_SHIM_START_TIMEOUT  seconds to wait for the proxy to start (default 90)
+#   CLAUDE_LB_ALLOW_FALLBACK=1    opt in to plain Claude if proxy startup fails
+#   CLAUDE_LB_STALL_TIMEOUT       headless LB inactivity budget in seconds (default 300;
+#                                 <=0 or non-finite disables supervision)
 
 from __future__ import annotations
 
@@ -90,6 +94,9 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
+EXIT_TEMPFAIL = 75
+SHIM_START_TIMEOUT_DEFAULT = 90.0
+STALL_TIMEOUT_DEFAULT = 300.0
 # The retry budget (~2 minutes with these defaults) must outlast a full
 # watchdog-driven LB recovery: an unloaded launchd job is re-bootstrapped
 # within ~65s (2 x 30s ticks + startup), so a session mid-request rides the
@@ -303,6 +310,47 @@ def ensure_mitm_certs() -> None:
     CERT_MARKER.write_text("1\n")
 
 
+class _LbActivity:
+    """Launcher-scoped progress for LB requests, excluding time spent in tools."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lock = threading.Lock()
+        self.inflight = 0
+        self.last_progress = 0.0
+        self.last_write = 0.0
+
+    def _write(self) -> None:
+        tmp = self.path.with_name(f"{self.path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(f"{self.inflight} {self.last_progress}\n")
+            os.replace(tmp, self.path)
+            self.last_write = self.last_progress
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+    def start(self) -> None:
+        with self.lock:
+            self.inflight += 1
+            self.last_progress = time.time()
+            self._write()
+
+    def progress(self) -> None:
+        with self.lock:
+            self.last_progress = time.time()
+            if self.last_progress - self.last_write >= 2.0:
+                self._write()
+
+    def end(self) -> None:
+        with self.lock:
+            self.inflight -= 1
+            self.last_progress = time.time()
+            self._write()
+
+
 class _LbApiHandler(http.server.BaseHTTPRequestHandler):
     """Serves the MITM'd api.anthropic.com stream, forwarding to the LB.
 
@@ -400,6 +448,19 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
             headers=headers,
             method=self.command,
         )
+        activity = getattr(self.server, "activity", None)
+        if activity is not None:
+            activity.start()
+        try:
+            self._forward_lb(request, shared, parent_pid, activity)
+        finally:
+            if activity is not None:
+                activity.end()
+
+    def _forward_lb(
+        self, request: urllib.request.Request, shared: bool, parent_pid: int | None,
+        activity: _LbActivity | None,
+    ) -> None:
         # Absorb an LB restart or watchdog-driven revival: a refused/reset/
         # broken-pipe connect never produced a response, so retry with bounded
         # backoff before surfacing an error. Real HTTP responses (429/503 with
@@ -427,12 +488,14 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     continue
                 self._send_shim_error(error)
                 return
+            if activity is not None:
+                activity.progress()
             # Copy outside the retry try-block: a client hangup mid-stream is a
             # ConnectionError too, and retrying it would re-send an already
             # processed upstream request. Close the upstream response promptly
             # instead of leaving its socket to the garbage collector.
             try:
-                self._copy_response(response)
+                self._copy_response(response, activity)
             finally:
                 response.close()
             return
@@ -465,7 +528,7 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(message)
         self.close_connection = True
 
-    def _copy_response(self, response: object) -> None:
+    def _copy_response(self, response: object, activity: _LbActivity | None = None) -> None:
         status = getattr(response, "status", None) or getattr(response, "code", 502)
         content_type = response.headers.get("content-type", "")
         self.send_response(int(status))
@@ -482,6 +545,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(line)
                 self.wfile.flush()
+                if activity is not None:
+                    activity.progress()
         else:
             while True:
                 chunk = response.read(65536)
@@ -489,6 +554,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
+                if activity is not None:
+                    activity.progress()
         self.close_connection = True
 
 
@@ -708,6 +775,10 @@ def proxy_ready_path(session_id: str) -> Path:
     return shim_dir / f"{session_id}.proxy"
 
 
+def activity_path(session_id: str, parent_pid: int) -> Path:
+    return proxy_ready_path(session_id).parent / f"{session_id}.{parent_pid}.activity"
+
+
 def _raise_fd_soft_limit(target: int = 10240) -> None:
     """Raise this process's soft limit only, preserving an operator's hard cap."""
     try:
@@ -744,6 +815,7 @@ def run_lb_proxy(
     server.shared = shared
     server.ccgpt_mode = CCGPT_MODE and not shared
     server.upstream_base_url = upstream_base_url.rstrip("/")
+    server.activity = _LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
     port = server.server_address[1]
 
     ready = Path(ready_path)
@@ -766,10 +838,12 @@ def run_lb_proxy(
     try:
         server.serve_forever()
     finally:
-        try:
-            ready.unlink()
-        except OSError:
-            pass
+        for path in (ready, server.activity.path if server.activity is not None else None):
+            if path is not None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
 
 def _proxy_port_ready(port: int, timeout: float = 0.4) -> bool:
@@ -823,12 +897,13 @@ def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
 def start_lb_proxy(session_id: str) -> str:
     ready = proxy_ready_path(session_id)
     _prune_stale_shim_files(ready.parent)
-    try:
-        ready.unlink()
-    except OSError:
-        pass
+    for path in (ready, activity_path(session_id, os.getpid())):
+        try:
+            path.unlink()
+        except OSError:
+            pass
     _spawn_lb_proxy(ready, session_id, os.getpid(), AGENT_LB_BASE_URL)
-    deadline = time.monotonic() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", 12.0)
+    deadline = time.monotonic() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
     while time.monotonic() < deadline:
         try:
             text = ready.read_text().strip()
@@ -1847,6 +1922,62 @@ def build_resume_command(argv: list[str], claude_session_id: str) -> list[str]:
     return command
 
 
+def _stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> None:
+    if child.poll() is None:
+        if not interrupt:
+            child.terminate()
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+
+
+def run_supervised(command: list[str], activity: Path, stall_timeout: float) -> int:
+    if not math.isfinite(stall_timeout) or stall_timeout <= 0:
+        try:
+            return subprocess.run(command).returncode
+        finally:
+            try:
+                activity.unlink()
+            except OSError:
+                pass
+    start = time.monotonic()
+    child = subprocess.Popen(command)
+    try:
+        while True:
+            try:
+                return child.wait(timeout=min(1.0, stall_timeout / 4))
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                inflight_text, progress_text = activity.read_text().split()
+                inflight = int(inflight_text)
+                progress = float(progress_text)
+                if inflight < 0 or not math.isfinite(progress):
+                    raise ValueError("invalid activity")
+            except (OSError, ValueError):
+                stalled = time.monotonic() - start >= stall_timeout
+            else:
+                stalled = inflight > 0 and time.time() - progress >= stall_timeout
+            if stalled:
+                print(
+                    f"cc: no agent-lb activity for {stall_timeout:g}s "
+                    f"(CLAUDE_LB_STALL_TIMEOUT); stopping claude, exit {EXIT_TEMPFAIL} (retryable)",
+                    file=sys.stderr,
+                )
+                _stop_child(child)
+                return EXIT_TEMPFAIL
+    except KeyboardInterrupt:
+        _stop_child(child, interrupt=True)
+        return 130
+    finally:
+        try:
+            activity.unlink()
+        except OSError:
+            pass
+
+
 def run_headless_with_resume(
     command: list[str],
     argv: list[str],
@@ -1861,17 +1992,19 @@ def run_headless_with_resume(
         command = [*command, "--session-id", claude_session_id]
     deadline = time.time() + wait_max_seconds()
     current = command
+    activity = activity_path(session_id, os.getpid())
+    stall_timeout = _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT)
     for attempt in range(RESUME_MAX_ATTEMPTS + 1):
-        result = subprocess.run(current)
-        if result.returncode == 0:
-            return 0
+        returncode = run_supervised(current, activity, stall_timeout)
+        if returncode in (0, EXIT_TEMPFAIL):
+            return returncode
         # Only retry when the LB confirms the failure is account exhaustion
         # with a known reset; any other failure propagates immediately.
         claim, _, retry_at = claim_session_route(session_id, model, quota_key, AGENT_LB_BASE_URL)
         if claim is not None or not should_wait_for_reset(retry_at, deadline):
-            return result.returncode
+            return returncode
         if attempt == RESUME_MAX_ATTEMPTS:
-            return result.returncode
+            return returncode
         try:
             wait_until_reset(retry_at, "Claude run interrupted by account limits.")
         except KeyboardInterrupt:
@@ -1980,7 +2113,17 @@ def main() -> None:
                 os.environ.pop("ANTHROPIC_API_KEY", None)
                 routed = True
             except RuntimeError as error:
-                print(f"cc: {error}", file=sys.stderr)
+                label = "ccgpt" if CCGPT_MODE else "cc"
+                if os.environ.get("CLAUDE_LB_ALLOW_FALLBACK") != "1":
+                    timeout = _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
+                    print(
+                        f"{label}: proxy did not start within {timeout:g} seconds "
+                        "(CLAUDE_LB_SHIM_START_TIMEOUT); exit 75 (retryable). "
+                        "Set CLAUDE_LB_ALLOW_FALLBACK=1 to allow plain Claude fallback",
+                        file=sys.stderr,
+                    )
+                    sys.exit(EXIT_TEMPFAIL)
+                print(f"{label}: {error}", file=sys.stderr)
         if not routed:
             if CCGPT_MODE or os.environ.get("CLAUDE_LB_REQUIRE") == "1":
                 label = "ccgpt" if CCGPT_MODE else "cc"
@@ -2003,10 +2146,15 @@ def main() -> None:
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         return
-    if routed and not CCGPT_MODE and auto_resume_enabled() and headless_invocation(argv):
-        model = requested_model(argv)
-        quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
-        sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))
+    if routed and not CCGPT_MODE and headless_invocation(argv):
+        if auto_resume_enabled():
+            model = requested_model(argv)
+            quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
+            sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))
+        sys.exit(run_supervised(
+            command, activity_path(session_id, os.getpid()),
+            _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
+        ))
     os.execvp(command[0], command)
 
 
