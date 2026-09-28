@@ -28,6 +28,8 @@ call starts in the session cwd, so a `cd` from an earlier call does not carry ov
 
 There is no `--write`. This seat is read-only by construction; if a brief asks
 you to fix something, stop and report that it asked the verifier to write.
+Returning a `patch` as text (step 6 below) is not writing; the verifier never
+applies it.
 
 Build `<verification contract>` as one shell-quoted argument: the brief's own
 contract (repo, worktree, what was claimed, the eval command, which files the
@@ -46,8 +48,15 @@ contract owned) followed verbatim by this procedure:
    claims, from the diff, or from a suite you remember passing elsewhere.
 2. `git status --short` + `git diff --stat` — flag out-of-scope files (anything
    not owned by the contract) and suspicious artifacts (stray logs, lockfile churn).
-3. Spot-read only high-risk hunks (auth, payments, data deletion, public APIs).
-   Do not read the whole diff.
+   When the brief names the author's vendor, say it in the report; this seat
+   exists so the verifier is the other vendor.
+3. Read the whole diff of the piece, every hunk, not a sample:
+   `git diff <base>...HEAD` plus any uncommitted changes (`git diff HEAD`), and
+   `git log <base>..HEAD`. When the brief gives a scenario spec and its saved
+   base and head outputs (a scenario-run `result.json` and the `base/` and
+   `head/` dirs with `stdout.txt` and `stderr.txt`), read those too. Judge the
+   scenario's honesty: does it test the ask from the user's side, and does base
+   fail for the right reason, not a setup failure.
 4. Check the claim against reality: if the executor said "done" but the diff is
    empty, or the eval ran and genuinely failed, report FABRICATION explicitly.
    FABRICATION is an accusation about the executor, so only make it on evidence
@@ -55,13 +64,48 @@ contract owned) followed verbatim by this procedure:
    a missing runner output file, a permission gate) is not that evidence: report
    `unverified` with the reason instead, and let the scope and diff checks carry
    the verdict.
-5. If the brief assigns a lens (money path), judge only that lens and name it
+5. Apply the shared rubric (the same one the fold uses, factory
+   `fold-pipeline-v2.js` `bar()`). must_fix is only for: a concrete input,
+   state or sequence under which the diff breaks what the piece's spec says, or
+   misses a spec item, cited with file:line (name the input and the wrong
+   output or crash); a concrete regression (something that works on the base
+   breaks with this diff; name the input and file:line); a change outside the
+   allowed files; an edited acceptance test; a test that would still pass with
+   its behavior removed; a check or proof command that fails; a dishonest test
+   or scenario (a tautology, a mock of the unit under test, reading source
+   instead of running it, a skip, or special-casing the scenario's inputs); a
+   scenario that fails on head. A UI finding (layout, styling, copy or what a
+   screen shows) is a must_fix only with a failing page-shot cited by its image
+   path; without one it is advisory. If you cannot name the concrete input,
+   state, sequence or regression that shows a defect, you are unsure of it: put
+   it in advisory with what would settle it, never in must_fix. (When the brief
+   says the piece is on the money path or a one-way door: if you are unsure
+   whether such a concrete defect is real, keep it in must_fix and say what
+   would settle it.) Everything else goes to advisory: hypotheticals past the
+   bar the spec sets, more hardening, style, report wording or counts, and
+   scope questions the spec already answers. Advisory never fails the piece and
+   never drives a fix round. pass is true exactly when must_fix is empty.
+6. patch (optional): if a must_fix item's fix is 20 changed lines or fewer
+   inside the allowed files, return that fix as a unified diff that `git apply`
+   accepts from the worktree root (a/ and b/ paths), under a `patch:` heading.
+   Never return a patch that touches a money-path file (the base's
+   `config/money-path-paths.json` globs, that file, or
+   `config/verdict-authors.json`) or when the brief marks the piece money path
+   or one-way. Leave it out when unsure or when the fix is larger. You do not
+   apply it: the driver does, and applying it counts as the piece's one fix
+   round, after which the check, the scenario and the release facts rerun and a
+   fresh review judges the final diff.
+7. If the brief assigns a lens (money path), judge only that lens and name it
    in the verdict. The brief gives the id of the diff under review
-   (`git diff --cached | git patch-id --stable | cut -c1-12`, or the repo's
-   own).
-6. Report in 20 lines or fewer: VERDICT pass/fail/fabrication/unverified, eval
-   tail, scope check result, risks worth a human look. Echo the lens and the
-   diff id: `VERDICT PASS|FAIL lens=<lens> diff=<id>`. Never modify files.
+   (`git diff --cached | git patch-id --stable | cut -c1-12`, the head sha, or
+   the repo's own).
+8. Report in about 30 lines: must_fix (one line each, with the failing input),
+   advisory (one line each), the patch if any, eval tail, scope check result.
+   The last line is the verdict and echoes the diff you judged:
+   `VERDICT: PASS|FAIL diff=<patch-id or sha from the brief>`, with
+   ` lens=<lens>` before `diff=` when a lens was assigned. FABRICATION and
+   unverified are stated above that line with their evidence. Never modify
+   files.
 
 Also pass the standing constraints: do not commit, push or deploy; do not read
 credentials; do not message other agents.

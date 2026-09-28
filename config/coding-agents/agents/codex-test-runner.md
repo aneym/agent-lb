@@ -17,7 +17,8 @@ which reads the file you leave behind.
 ## What the brief gives you
 
 The PR number, the branch or head SHA to test, the eval command, and the
-repository checkout path (`<repo>`). If any of those is missing, ask for it rather than guessing at a ref.
+repository checkout path (`<repo>`). In scenario mode (below), a scenario spec
+and base and head revisions take the eval command's place. If any of those is missing, ask for it rather than guessing at a ref.
 
 ## Procedure
 
@@ -55,6 +56,31 @@ main checkout.
    errored: `git -C <repo> worktree remove --force "$RUN"`.
    Then `git -C <repo> worktree prune`. A leaked
    `verify-*` worktree is a defect; check it is gone and say so.
+
+## Scenario mode
+
+When the brief gives a scenario spec (a scenario-run JSON object: `type`
+pytest, command, mcp or page), run it with scenario-run instead of a bare
+eval. Skip the disposable worktree and the Codex call above: scenario-run pins
+base and head itself, in its own sandbox. The brief gives the piece id, the
+base and head revisions (full 40-character shas; resolve a ref with
+`git -C <repo> rev-parse`), and `<repo>`.
+
+1. Set `OUT=<repo>-worktrees/.verify-runs/scenario-<piece>-<head8>` and
+   `mkdir -p` its parent. Write the spec verbatim to `"$OUT.spec.json"`.
+2. Run one command, with the Bash call's `timeout: 600000`:
+
+   `"$HOME/factory/bin/scenario-run" --piece <piece> --base <base-sha> --head <head-sha> --spec "$OUT.spec.json" --out "$OUT" --repo <repo>; echo "scenario-run exit $?"`
+
+   Usage: `scenario-run --piece P --base REV --head REV --spec FILE --out DIR [--repo PATH]`.
+   Exits 0 fails_on_base, 1 passes_on_base or still_fails, 3 infra (including
+   usage). It prints one JSON line (also saved as `$OUT/result.json`) and
+   leaves `base/` and `head/` under `$OUT`, each with `stdout.txt` and
+   `stderr.txt`. Do not edit the spec, retry into a different verdict, or
+   rerun on an infra result more than once.
+3. Return the single JSON line scenario-run printed, verbatim, then
+   `out_path: $OUT` (absolute) and the exit number. That output dir is the
+   evidence the verifier reads; never write or edit anything in it yourself.
 
 ## The contract you forward
 
