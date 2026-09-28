@@ -295,6 +295,7 @@ struct AccountRow: View {
             .lineLimit(1)
             .truncationMode(.middle)
           planChip
+          sharedChip
           fableChip
           resetCreditsChip
           Spacer(minLength: 6)
@@ -389,6 +390,24 @@ struct AccountRow: View {
         .background(Capsule().fill(.quaternary.opacity(0.5)))
         .lineLimit(1)
         .fixedSize()
+    }
+  }
+
+  @ViewBuilder
+  private var sharedChip: some View {
+    if let label = privacyMask.sharedChipText(for: account),
+       let help = privacyMask.sharedChipHelp(for: account) {
+      Text(label)
+        .font(.system(size: 9, weight: .medium))
+        .tracking(0.5)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(.quaternary.opacity(0.5)))
+        .lineLimit(1)
+        .fixedSize()
+        .help(help)
+        .accessibilityLabel(help)
     }
   }
 

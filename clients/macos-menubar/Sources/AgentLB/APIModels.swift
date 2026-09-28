@@ -35,8 +35,14 @@ struct Account: Decodable, Identifiable, Sendable, Equatable {
   let deactivationReason: String?
   let isEmailDuplicate: Bool?
   let subscription: AccountSubscriptionLedger?
+  let ownerInstance: String?
+  let isLocallyOwned: Bool?
+  let ownerLabel: String?
 
   var id: String { accountId }
+  var sharedFrom: String? {
+    isLocallyOwned == false ? (ownerLabel ?? ownerInstance ?? "peer") : nil
+  }
 }
 
 extension Account {

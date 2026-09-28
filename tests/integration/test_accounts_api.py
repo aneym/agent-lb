@@ -764,13 +764,15 @@ async def test_list_accounts_flags_email_duplicates(async_client):
 
 
 @pytest.mark.asyncio
-async def test_list_accounts_surfaces_owner_instance(async_client):
-    """GET /api/accounts exposes federation ownership: ownerInstance null +
-    isLocallyOwned true for the classic (non-federated) default, and the
-    owning instance's id + isLocallyOwned false for a mirrored account."""
+async def test_list_accounts_surfaces_owner_instance(async_client, monkeypatch, tmp_path):
+    """GET /api/accounts labels pushed owners and falls back for pull mirrors."""
+    from app.core.config.settings import get_settings
     from app.core.utils.time import utcnow
     from app.modules.accounts.repository import AccountsRepository
 
+    sources_path = tmp_path / "federation-push-sources.json"
+    monkeypatch.setattr(get_settings(), "federation_push_sources_path", sources_path)
+    state_path = sources_path.with_name("federation-push-state.json")
     encryptor = TokenEncryptor()
 
     def _account(account_id: str, owner_instance: str | None) -> Account:
@@ -795,7 +797,9 @@ async def test_list_accounts_surfaces_owner_instance(async_client):
         # Not a real hostname, so it can never equal the test process's
         # local_instance_id (which defaults to the machine hostname).
         await repo.upsert(_account("owner-remote", "federation-other-instance"), merge_by_email=False)
+        await repo.upsert(_account("owner-pushed", "nates-host"), merge_by_email=False)
 
+    state_path.write_text(json.dumps({"nate": "nates-host"}))
     response = await async_client.get("/api/accounts")
     assert response.status_code == 200
     accounts_by_id = {a["accountId"]: a for a in response.json()["accounts"]}
@@ -804,6 +808,28 @@ async def test_list_accounts_surfaces_owner_instance(async_client):
     assert accounts_by_id["owner-null"]["isLocallyOwned"] is True
     assert accounts_by_id["owner-remote"]["ownerInstance"] == "federation-other-instance"
     assert accounts_by_id["owner-remote"]["isLocallyOwned"] is False
+    assert accounts_by_id["owner-null"]["ownerLabel"] is None
+    assert accounts_by_id["owner-remote"]["ownerLabel"] == "federation-other-instance"
+    assert accounts_by_id["owner-pushed"]["ownerLabel"] == "nate"
+
+    state_path.unlink()
+    missing_response = await async_client.get("/api/accounts")
+    assert missing_response.status_code == 200
+    missing_rows = {a["accountId"]: a for a in missing_response.json()["accounts"]}
+    assert missing_rows["owner-pushed"]["ownerLabel"] == "nates-host"
+
+    state_path.write_text("not valid JSON")
+    unreadable_response = await async_client.get("/api/accounts")
+    assert unreadable_response.status_code == 200
+    unreadable_rows = {a["accountId"]: a for a in unreadable_response.json()["accounts"]}
+    assert unreadable_rows["owner-pushed"]["ownerLabel"] == "nates-host"
+
+    state_path.unlink()
+    state_path.mkdir()
+    unreadable_response = await async_client.get("/api/accounts")
+    assert unreadable_response.status_code == 200
+    unreadable_rows = {a["accountId"]: a for a in unreadable_response.json()["accounts"]}
+    assert unreadable_rows["owner-pushed"]["ownerLabel"] == "nates-host"
 
 
 @pytest.mark.asyncio

@@ -54,7 +54,10 @@ func makeTestAccount(
     lastRefreshAt: nil,
     deactivationReason: deactivationReason,
     isEmailDuplicate: nil,
-    subscription: subscription
+    subscription: subscription,
+    ownerInstance: nil,
+    isLocallyOwned: nil,
+    ownerLabel: nil
   )
 }
 

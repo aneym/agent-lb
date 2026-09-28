@@ -217,7 +217,9 @@ class AccountsService:
         self._auth_manager = auth_manager
         self._reset_attempts: ResetCreditAttemptsRepository | None = None
 
-    async def list_accounts(self, *, include_request_usage: bool = False) -> list[AccountSummary]:
+    async def list_accounts(
+        self, *, include_request_usage: bool = False, owner_source_names: dict[str, str] | None = None
+    ) -> list[AccountSummary]:
         accounts = await self._repo.list_accounts()
         if not accounts:
             return []
@@ -255,6 +257,7 @@ class AccountsService:
             limit_warmups_by_account=limit_warmups_by_account,
             last_primed_by_account=last_primed_by_account,
             fable_scoped_weekly_by_account=fable_scoped_weekly_by_account,
+            owner_source_names=owner_source_names,
             encryptor=self._encryptor,
         )
 

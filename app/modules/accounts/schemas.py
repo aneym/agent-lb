@@ -186,6 +186,7 @@ class AccountSummary(DashboardModel):
     # badges off of.
     owner_instance: str | None = None
     is_locally_owned: bool = True
+    owner_label: str | None = None
 
 
 class AccountsResponse(DashboardModel):

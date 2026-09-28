@@ -94,6 +94,44 @@ final class ModelDecodingTests: XCTestCase {
     XCTAssertNil(response.accounts[1].resetCreditsAvailable)
   }
 
+  func testSharedAccountOwnerDecodingAndPrivacy() throws {
+    let json = """
+    {"accounts": [
+      {"accountId":"pushed","provider":"anthropic","displayName":"Pushed","status":"active",
+       "usage":{},"ownerInstance":"nates-host","ownerLabel":"nate","isLocallyOwned":false},
+      {"accountId":"pull","provider":"openai","displayName":"Pull","status":"active",
+       "usage":{},"ownerInstance":"other-instance","isLocallyOwned":false},
+      {"accountId":"local","provider":"openai","displayName":"Local","status":"active",
+       "usage":{},"ownerInstance":null,"ownerLabel":null,"isLocallyOwned":true},
+      {"accountId":"legacy","provider":"openai","displayName":"Legacy","status":"active","usage":{}},
+      {"accountId":"unknown","provider":"openai","displayName":"Unknown","status":"active",
+       "usage":{},"isLocallyOwned":false}
+    ]}
+    """.data(using: .utf8)!
+    let accounts = try decoder.decode(AccountsResponse.self, from: json).accounts
+    let pushed = accounts[0]
+    XCTAssertEqual(pushed.ownerInstance, "nates-host")
+    XCTAssertEqual(pushed.ownerLabel, "nate")
+    XCTAssertEqual(pushed.isLocallyOwned, false)
+    XCTAssertEqual(pushed.sharedFrom, "nate")
+    XCTAssertEqual(PrivacyMask.disabled.sharedChipText(for: pushed), "VIA NATE")
+    XCTAssertEqual(
+      PrivacyMask.disabled.sharedChipHelp(for: pushed),
+      "Shared from nate's agent-lb. It owns and refreshes this account; this LB only routes on it."
+    )
+    let privateMask = PrivacyMask.build(enabled: true, accounts: accounts)
+    XCTAssertEqual(privateMask.sharedChipText(for: pushed), "SHARED")
+    XCTAssertEqual(privateMask.sharedChipHelp(for: pushed), "Shared account. This LB only routes on it.")
+    XCTAssertEqual(accounts[1].sharedFrom, "other-instance")
+    XCTAssertNil(accounts[2].sharedFrom)
+    XCTAssertNil(privateMask.sharedChipText(for: accounts[2]))
+    XCTAssertNil(accounts[3].ownerInstance)
+    XCTAssertNil(accounts[3].ownerLabel)
+    XCTAssertNil(accounts[3].isLocallyOwned)
+    XCTAssertNil(accounts[3].sharedFrom)
+    XCTAssertEqual(accounts[4].sharedFrom, "peer")
+  }
+
   func testFableAvailabilityOnlyAppliesToAnthropicAccounts() throws {
     let anthropicOut = makeTestAccount(
       id: "claude-out",

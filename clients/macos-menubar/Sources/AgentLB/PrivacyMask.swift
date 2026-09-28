@@ -45,6 +45,18 @@ struct PrivacyMask: Equatable, Sendable {
     return names[accountId] ?? Self.providerLabel(provider)
   }
 
+  /// Describes shared ownership without revealing a source name in privacy mode.
+  func sharedChipText(for account: Account) -> String? {
+    guard let source = account.sharedFrom else { return nil }
+    return enabled ? "SHARED" : "VIA \(source.uppercased())"
+  }
+
+  func sharedChipHelp(for account: Account) -> String? {
+    guard let source = account.sharedFrom else { return nil }
+    if enabled { return "Shared account. This LB only routes on it." }
+    return "Shared from \(source)'s agent-lb. It owns and refreshes this account; this LB only routes on it."
+  }
+
   /// Redacts a host label to a generic token when enabled.
   func host(_ real: String) -> String {
     enabled ? "remote" : real

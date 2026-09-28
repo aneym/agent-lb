@@ -53,6 +53,7 @@ from app.modules.accounts.service import (
     AccountStateTransitionError,
     InvalidAuthJsonError,
 )
+from app.modules.federation.push_receiver import load_binding
 
 router = APIRouter(
     prefix="/api/accounts",
@@ -120,7 +121,15 @@ async def list_accounts(
 ) -> AccountsResponse:
     # Default (cc banner, menubar) skips the expensive request-usage aggregation;
     # the dashboard opts in with ?fresh=1 for its per-account token/cost columns.
-    accounts = await context.service.list_accounts(include_request_usage=fresh)
+    state_path = get_settings().federation_push_sources_path.with_name("federation-push-state.json")
+    try:
+        source_bindings = load_binding(state_path)
+    except (OSError, ValueError, TypeError):
+        source_bindings = {}
+    owner_source_names = {instance_id: source for source, instance_id in source_bindings.items()}
+    accounts = await context.service.list_accounts(
+        include_request_usage=fresh, owner_source_names=owner_source_names
+    )
     return AccountsResponse(accounts=accounts)
 
 

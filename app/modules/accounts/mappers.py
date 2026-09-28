@@ -61,6 +61,7 @@ def build_account_summaries(
     fable_scoped_weekly_by_account: dict[str, AdditionalUsageHistory] | None = None,
     encryptor: TokenEncryptor,
     include_auth: bool = True,
+    owner_source_names: dict[str, str] | None = None,
 ) -> list[AccountSummary]:
     duplicate_keys = _duplicate_detection_keys_appearing_more_than_once(accounts)
     return [
@@ -76,6 +77,7 @@ def build_account_summaries(
             encryptor,
             last_primed_at=last_primed_by_account.get(account.id) if last_primed_by_account else None,
             include_auth=include_auth,
+            owner_source_names=owner_source_names,
             is_email_duplicate=_duplicate_detection_key(account) in duplicate_keys,
             fable_scoped_weekly=(
                 fable_scoped_weekly_by_account.get(account.id) if fable_scoped_weekly_by_account else None
@@ -129,6 +131,7 @@ def _account_to_summary(
     include_auth: bool = True,
     is_email_duplicate: bool = False,
     fable_scoped_weekly: AdditionalUsageHistory | None = None,
+    owner_source_names: dict[str, str] | None = None,
 ) -> AccountSummary:
     plan_type = coerce_account_plan_type(account.plan_type, DEFAULT_PLAN)
     auth_status = _build_auth_status(account, encryptor) if include_auth else None
@@ -345,6 +348,10 @@ def _account_to_summary(
         identity_mismatch=_identity_mismatch_status(account.id),
         owner_instance=account.owner_instance,
         is_locally_owned=account_is_locally_owned,
+        owner_label=(
+            (owner_source_names or {}).get(account.owner_instance, account.owner_instance)
+            if not account_is_locally_owned and account.owner_instance else None
+        ),
     )
 
 
