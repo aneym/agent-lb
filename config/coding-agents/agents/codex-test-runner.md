@@ -33,6 +33,11 @@ main checkout.
    `git -C <repo> worktree add --detach "$RUN" <sha>`
    Detached and at the SHA, so the run names one immutable commit and cannot
    drift onto a branch someone else is still pushing to.
+   JS deps (2026-09-29): a fresh worktree has no node_modules. If the eval runs
+   node, npm, npx, vitest or tsc and `$RUN/package-lock.json` exists, run
+   `cd "$RUN" && npm ci --prefer-offline --no-audit --no-fund` once at the
+   worktree root before step 3. Never symlink another checkout's node_modules
+   (npm workspaces: it would test the wrong packages).
 3. Run the eval through Codex, capping parallelism at 4 workers. Add `-n 4` to a
    pytest command that does not already cap itself; never raise a cap the brief
    set lower.
