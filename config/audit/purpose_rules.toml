@@ -1,0 +1,79 @@
+# Ordered request overrides precede session prompt/title hints.
+[[rules]]
+name = "warmup"
+field = "request_kind"
+pattern = 'warmup|probe'
+purpose = "probe"
+
+[[rules]]
+name = "eval-client"
+field = "useragent"
+pattern = 'parallel-load-eval|remote-subs-probe'
+purpose = "eval"
+
+[[rules]]
+name = "product-client"
+field = "useragent"
+pattern = 'rails_desktop|codex_chatgpt_ios_remote'
+purpose = "product-runtime"
+
+[[rules]]
+name = "voice-client"
+field = "useragent"
+pattern = 'voice'
+purpose = "voice"
+
+[[rules]]
+name = "probe-source"
+field = "source"
+pattern = 'probe|warmup'
+purpose = "probe"
+
+[[rules]]
+name = "orchestrator"
+field = "text"
+pattern = 'orchestrat'
+purpose = "orchestrator"
+
+[[rules]]
+name = "scoping"
+field = "text"
+pattern = '\[scoping\]|scope-brief|scoping lane|scope (?:the|this)|PRD|grill'
+purpose = "scoping"
+
+[[rules]]
+name = "eval"
+field = "text"
+pattern = 'orch-lab|\bE\d{1,2}\b.*(batch|arm|eval)|\[class:eval\]|blind comparison'
+purpose = "eval"
+
+[[rules]]
+name = "orch-lab-directory"
+field = "cwd"
+pattern = 'orch-lab'
+purpose = "eval"
+
+[[rules]]
+name = "watcher"
+field = "text"
+pattern = 'usage-watch|orch-watch|cache-watch|backlog.feeder|forwarder|watcher|steward'
+purpose = "watcher"
+
+[[rules]]
+name = "fold"
+field = "text"
+pattern = 'fold|Verify a (?:GPT|Claude)|verification contract|VERDICT'
+purpose = "fold"
+headless = true
+
+[[rules]]
+name = "lane-opening"
+field = "text"
+pattern = 'You are the .{0,60}lane|lanes/[^/\s]+/(OPENING|BRIEF)\.md|-brief\.md|BRIEF\.md|follow it'
+purpose = "build-lane"
+
+[[rules]]
+name = "research"
+field = "text"
+pattern = 'research|deep dive|x\.com/|inventory|audit'
+purpose = "research"

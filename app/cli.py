@@ -28,6 +28,21 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    audit = subparsers.add_parser("audit", help="Read-only receipt audits.")
+    commands = audit.add_subparsers(dest="audit_command", required=True)
+    tokens = commands.add_parser("tokens", help="Account for tokens and list-price dollars.")
+    tokens.add_argument("--window", default="7d")
+    tokens.add_argument("--since")
+    tokens.add_argument("--until")
+    tokens.add_argument("--by", default="provider,account,purpose,lane,seat,model")
+    output = tokens.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true")
+    output.add_argument("--html", action="store_true")
+    tokens.add_argument("--out", type=Path)
+    tokens.add_argument("--db")
+    tokens.add_argument("--top", type=int, default=30)
+    tokens.add_argument("--snapshot-panes-only", action="store_true")
+
     status = subparsers.add_parser(
         "status",
         help="Read a safe status snapshot from a running local agent-lb service.",
@@ -136,6 +151,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     os.environ.setdefault("AGENT_LB_PROCESS_STARTED_NS", str(_PROCESS_STARTED_NS))
     args = _parse_args(argv)
+
+    if args.command == "audit":
+        from app.audit_tokens import run
+
+        run(args)
+        return
 
     if args.command == "throttle":
         _run_throttle(args)
