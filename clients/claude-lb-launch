@@ -2147,6 +2147,20 @@ def run_supervised(
                     pass
 
 
+def claude_session_args(argv: list[str], command: list[str]) -> tuple[list[str], str | None]:
+    explicit_id = arg_value(argv, "--session-id")
+    if explicit_id is not None:
+        return command, explicit_id
+    if "--fork-session" not in argv:
+        resume_id = arg_value(argv, "--resume", "-r")
+        if resume_id is not None:
+            return command, resume_id
+        if "--continue" in argv or "-c" in argv:
+            return command, None
+    session_id = str(uuid.uuid4())
+    return [*command, "--session-id", session_id], session_id
+
+
 def run_headless_with_resume(
     command: list[str],
     argv: list[str],
@@ -2155,17 +2169,14 @@ def run_headless_with_resume(
     quota_key: str,
 ) -> int:
     """Run headless Claude; on limit-confirmed failure, wait for reset and resume."""
-    claude_session_id = arg_value(argv, "--session-id")
-    if not claude_session_id:
-        claude_session_id = str(uuid.uuid4())
-        command = [*command, "--session-id", claude_session_id]
+    command, claude_session_id = claude_session_args(argv, command)
     deadline = time.time() + wait_max_seconds()
     current = command
     activity = activity_path(session_id, os.getpid())
     stall_timeout = _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT)
     for attempt in range(RESUME_MAX_ATTEMPTS + 1):
         returncode = run_supervised(current, activity, stall_timeout, session_id=claude_session_id)
-        if returncode in (0, EXIT_TEMPFAIL):
+        if returncode in (0, EXIT_TEMPFAIL) or claude_session_id is None:
             return returncode
         # Only retry when the LB confirms the failure is account exhaustion
         # with a known reset; any other failure propagates immediately.
@@ -2320,10 +2331,7 @@ def main() -> None:
             model = requested_model(argv)
             quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
             sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))
-        claude_session_id = arg_value(argv, "--session-id")
-        if not claude_session_id:
-            claude_session_id = str(uuid.uuid4())
-            command = [*command, "--session-id", claude_session_id]
+        command, claude_session_id = claude_session_args(argv, command)
         sys.exit(run_supervised(
             command, activity_path(session_id, os.getpid()),
             _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
