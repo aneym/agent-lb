@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Relay an MCP stdio server without eagerly loaded tool metadata."""
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+
+
+def strip_always_load(line):
+    """Rewrite tools-list responses; preserve all other transport bytes."""
+    try:
+        message = json.loads(line)
+    except (ValueError, UnicodeDecodeError):
+        return line
+    if not isinstance(message, dict):
+        return line
+    result = message.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+        return line
+    for tool in result["tools"]:
+        if not isinstance(tool, dict):
+            continue
+        metadata = tool.get("_meta")
+        if isinstance(metadata, dict) and "anthropic/alwaysLoad" in metadata:
+            del metadata["anthropic/alwaysLoad"]
+            if not metadata:
+                del tool["_meta"]
+    return (json.dumps(message, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def main():
+    if len(sys.argv) < 3 or sys.argv[1] != "--":
+        print("Usage: mcp-strip-always-load -- <command> [args...]", file=sys.stderr)
+        return 2
+    child = subprocess.Popen(sys.argv[2:], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    def forward_signal(signum, _frame):
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    signal.signal(signal.SIGTERM, forward_signal)
+    signal.signal(signal.SIGINT, forward_signal)
+
+    def relay_input():
+        try:
+            for line in sys.stdin.buffer:
+                child.stdin.write(line)
+                child.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                child.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+    def relay_output():
+        for line in child.stdout:
+            sys.stdout.buffer.write(strip_always_load(line))
+            sys.stdout.buffer.flush()
+
+    threading.Thread(target=relay_input, daemon=True).start()
+    output = threading.Thread(target=relay_output, daemon=True)
+    output.start()
+    code = child.wait()
+    output.join()
+    return code if code >= 0 else 128 - code
+
+
+if __name__ == "__main__":
+    os._exit(main())
