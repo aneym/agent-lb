@@ -22,11 +22,11 @@ the raw code that comes out of those decisions."
    auditor (rule 1), so `route` picks nothing and the fold's order decides. Orch-lab E12 (2026-09-28, n=6
    per batch, provisional): Sol medium 6/6 at $0.86 per accepted unit; Sonnet 5.5 high 8/12 at $2.76; Opus medium
    4/6 at $3.76. `implement_default` in `routing-table.json` names the seat route puts first.
-4. **`luna-implementer` is off the default path** (`off_default`); it returns only through an eval. Orch-lab E6
-   (2026-09-26, small n): Sol 6/6 at about 105k tokens per accepted unit; Luna 5/6 at about 135k; Sonnet 5 5/6 at
-   about 284k; Opus 4/6 at about 618k. E12 set step 3's order.
-5. **Read-only lookups go to `gpt-explorer` (Luna, low) or `Explore` (Sonnet, medium).** No decision rides on
-   them. First call: about 3.4k tokens for gpt-explorer, 13k for Explore.
+4. **Luna has no seat.** 2026-09-29 (Alex): "swap all gpt routing to sol latest, 6.1 please. make sure
+   this is fully ingrained in and automatic." Every GPT seat uses the floating `sol-latest` alias.
+5. **Read-only lookups go to `gpt-explorer` (Sol, low) or `Explore` (Sonnet, medium).** 2026-09-29 (Alex):
+   every GPT seat runs sol-latest. No decision rides on them. First call: about 3.4k tokens for gpt-explorer,
+   13k for Explore.
 6. Codex CLI, Cursor and Devin are optional capacity; Cursor takes mechanical sweeps, Devin sits behind it.
 
 ## Review (2026-09-26, orch-lab E7)
@@ -102,7 +102,7 @@ table together. Log which rung passed which task (`route record`, 2026-09-25) so
   the `claude-planner` alias), the Codex Astra family (`gpt-*-astra`), and the gpt-5.6 generation and older. The
   table's `retired` list is the authority.
 - **Family aliases, never versions:** `opus-latest`, `sonnet-latest` and `haiku-latest` for Claude seats,
-  `sol-latest` and `luna-latest` for Codex and ccgpt seats, `grok-latest` for Cursor, `swe-latest` for Devin.
+  `sol-latest` for Codex and ccgpt seats (Luna has no seat, 2026-09-29, Alex), `grok-latest` for Cursor, `swe-latest` for Devin.
   `route resolve <alias>` returns the newest non-retired model served (Claude: LB `/api/models/anthropic`, else the
   alias's `pinned` id; 2026-09-28); `route models` shows it. install-policy pins `sonnet` to the resolved Sonnet.
 - Terra is unserved and `implementer` retired (2026-09-25). `cc` and the Claude launcher start `opus[1m]`.
@@ -112,7 +112,7 @@ table together. Log which rung passed which task (`route record`, 2026-09-25) so
 Which seat serves which class, on which model and effort, out of which pool, is `routing-table.json` and nothing else.
 `route pick <class> [--author-vendor V]` returns the first admitted seat, its chain and its auditor. Chains, best
 first (2026-09-26): plan planner (Opus high), then codex-sol (Sol high), with `sol-consult` (Sol high) as the second
-opinion; review plan-reviewer (Opus high), then codex-sol; explore gpt-explorer (Luna low), Explore (Sonnet medium),
+opinion; review plan-reviewer (Opus high), then codex-sol; explore gpt-explorer (Sol low; 2026-09-29, Alex: all GPT routing to sol latest; Luna has no seat), Explore (Sonnet medium),
 codex-sol (Sol medium); research codex-sol (Sol high), Explore, opus-seat (Opus high); implement gpt-implementer (Sol
 medium), sonnet-implementer (Sonnet high), then opus-seat (Opus medium, `min_pace` -10); mechanical gpt-implementer,
 sonnet-implementer, then cursor-seat (`grok-latest`), devin-seat (`swe-latest`); verify verifier (Opus high), then codex-verifier (Sol xhigh), cross-vendor; computer

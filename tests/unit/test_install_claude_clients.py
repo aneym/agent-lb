@@ -647,6 +647,8 @@ def test_policy_installer_manages_every_seat_definition(tmp_path: Path) -> None:
     }
     for name, text in local.items():
         (agents / f"{name}.md").write_text(text)
+    luna_owner = owner.with_name("luna-implementer")
+    luna_owner.write_text("agent-lb:luna-implementer:v1\n")
 
     result = subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True)
 
@@ -661,13 +663,9 @@ def test_policy_installer_manages_every_seat_definition(tmp_path: Path) -> None:
     assert (home / ".agent-lb" / "managed" / "coding-agents" / "gpt-implementer").read_text() == (
         "agent-lb:gpt-implementer:v1\n"
     )
-    assert (agents / "luna-implementer.md").read_bytes() == (
-        POLICY_INSTALLER.parent / "agents" / "luna-implementer.md"
-    ).read_bytes()
+    assert not (agents / "luna-implementer.md").exists()
     assert (checkpoint / ".claude" / "agents" / "luna-implementer.md").read_text() == local["luna-implementer"]
-    assert (home / ".agent-lb" / "managed" / "coding-agents" / "luna-implementer").read_text() == (
-        "agent-lb:luna-implementer:v1\n"
-    )
+    assert not luna_owner.exists()
 
 
 def test_policy_installer_replaces_a_symlinked_policy_dir_with_a_full_copy(tmp_path: Path) -> None:
@@ -714,3 +712,63 @@ def test_uninstall_removes_the_seat_guard_registration(tmp_path: Path) -> None:
     commands = [h["command"] for g in settings.get("hooks", {}).get("PreToolUse", []) for h in g.get("hooks", [])]
     assert not any("hooks/seat-guard.py" in command for command in commands)
     assert not settings.get("hooks", {}).get("SubagentStop")
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "claude-opus-5-5"])
+@pytest.mark.parametrize("symlink", [False, True])
+def test_policy_installer_codex_defaults_follow_served_sol_without_changing_other_bytes(
+    tmp_path: Path, model: str, symlink: bool,
+) -> None:
+    home = tmp_path / "home"
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    original = (
+        f'model = "{model}" # default\r\n'
+        'model_reasoning_effort = "low"\r\n'
+        '[memories]\r\n'
+        'extract_model = "gpt-6-luna"\r\n'
+        "consolidation_model = 'gpt-6-sol' # keep\r\n"
+        '[profiles.custom]\r\n'
+        'model = "gpt-6-sol"\r\n'
+    )
+    target = home / ".codex-shared/config.toml" if symlink else config
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(original.encode())
+    if symlink:
+        config.symlink_to(target)
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "api_models.json").write_text(json.dumps({"data": [{"id": "gpt-7-sol"}]}))
+    env = os.environ | {"ROUTE_FIXTURE_DIR": str(fixture)}
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home)], env=env, check=True, capture_output=True)
+    expected = original.replace('extract_model = "gpt-6-luna"', 'extract_model = "gpt-7-sol"').replace(
+        "consolidation_model = 'gpt-6-sol'", "consolidation_model = 'gpt-7-sol'"
+    )
+    if model == "gpt-6-sol":
+        expected = expected.replace('model = "gpt-6-sol" # default', 'model = "gpt-7-sol" # default')
+    assert config.read_bytes() == target.read_bytes() == expected.encode()
+    assert config.is_symlink() is symlink
+    subprocess.run([str(POLICY_INSTALLER), "--home", str(home), "--uninstall"], env=env, check=True, capture_output=True)
+    assert config.read_bytes() == target.read_bytes() == expected.encode()
+    assert config.is_symlink() is symlink
+
+
+@pytest.mark.parametrize("case", ["outside-home", "non-utf8"])
+def test_policy_installer_skips_unsupported_codex_config_and_finishes_converge(tmp_path: Path, case: str) -> None:
+    home = tmp_path / "home"
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    original = b'model = "gpt-6-sol"\n' if case == "outside-home" else b'model = "gpt-6-sol"\n# \xff\n'
+    target = tmp_path / "shared/config.toml" if case == "outside-home" else config
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(original)
+    if case == "outside-home":
+        config.symlink_to(target)
+    result = subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home)], check=True, capture_output=True, text=True,
+    )
+    reason = "target is outside --home" if case == "outside-home" else "is not UTF-8"
+    assert f"SKIP Codex config rewrite: config.toml {reason}" in result.stdout
+    assert (home / ".claude/agents/gpt-implementer.md").is_file()
+    assert config.read_bytes() == target.read_bytes() == original
+    assert config.is_symlink() is (case == "outside-home")

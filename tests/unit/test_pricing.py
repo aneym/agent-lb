@@ -79,6 +79,9 @@ def test_gpt_6_astra_long_context_surcharge():
     ("model", "expected"),
     [
         # 50k fresh input + 10k cached + 20k output at OpenAI's published list price.
+        ("gpt-6.1-sol", 50_000 * 2.0e-6 + 10_000 * 0.1e-6 + 20_000 * 10.0e-6),
+        ("gpt-6.1-sol-xhigh", 50_000 * 2.0e-6 + 10_000 * 0.1e-6 + 20_000 * 10.0e-6),
+        ("gpt-6.1-sol-pro", None),
         ("gpt-6-sol", 50_000 * 2.0e-6 + 10_000 * 0.2e-6 + 20_000 * 10.0e-6),
         ("gpt-6-sol-low", 50_000 * 2.0e-6 + 10_000 * 0.2e-6 + 20_000 * 10.0e-6),
         ("gpt-6-luna", 50_000 * 0.1e-6 + 10_000 * 0.01e-6 + 20_000 * 0.5e-6),
@@ -95,6 +98,12 @@ def test_gpt_6_sol_and_luna_carry_subscription_equivalent_price(model, expected)
         assert cost is None
     else:
         assert cost == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6.1-sol-xhigh"])
+def test_gpt_6_1_sol_long_context_price(model):
+    usage = UsageTokens(input_tokens=300_000, output_tokens=100_000, cached_input_tokens=10_000)
+    assert _cost_for(model, usage) == pytest.approx(290_000 * 4.0e-6 + 10_000 * 0.2e-6 + 100_000 * 15.0e-6)
 
 
 def test_get_pricing_for_model_gpt_5_3_alias():

@@ -24,6 +24,8 @@ EFFORT_LEVEL = "high"
 SONNET_ENV = "ANTHROPIC_DEFAULT_SONNET_MODEL"
 SONNET_MODEL = "claude-sonnet-5-5"
 SONNET_ID = re.compile(r"claude-sonnet-\d+(?:-\d{1,2})?")
+SOL_MODEL = "gpt-6.1-sol"
+SOL_ID = re.compile(r"gpt-\d+(?:\.\d+)*-sol")
 MANAGED_AGENTS = (
     (
         Path(".claude/agents/computer-use.md"),
@@ -120,12 +122,6 @@ MANAGED_AGENTS = (
         Path(".agent-lb/managed/coding-agents/sonnet-implementer"),
         "agent-lb:sonnet-implementer:v1\n",
         Path("agents/sonnet-implementer.md"),
-    ),
-    (
-        Path(".claude/agents/luna-implementer.md"),
-        Path(".agent-lb/managed/coding-agents/luna-implementer"),
-        "agent-lb:luna-implementer:v1\n",
-        Path("agents/luna-implementer.md"),
     ),
     (
         Path(".claude/agents/effort-xhigh.md"),
@@ -292,6 +288,41 @@ def resolve_sonnet(source: Path, home: Path) -> str:
     return model if SONNET_ID.fullmatch(model) else SONNET_MODEL
 
 
+def resolve_sol(source: Path, home: Path) -> str:
+    """Resolve the Codex default through the same floating alias as GPT seats."""
+    route = source.parent.parent / "clients" / "route"
+    if not route.is_file():
+        route = home / ".agent-lb" / "bin" / "route"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(route), "resolve", "sol-latest"],
+            capture_output=True, text=True, timeout=60, check=False,
+            env=os.environ | {"ROUTE_TABLE": str(source / "routing-table.json")},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return SOL_MODEL
+    model = result.stdout.strip() if result.returncode == 0 else ""
+    return model if SOL_ID.fullmatch(model) else SOL_MODEL
+
+
+def reconcile_codex_config(text: str, model: str) -> str:
+    """Change only GPT Sol/Luna model values, retaining every other byte."""
+    section = ""
+    lines = []
+    assignment = re.compile(
+        r'^(\s*(model|extract_model|consolidation_model)\s*=\s*)([\"\'])(gpt-\d+(?:\.\d+)*-(?:sol|luna))(\3)(.*)$'
+    )
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("["):
+            section = line.strip()
+        match = assignment.match(line.rstrip("\r\n"))
+        if match and (match[2] != "model" or not section):
+            start, end = match.span(4)
+            line = line[:start] + model + line[end:]
+        lines.append(line)
+    return "".join(lines)
+
+
 def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
@@ -428,6 +459,21 @@ def main() -> int:
     # Compare parsed settings so a formatting-only difference never rewrites the file.
     if desired_settings != settings:
         changes[settings_path] = desired_settings_text
+    if not args.uninstall:
+        codex_config = args.home / ".codex" / "config.toml"
+        if codex_config.is_file():
+            codex_config = codex_config.resolve()
+            try:
+                codex_config.relative_to(args.home.resolve())
+                config_text = codex_config.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                print("SKIP Codex config rewrite: config.toml is not UTF-8")
+            except ValueError:
+                print("SKIP Codex config rewrite: config.toml target is outside --home")
+            else:
+                desired_config = reconcile_codex_config(config_text, resolve_sol(source, args.home))
+                if desired_config != config_text:
+                    changes[codex_config] = desired_config
     preserved_agents: list[tuple[str, Path]] = []
     replace_policy_link = False
     policy_link_target = ""
@@ -453,6 +499,16 @@ def main() -> int:
                 changes[owner_path] = owner_marker
 
     if not args.uninstall:
+        luna_owner = args.home / ".agent-lb/managed/coding-agents/luna-implementer"
+        if read_text(luna_owner) == "agent-lb:luna-implementer:v1\n":
+            for relative in (
+                Path(".claude/agents/luna-implementer.md"),
+                Path(".agent-lb/managed/coding-agents/luna-implementer"),
+                POLICY_DIR / "agents/luna-implementer.md",
+            ):
+                path = args.home / relative
+                if path.is_file() and path.resolve().parent != source / "agents":
+                    changes[path] = None
         for name in RETIRED_AGENTS:
             for relative in (
                 Path(".claude/agents") / f"{name}.md",

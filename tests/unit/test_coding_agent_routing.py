@@ -100,7 +100,7 @@ def test_verify_routing_rejects_each_factory_violation(
     elif violation == "seat-box-vendor":
         table["seats"]["opus-seat"]["box"] = {"adapter": "codex"}
     elif violation == "seat-effort-vs-definition":
-        table["seats"]["luna-implementer"]["effort"] = "high"
+        table["seats"]["host-relay"]["effort"] = "high"
     elif violation == "auditor-without-test-run-flag":
         del table["seats"]["codex-verifier"]["needs_test_run"]
     elif violation == "test-run-flag-on-non-auditor":

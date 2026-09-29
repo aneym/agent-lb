@@ -1,7 +1,7 @@
 ---
 name: gpt-explorer
-description: Read-only code exploration seat on GPT (newest Luna via luna-latest, low effort) through the agent-lb bridge; bills the Codex pool, not Anthropic. Use for finding files, tracing code, and answering questions about a codebase.
-model: luna-latest-low
+description: Read-only code exploration seat on GPT (newest Sol via sol-latest, low effort) through the agent-lb bridge; bills the Codex pool, not Anthropic. Use for finding files, tracing code, and answering questions about a codebase.
+model: sol-latest-low
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit]
 ---

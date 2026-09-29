@@ -937,7 +937,7 @@ async def v1_ccgpt_messages(
         return _anthropic_error_response(
             400, "invalid_request_error", f"model {payload.model} is not a served GPT model"
         )
-    locked_model, alias_effort = resolved or (CCGPT_MODEL, None)
+    locked_model, alias_effort = resolved or resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None)
     return await _ccgpt_messages_response(
         request, payload, context, api_key, alias_effort=alias_effort, locked_model=locked_model
     )
@@ -949,7 +949,7 @@ async def _ccgpt_messages_response(
     context: ProxyContext,
     api_key: ApiKeyData | None,
     alias_effort: str | None = None,
-    locked_model: str = CCGPT_MODEL,
+    locked_model: str | None = None,
 ) -> Response:
     # Claude Code's message-threads beta (first-party host only, which the
     # desktop MITM proxy looks like) sends `thread: continue` turns carrying just
@@ -971,6 +971,7 @@ async def _ccgpt_messages_response(
             "invalid_request_error",
             "Anthropic-defined tools are not supported by the ccgpt compatibility route",
         )
+    locked_model = locked_model or (resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None))[0]
     client_session_id = _anthropic_request_session_id(payload, request.headers)
     responses_payload = claude_to_responses(payload)
     responses_payload.model = locked_model
@@ -1063,7 +1064,7 @@ async def v1_ccgpt_messages_count_tokens(
     payload: dict[str, JsonValue] = Body(...),
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    validate_model_access(api_key, CCGPT_MODEL)
+    validate_model_access(api_key, (resolve_ccgpt_model("sol-latest") or (CCGPT_MODEL, None))[0])
     return JSONResponse(content={"input_tokens": estimate_claude_input_tokens(payload)})
 
 

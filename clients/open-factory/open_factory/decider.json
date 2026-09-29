@@ -9,8 +9,7 @@
   "capability": {
     "opus-latest": "Claude Opus, newest. Strongest reasoning and judgment; for ambiguous, correctness-critical or multi-file work.",
     "sonnet-latest": "Claude Sonnet, newest. Strong coding and codebase research; the Claude fallback implementer when Codex is tight.",
-    "sol-latest": "OpenAI GPT Sol via Codex. The house implementer: feature code, bug fixes and their tests written to a spec, multi-file edits, long agentic runs.",
-    "luna-latest": "OpenAI GPT Luna. Fast and cheap; mechanical edits, boilerplate, renames and tests written to a given contract.",
+    "sol-latest": "OpenAI GPT Sol via Codex. The house implementer: feature code, bug fixes and their tests written to a spec, multi-file edits, long agentic runs, mechanical edits, boilerplate and renames.",
     "grok-latest": "xAI Grok medium-fast via Cursor. Fast mechanical edits against a tight spec.",
     "grok-latest-low": "xAI Grok low-fast via Cursor. Quick scouting and lookups.",
     "swe-latest": "Cognition SWE via Devin. Free on the Devin subscription; mechanical and volume work as the fallback behind Cursor."

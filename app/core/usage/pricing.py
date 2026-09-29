@@ -114,6 +114,18 @@ DEFAULT_PRICING_MODELS: dict[str, ModelPrice] = {
     # members can be compared in dollars. Cached input is 10% of input; >272k
     # input bills the whole request at 2x input / 1.5x output. Priority rates are
     # unpublished, so priority traffic falls back to standard rates.
+    # OpenAI list price read 2026-09-29 (openai.com/index/introducing-gpt-6-1-sol).
+    # Cached input is 95% off input; unpublished long-context rates assume the
+    # same 2x input / 1.5x output rule as gpt-6-sol.
+    "gpt-6.1-sol": ModelPrice(
+        input_per_1m=2.0,
+        cached_input_per_1m=0.10,
+        output_per_1m=10.0,
+        long_context_threshold_tokens=272_000,
+        long_context_input_per_1m=4.0,
+        long_context_cached_input_per_1m=0.20,
+        long_context_output_per_1m=15.0,
+    ),
     "gpt-6-sol": ModelPrice(
         input_per_1m=2.0,
         cached_input_per_1m=0.2,
@@ -360,8 +372,8 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     # GPT-6 Sol / Luna: only the effort suffixes share the base price. No
     # "gpt-6-sol*" catch-all, which would bill a pro or 6.1 variant at Sol rates.
     **{
-        f"gpt-6-{tier}-{suffix}": f"gpt-6-{tier}"
-        for tier in ("sol", "luna")
+        f"{model}-{suffix}": model
+        for model in ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol")
         for suffix in ("minimal", "low", "medium", "high", "xhigh", "fast")
     },
     # Bare "gpt-5.6" is OpenAI's alias for Sol; the tier patterns win by length.

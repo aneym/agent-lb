@@ -46,7 +46,7 @@
       "chain": [
         {
           "seat": "gpt-explorer",
-          "model": "luna-latest",
+          "model": "sol-latest",
           "vendor": "openai",
           "effort": "low"
         },
@@ -303,7 +303,6 @@
     "computer-use": {"vendor": "openai", "box": null},
     "codex-test-runner": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "medium"},
     "frontend-designer": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "high"},
-    "luna-implementer": {"vendor": "openai", "box": null, "model": "luna-latest", "effort": "medium"},
     "sonnet-implementer": {"vendor": "anthropic", "box": null},
     "effort-xhigh": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "xhigh"},
     "host-relay": {"vendor": "anthropic", "box": null, "model": "haiku-latest", "effort": "low"}
@@ -359,7 +358,7 @@
         "sol-latest"
       ],
       "retired": "see top-level `retired`: Fable, the whole Astra family, the gpt-5.6 generation and older",
-      "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; sonnet-implementer (sonnet-latest, high) stands in when Codex is empty (2026-09-28, E12); opus-seat takes judgment code and is the pace-gated implement fallback; luna-implementer is off_default."
+      "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; sonnet-implementer (sonnet-latest, high) stands in when Codex is empty (2026-09-28, E12); opus-seat takes judgment code and is the pace-gated implement fallback; Luna has no seat (2026-09-29, Alex: every GPT seat runs sol-latest)."
     },
     "review": {
       "owner_date": "2026-09-26",
@@ -421,6 +420,7 @@
     }
   },
   "notes": [
+    "2026-09-29 (Alex): every GPT seat runs sol-latest (GPT-6.1 Sol today); Luna has no seat. The alias floats to the newest served Sol, so a release needs no edit.",
     "Codex seats take --model <id> plus a separate --effort; the effort suffix is not a model name.",
     "2026-09-22 canonical lineup (owner): no Fable, no Codex Astra, no gpt-5.6. Seats name family aliases (`aliases`); `route resolve <alias>` and `route pick` resolve them to the newest served, non-retired model, so a release needs no edit. Opus plans and verifies; Sol implements (2026-09-28, E12: sonnet-implementer stands in when Codex is empty); the other vendor audits (classes.*.audit).",
     "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
@@ -492,12 +492,5 @@
     "gpt-5-*",
     "gpt-5"
   ],
-  "off_default": [
-    {
-      "seat": "luna-implementer",
-      "since": "2026-09-26",
-      "evidence": "orch-lab E6: 5/6 accepted, ~135k tokens per accepted unit vs gpt-implementer 6/6 at ~105k",
-      "returns_when": "an eval matches gpt-implementer's accept rate on that kind of task"
-    }
-  ]
+  "off_default": []
 }

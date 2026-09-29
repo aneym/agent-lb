@@ -10,6 +10,7 @@ also checks the installation, launchers and live model resolution.
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import json
 import os
@@ -48,7 +49,6 @@ MANAGED = (
     ("gpt-explorer", ".claude/agents/gpt-explorer.md", "agents/gpt-explorer.md"),
     ("sol-consult", ".claude/agents/sol-consult.md", "agents/sol-consult.md"),
     ("sonnet-implementer", ".claude/agents/sonnet-implementer.md", "agents/sonnet-implementer.md"),
-    ("luna-implementer", ".claude/agents/luna-implementer.md", "agents/luna-implementer.md"),
     ("effort-xhigh", ".claude/agents/effort-xhigh.md", "agents/effort-xhigh.md"),
     ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
     ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
@@ -217,9 +217,10 @@ off_default = source_table.get("off_default", [])
 off_seats = {item.get("seat") for item in off_default}
 factory(
     "off-default",
-    bool(off_default) and all(all(item.get(field) for field in ("seat", "since", "evidence", "returns_when"))
+    all(all(item.get(field) for field in ("seat", "since", "evidence", "returns_when"))
         for item in off_default)
-    and not any(entry.get("seat") in off_seats for spec in classes.values() for entry in spec.get("chain", [])),
+    and not any(entry.get("seat") in off_seats | {"luna-implementer"}
+        for spec in classes.values() for entry in spec.get("chain", [])),
     "dated off-default seats are absent from chains",
 )
 expected_auditors = {
@@ -468,6 +469,67 @@ if not SOURCE_ONLY:
     for alias, spec in aliases.items():
         if spec.get("family") and resolution.get(alias):
             newest_by_family[spec["family"]] = resolution[alias]
+
+
+if not SOURCE_ONLY:
+    # A newly served GPT release must never silently acquire a zero-dollar price.
+    pricing_root = SOURCE.parent.parent
+    if not (pricing_root / "app/core/usage/pricing.py").is_file():
+        pricing_root = Path(__file__).resolve().parent
+        for parent in pricing_root.parents:
+            if (parent / "app/core/usage/pricing.py").is_file():
+                pricing_root = parent
+                break
+    if not (pricing_root / "app/core/usage/pricing.py").is_file():
+        print("SKIP served GPT alias pricing check: pricing.py is absent from this installation")
+    else:
+        sys.path.insert(0, str(pricing_root))
+        try:
+            # Read the static catalogue without loading service-only dependencies in
+            # the policy CLI's system Python.
+            catalogue = ast.parse((pricing_root / "app/core/usage/pricing.py").read_text())
+            priced = set()
+            price_aliases = {}
+            for node in catalogue.body:
+                if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+                    continue
+                if node.target.id == "DEFAULT_PRICING_MODELS":
+                    priced = {ast.literal_eval(key) for key in node.value.keys}
+                elif node.target.id == "DEFAULT_MODEL_ALIASES":
+                    price_aliases = eval(compile(ast.Expression(node.value), "pricing aliases", "eval"), {"__builtins__": {}})
+
+            def has_price(model):
+                if model in priced:
+                    return True
+                matches = [(len(pattern), target) for pattern, target in price_aliases.items()
+                           if fnmatch.fnmatchcase(model.lower(), pattern.lower())]
+                return bool(matches) and max(matches)[1] in priced
+
+            def openai_aliases(value):
+                found = set()
+                if isinstance(value, dict):
+                    if value.get("vendor") == "openai" and value.get("model") in aliases:
+                        found.add(value["model"])
+                    for child in value.values():
+                        found.update(openai_aliases(child))
+                elif isinstance(value, list):
+                    for child in value:
+                        found.update(openai_aliases(child))
+                return found
+
+            route = (SOURCE / "../../clients/route").resolve()
+            if not route.is_file():
+                route = HOME / ".agent-lb/bin/route"
+            for alias in sorted({"sol-latest"} | openai_aliases(source_table)):
+                result = subprocess.run(
+                    [sys.executable, str(route), "resolve", alias], text=True, capture_output=True,
+                    timeout=60, env=os.environ | {"ROUTE_TABLE": str(SOURCE / "routing-table.json")},
+                )
+                model = result.stdout.strip()
+                check(result.returncode == 0 and has_price(model),
+                      f"{alias} resolved id {model or '(unresolved)'} has pricing")
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            check(False, f"served GPT alias pricing check unavailable: {exc}")
 
 
 def stale_reason(model):
