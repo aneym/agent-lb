@@ -31,7 +31,6 @@ FORWARDER_SEATS = {
     "cursor-seat",
     "devin-seat",
     "gpt-implementer",
-    "luna-implementer",
     "gpt-explorer",
     "sol-consult",
 }
@@ -72,7 +71,7 @@ def emit_deny(reason: str) -> None:
                     "permissionDecisionReason": (
                         "seat-guard: " + reason + ". No seat or subagent runs on Fable or a retired model "
                         "(owner lineup 2026-09-22). Name a family alias instead: `opus`/`sonnet` for Claude "
-                        "seats, `route resolve sol-latest|luna-latest` for Codex; "
+                        "seats, `route resolve sol-latest` for Codex; "
                         "`route pick <class>` picks the seat. Canon: ~/.agents/policy/coding-agents/ROUTING.md."
                     ),
                 }

@@ -39,8 +39,8 @@ Rules:
   (read-only); for building, gpt-implementer (newest Sol, medium) writes
   code to a spec, mechanical edits included, and sonnet-implementer (newest
   Sonnet, high) only when Codex is really out (2026-09-28); opus-seat takes
-  judgment code and anything a seat fails twice. luna-implementer is off the default
-  path until an eval matches the default's accept rate. cursor-seat (Grok) is
+  judgment code and anything a seat fails twice. Every GPT seat follows sol-latest
+  (2026-09-29). cursor-seat (Grok) is
   optional capacity for mechanical sweeps; frontend-designer gives UI
   direction. Every piece names its files, fixed interfaces and one check
   command. >~3 direct reads on one question or ANY retry of a failed empirical
