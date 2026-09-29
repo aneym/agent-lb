@@ -1974,7 +1974,20 @@ def _shell_command_process(args: str) -> bool:
     if not words:
         return False
     shell = os.path.basename(words[0]).lstrip("-")
-    return shell in {"sh", "bash", "zsh", "dash", "ksh", "fish"} and "-c" in words[1:]
+    if shell not in {"sh", "bash", "zsh", "dash", "ksh", "fish"}:
+        return False
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word == "--" or not word.startswith(("-", "+")):
+            return False
+        if word in {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}:
+            index += 2
+            continue
+        if word.startswith("-") and not word.startswith("--") and word[1:].isalpha() and "c" in word[1:]:
+            return True
+        index += 1
+    return False
 
 
 def _work_process_alive(child_pid: int) -> bool:

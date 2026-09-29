@@ -229,6 +229,25 @@ def test_early_shell_tool_keeps_idle_session_alive(tmp_path, capsys):
         ),
         ("-zsh", False),
         ("node /x/mcp-server.js", False),
+        (
+            "/bin/bash -c source /home/jobs/.claude/shell-snapshots/"
+            "snapshot-bash-1.sh 2>/dev/null || true && eval 'python3 w.py'",
+            True,
+        ),
+        ("bash -lc 'python3 w.py'", True),
+        ("bash -c -l 'python3 w.py'", True),
+        ("bash -l -c x", True),
+        ("-bash -c x", True),
+        ("bash --login -c x", True),
+        ("bash -o pipefail -c x", True),
+        ("zsh -ic x", True),
+        ("sh -c x", True),
+        ("bash script.sh -c", False),
+        ("bash -l", False),
+        ("bash -- -c", False),
+        ("python3 -c x", False),
+        ("bash -o c", False),
+        ("bash", False),
     ],
 )
 def test_shell_command_classifier(args, expected):
