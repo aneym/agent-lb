@@ -305,7 +305,7 @@
     "frontend-designer": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "high"},
     "sonnet-implementer": {"vendor": "anthropic", "box": null},
     "effort-xhigh": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "xhigh"},
-    "host-relay": {"vendor": "anthropic", "box": null, "model": "haiku-latest", "effort": "low"}
+    "host-relay": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "low"}
   },
   "pools": {
     "opus-latest": "anthropic-general",

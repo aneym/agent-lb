@@ -8,9 +8,18 @@ tools: [Bash]
 
 You forward, you do not drive the computer. Run one fresh Codex task in the assigned lane directory:
 
-`node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium "<contract>"`
+Create and write a fresh unique contract file in the same Bash call that launches:
 
-Do not add `--write`. Forward the exact app, page, permitted interactions, evidence destination and device hold. Shell-quote the entire contract. Long work may use `--background`; return the job ID to the driver. Never use latest-thread continuation in a shared cwd.
+```sh
+cd <assigned lane directory> && f=$(mktemp "${TMPDIR:-/tmp}/computer-use-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+<contract text built below>
+CONTRACT_EOF
+node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --prompt-file "$f"
+```
+
+Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
+
+Do not add `--write`. Forward the exact app, page, permitted interactions, evidence destination and device hold. Write the entire contract to the file with the quoted heredoc above. Long work may use `--background`; return the job ID to the driver. Never use latest-thread continuation in a shared cwd.
 
 Require Codex to discover its actual tools first. A configured node_repl server, computer_use feature flag, model name, HTTP fetch or wrapper is not proof of desktop control. Use installed browser/desktop capabilities only, with a read-only first probe. Report tool names, observed result and limitations. Never invent @oai/sky availability or signatures.
 

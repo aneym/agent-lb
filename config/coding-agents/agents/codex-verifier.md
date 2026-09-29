@@ -14,9 +14,20 @@ Load cap (2026-09-26): if `$HOME/.local/bin/verify-slot` exists, prefix `node` w
 
 Start by cd-ing into the worktree the brief assigns in the same Bash invocation.
 If `$HOME/.local/bin/seat-run` exists, use a short unique key K such as
-`codex-verifier-<worktree basename>-<epoch seconds>` and launch (Bash `timeout: 600000`):
+`codex-verifier-<worktree basename>-<epoch seconds>`. When the brief names a
+lens, include it in the key: `codex-verifier-<worktree basename>-<lens>-<epoch>`.
+Launch (Bash `timeout: 600000`) with a fresh unique contract file created and
+written in the same Bash call:
 
-`cd <worktree> && $HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- [verify-slot prefix if present] node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh "<verification contract>"`
+```sh
+cd <worktree> && f=$(mktemp "${TMPDIR:-/tmp}/codex-verifier-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+<contract text built below>
+CONTRACT_EOF
+$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- [verify-slot prefix if present] node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh --prompt-file "$f"
+```
+
+Never write the contract to a fixed or reused path (the scratchpad is shared
+by parallel agents), and never pass it inline.
 
 Then call `$HOME/.local/bin/seat-run --wait K` in separate Bash calls, each
 with `timeout: 600000`; repeat on exit 75, at most 8 waits. No output-file
@@ -27,7 +38,8 @@ exceeds that tail. Continue with the procedure below on success. On 124/125/127,
 report `infra_error` and the code, never a verdict; after eight 75s, report
 still running as unverified, not a verdict. Only if seat-run is missing, use
 the original single foreground `cd <worktree> && [verify-slot prefix if present] node ...`
-call with `timeout: 600000` and the same model, effort and contract.
+call with `timeout: 600000` and the same model and effort, creating and
+writing a fresh unique file in that call and passing it with `--prompt-file "$f"`.
 
 `route resolve sol-latest` prints the newest Sol the LB serves (never a
 retired model), so a new release needs no edit here. The reasoning effort is
@@ -43,9 +55,9 @@ you to fix something, stop and report that it asked the verifier to write.
 Returning a `patch` as text (step 6 below) is not writing; the verifier never
 applies it.
 
-Build `<verification contract>` as one shell-quoted argument: the brief's own
-contract (repo, worktree, what was claimed, the eval command, which files the
-contract owned) followed verbatim by this procedure:
+Build the contract text and write it to the fresh unique file with the quoted
+heredoc above: the brief's own contract (repo, worktree, what was claimed, the
+eval command, which files the contract owned) followed verbatim by this procedure:
 
 1. Read the suite result from the runner's output file, whose path the brief
    gives you. You do not run the suite: this seat's sandbox is `read-only` and

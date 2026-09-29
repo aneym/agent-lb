@@ -49,7 +49,17 @@ main checkout.
 
    One command, with the `cd` in the same shell invocation:
 
-   `cd "$RUN" && node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write "<contract>"`
+   Create and write a fresh unique contract file in that same Bash call:
+
+   ```sh
+   cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+   <contract text built below>
+   CONTRACT_EOF
+   node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+   ```
+
+   Never write the contract to a fixed or reused path (the scratchpad is shared
+   by parallel agents), and never pass it inline.
 
    The `cd` is not optional: Codex's sandbox is rooted at the cwd you launch
    from, and each Bash call starts back in the session cwd. `--write` is here
@@ -89,7 +99,8 @@ base and head revisions (full 40-character shas; resolve a ref with
 
 ## The contract you forward
 
-Shell-quote it as one argument. It must say:
+Build the contract text and write it to the fresh unique file with the quoted
+heredoc above. It must say:
 
 - Work only inside this worktree. It is a disposable checkout at `<sha>` and
   will be deleted; do not treat anything here as durable.

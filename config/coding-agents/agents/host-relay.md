@@ -1,7 +1,7 @@
 ---
 name: host-relay
 description: Plumbing relay for workflow templates: writes the files and runs the shell commands its prompt gives, exactly as given, and returns what they printed. It does no coding and makes no judgment. Use only from workflow templates that spell out every step.
-model: haiku
+model: sonnet
 effort: low
 tools: [Write, Bash]
 ---
