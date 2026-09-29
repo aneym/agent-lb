@@ -1968,29 +1968,38 @@ def _parse_elapsed(text: str) -> int:
     return int(days or 0) * 86400 + int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds)
 
 
+def _shell_command_process(args: str) -> bool:
+    """Recognize a command shell (including login shells prefixed with '-')."""
+    words = args.split()
+    if not words:
+        return False
+    shell = os.path.basename(words[0]).lstrip("-")
+    return shell in {"sh", "bash", "zsh", "dash", "ksh", "fish"} and "-c" in words[1:]
+
+
 def _work_process_alive(child_pid: int) -> bool:
-    """Count late-starting descendants as work; failed inspection is life too."""
+    """Count command shells or late-starting descendants; failed inspection is life."""
     try:
         output = subprocess.run(
-            ["ps", "-axo", "pid=,ppid=,etime="], capture_output=True, text=True, timeout=5,
+            ["ps", "-axo", "pid=,ppid=,etime=,args="], capture_output=True, text=True, timeout=5,
         )
         if output.returncode != 0:
             return True
         processes = {}
         for line in output.stdout.splitlines():
-            pid, ppid, age = line.split()
-            processes[int(pid)] = (int(ppid), _parse_elapsed(age))
+            pid, ppid, age, *args = line.split(maxsplit=3)
+            processes[int(pid)] = (int(ppid), _parse_elapsed(age), args[0] if args else "")
         if child_pid not in processes:
             return True  # Child disappeared between wait and ps.
         parent_age = processes[child_pid][1]
         children = {}
-        for pid, (ppid, age) in processes.items():
-            children.setdefault(ppid, []).append((pid, age))
+        for pid, (ppid, age, args) in processes.items():
+            children.setdefault(ppid, []).append((pid, age, args))
         descendants = [child_pid]
         while descendants:
             parent = descendants.pop()
-            for pid, age in children.get(parent, ()):
-                if age < parent_age - STALL_STARTUP_GRACE:
+            for pid, age, args in children.get(parent, ()):
+                if _shell_command_process(args) or age < parent_age - STALL_STARTUP_GRACE:
                     return True
                 descendants.append(pid)
         return False

@@ -208,6 +208,34 @@ def test_late_work_process_keeps_idle_session_alive(monkeypatch, tmp_path, capsy
     assert not capsys.readouterr().err
 
 
+def test_early_shell_tool_keeps_idle_session_alive(tmp_path, capsys):
+    launcher = load_launcher_module()
+    # A bare `sleep 3` is exec-optimized by macOS sh and leaves no shell to detect.
+    script = "import subprocess; subprocess.run(['/bin/sh', '-c', 'sleep 3; :'], check=True)"
+
+    assert launcher.run_supervised(
+        [sys.executable, "-c", script], tmp_path / "missing", 1.0,
+    ) == 0
+    assert not capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (
+            "/bin/zsh -c source /Users/aneyman/.claude/shell-snapshots/"
+            "snapshot-zsh-....sh 2>/dev/null || true && python3 wait100.py",
+            True,
+        ),
+        ("-zsh", False),
+        ("node /x/mcp-server.js", False),
+    ],
+)
+def test_shell_command_classifier(args, expected):
+    launcher = load_launcher_module()
+    assert launcher._shell_command_process(args) is expected
+
+
 def test_missing_activity_stops_child(monkeypatch, tmp_path, capsys):
     launcher = load_launcher_module()
     child = None
