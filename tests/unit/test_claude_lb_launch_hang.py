@@ -167,6 +167,47 @@ def test_stalled_upstream_request_triggers_headless_stop(monkeypatch, tmp_path, 
             child.wait()
 
 
+@pytest.mark.parametrize("subagent", [False, True])
+def test_transcript_writes_keep_supervised_session_alive(monkeypatch, tmp_path, capsys, subagent):
+    launcher = load_launcher_module()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    slug = launcher.re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
+    session_id = "transcript-test"
+    transcript = tmp_path / "projects" / slug / (
+        f"{session_id}/subagents/agent-x.jsonl" if subagent else f"{session_id}.jsonl"
+    )
+    script = (
+        "import pathlib, sys, time\n"
+        "path = pathlib.Path(sys.argv[1]); path.parent.mkdir(parents=True, exist_ok=True)\n"
+        "for _ in range(12):\n"
+        "    with path.open('a') as stream: stream.write('{}\\n')\n"
+        "    time.sleep(.3)\n"
+    )
+    assert launcher.run_supervised(
+        [sys.executable, "-c", script, str(transcript)], tmp_path / "missing", 1.0,
+        session_id=session_id,
+    ) == 0
+    assert not capsys.readouterr().err
+
+
+def test_late_work_process_keeps_idle_session_alive(monkeypatch, tmp_path, capsys):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "STALL_STARTUP_GRACE", 0.5)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    script = (
+        "import subprocess, time\n"
+        "time.sleep(1)\n"
+        "subprocess.run(['sleep', '3'], check=True)\n"
+    )
+    assert launcher.run_supervised(
+        [sys.executable, "-c", script], tmp_path / "missing", 1.0,
+        session_id="idle-session",
+    ) == 0
+    assert not capsys.readouterr().err
+
+
 def test_missing_activity_stops_child(monkeypatch, tmp_path, capsys):
     launcher = load_launcher_module()
     child = None
@@ -183,11 +224,56 @@ def test_missing_activity_stops_child(monkeypatch, tmp_path, capsys):
             [sys.executable, "-c", "import time; time.sleep(60)"], tmp_path / "missing", 1.0,
         ) == 75
         assert child is not None and child.poll() is not None
-        assert len(capsys.readouterr().err.splitlines()) == 1
+        lines = capsys.readouterr().err.splitlines()
+        assert len(lines) == 1
+        assert "CLAUDE_LB_STALL_TIMEOUT" in lines[0]
     finally:
         if child is not None and child.poll() is None:
             child.kill()
             child.wait()
+
+
+def test_early_mcp_like_child_does_not_keep_session_alive(monkeypatch, tmp_path, capsys):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "STALL_STARTUP_GRACE", 0.5)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    child = None
+    original_popen = subprocess.Popen
+
+    def track_child(*args, **kwargs):
+        nonlocal child
+        child = original_popen(*args, **kwargs)
+        return child
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", track_child)
+    pidfile = tmp_path / "grandchild.pid"
+    script = (
+        "import pathlib, subprocess, sys, time\n"
+        "proc = subprocess.Popen(['sleep', '60'])\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(proc.pid))\n"
+        "time.sleep(60)\n"
+    )
+    try:
+        started = time.monotonic()
+        assert launcher.run_supervised(
+            [sys.executable, "-c", script, str(pidfile)], tmp_path / "missing", 1.0,
+            session_id="mcp-session",
+        ) == 75
+        assert time.monotonic() - started < 5
+        assert child is not None and child.poll() is not None
+        lines = capsys.readouterr().err.splitlines()
+        assert len(lines) == 1
+        assert "CLAUDE_LB_STALL_TIMEOUT" in lines[0]
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait()
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text()), 9)
+            except ProcessLookupError:
+                pass
 
 
 def test_idle_activity_does_not_count_tool_execution(tmp_path, capsys):
@@ -202,10 +288,32 @@ def test_idle_activity_does_not_count_tool_execution(tmp_path, capsys):
     assert not capsys.readouterr().err
 
 
+def test_main_no_auto_resume_passes_session_id_to_supervisor(monkeypatch, tmp_path):
+    launcher = load_launcher_module()
+    setup_main(monkeypatch, launcher, tmp_path)
+    monkeypatch.setenv("CLAUDE_LB_AUTO_RESUME", "0")
+    monkeypatch.setattr(launcher, "start_lb_proxy", lambda session: "http://127.0.0.1:12345")
+    observed = []
+
+    def capture(command, activity, timeout, session_id=None):
+        observed.append((command, session_id))
+        return 0
+
+    monkeypatch.setattr(launcher, "run_supervised", capture)
+    with pytest.raises(SystemExit) as exit_info:
+        launcher.main()
+
+    assert exit_info.value.code == 0
+    assert len(observed) == 1
+    command, session_id = observed[0]
+    assert session_id is not None
+    assert command[command.index("--session-id") + 1] == session_id
+
+
 def test_stall_does_not_claim_route_for_resume(monkeypatch, tmp_path):
     launcher = load_launcher_module()
     monkeypatch.setattr(launcher, "proxy_ready_path", lambda session: tmp_path / f"{session}.proxy")
-    monkeypatch.setattr(launcher, "run_supervised", lambda *args: 75)
+    monkeypatch.setattr(launcher, "run_supervised", lambda *args, **kwargs: 75)
     monkeypatch.setattr(
         launcher, "claim_session_route", lambda *args: pytest.fail("stall must not claim route"),
     )

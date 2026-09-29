@@ -97,6 +97,7 @@ FABLE_SCOPED_WEEKLY_QUOTA_KEY = "anthropic_fable_scoped_weekly"
 EXIT_TEMPFAIL = 75
 SHIM_START_TIMEOUT_DEFAULT = 90.0
 STALL_TIMEOUT_DEFAULT = 300.0
+STALL_STARTUP_GRACE = 30.0
 # The retry budget (~2 minutes with these defaults) must outlast a full
 # watchdog-driven LB recovery: an unloaded launchd job is re-bootstrapped
 # within ~65s (2 x 30s ticks + startup), so a session mid-request rides the
@@ -1933,7 +1934,73 @@ def _stop_child(child: subprocess.Popen[bytes], *, interrupt: bool = False) -> N
             child.wait()
 
 
-def run_supervised(command: list[str], activity: Path, stall_timeout: float) -> int:
+def _transcript_mtime(session_dir: Path, session_id: str) -> float | None:
+    """Newest session write, including nested agent and tool transcripts."""
+    latest = None
+    paths = [session_dir / f"{session_id}.jsonl"]
+    subtree = session_dir / session_id
+    # A session may have many subagents; bound each poll even if the tree grows.
+    remaining = 10000
+    for root, dirs, files in os.walk(subtree, onerror=lambda error: None):
+        paths.extend(Path(root) / name for name in files[:remaining])
+        remaining -= min(len(files), remaining)
+        if remaining <= 0:
+            dirs.clear()
+            break
+        dirs[:] = dirs[:remaining]
+        remaining -= len(dirs)
+    for path in paths:
+        try:
+            modified = path.stat().st_mtime
+        except OSError:
+            continue
+        if latest is None or modified > latest:
+            latest = modified
+    return latest
+
+
+def _parse_elapsed(text: str) -> int:
+    """Parse ps etime ([[dd-]hh:]mm:ss) into seconds."""
+    match = re.fullmatch(r"(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)", text)
+    if match is None:
+        raise ValueError("invalid ps etime")
+    days, hours, minutes, seconds = match.groups()
+    return int(days or 0) * 86400 + int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds)
+
+
+def _work_process_alive(child_pid: int) -> bool:
+    """Count late-starting descendants as work; failed inspection is life too."""
+    try:
+        output = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,etime="], capture_output=True, text=True, timeout=5,
+        )
+        if output.returncode != 0:
+            return True
+        processes = {}
+        for line in output.stdout.splitlines():
+            pid, ppid, age = line.split()
+            processes[int(pid)] = (int(ppid), _parse_elapsed(age))
+        if child_pid not in processes:
+            return True  # Child disappeared between wait and ps.
+        parent_age = processes[child_pid][1]
+        children = {}
+        for pid, (ppid, age) in processes.items():
+            children.setdefault(ppid, []).append((pid, age))
+        descendants = [child_pid]
+        while descendants:
+            parent = descendants.pop()
+            for pid, age in children.get(parent, ()):
+                if age < parent_age - STALL_STARTUP_GRACE:
+                    return True
+                descendants.append(pid)
+        return False
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return True
+
+
+def run_supervised(
+    command: list[str], activity: Path, stall_timeout: float, session_id: str | None = None,
+) -> int:
     if not math.isfinite(stall_timeout) or stall_timeout <= 0:
         try:
             return subprocess.run(command).returncode
@@ -1943,13 +2010,21 @@ def run_supervised(command: list[str], activity: Path, stall_timeout: float) -> 
             except OSError:
                 pass
     start = time.monotonic()
+    last_life = start
     child = subprocess.Popen(command)
+    session_dir = None
+    next_lookup = start
+    if session_id is not None:
+        projects = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+        session_dir = projects / re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
     try:
         while True:
             try:
                 return child.wait(timeout=min(1.0, stall_timeout / 4))
             except subprocess.TimeoutExpired:
                 pass
+            now = time.monotonic()
+            wall_now = time.time()
             try:
                 inflight_text, progress_text = activity.read_text().split()
                 inflight = int(inflight_text)
@@ -1957,12 +2032,30 @@ def run_supervised(command: list[str], activity: Path, stall_timeout: float) -> 
                 if inflight < 0 or not math.isfinite(progress):
                     raise ValueError("invalid activity")
             except (OSError, ValueError):
-                stalled = time.monotonic() - start >= stall_timeout
+                pass
             else:
-                stalled = inflight > 0 and time.time() - progress >= stall_timeout
-            if stalled:
+                if inflight == 0:
+                    last_life = now
+                elif wall_now - progress < stall_timeout:
+                    last_life = max(last_life, now - max(0, wall_now - progress))
+            if session_dir is not None and session_id is not None:
+                primary = session_dir / f"{session_id}.jsonl"
+                if not primary.exists() and now >= next_lookup:
+                    next_lookup = now + 30
+                    try:
+                        discovered = next(projects.glob(f"*/{session_id}.jsonl"), None)
+                    except OSError:
+                        discovered = None
+                    if discovered is not None:
+                        session_dir = discovered.parent
+                modified = _transcript_mtime(session_dir, session_id)
+                if modified is not None and wall_now - modified < stall_timeout:
+                    last_life = max(last_life, now - max(0, wall_now - modified))
+            if _work_process_alive(child.pid):
+                last_life = now
+            if now - last_life >= stall_timeout:
                 print(
-                    f"cc: no agent-lb activity for {stall_timeout:g}s "
+                    f"cc: no agent-lb traffic, transcript writes or tool processes for {stall_timeout:g}s "
                     f"(CLAUDE_LB_STALL_TIMEOUT); stopping claude, exit {EXIT_TEMPFAIL} (retryable)",
                     file=sys.stderr,
                 )
@@ -1995,7 +2088,7 @@ def run_headless_with_resume(
     activity = activity_path(session_id, os.getpid())
     stall_timeout = _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT)
     for attempt in range(RESUME_MAX_ATTEMPTS + 1):
-        returncode = run_supervised(current, activity, stall_timeout)
+        returncode = run_supervised(current, activity, stall_timeout, session_id=claude_session_id)
         if returncode in (0, EXIT_TEMPFAIL):
             return returncode
         # Only retry when the LB confirms the failure is account exhaustion
@@ -2151,9 +2244,14 @@ def main() -> None:
             model = requested_model(argv)
             quota_key, _ = anthropic_quota_key(model, requested_effort(argv))
             sys.exit(run_headless_with_resume(command, argv, session_id, model, quota_key))
+        claude_session_id = arg_value(argv, "--session-id")
+        if not claude_session_id:
+            claude_session_id = str(uuid.uuid4())
+            command = [*command, "--session-id", claude_session_id]
         sys.exit(run_supervised(
             command, activity_path(session_id, os.getpid()),
             _env_float("CLAUDE_LB_STALL_TIMEOUT", STALL_TIMEOUT_DEFAULT),
+            session_id=claude_session_id,
         ))
     os.execvp(command[0], command)
 
