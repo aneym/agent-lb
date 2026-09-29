@@ -45,7 +45,7 @@ def valid_stream(nonce: str, *, second_model: str = "claude-opus-5", terminal: b
             _event(
                 type="assistant",
                 message={
-                    "model": "claude-fable-5-1",
+                    "model": "claude-opus-5",
                     "content":[{"type": "tool_use", "id": agent_id, "name": "Agent", "input": inputs}],
                 },
                 parent_tool_use_id=None,
@@ -120,7 +120,7 @@ def test_parent_prose_and_model_usage_cannot_forge_child_evidence() -> None:
             _event(
                 type="assistant",
                 message={
-                    "model": "claude-fable-5-1",
+                    "model": "claude-opus-5",
                     "content": [
                         {
                             "type": "tool_use",
@@ -136,7 +136,7 @@ def test_parent_prose_and_model_usage_cannot_forge_child_evidence() -> None:
         + [
             _event(
                 type="assistant",
-                message={"model": "claude-fable-5-1", "content": [{"type": "text", "text": nonce}]},
+                message={"model": "claude-opus-5", "content": [{"type": "text", "text": nonce}]},
                 modelUsage={"claude-opus-5": {}},
             ),
             _event(type="result", subtype="success", is_error=False, modelUsage={"claude-opus-5": {}}),
@@ -242,7 +242,7 @@ def test_probe_timeout_kills_owned_process_group(monkeypatch: pytest.MonkeyPatch
             if self.calls == 1:
                 raise subprocess.TimeoutExpired("probe", timeout)
             return (
-                _event(type="system", subtype="init", model="claude-fable-5-1", session_id="safe-session") + "\n",
+                _event(type="system", subtype="init", model="claude-opus-5", session_id="safe-session") + "\n",
                 "Operation not permitted; secret details omitted",
             )
 
@@ -257,7 +257,7 @@ def test_probe_timeout_kills_owned_process_group(monkeypatch: pytest.MonkeyPatch
     assert outcome.evidence == {
         "event_count": 1,
         "malformed_lines": 0,
-        "init_model": "claude-fable-5-1",
+        "init_model": "claude-opus-5",
         "session_id": "safe-session",
         "last_event_type": "system",
         "last_event_subtype": "init",
@@ -273,7 +273,7 @@ def test_stream_diagnostics_sanitizes_models_and_classifies_stderr() -> None:
     doctor = load_script("opus-runtime-doctor")
     stdout = "\n".join(
         [
-            _event(type="system", subtype="init", model="claude-fable-5-1[1m]", session_id="session-1"),
+            _event(type="system", subtype="init", model="claude-opus-5[1m]", session_id="session-1"),
             _event(type="assistant", message={"model": "claude-opus-5", "content": []}),
             _event(
                 type="assistant",
@@ -286,7 +286,7 @@ def test_stream_diagnostics_sanitizes_models_and_classifies_stderr() -> None:
     )
     evidence = doctor.stream_diagnostics(stdout, "Unauthorized keychain rate limit connection refused SECRET")
 
-    assert evidence["init_model"] == "claude-fable-5-1[1m]"
+    assert evidence["init_model"] == "claude-opus-5[1m]"
     assert evidence["session_id"] == "session-1"
     assert evidence["parent_models"] == ["claude-opus-5"]
     assert evidence["child_models"] == ["claude-opus-5"]
@@ -342,9 +342,52 @@ def test_raise_fd_soft_limit_handles_infinite_hard_limit(monkeypatch: pytest.Mon
     assert changes == [(8192, doctor.resource.RLIM_INFINITY)]
 
 
+def test_run_probe_launches_opus_not_fable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    doctor = load_script("opus-runtime-doctor")
+    monkeypatch.setenv("CLAUDE_LB_DOCTOR_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("AGENT_LB_OPUS_MODEL", "claude-opus-5")
+    monkeypatch.setattr(doctor, "raise_fd_soft_limit", lambda: 8192)
+    commands: list[list[str]] = []
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, nonce: str):
+            self.nonce = nonce
+
+        def communicate(self, timeout=None):
+            return valid_stream(self.nonce), ""
+
+    def spawn(command, **kwargs):
+        commands.append(command)
+        nonce = (Path(kwargs["cwd"]) / "sentinel.txt").read_text().strip()
+        return Process(nonce)
+
+    monkeypatch.setattr(doctor.subprocess, "Popen", spawn)
+
+    outcome = doctor.run_probe()
+
+    assert outcome.status == "PASS"
+    assert len(commands) == 1
+    assert commands[0][:2] == [sys.executable, str(ROOT / "clients" / "opus")]
+    assert str(ROOT / "clients" / "fable") not in commands[0]
+    assert outcome.evidence["child_identity_replies"] == 2
+
+
+def test_run_probe_reports_missing_opus(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    doctor = load_script("opus-runtime-doctor")
+    monkeypatch.setenv("CLAUDE_LB_DOCTOR_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(doctor, "raise_fd_soft_limit", lambda: 8192)
+    monkeypatch.setattr(doctor, "_sibling", lambda name: tmp_path / name)
+
+    outcome = doctor.run_probe()
+
+    assert (outcome.status, outcome.error_class) == ("FAIL", "opus_missing")
+
+
 def test_probe_command_disables_slash_commands() -> None:
     doctor = load_script("opus-runtime-doctor")
-    command = doctor._probe_command(Path("/safe/fable"), "safe prompt", "session")
+    command = doctor._probe_command(Path("/safe/opus"), "safe prompt", "session")
     assert "--disable-slash-commands" in command
 
 

@@ -374,10 +374,10 @@ def analyze_stream(stdout: str, nonce: str, expected_model: str) -> tuple[str, s
     return "PASS", None, evidence
 
 
-def _probe_command(fable: Path, prompt: str, session_id: str) -> list[str]:
+def _probe_command(opus: Path, prompt: str, session_id: str) -> list[str]:
     return [
         sys.executable,
-        str(fable),
+        str(opus),
         "-p",
         prompt,
         "--output-format",
@@ -411,9 +411,9 @@ def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
     expected_model = os.environ.get("AGENT_LB_OPUS_MODEL") or EXPECTED_MODEL_DEFAULT
     nonce = secrets.token_hex(16)
     directory = state_dir()
-    fable = _sibling("fable")
-    if not fable.is_file():
-        return ProbeOutcome("FAIL", "fable_missing", {}, time.monotonic() - started)
+    opus = _sibling("opus")
+    if not opus.is_file():
+        return ProbeOutcome("FAIL", "opus_missing", {}, time.monotonic() - started)
     with tempfile.TemporaryDirectory(prefix="opus-doctor-", dir=directory) as temp_name:
         temp = Path(temp_name)
         sentinel = temp / "sentinel.txt"
@@ -441,7 +441,7 @@ def run_probe(*, canonical_retry: bool = False) -> ProbeOutcome:
         if canonical_retry:
             env["AGENT_LB_OPUS_MODEL"] = expected_model
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = expected_model
-        command = _probe_command(fable, prompt, str(uuid.uuid4()))
+        command = _probe_command(opus, prompt, str(uuid.uuid4()))
         try:
             process = subprocess.Popen(
                 command,

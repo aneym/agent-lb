@@ -36,7 +36,7 @@ if [[ "$MODE" == "install" && ! -x "$LAUNCHER" ]]; then
 fi
 if [[ "$MODE" == "install" ]]; then
   LAUNCHER_DIR="$(cd "$(dirname "$LAUNCHER")" && pwd)"
-  for sibling in fable agent-defs-doctor opus-runtime-doctor; do
+  for sibling in opus agent-defs-doctor opus-runtime-doctor; do
     if [[ ! -x "$LAUNCHER_DIR/$sibling" ]]; then
       echo "error: required executable is missing: $LAUNCHER_DIR/$sibling" >&2
       exit 1
