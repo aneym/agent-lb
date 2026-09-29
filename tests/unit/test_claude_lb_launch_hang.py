@@ -167,6 +167,142 @@ def test_stalled_upstream_request_triggers_headless_stop(monkeypatch, tmp_path, 
             child.wait()
 
 
+@pytest.mark.parametrize("registered", [True, False])
+def test_shared_proxy_tracks_only_registered_client_activity(monkeypatch, tmp_path, registered):
+    launcher = load_launcher_module()
+    session_id = "client-session"
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session: tmp_path / f"{session}.proxy")
+    activity = launcher.client_activity_path(session_id)
+    assert activity is not None
+    if registered:
+        activity.touch()
+    received = threading.Event()
+    released = threading.Event()
+
+    class StallingUpstream(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["content-length"]))
+            received.set()
+            released.wait(4)
+            self.send_response(200)
+            self.send_header("content-length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), StallingUpstream)
+    upstream.daemon_threads = True
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    fake_server = SimpleNamespace(
+        parent_pid=None, shared=True, session_id="shared", ccgpt_mode=False,
+        upstream_base_url=f"http://127.0.0.1:{upstream.server_port}",
+        activity=None, client_activity={}, client_activity_lock=threading.Lock(),
+    )
+    body = b'{}'
+    request = (
+        b"POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode()
+        + f"x-claude-code-session-id: {session_id}\r\n".encode()
+        + b"Connection: close\r\n\r\n" + body
+    )
+    client, server_socket = socket.socketpair()
+    client.sendall(request)
+    client.shutdown(socket.SHUT_WR)
+
+    def forward():
+        try:
+            launcher._LbApiHandler(server_socket, ("127.0.0.1", 0), fake_server)
+        finally:
+            server_socket.close()
+
+    handler_thread = threading.Thread(target=forward, daemon=True)
+    handler_thread.start()
+    try:
+        assert received.wait(2)
+        if registered:
+            assert activity.read_text().split()[0] == "1"
+        else:
+            assert not activity.exists()
+    finally:
+        released.set()
+        handler_thread.join(timeout=2)
+        client.close()
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+    assert not handler_thread.is_alive()
+    if registered:
+        assert activity.read_text().split()[0] == "0"
+    else:
+        assert not activity.exists()
+    assert fake_server.client_activity == {}
+
+
+def test_client_activity_path_rejects_invalid_ids(monkeypatch, tmp_path):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session: tmp_path / f"{session}.proxy")
+    for session_id in ("../x", "a b", "a" * 129):
+        assert launcher.client_activity_path(session_id) is None
+
+
+def test_stale_client_activity_stops_supervised_session(monkeypatch, tmp_path, capsys):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session: tmp_path / f"{session}.proxy")
+    activity = launcher.client_activity_path("stale-session")
+    assert activity is not None
+    original_popen = subprocess.Popen
+
+    def track_child(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        activity.write_text(f"1 {time.time() - 600}\n")
+        return child
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", track_child)
+    assert launcher.run_supervised(
+        [sys.executable, "-c", "import time; time.sleep(60)"], tmp_path / "missing", 1.0,
+        session_id="stale-session",
+    ) == 75
+    assert not activity.exists()
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 1
+    assert "CLAUDE_LB_STALL_TIMEOUT" in lines[0]
+
+
+def test_fresh_client_activity_keeps_supervised_session_alive(monkeypatch, tmp_path, capsys):
+    launcher = load_launcher_module()
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session: tmp_path / f"{session}.proxy")
+    activity = launcher.client_activity_path("streaming-session")
+    assert activity is not None
+    stopped = threading.Event()
+
+    def write_progress():
+        while not stopped.is_set():
+            try:
+                with activity.open("r+") as stream:
+                    stream.seek(0)
+                    stream.write(f"1 {time.time()}\n")
+                    stream.truncate()
+            except OSError:
+                pass
+            stopped.wait(0.3)
+
+    writer = threading.Thread(target=write_progress, daemon=True)
+    writer.start()
+    try:
+        assert launcher.run_supervised(
+            [sys.executable, "-c", "import time; time.sleep(2.5)"], tmp_path / "missing", 1.0,
+            session_id="streaming-session",
+        ) == 0
+    finally:
+        stopped.set()
+        writer.join(timeout=2)
+    assert not activity.exists()
+    assert not capsys.readouterr().err
+
+
 @pytest.mark.parametrize("subagent", [False, True])
 def test_transcript_writes_keep_supervised_session_alive(monkeypatch, tmp_path, capsys, subagent):
     launcher = load_launcher_module()

@@ -312,16 +312,27 @@ def ensure_mitm_certs() -> None:
 
 
 class _LbActivity:
-    """Launcher-scoped progress for LB requests, excluding time spent in tools."""
+    """Progress for LB requests, excluding time spent in tools."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, only_if_exists: bool = False) -> None:
         self.path = path
+        self.only_if_exists = only_if_exists
         self.lock = threading.Lock()
         self.inflight = 0
         self.last_progress = 0.0
         self.last_write = 0.0
 
     def _write(self) -> None:
+        if self.only_if_exists:
+            try:
+                with self.path.open("r+") as stream:
+                    stream.seek(0)
+                    stream.write(f"{self.inflight} {self.last_progress}\n")
+                    stream.truncate()
+                self.last_write = self.last_progress
+            except OSError:
+                pass
+            return
         tmp = self.path.with_name(f"{self.path.name}.{uuid.uuid4().hex}.tmp")
         try:
             tmp.write_text(f"{self.inflight} {self.last_progress}\n")
@@ -450,13 +461,31 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
             method=self.command,
         )
         activity = getattr(self.server, "activity", None)
-        if activity is not None:
+        client_id = None
+        if shared and activity is None:
+            client_id = self.headers.get("x-claude-code-session-id")
+            client_path = client_activity_path(client_id) if client_id is not None else None
+            if client_path is not None and client_path.exists():
+                client_activities = getattr(self.server, "client_activity", None)
+                client_lock = getattr(self.server, "client_activity_lock", None)
+                if client_activities is not None and client_lock is not None:
+                    with client_lock:
+                        activity = client_activities.get(client_id)
+                        if activity is None:
+                            activity = _LbActivity(client_path, only_if_exists=True)
+                            client_activities[client_id] = activity
+                        activity.start()
+        elif activity is not None:
             activity.start()
         try:
             self._forward_lb(request, shared, parent_pid, activity)
         finally:
             if activity is not None:
                 activity.end()
+                if client_id is not None:
+                    with client_lock:
+                        if client_activities.get(client_id) is activity and activity.inflight == 0:
+                            client_activities.pop(client_id, None)
 
     def _forward_lb(
         self, request: urllib.request.Request, shared: bool, parent_pid: int | None,
@@ -780,6 +809,12 @@ def activity_path(session_id: str, parent_pid: int) -> Path:
     return proxy_ready_path(session_id).parent / f"{session_id}.{parent_pid}.activity"
 
 
+def client_activity_path(client_session_id: str) -> Path | None:
+    if re.fullmatch(r"[A-Za-z0-9-]{1,128}", client_session_id) is None:
+        return None
+    return proxy_ready_path("x").parent / f"client-{client_session_id}.activity"
+
+
 def _raise_fd_soft_limit(target: int = 10240) -> None:
     """Raise this process's soft limit only, preserving an operator's hard cap."""
     try:
@@ -817,6 +852,9 @@ def run_lb_proxy(
     server.ccgpt_mode = CCGPT_MODE and not shared
     server.upstream_base_url = upstream_base_url.rstrip("/")
     server.activity = _LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
+    if shared:
+        server.client_activity = {}
+        server.client_activity_lock = threading.Lock()
     port = server.server_address[1]
 
     ready = Path(ready_path)
@@ -2020,6 +2058,22 @@ def _work_process_alive(child_pid: int) -> bool:
         return True
 
 
+def _activity_life(path: Path, now: float, wall_now: float, stall_timeout: float) -> float | None:
+    try:
+        inflight_text, progress_text = path.read_text().split()
+        inflight = int(inflight_text)
+        progress = float(progress_text)
+        if inflight < 0 or not math.isfinite(progress):
+            raise ValueError("invalid activity")
+    except (OSError, ValueError):
+        return None
+    if inflight == 0:
+        return now
+    if wall_now - progress < stall_timeout:
+        return now - max(0, wall_now - progress)
+    return None
+
+
 def run_supervised(
     command: list[str], activity: Path, stall_timeout: float, session_id: str | None = None,
 ) -> int:
@@ -2031,15 +2085,21 @@ def run_supervised(
                 activity.unlink()
             except OSError:
                 pass
+    client_activity = client_activity_path(session_id) if session_id is not None else None
+    if client_activity is not None:
+        try:
+            client_activity.touch()
+        except OSError:
+            pass
     start = time.monotonic()
     last_life = start
-    child = subprocess.Popen(command)
     session_dir = None
     next_lookup = start
     if session_id is not None:
         projects = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
         session_dir = projects / re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
     try:
+        child = subprocess.Popen(command)
         while True:
             try:
                 return child.wait(timeout=min(1.0, stall_timeout / 4))
@@ -2047,19 +2107,11 @@ def run_supervised(
                 pass
             now = time.monotonic()
             wall_now = time.time()
-            try:
-                inflight_text, progress_text = activity.read_text().split()
-                inflight = int(inflight_text)
-                progress = float(progress_text)
-                if inflight < 0 or not math.isfinite(progress):
-                    raise ValueError("invalid activity")
-            except (OSError, ValueError):
-                pass
-            else:
-                if inflight == 0:
-                    last_life = now
-                elif wall_now - progress < stall_timeout:
-                    last_life = max(last_life, now - max(0, wall_now - progress))
+            for path in (activity, client_activity):
+                if path is not None:
+                    life = _activity_life(path, now, wall_now, stall_timeout)
+                    if life is not None:
+                        last_life = max(last_life, life)
             if session_dir is not None and session_id is not None:
                 primary = session_dir / f"{session_id}.jsonl"
                 if not primary.exists() and now >= next_lookup:
@@ -2087,10 +2139,12 @@ def run_supervised(
         _stop_child(child, interrupt=True)
         return 130
     finally:
-        try:
-            activity.unlink()
-        except OSError:
-            pass
+        for path in (activity, client_activity):
+            if path is not None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
 
 def run_headless_with_resume(
