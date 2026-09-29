@@ -5,6 +5,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 def load_doctor():
     path = Path(__file__).resolve().parents[2] / "clients" / "agent-defs-doctor"
@@ -154,6 +156,48 @@ def test_unknown_model_is_error_but_local_catalog_adds_authoritative_id(tmp_path
     assert unknown["summary"]["errors"] == 1
     assert known["summary"]["errors"] == 0
     assert known["cached"] is False
+
+
+@pytest.mark.parametrize(
+    ("model", "known"),
+    [
+        ("sol-latest-medium", True),
+        ("grok-latest-low", True),
+        ("gpt-6.1-sol-high", True),
+        ("sol-latest-turbo", False),
+        ("mystery-latest", False),
+    ],
+)
+def test_model_recognition_at_inspection_boundary(tmp_path: Path, model: str, known: bool) -> None:
+    doctor = load_doctor()
+    agent = tmp_path / "worker.md"
+    agent.write_text(definition(f"model: {model}\ntools: '*'\n"))
+
+    result = doctor.inspect_file(agent)
+
+    assert result["status"] == ("ok" if known else "error")
+    assert result["issues"] == (
+        [] if known else [{"field": "model", "code": "unknown", "message": f"unknown model: {model}"}]
+    )
+
+
+def test_family_alias_is_known_with_local_catalog(tmp_path: Path) -> None:
+    doctor = load_doctor()
+    agent = tmp_path / ".claude" / "agents" / "worker.md"
+    agent.parent.mkdir(parents=True)
+    agent.write_text(definition("model: sol-latest-medium\ntools: '*'\n"))
+    catalog = tmp_path / "models.json"
+    catalog.write_text(json.dumps(["routed-future"]))
+
+    result = doctor.run_check(
+        cwd=tmp_path,
+        user_root=tmp_path / "home",
+        models_file=catalog,
+        state_dir=tmp_path / "state",
+    )
+
+    assert result["files"][0]["status"] == "ok"
+    assert result["summary"]["errors"] == 0
 
 
 def test_cache_hits_and_invalidates_on_content_catalog_and_root(tmp_path: Path) -> None:

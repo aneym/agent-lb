@@ -53,8 +53,21 @@ DEFAULT_MODELS = frozenset(
         "gpt-5.6-terra",
         "gpt-5.6-terra-medium",
         "gpt-5.6-luna",
+        "gpt-6-sol",
+        "gpt-6-sol-low",
+        "gpt-6-sol-medium",
+        "gpt-6-sol-high",
+        "gpt-6-sol-xhigh",
+        "gpt-6.1-sol",
+        "gpt-6.1-sol-low",
+        "gpt-6.1-sol-medium",
+        "gpt-6.1-sol-high",
+        "gpt-6.1-sol-xhigh",
+        "gpt-6-luna",
+        "gpt-6.1-luna",
     }
 )
+_FAMILY_ALIAS = re.compile(r"(?:opus|sonnet|haiku|sol|luna|terra|grok|swe)-latest(?:-(?:low|medium|high|xhigh|max))?")
 _KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]*(.*))?$")
 _BLOCK = re.compile(r"^[>|][+-]?(?:[1-9])?(?:[ \t]+#.*)?$")
 
@@ -229,7 +242,7 @@ def _validate(data: bytes, models: set[str]) -> tuple[list[dict[str, str]], tupl
     model = fields.get("model")
     if model is None:
         issues.append({"field": "model", "code": "missing_inherited", "message": "model inherits implicitly"})
-    elif not isinstance(model, str) or model not in models:
+    elif not isinstance(model, str) or (model not in models and not _FAMILY_ALIAS.fullmatch(model)):
         issues.append({"field": "model", "code": "unknown", "message": f"unknown model: {model}"})
     tools = fields.get("tools")
     if tools is None:
