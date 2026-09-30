@@ -522,6 +522,31 @@ FROM base ORDER BY requested_at,id
 
 def quota_allocation(rows, snapshots, since, until):
     """Allocate observed increments, ignoring jitter within a reset period."""
+    with (RULE_PATH.parent / "openai_quota_weights.toml").open("rb") as stream:
+        openai_weights = tomllib.load(stream)
+
+    def row_weight(row):
+        tokens = token_classes(row)
+        if row["provider"] == "openai":
+            return (
+                tokens["fresh_input"]
+                + openai_weights["c_cached"] * tokens["cache_read"]
+                + openai_weights["c_out"] * tokens["output"]
+            )
+        usd = price_row(row)[0]
+        return (
+            usd
+            if usd > 0
+            else (tokens["fresh_input"] + tokens["cache_write"] + tokens["output"] + 0.1 * tokens["cache_read"])
+        )
+
+    def utc(stamp):
+        return stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp.astimezone(UTC)
+
+    def bin_start(stamp, hours=1):
+        stamp = utc(stamp)
+        return stamp.replace(hour=stamp.hour // hours * hours, minute=0, second=0, microsecond=0)
+
     grouped = defaultdict(list)
     for snap in snapshots:
         minutes = snap.get("window_minutes")
@@ -537,19 +562,26 @@ def quota_allocation(rows, snapshots, since, until):
         receipt_groups[(row["provider"], row["account_id"])].append((index, row))
     allocated = [dict(weekly=0.0, **{"5h": 0.0}) for _ in rows]
     missing, accounts, calibration = [], [], defaultdict(list)
+    binned_calibration = defaultdict(list)
     for (provider, account, window_name), history in grouped.items():
         history.sort(key=lambda v: v["recorded_at"])
         history = [v for v in history if v["used_percent"] is not None and v["reset_at"] is not None]
         if not history:
             continue
         indexed = receipt_groups[(provider, account)]
-        times = [row["requested_at"].replace(tzinfo=UTC) for _, row in indexed]
+        times = [utc(row["requested_at"]) for _, row in indexed]
+        quota_bins = defaultdict(float)
+        receipt_bins = defaultdict(list)
+        for index, row in indexed:
+            stamp = utc(row["requested_at"])
+            if since <= stamp < until and row.get("status", "success") == "success":
+                receipt_bins[bin_start(stamp)].append((index, row))
         maximum, previous, reset, previous_used = 0.0, None, None, None
         used, capacity = 0.0, 0.0
         periods = set()
         observed = False
         for snap in history:
-            stamp = snap["recorded_at"].replace(tzinfo=UTC)
+            stamp = utc(snap["recorded_at"])
             end = datetime.fromtimestamp(snap["reset_at"], UTC)
             period_length = timedelta(minutes=10080 if window_name == "weekly" else 300)
             current_used = float(snap["used_percent"])
@@ -566,33 +598,28 @@ def quota_allocation(rows, snapshots, since, until):
                 periods.add((reset - period_length, reset))
             if previous is not None and since < stamp <= until:
                 used += delta
+                quota_bins[bin_start(stamp - timedelta(microseconds=1))] += delta
                 left = bisect_left(times, max(previous, since))
                 while left < len(times) and times[left] <= max(previous, since):
                     left += 1
                 right = bisect_left(times, stamp)
                 while right < len(times) and times[right] <= stamp:
                     right += 1
-                candidates = indexed[left:right]
-                weights = []
-                for _, row in candidates:
-                    usd = price_row(row)[0]
-                    tokens = token_classes(row)
-                    weights.append(
-                        usd
-                        if usd > 0
-                        else tokens["fresh_input"]
-                        + tokens["cache_write"]
-                        + tokens["output"]
-                        + 0.1 * tokens["cache_read"]
-                    )
+                candidates = [
+                    (index, row)
+                    for index, row in indexed[left:right]
+                    if provider != "openai" or row.get("status", "success") == "success"
+                ]
+                weights = [row_weight(row) for _, row in candidates]
                 total = sum(weights)
                 if total:
-                    remainder = delta
-                    for (index, _), weight in zip(candidates[:-1], weights[:-1], strict=True):
-                        part = delta * weight / total
-                        allocated[index][window_name] += part
-                        remainder -= part
-                    allocated[candidates[-1][0]][window_name] += remainder
+                    if provider != "openai":
+                        remainder = delta
+                        for (index, _), weight in zip(candidates[:-1], weights[:-1], strict=True):
+                            part = delta * weight / total
+                            allocated[index][window_name] += part
+                            remainder -= part
+                        allocated[candidates[-1][0]][window_name] += remainder
                     calibration[(provider, window_name, "all")].append((total, delta))
                     models = defaultdict(float)
                     for (_, row), weight in zip(candidates, weights, strict=True):
@@ -601,12 +628,38 @@ def quota_allocation(rows, snapshots, since, until):
                         if not weight:
                             continue
                         calibration[(provider, window_name, model)].append((weight, delta * weight / total))
-                elif delta:
+                elif delta and provider != "openai":
                     missing.append(
                         {"provider": provider, "account_id": account, "window": window_name, "points": delta}
                     )
             previous = stamp
             previous_used = current_used
+        if provider == "openai":
+            # A snapshot on an exact hour closes the preceding UTC bin.
+            for stamp, delta in quota_bins.items():
+                candidates = receipt_bins[stamp]
+                weights = [row_weight(row) for _, row in candidates]
+                total = sum(weights)
+                if total:
+                    remainder = delta
+                    for (index, _), weight in zip(candidates[:-1], weights[:-1], strict=True):
+                        part = delta * weight / total
+                        allocated[index][window_name] += part
+                        remainder -= part
+                    allocated[candidates[-1][0]][window_name] += remainder
+                elif delta:
+                    missing.append(
+                        {"provider": provider, "account_id": account, "window": window_name, "points": delta}
+                    )
+        for hours in (1, 3):
+            bins = defaultdict(lambda: [0.0, 0.0])
+            for stamp, candidates in receipt_bins.items():
+                bins[bin_start(stamp, hours)][0] += sum(row_weight(row) for _, row in candidates)
+            for stamp, delta in quota_bins.items():
+                bins[bin_start(stamp, hours)][1] += delta
+            binned_calibration[(provider, window_name, hours)].extend(
+                (stamp, weight, points) for stamp, (weight, points) in bins.items()
+            )
         if observed:
             in_window = [
                 snap["recorded_at"].replace(tzinfo=UTC)
@@ -665,6 +718,28 @@ def quota_allocation(rows, snapshots, since, until):
                 "ratio_min": min(ratios),
                 "ratio_max": max(ratios),
                 "r_squared": 1 - sum((y - slope * x) ** 2 for x, y in pairs) / variance if variance > 1e-20 else None,
+            }
+        )
+    for (provider, window_name, hours), bins in binned_calibration.items():
+        training = [(x, y) for stamp, x, y in bins if stamp.day % 2 == 0]
+        holdout = [(x, y) for stamp, x, y in bins if stamp.day % 2 == 1]
+        denominator = sum(x * x for x, _ in training)
+        slope = sum(x * y for x, y in training) / denominator if denominator else None
+        mean = sum(y for _, y in holdout) / len(holdout) if holdout else 0.0
+        variance = sum((y - mean) ** 2 for _, y in holdout)
+        fits.append(
+            {
+                "provider": provider,
+                "window": window_name,
+                "model": "all",
+                "bin_hours": hours,
+                "intervals": len(bins),
+                "training_intervals": len(training),
+                "holdout_intervals": len(holdout),
+                "points_per_weight": slope,
+                "holdout_r2": 1 - sum((y - slope * x) ** 2 for x, y in holdout) / variance
+                if slope is not None and variance > 1e-20
+                else None,
             }
         )
     return allocated, {"providers": providers, "accounts": accounts, "calibration": fits, "unattributed": missing}

@@ -1,0 +1,3 @@
+# Relative token weights for allocating observed OpenAI quota points.
+c_cached = 0.02
+c_out = 20
