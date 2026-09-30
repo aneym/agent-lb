@@ -574,7 +574,7 @@ def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_
     if vendor == "cursor":
         command = [cli_bin("cursor"), "-p", "--trust", "--output-format", "json", "--model", model]
         command += ["--mode", "ask"] if mode == "ask" else ["--force"]
-        return command + [prompt_file.read_text(encoding="utf-8")]
+        return command
     # Devin's `auto` rejects every shell call in print mode, `ls` included, so a read-only
     # task cannot finish; `smart` runs what Devin's own safety model judges safe.
     permission = "smart" if mode == "ask" else "dangerous"
@@ -1069,7 +1069,8 @@ def command_run(args: argparse.Namespace) -> int:
                     command,
                     cwd=cwd,
                     env=account_env(account),
-                    stdin=subprocess.DEVNULL,
+                    input=prompt_file.read_text(encoding="utf-8") if args.vendor == "cursor" else None,
+                    stdin=None if args.vendor == "cursor" else subprocess.DEVNULL,
                     capture_output=True,
                     text=True,
                     timeout=args.timeout,

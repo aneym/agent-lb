@@ -119,3 +119,55 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     (pool,) = cli_seat_pools(seats)
     assert (pool.status, pool.eligible_accounts) == ("exhausted", 0)
     assert pool.reset_at == min(account.cooldown_until for account in seats.accounts)
+
+
+def test_cursor_prompt_goes_on_stdin(tmp_path: Path) -> None:
+    prompt = "x" * (3 * 1024 * 1024)
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    argv_file = tmp_path / "argv.json"
+    stdin_file = tmp_path / "stdin.txt"
+    cursor = _script(
+        tmp_path / "cursor-agent",
+        """#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+if sys.argv[1:] == ["models"]:
+    print("Available models")
+    raise SystemExit(0)
+Path(os.environ["FAKE_ARGV_FILE"]).write_text(json.dumps(sys.argv[1:]))
+Path(os.environ["FAKE_STDIN_FILE"]).write_text(sys.stdin.read(), encoding="utf-8")
+print(json.dumps({"type": "result", "is_error": False, "result": "done"}))
+""",
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("SEAT_", "ROUTE_", "CURSOR_"))}
+    env.update(
+        SEAT_HOME=str(tmp_path / "seats"),
+        ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"),
+        ROUTE_BIN=str(_script(tmp_path / "route", FAKE_ROUTE)),
+        SEAT_CURSOR_BIN=str(cursor),
+        FAKE_ARGV_FILE=str(argv_file),
+        FAKE_STDIN_FILE=str(stdin_file),
+    )
+    key_file = tmp_path / "test.key"
+    key_file.write_text("fake-key\n")
+    key_file.chmod(0o600)
+    added = _seat(env, "add", "cursor-test", "--vendor", "cursor", "--api-key-file", str(key_file))
+    assert added.returncode == 0, added.stderr
+
+    result = _seat(
+        env,
+        "run",
+        "--vendor",
+        "cursor",
+        "--model",
+        "grok-latest",
+        "--cwd",
+        str(tmp_path),
+        "--prompt-file",
+        str(prompt_file),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["ok"] is True
+    assert prompt not in json.loads(argv_file.read_text())
+    assert stdin_file.read_text(encoding="utf-8") == prompt
