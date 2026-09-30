@@ -238,7 +238,8 @@ def applied_record(path: Path) -> dict[str, Any] | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return value if isinstance(value, dict) and isinstance(value.get("commit"), str) and FULL_COMMIT.fullmatch(value["commit"]) else None
+    return (value if isinstance(value, dict) and isinstance(value.get("commit"), str)
+            and FULL_COMMIT.fullmatch(value["commit"]) else None)
 
 
 def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dict[str, Any], Path]:
@@ -248,7 +249,8 @@ def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dic
     commit = None
     if pin is not None:
         if not git_ready:
-            setup_error("no_rules", f"no policy clone {clone}; APPLIED {applied_path}; installed {installed_path}", as_json)
+            setup_error("no_rules",
+                        f"no policy clone {clone}; APPLIED {applied_path}; installed {installed_path}", as_json)
         if not COMMIT_NAME.fullmatch(pin):
             setup_error("unknown_rules", f"invalid rules commit {pin!r}", as_json)
         source = "pinned"
@@ -272,14 +274,17 @@ def versioned_rules(pin: str | None, as_json: bool) -> tuple[dict[str, Any], dic
         try:
             data = installed_path.read_bytes()
         except OSError:
-            setup_error("no_rules", f"no policy clone/APPLIED {clone}, {applied_path} or installed table {installed_path}", as_json)
+            setup_error("no_rules",
+                        f"no policy clone/APPLIED {clone}, {applied_path} or installed table {installed_path}", as_json)
     try:
         table = json.loads(data)
     except (UnicodeError, ValueError):
         table = None
-    if not isinstance(table, dict) or not isinstance(table.get("classes"), dict) or not isinstance(table.get("seats"), dict):
+    if (not isinstance(table, dict) or not isinstance(table.get("classes"), dict)
+            or not isinstance(table.get("seats"), dict)):
         setup_error("unknown_rules", f"invalid routing table at {commit or installed_path}", as_json)
-    return apply_implement_default(table), {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()}, clone
+    return (apply_implement_default(table),
+            {"commit": commit, "source": source, "table_sha256": hashlib.sha256(data).hexdigest()}, clone)
 
 
 def class_seat_entries(classes: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -292,7 +297,8 @@ def class_seat_entries(classes: dict[str, Any]) -> list[tuple[str, dict[str, Any
         audit = spec.get("audit", {})
         if isinstance(audit, dict) and isinstance(audit.get("by_author_vendor"), dict):
             candidates.extend(audit["by_author_vendor"].values())
-        entries.extend((task_class, entry) for entry in candidates if isinstance(entry, dict) and isinstance(entry.get("seat"), str))
+        entries.extend((task_class, entry) for entry in candidates
+                       if isinstance(entry, dict) and isinstance(entry.get("seat"), str))
     return entries
 
 
@@ -327,7 +333,9 @@ def command_seat(args: argparse.Namespace) -> int:
         chosen = named
     if chosen:
         if len({(entry.get("model"), entry.get("effort")) for _, entry in chosen}) != 1:
-            setup_error("ambiguous_class", f"seat {name} disagrees across classes {', '.join(dict.fromkeys(c for c, _ in chosen))}", args.json)
+            setup_error("ambiguous_class",
+                        f"seat {name} disagrees across classes {', '.join(dict.fromkeys(c for c, _ in chosen))}",
+                        args.json)
         task_class = ("implement" if any(c == "implement" for c, _ in chosen) else chosen[0][0])
         entry = next(entry for c, entry in chosen if c == task_class)
         model_alias, effort = entry.get("model"), entry.get("effort")
@@ -362,7 +370,8 @@ def command_seat(args: argparse.Namespace) -> int:
     else:
         box = seat["box"]["adapter"] if isinstance(seat["box"], dict) else "studio only"
         revision = rules["commit"][:12] if rules["commit"] else "installed:" + rules["table_sha256"][:12]
-        print(f"{name}: {model} ({model_alias}), effort {effort or '-'}, vendor {seat['vendor']}, box {box}, rules {revision}")
+        print(f"{name}: {model} ({model_alias}), effort {effort or '-'}, "
+              f"vendor {seat['vendor']}, box {box}, rules {revision}")
     return EXIT_OK
 
 
@@ -945,7 +954,8 @@ def command_pools(args: argparse.Namespace) -> int:
                       "exhausted": "empty", "unknown": "unknown"}.get(
                           pool.get("pace", {}).get("state", "unknown"), "unknown")
         print(
-            f"{pool.get('id', '?'):<20} {pool.get('unavailableReason') or pool.get('status', '?'):<10} {pace_label:<12} "
+            f"{pool.get('id', '?'):<20} {pool.get('unavailableReason') or pool.get('status', '?'):<10} "
+            f"{pace_label:<12} "
             f"{_percent(pool.get('headroomPercent')):>9} {_percent(pool.get('aggregateRemainingPercent')):>10} "
             f"{usable:>8}  {pool.get('resetAt') or '-'}"
         )
@@ -1124,55 +1134,86 @@ def cursor_models() -> list[str]:
     return _CURSOR_MODELS
 
 
+def model_list_failed_recently(cache: Path) -> bool:
+    failure = cache.with_suffix(".failed.json")
+    try:
+        cached = json.loads(failure.read_text(encoding="utf-8"))
+        stamp = _parse_ts(cached.get("ts"))
+        return bool(stamp and stamp.tzinfo and (datetime.now(timezone.utc) - stamp).total_seconds() < 300)
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def cache_model_list(cache: Path, ids: list[str]) -> None:
+    failure = cache.with_suffix(".failed.json")
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if ids:
+            cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
+            failure.unlink(missing_ok=True)
+        else:
+            failure.write_text(json.dumps({"ts": _now_iso()}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def fetch_cursor_models() -> list[str]:
     cache = models_cache_path().with_name("route-cursor-models.json")
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
         stamp = _parse_ts(cached.get("ts"))
-        if stamp and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS:
+        if (stamp and stamp.tzinfo
+                and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS):
             return [value for value in cached.get("models", []) if isinstance(value, str)]
     except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
         pass
+    if model_list_failed_recently(cache):
+        return []
     command = shlex.split(os.environ.get("ROUTE_CURSOR_MODELS_CMD") or "cursor-agent --list-models")
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
-        return []
-    ids = [line.split(" - ", 1)[0].strip() for line in result.stdout.splitlines() if " - " in line]
+        result = None
+    output = result.stdout if result is not None and result.returncode == 0 else ""
+    ids = [line.split(" - ", 1)[0].strip() for line in output.splitlines() if " - " in line]
     ids = [value for value in ids if re.fullmatch(r"[\w.\-]+", value)]
-    if ids:
-        try:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
-        except OSError:
-            pass
+    cache_model_list(cache, ids)
     return ids
 
 
+_DEVIN_MODELS: list[str] | None = None
+
+
 def devin_models() -> list[str]:
-    """Devin's model ids (`devin models list`), cached for a day."""
+    """Devin's model ids, memoized per process and cached for a day."""
+    global _DEVIN_MODELS
+    if _DEVIN_MODELS is None:
+        _DEVIN_MODELS = fetch_devin_models()
+    return _DEVIN_MODELS
+
+
+def fetch_devin_models() -> list[str]:
     cache = models_cache_path().with_name("route-devin-models.json")
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
         stamp = _parse_ts(cached.get("ts"))
-        if stamp and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS:
+        if (stamp and stamp.tzinfo
+                and (datetime.now(timezone.utc) - stamp).total_seconds() < MODELS_CACHE_MAX_AGE_SECONDS):
             return [value for value in cached.get("models", []) if isinstance(value, str)]
     except (FileNotFoundError, OSError, json.JSONDecodeError, AttributeError):
         pass
+    if model_list_failed_recently(cache):
+        return []
     command = shlex.split(os.environ.get("ROUTE_DEVIN_MODELS_CMD") or "devin models list")
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
-        return []
+        result = None
+    output = result.stdout if result is not None and result.returncode == 0 else ""
     # Model rows are indented `<id>  <display name>  [...]`; family headers and aliases are not.
-    ids = [line.split()[0] for line in result.stdout.splitlines() if line.startswith("  ") and line.split()]
+    ids = [line.split()[0] for line in output.splitlines() if line.startswith("  ") and line.split()]
     ids = [value for value in ids if re.fullmatch(r"[a-z0-9][\w.\-]*", value)]
-    if ids:
-        try:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps({"ts": _now_iso(), "models": ids}), encoding="utf-8")
-        except OSError:
-            pass
+    cache_model_list(cache, ids)
     return ids
 
 
@@ -1583,7 +1624,8 @@ def ladder_entries(table: dict[str, Any], class_name: str, author: str | None = 
             values = definition
         for entry in values:
             if not isinstance(entry, dict) or any(not isinstance(entry.get(key), str)
-                    for key in ("seat", "model", "maker")) or (task != "verify" and not isinstance(entry.get("id"), str)):
+                    for key in ("seat", "model", "maker")) or (
+                        task != "verify" and not isinstance(entry.get("id"), str)):
                 invalid(f"malformed rung in {task}")
             if "gate" in entry and not isinstance(entry["gate"], dict):
                 invalid(f"gate in {task} must be an object")
@@ -1704,7 +1746,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                "alias": entry["model"], "effort": entry.get("effort"), "maker": entry["maker"],
                "vendor": entry["maker"], "stand_in_only": bool(entry.get("stand_in_only")),
                "pool": pool, "same_vendor": class_name == "verify" and entry["maker"] == author,
-               "audit": audit}
+               "audit": audit, "read_only": bool(entry.get("read_only"))}
         if reason:
             row.update(status="skipped", reason=reason)
         else:
@@ -1958,7 +2000,11 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
             walk = ladder_walk(table, class_name, pools, seats, served, history, now)
             used_pools.update(walk["pace"])
             menu_classes[class_name] = {"driver": False, "crossVendor": class_name == "verify",
-                                        "rungs": walk["rungs"], "seats": [{"id": f"{row['seat']}.{row['model']}", **row} for row in walk["routable"]], "excluded": [{key: row.get(key) for key in ("seat", "model", "alias", "rung", "reason")}
+                                        "rungs": walk["rungs"],
+                                        "seats": [{"id": f"{row['seat']}.{row['model']}", **row}
+                                                  for row in walk["routable"]],
+                                        "excluded": [{key: row.get(key)
+                                                      for key in ("seat", "model", "alias", "rung", "reason")}
                                                      for row in walk["rungs"] if row["status"] != "open"],
                                         "paced": [], "ladder": table["ladder"]}
             continue

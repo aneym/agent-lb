@@ -49,14 +49,23 @@ def test_ladder_pick_preserves_standing_in(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("task,seat,rung", [
-    ("implement", "cursor-seat", "grok-low"),
+    ("implement", "devin-seat", "swe2-high"),
     ("explore", "cursor-seat", "composer"),
 ])
 def test_unresolvable_sol_uses_cursor_worker(tmp_path: Path, task: str, seat: str, rung: str) -> None:
     env = setup(tmp_path)
     (Path(env["ROUTE_FIXTURE_DIR"]) / "api_models.json").write_text(json.dumps({"models": [{"id": "gpt-6-luna"}]}))
+    if task == "implement":
+        pools_file = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
+        pools = json.loads(pools_file.read_text())
+        for pool in pools["pools"]:
+            if pool["id"] == "cursor-models":
+                pool["eligibleAccounts"] = 0
+        pools_file.write_text(json.dumps(pools))
     selected = pick(env, CANONICAL_TABLE, task)
     assert (selected["seat"], selected["rung"]) == (seat, rung)
+    assert any(row["reason"].startswith("unresolvable:") for row in selected["skipped"]
+               if row["rung"] in {"sol-medium", "sol-low"})
 
 
 def test_seats_rejects_null_ladders(tmp_path: Path) -> None:

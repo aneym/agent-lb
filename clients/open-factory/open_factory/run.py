@@ -17,7 +17,11 @@ from .common import resolve_bin, utc_now
 from .decide import ledger_path, run_route
 
 READ_ONLY = {"explore", "research", "review", "verify", "plan"}
-LIMIT = re.compile(r"429|rate.?limit|usage limit|quota|hit your limit", re.IGNORECASE)
+LIMIT = re.compile(
+    r"429|rate.?limit|usage limit|quota|hit your limit|too many requests|limit (?:reached|exceeded)|"
+    r"out of (?:credits|usage|requests)|exceeded your|resource.?exhausted|upgrade your plan",
+    re.IGNORECASE,
+)
 
 
 def maker(pool: str, model: str) -> str:
@@ -58,7 +62,7 @@ def pick(task_class: str, author_vendor: str | None, skipped: list[str]) -> dict
 
 def command(seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: Path) -> list[str]:
     pool, model = seat.get("pool") or "", seat.get("model")
-    readonly = task_class in READ_ONLY
+    readonly = bool(seat.get("read_only")) or task_class in READ_ONLY
     if pool.startswith("anthropic-"):
         name = "claude-lb-launch"
         args = ["-p", "--model", model, "--output-format", "json"]
@@ -112,38 +116,38 @@ def attempt(
 ) -> tuple[str, int, float, str]:
     started = time.monotonic()
     env = dict(os.environ, AGENT_LB_INTENT=task_class)
+    stderr_path = out.with_suffix(".stderr")
     try:
-        with out.open("w", encoding="utf-8") as handle:
+        with out.open("wb") as handle, stderr_path.open("wb") as errors:
             proc = subprocess.run(
                 command(seat, task_class, cwd, brief, out),
                 cwd=cwd,
                 env=env,
                 stdout=handle,
-                stderr=subprocess.STDOUT,
+                stderr=errors,
                 timeout=timeout,
                 check=False,
             )
         code = proc.returncode
         text = out.read_text(encoding="utf-8", errors="replace")
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+        seat_pool = seat.get("pool", "").startswith("cursor") or seat.get("pool") == "devin"
+        usage_error = seat_pool and code == 2 and stderr.lstrip().startswith("usage:")
+        pool_miss = seat_pool and (code == 3 or code == 2 and not usage_error)
         outcome = (
-            "ok"
-            if code == 0
-            else (
-                "limit"
-                if (seat.get("pool", "").startswith("cursor") or seat.get("pool") == "devin")
-                and code == 3
-                or LIMIT.search(text)
-                else "infra"
-                if code in {75, 124}
-                else "fail"
-            )
+            "ok" if code == 0 else
+            "fail" if usage_error else
+            "limit" if pool_miss or LIMIT.search(text + "\n" + stderr) else
+            "infra" if code in {75, 124} else "fail"
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         code, outcome = (124 if isinstance(error, subprocess.TimeoutExpired) else 75), "infra"
-        with out.open("a", encoding="utf-8") as handle:
+        with stderr_path.open("a", encoding="utf-8") as handle:
             handle.write("\nattempt timed out\n" if isinstance(error, subprocess.TimeoutExpired) else f"\n{error}\n")
-        text = out.read_text(encoding="utf-8", errors="replace")
-    first_line = next((line for line in text.splitlines() if line.strip()), f"exit {code}")
+        text = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
+    diagnostics = stderr + "\n" + text if code != 0 else text
+    first_line = next((line for line in diagnostics.splitlines() if line.strip()), f"exit {code}")
     return outcome, code, round(time.monotonic() - started, 3), first_line
 
 
