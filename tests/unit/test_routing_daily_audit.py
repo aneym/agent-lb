@@ -5,7 +5,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from scripts.routing_daily_audit import dispatch, proposals, store, summarize, write_outputs
+from scripts.routing_daily_audit import (
+    dispatch, load_outcomes, proposals, store, summarize, summarize_outcomes, write_outputs,
+)
 
 
 @pytest.fixture
@@ -111,3 +113,51 @@ def test_routing_daily_audit_quantized_claude_points_show_fleet_estimate(observa
     assert row["claude_weekly_points"] is None
     assert row["claude_weekly_points_per_finished"] is None
     assert row["claude_weekly_points_fleet_estimate"] == 1
+
+
+def _outcome(**overrides):
+    row = dict(ts="2026-09-30T16:07:12.123Z", source="fold", run_id="run", piece="piece", repo="agent-lb",
+               branch="routing/audit-outcomes", pr=1, job="implement", seat="alpha", model="sol-medium",
+               harness="codex", pool="openai", attempts=1, finished_by_seat="alpha",
+               fix_rounds=0, review_verdicts=[], outcome="accepted", wall_s=10, session_ids=["s"])
+    row.update(overrides)
+    return row
+
+
+def test_routing_daily_audit_outcome_ledger(tmp_path):
+    start = datetime(2026, 9, 30, tzinfo=UTC)
+    window = (start, start + timedelta(days=1))
+    missing = []
+    source, rows = load_outcomes(tmp_path / "missing.jsonl", *window, missing)
+    assert source == "none yet" and rows == [] and missing == []
+
+    path = tmp_path / "outcomes.jsonl"
+    lines = [
+        _outcome(outcome="held_pass", fix_rounds=2, wall_s=30),
+        _outcome(outcome="override", piece="over"),
+        _outcome(outcome="rejected", piece="no"),
+        _outcome(outcome="infra_blocked", piece="down", wall_s=100),
+        _outcome(piece="again", attempts=3, wall_s=None),
+        "{",
+    ]
+    path.write_text("\n".join(json.dumps(row) if isinstance(row, dict) else row for row in lines) + "\n")
+    errors = []
+    source, records = load_outcomes(path, *window, errors)
+    assert source == "outcomes"
+    assert errors == ["outcomes: JSONDecodeError"]
+    rung = summarize_outcomes(records)[0]
+    assert rung["accepted"] == 3
+    assert rung["overrides"] == 1
+    assert rung["rejected"] == 1
+    assert rung["infra_blocked"] == 1
+    assert rung["pieces"] == 5
+    assert rung["acceptance_observed"] == 4
+    assert rung["accepted_rate"] == pytest.approx(3 / 4)
+    assert rung["fix_rounds_per_accepted"] == pytest.approx(2 / 3)
+    assert rung["multi_attempt"] == 1
+    assert rung["median_wall_s"] == 20
+    assert rung["acceptance_source"] == "outcomes"
+    ladder = {"implement": ["sol-medium", "grok-low"]}
+    assert proposals([], ladder, outcome_rungs=summarize_outcomes(records)) == [
+        "not enough outcomes (n=4)", "not enough outcomes (n=0)",
+    ]

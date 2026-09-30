@@ -261,6 +261,165 @@ def prs(since, until, errors):
                        "headRefName": p.get("headRefName")} for p in entries], reverts
 
 
+ACCEPTED_OUTCOMES = ("accepted", "held_pass", "override")
+
+
+def load_outcomes(path, since, until, errors):
+    """Outcome ledger for the audit window. A missing file is an empty source, not an error."""
+    if not path.exists():
+        return "none yet", []
+    records = []
+    try:
+        with path.open() as source:
+            for line in source:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                    if not isinstance(row, dict):
+                        raise TypeError("outcome")
+                    stamp = date(row.get("ts"))
+                    if stamp is None:
+                        raise ValueError("timestamp")
+                    if since <= stamp < until:
+                        row = dict(row)
+                        row["ts"] = stamp.isoformat()
+                        records.append(row)
+                except (TypeError, ValueError) as exc:
+                    errors.append(f"outcomes: {type(exc).__name__}")
+    except OSError as exc:
+        errors.append(f"outcomes: {type(exc).__name__}")
+    return "outcomes", records
+
+
+def _attempt_count(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 1
+    return value
+
+
+def _median(values):
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def summarize_outcomes(records):
+    """Per rung (seat + model): acceptance excludes infra_blocked; override counts as accepted and itself."""
+    groups = defaultdict(list)
+    for row in records:
+        kind = str(row.get("job") or "implement").lower()
+        if kind not in JOBS:
+            kind = "implement"
+        groups[(label(row.get("seat")), label(row.get("model")), kind)].append(row)
+    rungs = []
+    for (seat, model, kind), items in groups.items():
+        accepted = overrides = rejected = infra = dropped = multi = 0
+        fix_rounds = 0.0
+        walls = []
+        for item in items:
+            outcome = str(item.get("outcome") or "")
+            if _attempt_count(item.get("attempts")) > 1:
+                multi += 1
+            if item.get("wall_s") is not None:
+                walls.append(number(item.get("wall_s")))
+            if outcome == "infra_blocked":
+                infra += 1
+            elif outcome == "dropped":
+                dropped += 1
+            elif outcome == "rejected":
+                rejected += 1
+            elif outcome in ACCEPTED_OUTCOMES:
+                accepted += 1
+                fix_rounds += number(item.get("fix_rounds"))
+                overrides += outcome == "override"
+        counted = accepted + rejected
+        rungs.append(dict(
+            seat=seat, model=model, job=kind, pieces=len(items), accepted=accepted, overrides=overrides,
+            rejected=rejected, infra_blocked=infra, dropped=dropped, acceptance_observed=counted,
+            accepted_rate=accepted / counted if counted else None, fix_rounds=fix_rounds,
+            fix_rounds_per_accepted=fix_rounds / accepted if accepted else None,
+            median_wall_s=_median(walls),
+            multi_attempt=multi, acceptance_source="outcomes",
+        ))
+    return sorted(rungs, key=lambda row: (row["job"], row["seat"], row["model"]))
+
+
+def _matching_rungs(rungs, rung_id, kind):
+    return [row for row in rungs if row["job"] == kind and rung_id in (
+        row["model"], row["seat"], f"{row['seat']}/{row['model']}")]
+
+
+def _combine_rungs(matches):
+    accepted = sum(row["accepted"] for row in matches)
+    observed = sum(row["acceptance_observed"] for row in matches)
+    fix_rounds = sum(row["fix_rounds"] for row in matches)
+    walls = [row["median_wall_s"] for row in matches if row["median_wall_s"] is not None]
+    return dict(
+        pieces=sum(row["pieces"] for row in matches), accepted=accepted,
+        overrides=sum(row["overrides"] for row in matches),
+        rejected=sum(row["rejected"] for row in matches),
+        infra_blocked=sum(row["infra_blocked"] for row in matches),
+        dropped=sum(row.get("dropped", 0) for row in matches),
+        acceptance_observed=observed, accepted_rate=accepted / observed if observed else None,
+        fix_rounds=fix_rounds, fix_rounds_per_accepted=fix_rounds / accepted if accepted else None,
+        median_wall_s=sum(walls) / len(walls) if walls else None,
+        multi_attempt=sum(row.get("multi_attempt", 0) for row in matches),
+    )
+
+
+def overlay_outcomes(rows, rungs):
+    """Outcome counts replace the dispatch/PR acceptance join for a rung that has ledger rows."""
+    grouped = defaultdict(list)
+    for rung in rungs:
+        grouped[(rung["model"], rung["job"])].append(rung)
+    for row in rows:
+        matches = grouped.get((row["model"], row["job"]))
+        if not matches:
+            continue
+        combined = _combine_rungs(matches)
+        row.update(combined)
+        row["acceptance_source"] = "outcomes"
+
+
+def _outcome_proposals(rungs, ladder):
+    result, insufficient = [], []
+    for kind in ("implement", "mechanical"):
+        order = ladder.get(kind, [])
+        chosen = []
+        for rung_id in order:
+            matches = _matching_rungs(rungs, rung_id, kind)
+            count = sum(row["pieces"] - row["infra_blocked"] - row.get("dropped", 0) for row in matches)
+            if count < 20:
+                insufficient.append(f"not enough outcomes (n={count})")
+                chosen.append(None)
+                continue
+            combined = _combine_rungs(matches)
+            chosen.append(combined if combined["accepted_rate"] is not None and combined["median_wall_s"] is not None
+                          else None)
+        for index, upper in enumerate(order):
+            for lower_index, lower in enumerate(order[index + 1:], start=index + 1):
+                slower, faster = chosen[lower_index], chosen[index]
+                if not slower or not faster:
+                    continue
+                if (slower["accepted_rate"] >= faster["accepted_rate"] - 1 / 6
+                        and slower["median_wall_s"] <= 1.10 * faster["median_wall_s"]):
+                    result.append(
+                        f"propose: move {lower} above {upper} ({kind}; "
+                        f"accepted {slower['accepted']}/{slower['acceptance_observed']} vs "
+                        f"{faster['accepted']}/{faster['acceptance_observed']}; "
+                        f"median wall_s {slower['median_wall_s']:.2f} vs {faster['median_wall_s']:.2f})"
+                    )
+    if result:
+        return result
+    deduped = list(dict.fromkeys(insufficient))
+    return deduped or ["no change"]
+
+
 def fold_acceptance(home, runs, errors):
     paths = {}
     for path in (home / ".agent-rails/workflows/results").glob("*.json"):
@@ -438,7 +597,9 @@ def summarize(runs, verdicts, merged, reverts, requests, usage, since, until):
     return sorted(groups.values(), key=lambda row: (row["job"], row["model"]))
 
 
-def proposals(rows, ladder):
+def proposals(rows, ladder, outcome_rungs=None):
+    if outcome_rungs is not None:
+        return _outcome_proposals(outcome_rungs, ladder)
     result = []
     for kind in ("implement", "mechanical"):
         order = ladder.get(kind, [])
@@ -484,7 +645,19 @@ def render(report):
              "| " + " | ".join("---" for _ in columns) + " |"]
     for row in report["rows"]:
         lines.append("| " + " | ".join(str(row[k]) if row[k] is not None else "unverified" for k in columns) + " |")
-    lines += ["", "## Rolling 7-day ladder", "", *report["proposals"], "", "## Notes", "", *report["notes"]]
+    lines += ["", "## Rolling 7-day ladder", "", *report["proposals"], ""]
+    if "outcomes_source" in report:
+        lines += ["## Rung sources", ""]
+        if report["outcomes_source"] == "none yet":
+            lines.append("outcomes: none yet")
+        for rung in report.get("outcome_rungs") or []:
+            lines.append(f"{rung['seat']} {rung['model']} ({rung['job']}): {rung['acceptance_source']}")
+        covered = {(rung["model"], rung["job"]) for rung in report.get("outcome_rungs") or []}
+        for row in report["rows"]:
+            if (row["model"], row["job"]) not in covered:
+                lines.append(f"{row['model']} {row['job']}: {row.get('acceptance_source', 'dispatch')}")
+        lines.append("")
+    lines += ["## Notes", "", *report["notes"]]
     lines += ["", "Unverified sources: " + ("; ".join(report["errors"]) or "none")]
     return "\n".join(lines) + "\n"
 
@@ -574,7 +747,16 @@ def main():
             run["pr"] = pr["number"]
     rows = summarize(runs, verdicts, merges, reverts, requests, usage, since, until)
     week = summarize(runs, verdicts, merges, reverts, requests, usage, rolling, until)
-    proposal = proposals(week, ladder)
+    outcomes_source, outcome_records = load_outcomes(
+        home / ".agent-lb/audits/routing/outcomes.jsonl", min(since, rolling), until, errors)
+    daily_rungs = summarize_outcomes(
+        [row for row in outcome_records if since <= date(row["ts"]) < until])
+    rolling_rungs = summarize_outcomes(
+        [row for row in outcome_records if rolling <= date(row["ts"]) < until])
+    overlay_outcomes(rows, daily_rungs)
+    overlay_outcomes(week, rolling_rungs)
+    proposal = (proposals(week, ladder, outcome_rungs=rolling_rungs)
+                if outcomes_source == "outcomes" else proposals(week, ladder))
     swaps = stand_ins(home / ".agent-lb/agent-lb.out.log", since, until, errors)
     errors.append("stand-in events: current server does not emit swap/return log lines; counts unverified")
     observed = sum(r["acceptance_observed"] for r in rows)
@@ -593,7 +775,8 @@ def main():
             f"unverified sources {len(errors)}")
     report = dict(since=since.isoformat(), until=until.isoformat(), rows=rows, rolling_7d=week,
                   proposals=proposal, stand_ins=swaps, cursor_models_percent=percent,
-                  notes=notes, errors=errors, line=line)
+                  notes=notes, errors=errors, line=line, outcomes_source=outcomes_source,
+                  outcome_rungs=daily_rungs)
     out = args.out or home / ".agent-lb/audits/routing"
     # An explicit output directory is a dry-run boundary: do not overwrite the published page.
     page = out / "routing-daily-audit.html" if args.out else home / ".claude/pretty-docs/routing-daily-audit.html"
