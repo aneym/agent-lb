@@ -214,7 +214,7 @@ def prompt_text(content):
 def transcript_digest(path):
     """Cache only attribution hints and deduplicated usage, never full messages."""
     stat = path.stat()
-    signature = [str(path), stat.st_size, stat.st_mtime_ns, RULE_PATH.stat().st_mtime_ns, 7]
+    signature = [str(path), stat.st_size, stat.st_mtime_ns, RULE_PATH.stat().st_mtime_ns, 8]
     cache = Path.home() / ".agent-lb/audit/transcript-cache" / (hashlib.sha1(str(path).encode()).hexdigest() + ".json")
     try:
         cached = json.loads(cache.read_text())
@@ -222,8 +222,12 @@ def transcript_digest(path):
             return cached["digest"]
     except (OSError, ValueError, KeyError):
         pass
-    result = {"prompt": "", "cwd": "", "title": "", "entrypoint": "", "originator": "", "events": []}
+    result = {
+        "prompt": "", "cwd": "", "title": "", "entrypoint": "", "originator": "", "events": [],
+        "compact_boundaries": [],
+    }
     seen = set()
+    events_by_id, tools_by_id, seen_tools = {}, defaultdict(list), set()
     with path.open() as stream:
         for line in stream:
             # Metadata is sparse; avoid parsing tool results and assistant content without usage.
@@ -231,6 +235,9 @@ def transcript_digest(path):
                 marker in line
                 for marker in (
                     '"usage"',
+                    '"tool_use"',
+                    '"isCompactSummary"',
+                    '"compact_boundary"',
                     '"type":"user"',
                     '"type": "user"',
                     '"ai-title"',
@@ -251,6 +258,22 @@ def transcript_digest(path):
             if item.get("type") == "ai-title":
                 result["title"] = safe_label(item.get("aiTitle"), "")
             message = item.get("message") or {}
+            if item.get("isCompactSummary") or (
+                item.get("type") == "system" and item.get("subtype") == "compact_boundary"
+            ):
+                if item.get("timestamp"):
+                    result["compact_boundaries"].append(item["timestamp"])
+            if item.get("type") == "assistant":
+                content = message.get("content") or []
+                for block in content if isinstance(content, list) else []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    canonical = json.dumps(block.get("input", {}), sort_keys=True, separators=(",", ":"))
+                    pair = [block.get("name") or "", hashlib.sha1(canonical.encode()).hexdigest()]
+                    identity = (message.get("id"), block.get("id") or tuple(pair))
+                    if identity not in seen_tools:
+                        seen_tools.add(identity)
+                        tools_by_id[message.get("id")].append(pair)
             if not result["prompt"] and (item.get("type") == "user" or payload.get("role") == "user"):
                 result["prompt"] = prompt_text(message.get("content", payload.get("content", "")))[:600]
             if item.get("type") != "assistant" or not message.get("usage") or not message.get("id"):
@@ -274,6 +297,10 @@ def transcript_digest(path):
                     "loop_output": usage.get("output_tokens") or 0,
                 }
             )
+            events_by_id[message["id"]] = result["events"][-1]
+    for message_id, event in events_by_id.items():
+        event["tool_calls"] = tools_by_id[message_id]
+        event["compact_boundaries"] = result["compact_boundaries"]
     # Persist only safe hints, never emails or complete prompt bodies.
     result["prompt"] = safe_label(result["prompt"], "") if "@" in result["prompt"] else result["prompt"]
     result["cwd"] = safe_label(result["cwd"], "")
@@ -477,6 +504,12 @@ def cache_kind(row, previous):
         return "ttl_expiry"
     if row.get("account_id") and row.get("account_id") != previous.get("account_id"):
         return "account_switch"
+    if any(
+        (stamp := event_time({"timestamp": boundary}))
+        and event_time(previous) < stamp <= event_time(row)
+        for boundary in row.get("compact_boundaries", [])
+    ):
+        return "compaction"
     prior = sum(previous.get(k) or 0 for k in ("input_tokens", "cache_creation_tokens", "cache_read_tokens"))
     reads = row.get("cache_read_tokens") or 0
     context = (row.get("input_tokens") or 0) + write + reads
@@ -803,10 +836,11 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
     totals, priced = empty(), Counter()
     groups = {dim: defaultdict(empty) for dim in DIMS}
     sessions, tree = {}, {"name": "all", **empty(), "children": {}}
+    detectors = (*DETECTORS, "compaction", "coordinator")
     wastes = {
-        key: {**empty(), "write_tokens": 0, "premium_usd": 0.0, "agents": defaultdict(empty)} for key in DETECTORS
+        key: {**empty(), "write_tokens": 0, "premium_usd": 0.0, "agents": defaultdict(empty)} for key in detectors
     }
-    daily = defaultdict(lambda: {"bust": 0.0, "ttl_expiry": 0.0})
+    daily = defaultdict(lambda: {kind: {"usd": 0.0, "quota_points": 0.0} for kind in ("bust", "ttl_expiry")})
     cache_receipts = set()
     agent_receipts = {}
     row_index = defaultdict(list)
@@ -832,9 +866,31 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
             sequences = defaultdict(list)
             for event in agent["events"]:
                 sequences[event["sequence"]].append(event)
+            looping = False
+            for events in sequences.values():
+                calls = [
+                    tuple(call)
+                    for event in sorted(events, key=event_time)
+                    for call in event.get("tool_calls", [])
+                ]
+                counts = Counter()
+                for index, call in enumerate(calls):
+                    counts[call] += 1
+                    if index >= 50:
+                        expired = calls[index - 50]
+                        counts[expired] -= 1
+                        if not counts[expired]:
+                            del counts[expired]
+                    if index >= 49 and max(counts.values()) >= 20:
+                        looping = True
+                        break
+            coordinator = (
+                not looping
+                and len(agent["events"]) > 300
+                and median(e.get("loop_output", e.get("output_tokens", 0)) for e in agent["events"]) < 200
+            )
             for events in sequences.values():
                 previous = None
-                looping = len(events) > 300 and median(e.get("loop_output", 0) for e in events) < 200
                 for event in sorted(events, key=lambda e: event_time(e)):
                     kind = cache_kind(event, previous)
                     previous = event
@@ -843,7 +899,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                     nearest = min(
                         (i for i in (pos - 1, pos) if 0 <= i < len(times)), key=lambda i: abs(times[i] - point)
                     )
-                    agent_receipts[indexed[nearest][0]] = (agent, event == events[0], looping)
+                    agent_receipts[indexed[nearest][0]] = (agent, event == events[0], looping, coordinator)
                     if not kind:
                         continue
                     premium = input_cost(event, premium=True)
@@ -855,7 +911,9 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                     value.update({k: receipt.get(k, 0) * fraction for k in ("quota_points", "quota_5h_points")})
                     add_waste(kind, value, sid, lane, agent["seat"], agent["key"], write, premium)
                     if kind in ("bust", "ttl_expiry"):
-                        daily[str(event_time(event).date())][kind] += premium
+                        entry = daily[str(event_time(event).date())][kind]
+                        entry["usd"] += premium
+                        entry["quota_points"] += value["quota_points"]
                     cache_receipts.add(indexed[nearest][0])
     financial_rows = {}
     for row in rows:
@@ -997,14 +1055,18 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                 premium,
             )
             if kind in ("bust", "ttl_expiry"):
-                daily[str(event_time(event).date())][kind] += premium
+                entry = daily[str(event_time(event).date())][kind]
+                entry["usd"] += premium
+                entry["quota_points"] += row.get("quota_points", 0) * min(1.0, premium / usd) if usd else 0.0
             continue
         if index in cache_receipts:
             continue
-        agent, first, looping = agent_receipts.get(
-            index, ({"seat": "lead", "key": "lead"}, previous is None if not agents else False, False)
+        agent, first, looping, coordinator = agent_receipts.get(
+            index, ({"seat": "lead", "key": "lead"}, previous is None if not agents else False, False, False)
         )
         flags = waste_flags(row | {"first": first, "preexisting": sid in preexisting, "looping": looping})
+        if not flags and coordinator:
+            flags = ["coordinator"]
         if not flags and purpose in ("unknown", "unlinked"):
             flags = ["unattributed"]
         for flag in flags:
@@ -1047,7 +1109,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         "tree": finish_tree(tree),
         "sessions": sorted(sessions.values(), key=lambda v: v["usd"], reverse=True)[:top],
         "waste": wastes,
-        "waste_total_usd": sum(wastes[k]["usd"] for k in DETECTORS if k != "first_write"),
+        "waste_total_usd": sum(wastes[k]["usd"] for k in detectors if k != "first_write"),
         "cache_premium_by_day": dict(sorted(daily.items())),
         "priced_by": dict(priced),
         "account_shares": account_shares,
