@@ -696,6 +696,14 @@
       "family": "luna",
       "note": "newest non-retired gpt-*-luna the LB serves"
     },
+    "sonnet-latest-low": {"vendor": "cursor", "family": "claude-sonnet", "variant": "low"},
+    "sonnet-latest-medium": {"vendor": "cursor", "family": "claude-sonnet", "variant": "medium"},
+    "sonnet-latest-high": {"vendor": "cursor", "family": "claude-sonnet", "variant": "high"},
+    "sonnet-latest-xhigh": {"vendor": "cursor", "family": "claude-sonnet", "variant": "xhigh"},
+    "opus-latest-low": {"vendor": "cursor", "family": "claude-opus", "variant": "low"},
+    "opus-latest-medium": {"vendor": "cursor", "family": "claude-opus", "variant": "medium"},
+    "opus-latest-high": {"vendor": "cursor", "family": "claude-opus", "variant": "high"},
+    "opus-latest-xhigh": {"vendor": "cursor", "family": "claude-opus", "variant": "xhigh"},
     "grok-latest": {
       "vendor": "cursor",
       "family": "grok",

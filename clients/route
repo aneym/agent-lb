@@ -41,6 +41,7 @@
 #   0  success
 #   1  degraded (doctor: a probe failed) or operational failure
 #   2  nothing routable / usage error
+#   3  setup error / unknown latest alias
 
 from __future__ import annotations
 
@@ -1009,8 +1010,18 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
     return None, f"alias for {family} has no model list, pin or harness"
 
 
+_CURSOR_MODELS: list[str] | None = None
+
+
 def cursor_models() -> list[str]:
-    """Cursor's model ids (`cursor-agent --list-models`), cached for a day."""
+    """Cursor's model ids, memoized per process and cached for a day."""
+    global _CURSOR_MODELS
+    if _CURSOR_MODELS is None:
+        _CURSOR_MODELS = fetch_cursor_models()
+    return _CURSOR_MODELS
+
+
+def fetch_cursor_models() -> list[str]:
     cache = models_cache_path().with_name("route-cursor-models.json")
     try:
         cached = json.loads(cache.read_text(encoding="utf-8"))
@@ -1072,6 +1083,8 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     spec = aliases.get(name)
     if not isinstance(spec, dict):
+        if re.search(r"-latest(?:-(?:low|medium|high|xhigh))?$", name):
+            return None, f"unknown alias {name}"
         if is_retired(name, retired):
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
@@ -1088,7 +1101,8 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
         # Cursor families: `<family>-<version>-<variant>`, optionally `cursor-` prefixed.
         variant = spec.get("variant")
         suffix = "-" + re.escape(variant) if variant else ""
-        pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-(\d+(?:\.\d+)*){suffix}$")
+        version = r"\d+(?:-\d{1,2})?" if family.startswith("claude-") else r"\d+(?:\.\d+)*"
+        pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-({version}){suffix}$")
         served = cursor_models()
         if not served:
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
@@ -1105,7 +1119,7 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
     for model in served:
         match = pattern.match(model)
         if match and not is_retired(model, retired):
-            candidates.append((_version_key(match.group(1)), model))
+            candidates.append((_version_key(match.group(1).replace("-", ".")), model))
     if not candidates:
         return None, f"no non-retired {family} model is served"
     return max(candidates)[1], f"newest served {family}"
@@ -1119,12 +1133,18 @@ def command_resolve(args: argparse.Namespace) -> int:
     table = load_table()
     served, source = served_models()
     reasons = []
+    unknown = []
     for name in args.aliases:
         model, reason = resolve_alias(table, name, served)
         if model:
             print(model)
             return EXIT_OK
+        if reason == f"unknown alias {name}":
+            unknown.append(name)
         reasons.append(f"{name}: {reason}")
+    if unknown:
+        print(f"route: unknown alias {', '.join(unknown)}", file=sys.stderr)
+        return EXIT_SETUP
     print(f"route: nothing resolvable ({'; '.join(reasons)}; models from {source})", file=sys.stderr)
     return EXIT_UNROUTABLE
 

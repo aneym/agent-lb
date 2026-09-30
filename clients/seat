@@ -570,6 +570,56 @@ def resolve_model(vendor: str, model: str) -> str:
     return resolved
 
 
+_CURSOR_MODELS: dict[str, tuple[str, ...]] = {}
+
+
+def cursor_models(account: dict[str, Any]) -> tuple[str, ...]:
+    """Discover served ids once per account; unavailable lists do not block dispatch."""
+    account_id = account["id"]
+    if account_id in _CURSOR_MODELS:
+        return _CURSOR_MODELS[account_id]
+    _CURSOR_MODELS[account_id] = ()
+    try:
+        result = subprocess.run(
+            [cli_bin("cursor"), "models"], capture_output=True, text=True,
+            env=account_env(account), stdin=subprocess.DEVNULL,
+            timeout=PROBE_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return ()
+    if result.returncode != 0:
+        return ()
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
+    ids = [line.split(" - ", 1)[0].strip() for line in text.splitlines() if " - " in line]
+    _CURSOR_MODELS[account_id] = tuple(dict.fromkeys(
+        value for value in ids if re.fullmatch(r"[\w.\-]+", value)
+    ))
+    return _CURSOR_MODELS[account_id]
+
+
+def check_cursor_model(model: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lists = [(account, cursor_models(account)) for account in candidates]
+    listed = tuple(dict.fromkeys(value for _, models in lists for value in models))
+    family = re.match(r"^(claude-(?:opus|sonnet)|[a-z]+)-", model)
+    prefix = family.group(1) + "-" if family else model.split("-", 1)[0] + "-"
+    older = re.fullmatch(r"claude-(opus|sonnet)-5-(?!5(?:-|$)).*?(low|medium|high|xhigh)", model)
+    if older:
+        name, effort = older.groups()
+        pattern = re.compile(rf"^claude-{name}-(\d+)(?:-(\d{{1,2}}))?-{effort}$")
+        candidates = []
+        for value in listed:
+            match = pattern.fullmatch(value)
+            if match and (int(match[1]), int(match[2] or 0)) > (5, 0):
+                candidates.append(((int(match[1]), int(match[2] or 0)), value))
+        newest = max(candidates)[1] if candidates else f"claude-{name}-5-5-{effort}"
+        print(f"seat: {model} is superseded by {newest}", file=sys.stderr)
+    supported = [account for account, models in lists if not models or model in models]
+    if not supported:
+        closest = [value for value in listed if value.startswith(prefix)][:3]
+        fail(f"{model} is not a Cursor model; closest: {', '.join(closest) or 'none'}")
+    return supported
+
+
 def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_file: Path) -> list[str]:
     if vendor == "cursor":
         command = [cli_bin("cursor"), "-p", "--trust", "--output-format", "json", "--model", model]
@@ -1027,6 +1077,8 @@ def command_run(args: argparse.Namespace) -> int:
         candidates = order_accounts(registry, state, args.vendor)
     if not candidates:
         fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
+    if args.vendor == "cursor":
+        candidates = check_cursor_model(model, candidates)
 
     run_id = f"seat-{uuid.uuid4()}"
     seat = SEAT_FOR_VENDOR[args.vendor]
