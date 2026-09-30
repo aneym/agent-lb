@@ -182,6 +182,43 @@ def test_fold_seat_accept_rate_excludes_only_infra_faults(statuses, seat_rate):
         assert "50.0% | 66.7%" in rendered
 
 
+@pytest.mark.parametrize(
+    "wall, points, expected",
+    [
+        (
+            52.161549751243776,
+            {"openai": 0.2288198485928572, "anthropic": 0.26587479571518197},
+            "52.2 | anthropic 0.27, openai 0.23",
+        ),
+        (None, {"anthropic": None}, "n/a | anthropic n/a"),
+    ],
+)
+def test_text_report_formats_fold_costs_and_unattributed_rows(wall, points, expected):
+    rows, _ = routing_rows(
+        [], {}, {}, {"unattributed": [dict(provider="anthropic", window="weekly", points=5)]}
+    )
+    fold = dict(
+        seat="builder",
+        model="sol",
+        pieces=4,
+        accepted=2,
+        accept_rate=0.5,
+        seat_accept_rate=2 / 3,
+        fix_rounds=1,
+        review_rounds=3,
+        wall_minutes_per_accepted_piece=wall,
+        points_per_accepted_piece=points,
+        provisional=True,
+    )
+    rendered = text_report(dict(window=dict(since="start", until="end"), rows=rows, fold=[fold], notes=[]))
+    assert expected in rendered
+    assert "{'" not in rendered
+    assert "50.0% | 66.7%" in rendered
+    assert "unattributed / unknown / unknown / other | 0 | 5.00" in rendered
+    assert fold["wall_minutes_per_accepted_piece"] == wall
+    assert fold["points_per_accepted_piece"] == points
+
+
 def test_movement_requires_more_than_quarter_and_ten_samples_in_both_windows():
     base = dict(
         pool="openai",

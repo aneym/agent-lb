@@ -293,11 +293,16 @@ def text_report(report):
     ]
     for row in report["fold"]:
         wall = row["wall_minutes_per_accepted_piece"]
+        wall_text = f"{wall:.1f}" if wall is not None else "n/a"
+        points_text = ", ".join(
+            f"{pool} {value:.2f}" if value is not None else f"{pool} n/a"
+            for pool, value in sorted(row["points_per_accepted_piece"].items())
+        )
         seat_rate = f"{row['seat_accept_rate']:.1%}" if row["seat_accept_rate"] is not None else "n/a"
         lines.append(
             f"{row['seat']} / {row['model']} | {row['pieces']} | {row['accepted']} | "
             f"{row['accept_rate']:.1%} | {seat_rate} | {row['fix_rounds']} | {row['review_rounds']} | "
-            f"{wall if wall is not None else 'n/a'} | {row['points_per_accepted_piece']}"
+            f"{wall_text} | {points_text}"
             + (" (provisional)" if row["provisional"] else "")
         )
     lines += ["\nMOVED"] + [json.dumps(m) for m in report.get("moved", [])]
