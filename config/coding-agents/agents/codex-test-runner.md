@@ -51,12 +51,14 @@ main checkout.
 
    Create and write a fresh unique contract file in that same Bash call:
 
-   ```sh
-   cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
-   <contract text built below>
-   CONTRACT_EOF
-   node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
-   ```
+```sh
+cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+<contract text built below>
+CONTRACT_EOF
+node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+```
+
+   Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the `node` line.
 
    Never write the contract to a fixed or reused path (the scratchpad is shared
    by parallel agents), and never pass it inline.
@@ -65,6 +67,7 @@ main checkout.
    from, and each Bash call starts back in the session cwd. `--write` is here
    only so the suite has a writable temp dir and scratch space — the contract
    below forbids touching tracked files.
+
 4. Copy the captured output out of the worktree to `$OUT` **before** you remove
    anything. The worktree is about to stop existing; the evidence must not.
 5. Remove the worktree, always, including when the suite failed or the run
