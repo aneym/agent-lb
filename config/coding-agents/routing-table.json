@@ -532,8 +532,8 @@
       "cycle_day_default": 1,
       "fast_multiplier": 3,
       "pools": [
-        {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {}},
-        {"id": "cursor-other", "label": "Other models", "models": ["*"], "budget_usd_by_tier": {"Ultra": 400, "Pro+": 70, "Pro": 20}}
+        {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {"Ultra": 3123}, "note": "2026-09-30 calibration: shared cursor-main + cursor-gmail plan current-cycle service tally $62.46 / 0.02, rounded to $3123 (minimum $200), matches dashboard 2% used."},
+        {"id": "cursor-other", "label": "Other models", "models": ["*"], "budget_usd_by_tier": {"Ultra": 223, "Pro+": 70, "Pro": 20}, "note": "2026-09-30 calibration: shared cursor-main + cursor-gmail plan current-cycle service tally $222.73 rounded to $223; dashboard Other models limit hit (100% used)."}
       ],
       "prices_usd_per_mtok": [
         ["composer-2.5-fast", [3, 3, 15]],
@@ -543,7 +543,7 @@
         ["claude-sonnet-5-5-*", [2, 0.2, 10]],
         ["*", [5, 5, 25]]
       ],
-      "note": "2026-09-30: Cursor publishes no usage API. Prices are Cursor's list prices, and an unknown cached price is billed at the input price. Cursor models has no published size, so it stays unbudgeted until an owner sets budget_usd_by_tier. Over-256k double billing is not counted."
+      "note": "2026-09-30: Cursor publishes no usage API. Prices are Cursor's list prices, and an unknown cached price is billed at the input price. Ultra budgets are dashboard-calibrated estimates dated 2026-09-30, not published plan allowances. Over-256k double billing is not counted."
     }
   },
   "overrides": [],

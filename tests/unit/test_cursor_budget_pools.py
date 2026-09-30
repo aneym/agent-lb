@@ -23,6 +23,8 @@ def test_naive_utc_budget_time_is_independent_of_host_timezone(monkeypatch: pyte
     config = json.loads((Path(__file__).resolve().parents[2] / "config/coding-agents/routing-table.json").read_text())[
         "cli_pools"
     ]
+    # Pin the test allowance; live dashboard calibration changes independently.
+    config["cursor"]["pools"][1]["budget_usd_by_tier"]["Ultra"] = 400
     stamp = datetime(2026, 9, 30, 0, tzinfo=timezone.utc)
     seats = SeatAccountsResponse(
         source="seat_state",

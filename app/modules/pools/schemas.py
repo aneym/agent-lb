@@ -52,8 +52,10 @@ class PoolSummary(DashboardModel):
     budget_usd: float | None = Field(default=None, exclude_if=lambda value: value is None)
     monthly_remaining_percent: float | None = Field(default=None, exclude_if=lambda value: value is None)
     monthly_pace_percent: float | None = Field(default=None, exclude_if=lambda value: value is None)
-    burn24h_percent: float | None = Field(
-        default=None, alias="burn24hPercent", exclude_if=lambda value: value is None
+    burn24h_percent: float | None = Field(default=None, alias="burn24hPercent", exclude_if=lambda value: value is None)
+    percent_used: float | None = Field(default=None, exclude_if=lambda value: value is None)
+    percent_source: str | None = Field(
+        default=None, pattern=r"^(vendor|estimate)$", exclude_if=lambda value: value is None
     )
     cycle_reset_at: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
     unbudgeted_accounts: int | None = Field(default=None, exclude_if=lambda value: value is None)

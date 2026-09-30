@@ -65,10 +65,13 @@ class SeatAccount(DashboardModel):
     auth_ok: bool | None = None
     auth_checked_at: datetime | None = None
     tier: str | None = None
+    plan: str | None = None
     cycle_day: int | None = None
     daily: dict[str, dict[str, SeatModelUsage]] = Field(default_factory=dict)
     recent_runs: list[SeatRun] = Field(default_factory=list)
     cooldown_until: datetime | None = None
+    cooldowns: dict[str, datetime] = Field(default_factory=dict)
+    limits: dict[str, dict[str, Any]] = Field(default_factory=dict, exclude=True)
     last_error_kind: str | None = None
     last_error_at: datetime | None = None
     last_run_at: datetime | None = None
@@ -167,10 +170,17 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                     auth_ok=record.get("auth_ok"),
                     auth_checked_at=_ts(record.get("auth_checked_at")),
                     tier=record.get("tier_override") or identity.get("tier"),
+                    plan=record.get("plan"),
                     cycle_day=record.get("cycle_day"),
                     daily=usage.daily,
                     recent_runs=usage.recent_runs,
                     cooldown_until=cooldown,
+                    cooldowns={
+                        pool: stamp
+                        for pool, value in (record.get("cooldowns") or {}).items()
+                        if (stamp := _ts(value)) is not None and stamp > current
+                    },
+                    limits=record.get("limits") or {},
                     last_error_kind=error.get("kind"),
                     last_error_at=_ts(error.get("ts")),
                     last_run_at=_ts(record.get("last_run_at")),
@@ -180,6 +190,12 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
             )
         except (ValidationError, ValueError, TypeError):
             logger.warning("Skipping malformed seat account %s", account_id)
+    for account in accounts:
+        if account.vendor == "cursor" and account.plan:
+            peers = [peer for peer in accounts if peer.vendor == "cursor" and peer.plan == account.plan]
+            for peer in peers:
+                for pool, until in peer.cooldowns.items():
+                    account.cooldowns[pool] = max(until, account.cooldowns.get(pool, until))
     return SeatAccountsResponse(
         state_updated_at=updated,
         source=POOL_SOURCE_SEAT_STATE_STALE if stale else POOL_SOURCE_SEAT_STATE,
@@ -292,38 +308,70 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
                 )
         return 0.0
 
+    plans: dict[tuple[str, str], list[SeatAccount]] = {}
+    for account in members:
+        key = ("plan", account.plan) if account.plan else ("account", account.id)
+        plans.setdefault(key, []).append(account)
     pools: list[PoolSummary] = []
-    ready = sum(account.ready for account in members)
     for index, definition in enumerate(definitions):
+        ready = sum(
+            account.enabled
+            and account.auth_ok is not False
+            and account.cooldown_until is None
+            and not any(
+                definition["id"] in peer.cooldowns
+                for peer in (plans[("plan", account.plan)] if account.plan else [account])
+            )
+            for account in members
+        )
+        vendor_limit = False
         spent = budgeted_spent = burn = budget = 0.0
         unbudgeted = observed_runs = observed_tokens = 0
         cycles: list[tuple[datetime, datetime]] = []
-        for account in members:
-            start, reset = _monthly_cycle(current, account.cycle_day or cycle_day)
+        for plan_members in plans.values():
+            budgets = definition.get("budget_usd_by_tier", {})
+            account_budget = next((budgets[a.tier] for a in plan_members if a.tier in budgets), None)
+            start, reset = _monthly_cycle(current, next((a.cycle_day for a in plan_members if a.cycle_day), cycle_day))
             cycles.append((start, reset))
-            account_spent = sum(
-                cost(model, usage)
-                for day, models in account.daily.items()
-                if start.date().isoformat() <= day <= current.date().isoformat()
-                for model, usage in models.items()
-                if membership(model) == index
-            )
-            recent = [
-                run
-                for run in account.recent_runs
-                if run.model and membership(run.model) == index and current - timedelta(hours=24) < run.ts <= current
-            ]
-            spent += account_spent
-            observed_runs += len(recent)
-            observed_tokens += sum((run.tokens_in or 0) + (run.tokens_out or 0) for run in recent)
-            account_budget = definition.get("budget_usd_by_tier", {}).get(account.tier)
+            plan_spent = plan_burn = 0.0
+            for account in plan_members:
+                plan_spent += sum(
+                    cost(model, usage)
+                    for day, models in account.daily.items()
+                    if start.date().isoformat() <= day <= current.date().isoformat()
+                    for model, usage in models.items()
+                    if membership(model) == index
+                )
+                recent = [
+                    run
+                    for run in account.recent_runs
+                    if run.model
+                    and membership(run.model) == index
+                    and current - timedelta(hours=24) < run.ts <= current
+                ]
+                observed_runs += len(recent)
+                observed_tokens += sum((run.tokens_in or 0) + (run.tokens_out or 0) for run in recent)
+                plan_burn += sum(cost(run.model, run) for run in recent if run.model)
+                limit = account.limits.get(definition["id"], {})
+                at, until = _ts(limit.get("at")), _ts(limit.get("until"))
+                if account_budget is not None:
+                    vendor_limit |= bool(
+                        limit.get("source") == "vendor" and at and until and start <= at <= current < until
+                    )
+            spent += plan_spent
             if account_budget is None:
-                unbudgeted += 1
+                unbudgeted += len(plan_members)
             else:
                 budget += account_budget
-                budgeted_spent += account_spent
-                burn += sum(cost(run.model, run) for run in recent if run.model)
-        remaining = max(0.0, 100 * (budget - budgeted_spent) / budget) if budget > 0 else None
+                budgeted_spent += plan_spent
+                burn += plan_burn
+        percent_used = (
+            100.0 if vendor_limit else (min(100.0, round(100 * budgeted_spent / budget, 1)) if budget > 0 else None)
+        )
+        percent_source = "vendor" if vendor_limit else ("estimate" if budget > 0 else None)
+        remaining = (
+            0.0 if vendor_limit else (max(0.0, 100 * (budget - budgeted_spent) / budget) if budget > 0 else None)
+        )
         start, reset = min(cycles, key=lambda cycle: cycle[1])
         time_remaining = 100 * (reset - current).total_seconds() / (reset - start).total_seconds()
         status = (
@@ -343,6 +391,8 @@ def cursor_budget_pools(seats: SeatAccountsResponse, config: dict, *, now: datet
                 status=status,
                 source=seats.source,
                 window_label="month",
+                percent_used=percent_used,
+                percent_source=percent_source,
                 spent_usd=round(spent, 2),
                 budget_usd=budget if budget > 0 else None,
                 monthly_remaining_percent=remaining,

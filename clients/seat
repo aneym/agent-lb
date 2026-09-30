@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import fnmatch
 import getpass
 import hashlib
 import json
@@ -209,6 +210,7 @@ def save_state(state: dict[str, Any], registry: list[dict[str, Any]]) -> None:
         record["enabled"] = account.get("enabled", True) is not False
         record["tier_override"] = account.get("tier")
         record["cycle_day"] = account.get("cycle_day")
+        record["plan"] = account.get("plan")
         cutoff = (now() - timedelta(days=62)).date().isoformat()
         record["daily"] = {day: usage for day, usage in (record.get("daily") or {}).items() if day >= cutoff}
     state["updated_at"] = iso(now())
@@ -370,9 +372,52 @@ def usage_since(record: dict[str, Any], since: datetime) -> dict[str, Any]:
     }
 
 
-def cooling(record: dict[str, Any]) -> datetime | None:
-    until = parse_ts(record.get("cooldown_until"))
-    return until if until and until > now() else None
+def cursor_pool(model: str) -> str:
+    managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
+    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "routing-table.json"
+    path = (
+        Path(os.environ["ROUTE_TABLE"]).expanduser()
+        if os.environ.get("ROUTE_TABLE")
+        else (managed if managed.is_file() else repo)
+    )
+    try:
+        table = json.loads(path.read_text(encoding="utf-8"))
+        definitions = table["cli_pools"]["cursor"]["pools"]
+        return next(
+            pool["id"]
+            for pool in definitions
+            if isinstance(pool, dict)
+            and isinstance(pool.get("id"), str)
+            and isinstance(pool.get("models"), list)
+            and any(fnmatch.fnmatchcase(model, pattern) for pattern in pool["models"] if isinstance(pattern, str))
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return "cursor-other"
+
+
+def cooling(record: dict[str, Any], pool: str | None = None) -> datetime | None:
+    values = [record.get("cooldown_until")]
+    if pool:
+        values.append((record.get("cooldowns") or {}).get(pool))
+    return next((until for value in values if (until := parse_ts(value)) and until > now()), None)
+
+
+def mark_limit(record: dict[str, Any], vendor: str, model: str, text: str) -> None:
+    if vendor != "cursor":
+        record["cooldown_until"] = iso(cooldown_until(text))
+        return
+    pool = cursor_pool(model)
+    match = re.search(r"reset when your monthly cycle ends on (\d{1,2})/(\d{1,2})/(\d{4})", text, re.I)
+    until = None
+    if match:
+        try:
+            month, day, year = map(int, match.groups())
+            until = datetime(year, month, day, tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    if until is not None:
+        record.setdefault("limits", {})[pool] = {"at": iso(now()), "until": iso(until), "source": "vendor"}
+    record.setdefault("cooldowns", {})[pool] = iso(until or cooldown_until(text))
 
 
 def active_leases(state: dict[str, Any], account_id: str, current: datetime) -> list[dict[str, Any]]:
@@ -398,12 +443,18 @@ def command_accounts(args: argparse.Namespace) -> int:
             {
                 "id": account["id"],
                 "vendor": account.get("vendor"),
+                "plan": account.get("plan"),
                 "auth": account.get("auth"),
                 "enabled": account.get("enabled", True) is not False,
                 "auth_ok": record.get("auth_ok"),
                 "auth_checked_at": record.get("auth_checked_at"),
                 "identity": record.get("identity") or {},
                 "cooldown_until": iso(until) if until else None,
+                "cooldowns": {
+                    pool: value
+                    for pool, value in (record.get("cooldowns") or {}).items()
+                    if (stamp := parse_ts(value)) and stamp > now()
+                },
                 "last_error": record.get("last_error"),
                 "last_run_at": record.get("last_run_at"),
                 "last_24h": usage_since(record, day_ago),
@@ -425,6 +476,11 @@ def command_accounts(args: argparse.Namespace) -> int:
             status = "disabled"
         elif row["cooldown_until"]:
             status = f"cooling to {row['cooldown_until'][11:16]}Z"
+        elif row["cooldowns"]:
+            labels = {"cursor-models": "Cursor models", "cursor-other": "Other models"}
+            status = "; ".join(
+                f"{labels.get(pool, pool)} out to {value[5:10]}" for pool, value in row["cooldowns"].items()
+            )
         elif row["auth_ok"] is False:
             status = "re-login needed"
         elif row["auth_ok"] is None:
@@ -433,7 +489,7 @@ def command_accounts(args: argparse.Namespace) -> int:
             status = "ok " + (row["identity"].get("tier") or "")
         usage = row["last_24h"]
         print(
-            f"{row['id']:<22} {row['vendor']:<7} {row['auth']:<8} {status:<22} "
+            f"{row['id'] + (' [' + row['plan'] + ']' if row['plan'] else ''):<22} {row['vendor']:<7} {row['auth']:<8} {status:<22} "
             f"{usage['runs']:>8} {usage['tokens_in']:>9} {usage['tokens_out']:>8} {row['leases']['active']:>6}"
         )
     return EXIT_OK
@@ -493,6 +549,8 @@ def command_set(args: argparse.Namespace) -> int:
         account = next((entry for entry in registry if entry["id"] == args.id), None)
         if account is None:
             fail(f"no account {args.id} registered", EXIT_NO_ACCOUNT)
+        if args.plan is not None:
+            account["plan"] = args.plan or None
         if args.tier is not None:
             account["tier"] = args.tier
         if args.cycle_day is not None:
@@ -581,9 +639,13 @@ def cursor_models(account: dict[str, Any]) -> tuple[str, ...]:
     _CURSOR_MODELS[account_id] = ()
     try:
         result = subprocess.run(
-            [cli_bin("cursor"), "models"], capture_output=True, text=True,
-            env=account_env(account), stdin=subprocess.DEVNULL,
-            timeout=PROBE_TIMEOUT_SECONDS, check=False,
+            [cli_bin("cursor"), "models"],
+            capture_output=True,
+            text=True,
+            env=account_env(account),
+            stdin=subprocess.DEVNULL,
+            timeout=PROBE_TIMEOUT_SECONDS,
+            check=False,
         )
     except (OSError, RuntimeError, subprocess.SubprocessError):
         return ()
@@ -591,9 +653,7 @@ def cursor_models(account: dict[str, Any]) -> tuple[str, ...]:
         return ()
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.stdout)
     ids = [line.split(" - ", 1)[0].strip() for line in text.splitlines() if " - " in line]
-    _CURSOR_MODELS[account_id] = tuple(dict.fromkeys(
-        value for value in ids if re.fullmatch(r"[\w.\-]+", value)
-    ))
+    _CURSOR_MODELS[account_id] = tuple(dict.fromkeys(value for value in ids if re.fullmatch(r"[\w.\-]+", value)))
     return _CURSOR_MODELS[account_id]
 
 
@@ -704,7 +764,9 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
     return outcome
 
 
-def order_accounts(registry: list[dict[str, Any]], state: dict[str, Any], vendor: str) -> list[dict[str, Any]]:
+def order_accounts(
+    registry: list[dict[str, Any]], state: dict[str, Any], vendor: str, model: str | None = None
+) -> list[dict[str, Any]]:
     """Healthy accounts of the vendor, least used in the last five hours first."""
     window = now() - timedelta(hours=5)
     ready = []
@@ -712,7 +774,18 @@ def order_accounts(registry: list[dict[str, Any]], state: dict[str, Any], vendor
         if account.get("vendor") != vendor or account.get("enabled", True) is False:
             continue
         record = state["accounts"].get(account["id"], {})
-        if record.get("auth_ok") is False or cooling(record):
+        pool = cursor_pool(model) if vendor == "cursor" and model else None
+        peers = [record]
+        if pool and account.get("plan"):
+            peers = [
+                state["accounts"].get(peer["id"], {})
+                for peer in registry
+                if peer.get("vendor") == vendor and peer.get("plan") == account["plan"]
+            ]
+        pool_cooling = pool and any(
+            (until := parse_ts((peer.get("cooldowns") or {}).get(pool))) and until > now() for peer in peers
+        )
+        if record.get("auth_ok") is False or cooling(record) or pool_cooling:
             continue
         leases = [lease for lease in state.get("leases", {}).values() if lease.get("account") == account["id"]]
         recent = usage_since(record, window)["runs"] + len(active_leases(state, account["id"], now()))
@@ -1005,7 +1078,7 @@ def command_release(args: argparse.Namespace) -> int:
                         "text": release_diagnostic(outcome, text, args.outcome is not None),
                     }
                     if outcome == "limit":
-                        record["cooldown_until"] = iso(cooldown_until(text))
+                        mark_limit(record, lease["vendor"], args.model or "", text)
                     elif outcome == "auth" and probe_status in ("rejected", "ok"):
                         record["auth_ok"] = probe_status == "ok"
                         record["auth_checked_at"] = ts
@@ -1074,7 +1147,10 @@ def command_run(args: argparse.Namespace) -> int:
         if not candidates:
             fail(f"no {args.vendor} account {args.account!r} registered", EXIT_NO_ACCOUNT)
     else:
-        candidates = order_accounts(registry, state, args.vendor)
+        candidates = order_accounts(registry, state, args.vendor, model)
+    if args.vendor == "cursor" and args.account:
+        ready = order_accounts(registry, state, args.vendor, model)
+        candidates = [account for account in candidates if account in ready]
     if not candidates:
         fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
     if args.vendor == "cursor":
@@ -1104,7 +1180,10 @@ def command_run(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="seat-") as scratch:
         prompt_file = Path(scratch) / "prompt.md"
         prompt_file.write_text(prompt, encoding="utf-8")
+        limited_plans: set[str] = set()
         for account in candidates:
+            if args.vendor == "cursor" and account.get("plan") in limited_plans:
+                continue
             if args.vendor == "devin" and not devin_trusted(account, cwd):
                 attempts.append({"account": account["id"], "outcome": "untrusted_workspace"})
                 outcome = {
@@ -1159,9 +1238,13 @@ def command_run(args: argparse.Namespace) -> int:
                 break
             fields["last_error"] = {"ts": iso(now()), "kind": kind or "error", "text": outcome.get("error")}
             if kind == "limit":
-                fields["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
+                mark_limit(fields, args.vendor, model, outcome.get("error") or "")
+                if args.vendor == "cursor" and account.get("plan"):
+                    limited_plans.add(account["plan"])
             elif kind == "auth":
                 fields["auth_ok"] = False
+                if args.vendor == "cursor":
+                    fields["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
             else:
                 # A task failure is not the account's fault; another account would repeat it.
                 break
@@ -1172,7 +1255,11 @@ def command_run(args: argparse.Namespace) -> int:
             if account_id not in known:
                 continue
             record = fresh["accounts"].setdefault(account_id, {})
-            record.update(change["fields"])
+            fields = change["fields"].copy()
+            for key in ("cooldowns", "limits"):
+                if key in fields:
+                    record.setdefault(key, {}).update(fields.pop(key))
+            record.update(fields)
             for run in change["runs"]:
                 record_run(record, run)
 
@@ -1234,6 +1321,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     setting = commands.add_parser("set", help="set an account's tier and monthly cycle day")
     setting.add_argument("id")
+    setting.add_argument("--plan", help="shared subscription plan id; empty clears it")
     setting.add_argument("--tier")
     setting.add_argument("--cycle-day", type=int, choices=range(1, 32))
     setting.add_argument("--json", action="store_true")
