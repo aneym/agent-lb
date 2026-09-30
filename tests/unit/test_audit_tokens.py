@@ -5,6 +5,7 @@ exercise double-counting, imputation provenance and false session starts without
 DB mocks or test-only production hooks.
 """
 
+import json
 import tomllib
 from datetime import UTC, datetime, timedelta
 
@@ -19,7 +20,9 @@ from app.audit_tokens import (
     price_row,
     prompt_text,
     quota_allocation,
+    session_agents,
     token_classes,
+    transcript_digest,
     waste_flags,
 )
 
@@ -80,6 +83,24 @@ def test_prompt_unwrap_and_rule_order():
     assert classify(receipt(), {"prompt": "Verify a GPT contract", "entrypoint": "sdk-cli"}, rules)[0] == "fold-verify"
 
 
+def test_codex_rollout_lanes_use_distinct_session_uuids(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    labels = []
+    for uuid in ("0199abcd-1234-5678-9abc-123456789abc", "0199abcd-5345-5678-9abc-1234abcdef12"):
+        path = tmp_path / f"rollout-2026-09-29T10-00-00-{uuid}.jsonl"
+        path.write_text('{}\n')
+        meta = transcript_digest(path)
+        labels.append(classify({"sid": uuid, "useragent_group": "Codex"}, meta, [])[1])
+    assert labels == ["Codex 56789abc", "Codex abcdef12"]
+    assert len(set(labels)) == 2
+    assert all("rollout" not in label for label in labels)
+
+
+def test_lane_fallback_uses_client_session_without_prompt_text():
+    row = {"useragent_group": "Claude", "client_session_id": "6f020060-rest"}
+    assert classify(row, {"entrypoint": "cli"}, [])[1] == "Claude 6f020060"
+
+
 def test_exclusive_cache_premiums_and_retry_boundaries():
     prior = dict(
         timestamp="2026-09-29T10:00:00Z",
@@ -131,6 +152,39 @@ def test_agent_allocation_reconciles_each_lb_class():
     assert sum(piece["usd"] for _, piece in pieces) == value["usd"]
     assert sum(piece["token_classes"]["fresh_input"] for _, piece in pieces) == 11
     assert allocate(value, [agents[0] | {"weight": 0}])[0][1] == value
+
+
+def test_anthropic_report_does_not_allocate_spend_to_gpt_only_subagent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    start = datetime(2026, 9, 22, tzinfo=UTC)
+    session = tmp_path / ".claude" / "projects" / "session.jsonl"
+    subagents = session.parent / session.stem / "subagents"
+    subagents.mkdir(parents=True)
+    session.write_text("{}\n")
+    for seat, model in (("verifier", "claude-opus-5-5"), ("gpt-implementer", "gpt-6-sol")):
+        child = subagents / f"agent-{seat}.jsonl"
+        child.with_suffix(".meta.json").write_text(json.dumps({"agentType": seat}))
+        child.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": start.isoformat(),
+                    "message": {
+                        "id": seat,
+                        "model": model,
+                        "usage": {"input_tokens": 1000, "output_tokens": 100},
+                    },
+                }
+            ) + "\n"
+        )
+    agents = session_agents(session, start, start + timedelta(hours=1))
+    row = receipt(provider="anthropic", model="claude-opus-5-5", cost_usd=1, quota_points=10, requested_at=start)
+    report = build_report([row], {}, {}, {}, [], ["seat"], 10, agents_by_session={"session": agents})
+    seats = {value["name"]: value for value in report["by"]["seat"]}
+    assert seats["verifier"]["usd"] == 1
+    assert seats["verifier"]["quota_points"] == 10
+    assert seats.get("gpt-implementer", {}).get("usd", 0) == 0
+    assert seats.get("gpt-implementer", {}).get("quota_points", 0) == 0
 
 
 def test_report_reconciles_aggregate_prices_and_token_totals():

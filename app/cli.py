@@ -30,6 +30,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     audit = subparsers.add_parser("audit", help="Read-only receipt audits.")
     commands = audit.add_subparsers(dest="audit_command", required=True)
+    from app.audit_routing import add_parser
+
+    add_parser(commands)
     tokens = commands.add_parser("tokens", help="Account for tokens and list-price dollars.")
     tokens.add_argument("--window", default="7d")
     tokens.add_argument("--since")
@@ -153,7 +156,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
 
     if args.command == "audit":
-        from app.audit_tokens import run
+        if args.audit_command == "routing":
+            from app.audit_routing import run
+        else:
+            from app.audit_tokens import run
 
         run(args)
         return

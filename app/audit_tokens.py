@@ -214,7 +214,7 @@ def prompt_text(content):
 def transcript_digest(path):
     """Cache only attribution hints and deduplicated usage, never full messages."""
     stat = path.stat()
-    signature = [str(path), stat.st_size, stat.st_mtime_ns, RULE_PATH.stat().st_mtime_ns, 4]
+    signature = [str(path), stat.st_size, stat.st_mtime_ns, RULE_PATH.stat().st_mtime_ns, 7]
     cache = Path.home() / ".agent-lb/audit/transcript-cache" / (hashlib.sha1(str(path).encode()).hexdigest() + ".json")
     try:
         cached = json.loads(cache.read_text())
@@ -265,6 +265,8 @@ def transcript_digest(path):
                     "timestamp": item.get("timestamp"),
                     "model": message.get("model") or "",
                     "input_tokens": usage.get("input_tokens") or 0,
+                    "cached_input_tokens": usage.get("cached_input_tokens") or 0,
+                    "output_tokens": usage.get("output_tokens") or 0,
                     "cache_creation_tokens": usage.get("cache_creation_input_tokens") or 0,
                     "cache_read_tokens": usage.get("cache_read_input_tokens") or 0,
                     "write_1h": tier.get("ephemeral_1h_input_tokens") or 0,
@@ -294,7 +296,11 @@ def transcript_digest(path):
         if rule["field"] not in ("useragent", "source", "request_kind")
     }
     result["rule_hints"] = hints
-    result["lane_hint"] = classify({}, result, [])[1]
+    rollout_uuid = re.search(r"^rollout-.*-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$", path.stem)
+    sid = rollout_uuid[1][-8:] if rollout_uuid else path.stem
+    result["lane_hint"] = classify(
+        {"sid": sid, "useragent_group": "Claude" if ".claude" in path.parts else "Codex"}, result, []
+    )[1]
     result["fold_hint"] = next(
         (
             name
@@ -352,7 +358,7 @@ def session_agents(path, since, until):
             info = {}
         agent_type = safe_label(info.get("agentType"))
         workflow = next((part for part in child.parts if part.startswith("wf_")), None)
-        label = safe_label(info.get("workflowPhase") or info.get("description") or agent_type)
+        label = safe_label(info.get("description") or info.get("workflowPhase") or agent_type)
         if workflow and re.search(r"verify|review", str(info.get("description") or ""), re.I):
             label += " review"
         key = f"workflow:{workflow}:{label}" if workflow else f"subagent:{agent_type}"
@@ -409,7 +415,9 @@ def classify(row, meta, rules):
         or "unknown"
     )
     if lane == "unknown":
-        lane = safe_label(row.get("seat") or row.get("useragent_group"), "other") + " " + str(row.get("sid", ""))[:8]
+        client = safe_label(row.get("useragent_group") or row.get("seat"), "client")
+        sid = row.get("sid") or row.get("client_session_id") or row.get("session_id") or row.get("agent") or "unknown"
+        lane = f"{client} {safe_label(sid)[:8]}"
     for rule in rules:
         if rule.get("headless") and not headless:
             continue
@@ -1073,6 +1081,55 @@ def html_report(report):
     return "".join(page) + "</table></html>"
 
 
+def load_receipts(args, since, until, notes):
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from app.core.config.settings import get_settings
+
+    url = args.db or os.environ.get("AGENT_LB_DATABASE_URL") or get_settings().database_url
+    if not args.db and url.startswith("sqlite"):
+        notes.append("Configured SQLite default has no live receipts; using local PostgreSQL audit source.")
+        url = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
+    url = url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
+    with psycopg.connect(
+        url, options="-c default_transaction_read_only=on -c statement_timeout=90000", row_factory=dict_row
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id,alias FROM accounts")
+            aliases = {r["id"]: safe_label(r["alias"], r["id"][:8]) for r in cursor.fetchall()}
+            cursor.execute(
+                """SELECT DISTINCT ON (account_id) account_id,used_percent,recorded_at,reset_at
+            FROM usage_history WHERE (window_minutes=10080 OR (provider='anthropic' AND "window"='secondary'))
+            AND recorded_at <= %s AND reset_at > %s ORDER BY account_id,recorded_at DESC""",
+                (until.replace(tzinfo=None), int(until.timestamp())),
+            )
+            weekly = {
+                aliases.get(r["account_id"], r["account_id"][:8]): {
+                    "used_percent": r["used_percent"],
+                    "recorded_at": r["recorded_at"].isoformat(),
+                    "reset_at": r["reset_at"],
+                }
+                for r in cursor.fetchall()
+            }
+            cursor.execute(
+                """SELECT account_id,provider,"window",window_minutes,used_percent,recorded_at,reset_at
+                FROM usage_history WHERE recorded_at >= %s AND recorded_at <= %s
+                ORDER BY provider,account_id,recorded_at""",
+                ((since - timedelta(days=14)).replace(tzinfo=None), until.replace(tzinfo=None)),
+            )
+            snapshots = cursor.fetchall()
+            cursor.execute(QUERY, (since.replace(tzinfo=None), until.replace(tzinfo=None)))
+            rows = cursor.fetchall()
+            cursor.execute(
+                """SELECT DISTINCT coalesce(nullif(client_session_id,''),nullif(session_id,'')) AS sid
+                FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s""",
+                ((since - timedelta(hours=1)).replace(tzinfo=None), since.replace(tzinfo=None)),
+            )
+            preexisting = {r["sid"] for r in cursor.fetchall()}
+    return rows, snapshots, aliases, weekly, preexisting
+
+
 def run(args):
     try:
         since, until = window(args)
@@ -1083,51 +1140,7 @@ def run(args):
         if args.snapshot_panes_only:
             print("Pane snapshot complete. " + " ".join(notes))
             return
-        import psycopg
-        from psycopg.rows import dict_row
-
-        from app.core.config.settings import get_settings
-
-        url = args.db or os.environ.get("AGENT_LB_DATABASE_URL") or get_settings().database_url
-        if not args.db and url.startswith("sqlite"):
-            notes.append("Configured SQLite default has no live receipts; using local PostgreSQL audit source.")
-            url = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
-        url = url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
-        with psycopg.connect(
-            url, options="-c default_transaction_read_only=on -c statement_timeout=90000", row_factory=dict_row
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT id,alias FROM accounts")
-                aliases = {r["id"]: safe_label(r["alias"], r["id"][:8]) for r in cursor.fetchall()}
-                cursor.execute(
-                    """SELECT DISTINCT ON (account_id) account_id,used_percent,recorded_at,reset_at
-                FROM usage_history WHERE (window_minutes=10080 OR (provider='anthropic' AND "window"='secondary'))
-                AND recorded_at <= %s AND reset_at > %s ORDER BY account_id,recorded_at DESC""",
-                    (until.replace(tzinfo=None), int(until.timestamp())),
-                )
-                weekly = {
-                    aliases.get(r["account_id"], r["account_id"][:8]): {
-                        "used_percent": r["used_percent"],
-                        "recorded_at": r["recorded_at"].isoformat(),
-                        "reset_at": r["reset_at"],
-                    }
-                    for r in cursor.fetchall()
-                }
-                cursor.execute(
-                    """SELECT account_id,provider,"window",window_minutes,used_percent,recorded_at,reset_at
-                    FROM usage_history WHERE recorded_at >= %s AND recorded_at <= %s
-                    ORDER BY provider,account_id,recorded_at""",
-                    ((since - timedelta(days=14)).replace(tzinfo=None), until.replace(tzinfo=None)),
-                )
-                snapshots = cursor.fetchall()
-                cursor.execute(QUERY, (since.replace(tzinfo=None), until.replace(tzinfo=None)))
-                rows = cursor.fetchall()
-                cursor.execute(
-                    """SELECT DISTINCT coalesce(nullif(client_session_id,''),nullif(session_id,'')) AS sid
-                    FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s""",
-                    ((since - timedelta(hours=1)).replace(tzinfo=None), since.replace(tzinfo=None)),
-                )
-                preexisting = {r["sid"] for r in cursor.fetchall()}
+        rows, snapshots, aliases, weekly, preexisting = load_receipts(args, since, until, notes)
         quota_rows, quota = quota_allocation(rows, snapshots, since, until)
         for row, points in zip(rows, quota_rows, strict=True):
             row.update(quota_points=points["weekly"], quota_5h_points=points["5h"])
