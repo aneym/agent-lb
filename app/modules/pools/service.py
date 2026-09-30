@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.utils.time import utcnow
@@ -9,7 +12,7 @@ from app.db.models import AccountStatus
 from app.modules.accounts.schemas import AccountSummary
 from app.modules.accounts.service import AccountsService
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS, normalize_subscription_status
-from app.modules.pools.cli_seats import cli_seat_pools, read_seat_accounts
+from app.modules.pools.cli_seats import cli_seat_pools, cursor_budget_pools, read_seat_accounts
 from app.modules.pools.schemas import (
     POOL_SOURCE_SCOPED_MARKER,
     POOL_SOURCE_WEEKLY_HEURISTIC,
@@ -335,7 +338,22 @@ class PoolsService:
         summaries = await self._accounts_service.list_accounts()
         response = build_pools(summaries)
         # Cursor and Devin never pass through the LB; their pools come from the seat CLI's state.
-        seat_pools = [
-            pool.model_copy(update={"window_label": "month"}) for pool in cli_seat_pools(read_seat_accounts())
-        ]
-        return response.model_copy(update={"pools": [*response.pools, *seat_pools]})
+        seats = read_seat_accounts()
+        seat_pools = [pool.model_copy(update={"window_label": "month"}) for pool in cli_seat_pools(seats)]
+        managed = Path.home() / ".agent-lb/managed/coding-agents/routing-table.json"
+        table = (
+            Path(os.environ["ROUTE_TABLE"]).expanduser()
+            if os.environ.get("ROUTE_TABLE")
+            else (
+                managed
+                if managed.is_file()
+                else Path(__file__).resolve().parents[3] / "config/coding-agents/routing-table.json"
+            )
+        )
+        try:
+            document = json.loads(table.read_text(encoding="utf-8"))
+            config = document.get("cli_pools", {}) if isinstance(document, dict) else {}
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            config = {}
+        budget_pools = cursor_budget_pools(seats, config, now=response.generated_at) if isinstance(config, dict) else []
+        return response.model_copy(update={"pools": [*response.pools, *seat_pools, *budget_pools]})

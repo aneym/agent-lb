@@ -207,6 +207,10 @@ def save_state(state: dict[str, Any], registry: list[dict[str, Any]]) -> None:
         record["vendor"] = account.get("vendor")
         record["auth"] = account.get("auth")
         record["enabled"] = account.get("enabled", True) is not False
+        record["tier_override"] = account.get("tier")
+        record["cycle_day"] = account.get("cycle_day")
+        cutoff = (now() - timedelta(days=62)).date().isoformat()
+        record["daily"] = {day: usage for day, usage in (record.get("daily") or {}).items() if day >= cutoff}
     state["updated_at"] = iso(now())
     write_json(state_path(), state)
 
@@ -482,6 +486,64 @@ def command_add(args: argparse.Namespace) -> int:
     apply_probe(args.id, probe)
     print(f"registered {args.id} ({args.vendor}, {account['auth']}): auth {'ok' if probe['auth_ok'] else 'FAILED'}")
     return EXIT_OK if probe["auth_ok"] else EXIT_FAILED
+
+
+def command_set(args: argparse.Namespace) -> int:
+    def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> dict[str, Any]:
+        account = next((entry for entry in registry if entry["id"] == args.id), None)
+        if account is None:
+            fail(f"no account {args.id} registered", EXIT_NO_ACCOUNT)
+        if args.tier is not None:
+            account["tier"] = args.tier
+        if args.cycle_day is not None:
+            account["cycle_day"] = args.cycle_day
+        write_json(registry_path(), {"version": 1, "accounts": registry})
+        return {"id": args.id, "tier": account.get("tier"), "cycle_day": account.get("cycle_day")}
+
+    result = update_state(apply)
+    print(json.dumps(result, sort_keys=True) if args.json else f"updated {args.id}")
+    return EXIT_OK
+
+
+def record_run(record: dict[str, Any], run: dict[str, Any]) -> None:
+    record["runs"] = ((record.get("runs") or []) + [run])[-RUNS_KEPT:]
+    if run.get("model"):
+        day = (parse_ts(run.get("ts")) or now()).astimezone(timezone.utc).date().isoformat()
+        bucket = (
+            record.setdefault("daily", {})
+            .setdefault(day, {})
+            .setdefault(run["model"], {"runs": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0})
+        )
+        bucket["runs"] += 1
+        for field in ("tokens_in", "tokens_out", "cache_read"):
+            bucket[field] += int(run.get(field) or 0)
+
+
+def release_usage(model: str | None, path: str | None) -> dict[str, Any]:
+    empty = {"model": None, "tokens_in": None, "tokens_out": None, "cache_read": None}
+    if not model or not path:
+        return empty
+    try:
+        usage = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+        if not isinstance(usage, dict):
+            return empty
+        counts = {
+            field: usage.get(source)
+            for field, source in (
+                ("tokens_in", "tokens_in"),
+                ("tokens_out", "tokens_out"),
+                ("cache_read", "cache_read_tokens"),
+            )
+        }
+        counts = {
+            field: int(value) if type(value) is float and value.is_integer() else value
+            for field, value in counts.items()
+        }
+        if any(value is not None and (type(value) is not int or value < 0) for value in counts.values()):
+            return empty
+        return {"model": model, **counts}
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return empty
 
 
 # --- run -------------------------------------------------------------------------
@@ -829,6 +891,7 @@ def release_log(path: str | None) -> tuple[str, bool]:
 
 def command_release(args: argparse.Namespace) -> int:
     text, log_read = release_log(args.log)
+    usage = release_usage(args.model, args.usage_file)
     outcome = args.outcome or ((classify(text) or "error") if log_read else "unknown")
     snapshot = load_state().get("leases", {}).get(args.lease)
     if snapshot is None:
@@ -874,18 +937,7 @@ def command_release(args: argparse.Namespace) -> int:
             if any(a["id"] == lease["account"] for a in registry):
                 record = state["accounts"].setdefault(lease["account"], {})
                 record["last_run_at"] = ts
-                record.setdefault("runs", []).append(
-                    {
-                        "ts": ts,
-                        "model": None,
-                        "ok": ok,
-                        "wall_s": wall,
-                        "tokens_in": None,
-                        "tokens_out": None,
-                        "run_id": args.lease,
-                    }
-                )
-                record["runs"] = record["runs"][-RUNS_KEPT:]
+                record_run(record, {"ts": ts, **usage, "ok": ok, "wall_s": wall, "run_id": args.lease})
                 if outcome == "ok":
                     record["last_error"] = None
                     record["auth_ok"] = True
@@ -921,6 +973,7 @@ def command_release(args: argparse.Namespace) -> int:
             result["ledger"] = {
                 "ts": ts,
                 "event": "release",
+                **usage,
                 "session_id": args.lease,
                 "lease": args.lease,
                 "subagent_type": SEAT_FOR_VENDOR[lease["vendor"]],
@@ -1034,6 +1087,7 @@ def command_run(args: argparse.Namespace) -> int:
                     "wall_s": wall,
                     "tokens_in": outcome.get("tokens_in"),
                     "tokens_out": outcome.get("tokens_out"),
+                    "cache_read": outcome.get("cache_read_tokens"),
                     "run_id": run_id,
                 }
             )
@@ -1060,7 +1114,8 @@ def command_run(args: argparse.Namespace) -> int:
                 continue
             record = fresh["accounts"].setdefault(account_id, {})
             record.update(change["fields"])
-            record["runs"] = ((record.get("runs") or []) + change["runs"])[-RUNS_KEPT:]
+            for run in change["runs"]:
+                record_run(record, run)
 
     update_state(apply_run)
     wall_all = round(time.monotonic() - started_all, 1)
@@ -1118,6 +1173,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     add.add_argument("--data-dir", help="Devin: XDG_DATA_HOME this account logged in under")
     add.set_defaults(handler=command_add)
 
+    setting = commands.add_parser("set", help="set an account's tier and monthly cycle day")
+    setting.add_argument("id")
+    setting.add_argument("--tier")
+    setting.add_argument("--cycle-day", type=int, choices=range(1, 32))
+    setting.add_argument("--json", action="store_true")
+    setting.set_defaults(handler=command_set)
+
     probe = commands.add_parser("probe", help="check each account's auth and record it")
     probe.add_argument("--vendor", choices=VENDORS)
     probe.add_argument("--json", action="store_true")
@@ -1136,6 +1198,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     release = commands.add_parser("release", help="record the outcome of a leased attempt")
     release.add_argument("lease")
     release.add_argument("--log")
+    release.add_argument("--model")
+    release.add_argument("--usage-file")
     release.add_argument("--outcome", choices=("ok", "limit", "auth", "error"))
     release.add_argument("--json", action="store_true")
     release.set_defaults(handler=command_release)

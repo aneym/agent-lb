@@ -322,6 +322,25 @@
     "swe-latest": "devin",
     "swe-*": "devin"
   },
+  "cli_pools": {
+    "cursor": {
+      "cycle_day_default": 1,
+      "fast_multiplier": 3,
+      "pools": [
+        {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {}},
+        {"id": "cursor-other", "label": "Other models", "models": ["*"], "budget_usd_by_tier": {"Ultra": 400, "Pro+": 70, "Pro": 20}}
+      ],
+      "prices_usd_per_mtok": [
+        ["composer-2.5-fast", [3, 3, 15]],
+        ["composer-*", [0.5, 0.2, 2.5]],
+        ["grok-4.7-*", [2, 2, 6]],
+        ["cursor-grok-*", [2, 2, 6]],
+        ["claude-sonnet-5-5-*", [2, 0.2, 10]],
+        ["*", [5, 5, 25]]
+      ],
+      "note": "2026-09-30: Cursor publishes no usage API. Prices are Cursor's list prices, and an unknown cached price is billed at the input price. Cursor models has no published size, so it stays unbudgeted until an owner sets budget_usd_by_tier. Over-256k double billing is not counted."
+    }
+  },
   "overrides": [],
   "policy": {
     "mode": "adaptive",
