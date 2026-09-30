@@ -313,6 +313,7 @@ struct SeatAccount: Decodable, Equatable, Sendable {
   let authOk: Bool?
   let tier: String?
   let cooldownUntil: Date?
+  let cooldowns: [String: Date]?
   let ready: Bool
   let lastDay: SeatUsage
 }
@@ -341,4 +342,7 @@ struct PoolEntry: Decodable, Equatable, Sendable {
   let budgetUsd: Double?
   let monthlyRemainingPercent: Double?
   let unbudgetedAccounts: Int?
+  let percentUsed: Double?
+  let percentSource: String?
+  let cycleResetAt: Date?
 }

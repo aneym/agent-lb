@@ -6,7 +6,8 @@ import XCTest
 final class MakerScopeTests: XCTestCase {
   private let seatsJSON = """
   {"stateUpdatedAt":"2026-09-30T02:40:00Z","source":"seat_state","accounts":[
-   {"id":"cursor-main","vendor":"cursor","enabled":true,"authOk":true,"tier":"Pro+","ready":true,
+   {"id":"cursor-main","vendor":"cursor","enabled":true,"authOk":true,"tier":"Ultra","ready":true,
+    "cooldowns":{"cursor-other":"2099-10-30T04:00:00Z"},
     "lastDay":{"runs":3,"ok":3,"wallS":90,"tokensIn":1000,"tokensOut":100}},
    {"id":"cursor-gmail","vendor":"cursor","enabled":true,"authOk":true,"tier":null,"ready":true,
     "lastDay":{"runs":0,"ok":0,"wallS":0,"tokensIn":0,"tokensOut":0}},
@@ -22,9 +23,9 @@ final class MakerScopeTests: XCTestCase {
     "windowLabel":"month","observedRuns":2},
    {"id":"cursor","provider":"cursor","kind":"cli_seat","accounts":2,"eligibleAccounts":2,"status":"ok"},
    {"id":"cursor-models","provider":"cursor","kind":"cli_seat_budget","accounts":2,"eligibleAccounts":2,"status":"ok",
-    "windowLabel":"month","spentUsd":10.1,"budgetUsd":null,"monthlyRemainingPercent":null,"unbudgetedAccounts":2},
+    "windowLabel":"month","percentUsed":2,"percentSource":"estimate","cycleResetAt":"2099-10-30T04:00:00Z"},
    {"id":"cursor-other","provider":"cursor","kind":"cli_seat_budget","accounts":2,"eligibleAccounts":2,"status":"ok",
-    "windowLabel":"month","spentUsd":6.0,"budgetUsd":70,"monthlyRemainingPercent":91.4,"unbudgetedAccounts":1}]}
+    "windowLabel":"month","percentUsed":100,"percentSource":"vendor","cycleResetAt":"2099-10-30T04:00:00Z"}]}
   """
 
   func testAllCountsEveryAccountAndMakerScopesShowTheirPoolsAndAccounts() throws {
@@ -48,11 +49,18 @@ final class MakerScopeTests: XCTestCase {
 
     XCTAssertTrue(MakerRows.lines(for: .cursor, seats: [], pools: pools.filter { $0.id == "cursor" }).isEmpty)
     XCTAssertEqual(MakerRows.lines(for: .cursor, seats: seats, pools: pools), [
-      "Cursor models: $10.10 spent, no published size",
-      "Other models: $6.00 of $70, 91% left",
-      "cursor-gmail: tier unknown, ready",
-      "cursor-main: Pro+, ready",
+      "Cursor models: ~2% used (estimate), resets Oct 30",
+      "Other models: 100% used, resets Oct 30",
+      "cursor-gmail: plan unknown, ready",
+      "cursor-main: Ultra, Other models out until Oct 30; other pools ready",
     ])
+    let allOutJSON = seatsJSON.replacingOccurrences(
+      of: "\"cooldowns\":{\"cursor-other\":\"2099-10-30T04:00:00Z\"}",
+      with: "\"cooldowns\":{\"cursor-models\":\"2099-10-30T04:00:00Z\",\"cursor-other\":\"2099-10-30T04:00:00Z\"}"
+    )
+    let allOutSeats = try decoder.decode(SeatAccountsResponse.self, from: Data(allOutJSON.utf8)).accounts
+    XCTAssertEqual(MakerRows.lines(for: .cursor, seats: allOutSeats, pools: pools).last,
+      "cursor-main: Ultra, Cursor models out until Oct 30; Other models out until Oct 30")
     XCTAssertEqual(MakerRows.lines(for: .devin, seats: seats, pools: pools), [
       "Devin: 1 of 2 ready, 2 runs in 24 h",
       "devin-kinetic: disabled",
