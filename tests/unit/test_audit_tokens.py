@@ -81,6 +81,9 @@ def test_prompt_unwrap_and_rule_order():
     assert classify(receipt(useragent_group="parallel-load-eval"), meta, rules)[0] == "eval"
     assert classify(receipt(), {"prompt": "Please help debug", "entrypoint": "cli"}, rules)[0] == "ad-hoc"
     assert classify(receipt(), {"prompt": "Verify a GPT contract", "entrypoint": "sdk-cli"}, rules)[0] == "fold-verify"
+    remote = receipt(useragent_group="codex_chatgpt_ios_remote")
+    assert classify(remote, {"cwd": "/work/orch-lab", "entrypoint": "cli"}, rules)[0] == "eval"
+    assert classify(remote, {"title": "[scoping] bridge audit", "entrypoint": "cli"}, rules)[0] == "scoping"
 
 
 def test_codex_rollout_lanes_use_distinct_session_uuids(tmp_path, monkeypatch):
@@ -148,20 +151,41 @@ def test_agent_allocation_reconciles_each_lb_class():
         dict(key="subagent:builder", seat="builder", kind="subagent", weight=2),
     ]
     pieces = allocate(value, agents)
-    assert pieces[0][1]["usd"] == pytest.approx(0.13 * 2 / 3)
+    builder = next(piece for agent, piece in pieces if agent["seat"] == "builder")
+    assert builder["usd"] == pytest.approx(0.13 * 2 / 3)
     assert sum(piece["usd"] for _, piece in pieces) == value["usd"]
     assert sum(piece["token_classes"]["fresh_input"] for _, piece in pieces) == 11
     assert allocate(value, [agents[0] | {"weight": 0}])[0][1] == value
 
 
-def test_anthropic_report_does_not_allocate_spend_to_gpt_only_subagent(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "subagent_models,providers",
+    [
+        ([("gpt-implementer", "gpt-6-sol")], ["openai"]),
+        ([("verifier", "claude-opus-5-5")], ["openai"]),
+        ([("verifier", "claude-opus-5-5"), ("gpt-implementer", "gpt-6-sol")], ["anthropic", "openai"]),
+    ],
+)
+def test_bridge_report_allocates_only_to_matching_provider_agents(tmp_path, monkeypatch, subagent_models, providers):
     monkeypatch.setenv("HOME", str(tmp_path))
     start = datetime(2026, 9, 22, tzinfo=UTC)
     session = tmp_path / ".claude" / "projects" / "session.jsonl"
     subagents = session.parent / session.stem / "subagents"
     subagents.mkdir(parents=True)
-    session.write_text("{}\n")
-    for seat, model in (("verifier", "claude-opus-5-5"), ("gpt-implementer", "gpt-6-sol")):
+    session.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "timestamp": start.isoformat(),
+                "message": {
+                    "id": "lead",
+                    "model": "claude-opus-5-5",
+                    "usage": {"input_tokens": 1000, "output_tokens": 100},
+                },
+            }
+        ) + "\n"
+    )
+    for seat, model in subagent_models:
         child = subagents / f"agent-{seat}.jsonl"
         child.with_suffix(".meta.json").write_text(json.dumps({"agentType": seat}))
         child.write_text(
@@ -178,13 +202,39 @@ def test_anthropic_report_does_not_allocate_spend_to_gpt_only_subagent(tmp_path,
             ) + "\n"
         )
     agents = session_agents(session, start, start + timedelta(hours=1))
-    row = receipt(provider="anthropic", model="claude-opus-5-5", cost_usd=1, quota_points=10, requested_at=start)
-    report = build_report([row], {}, {}, {}, [], ["seat"], 10, agents_by_session={"session": agents})
-    seats = {value["name"]: value for value in report["by"]["seat"]}
-    assert seats["verifier"]["usd"] == 1
-    assert seats["verifier"]["quota_points"] == 10
-    assert seats.get("gpt-implementer", {}).get("usd", 0) == 0
-    assert seats.get("gpt-implementer", {}).get("quota_points", 0) == 0
+    rows = [
+        receipt(
+            provider=provider,
+            model="claude-opus-5-5" if provider == "anthropic" else "gpt-6-sol",
+            useragent_group="claude-cli",
+            cost_usd=1,
+            quota_points=10,
+            quota_5h_points=2,
+            requested_at=start,
+        )
+        for provider in providers
+    ]
+    report = build_report(rows, {}, {}, {}, [], ["seat", "provider"], 10, agents_by_session={"session": agents})
+    for provider in providers:
+        allocated = [value for value in report["sessions"] if value["provider"] == provider]
+        for metric in ("requests", "tokens", "usd", "quota_points", "quota_5h_points"):
+            provider_total = next(value for value in report["by"]["provider"] if value["name"] == provider)
+            assert sum(value[metric] for value in allocated) == provider_total[metric]
+        gpt = next((value for value in allocated if value["agent"] == "subagent:gpt-implementer"), {})
+        if provider == "openai" and any(model.startswith("gpt-") for _, model in subagent_models):
+            assert gpt["usd"] == 1
+            assert gpt["quota_points"] == 10
+            assert gpt["quota_5h_points"] == 2
+            assert sum(value["usd"] for value in allocated if value["agent"] == "lead") == 0
+        elif provider == "openai":
+            assert len(allocated) == 1
+            assert allocated[0]["agent"] == "lead"
+            assert allocated[0]["seat"] == "lead"
+            assert allocated[0]["usd"] == 1
+        else:
+            assert gpt.get("usd", 0) == 0
+            assert gpt.get("quota_points", 0) == 0
+            assert {value["seat"]: value["usd"] for value in allocated} == {"lead": 0.5, "verifier": 0.5}
 
 
 def test_report_reconciles_aggregate_prices_and_token_totals():

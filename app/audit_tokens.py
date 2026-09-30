@@ -331,7 +331,17 @@ def event_time(event):
 
 
 def input_cost(event, premium=False):
-    resolved = anthropic_price(event.get("model") or "")
+    model = event.get("model") or ""
+    if model.startswith("gpt-"):
+        resolved = get_pricing_for_model(model, None, None)
+        if not resolved or premium:
+            return 0.0
+        breakdown = calculate_cost_breakdown_from_usage(
+            UsageTokens(event.get("input_tokens") or 0, 0, event.get("cached_input_tokens") or 0),
+            resolved[1],
+        )
+        return (breakdown.input_usd or 0) + (breakdown.cached_input_usd or 0)
+    resolved = anthropic_price(model)
     if not resolved:
         return 0.0
     price = resolved[1]
@@ -388,7 +398,12 @@ def session_agents(path, since, until):
         ]
         agent["events"].extend(events)
     for agent in agents.values():
-        agent["weight"] = sum(input_cost(event) for event in agent["events"])
+        agent["weight"] = sum(
+            input_cost(event) for event in agent["events"] if event["model"].startswith("claude-")
+        )
+        agent["openai_weight"] = sum(
+            input_cost(event) for event in agent["events"] if event["model"].startswith("gpt-")
+        )
     return list(agents.values())
 
 
@@ -678,15 +693,12 @@ def merge(target, value):
 
 
 def allocate(value, agents):
-    """Reconcile each LB class exactly, with the floating remainder on lead."""
+    """Reconcile each LB class exactly, with the floating remainder on the largest row."""
     positive = [agent for agent in agents if agent.get("weight", 0) > 0]
     if not positive:
         return [({"key": "lead", "seat": "lead", "kind": "lead"}, value)]
-    lead = next(
-        (agent for agent in agents if agent["key"] == "lead"),
-        {"key": "lead", "seat": "lead", "kind": "lead", "weight": 0},
-    )
-    ordered = [agent for agent in positive if agent["key"] != "lead"] + [lead]
+    largest = max(positive, key=lambda agent: agent["weight"])
+    ordered = [agent for agent in positive if agent is not largest] + [largest]
     total = sum(agent["weight"] for agent in positive)
     remainder = {**value, "token_classes": value["token_classes"].copy(), "usd_classes": value["usd_classes"].copy()}
     allocated = []
@@ -708,7 +720,7 @@ def allocate(value, agents):
             for name, amount in piece[key].items():
                 remainder[key][name] -= amount
         allocated.append((agent, piece))
-    return allocated + [(lead, remainder)]
+    return allocated + [(largest, remainder)]
 
 
 def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by_session=None, preexisting=None):
@@ -811,7 +823,10 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
         sid = row["sid"]
         purpose, lane, rule = classify(row, metas.get(sid, {}), rules)
         account = aliases.get(row["account_id"], safe_label(str(row["account_id"] or "unknown")[:8]))
-        agents = agents_by_session.get(sid, []) if row["provider"] == "anthropic" else []
+        bridge = row["provider"] == "openai" and row.get("useragent_group") == "claude-cli"
+        agents = agents_by_session.get(sid, []) if row["provider"] == "anthropic" or bridge else []
+        if bridge:
+            agents = [agent | {"weight": agent.get("openai_weight", 0)} for agent in agents]
         for agent, piece in allocate(value, agents):
             seat, kind = agent["seat"], agent["kind"]
             agent_purpose = purpose
@@ -1170,7 +1185,7 @@ def run(args):
             rules = tomllib.load(stream)["rules"]
         agents = {
             sid: session_agents(index.get(sid), since, until)
-            for sid in {row["sid"] for row in rows if row["provider"] == "anthropic"}
+            for sid in {row["sid"] for row in rows if row["sid"] in index}
         }
         report = build_report(rows, aliases, weekly, metas, rules, dimensions, args.top, agents, preexisting)
         add_quota_units(report, quota)

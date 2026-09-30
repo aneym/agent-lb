@@ -14,7 +14,7 @@ purpose = "eval"
 [[rules]]
 name = "product-client"
 field = "useragent"
-pattern = 'rails_desktop|codex_chatgpt_ios_remote'
+pattern = 'rails_desktop'
 purpose = "product-runtime"
 
 [[rules]]
