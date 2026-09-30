@@ -713,7 +713,7 @@ def test_canonical_implement_falls_to_sonnet_high_then_opus_only_when_sol_is_out
     # A low Codex pool is not "out": Sol keeps the work.
     assert pick({"anthropic-general": "ok", "openai-codex": "low"})["seat"] == "gpt-implementer"
     # Sol recorded down (a 429 or usage limit) is out: Sonnet high stands in first, and Sol audits it.
-    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude").mkdir(parents=True, exist_ok=True)
     routing_state(tmp_path, age_seconds=60, seats={"gpt-implementer": {"ok": False, "error": "HTTP 429"}})
     out = pick({"anthropic-general": "ok", "openai-codex": "ok"})
     assert (out["seat"], out["alias"]) == ("sonnet-implementer", "sonnet-latest")
