@@ -549,6 +549,12 @@
   "overrides": [],
   "policy": {
     "mode": "adaptive",
+    "stand_in_rollout": {
+      "stage": "canary",
+      "tabs": ["w5H:tC8"],
+      "lanes": [],
+      "note": "2026-09-30: canary one build lane; expand to half, then all after a clean day at each stage. Missing policy or off leaves tabs untagged."
+    },
     "owner_date": "2026-09-20",
     "reserve": {
       "pool": "anthropic-general",

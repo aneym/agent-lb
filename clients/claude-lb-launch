@@ -84,6 +84,82 @@ def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
     }
 
 
+def resolve_lane_tags(argv: list[str]) -> str:
+    """Apply installed herdr rollout policy without holding up a launch."""
+    if os.environ.get("AGENT_LB_INTENT"):
+        return "explicit intent"
+    if headless_invocation(argv) or any(arg.startswith("--print=") for arg in argv):
+        return "print mode"
+    if os.environ.get("CLAUDECODE"):
+        return "child process"
+    tab = os.environ.get("HERDR_TAB_ID")
+    if not tab:
+        return "no herdr tab"
+    if (
+        re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", tab) is None
+        or re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", tab) is None
+    ):
+        return "invalid herdr tab"
+
+    result: list[tuple[str, str, str]] = []
+
+    def read_tags() -> None:
+        try:
+            home = Path.home()
+            managed = home / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
+            fallback = home / ".agents" / "policy" / "coding-agents" / "routing-table.json"
+            configured = (os.environ.get("ROUTE_TABLE") or "").strip()
+            registry = home / ".agent-rails" / "workflows" / "kinds" / f"{tab.replace(':', '_')}.json"
+            table = Path(configured).expanduser() if configured else managed if managed.is_file() else fallback
+            rollout = json.loads(table.read_text()).get("policy", {}).get("stand_in_rollout", {})
+            stage = rollout.get("stage", "off")
+            if stage not in {"canary", "all"}:
+                result.append(("", "", "rollout off"))
+                return
+            try:
+                kind = json.loads(registry.read_text())
+            except FileNotFoundError:
+                kind = {}
+            lane = kind.get("lane") or tab
+            if not isinstance(lane, str) or re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", lane) is None:
+                lane = tab
+            registry_kind = kind.get("kind")
+            tabs, lanes = rollout.get("tabs", []), rollout.get("lanes", [])
+            if not isinstance(tabs, list) or not isinstance(lanes, list) or not isinstance(lane, str):
+                raise ValueError("invalid rollout or registry")
+            if registry_kind in {"ephemeral", "background"}:
+                result.append(("", "", "excluded registry kind"))
+            elif stage == "all" or tab in tabs or kind.get("lane") in lanes:
+                result.append(("orchestrator" if registry_kind == "orchestrator" else "lane-tab", lane, stage))
+            else:
+                result.append(("", "", "outside canary"))
+        except Exception:
+            result.append(("", "", "policy or registry unreadable"))
+
+    # Reads can stall on a mounted home directory. Only the caller applies tags,
+    # so a timed-out daemon reader cannot tag this launch later.
+    reader = threading.Thread(target=read_tags, daemon=True)
+    reader.start()
+    reader.join(0.045)
+    if reader.is_alive() or not result:
+        return "policy lookup timed out"
+    intent, lane, reason = result[0]
+    previous = {name: os.environ.get(name) for name in ("AGENT_LB_INTENT", "AGENT_LB_LANE")}
+    try:
+        if intent:
+            os.environ["AGENT_LB_INTENT"] = intent
+            if not previous["AGENT_LB_LANE"]:
+                os.environ["AGENT_LB_LANE"] = lane
+    except Exception:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        return "tag assignment failed"
+    return reason
+
+
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
 CCGPT_MODEL = "sol-latest"
@@ -2259,6 +2335,8 @@ def main() -> None:
     schedule_opus_doctor()
 
     argv = sys.argv[1:]
+    tag_reason = resolve_lane_tags(argv)
+    resolved_tags = tag_headers(os.environ)
     routed = False
     session_id = ""
     if lb_enabled():
@@ -2344,6 +2422,10 @@ def main() -> None:
     command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
+        print(
+            f"agent-lb tags: intent={resolved_tags.get('x-agent-lb-intent', 'none')} "
+            f"lane={resolved_tags.get('x-agent-lb-lane', 'none')} reason={tag_reason}"
+        )
         return
     if routed and not CCGPT_MODE and headless_invocation(argv):
         if auto_resume_enabled():
