@@ -748,7 +748,9 @@ def test_policy_installer_codex_defaults_follow_served_sol_without_changing_othe
         expected = expected.replace('model = "gpt-6-sol" # default', 'model = "gpt-7-sol" # default')
     assert config.read_bytes() == target.read_bytes() == expected.encode()
     assert config.is_symlink() is symlink
-    subprocess.run([str(POLICY_INSTALLER), "--home", str(home), "--uninstall"], env=env, check=True, capture_output=True)
+    subprocess.run(
+        [str(POLICY_INSTALLER), "--home", str(home), "--uninstall"], env=env, check=True, capture_output=True
+    )
     assert config.read_bytes() == target.read_bytes() == expected.encode()
     assert config.is_symlink() is symlink
 

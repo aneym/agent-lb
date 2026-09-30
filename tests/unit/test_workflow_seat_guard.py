@@ -3,9 +3,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -16,7 +16,10 @@ HOOK = POLICY / 'hooks/workflow-seat-guard.py'
 
 
 def invoke(script=None, *, script_path=None, table=None, raw=None, env=None):
-    payload = {'tool_input': {'script': script}} if script_path is None else {'tool_input': {'scriptPath': str(script_path)}}
+    payload = (
+        {'tool_input': {'script': script}} if script_path is None
+        else {'tool_input': {'scriptPath': str(script_path)}}
+    )
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=raw if raw is not None else json.dumps(payload), text=True, capture_output=True,
@@ -86,10 +89,16 @@ def test_real_fold_script_allows_inline_and_by_path():
 @pytest.mark.parametrize('alias', ['sonnet', 'haiku'])
 def test_alias_is_checked_against_resolved_retirement(tmp_path, alias):
     table = tmp_path / 'routing.json'
-    table.write_text(json.dumps({'retired': ['claude-old-*'], 'aliases': {alias + '-latest': {'pinned': 'claude-old-1'}}}))
+    table.write_text(json.dumps(
+        {'retired': ['claude-old-*'], 'aliases': {alias + '-latest': {'pinned': 'claude-old-1'}}}
+    ))
     script = f"agent(p, {{agentType: seat, model: '{alias}'}})"
-    assert invoke(script, table=table, env={'ANTHROPIC_DEFAULT_' + alias.upper() + '_MODEL': ''})['permissionDecision'] == 'deny'
-    assert 'permissionDecision' not in invoke(script, table=table, env={'ANTHROPIC_DEFAULT_' + alias.upper() + '_MODEL': 'claude-current'})
+    assert invoke(
+        script, table=table, env={'ANTHROPIC_DEFAULT_' + alias.upper() + '_MODEL': ''}
+    )['permissionDecision'] == 'deny'
+    assert 'permissionDecision' not in invoke(
+        script, table=table, env={'ANTHROPIC_DEFAULT_' + alias.upper() + '_MODEL': 'claude-current'}
+    )
 
 
 @pytest.mark.parametrize('script', ["agent(p, {label: 'y'}", "agent(p, {label: 'unterminated})", '/* unclosed'])
@@ -100,7 +109,11 @@ def test_parse_errors_fail_open(script):
 
 
 def test_missing_files_and_invalid_hook_json_fail_open(tmp_path):
-    for output in [invoke(script_path=tmp_path / 'missing'), invoke('agent(p, {label: x})', table=tmp_path / 'missing'), invoke(raw='{')]:
+    for output in [
+        invoke(script_path=tmp_path / 'missing'),
+        invoke('agent(p, {label: x})', table=tmp_path / 'missing'),
+        invoke(raw='{'),
+    ]:
         assert 'permissionDecision' not in output
         assert 'not blocked' in output['additionalContext']
 

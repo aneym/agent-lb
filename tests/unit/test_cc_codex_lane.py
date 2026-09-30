@@ -1,5 +1,5 @@
-from pathlib import Path
 import runpy
+from pathlib import Path
 
 CC = Path(__file__).resolve().parents[2] / "clients" / "cc"
 

@@ -1233,7 +1233,9 @@ def test_seat_installed_fallback_and_pin(tmp_path: Path) -> None:
     first = run("seat", "coder", "--json", home=home, fixtures=p["fixtures"], extra=env)
     assert first.returncode == 0, first.stderr
     answer = json.loads(first.stdout)
-    expected = {"commit": None, "source": "installed", "table_sha256": hashlib.sha256(installed.read_bytes()).hexdigest()}
+    expected = {
+        "commit": None, "source": "installed", "table_sha256": hashlib.sha256(installed.read_bytes()).hexdigest()
+    }
     assert answer["rules"] == expected and answer["effort"] == "medium"
     assert answer["class"] == "implement" and answer["definition_sha256"] == hashlib.sha256(definition).hexdigest()
     absent = run("seat", "thinker", "--class", "implement", "--json", home=home,
@@ -1297,7 +1299,8 @@ def test_seat_typed_errors(tmp_path: Path, args: tuple[str, ...], error: str) ->
 def test_seat_source_errors_and_unresolved_model(tmp_path: Path) -> None:
     p = policy_clone(tmp_path)
     env = {"AGENT_LB_POLICY_SRC": str(p["clone"])}
-    cases = [(dict(env, AGENT_LB_POLICY_SRC=str(p["clone"].parent / "missing")), ("seat", "coder", "--rules", p["c1"]), "no_rules"),
+    cases = [(dict(env, AGENT_LB_POLICY_SRC=str(p["clone"].parent / "missing")),
+              ("seat", "coder", "--rules", p["c1"]), "no_rules"),
              (env, ("seat", "coder", "--rules", p["c0"]), "unknown_rules")]
     for extra, args, error in cases:
         result = run(*args, "--json", home=tmp_path, fixtures=p["fixtures"], extra=extra)

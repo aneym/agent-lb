@@ -1,13 +1,12 @@
 """Transport contract for the deferred-tool MCP proxy."""
 
 import json
-from pathlib import Path
 import runpy
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 PROXY = Path(__file__).resolve().parents[2] / "config/coding-agents/bin/mcp-strip-always-load"
 strip_always_load = runpy.run_path(str(PROXY))["strip_always_load"]
