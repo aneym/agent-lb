@@ -15,6 +15,11 @@ from tests.unit.test_route_reserve import SCRIPT, TABLE, env_for, pick
 
 def audit_env(tmp_path: Path, *, claude: int = 1, cursor: int = 3) -> dict[str, str]:
     env = env_for(tmp_path, "audit", eligible=claude, headroom=50.0)
+    table = json.loads(TABLE.read_text())
+    table["ladder"] = "baseline"
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(table))
+    env["ROUTE_TABLE"] = str(baseline)
     env["ROUTE_CURSOR_MODELS_CMD"] = "printf 'claude-sonnet-5-5-high - Sonnet\\n'"
     path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
     document = json.loads(path.read_text())
@@ -89,7 +94,7 @@ def test_unavailable_cursor_keeps_primary_auditor_skip_reason(tmp_path: Path, cu
 ])
 def test_malformed_auditor_via_preserves_existing_routing(tmp_path: Path, alternate: object) -> None:
     env = audit_env(tmp_path)
-    table = json.loads(TABLE.read_text())
+    table = json.loads(Path(env["ROUTE_TABLE"]).read_text())
     table["policy"]["auditor_via"] = alternate
     path = tmp_path / "routing-table.json"
     path.write_text(json.dumps(table))

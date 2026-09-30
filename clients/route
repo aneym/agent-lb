@@ -303,6 +303,19 @@ def command_seat(args: argparse.Namespace) -> int:
         setup_error("unknown_seat", f"unknown seat {name!r}", args.json)
     named = [(task_class, entry) for task_class, entry in class_seat_entries(table["classes"])
              if entry["seat"] == name]
+    rung = None
+    ladder = ladder_entries(table, args.task_class) if args.task_class is not None else None
+    if ladder is not None:
+        entry = next((entry for entry in ladder if entry["seat"] == name), None)
+        if entry is None:
+            spec = table["classes"].get(args.task_class, {})
+            fallback = spec.get("codex_empty_fallback", {}).get("order", [])
+            escalation = spec.get("escalation", {}).get("seat")
+            entry = next((item for task, item in named if task == args.task_class), None)
+            if entry is None or (name not in fallback and name != escalation):
+                setup_error("unknown_class", f"class {args.task_class!r} does not name seat {name}", args.json)
+        rung = entry.get("id")
+        named = [(args.task_class, entry)]
     if args.task_class is not None:
         if args.task_class not in table["classes"]:
             setup_error("unknown_class", f"unknown class {args.task_class!r} for seat {name}", args.json)
@@ -323,7 +336,7 @@ def command_seat(args: argparse.Namespace) -> int:
         if not isinstance(model_alias, str):
             setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
     served = ServedModels().get() if model_alias in table.get("aliases", {}) else []
-    model, reason = resolve_alias(table, model_alias, served)
+    model, reason = rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served)
     if model is None:
         setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)
     if rules["commit"]:
@@ -341,6 +354,8 @@ def command_seat(args: argparse.Namespace) -> int:
     answer = {"seat": name, "class": task_class, "vendor": seat["vendor"], "box": seat["box"],
               "model_alias": model_alias, "model": model, "effort": effort,
               "definition_sha256": hashlib.sha256(definition).hexdigest(), "rules": rules}
+    if rung:
+        answer["rung"] = rung
     if args.json:
         print(json.dumps(answer, sort_keys=True))
     else:
@@ -361,6 +376,7 @@ def reduced_entry(entry: dict[str, Any], table: dict[str, Any]) -> dict[str, Any
 
 def command_seats(args: argparse.Namespace) -> int:
     table, rules, _ = versioned_rules(args.rules, args.json)
+    ladder_entries(table, "verify")
     classes = {name: {"chain": [reduced_entry(entry, table) for entry in spec["chain"] if isinstance(entry, dict)]}
                for name, spec in table["classes"].items()
                if isinstance(spec, dict) and isinstance(spec.get("chain"), list)}
@@ -373,6 +389,14 @@ def command_seats(args: argparse.Namespace) -> int:
     answer = {"rules": rules, "seats": table["seats"], "classes": classes,
               "audit": {"by_author_vendor": {name: reduced_entry(entry, table) for name, entry in audit.items()}},
               "escalation": {"implement": {"seat": escalation["seat"], "at_fix_round": escalation["at_fix_round"]}}}
+    if "ladders" in table:
+        answer["ladder"] = table.get("ladder")
+        answer["ladders"] = json.loads(json.dumps(table["ladders"]))
+        for ladder in answer["ladders"].values():
+            verify = ladder.get("verify")
+            if isinstance(verify, dict):
+                verify["by_author_maker"] = {maker: [{"id": ref[1:], **verify["rungs"][ref[1:]]}
+                    for ref in refs] for maker, refs in verify["by_author_maker"].items()}
     if args.json:
         print(json.dumps(answer))
     else:
@@ -1062,8 +1086,9 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
         return None, f"alias {name} has no family"
     if spec.get("vendor") == "cursor":
         # Cursor families: `<family>-<version>-<variant>`, optionally `cursor-` prefixed.
-        variant = spec.get("variant") or "medium-fast"
-        pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-(\d+(?:\.\d+)*)-{re.escape(variant)}$")
+        variant = spec.get("variant")
+        suffix = "-" + re.escape(variant) if variant else ""
+        pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-(\d+(?:\.\d+)*){suffix}$")
         served = cursor_models()
         if not served:
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
@@ -1404,12 +1429,250 @@ def class_candidates(
     return routable, skipped, paced
 
 
-def command_pick(args: argparse.Namespace) -> int:
-    table = load_table()
+def ladder_entries(table: dict[str, Any], class_name: str, author: str | None = None) -> list[dict] | None:
+    ladders = table.get("ladders", {})
+    name = table.get("ladder")
+    def invalid(message: str) -> Any:
+        setup_error("invalid_ladder", message, "--json" in sys.argv)
+    if not isinstance(ladders, dict):
+        invalid("ladders must be an object")
+    if name is not None and (not isinstance(name, str) or name not in ladders):
+        invalid("unknown or malformed ladder name")
+    ladder = ladders.get(name, {})
+    if not isinstance(ladder, dict):
+        invalid("ladder must be an object")
+    for task, definition in ladder.items():
+        if task == "verify":
+            if not isinstance(definition, dict):
+                invalid("verify ladder must be an object")
+            rungs = definition.get("rungs")
+            authors = definition.get("by_author_maker")
+            if not isinstance(rungs, dict) or not rungs or not isinstance(authors, dict):
+                invalid("verify ladder requires rungs and by_author_maker")
+            for refs in authors.values():
+                if not isinstance(refs, list) or any(not isinstance(ref, str) or not ref.startswith("@")
+                                                    or ref[1:] not in rungs for ref in refs):
+                    invalid("invalid verify rung reference")
+            values = list(rungs.values())
+        else:
+            if not isinstance(definition, list) or not definition:
+                invalid(f"{task} ladder must be a list")
+            values = definition
+        for entry in values:
+            if not isinstance(entry, dict) or any(not isinstance(entry.get(key), str)
+                    for key in ("seat", "model", "maker")) or (task != "verify" and not isinstance(entry.get("id"), str)):
+                invalid(f"malformed rung in {task}")
+            if "gate" in entry and not isinstance(entry["gate"], dict):
+                invalid(f"gate in {task} must be an object")
+            if "pool" in entry and not isinstance(entry["pool"], str):
+                invalid(f"pool in {task} must be a string")
+    spec = ladder.get(class_name)
+    if isinstance(spec, list):
+        return [dict(entry) for entry in spec]
+    if isinstance(spec, dict) and class_name == "verify":
+        rungs = spec.get("rungs", {})
+        author = "cognition" if author == "devin" else author
+        references = spec.get("by_author_maker", {}).get(author)
+        if author is not None and references is None:
+            setup_error("unknown_author", f"unknown author maker {author!r}", "--json" in sys.argv)
+        if references is None:
+            references = ["@" + key for key in rungs]
+        return [{"id": ref[1:], **rungs[ref[1:]]} for ref in references]
+    return None
+
+
+def rung_pool(table: dict, entry: dict, pools: dict) -> str | None:
+    return entry["pool"] if entry.get("pool") in pools else pool_for_model(table, entry["model"])
+
+
+def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | None, str]:
+    alias = entry["model"]
+    model, why = resolve_alias(table, alias, served.get() if alias in table.get("aliases", {}) else [])
+    if model and alias not in table.get("aliases", {}):
+        listed = cursor_models() if entry["seat"] == "cursor-seat" else (
+            devin_models() if entry["seat"] == "devin-seat" else [])
+        if listed and model not in listed:
+            return None, f"{model} is not listed for {entry['seat']}"
+    return model, why
+
+
+def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: ServedModels,
+                history: list[dict], now: datetime, author: str | None = None,
+                skip_ids: list[str] | None = None) -> dict:
+    author = "cognition" if author == "devin" else author
+    entries = apply_overrides(ladder_entries(table, class_name, author) or [],
+                              table.get("overrides"), class_name)
+    policy = table.get("policy") or {}
+    pace = {pool: pace_state(pools.get(pool, {}), history, policy, now)
+            for entry in entries if (pool := rung_pool(table, entry, pools))}
+    for pool in pace:
+        if pool_exhausted(pools.get(pool, {})):
+            pace[pool]["state"] = "exhausted"
+    reserve = reserve_state(table, pools, class_name)
+    ordered = [entry for entry in entries if (
+        entry["id"] != "sonnet-cursor-high" or (reserve and reserve["active"]))
+        and entry.get("promote") == pace.get(
+        rung_pool(table, entry, pools), {}).get("state") and entry.get("promote")]
+    ordered += [entry for entry in entries if entry not in ordered]
+    rows, opened, soft, skipped = [], [], [], []
+    intended = None
+    for entry in ordered:
+        pool = rung_pool(table, entry, pools)
+        state = pace.get(pool, {}).get("state", "unknown")
+        gate = entry.get("gate") or {}
+        reason = None
+        if "gate" in entry and gate.get("open") is not True:
+            reason = f"gated: {gate.get('until')}"
+        elif entry.get("when") and entry["when"] != state:
+            reason = f"when {entry['when']}: {pool} is {state}"
+        if intended is None and reason is None:
+            intended = entry["id"]
+        if reason is None and entry["id"] == "sonnet-cursor-high" and not (
+                reserve and reserve["active"]):
+            reason = "review adapter only while Claude is short"
+        if (reason is None and entry.get("reserve_hard") and reserve and reserve["active"]
+                and not reserve["admitted"] and pool == reserve["pool"]):
+            reason = f"reserved for orchestrators: {reserve['why']}"
+        if reason is None and entry.get("stand_in_only"):
+            unavailable = all(row["status"] == "skipped" for row in rows
+                              if not row.get("stand_in_only"))
+            if not unavailable:
+                reason = "stand-in only when the default is unavailable"
+        if reason is None and entry["id"] in (skip_ids or []):
+            reason = "skipped by caller"
+        if reason is None and entry.get("pool") and entry["pool"] not in pools and pool is None:
+            reason = f"unresolvable: pool {entry['pool']} unavailable"
+        if reason is None and pool_exhausted(pools.get(pool, {})):
+            reason = f"pool {pool} exhausted"
+        model, why = rung_model(table, entry, served) if reason is None else (None, "")
+        if reason is None and model is None:
+            reason = f"unresolvable: {why}"
+        if reason is None and not seat_is_up(seats, entry["seat"]):
+            record = seats.get(entry["seat"], {}) if isinstance(seats, dict) else {}
+            reason = f"seat down: {record.get('error') or 'routing-state.json'}"
+        if (reason is None and class_name == "verify" and entry["maker"] == author
+                and not entry.get("same_vendor_fallback")):
+            reason = f"same maker {author}"
+        audit = None
+        if reason is None and class_name in ("implement", "mechanical", "explore"):
+            review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"])
+            audit = review["chosen"]
+            primary = pools.get("anthropic-general", {})
+            eligible = primary.get("eligibleAccounts")
+            critical = pool_exhausted(primary) or (
+                isinstance(eligible, int) and not isinstance(eligible, bool) and eligible <= 1)
+            if audit is None and entry["maker"] != "anthropic" and critical:
+                # auditor_via remains the availability adapter, independent of ladder ordering.
+                legacy = table["classes"].get(class_name, {}).get("audit", {})
+                candidate = {**entry, "vendor": {"xai": "cursor", "cognition": "devin"}.get(
+                    entry["maker"], entry["maker"])}
+                available, rejected, _ = class_candidates(
+                    table, class_name, {"chain": [candidate], "audit": legacy},
+                    author_vendor=None, pools=pools, seats=seats, served=served)
+                audit = available[0]["auditor"] if available else None
+                if audit is not None:
+                    audit.update(rung=None, maker="anthropic" if audit.get("via") else audit.get("vendor"))
+                if audit is None and rejected:
+                    reason = rejected[0]["reason"]
+            if audit is None and reason is None:
+                reason = f"no open reviewer for {entry['maker']}"
+        row = {"rung": entry["id"], "seat": entry["seat"], "model": model,
+               "alias": entry["model"], "effort": entry.get("effort"), "maker": entry["maker"],
+               "vendor": entry["maker"], "stand_in_only": bool(entry.get("stand_in_only")),
+               "pool": pool, "same_vendor": class_name == "verify" and entry["maker"] == author,
+               "audit": audit}
+        if reason:
+            row.update(status="skipped", reason=reason)
+        else:
+            reasons = []
+            if state == "low":
+                facts = pace[pool]
+                empties, reset = facts.get("empties_in_h"), facts.get("hours_left")
+                reasons.append(f"running low: empties in {empties:.3g} h, resets in {reset:.3g} h"
+                               if empties is not None and reset is not None else "running low: pace below policy")
+            if reserve and reserve["active"] and not reserve["admitted"] and pool == reserve["pool"]:
+                reasons.append(f"reserved for orchestrators: {reserve['why']}")
+            if entry.get("same_vendor_fallback"):
+                reasons.append(f"same maker {entry['maker']}")
+            row.update(status="soft" if reasons else "open",
+                       reason="; ".join(reasons) if reasons else "first open rung")
+            (soft if reasons else opened).append(row)
+        rows.append(row)
+        if row["status"] != "open":
+            skipped.append({"rung": row["rung"], "reason": row["reason"]})
+    chosen = next(iter(opened or soft), None)
+    if chosen is not None and not opened:
+        chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
+    return {"chosen": chosen, "rungs": rows, "routable": opened + soft, "fallbacks": [row for row in opened + soft
+            if chosen is None or row["rung"] != chosen["rung"]], "skipped": skipped,
+            "intended": intended, "pace": pace}
+
+
+def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
+    if args.task_class == "verify" and not args.author_vendor:
+        setup_error("unknown_author", "verify requires --author-vendor <maker>", args.json)
+    state = read_state()
+    age = state_age_seconds(state)
+    stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
+    document, error = fetch_pools(timeout=3.0)
+    now = datetime.now(timezone.utc)
+    history = load_pool_history(now)
+    if document is not None:
+        record_pool_history(document, now)
+    elif isinstance(state.get("pools"), dict):
+        document = state["pools"]
+    pools = pools_by_id(document)
+    walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
+                       ServedModels(), history, now, args.author_vendor, args.skip)
+    chosen = walk.pop("chosen")
+    walk.pop("rungs")
+    walk.pop("routable")
+    if chosen is None:
+        message = f"nothing routable for class {args.task_class!r}"
+        print(f"route: {message}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"error": "unroutable", "message": message, **walk}))
+        else:
+            for entry in walk["skipped"]:
+                print(f"  skipped {entry['rung']}: {entry['reason']}", file=sys.stderr)
+        return EXIT_UNROUTABLE
+    chosen.pop("status")
+    result = {"class": args.task_class, "ladder": table["ladder"],
+              "state_age_s": None if age is None else round(age, 1),
+              "reserve": reserve_state(table, pools, args.task_class), **chosen, **walk}
+    fields = ("session_id", "lane", "intended", "running", "since", "expected_return")
+    result["standing_in"] = [{key: record.get(key) for key in fields} for record in fetch_stand_ins()["active"]]
+    if error:
+        result["reason"] += f"; pool status unknown ({error})"
+    if args.json:
+        print(json.dumps(result))
+    else:
+        for pool, facts in result["pace"].items():
+            label = pool.replace("-general", "").replace("-codex", "")
+            label = "cursor" if pool in ("cursor-models", "cursor-other") else label
+            words = {"low": "running low", "rich": "running rich", "on_pace": "on pace",
+                     "exhausted": "empty", "unknown": "unknown"}[facts["state"]]
+            detail = f"remaining {_percent(facts['remaining'])}"
+            print(f"{label:<12}{words:<14}{detail}")
+        for entry in result["skipped"]:
+            print(f"  skipped {entry['rung']}: {entry['reason']}")
+        auditor = result.get("audit")
+        if auditor and auditor.get("via"):
+            print(f"audit     {auditor['seat']}/{auditor['model']} via {auditor['via']}")
+        for record in result["standing_in"]:
+            _print_stand_in(record)
+        print(f"→ {result['model']} ({result['pool']})")
+    return EXIT_OK
+
+
+def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
+    table = load_table() if table is None else table
     classes = table.get("classes")
     if not isinstance(classes, dict) or args.task_class not in classes:
         known = ", ".join(sorted(classes)) if isinstance(classes, dict) else "none"
         fail(f"unknown class {args.task_class!r}; known classes: {known}")
+    if ladder_entries(table, args.task_class) is not None:
+        return command_ladder_pick(args, table)
     spec = classes[args.task_class]
     if not isinstance(spec, dict):
         fail(f"class {args.task_class!r} is malformed")
@@ -1554,6 +1817,8 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
     accounts = http_get("/api/accounts", timeout=3.0)
     windows = _five_hour_windows(accounts.body) if accounts.json_ok else {}
 
+    now = datetime.now(timezone.utc)
+    history = load_pool_history(now)
     served = ServedModels()
     menu_classes: dict[str, Any] = {}
     used_pools: set[str] = set()
@@ -1563,6 +1828,14 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
             fail(f"unknown class {class_name!r}; known classes: {', '.join(sorted(classes))}")
         if spec.get("driver"):
             menu_classes[class_name] = {"driver": True, "crossVendor": False, "seats": [], "excluded": []}
+            continue
+        if ladder_entries(table, class_name) is not None:
+            walk = ladder_walk(table, class_name, pools, seats, served, history, now)
+            used_pools.update(walk["pace"])
+            menu_classes[class_name] = {"driver": False, "crossVendor": class_name == "verify",
+                                        "rungs": walk["rungs"], "seats": [{"id": f"{row['seat']}.{row['model']}", **row} for row in walk["routable"]], "excluded": [{key: row.get(key) for key in ("seat", "model", "alias", "rung", "reason")}
+                                                     for row in walk["rungs"] if row["status"] != "open"],
+                                        "paced": [], "ladder": table["ladder"]}
             continue
         routable, skipped, paced = class_candidates(
             table, class_name, spec, author_vendor=None, pools=pools, seats=seats, served=served
@@ -1607,10 +1880,11 @@ def command_menu(args: argparse.Namespace) -> int:
             if entry["driver"]:
                 print(f"{class_name:<11} driver session")
                 continue
-            shown = ", ".join(seat["id"] for seat in entry["seats"]) or "nothing routable"
+            shown = ", ".join(seat.get("id", seat.get("rung", "?")) for seat in entry["seats"]) or "nothing routable"
             print(f"{class_name:<11} {shown}")
             for excluded in entry["excluded"]:
-                print(f"{'':<11}   excluded {excluded['seat']}: {excluded['reason']}")
+                name = excluded.get("seat", excluded.get("rung", "?"))
+                print(f"{'':<11}   excluded {name}: {excluded['reason']}")
     routable = any(entry["seats"] or entry["driver"] for entry in menu["classes"].values())
     return EXIT_OK if routable else EXIT_UNROUTABLE
 
@@ -2345,6 +2619,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pick = sub.add_parser("pick", help="first routable seat for a class")
     pick.add_argument("task_class", metavar="class")
     pick.add_argument("--author-vendor", default=None, help="required for cross_vendor classes")
+    pick.add_argument("--skip", action="append", default=[], help="skip a ladder rung id")
     pick.add_argument("--json", action="store_true")
     pick.set_defaults(handler=command_pick)
 

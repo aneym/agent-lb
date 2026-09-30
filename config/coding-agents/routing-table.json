@@ -2,6 +2,208 @@
   "version": 2,
   "implement_default": "gpt-implementer",
   "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; sonnet-implementer is the Codex-empty fallback, not the default.",
+    "ladder": "interim",
+    "ladder_note": "2026-09-30 (Alex approved 02:35Z): the interim ladder. Set baseline to get the class chains below back on the next pick. A closed gate opens only on eval evidence (DECISIONS T2, T3).",
+    "ladders": {
+      "baseline": {},
+      "interim": {
+        "implement": [
+      {
+        "id": "sol-medium",
+        "seat": "gpt-implementer",
+        "model": "sol-latest",
+        "effort": "medium",
+        "maker": "openai"
+      },
+      {
+        "id": "grok-medium",
+        "seat": "cursor-seat",
+        "model": "grok-latest",
+        "effort": "medium",
+        "maker": "xai",
+        "pool": "cursor-models",
+        "gate": {
+          "open": false,
+          "until": "E16: Grok 4.7 medium within 10% of Sol medium"
+        }
+      },
+      {
+        "id": "composer",
+        "seat": "cursor-seat",
+        "model": "composer-latest",
+        "effort": null,
+        "maker": "cursor",
+        "pool": "cursor-models",
+        "gate": {
+          "open": false,
+          "until": "E16: Composer 2.5 within 10% of Sol medium"
+        }
+      },
+      {
+        "id": "swe2-high",
+        "seat": "devin-seat",
+        "model": "swe-latest",
+        "effort": "high",
+        "maker": "cognition",
+        "pool": "devin",
+        "gate": {
+          "open": false,
+          "until": "E16: SWE-2 high within 10% of Sol medium"
+        }
+      },
+      {
+        "id": "sonnet-standin",
+        "seat": "sonnet-implementer",
+        "model": "sonnet-latest",
+        "effort": "high",
+        "maker": "anthropic",
+        "pool": "anthropic-general",
+        "reserve_hard": true,
+        "stand_in_only": true
+      }
+    ],
+    "mechanical": [
+          {
+            "id": "sol-low-rich",
+            "seat": "gpt-implementer",
+            "model": "sol-latest",
+            "effort": "low",
+            "maker": "openai",
+            "when": "rich"
+          },
+          {
+            "id": "composer",
+            "seat": "cursor-seat",
+            "model": "composer-latest",
+            "effort": null,
+            "maker": "cursor",
+            "pool": "cursor-models"
+          },
+          {
+            "id": "grok-low",
+            "seat": "cursor-seat",
+            "model": "grok-latest-low",
+            "effort": "low",
+            "maker": "xai",
+            "pool": "cursor-models"
+          },
+          {
+            "id": "swe2-medium",
+            "seat": "devin-seat",
+            "model": "swe-latest-medium",
+            "effort": "medium",
+            "maker": "cognition",
+            "pool": "devin"
+          },
+          {
+            "id": "sol-low",
+            "seat": "gpt-implementer",
+            "model": "sol-latest",
+            "effort": "low",
+            "maker": "openai"
+          }
+        ],
+        "explore": [
+          {
+            "id": "sol-low",
+            "seat": "gpt-explorer",
+            "model": "sol-latest",
+            "effort": "low",
+            "maker": "openai"
+          },
+          {
+            "id": "grok-low",
+            "seat": "cursor-seat",
+            "model": "grok-latest-low",
+            "effort": "low",
+            "maker": "xai",
+            "pool": "cursor-models",
+            "gate": {
+              "open": false,
+              "until": "a lane eval of Grok low as explorer (T3)"
+            }
+          },
+      {
+        "id": "sonnet-explore-standin",
+        "seat": "Explore",
+        "model": "sonnet-latest",
+        "effort": "medium",
+        "maker": "anthropic",
+        "pool": "anthropic-general",
+        "reserve_hard": true,
+        "stand_in_only": true
+      }
+    ],
+    "verify": {
+          "by_author_maker": {
+            "openai": [
+              "@sonnet-high",
+              "@sonnet-cursor-high"
+            ],
+            "xai": [
+              "@sonnet-high",
+              "@sol-high",
+              "@sonnet-cursor-high"
+            ],
+            "cursor": [
+              "@sonnet-high",
+              "@sol-high",
+              "@sonnet-cursor-high"
+            ],
+            "cognition": [
+              "@sonnet-high",
+              "@sol-high",
+              "@sonnet-cursor-high"
+            ],
+            "anthropic": [
+              "@sol-xhigh",
+              "@opus-same-vendor"
+            ],
+        "glm": ["@sonnet-high", "@sol-high", "@sonnet-cursor-high"],
+        "kimi": ["@sonnet-high", "@sol-high", "@sonnet-cursor-high"]
+      },
+          "rungs": {
+            "sonnet-high": {
+              "seat": "sonnet-verifier",
+              "model": "sonnet-latest",
+              "effort": "high",
+              "maker": "anthropic"
+            },
+            "sol-high": {
+              "seat": "codex-verifier",
+              "model": "sol-latest",
+              "effort": "high",
+              "maker": "openai"
+            },
+            "sol-xhigh": {
+              "seat": "codex-verifier",
+              "model": "sol-latest",
+              "effort": "xhigh",
+              "maker": "openai"
+            },
+            "sonnet-cursor-high": {
+              "seat": "cursor-seat",
+              "model": "claude-sonnet-5-5-high",
+              "effort": "high",
+              "maker": "anthropic",
+              "pool": "cursor-other",
+              "promote": "rich",
+              "gate": {
+                "open": true,
+                "until": "2026-09-29: orchestrators-first routes the same T4 Sonnet 5.5 high reviewer through Cursor while Claude is short"
+              }
+            },
+            "opus-same-vendor": {
+              "seat": "verifier",
+              "model": "opus-latest",
+              "effort": "high",
+              "maker": "anthropic",
+              "same_vendor_fallback": true
+            }
+          }
+        }
+      }
+    },
   "classes": {
     "plan": {
       "chain": [
@@ -299,6 +501,7 @@
     "opus-seat-full": {"vendor": "anthropic", "box": {"adapter": "claude-code"}, "model": "opus-latest", "effort": "medium"},
     "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}},
     "devin-seat": {"vendor": "devin", "box": {"adapter": "devin"}},
+    "sonnet-verifier": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"},
     "verifier": {"vendor": "anthropic", "box": null, "needs_test_run": false},
     "codex-verifier": {"vendor": "openai", "box": null, "needs_test_run": true},
     "computer-use": {"vendor": "openai", "box": null},
@@ -319,6 +522,8 @@
     "cursor-*": "cursor",
     "kimi-*": "kimi",
     "glm-*": "glm",
+    "composer-latest": "cursor",
+    "swe-latest-medium": "devin",
     "swe-latest": "devin",
     "swe-*": "devin"
   },
@@ -494,15 +699,17 @@
     "grok-latest": {
       "vendor": "cursor",
       "family": "grok",
-      "variant": "medium-fast",
-      "note": "newest Grok on Cursor (cursor-agent --list-models), medium-fast"
+      "variant": "medium",
+      "note": "newest Grok on Cursor (cursor-agent --list-models), medium at standard speed"
     },
     "grok-latest-low": {
       "vendor": "cursor",
       "family": "grok",
-      "variant": "low-fast",
-      "note": "newest Grok on Cursor, low-fast (scouting)"
+      "variant": "low",
+      "note": "newest Grok on Cursor, low at standard speed (scouting)"
     },
+    "composer-latest": {"vendor": "cursor", "family": "composer", "note": "newest Composer on Cursor; Composer has no variant suffix"},
+    "swe-latest-medium": {"vendor": "devin", "family": "swe", "variant": "medium"},
     "swe-latest": {
       "vendor": "devin",
       "family": "swe",

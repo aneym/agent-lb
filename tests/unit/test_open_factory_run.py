@@ -84,16 +84,17 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     decision = [r for r in ledger if r["event"] == "of_decision"]
     outcomes = [r for r in ledger if r["event"] == "of_outcome"]
     assert len(decision) == 1 and decision[0]["decision_id"] == receipt["decision_id"]
-    assert (decision[0]["decider"], decision[0]["task_class"], decision[0]["seat"]) == ("route", "implement", "gpt-implementer")
+    assert (decision[0]["decider"], decision[0]["task_class"], decision[0]["seat"]) == ("ladder", "implement", "gpt-implementer")
     assert [(o["decision_id"], o["attempt"], o["outcome"]) for o in outcomes] == [
         (receipt["decision_id"], 1, "limit"), (receipt["decision_id"], 2, "ok")]
 
-    # --intended puts a job on the model it belongs on when the class menu has it: Grok through the seat CLI.
-    grok = json.loads(of(env, "run", "mechanical", "--intended", "grok-latest", "--json", "--", "Rename y to z").stdout)
-    assert grok["ran"] == {"seat": "cursor-seat", "model": "grok-4.7-medium-fast"} and grok["standing_in"] is False
-    assert grok["attempts"][0]["maker"] == "xai"
+    # --intended puts a job on the model it belongs on when the class menu has it: Composer through the seat CLI
+    # (the interim mechanical ladder's Cursor rung; its Grok rung is grok-latest-low, not the medium alias).
+    comp = json.loads(of(env, "run", "mechanical", "--intended", "composer-2.5", "--json", "--", "Rename y to z").stdout)
+    assert comp["ran"] == {"seat": "cursor-seat", "model": "composer-2.5"} and comp["standing_in"] is False
+    assert comp["attempts"][0]["maker"] == "cursor"
     seat = rows(env, "CALLS")[-1]["argv"]
-    assert seat[1:6] == ["run", "--vendor", "cursor", "--model", "grok-4.7-medium-fast"] and "--mode" not in seat
+    assert seat[1:6] == ["run", "--vendor", "cursor", "--model", "composer-2.5"] and "--mode" not in seat
 
     # An intended model the class menu lacks is recorded as intended, and route decides where the job runs.
     look = json.loads(of(env, "run", "explore", "--intended", "composer-2.5", "--json", "--", "Where is z?").stdout)

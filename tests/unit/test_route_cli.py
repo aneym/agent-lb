@@ -699,17 +699,22 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
     assert implement.returncode == 0, implement.stderr
     picked = json.loads(implement.stdout)
     assert (picked["seat"], picked["model"]) == ("gpt-implementer", "gpt-6-sol")
-    assert picked["audit"]["alias"] == "opus-latest"
-    assert [entry["seat"] for entry in picked["fallbacks"]][:1] == ["sonnet-implementer"]
+    assert picked["audit"]["alias"] == "sonnet-latest"
+    assert picked["audit"]["seat"] == "sonnet-verifier"
+    assert picked["fallbacks"] == []
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
 
 def test_canonical_implement_falls_to_sonnet_high_then_opus_only_when_sol_is_out(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
+    baseline = json.loads(CANONICAL_TABLE.read_text())
+    baseline["ladder"] = "baseline"
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps(baseline))
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}, {"id": "gpt-6-luna"}]})
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
 
-    def pick(statuses: dict[str, str], table: Path = CANONICAL_TABLE) -> dict[str, object]:
+    def pick(statuses: dict[str, str], table: Path = baseline_path) -> dict[str, object]:
         pools_fixture(fixtures, statuses)
         result = run("pick", "implement", "--json", home=tmp_path, table=table, fixtures=fixtures, extra=extra)
         assert result.returncode == 0, result.stderr
@@ -730,6 +735,7 @@ def test_canonical_implement_falls_to_sonnet_high_then_opus_only_when_sol_is_out
 
     # implement_default names the seat route puts first; switching it puts Sonnet ahead of Sol.
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    table["ladder"] = "baseline"
     table["implement_default"] = "sonnet-implementer"
     switched = tmp_path / "switched-table.json"
     switched.write_text(json.dumps(table), encoding="utf-8")
@@ -794,6 +800,7 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
 def _pace_gated_table(tmp_path: Path) -> Path:
     """The canonical table with a pace-gated Opus ahead of Codex Sol: the chain the pace and audit rules act on."""
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    table["ladder"] = "baseline"
     table["classes"]["implement"]["chain"] = [
         {
             "seat": "opus-seat",
@@ -1118,6 +1125,10 @@ def test_canonical_implement_admission_by_codex_pool(
     expected_seat: str | None, expected_error: str | None,
 ) -> None:
     fixtures = tmp_path / "fixtures"
+    baseline = json.loads(CANONICAL_TABLE.read_text())
+    baseline["ladder"] = "baseline"
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps(baseline))
     reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
     write_fixture(
         fixtures,
@@ -1138,7 +1149,7 @@ def test_canonical_implement_admission_by_codex_pool(
     (tmp_path / ".claude").mkdir()
     routing_state(tmp_path, age_seconds=60, seats=down)
     extra = {"ROUTE_MODELS_CACHE": str(tmp_path / "models.json"), "ROUTE_CURSOR_MODELS_CMD": "printf ''"}
-    result = run("pick", "implement", "--json", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    result = run("pick", "implement", "--json", home=tmp_path, table=baseline_path, fixtures=fixtures, extra=extra)
     assert result.returncode == (0 if expected_seat else 2), result.stdout + result.stderr
     if expected_seat:
         picked = json.loads(result.stdout)
