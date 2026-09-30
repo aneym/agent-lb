@@ -77,6 +77,7 @@ def fold_units(records, agent_points, since, until):
                     model=key[1],
                     pieces=0,
                     accepted=0,
+                    status_counts={},
                     fix_rounds=0,
                     review_rounds=0,
                     wall_minutes=0.0,
@@ -84,7 +85,9 @@ def fold_units(records, agent_points, since, until):
                 ),
             )
             row["pieces"] += 1
-            row["accepted"] += str(piece.get("status", "")).lower() in ("pass", "override")
+            status = str(piece.get("status", "")).lower()
+            row["accepted"] += status in ("pass", "override")
+            row["status_counts"][status] = row["status_counts"].get(status, 0) + 1
             row["fix_rounds"] += piece.get("fix_rounds", sum(phase == "fix" for phase, _ in matched))
             row["review_rounds"] += sum(phase in ("verify", "verify-codex", "lens-risk") for phase, _ in matched)
             row["wall_minutes"] += (completed - min(starts)).total_seconds() / 60 if starts else 0
@@ -96,6 +99,10 @@ def fold_units(records, agent_points, since, until):
     for row in groups.values():
         accepted = row["accepted"]
         row["accept_rate"] = accepted / row["pieces"]
+        seat_pieces = row["pieces"] - sum(
+            row["status_counts"].get(status, 0) for status in ("infra_blocked", "pipeline_error")
+        )
+        row["seat_accept_rate"] = accepted / seat_pieces if seat_pieces else None
         row["provisional"] = row["pieces"] < 10
         row["wall_minutes_per_accepted_piece"] = row["wall_minutes"] / accepted if accepted else None
         row["points_per_accepted_piece"] = {
@@ -104,7 +111,7 @@ def fold_units(records, agent_points, since, until):
     return sorted(groups.values(), key=lambda r: (r["seat"], r["model"]))
 
 
-def routing_rows(rows, agents_by_session, metas):
+def routing_rows(rows, agents_by_session, metas, quota=None):
     groups, agent_points = {}, defaultdict(lambda: defaultdict(float))
     first = {}
     outputs = defaultdict(list)
@@ -170,6 +177,13 @@ def routing_rows(rows, agents_by_session, metas):
             outputs[key].append(classes["output"])
             workflow_key = agent["key"].removesuffix(" review")
             agent_points[workflow_key][row["provider"]] += part["quota_points"]
+    for item in (quota or {}).get("unattributed", []):
+        key = (item["provider"], "unattributed", "unknown", "unknown", "other")
+        summary = groups.setdefault(
+            key, dict(pool=key[0], seat=key[1], model=key[2], effort=key[3], harness=key[4], **tokens.empty())
+        )
+        field = "quota_points" if item["window"] == "weekly" else "quota_5h_points"
+        summary[field] += item["points"]
     result = []
     for key, row in groups.items():
         classes = row["token_classes"]
@@ -236,7 +250,7 @@ def report_for(args, since, until):
     sessions = {row["sid"] for row in rows}
     metas = {sid: tokens.metadata(index.get(sid)) for sid in sessions}
     agents = {sid: tokens.session_agents(index.get(sid), since, until) for sid in sessions}
-    grouped, points = routing_rows(rows, agents, metas)
+    grouped, points = routing_rows(rows, agents, metas, quota)
     records = []
     for path in (Path.home() / ".claude/projects").glob("*/*/workflows/wf_*.json"):
         try:
@@ -275,13 +289,14 @@ def text_report(report):
                 )
     lines += [
         "\nFOLD",
-        "SEAT / MODEL | PIECES | ACCEPTED | RATE | FIX | REVIEW | MIN/ACCEPTED | POINTS/ACCEPTED BY POOL",
+        "SEAT / MODEL | PIECES | ACCEPTED | RATE | SEAT RATE | FIX | REVIEW | MIN/ACCEPTED | POINTS/ACCEPTED BY POOL",
     ]
     for row in report["fold"]:
         wall = row["wall_minutes_per_accepted_piece"]
+        seat_rate = f"{row['seat_accept_rate']:.1%}" if row["seat_accept_rate"] is not None else "n/a"
         lines.append(
             f"{row['seat']} / {row['model']} | {row['pieces']} | {row['accepted']} | "
-            f"{row['accept_rate']:.1%} | {row['fix_rounds']} | {row['review_rounds']} | "
+            f"{row['accept_rate']:.1%} | {seat_rate} | {row['fix_rounds']} | {row['review_rounds']} | "
             f"{wall if wall is not None else 'n/a'} | {row['points_per_accepted_piece']}"
             + (" (provisional)" if row["provisional"] else "")
         )
