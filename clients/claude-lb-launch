@@ -934,14 +934,17 @@ def _prune_stale_shim_files(shim_dir: Path, *, now: float | None = None) -> int:
 
 
 def start_lb_proxy(session_id: str) -> str:
-    ready = proxy_ready_path(session_id)
+    parent_pid = os.getpid()
+    # Sticky routing may share a session across concurrent headless launchers;
+    # each ephemeral proxy's readiness and cleanup belong to its own parent.
+    ready = proxy_ready_path(f"{session_id}.{parent_pid}")
     _prune_stale_shim_files(ready.parent)
-    for path in (ready, activity_path(session_id, os.getpid())):
+    for path in (ready, activity_path(session_id, parent_pid)):
         try:
             path.unlink()
         except OSError:
             pass
-    _spawn_lb_proxy(ready, session_id, os.getpid(), AGENT_LB_BASE_URL)
+    _spawn_lb_proxy(ready, session_id, parent_pid, AGENT_LB_BASE_URL)
     deadline = time.monotonic() + _env_float("CLAUDE_LB_SHIM_START_TIMEOUT", SHIM_START_TIMEOUT_DEFAULT)
     while time.monotonic() < deadline:
         try:

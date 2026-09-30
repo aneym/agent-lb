@@ -381,14 +381,19 @@ def _model_observation(accounts: list[dict[str, Any]], model: str, thinking: boo
 
 
 def _anthropic_model_quota(quotas: list[dict[str, Any]], model: str, thinking: bool) -> tuple[str, str | None]:
+    opus_model = "opus" in model.casefold()
     if "haiku" in model.casefold():
         keys = {"anthropic_standard"}
+    elif opus_model:
+        keys = {"anthropic_opus_thinking"} if thinking else {"anthropic_opus"}
     else:
         keys = {"anthropic_top_thinking"} if thinking else {"anthropic_top", "anthropic_top_thinking"}
     relevant = [quota for quota in quotas if quota["quota_key"] in keys]
     if not relevant:
         return "unknown", "relevant Anthropic model quota telemetry is missing"
     exhausted = [_quota_exhausted(quota) for quota in relevant]
+    if opus_model and any(exhausted):
+        return "unknown", "observed Opus scoped quota is exhausted; routing uses bounded retries"
     if all(exhausted):
         return "blocked", "all observed relevant Anthropic model quotas are exhausted until reset"
     if any(exhausted):

@@ -4914,3 +4914,36 @@ def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monke
         assert state.reset_at is None
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("status", [AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED])
+@pytest.mark.parametrize("age, deadline, selectable", [
+    (30, 86400, False), (61, 86400, True), (61, 300, False),
+    (61, 3600, False), (3600, 3600, True),
+])
+@pytest.mark.parametrize("fraction", [0.0, 0.75])
+def test_selector_enforces_same_bounded_refusal_for_runtime_and_persisted_guards(
+    monkeypatch, status, age, deadline, selectable, fraction
+):
+    now = 1_700_000_000.0 + fraction
+    blocked = now - age
+    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    account = _make_test_account(status=status, reset_at=int(blocked + deadline))
+    account.blocked_at = int(blocked)
+    runtime = RuntimeState(reset_at=blocked + deadline, cooldown_until=blocked + deadline, blocked_at=blocked)
+    state = _state_from_account(account=account, primary_entry=None, secondary_entry=None, runtime=runtime)
+
+    result = select_account([state], now=now)
+
+    assert (result.account is not None) is selectable
+
+
+def test_selector_preserves_marker_free_transient_runtime_cooldown(monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
+    account = _make_test_account(status=AccountStatus.ACTIVE)
+    runtime = RuntimeState(cooldown_until=now + 86400)
+    state = _state_from_account(account=account, primary_entry=None, secondary_entry=None, runtime=runtime)
+
+    assert select_account([state], now=now).account is None
+    assert state.cooldown_until == now + 86400

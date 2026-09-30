@@ -1325,3 +1325,75 @@ def test_splice_relays_both_directions_and_reports_totals() -> None:
     assert received == b"a" * 4_000
     assert reply == b"b" * 1_000
     assert result["totals"] == (4_000, 1_000)
+
+
+def test_overlapping_launchers_keep_independent_readiness_after_peer_cleanup(monkeypatch, tmp_path):
+    import threading
+
+    launcher = load_launcher_module()
+    original_thread = threading.Thread
+    stopped = [threading.Event(), threading.Event()]
+    serving = [threading.Event(), threading.Event()]
+    servers = []
+    workers = []
+    receipts = []
+
+    class FakeTlsContext:
+        def __init__(self, protocol):
+            pass
+
+        def load_cert_chain(self, **kwargs):
+            pass
+
+    class FakeServer:
+        def __init__(self, address, handler):
+            self.index = len(servers)
+            self.server_address = ("127.0.0.1", 31000 + self.index)
+            servers.append(self)
+
+        def serve_forever(self):
+            serving[self.index].set()
+            assert stopped[self.index].wait(5)
+
+    class NoWatchdog:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    def spawn(ready, session_id, parent_pid, upstream):
+        receipts.append(ready)
+        worker = original_thread(target=launcher.run_lb_proxy, args=(str(ready), session_id, parent_pid, upstream))
+        workers.append(worker)
+        worker.start()
+        assert serving[len(workers) - 1].wait(5)
+
+    monkeypatch.setattr(launcher, "proxy_ready_path", lambda session_id: tmp_path / f"{session_id}.proxy")
+    monkeypatch.setattr(launcher, "ensure_mitm_certs", lambda: None)
+    monkeypatch.setattr(launcher.ssl, "SSLContext", FakeTlsContext)
+    monkeypatch.setattr(launcher, "_ThreadingProxyServer", FakeServer)
+    monkeypatch.setattr(launcher.threading, "Thread", NoWatchdog)
+    monkeypatch.setattr(launcher, "_spawn_lb_proxy", spawn)
+    monkeypatch.setattr(launcher, "_proxy_port_ready", lambda port, **kwargs: port in (31000, 31001))
+    monkeypatch.delenv("CLAUDE_LB_SESSION_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    session = launcher.derive_session_id(["-p", "review"])
+    try:
+        monkeypatch.setattr(launcher.os, "getpid", lambda: 101)
+        first_url = launcher.start_lb_proxy(session)
+        monkeypatch.setattr(launcher.os, "getpid", lambda: 202)
+        assert launcher.derive_session_id(["-p", "review"]) == session
+        second_url = launcher.start_lb_proxy(session)
+        assert (first_url, second_url) == ("http://127.0.0.1:31000", "http://127.0.0.1:31001")
+        stopped[0].set()
+        workers[0].join(5)
+        assert not workers[0].is_alive()
+        assert receipts[1].read_text().strip() == "31001"
+        assert [server.session_id for server in servers] == [session, session]
+        assert servers[0].activity.path != servers[1].activity.path
+    finally:
+        for event in stopped:
+            event.set()
+        for worker in workers:
+            worker.join(5)

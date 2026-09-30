@@ -261,7 +261,8 @@ def test_fable_telemetry_is_labeled_only_for_fable_human_assessment(service, cap
 
 @pytest.mark.parametrize("alias", ["opus", "sonnet"])
 def test_anthropic_model_aliases_are_recognized(service, capsys, alias):
-    _set_routes([_account(additionalQuotas=[{"quotaKey": "anthropic_top", "primaryWindow": {"usedPercent": 10}}])])
+    quota_key = "anthropic_opus" if alias == "opus" else "anthropic_top"
+    _set_routes([_account(additionalQuotas=[{"quotaKey": quota_key, "primaryWindow": {"usedPercent": 10}}])])
 
     cli.main(["status", "--json", "--model", alias, "--base-url", service])
 
@@ -413,3 +414,29 @@ def test_invalid_inputs_fail_safely_and_human_output_has_account_windows(service
 )
 def test_account_usability_knows_exchange_uncertain(status, expected):
     assert status_cli._account_usability(status, "active", {}) == expected
+
+
+@pytest.mark.parametrize("thinking, scoped_key", [(False, "anthropic_opus"), (True, "anthropic_opus_thinking")])
+def test_opus_observation_uses_exact_scope_without_claiming_snapshot_availability(
+    service, capsys, thinking, scoped_key
+):
+    reset = (datetime.now(UTC) + timedelta(hours=6)).isoformat()
+    _set_routes(
+        [
+            _account(
+                additionalQuotas=[
+                    {"quotaKey": "anthropic_top", "primaryWindow": {"usedPercent": 0}},
+                    {"quotaKey": "anthropic_top_thinking", "primaryWindow": {"usedPercent": 0}},
+                    {"quotaKey": scoped_key, "primaryWindow": {"usedPercent": 100, "resetAt": reset}},
+                ]
+            )
+        ]
+    )
+    args = ["status", "--json", "--model", "claude-opus-5-5", "--base-url", service]
+    if thinking:
+        args.append("--thinking")
+    cli.main(args)
+
+    model = json.loads(capsys.readouterr().out)["model"]
+    assert model["status"] == "unknown"
+    assert "observed Opus scoped quota is exhausted; routing uses bounded retries" in model["reasons"]

@@ -19,9 +19,9 @@ from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog, StickySession, StickySessionKind
 from app.db.session import SessionLocal
-from app.dependencies import _proxy_repo_context
+from app.dependencies import _proxy_repo_context, get_anthropic_proxy_service_for_app
 from app.modules.api_keys.service import ApiKeyData, ApiKeyUsageReservationData
-from app.modules.proxy.load_balancer import AccountSelection
+from app.modules.proxy.load_balancer import AccountSelection, RuntimeState
 
 pytestmark = pytest.mark.integration
 
@@ -366,22 +366,29 @@ async def _insert_account(
 
 
 @pytest.mark.asyncio
-async def test_anthropic_session_route_surfaces_provider_status_failure(async_client):
+@pytest.mark.parametrize("runtime_only", [False, True])
+async def test_anthropic_session_route_surfaces_provider_status_failure(async_client, app_instance, runtime_only):
     for index in range(3):
         await _insert_account(
             account_id=f"anthropic-rate-limited-{index}",
             provider="anthropic",
             access_token=f"anthropic-access-{index}",
             email=f"claude-{index}@example.com",
-            status=AccountStatus.RATE_LIMITED,
+            status=AccountStatus.ACTIVE if runtime_only else AccountStatus.RATE_LIMITED,
         )
 
     # 82ed714b: a status without a failure marker is legacy and routable, so
     # mark these as live provider failures inside their bounded retry.
     blocked_at = int(time.time())
     retry_at = blocked_at + 60
-    async with SessionLocal() as session:
+    if runtime_only:
+        service = get_anthropic_proxy_service_for_app(app_instance)
         for index in range(3):
+            service._load_balancer._runtime[f"anthropic-rate-limited-{index}"] = RuntimeState(
+                cooldown_until=retry_at,
+            )
+    async with SessionLocal() as session:
+        for index in range(0 if runtime_only else 3):
             account = await session.get(Account, f"anthropic-rate-limited-{index}")
             account.blocked_at = blocked_at
             account.reset_at = retry_at
@@ -398,12 +405,12 @@ async def test_anthropic_session_route_surfaces_provider_status_failure(async_cl
 
     assert response.status_code == 503
     error = response.json()["error"]
-    assert error["message"] == (
-        "3 Anthropic accounts exist, but none are selectable for "
-        "claude-fable-5/anthropic_top_thinking; statuses: rate_limited=3. "
-        "OpenAI accounts are not eligible for Claude routing. "
-        f"Limits reset at {datetime.fromtimestamp(retry_at).isoformat()}."
-    )
+    status = "active" if runtime_only else "rate_limited"
+    assert f"statuses: {status}=3" in error["message"]
+    assert f"Limits reset at {datetime.fromtimestamp(retry_at).isoformat()}." in error["message"]
+    if runtime_only:
+        assert "selector reason: Rate limit exceeded. Try again in" in error["message"]
+        assert "runtime cooldown excluded 3 accounts" in error["message"]
     assert error["type"] == "server_error"
     assert error["code"] == "no_available_anthropic_accounts"
     assert error["retryAt"] == datetime.fromtimestamp(retry_at, tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -4663,3 +4670,40 @@ async def test_upstream_connect_failure_exhausted_returns_503_not_500(async_clie
     assert response.status_code == 503
     assert "upstream_unreachable" in response.text
     assert len(opens) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_delay, tripwire", [(30, False), (120, False), (900, True)])
+async def test_session_route_retry_uses_earliest_live_guard_across_disjoint_accounts(
+    async_client, app_instance, runtime_delay, tripwire
+):
+    now = int(time.time())
+    for account_id in ("scope-cooling", "runtime-cooling"):
+        await _insert_account(
+            account_id=account_id,
+            provider="anthropic",
+            access_token="fixture-access",
+            email=f"{account_id}@example.test",
+        )
+    await _insert_quota_cooldown(
+        account_id="scope-cooling",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY if tripwire else "anthropic_opus",
+        reset_at=now + 120 if tripwire else now + 3600,
+        recorded_at=datetime.fromtimestamp(now, tz=timezone.utc).replace(tzinfo=None),
+    )
+    service = get_anthropic_proxy_service_for_app(app_instance)
+    service._load_balancer._runtime["runtime-cooling"] = RuntimeState(cooldown_until=now + runtime_delay)
+
+    response = await async_client.post("/api/anthropic/session-route", json={
+        "sessionId": "mixed-live-guards", "model": "claude-opus-5", "quotaKey": "anthropic_top",
+    })
+
+    assert response.status_code == 503
+    error = response.json()["error"]
+    expected_retry = now + min(120 if tripwire else 60, runtime_delay)
+    assert error["retryAt"] == (
+        datetime.fromtimestamp(expected_retry, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+    if not tripwire:
+        assert "anthropic_opus cooldown excluded 1 account" in error["message"]
+    assert "runtime cooldown excluded 1 account" in error["message"]

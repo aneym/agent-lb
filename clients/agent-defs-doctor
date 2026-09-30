@@ -415,6 +415,7 @@ def _file_identity(
         file_hashes.append([str(path.absolute()), digest])
     identity = {
         "version": VERSION,
+        "validator": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "cwd": str(working),
         "user_root": str(home),
         "catalog": catalog_hash,

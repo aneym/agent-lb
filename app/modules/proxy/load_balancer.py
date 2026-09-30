@@ -2185,6 +2185,11 @@ def _state_from_account(
             effective_runtime_reset = marker_reset
     if status_seed in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED) and effective_blocked_at is not None:
         effective_runtime_reset = _bounded_retry_at(effective_runtime_reset, effective_blocked_at)
+    effective_cooldown_until = runtime.cooldown_until
+    if effective_cooldown_until is not None and effective_blocked_at is not None:
+        # Both guards describe the same refusal. A legacy window deadline must
+        # not outlive the bounded retry merely because it is also held in memory.
+        effective_cooldown_until = _bounded_retry_at(effective_cooldown_until, effective_blocked_at)
 
     # Usage is a ranking signal, not evidence that an upstream request failed.
     # Older quota statuses with no failure marker were inferred from snapshots.
@@ -2263,7 +2268,7 @@ def _state_from_account(
         reset_at=reset_at,
         primary_reset_at=primary_reset,
         blocked_at=next_blocked_at,
-        cooldown_until=runtime.cooldown_until,
+        cooldown_until=effective_cooldown_until,
         secondary_used_percent=effective_secondary_used_percent,
         secondary_reset_at=secondary_reset,
         last_error_at=runtime.last_error_at,
@@ -2285,7 +2290,9 @@ def _state_from_account(
 def _bounded_retry_at(reset_at: float | None, blocked_at: float) -> float:
     # A missing reset, or a legacy one more than an hour past the block, retries
     # 60s after the real refusal instead of holding the account for the window.
-    if reset_at is None or reset_at > blocked_at + 3600.0:
+    # Persisted refusal markers have whole-second precision; runtime retries
+    # retain fractions. Compare like precision without shortening a valid hour.
+    if reset_at is None or int(reset_at) > int(blocked_at) + 3600:
         return blocked_at + 60.0
     return reset_at
 

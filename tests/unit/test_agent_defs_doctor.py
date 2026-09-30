@@ -340,3 +340,49 @@ def test_literal_description_and_quoted_scalars_are_valid(tmp_path: Path) -> Non
     result = doctor.inspect_file(agent)
 
     assert result["status"] == "ok"
+
+
+def test_cli_rechecks_cached_verdict_when_validator_is_upgraded_at_same_path(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    source = (Path(__file__).resolve().parents[2] / "clients" / "agent-defs-doctor").read_text()
+    validator = tmp_path / "agent-defs-doctor"
+    # Reproduce the historical pre-family-alias validator's model predicate.
+    validator.write_text(source.replace(" and not _FAMILY_ALIAS.fullmatch(model)", ""))
+    agent = tmp_path / ".claude" / "agents" / "worker.md"
+    agent.parent.mkdir(parents=True)
+    content = definition("model: sol-latest-medium\ntools: '*'\n")
+    agent.write_text(content)
+    arguments = [
+        sys.executable,
+        str(validator),
+        "--json",
+        "--cwd",
+        str(tmp_path),
+        "--user-root",
+        str(tmp_path / "home"),
+        "--state-dir",
+        str(tmp_path / "state"),
+    ]
+
+    def invoke():
+        result = subprocess.run(arguments, capture_output=True, text=True, check=False)
+        return result.returncode, json.loads(result.stdout)
+
+    old_code, rejected = invoke()
+    cached_code, cached_rejection = invoke()
+    assert old_code == cached_code == 1
+    assert rejected["summary"]["errors"] == 1
+    assert rejected["cached"] is False
+    assert cached_rejection["cached"] is True
+
+    validator.write_text(source)
+    new_code, accepted = invoke()
+    hit_code, accepted_hit = invoke()
+
+    assert new_code == hit_code == 0
+    assert accepted["cached"] is False
+    assert accepted["summary"]["errors"] == 0
+    assert accepted_hit["cached"] is True
+    assert agent.read_text() == content

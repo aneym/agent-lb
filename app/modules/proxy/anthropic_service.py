@@ -947,6 +947,12 @@ class AnthropicProxyService:
                 quota_cooldown_reset_at=eligibility.cooldown_reset_at,
                 selection_error_code=selection.error_code,
                 selection_error_message=selection.error_message,
+                selection_retry_at=int(selection.retry_at.timestamp()) if selection.retry_at is not None else None,
+                selection_cooldown_count=sum(
+                    1
+                    for excluded in selection.excluded_accounts
+                    if excluded.cooldown_until is not None and excluded.cooldown_until.timestamp() > time.time()
+                ),
             )
             raise AnthropicProxyError(
                 503,
@@ -970,6 +976,8 @@ class AnthropicProxyService:
         quota_cooldown_reset_at: int | None = None,
         selection_error_code: str | None = None,
         selection_error_message: str | None = None,
+        selection_retry_at: int | None = None,
+        selection_cooldown_count: int = 0,
     ) -> tuple[str, int | None]:
         now = int(time.time())
         reset_candidates: list[int] = [quota_reset_at] if quota_reset_at is not None else []
@@ -994,10 +1002,16 @@ class AnthropicProxyService:
                 for entry in primary_usage.values()
                 if entry.reset_at and float(entry.used_percent) >= 100.0
             )
-        # A live quota cooldown owns the retry hint; a usage snapshot must not
-        # replace its reset with an earlier, merely advisory window timestamp.
-        if quota_cooldown_reset_at is not None and quota_cooldown_reset_at > now:
-            retry_at = quota_cooldown_reset_at
+        # The prefilter deadline includes response-written extra-usage tripwires
+        # as well as requested-quota cooldowns. Merge both stages' live guards;
+        # persisted account and usage windows below remain advisory fallback.
+        live_retries = [
+            candidate
+            for candidate in (quota_reset_at, quota_cooldown_reset_at, selection_retry_at)
+            if candidate is not None and candidate > now
+        ]
+        if live_retries:
+            retry_at = min(live_retries)
         else:
             future_resets = [candidate for candidate in reset_candidates if candidate > now]
             retry_at = min(future_resets) if future_resets else None
@@ -1018,6 +1032,12 @@ class AnthropicProxyService:
             selection_error_message=selection_error_message,
         )
         quota_sentence = f"Model quota: {quota_detail}. " if quota_detail else ""
+        runtime_sentence = (
+            f"Selector runtime cooldown excluded {selection_cooldown_count} "
+            f"{'account' if selection_cooldown_count == 1 else 'accounts'}. "
+            if selection_cooldown_count
+            else ""
+        )
         stored_note = (
             f" (+{unusable_count} stored but not routable: canceled, deactivated, paused, or reauth-required)"
             if unusable_count
@@ -1026,14 +1046,14 @@ class AnthropicProxyService:
         message = (
             f"{account_count} {_provider_label(provider_name)} {noun} exist, but none are selectable for "
             f"{model}/{quota_key}; statuses: {status_summary}.{stored_note} "
-            f"{quota_sentence}"
+            f"{quota_sentence}{runtime_sentence}"
             f"{_other_provider_routing_message(provider_name)}{reset_suffix}"
         )
         logger.warning(
             (
                 "Anthropic account selection failed model=%s quota_key=%s statuses=%s "
                 "quota_blocked=%s quota_cooldown_blocked=%s quota_candidates=%s "
-                "selection_error_code=%s retry_at=%s"
+                "selection_error_code=%s selection_error_message=%s runtime_cooldown_excluded=%s retry_at=%s"
             ),
             model,
             quota_key,
@@ -1042,6 +1062,8 @@ class AnthropicProxyService:
             quota_cooldown_blocked_count,
             quota_candidate_count,
             selection_error_code,
+            selection_error_message,
+            selection_cooldown_count,
             retry_at,
         )
         return message, retry_at
@@ -1858,9 +1880,9 @@ def _anthropic_selection_quota_detail(
     if candidate_count is not None and (blocked_count > 0 or selection_error_code):
         noun = "account" if candidate_count == 1 else "accounts"
         parts.append(f"{candidate_count} {noun} remained after the {quota_key} prefilter")
-    if selection_error_code:
-        reason = selection_error_code
-        if selection_error_message and selection_error_message != "No available accounts":
+    if selection_error_code or selection_error_message and selection_error_message != "No available accounts":
+        reason = selection_error_code or selection_error_message
+        if selection_error_code and selection_error_message and selection_error_message != "No available accounts":
             reason = f"{selection_error_message} ({selection_error_code})"
         parts.append(f"selector reason: {reason}")
     return "; ".join(parts) if parts else None
