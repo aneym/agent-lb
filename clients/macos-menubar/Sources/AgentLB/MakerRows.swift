@@ -3,7 +3,9 @@ import Foundation
 enum MakerRows {
   static func lines(for scope: ProviderScope, seats: [SeatAccount], pools: [PoolEntry]) -> [String] {
     guard scope == .cursor || scope == .devin else { return [] }
-    let poolLines = pools.filter { $0.provider == scope.rawValue }.map { pool in
+    let poolLines = pools.filter {
+      $0.provider == scope.rawValue && (scope == .devin || $0.kind == "cli_seat_budget")
+    }.map { pool in
       if scope == .devin {
         return "Devin: \(pool.eligibleAccounts) of \(pool.accounts) ready, \(pool.observedRuns ?? 0) runs in 24 h"
       }

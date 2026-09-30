@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -69,3 +70,29 @@ def test_pools_reports_running_low_and_running_rich_from_the_last_day_of_burn(tm
     # This read became a sample for the next one.
     sampled = {json.loads(line)["pool"] for line in history.read_text().splitlines() if json.loads(line)["ts"] != day_ago}
     assert {"openai-codex", "anthropic-general", "cursor-other", "glm"} <= sampled
+
+
+def test_serialized_cursor_budget_burn_reaches_route_pace() -> None:
+    from app.modules.pools.schemas import PoolSummary
+
+    now = datetime.now(timezone.utc)
+    pool = PoolSummary(
+        id="cursor-other", provider="cursor", kind="cli_seat_budget", accounts=1,
+        eligible_accounts=1, status="ok", window_label="month", monthly_remaining_percent=10,
+        burn24h_percent=24, cycle_reset_at=now + timedelta(hours=100), monthly_pace_percent=20,
+    )
+    pace = runpy.run_path(str(SCRIPT))["pace_state"](pool.model_dump(mode="json", by_alias=True), [], {}, now)
+    assert (pace["state"], pace["basis"]) == ("low", "burn_24h")
+    assert pace["empties_in_h"] == 10
+
+
+@pytest.mark.parametrize("pace_policy", ["bad", [1], {"rich_leftover": "bad", "ahead_gt": [], "behind_lt": {}}])
+def test_route_pace_defaults_malformed_policy(pace_policy: object) -> None:
+    pace_state = runpy.run_path(str(SCRIPT))["pace_state"]
+    now = datetime.now(timezone.utc)
+    policy = {"pace": pace_policy}
+    pool = {"status": "ok", "weeklyRemainingPercent": 60, "weeklyResetAt": iso(now + timedelta(hours=24)),
+            "burn24hPercent": 10}
+    assert pace_state(pool, [], policy, now)["state"] == "rich"
+    for value, expected in [(-20, "low"), (0, "on_pace"), (20, "rich")]:
+        assert pace_state({"weeklyPacePercent": value}, [], policy, now)["state"] == expected

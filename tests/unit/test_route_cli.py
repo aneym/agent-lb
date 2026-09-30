@@ -646,7 +646,12 @@ def test_learn_apply_writes_the_override_with_reason_evidence_and_timestamp(home
     assert override["ts"].endswith("Z")
     assert override["reason"]
     assert again.returncode == 0
-    assert len(json.loads(table.read_text(encoding="utf-8"))["overrides"]) == 1
+    updated = json.loads(table.read_text(encoding="utf-8"))
+    assert len(updated["overrides"]) == 1
+    source = json.loads(TABLE.read_text(encoding="utf-8"))
+    updated.pop("overrides", None)
+    source.pop("overrides", None)
+    assert json.dumps(updated).encode() == json.dumps(source).encode()
 
 
 def test_report_joins_dispatches_with_closeouts(home: Path) -> None:

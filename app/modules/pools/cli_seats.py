@@ -129,6 +129,29 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
         if not isinstance(record, dict) or record.get("vendor") not in CLI_SEAT_VENDORS:
             continue
         try:
+            usage = SeatAccount(
+                id=str(account_id),
+                vendor=record["vendor"],
+                daily=record.get("daily") or {},
+                recent_runs=[
+                    SeatRun(
+                        ts=stamp,
+                        model=run.get("model"),
+                        tokens_in=run.get("tokens_in"),
+                        tokens_out=run.get("tokens_out"),
+                        cache_read=run.get("cache_read"),
+                    )
+                    for run in record.get("runs") or []
+                    if isinstance(run, dict)
+                    and (stamp := _ts(run.get("ts"))) is not None
+                    and current - timedelta(hours=24) < stamp <= current
+                ],
+                last_day=_usage(record, current - timedelta(hours=24)),
+            )
+        except (ValidationError, ValueError, TypeError, OverflowError):
+            logger.warning("Ignoring malformed seat usage for %s", account_id)
+            usage = SeatAccount(id=str(account_id), vendor=record["vendor"])
+        try:
             cooldown = _ts(record.get("cooldown_until"))
             if cooldown is not None and cooldown <= current:
                 cooldown = None
@@ -145,26 +168,14 @@ def read_seat_accounts(path: Path | None = None, *, now: datetime | None = None)
                     auth_checked_at=_ts(record.get("auth_checked_at")),
                     tier=record.get("tier_override") or identity.get("tier"),
                     cycle_day=record.get("cycle_day"),
-                    daily=record.get("daily") or {},
-                    recent_runs=[
-                        SeatRun(
-                            ts=stamp,
-                            model=run.get("model"),
-                            tokens_in=run.get("tokens_in"),
-                            tokens_out=run.get("tokens_out"),
-                            cache_read=run.get("cache_read"),
-                        )
-                        for run in record.get("runs") or []
-                        if isinstance(run, dict)
-                        and (stamp := _ts(run.get("ts"))) is not None
-                        and current - timedelta(hours=24) < stamp <= current
-                    ],
+                    daily=usage.daily,
+                    recent_runs=usage.recent_runs,
                     cooldown_until=cooldown,
                     last_error_kind=error.get("kind"),
                     last_error_at=_ts(error.get("ts")),
                     last_run_at=_ts(record.get("last_run_at")),
                     ready=enabled and record.get("auth_ok") is not False and cooldown is None,
-                    last_day=_usage(record, current - timedelta(hours=24)),
+                    last_day=usage.last_day,
                 )
             )
         except (ValidationError, ValueError, TypeError):

@@ -149,7 +149,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def load_table() -> dict[str, Any]:
+def load_table(*, apply_default: bool = True) -> dict[str, Any]:
     path = table_path()
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -159,12 +159,7 @@ def load_table() -> dict[str, Any]:
         fail(f"routing table at {path} is unreadable: {error}")
     if not isinstance(value, dict):
         fail(f"routing table at {path} is not an object")
-    policy = value.setdefault("policy", {})
-    if isinstance(policy, dict):
-        pace = policy.setdefault("pace", {})
-        if isinstance(pace, dict):
-            pace.setdefault("rich_leftover", 15)
-    return apply_implement_default(value)
+    return apply_implement_default(value) if apply_default else value
 
 
 def apply_implement_default(table: dict[str, Any]) -> dict[str, Any]:
@@ -791,19 +786,24 @@ def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> 
                 elapsed = (now - baseline[0]).total_seconds() / 3600
                 burn = max(0.0, (baseline[1] - remaining) / elapsed)
     result.update(remaining=remaining, hours_left=hours_left, burn_per_hour=burn)
-    pace_policy = policy.get("pace") or {}
+    pace_policy = policy.get("pace") if isinstance(policy, dict) else None
+    pace_policy = pace_policy if isinstance(pace_policy, dict) else {}
+    thresholds = {}
+    for key, default in (("rich_leftover", 15), ("behind_lt", -10), ("ahead_gt", 15)):
+        value = _pace_number(pace_policy.get(key))
+        thresholds[key] = default if value is None else value
     if burn is not None and remaining is not None and hours_left is not None:
         empties = remaining / burn if burn != 0 else None
         leftover = remaining - burn * hours_left
-        rich_leftover = pace_policy.get("rich_leftover", 15)
+        rich_leftover = thresholds["rich_leftover"]
         state = "low" if empties is not None and empties < hours_left else (
             "rich" if leftover >= rich_leftover else "on_pace")
         result.update(state=state, empties_in_h=empties, leftover=leftover, basis="burn_24h")
     elif burn is None:
         pace = _pace_number(pool.get("monthlyPacePercent" if monthly else "weeklyPacePercent"))
         if pace is not None:
-            state = "low" if pace < pace_policy.get("behind_lt", -10) else (
-                "rich" if pace > pace_policy.get("ahead_gt", 15) else "on_pace")
+            state = "low" if pace < thresholds["behind_lt"] else (
+                "rich" if pace > thresholds["ahead_gt"] else "on_pace")
             result.update(state=state, basis="pace")
     return result
 
@@ -2296,7 +2296,7 @@ def command_learn(args: argparse.Namespace) -> int:
         )
         return EXIT_OK
 
-    table = load_table()
+    table = load_table(apply_default=False)
     existing = table.get("overrides")
     existing = existing if isinstance(existing, list) else []
     fresh = [

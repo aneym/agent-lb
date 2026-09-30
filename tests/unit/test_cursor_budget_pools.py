@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.pools.cli_seats import SeatAccount, SeatAccountsResponse, SeatModelUsage, SeatRun, cursor_budget_pools
+from app.modules.pools.cli_seats import (
+    SeatAccount,
+    SeatAccountsResponse,
+    SeatModelUsage,
+    SeatRun,
+    cursor_budget_pools,
+    read_seat_accounts,
+)
 from app.modules.pools.schemas import PoolSummary
 
 
@@ -57,7 +64,7 @@ def test_budget_fields_are_in_serialization_schema() -> None:
         "budgetUsd",
         "monthlyRemainingPercent",
         "monthlyPacePercent",
-        "burn24HPercent",
+        "burn24hPercent",
         "cycleResetAt",
         "unbudgetedAccounts",
     } <= properties.keys()
@@ -75,7 +82,7 @@ def test_malformed_budget_table_entries_are_skipped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pools_api_skips_corrupt_seat_account(
+async def test_pools_api_keeps_accounts_with_corrupt_usage(
     async_client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     state = tmp_path / "state.json"
@@ -85,6 +92,11 @@ async def test_pools_api_skips_corrupt_seat_account(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "accounts": {
                     "bad": {"vendor": "cursor", "daily": {"2026-09-30": {"grok-4.7-low": {"tokens_in": "abc"}}}},
+                    "bad-run": {
+                        "vendor": "cursor",
+                        "auth_ok": True,
+                        "runs": [{"ts": datetime.now(timezone.utc).isoformat(), "tokens_in": "abc"}],
+                    },
                     "good": {"vendor": "cursor", "auth_ok": True},
                 },
             }
@@ -94,5 +106,11 @@ async def test_pools_api_skips_corrupt_seat_account(
     response = await async_client.get("/api/pools")
     assert response.status_code == 200
     cursor = next(pool for pool in response.json()["pools"] if pool["id"] == "cursor")
-    assert cursor["accounts"] == 1
-    assert cursor["eligibleAccounts"] == 1
+    assert cursor["accounts"] == 3
+    assert cursor["eligibleAccounts"] == 3
+    seats = read_seat_accounts(state)
+    for seat in seats.accounts:
+        assert seat.ready
+        assert seat.daily == {}
+        assert seat.recent_runs == []
+        assert seat.last_day.tokens_in == 0

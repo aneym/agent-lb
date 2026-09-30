@@ -20,6 +20,7 @@ final class MakerScopeTests: XCTestCase {
    {"id":"openai-codex","provider":"openai","kind":"weekly","accounts":5,"eligibleAccounts":4,"status":"ok"},
    {"id":"devin","provider":"devin","kind":"cli_seat","accounts":2,"eligibleAccounts":1,"status":"ok",
     "windowLabel":"month","observedRuns":2},
+   {"id":"cursor","provider":"cursor","kind":"cli_seat","accounts":2,"eligibleAccounts":2,"status":"ok"},
    {"id":"cursor-models","provider":"cursor","kind":"cli_seat_budget","accounts":2,"eligibleAccounts":2,"status":"ok",
     "windowLabel":"month","spentUsd":10.1,"budgetUsd":null,"monthlyRemainingPercent":null,"unbudgetedAccounts":2},
    {"id":"cursor-other","provider":"cursor","kind":"cli_seat_budget","accounts":2,"eligibleAccounts":2,"status":"ok",
@@ -45,6 +46,7 @@ final class MakerScopeTests: XCTestCase {
     XCTAssertTrue(ProviderScope.other.includes(accounts.first { $0.provider == "kimi" }!))
     XCTAssertEqual(ProviderScope.cursor.filter(accounts).count, 0)
 
+    XCTAssertTrue(MakerRows.lines(for: .cursor, seats: [], pools: pools.filter { $0.id == "cursor" }).isEmpty)
     XCTAssertEqual(MakerRows.lines(for: .cursor, seats: seats, pools: pools), [
       "Cursor models: $10.10 spent, no published size",
       "Other models: $6.00 of $70, 91% left",

@@ -506,6 +506,12 @@ def command_set(args: argparse.Namespace) -> int:
 
 
 def record_run(record: dict[str, Any], run: dict[str, Any]) -> None:
+    run = dict(run)
+    for field in ("tokens_in", "tokens_out", "cache_read"):
+        try:
+            run[field] = int(run.get(field) or 0)
+        except (TypeError, ValueError, OverflowError):
+            run[field] = 0
     record["runs"] = ((record.get("runs") or []) + [run])[-RUNS_KEPT:]
     if run.get("model"):
         day = (parse_ts(run.get("ts")) or now()).astimezone(timezone.utc).date().isoformat()
