@@ -70,6 +70,12 @@ MANAGED_AGENTS = (
         Path("agents/opus-seat.md"),
     ),
     (
+        Path(".claude/agents/opus-seat-full.md"),
+        Path(".agent-lb/managed/coding-agents/opus-seat-full"),
+        "agent-lb:opus-seat-full:v1\n",
+        Path("agents/opus-seat-full.md"),
+    ),
+    (
         Path(".claude/agents/cursor-seat.md"),
         Path(".agent-lb/managed/coding-agents/cursor-seat"),
         "agent-lb:cursor-seat:v1\n",

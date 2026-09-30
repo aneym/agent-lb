@@ -296,6 +296,7 @@
     "Explore": {"vendor": "anthropic", "box": null},
     "gpt-implementer": {"vendor": "openai", "box": {"adapter": "codex"}},
     "opus-seat": {"vendor": "anthropic", "box": {"adapter": "claude-code"}},
+    "opus-seat-full": {"vendor": "anthropic", "box": {"adapter": "claude-code"}, "model": "opus-latest", "effort": "medium"},
     "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}},
     "devin-seat": {"vendor": "devin", "box": {"adapter": "devin"}},
     "verifier": {"vendor": "anthropic", "box": null, "needs_test_run": false},

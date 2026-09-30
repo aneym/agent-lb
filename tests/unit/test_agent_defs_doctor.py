@@ -18,6 +18,20 @@ def load_doctor():
     return module
 
 
+def test_opus_seat_has_core_tools_and_full_seat_keeps_every_tool() -> None:
+    doctor = load_doctor()
+    agents = Path(__file__).resolve().parents[2] / "config" / "coding-agents" / "agents"
+    _, seat, _, _ = doctor._parse_frontmatter((agents / "opus-seat.md").read_bytes())
+
+    tools = seat["tools"]
+    assert isinstance(tools, list)
+    assert {"Bash", "Read", "Write", "Edit", "ToolSearch"} <= set(tools)
+    assert "*" not in tools
+
+    _, full_seat, _, _ = doctor._parse_frontmatter((agents / "opus-seat-full.md").read_bytes())
+    assert full_seat["tools"] == "*"
+
+
 def definition(extra: str = "", description: str = "Does work") -> str:
     return f"---\nname: worker\ndescription: {description}\n{extra}---\n# Body\nExact body.\n"
 
