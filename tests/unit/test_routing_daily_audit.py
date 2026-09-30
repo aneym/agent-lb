@@ -1,12 +1,16 @@
 """Daily audit output contracts: counts, revert horizon and evidence-gated moves."""
 import json
+import plistlib
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
+from scripts import install_routing_audit
 from scripts.routing_daily_audit import (
-    dispatch, load_outcomes, proposals, store, summarize, summarize_outcomes, write_outputs,
+    dispatch, load_outcomes, proposals, quota_points, store, summarize, summarize_outcomes, write_outputs,
 )
 
 
@@ -52,6 +56,37 @@ def observations(tmp_path):
     runs = dispatch(log, start, start + timedelta(days=3), errors)
     assert not errors
     return start, runs, verdicts, merges, requests, usage
+
+
+@pytest.mark.parametrize("homebrew_available", [True, False])
+def test_routing_daily_audit_installer_interpreter(tmp_path, monkeypatch, homebrew_available):
+    monkeypatch.setattr(install_routing_audit.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sys, "argv", ["install_routing_audit.py"])
+    monkeypatch.setattr(install_routing_audit.os.path, "isfile", lambda path: homebrew_available)
+    monkeypatch.setattr(install_routing_audit.os, "access", lambda path, mode: homebrew_available)
+    monkeypatch.setattr(install_routing_audit.subprocess, "run",
+                        lambda *args, **kwargs: SimpleNamespace(returncode=1))
+    install_routing_audit.main()
+    payload = plistlib.loads((tmp_path / "Library/LaunchAgents/com.agentlb.routing-audit.plist").read_bytes())
+    interpreter = payload["ProgramArguments"][0]
+    assert interpreter != "/usr/bin/python3"
+    assert interpreter == ("/opt/homebrew/bin/python3" if homebrew_available
+                           else str(install_routing_audit.Path(sys.executable).resolve()))
+
+
+def test_routing_daily_audit_skips_unparseable_timestamps(observations):
+    start, runs, verdicts, merges, requests, usage = observations
+    expected = summarize(runs, verdicts, merges, [], requests, usage, start, start + timedelta(days=1))
+    requests.append(requests[0] | dict(requested_at="not-a-timestamp"))
+    usage.insert(1, usage[0] | dict(recorded_at="not-a-timestamp", used_percent=99))
+    errors = []
+    points = quota_points(requests, usage, start, errors)
+    assert points[("10", "sol-medium")]["openai"] == 2
+    assert errors == ["requests: 1 unparseable timestamps", "usage: 1 unparseable timestamps"]
+    errors = []
+    assert summarize(runs, verdicts, merges, [], requests, usage, start,
+                     start + timedelta(days=1), errors) == expected
+    assert errors == ["requests: 1 unparseable timestamps", "usage: 1 unparseable timestamps"]
 
 
 def test_routing_daily_audit_counts_and_published_report(observations, tmp_path):

@@ -114,7 +114,7 @@ def store(path, since, until, errors):
                     for row in copy.execute("SELECT " + ",".join(selected) + " FROM request_logs"):
                         item = dict(row)
                         stamp = date(item["requested_at"])
-                        if stamp and since <= stamp < until:
+                        if stamp is None or since <= stamp < until:
                             requests.append(item)
                     for row in copy.execute(
                         "SELECT account_id,provider,window,recorded_at,used_percent,reset_at FROM usage_history "
@@ -122,7 +122,7 @@ def store(path, since, until, errors):
                     ):
                         item = dict(row)
                         stamp = date(item["recorded_at"])
-                        if stamp and stamp < until:
+                        if stamp is None or stamp < until:
                             usage.append(item)
     except (OSError, sqlite3.Error) as exc:
         errors.append(f"store: {type(exc).__name__}")
@@ -156,8 +156,18 @@ def store(path, since, until, errors):
     return requests, usage
 
 
-def quota_points(requests, usage, since):
+def timestamp_rows(rows, field, name, errors=None):
+    valid = [row for row in rows if date(row.get(field)) is not None]
+    skipped = len(rows) - len(valid)
+    if skipped and errors is not None:
+        errors.append(f"{name}: {skipped} unparseable timestamps")
+    return valid
+
+
+def quota_points(requests, usage, since, errors=None):
     """Positive same-reset weekly deltas, token-weighted across matching requests."""
+    requests = timestamp_rows(requests, "requested_at", "requests", errors)
+    usage = timestamp_rows(usage, "recorded_at", "usage", errors)
     points, previous = defaultdict(lambda: defaultdict(float)), {}
     accounts = defaultdict(list)
     for request in requests:
@@ -469,7 +479,9 @@ def fold_acceptance(home, runs, errors):
     return len(matched)
 
 
-def summarize(runs, verdicts, merged, reverts, requests, usage, since, until):
+def summarize(runs, verdicts, merged, reverts, requests, usage, since, until, errors=None):
+    requests = timestamp_rows(requests, "requested_at", "requests", errors)
+    usage = timestamp_rows(usage, "recorded_at", "usage", errors)
     selected = [r for r in runs if since <= date(r["ts"]) < until]
     points = quota_points(requests, usage, since)
     groups = {}
@@ -745,6 +757,8 @@ def main():
         pr = next((p for p in merges if branch and p.get("headRefName") == branch), None)
         if pr:
             run["pr"] = pr["number"]
+    requests = timestamp_rows(requests, "requested_at", "requests", errors)
+    usage = timestamp_rows(usage, "recorded_at", "usage", errors)
     rows = summarize(runs, verdicts, merges, reverts, requests, usage, since, until)
     week = summarize(runs, verdicts, merges, reverts, requests, usage, rolling, until)
     outcomes_source, outcome_records = load_outcomes(

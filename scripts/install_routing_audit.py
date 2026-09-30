@@ -7,6 +7,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 LABEL = "com.agentlb.routing-audit"
@@ -34,9 +35,12 @@ def main():
     target.chmod(0o755)
     # launchd calendars use local time. Wake at :05 each hour and guard in UTC so
     # the daily 11:05Z run stays correct across timezone and DST changes.
+    homebrew = "/opt/homebrew/bin/python3"
+    interpreter = (homebrew if os.path.isfile(homebrew) and os.access(homebrew, os.X_OK)
+                   else str(Path(sys.executable).resolve()))
     payload = {
         "Label": LABEL,
-        "ProgramArguments": ["/usr/bin/python3", str(target), "--scheduled", "--post"],
+        "ProgramArguments": [interpreter, str(target), "--scheduled", "--post"],
         "StartCalendarInterval": {"Minute": 5},
         "EnvironmentVariables": {"PATH": f"{home}/.local/bin:{home}/.agent-lb/bin:/opt/homebrew/bin:/usr/bin:/bin"},
         "StandardOutPath": str(home / ".agent-lb/routing-audit.out.log"),
