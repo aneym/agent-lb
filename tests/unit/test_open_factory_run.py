@@ -69,6 +69,10 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     assert receipt["ran"] == {"seat": "sonnet-implementer", "model": "claude-sonnet-5-5"}
     assert receipt["standing_in"] is True
     assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("gpt-implementer", "limit"), ("sonnet-implementer", "ok")]
+    assert all(set(attempt) == {"seat", "model", "pool", "maker", "outcome", "exit", "wall_s"}
+               for attempt in receipt["attempts"])
+    assert [(attempt["pool"], attempt["maker"]) for attempt in receipt["attempts"]] == [
+        ("openai-codex", "openai"), ("anthropic-general", "anthropic")]
     assert "renamed" in Path(receipt["out"]).read_text()
 
     calls = rows(env, "CALLS")
@@ -87,6 +91,7 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     # --intended puts a job on the model it belongs on when the class menu has it: Grok through the seat CLI.
     grok = json.loads(of(env, "run", "mechanical", "--intended", "grok-latest", "--json", "--", "Rename y to z").stdout)
     assert grok["ran"] == {"seat": "cursor-seat", "model": "grok-4.7-medium-fast"} and grok["standing_in"] is False
+    assert grok["attempts"][0]["maker"] == "xai"
     seat = rows(env, "CALLS")[-1]["argv"]
     assert seat[1:6] == ["run", "--vendor", "cursor", "--model", "grok-4.7-medium-fast"] and "--mode" not in seat
 

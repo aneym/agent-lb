@@ -13,6 +13,9 @@ LOCAL_BIN = Path.home() / ".local" / "bin"
 
 def resolve_bin(name: str) -> str | None:
     """Prefer this checkout's clients, then ~/.local/bin, then PATH (never zsh function wrappers)."""
+    override = os.environ.get("OF_BIN_" + name.upper().replace("-", "_"))
+    if override:
+        return override
     repo = REPO_CLIENTS / name
     if repo.is_file() and os.access(repo, os.X_OK):
         return str(repo)

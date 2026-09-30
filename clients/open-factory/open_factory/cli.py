@@ -11,11 +11,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from . import aa
+from . import aa, run
 from .common import PKG, resolve_bin, utc_now
 from .decide import DECIDERS, decide, ledger_path, load_policy, read_decisions, run_route
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 TEMPLATES = PKG / "templates"
 FACTORY_DIRNAME = ".open-factory"
@@ -149,11 +149,24 @@ def cmd_seats(args: argparse.Namespace) -> int:
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str]] = []
-    for name in (CLAUDE_LAUNCHER, "route", "jev"):
+    for name in (CLAUDE_LAUNCHER, "route", "jev", "seat", "codex"):
         path = resolve_bin(name)
         checks.append((name, bool(path), path or "not found"))
     code, _ = http_json(f"{AGENT_LB_URL}/health")
     checks.append(("agent-lb", code == 200, f"{AGENT_LB_URL}/health -> {code or 'down'}"))
+    code, standins = http_json(f"{AGENT_LB_URL}/api/pools/stand-ins")
+    active = standins.get("stand_ins", standins.get("standIns", [])) if isinstance(standins, dict) else standins
+    checks.append(
+        (
+            "stand-ins",
+            code in {200, 404},
+            "not deployed"
+            if code == 404
+            else f"{len(active) if isinstance(active, (list, dict)) else 0} active"
+            if code == 200
+            else f"HTTP {code or 'down'}",
+        )
+    )
     code, menu, err = run_route("menu", "--json")
     if isinstance(menu, dict):
         runnable = sorted({seat["id"] for entry in menu["classes"].values() for seat in entry.get("seats", [])})
@@ -200,6 +213,27 @@ def cmd_route(args: argparse.Namespace) -> int:
     print(f"pool      {receipt['pool'] or '-'}")
     print(f"decision  {how}; {receipt['total_ms']} ms; id {receipt['decision_id']}")
     return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    if bool(args.brief_file) == bool(args.brief):
+        raise SystemExit("open-factory run: supply a brief after -- or --brief-file, not both")
+    cwd = Path(args.cwd).expanduser().resolve()
+    if not cwd.is_dir() or args.timeout <= 0:
+        raise SystemExit("open-factory run: cwd must be a directory and timeout must be positive")
+    brief = Path(args.brief_file).expanduser().read_text() if args.brief_file else " ".join(args.brief)
+    receipt = run.run(
+        brief, args.task_class, intended=args.intended, author_vendor=args.author_vendor, cwd=cwd, timeout=args.timeout
+    )
+    if args.json:
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+    else:
+        print(f"decision  {receipt['decision_id']}")
+        print(f"ran       {receipt['ran'] or 'none'}")
+        print(f"output    {receipt['out'] or '-'}")
+        if receipt["reason"]:
+            print(f"reason    {receipt['reason']}")
+    return receipt["exit"]
 
 
 def menu_text(menu: dict[str, Any]) -> str:
@@ -378,6 +412,17 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--context", default=None, help="extra state for the decider")
     r.add_argument("--json", action="store_true")
     r.set_defaults(func=cmd_route)
+
+    job = sub.add_parser("run", help="Run one brief on a routed seat, with automatic stand-ins")
+    job.add_argument("task_class", choices=WORK_CLASSES)
+    job.add_argument("--intended", default=None)
+    job.add_argument("--author-vendor", default=None)
+    job.add_argument("--cwd", default=str(Path.cwd()))
+    job.add_argument("--timeout", type=float, default=600)
+    job.add_argument("--brief-file", default=None)
+    job.add_argument("--json", action="store_true")
+    job.add_argument("brief", nargs="*")
+    job.set_defaults(func=cmd_run)
 
     start = sub.add_parser("start", help="Launch the Opus orchestrator (cc) for this project")
     start.add_argument("--path", default=None)
