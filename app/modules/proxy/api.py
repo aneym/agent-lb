@@ -800,6 +800,18 @@ async def v1_messages(
             alias_effort=alias_effort,
             locked_model=locked_model,
         )
+    from app.modules.proxy import stand_in
+
+    intended_model = payload.model
+    intent = request.headers.get("x-agent-lb-intent")
+    main_thread = "x-claude-code-agent-id" not in request.headers
+    eligible = (
+        main_thread
+        and bool(intent)
+        and bool(re.match(r"^claude-(?:opus|sonnet)(?:-|$)", intended_model))
+        and stand_in.stand_in_model(intent) is not None
+    )
+    session_id = _anthropic_request_session_id(payload, request.headers)
     resolved_request = await context.service.resolve_message_request(payload)
     payload = resolved_request.payload
     validate_model_access(api_key, payload.model)
@@ -822,6 +834,40 @@ async def v1_messages(
     except ProxyAuthError as exc:
         return _anthropic_error_response(401, "authentication_error", str(exc))
 
+    async def failure_response(exc: AnthropicProxyError) -> Response:
+        await _release_reservation(reservation)
+        alias = stand_in.stand_in_model(intent) if eligible else None
+        resolved = resolve_ccgpt_model(alias)
+        if resolved is None or not (
+            exc.status_code == 429 or exc.status_code >= 500 or exc.code.startswith("no_available_")
+        ):
+            return _anthropic_proxy_error_response(exc)
+        locked_model, alias_effort = resolved
+        response = await _ccgpt_messages_response(
+            request,
+            payload,
+            get_proxy_context(request),
+            api_key,
+            locked_model=locked_model,
+            alias_effort=alias_effort,
+        )
+        if response.status_code < 400 and session_id:
+            try:
+                stand_in.record_failure(
+                    session_id,
+                    lane=request.headers.get("x-agent-lb-lane"),
+                    intent=intent or "",
+                    intended=intended_model,
+                    running=locked_model,
+                    effort=alias_effort,
+                    reason=f"{exc.code}: {exc.message}",
+                    retry_at=exc.retry_at,
+                )
+            except Exception:
+                logger.warning("Unable to record stand-in failure")
+        response.headers["x-agent-lb-standing-in"] = f"{locked_model} for {intended_model}"
+        return response
+
     try:
         stream = await context.service.stream_messages(
             payload,
@@ -830,21 +876,47 @@ async def v1_messages(
             api_key_reservation=reservation,
         )
     except AnthropicProxyError as exc:
-        await _release_reservation(reservation)
-        return _anthropic_proxy_error_response(exc)
+        return await failure_response(exc)
 
     if not payload.stream:
         try:
             body = await _collect_anthropic_body(stream.body)
         except AnthropicProxyError as exc:
-            await _release_reservation(reservation)
-            return _anthropic_proxy_error_response(exc)
+            return await failure_response(exc)
+        if eligible and session_id:
+            try:
+                stand_in.record_success(session_id)
+            except Exception:
+                logger.warning("Unable to record stand-in return")
         return Response(content=body, media_type=stream.media_type)
+
+    stream_body = stream.body
+    if eligible:
+        iterator = stream.body.__aiter__()
+        try:
+            first_chunk = await anext(iterator)
+        except StopAsyncIteration:
+            first_chunk = None
+        except AnthropicProxyError as exc:
+            return await failure_response(exc)
+
+        async def prefetched_body() -> AsyncIterator[bytes]:
+            if first_chunk is not None:
+                yield first_chunk
+            async for chunk in iterator:
+                yield chunk
+
+        stream_body = prefetched_body()
+        if first_chunk is not None and session_id:
+            try:
+                stand_in.record_success(session_id)
+            except Exception:
+                logger.warning("Unable to record stand-in return")
 
     return StreamingResponse(
         inject_sse_keepalives(
             _anthropic_stream_error_guard(
-                stream.body,
+                stream_body,
                 streaming=bool(payload.stream),
                 api_key_reservation=reservation,
             ),

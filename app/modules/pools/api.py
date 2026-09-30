@@ -7,6 +7,7 @@ from app.dependencies import AccountsContext, get_accounts_context
 from app.modules.pools.cli_seats import SeatAccountsResponse, read_seat_accounts
 from app.modules.pools.schemas import PoolsResponse
 from app.modules.pools.service import PoolsService
+from app.modules.proxy.stand_in import snapshot
 
 router = APIRouter(
     prefix="/api/pools",
@@ -26,3 +27,8 @@ async def list_pools(
 async def list_seat_accounts() -> SeatAccountsResponse:
     """Cursor and Devin accounts as the `seat` CLI last saw them: auth, cooldowns, observed usage."""
     return read_seat_accounts()
+
+
+@router.get("/stand-ins")
+async def list_stand_ins() -> dict:
+    return snapshot()

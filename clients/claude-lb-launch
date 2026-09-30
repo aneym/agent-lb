@@ -71,8 +71,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
+
+
+def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
+    return {
+        header: environ[name]
+        for name, header in (("AGENT_LB_INTENT", "x-agent-lb-intent"), ("AGENT_LB_LANE", "x-agent-lb-lane"))
+        if environ.get(name)
+    }
+
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
 CCGPT_MODE = os.environ.get("CLAUDE_LB_CODEX_MODE") == "1"
@@ -429,6 +439,8 @@ class _LbApiHandler(http.server.BaseHTTPRequestHandler):
         }
         if routes_to_lb and session_id:
             headers["x-claude-session-id"] = session_id
+            if not shared:
+                headers.update(getattr(self.server, "tag_headers", {}))
 
         if not routes_to_lb:
             self._forward_direct(body, headers)
@@ -849,6 +861,7 @@ def run_lb_proxy(
     server.session_id = session_id
     server.parent_pid = parent_pid
     server.shared = shared
+    server.tag_headers = tag_headers(os.environ) if not shared else {}
     server.ccgpt_mode = CCGPT_MODE and not shared
     server.upstream_base_url = upstream_base_url.rstrip("/")
     server.activity = _LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
@@ -2325,6 +2338,9 @@ def main() -> None:
     if not routed:
         bypass_anthropic_proxy()
 
+    # The shim has captured these tags; nested launchers must choose their own intent.
+    os.environ.pop("AGENT_LB_INTENT", None)
+    os.environ.pop("AGENT_LB_LANE", None)
     command = build_command(argv)
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
