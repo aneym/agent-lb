@@ -71,7 +71,7 @@ def test_launch_rollout_dry_run(tmp_path, stage, tab, kind, extra, args, intent,
         [sys.executable, str(LAUNCHER), *args], env=env, capture_output=True, text=True, timeout=5,
     )
     assert completed.returncode == 0, completed.stderr
-    assert f"agent-lb tags: intent={intent} lane={lane} reason={reason}" in completed.stdout
+    assert f"agent-lb tags: intent={intent} lane={lane} reason={reason}" in completed.stderr
     assert completed.stdout.splitlines()[0].startswith("claude ")
 
 
@@ -94,7 +94,7 @@ def test_launch_reads_fallback_or_configured_table(tmp_path, configured):
         managed.write_text("{")
     completed = subprocess.run([sys.executable, str(LAUNCHER)], env=env, capture_output=True, text=True, timeout=5)
     assert completed.returncode == 0, completed.stderr
-    assert "intent=lane-tab lane=w5H:tC8 reason=all" in completed.stdout
+    assert "intent=lane-tab lane=w5H:tC8 reason=all" in completed.stderr
 
 
 @pytest.mark.parametrize("failure", ["home", "timeout"])
@@ -130,8 +130,8 @@ def test_launch_lookup_failure_proceeds_untagged(monkeypatch, capsys, failure):
         monkeypatch.setattr(launcher.threading, "Thread", StalledReader)
         reason = "policy lookup timed out"
     launcher.main()
-    output = capsys.readouterr().out
-    assert output.startswith("claude ")
-    assert f"intent=none lane=none reason={reason}" in output
+    output = capsys.readouterr()
+    assert output.out.startswith("claude ")
+    assert f"intent=none lane=none reason={reason}" in output.err
     assert "AGENT_LB_INTENT" not in os.environ
     assert "AGENT_LB_LANE" not in os.environ

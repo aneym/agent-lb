@@ -804,9 +804,13 @@ async def v1_messages(
 
     intended_model = payload.model
     intent = request.headers.get("x-agent-lb-intent")
+    review_lane = stand_in.is_review_lane(request.headers.get("x-agent-lb-lane"))
+    if intent and review_lane:
+        logger.info("stand_in_refused_review_lane")
     main_thread = "x-claude-code-agent-id" not in request.headers
     eligible = (
         main_thread
+        and not review_lane
         and bool(intent)
         and bool(re.match(r"^claude-(?:opus|sonnet)(?:-|$)", intended_model))
         and stand_in.stand_in_model(intent) is not None

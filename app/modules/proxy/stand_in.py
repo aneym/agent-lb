@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +15,10 @@ from app.modules.routing_policy.service import _live_paths
 logger = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _DEFAULT_MODELS = {"orchestrator": "sol-latest-high", "lane-tab": "sol-latest-high"}
+
+
+def is_review_lane(lane: str | None) -> bool:
+    return bool(lane and re.search(r"review|verif|audit", lane, re.IGNORECASE))
 
 
 def stand_in_model(intent: str | None) -> str | None:

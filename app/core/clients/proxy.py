@@ -85,6 +85,8 @@ IGNORE_INBOUND_HEADERS = {
     "x-real-ip",
     "true-client-ip",
     "x-agent-lb-machine",
+    "x-agent-lb-intent",
+    "x-agent-lb-lane",
 }
 
 _ERROR_TYPE_CODE_MAP = {

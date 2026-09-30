@@ -113,13 +113,17 @@ def resolve_lane_tags(argv: list[str]) -> str:
             table = Path(configured).expanduser() if configured else managed if managed.is_file() else fallback
             rollout = json.loads(table.read_text()).get("policy", {}).get("stand_in_rollout", {})
             stage = rollout.get("stage", "off")
-            if stage not in {"canary", "all"}:
+            if stage not in {"canary", "half", "all"}:
                 result.append(("", "", "rollout off"))
                 return
             try:
                 kind = json.loads(registry.read_text())
             except FileNotFoundError:
                 kind = {}
+            review_lane = any(
+                re.search(r"review|verif|audit", str(value), re.IGNORECASE)
+                for value in (kind.get("lane", ""), kind.get("title", ""), os.environ.get("HERDR_TAB_TITLE", ""))
+            ) or str(kind.get("kind", "")).lower() == "review"
             lane = kind.get("lane") or tab
             if not isinstance(lane, str) or re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", lane) is None:
                 lane = tab
@@ -127,9 +131,14 @@ def resolve_lane_tags(argv: list[str]) -> str:
             tabs, lanes = rollout.get("tabs", []), rollout.get("lanes", [])
             if not isinstance(tabs, list) or not isinstance(lanes, list) or not isinstance(lane, str):
                 raise ValueError("invalid rollout or registry")
-            if registry_kind in {"ephemeral", "background"}:
+            if review_lane:
+                result.append(("", "", "review lane"))
+            elif registry_kind in {"ephemeral", "background"}:
                 result.append(("", "", "excluded registry kind"))
-            elif stage == "all" or tab in tabs or kind.get("lane") in lanes:
+            elif (
+                stage == "all" or tab in tabs or kind.get("lane") in lanes
+                or (stage == "half" and int(hashlib.sha256(tab.encode()).hexdigest(), 16) % 2 == 0)
+            ):
                 result.append(("orchestrator" if registry_kind == "orchestrator" else "lane-tab", lane, stage))
             else:
                 result.append(("", "", "outside canary"))
@@ -158,6 +167,14 @@ def resolve_lane_tags(argv: list[str]) -> str:
                 os.environ[name] = value
         return "tag assignment failed"
     return reason
+
+
+def stand_in_banner() -> str:
+    intent = os.environ.get("AGENT_LB_INTENT")
+    if not intent:
+        return "stand-in: off"
+    lane = os.environ.get("AGENT_LB_LANE") or os.environ.get("HERDR_TAB_ID")
+    return f"stand-in: {intent}" + (f" ({lane})" if lane else "")
 
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
@@ -1746,7 +1763,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     if claim is DEFERRED_CLAIM:
         print(
             f"cc: {_c('Claude LB', '1;36')} · {model_label}/{quota_label} · LB busy, sticky account "
-            f"selected on first message {_c(endpoint_note, '2')}",
+            f"selected on first message {_c(endpoint_note, '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1761,7 +1778,8 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(
             f"cc: {_c('Claude LB', '1;36')} → {_c(account_label, '1')} · {model_label}/{quota_label} · "
-            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')}",
+            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} "
+            f"{_c(endpoint_note, '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1776,7 +1794,8 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
         account_label = claim.get("alias") or claim.get("email") or selected_account_id[:8]
         print(
             f"cc: {_c('Claude LB', '1;36')} → {_c(account_label, '1')} · {model_label}/{quota_label} · "
-            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')}",
+            f"proxy-claimed session route {_c('· OAuth/Max · sticky+failover', '2')} "
+            f"{_c(endpoint_note, '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1794,7 +1813,7 @@ def print_lb_banner(argv: list[str], session_id: str) -> bool:
     _, _, _, _, _, reason = account_pressure(selected, quota_key)
     print(
         f"cc: {_c('Claude LB', '1;36')} → {_c(short_account_name(selected), '1')} · {model_label} · "
-        f"{reason} {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')}",
+        f"{reason} {_c('· OAuth/Max · sticky+failover', '2')} {_c(endpoint_note, '2')} · {stand_in_banner()}",
         file=sys.stderr,
     )
     return True
@@ -1842,7 +1861,7 @@ def prepare_interactive_endpoint() -> bool:
         note = " · LB busy, routing anyway" if state == "busy" else ""
         print(
             f"cc: {_c('Claude LB', '1;36')} · sticky account selected on first message "
-            f"{_c(f'via {endpoint}{suffix}{note}', '2')}",
+            f"{_c(f'via {endpoint}{suffix}{note}', '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -1869,7 +1888,7 @@ def prepare_ccgpt_endpoint() -> bool:
         print(
             f"ccgpt: {_c('Claude Code + Codex', '1;36')} · {CCGPT_MODEL}/high · "
             f"{'bypass perms' if not _has_permission_option(sys.argv[1:]) else 'custom perms'} · "
-            f"requested priority {_c(f'via {endpoint}{suffix}', '2')}",
+            f"requested priority {_c(f'via {endpoint}{suffix}', '2')} · {stand_in_banner()}",
             file=sys.stderr,
         )
         return True
@@ -2424,7 +2443,8 @@ def main() -> None:
         print(" ".join(command))
         print(
             f"agent-lb tags: intent={resolved_tags.get('x-agent-lb-intent', 'none')} "
-            f"lane={resolved_tags.get('x-agent-lb-lane', 'none')} reason={tag_reason}"
+            f"lane={resolved_tags.get('x-agent-lb-lane', 'none')} reason={tag_reason}",
+            file=sys.stderr,
         )
         return
     if routed and not CCGPT_MODE and headless_invocation(argv):
