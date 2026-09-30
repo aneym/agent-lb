@@ -631,6 +631,43 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS) -> tuple[dict[str, Any
     return None, f"/api/pools unavailable ({reason}); /api/accounts unavailable ({accounts.error})"
 
 
+def fetch_stand_ins(timeout: float = 2.0) -> dict:
+    """Older or unavailable services do not prevent a pick."""
+    empty = {"active": [], "recent": []}
+    try:
+        response = http_get("/api/pools/stand-ins", timeout=timeout)
+        body = response.body
+        if not response.json_ok or not isinstance(body, dict):
+            return empty
+        if any(
+            not isinstance(body.get(key), list) or any(not isinstance(row, dict) for row in body[key])
+            for key in ("active", "recent")
+        ):
+            return empty
+        return body
+    except Exception:
+        return empty
+
+
+def _print_stand_in(record: dict[str, Any]) -> None:
+    print(
+        f"standing in: {record.get('lane') or record.get('session_id')} "
+        f"on {record.get('running')} for {record.get('intended')} since {record.get('since')}, "
+        f"back ~{record.get('expected_return') or 'unknown'}"
+    )
+
+
+def command_stand_ins(args: argparse.Namespace) -> int:
+    document = fetch_stand_ins()
+    if args.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        for record in document["active"]:
+            _print_stand_in(record)
+        print(f"recent: {len(document['recent'])} returned")
+    return EXIT_OK
+
+
 def pools_by_id(document: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not isinstance(document, dict):
         return {}
@@ -1579,6 +1616,8 @@ def command_menu(args: argparse.Namespace) -> int:
 
 
 def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
+    fields = ("session_id", "lane", "intended", "running", "since", "expected_return")
+    result["standing_in"] = [{key: record.get(key) for key in fields} for record in fetch_stand_ins()["active"]]
     if as_json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
@@ -1602,6 +1641,8 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         shown = auditor.get("model") or f"unresolved {auditor.get('alias')}: {auditor.get('reason')}"
         via = f" via {auditor['via']}" if auditor.get("via") else ""
         print(f"audit     {auditor.get('seat')}/{shown}{via} audits this seat's closeout before acceptance")
+    for record in result["standing_in"]:
+        _print_stand_in(record)
 
 
 # --- doctor ------------------------------------------------------------------
@@ -2296,6 +2337,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pools = sub.add_parser("pools", help="pool headroom from the LB")
     pools.add_argument("--json", action="store_true")
     pools.set_defaults(handler=command_pools)
+
+    stand_ins = sub.add_parser("stand-ins", help="sessions standing in and recent returns")
+    stand_ins.add_argument("--json", action="store_true")
+    stand_ins.set_defaults(handler=command_stand_ins)
 
     pick = sub.add_parser("pick", help="first routable seat for a class")
     pick.add_argument("task_class", metavar="class")
