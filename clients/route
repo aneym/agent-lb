@@ -1590,6 +1590,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     entries = apply_overrides(ladder_entries(table, class_name, author) or [],
                               table.get("overrides"), class_name)
     policy = table.get("policy") or {}
+    guarded_pools = (policy.get("pace") or {}).get("guarded_pools")
     pace = {pool: pace_state(pools.get(pool, {}), history, policy, now)
             for entry in entries if (pool := rung_pool(table, entry, pools))}
     for pool in pace:
@@ -1672,7 +1673,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             row.update(status="skipped", reason=reason)
         else:
             reasons = []
-            if state == "low":
+            if state == "low" and (guarded_pools is None or pool in guarded_pools):
                 facts = pace[pool]
                 empties, reset = facts.get("empties_in_h"), facts.get("hours_left")
                 reasons.append(f"running low: empties in {empties:.3g} h, resets in {reset:.3g} h"
@@ -2705,7 +2706,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     pick = sub.add_parser("pick", help="first routable seat for a class")
     pick.add_argument("task_class", metavar="class")
-    pick.add_argument("--author-vendor", default=None, help="required for cross_vendor classes")
+    pick.add_argument("--author-vendor", "--author-maker", dest="author_vendor", default=None,
+                      help="required for cross_vendor classes")
     pick.add_argument("--skip", action="append", default=[], help="skip a ladder rung id")
     pick.add_argument("--json", action="store_true")
     pick.set_defaults(handler=command_pick)

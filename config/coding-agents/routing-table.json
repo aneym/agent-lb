@@ -8,69 +8,57 @@
       "baseline": {},
       "interim": {
         "implement": [
-      {
-        "id": "sol-medium",
-        "seat": "gpt-implementer",
-        "model": "sol-latest",
-        "effort": "medium",
-        "maker": "openai"
-      },
-      {
-        "id": "grok-medium",
-        "seat": "cursor-seat",
-        "model": "grok-latest",
-        "effort": "medium",
-        "maker": "xai",
-        "pool": "cursor-models",
-        "gate": {
-          "open": false,
-          "until": "E16: Grok 4.7 medium within 10% of Sol medium"
-        }
-      },
-      {
-        "id": "composer",
-        "seat": "cursor-seat",
-        "model": "composer-latest",
-        "effort": null,
-        "maker": "cursor",
-        "pool": "cursor-models",
-        "gate": {
-          "open": false,
-          "until": "E16: Composer 2.5 within 10% of Sol medium"
-        }
-      },
-      {
-        "id": "swe2-high",
-        "seat": "devin-seat",
-        "model": "swe-latest",
-        "effort": "high",
-        "maker": "cognition",
-        "pool": "devin",
-        "gate": {
-          "open": false,
-          "until": "E16: SWE-2 high within 10% of Sol medium"
-        }
-      },
-      {
-        "id": "sonnet-standin",
-        "seat": "sonnet-implementer",
-        "model": "sonnet-latest",
-        "effort": "high",
-        "maker": "anthropic",
-        "pool": "anthropic-general",
-        "reserve_hard": true,
-        "stand_in_only": true
-      }
-    ],
-    "mechanical": [
           {
-            "id": "sol-low-rich",
+            "id": "grok-low",
+            "seat": "cursor-seat",
+            "model": "grok-latest-low",
+            "effort": "low",
+            "maker": "xai",
+            "pool": "cursor-models"
+          },
+          {
+            "id": "sol-medium",
             "seat": "gpt-implementer",
             "model": "sol-latest",
-            "effort": "low",
-            "maker": "openai",
-            "when": "rich"
+            "effort": "medium",
+            "maker": "openai"
           },
+          {
+            "id": "composer",
+            "seat": "cursor-seat",
+            "model": "composer-latest",
+            "effort": null,
+            "maker": "cursor",
+            "pool": "cursor-models",
+            "gate": {
+              "open": true,
+              "until": "fallback (routing-next approved 2026-09-30)"
+            }
+          },
+          {
+            "id": "swe2-high",
+            "seat": "devin-seat",
+            "model": "swe-latest",
+            "effort": "high",
+            "maker": "cognition",
+            "pool": "devin",
+            "gate": {
+              "open": true,
+              "until": "fallback (routing-next approved 2026-09-30)"
+            }
+          },
+          {
+            "id": "sonnet-standin",
+            "seat": "sonnet-implementer",
+            "model": "sonnet-latest",
+            "effort": "high",
+            "maker": "anthropic",
+            "pool": "anthropic-general",
+            "reserve_hard": true,
+            "stand_in_only": true
+          }
+        ],
+        "mechanical": [
           {
             "id": "composer",
             "seat": "cursor-seat",
@@ -112,28 +100,34 @@
             "maker": "openai"
           },
           {
-            "id": "grok-low",
+            "id": "composer",
             "seat": "cursor-seat",
-            "model": "grok-latest-low",
-            "effort": "low",
-            "maker": "xai",
+            "model": "composer-latest",
+            "effort": null,
+            "maker": "cursor",
             "pool": "cursor-models",
-            "gate": {
-              "open": false,
-              "until": "a lane eval of Grok low as explorer (T3)"
-            }
+            "read_only": true
           },
-      {
-        "id": "sonnet-explore-standin",
-        "seat": "Explore",
-        "model": "sonnet-latest",
-        "effort": "medium",
-        "maker": "anthropic",
-        "pool": "anthropic-general",
-        "reserve_hard": true,
-        "stand_in_only": true
-      }
-    ],
+          {
+            "id": "swe2-medium",
+            "seat": "devin-seat",
+            "model": "swe-latest-medium",
+            "effort": "medium",
+            "maker": "cognition",
+            "pool": "devin",
+            "read_only": true
+          },
+          {
+            "id": "sonnet-explore-standin",
+            "seat": "Explore",
+            "model": "sonnet-latest",
+            "effort": "medium",
+            "maker": "anthropic",
+            "pool": "anthropic-general",
+            "reserve_hard": true,
+            "stand_in_only": true
+          }
+        ],
     "verify": {
           "by_author_maker": {
             "openai": [
@@ -572,6 +566,7 @@
       }
     },
     "pace": {
+      "guarded_pools": ["anthropic-general", "anthropic-fable"],
       "ahead_gt": 15,
       "behind_lt": -10,
       "cycle_hours": 168

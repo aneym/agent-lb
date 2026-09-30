@@ -49,10 +49,10 @@ def test_ladder_pick_preserves_standing_in(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("task,seat,rung", [
-    ("implement", "sonnet-implementer", "sonnet-standin"),
-    ("explore", "Explore", "sonnet-explore-standin"),
+    ("implement", "cursor-seat", "grok-low"),
+    ("explore", "cursor-seat", "composer"),
 ])
-def test_unresolvable_primary_uses_claude_standin(tmp_path: Path, task: str, seat: str, rung: str) -> None:
+def test_unresolvable_sol_uses_cursor_worker(tmp_path: Path, task: str, seat: str, rung: str) -> None:
     env = setup(tmp_path)
     (Path(env["ROUTE_FIXTURE_DIR"]) / "api_models.json").write_text(json.dumps({"models": [{"id": "gpt-6-luna"}]}))
     selected = pick(env, CANONICAL_TABLE, task)

@@ -66,19 +66,19 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     assert done.returncode == 0, done.stderr
     receipt = json.loads(done.stdout)
     assert receipt["intended"] == {"seat": "gpt-implementer", "model": "gpt-6.1-sol"}
-    assert receipt["ran"] == {"seat": "sonnet-implementer", "model": "claude-sonnet-5-5"}
+    assert receipt["ran"] == {"seat": "cursor-seat", "model": "composer-2.5"}
     assert receipt["standing_in"] is True
-    assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("gpt-implementer", "limit"), ("sonnet-implementer", "ok")]
+    assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("gpt-implementer", "limit"), ("cursor-seat", "ok")]
     assert all(set(attempt) == {"seat", "model", "pool", "maker", "outcome", "exit", "wall_s"}
                for attempt in receipt["attempts"])
     assert [(attempt["pool"], attempt["maker"]) for attempt in receipt["attempts"]] == [
-        ("openai-codex", "openai"), ("anthropic-general", "anthropic")]
+        ("openai-codex", "openai"), ("cursor", "cursor")]
     assert "renamed" in Path(receipt["out"]).read_text()
 
     calls = rows(env, "CALLS")
-    codex, claude = calls[0], calls[1]
+    codex, cursor = calls[0], calls[1]
     assert codex["argv"][1:4] == ["exec", "-m", "gpt-6.1-sol"] and codex["argv"][-1] == "Rename helper x to y in a.py"
-    assert claude["argv"][1:4] == ["-p", "--model", "claude-sonnet-5-5"] and claude["intent"] == "implement"
+    assert cursor["argv"][1:6] == ["run", "--vendor", "cursor", "--model", "composer-2.5"] and cursor["intent"] == "implement"
 
     ledger = rows(env, "ROUTE_LEDGER")
     decision = [r for r in ledger if r["event"] == "of_decision"]
@@ -97,9 +97,9 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     assert seat[1:6] == ["run", "--vendor", "cursor", "--model", "composer-2.5"] and "--mode" not in seat
 
     # An intended model the class menu lacks is recorded as intended, and route decides where the job runs.
-    look = json.loads(of(env, "run", "explore", "--intended", "composer-2.5", "--json", "--", "Where is z?").stdout)
-    assert look["intended"] == {"seat": None, "model": "composer-2.5"} and look["standing_in"] is True
-    assert look["reason"] == "intended composer-2.5 is not on the explore menu"
+    look = json.loads(of(env, "run", "explore", "--intended", "unavailable-model", "--json", "--", "Where is z?").stdout)
+    assert look["intended"] == {"seat": None, "model": "unavailable-model"} and look["standing_in"] is True
+    assert look["reason"] == "intended unavailable-model is not on the explore menu"
 
 
 def test_of_installs_as_one_command(tmp_path: Path) -> None:
@@ -115,6 +115,7 @@ def test_of_installs_as_one_command(tmp_path: Path) -> None:
 def test_exhausted_run_has_no_stand_in(tmp_path: Path) -> None:
     env = world(tmp_path)
     stub(Path(env["OF_BIN_CLAUDE_LB_LAUNCH"]), "echo 'usage limit'\nexit 1\n")
+    stub(Path(env["OF_BIN_SEAT"]), "echo 'usage limit'\nexit 1\n")
     done = of(env, "run", "implement", "--json", "--", "Rename helper")
     receipt = json.loads(done.stdout)
     assert done.returncode == 2

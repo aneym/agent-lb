@@ -69,53 +69,38 @@ def pick(env: dict[str, str], table: Path, *args: str) -> dict:
     return json.loads(result.stdout)
 
 
-def open_grok(table: dict) -> None:
-    rung = next(r for r in table["ladders"]["interim"]["implement"] if r["id"] == "grok-medium")
-    rung["gate"]["open"] = True
-
-
-def test_codex_running_low_moves_spec_code_down_the_ladder_only_past_an_open_gate(tmp_path: Path) -> None:
+def test_best_first_ladder_starts_with_approved_grok_low(tmp_path: Path) -> None:
     env = setup(tmp_path)
 
-    # Tonight's table: Grok, Composer and SWE-2 wait for E16, so a Codex running low keeps Sol and says why.
     held = pick(env, CANONICAL_TABLE, "implement")
-    assert (held["ladder"], held["rung"], held["seat"], held["model"]) == ("interim", "sol-medium", "gpt-implementer", "gpt-6.1-sol")
-    assert held["reason"].startswith("running low") and "no other rung open" in held["reason"]
-    assert {"rung": "grok-medium", "reason": "gated: E16: Grok 4.7 medium within 10% of Sol medium"} in held["skipped"]
+    assert (held["ladder"], held["rung"], held["seat"], held["model"]) == (
+        "interim", "grok-low", "cursor-seat", "grok-4.7-low")
+    assert held["reason"] == "first open rung"
     assert held["pace"]["openai-codex"]["state"] == "low"
-    # Sol's work is reviewed by Sonnet 5.5 at high, not Opus.
     assert (held["audit"]["rung"], held["audit"]["seat"], held["audit"]["model"], held["audit"]["effort"]) == (
         "sonnet-high", "sonnet-verifier", "claude-sonnet-5-5", "high")
-
-    # E16 opens Grok's gate: the same pools now put spec'd code on Grok 4.7 medium at standard speed.
-    opened = table_copy(tmp_path, "grok-open", open_grok)
-    moved = pick(env, opened, "implement")
-    assert (moved["rung"], moved["seat"], moved["model"], moved["effort"], moved["maker"], moved["pool"]) == (
-        "grok-medium", "cursor-seat", "grok-4.7-medium", "medium", "xai", "cursor-models")
-    assert moved["intended"] == "sol-medium"
-    assert moved["skipped"][0]["rung"] == "sol-medium" and moved["skipped"][0]["reason"].startswith("running low")
-    assert moved["audit"]["rung"] == "sonnet-high"
-    text = route(env, opened, "pick", "implement")
+    assert held["intended"] == "grok-low"
+    text = route(env, CANONICAL_TABLE, "pick", "implement")
     assert text.returncode == 0, text.stderr
-    assert text.stdout.strip().splitlines()[-1] == "→ grok-4.7-medium (cursor-models)"
+    assert text.stdout.strip().splitlines()[-1] == "→ grok-4.7-low (cursor-models)"
 
     # Grok's work never goes to Grok or to Sonnet's own pool twice: Sonnet high, then Sol high.
-    review = pick(env, opened, "verify", "--author-vendor", "xai")
+    review = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai")
     assert (review["rung"], review["seat"], review["model"]) == ("sonnet-high", "sonnet-verifier", "claude-sonnet-5-5")
-    retry = pick(env, opened, "verify", "--author-vendor", "xai", "--skip", "sonnet-high")
+    retry = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-high")
     assert (retry["rung"], retry["seat"], retry["effort"]) == ("sol-high", "codex-verifier", "high")
 
-    # Mechanical work goes to Composer now (T2), with no variant suffix on its id.
+    # Mechanical work starts with Composer.
     mechanical = pick(env, CANONICAL_TABLE, "mechanical")
     assert (mechanical["rung"], mechanical["seat"], mechanical["model"]) == ("composer", "cursor-seat", "composer-2.5")
 
     # Claude on its last account, Codex healthy: orchestrators keep Claude, and Grok's review moves to Sol high.
     last = setup(tmp_path, claude_eligible=1, codex_low=False)
-    reserved = pick(last, opened, "verify", "--author-vendor", "xai")
+    reserved = pick(last, CANONICAL_TABLE, "verify", "--author-vendor", "xai")
     assert reserved["rung"] == "sonnet-cursor-high"
     assert (reserved["seat"], reserved["model"]) == ("cursor-seat", "claude-sonnet-5-5-high")
     assert {"rung": "sonnet-high", "reason": "reserved for orchestrators: 1 eligible account (keep 2)"} in reserved["skipped"]
-    assert pick(last, opened, "verify", "--author-vendor", "xai", "--skip", "sonnet-cursor-high")["rung"] == "sol-high"
+    assert pick(last, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-cursor-high")["rung"] == "sol-high"
 
     # The switch: baseline gives tonight's pre-ladder pick back on the next call.
     baseline = table_copy(tmp_path, "baseline", lambda t: t.update(ladder="baseline"))
