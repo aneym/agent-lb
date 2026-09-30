@@ -40,20 +40,64 @@ struct AccountsSection: View {
     let now = Date.now
     let filtered = filter.apply(to: accounts, now: now)
     VStack(alignment: .leading, spacing: PanelMetrics.accountsSpacing) {
-      headerRow(filteredCount: filtered.count)
+      headerRow(filteredCount: filtered.count + makerAccountCount)
       if searchVisible {
         searchField
       }
-      if hasError && accounts.isEmpty {
+      if hasError && accounts.isEmpty && makerLineCount == 0 {
         RetryRow(retry: retry)
-      } else if accounts.isEmpty {
+      } else if accounts.isEmpty && makerLineCount == 0 {
         emptyState
-      } else if filtered.isEmpty {
+      } else if filtered.isEmpty && makerLineCount == 0 {
         noMatches
       } else {
         list(filtered)
         if hasError {
           RetryRow(retry: retry)
+        }
+      }
+    }
+  }
+
+  private var makerScopes: [ProviderScope] {
+    switch appState.providerScope {
+    case .all: [.cursor, .devin]
+    case .cursor: [.cursor]
+    case .devin: [.devin]
+    default: []
+    }
+  }
+
+  private var makerAccountCount: Int {
+    appState.seatAccounts.filter { seat in
+      makerScopes.contains { $0.rawValue == seat.vendor.lowercased() }
+    }.count
+  }
+
+  private var makerLineCount: Int {
+    makerScopes.reduce(0) {
+      $0 + MakerRows.lines(for: $1, seats: appState.seatAccounts, pools: appState.pools).count
+    }
+  }
+
+  @ViewBuilder
+  private var makerGroups: some View {
+    ForEach(makerScopes, id: \.self) { scope in
+      let lines = MakerRows.lines(for: scope, seats: appState.seatAccounts, pools: appState.pools)
+      if !lines.isEmpty {
+        if appState.providerScope == .all {
+          Text(scope.label)
+            .font(.system(size: 12, weight: .semibold))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(height: PanelMetrics.accountRow)
+        }
+        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+          Text(line)
+            .font(.system(size: 12))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(height: PanelMetrics.accountRow)
         }
       }
     }
@@ -185,6 +229,7 @@ struct AccountsSection: View {
           ForEach(filtered) { account in
             AccountRow(account: account, now: context.date)
           }
+          makerGroups
         }
         .padding(.vertical, 4)
       }

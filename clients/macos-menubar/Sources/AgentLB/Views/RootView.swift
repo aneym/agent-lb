@@ -46,7 +46,7 @@ struct RootView: View {
         if showsScopeBar {
           ProviderScopeBar(
             scopeRaw: $providerScopeRaw,
-            counts: ProviderScope.counts(in: appState.accounts)
+            counts: ProviderScope.counts(in: appState.accounts, seats: appState.seatAccounts)
           )
           .frame(height: PanelMetrics.scopeControl)
           .padding(.horizontal, 14)
@@ -101,7 +101,21 @@ struct RootView: View {
   private var filteredAccountRows: Int {
     AccountFilter(provider: .all, status: accountStatus, query: accountQuery, sort: .resetSoonest)
       .apply(to: scopedAccounts, now: .now)
-      .count
+      .count + makerRowCount
+  }
+
+  private var makerRowCount: Int {
+    let scopes: [ProviderScope] = scope == .all ? [.cursor, .devin] : [scope]
+    return scopes.reduce(0) { count, makerScope in
+      let lines = MakerRows.lines(for: makerScope, seats: appState.seatAccounts, pools: appState.pools)
+      return count + lines.count + (scope == .all && !lines.isEmpty ? 1 : 0)
+    }
+  }
+
+  private var accountsHaveError: Bool {
+    appState.sectionErrors.contains(.accounts)
+      || ((scope == .all || scope == .cursor || scope == .devin)
+        && (!appState.sectionErrors.isDisjoint(with: [.seatAccounts, .pools])))
   }
 
   private var currentLayout: PanelLayout {
@@ -120,10 +134,10 @@ struct RootView: View {
     inputs.metricsLines = 1 + (hasTokenLine ? 1 : 0) + (arbitrage != nil ? 1 : 0)
     inputs.poolHasError = appState.sectionErrors.contains(.pool)
     inputs.poolHasData = appState.summary != nil || scope != .all
-    inputs.scopedAccountCount = scopedAccounts.count
+    inputs.scopedAccountCount = scopedAccounts.count + makerRowCount
     inputs.filteredAccountRows = filteredAccountRows
     inputs.searchVisible = searchVisible
-    inputs.accountsHaveError = appState.sectionErrors.contains(.accounts)
+    inputs.accountsHaveError = accountsHaveError
     inputs.recentExpanded = recentExpanded
     inputs.recentRows = min(scopedRecent.count, 5)
     inputs.recentHasError = appState.sectionErrors.contains(.recent)
@@ -176,7 +190,8 @@ struct RootView: View {
   }
 
   private var hasAnyData: Bool {
-    appState.summary != nil || !appState.accounts.isEmpty || appState.lastSyncAt != nil
+    appState.summary != nil || !appState.accounts.isEmpty || !appState.seatAccounts.isEmpty
+      || !appState.pools.isEmpty || appState.lastSyncAt != nil
   }
 
   // §8.3: panel padding 14 pt (horizontal), section vertical gap 12 pt —
@@ -204,7 +219,7 @@ struct RootView: View {
         status: $accountStatus,
         query: $accountQuery,
         searchVisible: $searchVisible,
-        hasError: appState.sectionErrors.contains(.accounts),
+        hasError: accountsHaveError,
         retry: retrySection
       )
       .padding(.horizontal, 14)

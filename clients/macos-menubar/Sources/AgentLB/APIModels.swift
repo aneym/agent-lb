@@ -297,3 +297,48 @@ struct RuntimeVersion: Decodable, Sendable, Equatable {
 struct HealthResponse: Decodable, Sendable {
   let status: String
 }
+
+// MARK: - Maker accounts and pools
+
+struct SeatAccountsResponse: Decodable {
+  let stateUpdatedAt: Date?
+  let source: String
+  let accounts: [SeatAccount]
+}
+
+struct SeatAccount: Decodable, Equatable, Sendable {
+  let id: String
+  let vendor: String
+  let enabled: Bool
+  let authOk: Bool?
+  let tier: String?
+  let cooldownUntil: Date?
+  let ready: Bool
+  let lastDay: SeatUsage
+}
+
+struct SeatUsage: Decodable, Equatable, Sendable {
+  let runs: Int
+  let ok: Int
+  let tokensIn: Int
+  let tokensOut: Int
+}
+
+struct PoolsDocument: Decodable {
+  let pools: [PoolEntry]
+}
+
+struct PoolEntry: Decodable, Equatable, Sendable {
+  let id: String
+  let provider: String
+  let kind: String
+  let accounts: Int
+  let eligibleAccounts: Int
+  let status: String
+  let windowLabel: String?
+  let observedRuns: Int?
+  let spentUsd: Double?
+  let budgetUsd: Double?
+  let monthlyRemainingPercent: Double?
+  let unbudgetedAccounts: Int?
+}

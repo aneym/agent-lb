@@ -7,6 +7,9 @@ enum ProviderScope: String, CaseIterable, Sendable {
   case all
   case openai
   case anthropic
+  case cursor
+  case devin
+  case other
 
   /// Dashboard `providerLabel`: openai → "Codex", anthropic → "Claude".
   var label: String {
@@ -14,11 +17,19 @@ enum ProviderScope: String, CaseIterable, Sendable {
     case .all: "All"
     case .openai: "Codex"
     case .anthropic: "Claude"
+    case .cursor: "Cursor"
+    case .devin: "Devin"
+    case .other: "Other"
     }
   }
 
   func includes(_ account: Account) -> Bool {
-    self == .all || account.provider.lowercased() == rawValue
+    if self == .all { return true }
+    let provider = account.provider.lowercased()
+    if self == .other {
+      return !["openai", "anthropic", "cursor", "devin"].contains(provider)
+    }
+    return provider == rawValue
   }
 
   /// §13: `/api/usage/summary?provider=` query value for this scope — nil for
@@ -32,11 +43,18 @@ enum ProviderScope: String, CaseIterable, Sendable {
   }
 
   /// Live segment counts over the full (unfiltered) accounts list.
-  static func counts(in accounts: [Account]) -> [ProviderScope: Int] {
-    var counts: [ProviderScope: Int] = [.all: 0, .openai: 0, .anthropic: 0]
+  static func counts(in accounts: [Account], seats: [SeatAccount] = []) -> [ProviderScope: Int] {
+    var counts = Dictionary(uniqueKeysWithValues: allCases.map { ($0, 0) })
     for account in accounts where account.isHeadlineCountable {
       counts[.all, default: 0] += 1
-      if let scope = ProviderScope(rawValue: account.provider.lowercased()) {
+      let providerScope = ProviderScope(rawValue: account.provider.lowercased()) ?? .other
+      let scope: ProviderScope = providerScope == .all ? .other : providerScope
+      counts[scope, default: 0] += 1
+    }
+    for seat in seats {
+      counts[.all, default: 0] += 1
+      if let scope = ProviderScope(rawValue: seat.vendor.lowercased()),
+         scope == .cursor || scope == .devin {
         counts[scope, default: 0] += 1
       }
     }

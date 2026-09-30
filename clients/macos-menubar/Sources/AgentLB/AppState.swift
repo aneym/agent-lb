@@ -9,13 +9,15 @@ final class AppState {
   }
 
   enum Section: Sendable, Hashable {
-    case pool, accounts, recent
+    case pool, accounts, recent, seatAccounts, pools
   }
 
   var serviceStatus: ServiceStatus = .running
   var summary: UsageSummary?
   var projections: ProjectionsResponse?
   var accounts: [Account] = []
+  var seatAccounts: [SeatAccount] = []
+  var pools: [PoolEntry] = []
   var recent: [RequestLogEntry] = []
   var version: RuntimeVersion?
   var lastSyncAt: Date?
@@ -69,6 +71,7 @@ final class AppState {
             // open must already have rows to size against.
             await fetchSummarySilently()
             await fetchAccountsSilently()
+            await fetchMakerData(silently: true)
             await fetchRecentSilently()
             await withDiscardingTaskGroup { group in
               group.addTask { await self.fetchProjections() }
@@ -161,6 +164,7 @@ final class AppState {
     // self-induced timeout storm when a remote service is under query load.
     await fetchSummary()
     await fetchAccounts()
+    await fetchMakerData()
     if tick.isMultiple(of: 2) {
       await fetchRecent()
     }
@@ -264,6 +268,25 @@ final class AppState {
       Self.updateSectionError(.accounts, error: nil, in: &sectionErrors)
     } catch {
       Self.updateSectionError(.accounts, error: error, in: &sectionErrors)
+    }
+  }
+
+  private func fetchMakerData(silently: Bool = false) async {
+    do {
+      seatAccounts = try await client.seatAccounts().accounts
+      Self.updateSectionError(.seatAccounts, error: nil, in: &sectionErrors)
+    } catch {
+      if !silently {
+        Self.updateSectionError(.seatAccounts, error: error, in: &sectionErrors)
+      }
+    }
+    do {
+      pools = try await client.pools().pools
+      Self.updateSectionError(.pools, error: nil, in: &sectionErrors)
+    } catch {
+      if !silently {
+        Self.updateSectionError(.pools, error: error, in: &sectionErrors)
+      }
     }
   }
 

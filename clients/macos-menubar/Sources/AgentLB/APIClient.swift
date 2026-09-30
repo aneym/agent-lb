@@ -130,6 +130,14 @@ struct APIClient: @unchecked Sendable {
     try await get("/api/accounts")
   }
 
+  func seatAccounts() async throws -> SeatAccountsResponse {
+    try await get("/api/pools/seat-accounts")
+  }
+
+  func pools() async throws -> PoolsDocument {
+    try await get("/api/pools")
+  }
+
   func usageSummary(provider: String? = nil) async throws -> UsageSummary {
     guard let provider else { return try await get("/api/usage/summary") }
     return try await get("/api/usage/summary?provider=\(provider)")

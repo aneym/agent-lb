@@ -46,7 +46,7 @@ final class AccountsLayoutTests: XCTestCase {
   @MainActor
   func testListClaimsFullHeightInEveryScope() throws {
     let all = try loadAccountsFixture()
-    for scope in ProviderScope.allCases {
+    for scope in [ProviderScope.all, .openai, .anthropic] {
       let scoped = scope.filter(all)
       XCTAssertFalse(scoped.isEmpty, "fixture must cover scope \(scope)")
       let height = sectionHeight(accounts: scoped, isScoped: scope != .all)
