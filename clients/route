@@ -1293,18 +1293,54 @@ def class_candidates(
             audit_pool = pool_for_model(table, audit_entry["model"])
             audit_seat = str(audit_entry.get("seat") or "")
             audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
-            if pool_exhausted(audit_pool_doc):
-                skip(seat, alias, f"its auditor's pool {audit_pool} is exhausted")
-                continue
             audit_eligible = audit_pool_doc.get("eligibleAccounts")
-            if isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
-                # A critical pool starts nothing new (rule 1), audits included.
-                skip(seat, alias, f"its auditor's pool {audit_pool} is critical: {audit_eligible} eligible")
-                continue
+            audit_unavailable = None
+            if pool_exhausted(audit_pool_doc):
+                audit_unavailable = f"its auditor's pool {audit_pool} is exhausted"
+            elif isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
+                audit_unavailable = f"its auditor's pool {audit_pool} is critical: {audit_eligible} eligible"
+            alternate = None
+            if audit_unavailable:
+                policy = table.get("policy")
+                via = policy.get("auditor_via") if isinstance(policy, dict) else None
+                alternate = via.get(audit_pool) if isinstance(via, dict) else None
+                if isinstance(alternate, dict) and all(
+                    isinstance(alternate.get(key), str) and alternate[key] for key in ("pool", "vendor", "model")
+                ):
+                    alternate_doc = pools.get(alternate["pool"], {})
+                    alternate_eligible = alternate_doc.get("eligibleAccounts")
+                    critical = (
+                        isinstance(alternate_eligible, int)
+                        and not isinstance(alternate_eligible, bool)
+                        and alternate_eligible <= 1
+                    )
+                    if (
+                        not alternate_doc
+                        or pool_exhausted(alternate_doc)
+                        or critical
+                        or not seat_is_up(seats, "cursor-seat")
+                        or alternate["model"] not in cursor_models()
+                    ):
+                        alternate = None
+                    else:
+                        audit_seat = "cursor-seat"
+                else:
+                    alternate = None
+                if alternate is None:
+                    skip(seat, alias, audit_unavailable)
+                    continue
             if audit_seat and not seat_is_up(seats, audit_seat):
                 skip(seat, alias, f"its auditor seat {audit_seat} is down per routing-state.json")
                 continue
             auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
+            if alternate is not None:
+                auditor.update({
+                    "seat": audit_seat,
+                    "via": alternate["vendor"],
+                    "pool": alternate["pool"],
+                    "model": alternate["model"],
+                    "reason": f"{audit_unavailable}; auditor via {alternate['vendor']} pool {alternate['pool']}",
+                })
         routable.append(
             {
                 "seat": seat,
@@ -1564,7 +1600,8 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
     auditor = result.get("audit")
     if isinstance(auditor, dict):
         shown = auditor.get("model") or f"unresolved {auditor.get('alias')}: {auditor.get('reason')}"
-        print(f"audit     {auditor.get('seat')}/{shown} audits this seat's closeout before acceptance")
+        via = f" via {auditor['via']}" if auditor.get("via") else ""
+        print(f"audit     {auditor.get('seat')}/{shown}{via} audits this seat's closeout before acceptance")
 
 
 # --- doctor ------------------------------------------------------------------

@@ -352,6 +352,14 @@
       "admit_classes": ["orchestrator", "lane-tab", "plan", "council"],
       "note": "2026-09-30 (Alex: orchestrators must never go down). Under this line only these classes start on the pool; the rest start elsewhere and use it only when nothing else is open."
     },
+    "auditor_via": {
+      "anthropic-general": {
+        "pool": "cursor-other",
+        "vendor": "cursor",
+        "model": "claude-sonnet-5-5-high",
+        "note": "2026-09-30: Sonnet review through Cursor when Claude is short"
+      }
+    },
     "pace": {
       "ahead_gt": 15,
       "behind_lt": -10,
