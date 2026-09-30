@@ -42,7 +42,9 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
    from the vendor that did not write it reviews it (`verifier` for GPT,
    Cursor, Devin, GLM or Kimi authors; `codex-verifier`, Sol at xhigh, for Claude
    authors), and the brief names the author vendor. Money-path changes get
-   three lenses (payload, accounts, release) at xhigh; any one FAIL blocks.
+   three lenses (payload, accounts, release) at xhigh by default; the lead may
+   run fewer when judgment says the risk is covered, and records the count and
+   why in a `Lenses: <n> (<reason>)` trailer. Any one FAIL blocks.
 10. Never push after a FAIL: fix and re-verify the final diff, or record
     `Verify-override: <reason>` in the commit. The commit carries `Seat:` and
     `Verified-by:` trailers with the diff id. Nothing checks them; they are
