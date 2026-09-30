@@ -1,8 +1,6 @@
 # Canonical coding-agent routing
 
-Host-neutral path: `~/.agents/policy/coding-agents/ROUTING.md`. The evidence below is small-n: E3 used 3 units, E6 and
-E10 six each, E7 eight candidates. This file is the canon. A machine's `~/.claude/rules/models.md` may add local
-steers; it changes a rule here only with the same evidence, and the change comes back here.
+Host-neutral path: `~/.agents/policy/coding-agents/ROUTING.md`. The evidence below is small-n: E3 used 3 units, E6 and E10 six each, E7 eight candidates. This file is the canon. A machine's `~/.claude/rules/models.md` may add local steers; it changes a rule here only with the same evidence, and the change comes back here.
 
 ## Who does what (owner, 2026-09-25; 2026-09-26)
 
@@ -50,8 +48,7 @@ This replaces the 2026-09-25 rule "no required cross-vendor audit". E7 used 8 se
 
 ## Effort per stage (2026-09-25; 2026-09-26)
 
-Effort is fixed per stage; no per-request router sits in the hot path. Higher effort buys verification, not a better
-approach, which comes from the plan. `verify-routing` checks every chain entry against `policy.stage_effort`.
+Effort is fixed per stage; no per-request router sits in the hot path. Higher effort buys verification, not a better approach, which comes from the plan. `verify-routing` checks every chain entry against `policy.stage_effort`.
 
 | Stage | Effort |
 |---|---|
@@ -79,16 +76,11 @@ tight spec stays on Opus at xhigh.
   `general-purpose` (tools "*") 48k, lean definitions 3.4k to 6.4k.
 - **Claude seats never drive a browser one step at a time.** Capture each page in one windowless call and read only
   the final image. Three Sonnet seats that drove step by step used about 40M tokens each.
-- **Waits in subagents (2026-09-29, token audit).** A subagent's or workflow agent's cache lives 5 minutes; a lead's
-  lives 1 hour. An agent with more work after a wait never blocks a single tool call past 270 s: run builds, tests, CI
-  and review waits in the background (Bash run_in_background, `seat-run --bg --name <n> -- <cmd>`) and poll with waits of 270 s or
-  less (Monitor timeout, `seat-run --wait <n> --max 270`). Never sleep or until-loop past 270 s in one call. Forwarder seats keep
-  the wait contract in their own definition. Evidence: waste.ttl_expiry was 57 points in the 7d audit, about 73 points a
-  week at the 09-26..29 rate; 82% of 1,172 sampled expiries followed one blocking call over 300 s.
-- **Relaunching a Codex lane writer resumes its thread** (`codex exec resume <thread-id>`) instead of starting a new
-  thread with the same prompt. A supervisor that has relaunched one lane 3 times in 6 hours stops and writes the failure
-  to the lane's inbox instead of relaunching. (2026-09-29 token audit: 505 cold failover relaunches of identical prompts
-  on 09-23/24, about 28 OpenAI points; one prompt was relaunched 75 times in 31.6 h.)
+- **Waits in subagents (2026-09-29, token audit).** A subagent's or workflow agent's cache lives 5 minutes; a lead's lives 1 hour.
+  An agent with more work after a wait never blocks a single tool call past 270 s: run builds, tests, CI and review waits in the background (Bash run_in_background, `seat-run --bg --name <n> -- <cmd>`) and poll with waits of 270 s or less (Monitor timeout, `seat-run --wait <n> --max 270`).
+  Never sleep or until-loop past 270 s in one call. Forwarder seats keep the wait contract in their own definition. Evidence: waste.ttl_expiry was 57 points in the 7d audit, about 73 points a week at the 09-26..29 rate; 82% of 1,172 sampled expiries followed one blocking call over 300 s.
+- **Relaunching a Codex lane writer resumes its thread** (`codex exec resume <thread-id>`) instead of starting a new thread with the same prompt.
+  A supervisor that has relaunched one lane 3 times in 6 hours stops and writes the failure to the lane's inbox instead of relaunching. (2026-09-29 token audit: 505 cold failover relaunches of identical prompts on 09-23/24, about 28 OpenAI points; one prompt was relaunched 75 times in 31.6 h.)
 - Sessions compact at 400k; keep state in files and do not poll for status. The one exception is a subagent waiting
   on a job it launched, which polls as the wait rule above allows (270 s or less per wait). Tests (2026-09-24): load the test-audit skill first.
 
@@ -140,13 +132,11 @@ Bands are re-read every 5 minutes and before every wave. Every dispatch and clos
 (`~/.claude/logs/dispatch.jsonl`). The Codex forwarders run Codex CLI; cursor-seat and devin-seat go through
 `seat run`, which fails over between registered accounts and writes the receipt.
 
-Efficiency is the machinery's job: agent-lb forwards Claude Code payloads unchanged so the prompt cache holds (it
-broke for 43 h on 2026-09-21 and 12 h on 2026-09-23). Run `scripts/claude_cache_eval.py` after request-path deploys.
+Efficiency is the machinery's job: agent-lb forwards Claude Code payloads unchanged so the prompt cache holds (it broke for 43 h on 2026-09-21 and 12 h on 2026-09-23). Run `scripts/claude_cache_eval.py` after request-path deploys.
 
 ## Planned, not live (2026-09-26)
 
-The factory's doctor, map, hourly canary and scoreboard are planned, not built. agent-lb's per-account status line is
-the doctor's accounts component.
+The factory's doctor, map, hourly canary and scoreboard are planned, not built. agent-lb's per-account status line is the doctor's accounts component.
 
 ## Enforcement (2026-09-26; seats 2026-09-27)
 
