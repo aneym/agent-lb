@@ -153,6 +153,12 @@ MANAGED_AGENTS = (
         "agent-lb:seat-guard:v1\n",
         Path("hooks/seat-guard.py"),
     ),
+    (
+        Path(".claude/hooks/workflow-seat-guard.py"),
+        Path(".agent-lb/managed/coding-agents/workflow-seat-guard"),
+        "agent-lb:workflow-seat-guard:v1\n",
+        Path("hooks/workflow-seat-guard.py"),
+    ),
 )
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
@@ -261,6 +267,13 @@ SEAT_GUARD_HOOK = {
 }
 
 
+WORKFLOW_SEAT_GUARD_HOOK = {
+    **SEAT_GUARD_HOOK,
+    "command": SEAT_GUARD_HOOK["command"].replace("seat-guard", "workflow-seat-guard"),
+    "statusMessage": "Workflow seat guard",
+}
+
+
 CLOSEOUT_HOOK = {
     "type": "command",
     "command": '/usr/bin/python3 "$HOME/.claude/hooks/subagent-closeout.py" 2>/dev/null || true',
@@ -275,6 +288,10 @@ def is_closeout_hook(command: Any) -> bool:
 
 def is_seat_guard_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/seat-guard.py" in command
+
+
+def is_workflow_seat_guard_hook(command: Any) -> bool:
+    return isinstance(command, str) and "hooks/workflow-seat-guard.py" in command
 
 
 def resolve_sonnet(source: Path, home: Path) -> str:
@@ -353,7 +370,7 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
             hooks.pop("SubagentStop", None)
         # The managed guard file goes away on uninstall; so does its registration.
         cleaned = [
-            {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_seat_guard_hook(hook.get("command"))]}
+            {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_seat_guard_hook(hook.get("command")) and not is_workflow_seat_guard_hook(hook.get("command"))]}
             for group in cleaned
         ]
         cleaned = [group for group in cleaned if group["hooks"]]
@@ -394,6 +411,16 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
                 pre_tool_use.append({"matcher": "Agent", "hooks": [dict(SEAT_GUARD_HOOK)]})
             else:
                 agent_group.setdefault("hooks", []).insert(0, dict(SEAT_GUARD_HOOK))
+        if not any(
+            is_workflow_seat_guard_hook(hook.get("command"))
+            for group in pre_tool_use if group.get("matcher") == "Workflow"
+            for hook in group.get("hooks", [])
+        ):
+            workflow_group = next((group for group in pre_tool_use if group.get("matcher") == "Workflow"), None)
+            if workflow_group is None:
+                pre_tool_use.append({"matcher": "Workflow", "hooks": [dict(WORKFLOW_SEAT_GUARD_HOOK)]})
+            else:
+                workflow_group.setdefault("hooks", []).insert(0, dict(WORKFLOW_SEAT_GUARD_HOOK))
         # The closeout hook writes the outcome/tokens side of the dispatch ledger.
         subagent_stop = updated["hooks"].setdefault("SubagentStop", [])
         if not any(is_closeout_hook(hook.get("command")) for group in subagent_stop for hook in group.get("hooks", [])):

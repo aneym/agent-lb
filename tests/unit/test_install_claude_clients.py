@@ -304,7 +304,7 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
         for hook_config in group["hooks"]
     ]
     assert commands[0] == ("Bash", "keep-safety-hook")
-    assert [matcher for matcher, command in commands[1:]] == ["Agent"]
+    assert [matcher for matcher, command in commands[1:]] == ["Agent", "Workflow"]
     assert "hooks/seat-guard.py" in commands[1][1]
 
 
