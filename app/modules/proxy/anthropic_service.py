@@ -8,7 +8,7 @@ import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 import aiohttp
 from pydantic import ValidationError
 
+from app.core import upload_admission
 from app.core.anthropic.identity import ensure_claude_code_identity_body
 from app.core.anthropic.models import (
     AnthropicErrorEvent,
@@ -142,6 +143,16 @@ _CONNECT_BACKOFF_MAX_SECONDS = 4.0
 
 def _connect_backoff_seconds(attempt: int) -> float:
     return min(_CONNECT_BACKOFF_BASE_SECONDS * (2**attempt), _CONNECT_BACKOFF_MAX_SECONDS)
+
+
+@asynccontextmanager
+async def _admitted_http_session(
+    session_key: str | None, nbytes: int
+) -> AsyncIterator[tuple[aiohttp.ClientSession, AsyncExitStack]]:
+    async with AsyncExitStack() as admission_stack:
+        await admission_stack.enter_async_context(upload_admission.admission().admit(session_key, nbytes))
+        async with lease_http_session() as session:
+            yield session, admission_stack
 
 
 class _ConnectRetryingResponse:
@@ -442,7 +453,11 @@ class AnthropicProxyService:
                             # a plain API client does not.
                             body_payload = ensure_claude_code_identity_body(body_payload)
 
-                        async with lease_http_session() as session:
+                        nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
+                        async with _admitted_http_session(session_id or sticky_key, nbytes) as (
+                            session,
+                            admission_stack,
+                        ):
                             async with _ConnectRetryingResponse(
                                 lambda: self._open_upstream_response(
                                     session,
@@ -453,6 +468,7 @@ class AnthropicProxyService:
                                 attempts=get_settings().upstream_connect_attempts,
                                 label=_provider_label(provider_name),
                             ) as resp:
+                                await admission_stack.aclose()
                                 if (provider_name == "glm" and resp.status >= 400) or (
                                     provider_name == "kimi" and resp.status in {402, 403, 429}
                                 ):
@@ -728,6 +744,23 @@ class AnthropicProxyService:
                                     usage=usage,
                                 )
                                 return
+                except upload_admission.UploadAdmissionTimeout as exc:
+                    message = "Upload admission wait exceeded while the upload throttle is on; retry shortly."
+                    await self._persist_request_log(
+                        account=last_account,
+                        provider_name=provider_name,
+                        request_id=request_id,
+                        model=payload.model,
+                        started_at=started_at,
+                        status="error",
+                        error_code="upload_admission_timeout",
+                        error_message=message,
+                        api_key=api_key,
+                        session_id=session_id,
+                        useragent=useragent,
+                        useragent_group=useragent_group,
+                    )
+                    raise AnthropicProxyError(503, message, code="upload_admission_timeout") from exc
                 except AnthropicProxyError as exc:
                     # Never hold once response bytes have gone out: appending a
                     # second upstream stream to a partial one would corrupt it.
@@ -838,17 +871,39 @@ class AnthropicProxyService:
         )
         access_token = await self._fresh_access_token(account)
         headers = _build_anthropic_headers(inbound_headers, access_token, provider_name=provider_name)
+        started_at = time.monotonic()
+        session_id = _anthropic_session_header(inbound_headers)
+        nbytes = len(json.dumps(body, separators=(",", ":")).encode())
         try:
-            async with lease_http_session() as session:
+            async with _admitted_http_session(session_id, nbytes) as (session, admission_stack):
                 async with self._open_count_tokens_response(
                     session,
                     provider_name=provider_name,
                     headers=headers,
                     json_body=body,
                 ) as resp:
+                    await admission_stack.aclose()
                     raw = await resp.read()
                     media_type = resp.headers.get("content-type") or "application/json"
                     return AnthropicCountTokensResult(status_code=resp.status, body=raw, media_type=media_type)
+        except upload_admission.UploadAdmissionTimeout as exc:
+            message = "Upload admission wait exceeded while the upload throttle is on; retry shortly."
+            useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
+            await self._persist_request_log(
+                account=account,
+                provider_name=provider_name,
+                request_id=ensure_request_id(_request_id_from_headers(inbound_headers)),
+                model=model,
+                started_at=started_at,
+                status="error",
+                error_code="upload_admission_timeout",
+                error_message=message,
+                api_key=None,
+                session_id=session_id,
+                useragent=useragent,
+                useragent_group=useragent_group,
+            )
+            raise AnthropicProxyError(503, message, code="upload_admission_timeout") from exc
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise AnthropicProxyError(
                 502,
