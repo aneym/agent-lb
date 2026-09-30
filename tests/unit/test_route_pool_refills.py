@@ -48,9 +48,9 @@ def test_weekly_refill_cohorts_and_next_low_account(tmp_path: Path, monkeypatch,
     pools = {row["id"]: row for row in json.loads(capsys.readouterr().out)["pools"]}
     codex = pools["openai-codex"]
     assert codex["refills"] == [
-        {"at": "2026-10-03T16:58:00Z", "accounts": 3, "remaining_percent": 1.0},
-        {"at": "2026-10-03T21:06:00Z", "accounts": 1, "remaining_percent": 0.0},
-        {"at": "2026-10-07T13:00:00Z", "accounts": 1, "remaining_percent": 76.0},
+        {"at": "2026-10-03T16:58:00Z", "accounts": 3, "remainingPercent": 1.0},
+        {"at": "2026-10-03T21:06:00Z", "accounts": 1, "remainingPercent": 0.0},
+        {"at": "2026-10-07T13:00:00Z", "accounts": 1, "remainingPercent": 76.0},
     ]
     assert codex["pace"]["next_refill_h"] == pytest.approx(75 + 58 / 60)
     assert "nextRefillAt" not in codex
@@ -58,7 +58,7 @@ def test_weekly_refill_cohorts_and_next_low_account(tmp_path: Path, monkeypatch,
     assert "refills" not in pools["cursor-models"]
     args.json = False
     assert router["command_pools"](args) == 0
-    assert "refills: 10-03 16:58Z +3, 10-03 21:06Z +1" in capsys.readouterr().out
+    assert "refills: 10-03 16:58Z +3 accounts, 10-03 21:06Z +1 accounts" in capsys.readouterr().out
     # An earlier healthy reset and a spent account's past reset do not set the next low refill.
     accounts = refill_accounts()
     accounts["accounts"].extend([

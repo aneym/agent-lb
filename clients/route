@@ -677,8 +677,9 @@ def add_pool_refills(document: dict[str, Any], body: Any) -> None:
             cohorts[-1][2] += remaining
             if remaining < 10 and stamp > now:
                 low_resets.append(stamp)
-        pool["refills"] = [{"at": stamp.isoformat().replace("+00:00", "Z"), "accounts": count,
-                            "remaining_percent": round(remaining, 1)} for stamp, count, remaining in cohorts]
+        if "refills" not in pool:
+            pool["refills"] = [{"at": stamp.isoformat().replace("+00:00", "Z"), "accounts": count,
+                                "remainingPercent": round(remaining, 1)} for stamp, count, remaining in cohorts]
         if low_resets:
             pool.setdefault("pace", {})["next_refill_h"] = (min(low_resets) - now).total_seconds() / 3600
 
@@ -952,8 +953,38 @@ def command_pools(args: argparse.Namespace) -> int:
             refills = []
             for refill in pool["refills"]:
                 stamp = _parse_ts(refill["at"])
-                refills.append(f"{stamp:%m-%d %H:%MZ} +{refill['accounts']}")
+                refills.append(f"{stamp:%m-%d %H:%MZ} +{refill['accounts']} accounts")
             print("  refills: " + (", ".join(refills) or "none"))
+    return EXIT_OK
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    result = http_get("/api/pools/plan")
+    if not result.json_ok or not isinstance(result.body, dict):
+        print(f"route: /api/pools/plan unavailable ({result.error or result.status})", file=sys.stderr)
+        return EXIT_DEGRADED
+    document = result.body
+    if args.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+        return EXIT_OK
+    level = args.level or document.get("recommended", "balanced")
+    plan = document.get("levels", {}).get(level)
+    if not isinstance(plan, dict):
+        print(f"route: plan level {level} unavailable", file=sys.stderr)
+        return EXIT_DEGRADED
+    print(plan["title"])
+    print(plan["why"])
+    for account in plan["accounts"]:
+        unit = "plan" if account["pool"] == "cursor" else "account"
+        print(f"{account['label']}, {account['count']} {unit}{'' if account['count'] == 1 else 's'} "
+              f"[{account['change']}, delta {account['delta']:+d}] — {account['reason']}")
+    labels = {"implement": "Write code", "mechanical": "Small edits", "explore": "Read and explore", "review": "Review"}
+    for job, rungs in plan["ladders"].items():
+        names = {"opus-every-piece": "Claude Opus on every piece",
+                 "sol-claude-work": "GPT-6.1 Sol for Claude work"}
+        print(f"{labels[job]}: " + " → ".join(
+            names.get(rung["id"], f"{rung['model']} ({rung['harness']})") for rung in rungs))
+    print(plan["risk"])
     return EXIT_OK
 
 
@@ -1887,6 +1918,7 @@ MENU_POOL_FIELDS = (
     "weeklyPacePercent",
     "weeklyResetAt",
     "resetAt",
+    "refills",
 )
 
 
@@ -1969,6 +2001,11 @@ def command_menu(args: argparse.Namespace) -> int:
         print(json.dumps(menu, indent=2, sort_keys=True))
     else:
         print(f"menu at {menu['generatedAt']} (pools: {menu['poolsSource'] or menu['poolsError']})")
+        for pool_id, pool in menu["pools"].items():
+            if pool.get("refills"):
+                print(f"{pool_id} refills: " + ", ".join(
+                    f"{_parse_ts(row['at']):%m-%d %H:%MZ} +{row['accounts']} accounts"
+                    for row in pool["refills"]))
         for class_name, entry in menu["classes"].items():
             if entry["driver"]:
                 print(f"{class_name:<11} driver session")
@@ -2704,6 +2741,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pools = sub.add_parser("pools", help="pool headroom from the LB")
     pools.add_argument("--json", action="store_true")
     pools.set_defaults(handler=command_pools)
+
+    plan = sub.add_parser("plan", help="account recommendations from live pools and trial costs")
+    plan.add_argument("--level", choices=("budget", "balanced", "unlimited"))
+    plan.add_argument("--json", action="store_true")
+    plan.set_defaults(handler=command_plan)
 
     stand_ins = sub.add_parser("stand-ins", help="sessions standing in and recent returns")
     stand_ins.add_argument("--json", action="store_true")

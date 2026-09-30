@@ -302,6 +302,8 @@ def test_generated_at_is_honored_and_the_wire_shape_is_camel_case() -> None:
         "kind",
         "accounts",
         "eligibleAccounts",
+        "usableAccounts",
+        "totalAccounts",
         "headroomPercent",
         "aggregateRemainingPercent",
         "resetAt",

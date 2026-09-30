@@ -524,6 +524,7 @@
   "cli_pools": {
     "cursor": {
       "cycle_day_default": 1,
+      "accounts": {"cursor-main": {"plan": "cursor-ultra-shared"}, "cursor-gmail": {"plan": "cursor-ultra-shared"}},
       "fast_multiplier": 3,
       "pools": [
         {"id": "cursor-models", "label": "Cursor models", "models": ["composer-*", "grok-*", "cursor-grok-*"], "budget_usd_by_tier": {"Ultra": 3123}, "note": "2026-09-30 calibration: shared cursor-main + cursor-gmail plan current-cycle service tally $62.46 / 0.02, rounded to $3123 (minimum $200), matches dashboard 2% used."},

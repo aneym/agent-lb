@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from app.modules.shared.schemas import DashboardModel
 
@@ -12,6 +12,12 @@ POOL_STATUS_EXHAUSTED = "exhausted"
 
 POOL_SOURCE_SCOPED_MARKER = "scoped_marker"
 POOL_SOURCE_WEEKLY_HEURISTIC = "weekly_heuristic"
+
+
+class PoolRefill(DashboardModel):
+    at: datetime
+    accounts: int
+    remaining_percent: float
 
 
 class PoolSummary(DashboardModel):
@@ -24,6 +30,20 @@ class PoolSummary(DashboardModel):
     # numbers below (canceled, deactivated, paused, re-auth).
     accounts: int
     eligible_accounts: int
+    weekly_empty_accounts: int = Field(default=0, exclude=True)
+    refills: list[PoolRefill] | None = Field(default=None, exclude_if=lambda value: value is None)
+    plan_count: int | None = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def total_accounts(self) -> int:
+        return self.accounts
+
+    @computed_field
+    @property
+    def usable_accounts(self) -> int:
+        return self.eligible_accounts
+
     # The best single account's remaining percent — what one more request can
     # actually use. Null when no account in the pool is usable.
     headroom_percent: float | None = None

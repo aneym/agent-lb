@@ -19,6 +19,7 @@ from app.modules.pools.schemas import (
     POOL_STATUS_EXHAUSTED,
     POOL_STATUS_LOW,
     POOL_STATUS_OK,
+    PoolRefill,
     PoolsResponse,
     PoolSummary,
 )
@@ -215,11 +216,30 @@ def _fable_pool(anthropic: list[AccountSummary]) -> PoolSummary:
     )
 
 
+def _weekly_refills(summaries: list[AccountSummary], now: datetime) -> list[PoolRefill]:
+    resets = []
+    for summary in summaries:
+        stamp = summary.reset_at_secondary
+        if not is_pool_usable(summary) or stamp is None:
+            continue
+        stamp = stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+        if stamp > now:
+            resets.append((stamp, _secondary_remaining(summary)))
+    cohorts: list[PoolRefill] = []
+    for stamp, remaining in sorted(resets):
+        if not cohorts or (stamp - cohorts[-1].at).total_seconds() > 3600:
+            cohorts.append(PoolRefill(at=stamp, accounts=0, remaining_percent=0.0))
+        cohorts[-1].accounts += 1
+        cohorts[-1].remaining_percent = round(cohorts[-1].remaining_percent + remaining, 1)
+    return cohorts
+
+
 def _weekly_pool(
     summaries: list[AccountSummary],
     *,
     pool_id: str,
     provider: str,
+    now: datetime,
 ) -> PoolSummary:
     candidates = [
         _Candidate(
@@ -242,12 +262,13 @@ def _weekly_pool(
     )
     usable = [summary for summary in summaries if is_pool_usable(summary)]
     if not usable:
-        return pool
+        return pool.model_copy(update={"refills": []})
     resets = [summary.reset_at_secondary for summary in usable if summary.reset_at_secondary is not None]
-    now = datetime.now(timezone.utc)
     paces = [_weekly_pace(summary, now) for summary in usable]
     return pool.model_copy(
         update={
+            "refills": _weekly_refills(usable, now),
+            "weekly_empty_accounts": sum(_secondary_remaining(summary) <= 0 for summary in usable),
             "weekly_remaining_percent": sum(_secondary_remaining(summary) for summary in usable) / len(usable),
             "weekly_reset_at": min(resets) if resets else None,
             "weekly_pace_percent": sum(paces) / len(paces),
@@ -310,15 +331,19 @@ def build_pools(summaries: list[AccountSummary], *, generated_at: datetime | Non
     and the dashboard read the same windows the balancer routes on.
     """
     anthropic = _by_provider(summaries, ANTHROPIC_PROVIDER_NAME)
+    now = generated_at or utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     return PoolsResponse(
-        generated_at=generated_at or utcnow(),
+        generated_at=now,
         pools=[
             _fable_pool(anthropic),
-            _weekly_pool(anthropic, pool_id="anthropic-general", provider=ANTHROPIC_PROVIDER_NAME),
+            _weekly_pool(anthropic, pool_id="anthropic-general", provider=ANTHROPIC_PROVIDER_NAME, now=now),
             _weekly_pool(
                 _by_provider(summaries, OPENAI_PROVIDER_NAME),
                 pool_id="openai-codex",
                 provider=OPENAI_PROVIDER_NAME,
+                now=now,
             ),
             _primary_window_pool(
                 _by_provider(summaries, KIMI_POOL_PROVIDER),
@@ -362,4 +387,20 @@ class PoolsService:
         except (OSError, UnicodeError, json.JSONDecodeError):
             config = {}
         budget_pools = cursor_budget_pools(seats, config, now=response.generated_at) if isinstance(config, dict) else []
-        return response.model_copy(update={"pools": [*response.pools, *seat_pools, *budget_pools]})
+        cursor_config = config.get("cursor") if isinstance(config, dict) else None
+        grouping = cursor_config.get("accounts") if isinstance(cursor_config, dict) else None
+        grouping = grouping if isinstance(grouping, dict) else {}
+        plans = set()
+        for account in seats.accounts:
+            if account.vendor != "cursor":
+                continue
+            entry = grouping.get(account.id)
+            plan = entry.get("plan") if isinstance(entry, dict) else None
+            plan = plan if isinstance(plan, str) and plan else None
+            plans.add(account.plan or plan or account.id)
+        all_pools = [*response.pools, *seat_pools, *budget_pools]
+        all_pools = [
+            pool.model_copy(update={"plan_count": len(plans)}) if pool.provider == "cursor" else pool
+            for pool in all_pools
+        ]
+        return response.model_copy(update={"pools": all_pools})
