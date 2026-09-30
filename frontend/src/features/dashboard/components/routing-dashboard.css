@@ -1,0 +1,126 @@
+.routing-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.routing-dashboard .plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.routing-dashboard .plan-head h2 {
+  margin: 0;
+}
+.routing-dashboard .rec {
+  font-weight: 600;
+}
+.routing-dashboard .plan-why,
+.routing-dashboard .plan-reason,
+.routing-dashboard .plan-risk,
+.routing-dashboard .pool-sub,
+.routing-dashboard .pool-foot {
+  color: var(--ink-2);
+  margin: 6px 0 0;
+}
+.routing-dashboard .plan-reason {
+  display: block;
+  font-size: 12px;
+}
+.routing-dashboard .plan-accounts {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+.routing-dashboard .plan-accounts td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.routing-dashboard .plan-accounts td:last-child {
+  text-align: right;
+  width: 72px;
+}
+.routing-dashboard .chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--fill);
+}
+.routing-dashboard .chip.add {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.routing-dashboard .chip.drop {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+.routing-dashboard .chip.keep {
+  background: var(--fill);
+  color: var(--ink-2);
+}
+.routing-dashboard .plan-ladders-label {
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+.routing-dashboard .plan-ladders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.routing-dashboard .plan-ladders li {
+  display: flex;
+  gap: 12px;
+}
+.routing-dashboard .job {
+  width: 120px;
+  flex: none;
+  color: var(--ink-2);
+}
+.routing-dashboard .steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.routing-dashboard .pool-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.routing-dashboard .pool-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.routing-dashboard .pool-name {
+  font-weight: 600;
+}
+.routing-dashboard .pool-value {
+  font-variant-numeric: tabular-nums;
+}
+.routing-dashboard .pool-bar {
+  position: relative;
+  height: 6px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--track);
+  overflow: visible;
+}
+.routing-dashboard .pool-bar i {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+}
+.routing-dashboard .pool-tick {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 10px;
+  background: var(--ink);
+}

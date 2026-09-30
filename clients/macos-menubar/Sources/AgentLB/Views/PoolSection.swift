@@ -15,6 +15,10 @@ struct PoolSection: View {
   let arbitrage: ArbitrageStats?
   let hasError: Bool
   let retry: () -> Void
+  var menuPools: [PoolEntry] = []
+  var plan: PoolPlan? = nil
+  var menuNow: Date = .now
+  var menuTimeZone: TimeZone = .current
 
   private var isScoped: Bool { scope != .all }
   var displayedWindows: [ProviderScope.Window] {
@@ -25,10 +29,12 @@ struct PoolSection: View {
   // label 14, cards 128, metric lines 14 (spacing 8/3).
   var body: some View {
     VStack(alignment: .leading, spacing: PanelMetrics.poolSpacing) {
-      SectionLabel("POOL")
+      SectionLabel("POOLS")
         .frame(height: PanelMetrics.poolLabel)
       if hasError && summary == nil && !isScoped {
         RetryRow(retry: retry)
+      } else if !menuPools.isEmpty {
+        menuRows
       } else {
         cards
         metricsStrip
@@ -37,6 +43,24 @@ struct PoolSection: View {
         }
       }
     }
+  }
+
+  private var menuRows: some View {
+    let rows = PoolMenu.rows(pools: menuPools, now: menuNow, timeZone: menuTimeZone)
+    let footer = PoolMenu.footer(plan: plan)
+    return VStack(alignment: .leading, spacing: 8) {
+      ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+        PoolMenuRowView(row: row)
+      }
+      if let footer {
+        Text(footer)
+          .font(.system(size: 11))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(minHeight: PanelMetrics.poolCard, alignment: .top)
   }
 
   private var cards: some View {
@@ -203,6 +227,64 @@ struct PoolSection: View {
 
 // One self-contained limit card (§9.3): title + scoped account count,
 // 30 pt ring beside the 26 pt percent, credits, countdown, optional status.
+private struct PoolMenuRowView: View {
+  let row: PoolMenuRow
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(row.name)
+          .font(.system(size: 12, weight: .semibold))
+        Spacer(minLength: 8)
+        Text(row.value)
+          .font(.system(size: 12, weight: .medium, design: .monospaced))
+          .monospacedDigit()
+      }
+      PoolCapsule(fraction: row.fraction, tone: row.tone, ticks: row.ticks)
+      if let subline = row.subline {
+        Text(subline)
+          .font(.system(size: 10))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+    }
+    .accessibilityElement(children: .combine)
+  }
+}
+
+private struct PoolCapsule: View {
+  let fraction: Double
+  let tone: PoolTone
+  let ticks: [Double]
+
+  var body: some View {
+    GeometryReader { geo in
+      let width = geo.size.width
+      ZStack(alignment: .leading) {
+        Capsule().fill(Color.primary.opacity(0.12))
+        Capsule()
+          .fill(fill)
+          .frame(width: max(0, width * fraction))
+        ForEach(Array(ticks.enumerated()), id: \.offset) { _, tick in
+          Capsule()
+            .fill(Color.primary)
+            .frame(width: 2, height: 10)
+            .offset(x: width * tick - 1)
+        }
+      }
+    }
+    .frame(height: 6)
+  }
+
+  private var fill: Color {
+    switch tone {
+    case .success: Color.green
+    case .warning: Color.orange
+    case .danger: Color.red
+    }
+  }
+}
+
 private struct WindowCard: View {
   struct Status {
     let text: String

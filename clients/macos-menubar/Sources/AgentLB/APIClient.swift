@@ -138,6 +138,20 @@ struct APIClient: @unchecked Sendable {
     try await get("/api/pools")
   }
 
+  /// Absent until the account-plan route exists. A 404 hides the menu footer.
+  func poolsPlan() async throws -> PoolPlan? {
+    let (data, response) = try await fetch(path: "/api/pools/plan")
+    if let http = response as? HTTPURLResponse, http.statusCode == 404 {
+      return nil
+    }
+    try assertOK(response, endpoint: "/api/pools/plan")
+    do {
+      return try Self.makeDecoder().decode(PoolPlan.self, from: data)
+    } catch let e as DecodingError {
+      throw APIError.decoding(e, endpoint: "/api/pools/plan")
+    }
+  }
+
   func usageSummary(provider: String? = nil) async throws -> UsageSummary {
     guard let provider else { return try await get("/api/usage/summary") }
     return try await get("/api/usage/summary?provider=\(provider)")

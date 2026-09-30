@@ -184,6 +184,7 @@ export const handlers = [
     return HttpResponse.json({ status: "ok" });
   }),
 
+  http.get("/api/pools/plan", () => new HttpResponse(null, { status: 404 })),
   http.get("/api/runtime/version", () => {
     return HttpResponse.json({
       currentVersion: "1.19.0",

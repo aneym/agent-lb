@@ -18,6 +18,7 @@ final class AppState {
   var accounts: [Account] = []
   var seatAccounts: [SeatAccount] = []
   var pools: [PoolEntry] = []
+  var poolPlan: PoolPlan?
   var recent: [RequestLogEntry] = []
   var version: RuntimeVersion?
   var lastSyncAt: Date?
@@ -287,6 +288,11 @@ final class AppState {
       if !silently {
         Self.updateSectionError(.pools, error: error, in: &sectionErrors)
       }
+    }
+    do {
+      poolPlan = try await client.poolsPlan()
+    } catch {
+      poolPlan = nil
     }
   }
 

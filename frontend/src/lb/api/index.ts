@@ -20,6 +20,15 @@ export const PoolSchema = z.object({
   weeklyPacePercent: maybeNumber,
   windowLabel: z.string().nullable().optional(),
   resetAt: maybeDate,
+  percentUsed: maybeNumber,
+  percentSource: z.string().nullable().optional(),
+  cycleResetAt: maybeDate,
+  refills: z
+    .array(z.object({ at: z.string(), accounts: z.number(), remainingPercent: z.number() }))
+    .nullable()
+    .optional(),
+  usableAccounts: maybeNumber,
+  totalAccounts: maybeNumber,
 });
 const PoolsSchema = z.object({ generatedAt: z.string(), pools: z.array(PoolSchema) });
 export type Pool = z.infer<typeof PoolSchema>;

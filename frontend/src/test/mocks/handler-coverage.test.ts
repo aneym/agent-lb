@@ -24,6 +24,7 @@ const EXPECTED_ENDPOINTS = [
 	"GET /health",
 	// runtime
 	"GET /api/runtime/version",
+	"GET /api/pools/plan",
 	// accounts
 	"GET /api/accounts",
 	"POST /api/accounts/import",

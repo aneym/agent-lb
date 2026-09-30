@@ -207,7 +207,9 @@ struct RootView: View {
         scopedAccounts: scopedAccounts,
         arbitrage: arbitrage,
         hasError: appState.sectionErrors.contains(.pool),
-        retry: retrySection
+        retry: retrySection,
+        menuPools: appState.pools,
+        plan: appState.poolPlan
       )
       .padding(.horizontal, 14)
       .padding(.vertical, 6)

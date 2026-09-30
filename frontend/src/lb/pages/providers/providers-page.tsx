@@ -39,6 +39,8 @@ import {
   Seg,
 } from "../../kit/primitives";
 import { PausePopover } from "../../kit/pause-popover";
+import { RoutingDashboard } from "@/features/dashboard/components/routing-dashboard";
+import { useAccountPlan } from "@/features/dashboard/use-account-plan";
 import { toast } from "sonner";
 import type { z } from "zod";
 
@@ -230,6 +232,7 @@ function AccountRow({
 export function ProvidersPage() {
   usePrivacyStore((state) => state.blurred);
   const pools = usePools();
+  const plan = useAccountPlan();
   const { accountsQuery } = useAccounts();
   const seat = useSeatAccounts();
   const sticky = useStickySessions();
@@ -311,6 +314,7 @@ export function ProvidersPage() {
           ? `${ready} of ${activePools.length} pools can take work. ${soon?.resetAtPrimary ? `Next 5-hour reset in ${durationWords(new Date(soon.resetAtPrimary).getTime() - now)} (${accountName(soon)}).` : "No upcoming 5-hour reset."}`
           : "See which providers can take work."}
       </PageHead>
+      <RoutingDashboard pools={pools.data?.pools ?? []} plan={plan.data ?? null} />
       <section>
         <div className="sec-h">
           <h2>Pools</h2>

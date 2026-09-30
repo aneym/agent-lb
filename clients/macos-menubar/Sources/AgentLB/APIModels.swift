@@ -329,6 +329,12 @@ struct PoolsDocument: Decodable {
   let pools: [PoolEntry]
 }
 
+struct PoolRefill: Decodable, Equatable, Sendable {
+  let at: Date
+  let accounts: Int
+  let remainingPercent: Double
+}
+
 struct PoolEntry: Decodable, Equatable, Sendable {
   let id: String
   let provider: String
@@ -345,4 +351,40 @@ struct PoolEntry: Decodable, Equatable, Sendable {
   let percentUsed: Double?
   let percentSource: String?
   let cycleResetAt: Date?
+  let weeklyRemainingPercent: Double?
+  let aggregateRemainingPercent: Double?
+  let weeklyResetAt: Date?
+  let resetAt: Date?
+  let refills: [PoolRefill]?
+  let usableAccounts: Int?
+  let totalAccounts: Int?
+}
+
+struct PoolPlan: Decodable, Equatable, Sendable {
+  let generatedAt: Date
+  let recommended: String
+  let levels: [String: PoolPlanLevel]
+}
+
+struct PoolPlanLevel: Decodable, Equatable, Sendable {
+  let title: String
+  let why: String
+  let accounts: [PoolPlanAccount]
+  let ladders: [String: [PoolPlanRung]]
+  let risk: String
+}
+
+struct PoolPlanAccount: Decodable, Equatable, Sendable {
+  let pool: String
+  let label: String
+  let count: Int
+  let change: String
+  let delta: Int
+  let reason: String
+}
+
+struct PoolPlanRung: Decodable, Equatable, Sendable {
+  let id: String
+  let model: String
+  let harness: String
 }
