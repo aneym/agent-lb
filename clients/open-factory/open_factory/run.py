@@ -184,7 +184,7 @@ def run(
             "seat": current.get("seat") if current else None,
             "model": current.get("model") if current else None,
             "pool": current.get("pool") if current else None,
-            "pick": current,
+            "pick": current.get("seat") if current else None,
             "total_ms": round((time.monotonic() - started) * 1000),
         }
     )
@@ -192,13 +192,12 @@ def run(
     directory.mkdir(parents=True, exist_ok=True)
     attempts, skipped, seen = [], [], set()
     fallbacks = (first or {}).get("fallbacks", [])
-    ran, out, exit_code, last = None, None, 2, current
+    ran, out, exit_code = None, None, 2
     while current and len(attempts) < 3:
         identity = (current.get("seat"), current.get("model"))
         if identity in seen:
             break
         seen.add(identity)
-        last = current
         number = len(attempts) + 1
         out = directory / f"attempt-{number}.txt"
         outcome, code, wall, line = attempt(current, task_class, cwd, brief, out, timeout)
@@ -234,18 +233,18 @@ def run(
         if outcome == "fail":
             exit_code = 1
             break
-        if "rung" in current:
-            skipped.append(str(current["rung"]))
+        if first and "rung" in first:
+            rung = first["rung"] if number == 1 else current["rung"]
+            skipped.append(str(rung))
             current = pick(task_class, author_vendor, skipped)
         else:
             current = next((seat for seat in fallbacks if (seat.get("seat"), seat.get("model")) not in seen), None)
-    actual = {"seat": last["seat"], "model": last.get("model")} if last and attempts else None
     return {
         "decision_id": decision_id,
         "class": task_class,
         "intended": intention,
         "ran": ran,
-        "standing_in": actual is not None and actual != intention,
+        "standing_in": ran is not None and ran != intention,
         "reason": reason,
         "attempts": attempts,
         "out": str(out) if out else None,

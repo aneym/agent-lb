@@ -109,3 +109,43 @@ def test_of_installs_as_one_command(tmp_path: Path) -> None:
     version = subprocess.run([str(prefix / "of"), "--version"], capture_output=True, text=True, timeout=60, check=False)
     assert version.stdout.startswith("open-factory 0.3")
     assert (REPO / "clients" / "open-factory" / "README.md").read_text().count("of run") >= 1
+
+
+def test_exhausted_run_has_no_stand_in(tmp_path: Path) -> None:
+    env = world(tmp_path)
+    stub(Path(env["OF_BIN_CLAUDE_LB_LAUNCH"]), "echo 'usage limit'\nexit 1\n")
+    done = of(env, "run", "implement", "--json", "--", "Rename helper")
+    receipt = json.loads(done.stdout)
+    assert done.returncode == 2
+    assert receipt["ran"] is None
+    assert receipt["standing_in"] is False
+
+
+def test_decision_pick_is_a_seat_id(tmp_path: Path) -> None:
+    env = world(tmp_path)
+    done = of(env, "run", "implement", "--json", "--", "Rename helper")
+    assert done.returncode == 0, done.stderr
+    decision = next(row for row in rows(env, "ROUTE_LEDGER") if row["event"] == "of_decision")
+    assert decision["pick"] == "gpt-implementer"
+
+
+def test_intended_menu_seat_keeps_ladder_fallback(tmp_path: Path) -> None:
+    env = world(tmp_path)
+    first = {"seat": "gpt-implementer", "model": "gpt-6.1-sol", "pool": "openai-codex", "rung": "sol"}
+    second = {"seat": "sonnet-implementer", "model": "claude-sonnet-5-5", "pool": "anthropic-general", "rung": "sonnet"}
+    menu_seat = {key: value for key, value in first.items() if key != "rung"}
+    menu = {"classes": {"implement": {"seats": [menu_seat]}}}
+    env["OF_BIN_ROUTE"] = stub(tmp_path / "route", f'''case "$1" in
+menu) echo '{json.dumps(menu)}' ;;
+pick)
+    case "$*" in
+    *"--skip sol"*) echo '{json.dumps(second)}' ;;
+    *) echo '{json.dumps(first)}' ;;
+    esac ;;
+esac
+''')
+    done = of(env, "run", "implement", "--intended", "gpt-6.1-sol", "--json", "--", "Rename helper")
+    receipt = json.loads(done.stdout)
+    assert done.returncode == 0, done.stderr
+    assert receipt["ran"] == {"seat": "sonnet-implementer", "model": "claude-sonnet-5-5"}
+    assert [attempt["outcome"] for attempt in receipt["attempts"]] == ["limit", "ok"]

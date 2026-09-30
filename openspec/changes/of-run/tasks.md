@@ -9,3 +9,4 @@
 ## 3. Validate
 - [x] 3.1 Run the unchanged run and route scenario checks.
 - [x] 3.2 Validate the OpenSpec change in strict mode.
+- [x] Follow-ups: standing_in from the seat that ran; ledger pick is a seat id; rung check reads the first pick (of-run-b)
