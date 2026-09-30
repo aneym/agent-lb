@@ -804,17 +804,16 @@ async def v1_messages(
 
     intended_model = payload.model
     intent = request.headers.get("x-agent-lb-intent")
-    review_lane = stand_in.is_review_lane(request.headers.get("x-agent-lb-lane"))
-    if intent and review_lane:
-        logger.info("stand_in_refused_review_lane")
+    lane = request.headers.get("x-agent-lb-lane")
+    review_lane = stand_in.is_review_lane(lane)
     main_thread = "x-claude-code-agent-id" not in request.headers
-    eligible = (
+    swap_candidate = (
         main_thread
-        and not review_lane
         and bool(intent)
         and bool(re.match(r"^claude-(?:opus|sonnet)(?:-|$)", intended_model))
         and stand_in.stand_in_model(intent) is not None
     )
+    eligible = swap_candidate and not review_lane
     session_id = _anthropic_request_session_id(payload, request.headers)
     resolved_request = await context.service.resolve_message_request(payload)
     payload = resolved_request.payload
@@ -840,11 +839,15 @@ async def v1_messages(
 
     async def failure_response(exc: AnthropicProxyError) -> Response:
         await _release_reservation(reservation)
-        alias = stand_in.stand_in_model(intent) if eligible else None
+        alias = stand_in.stand_in_model(intent) if swap_candidate else None
         resolved = resolve_ccgpt_model(alias)
         if resolved is None or not (
             exc.status_code == 429 or exc.status_code >= 500 or exc.code.startswith("no_available_")
         ):
+            return _anthropic_proxy_error_response(exc)
+        if review_lane:
+            safe_lane = re.sub(r"[^A-Za-z0-9._:/-]", "?", lane or "")[:80]
+            logger.info("stand_in_refused_review_lane lane=%s", safe_lane)
             return _anthropic_proxy_error_response(exc)
         locked_model, alias_effort = resolved
         response = await _ccgpt_messages_response(
@@ -895,7 +898,7 @@ async def v1_messages(
         return Response(content=body, media_type=stream.media_type)
 
     stream_body = stream.body
-    if eligible:
+    if swap_candidate:
         iterator = stream.body.__aiter__()
         try:
             first_chunk = await anext(iterator)
@@ -911,7 +914,7 @@ async def v1_messages(
                 yield chunk
 
         stream_body = prefetched_body()
-        if first_chunk is not None and session_id:
+        if eligible and first_chunk is not None and session_id:
             try:
                 stand_in.record_success(session_id)
             except Exception:

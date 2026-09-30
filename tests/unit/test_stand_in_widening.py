@@ -32,16 +32,27 @@ def launcher_env(tmp_path, kind, stage="all", tab="w5H:tC8"):
     registry = tmp_path / ".agent-rails" / "workflows" / "kinds" / f"{tab.replace(':', '_')}.json"
     registry.parent.mkdir(parents=True, exist_ok=True)
     registry.write_text(json.dumps(kind))
-    return {"HOME": str(tmp_path), "PATH": os.defpath, "ROUTE_TABLE": str(table), "HERDR_TAB_ID": tab,
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    herdr = bin_dir / "herdr"
+    herdr.write_text(f"#!{sys.executable}\nimport json, os\nfrom pathlib import Path\n"
+                     "Path(os.environ['HOME'], 'herdr-called').touch()\n"
+                     "print(json.dumps({'result': {'tab': {'label': os.environ.get('TEST_TAB_LABEL', '')}}}))\n")
+    herdr.chmod(0o755)
+    return {"HOME": str(tmp_path), "PATH": f"{bin_dir}{os.pathsep}{os.defpath}",
+            "ROUTE_TABLE": str(table), "HERDR_TAB_ID": tab,
             "CLAUDE_LB_DRY_RUN": "1", "CLAUDE_LB_DISABLE": "1"}
 
 
 @pytest.mark.parametrize("kind", [
     {"lane": "Review-build"}, {"lane": "verify-money"}, {"lane": "AUDIT"},
     {"kind": "review"}, {"title": "[Review] routing"}, {"lane": "audit — unicode title"},
+    *({"lane": lane} for lane in ("code_review", "review_build", "pr_review", "review2", "audit3",
+                                  "verification", "verified-build", "reviews", "auditing")),
 ])
-def test_stand_in_review_launcher_untagged(tmp_path, kind):
-    env = launcher_env(tmp_path, kind)
+@pytest.mark.parametrize("stage", ["all", "half"])
+def test_stand_in_review_launcher_untagged(tmp_path, kind, stage):
+    env = launcher_env(tmp_path, kind, stage)
     result = subprocess.run([sys.executable, str(LAUNCHER)], env=env, capture_output=True, text=True, timeout=5)
     assert result.returncode == 0
     assert "intent=none lane=none reason=review lane" in result.stderr
@@ -58,6 +69,16 @@ def test_stand_in_half_selection_stable(tmp_path, tab, tagged):
         result = subprocess.run([sys.executable, str(LAUNCHER)], env=env, capture_output=True, text=True, timeout=5)
         assert result.returncode == 0
         assert ("intent=lane-tab" in result.stderr) is tagged
+        assert (tmp_path / "herdr-called").exists() is tagged
+
+
+@pytest.mark.parametrize("label,tagged", [("[review] x", False), ("preview-build", True)])
+def test_stand_in_herdr_label(tmp_path, label, tagged):
+    env = launcher_env(tmp_path, {"lane": "build"}, "half")
+    env["TEST_TAB_LABEL"] = label
+    result = subprocess.run([sys.executable, str(LAUNCHER)], env=env, capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0
+    assert ("intent=lane-tab" in result.stderr) is tagged
 
 
 @pytest.mark.parametrize("ccgpt", [False, True])
@@ -67,21 +88,38 @@ def test_stand_in_banner_and_ccgpt_tags(tmp_path, monkeypatch, capsys, ccgpt):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.setenv("AGENT_LB_INTENT", "")
+    monkeypatch.setenv("AGENT_LB_LANE", "")
+    monkeypatch.setenv("CLAUDE_LB_DISABLE", "0")
     launcher = load_launcher()
-    assert launcher.resolve_lane_tags([]) == "all"
-    assert launcher.tag_headers(os.environ) == {"x-agent-lb-intent": "lane-tab", "x-agent-lb-lane": "build"}
+    monkeypatch.setattr(launcher, "CCGPT_MODE", ccgpt)
+    monkeypatch.setattr(sys, "argv", [str(LAUNCHER)])
     monkeypatch.setattr(launcher, "_lb_candidates", lambda: [("local", "http://example.invalid")])
-    if ccgpt:
-        monkeypatch.setattr(launcher, "_probe_ccgpt_at", lambda *a, **k: (True, None))
-        assert launcher.prepare_ccgpt_endpoint()
-    else:
-        monkeypatch.setattr(launcher, "_probe_interactive_ready", lambda *a, **k: ("ready", None))
-        assert launcher.prepare_interactive_endpoint()
+    monkeypatch.setattr(launcher, "_probe_ccgpt_at", lambda *a, **k: (True, None))
+    monkeypatch.setattr(launcher, "_probe_interactive_ready", lambda *a, **k: ("ready", None))
+    captured = {}
+
+    def proxy(session_id):
+        captured.update(launcher.tag_headers(os.environ))
+        return "http://example.invalid"
+
+    monkeypatch.setattr(launcher, "start_lb_proxy", proxy)
+    for name in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS",
+                 "ANTHROPIC_BASE_URL", "ANTHROPIC_UNIX_SOCKET", "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
+                 "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(name, "")
+    launcher.main()
     output = capsys.readouterr()
-    assert output.out == ""
+    assert "claude" in output.out
+    assert captured == {"x-agent-lb-intent": "lane-tab", "x-agent-lb-lane": "build"}
     assert "stand-in: lane-tab (build)" in output.err
-    monkeypatch.delenv("AGENT_LB_INTENT")
+    assert ("ccgpt:" in output.err) is ccgpt
+    monkeypatch.delenv("AGENT_LB_INTENT", raising=False)
     assert launcher.stand_in_banner() == "stand-in: off"
+    monkeypatch.setenv("AGENT_LB_INTENT", "explicit\n\x1b[31m")
+    assert launcher.stand_in_banner() == "stand-in: explicit???31m (lane: none)"
+    monkeypatch.setenv("AGENT_LB_LANE", "build\n\x1b")
+    assert launcher.stand_in_banner() == "stand-in: explicit???31m (build??)"
 
 
 def test_stand_in_internal_headers_not_forwarded():
@@ -95,7 +133,11 @@ def test_stand_in_internal_headers_not_forwarded():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lane", ["build", "Review-build", "VERIFY", "audit-money"])
+@pytest.mark.parametrize("lane", [
+    "build", "preview-build", "Review-build", "VERIFY", "audit-money", "reviewer",
+    "code_review", "review_build", "pr_review", "review2", "audit3", "verification",
+    "verified-build", "reviews", "auditing", "review\x1b[31m" + "x" * 100,
+])
 async def test_stand_in_forced_swap_and_recovery(async_client, monkeypatch, tmp_path, caplog, lane):
     table = tmp_path / "routing.json"
     table.write_text(json.dumps({"policy": {"stand_in": {"lane-tab": "sol-latest-high"}}}))
@@ -132,11 +174,19 @@ async def test_stand_in_forced_swap_and_recovery(async_client, monkeypatch, tmp_
     body = {"model": "claude-opus-5-5", "max_tokens": 10, "stream": True,
             "messages": [{"role": "user", "content": "next"}]}
     headers = {"x-agent-lb-intent": "lane-tab", "x-agent-lb-lane": lane, "x-claude-session-id": "forced-swap"}
+    mode["failed"] = False
+    healthy = await async_client.post("/v1/messages", json=body, headers=headers)
+    assert "msg_claude" in healthy.text
+    assert "stand_in_refused_review_lane" not in caplog.text
+    mode["failed"] = True
     response = await async_client.post("/v1/messages", json=body, headers=headers)
-    if lane != "build":
+    if lane not in {"build", "preview-build"}:
         assert "x-agent-lb-standing-in" not in response.headers
         assert bridge_calls == []
-        assert "stand_in_refused_review_lane" in caplog.text
+        assert response.status_code == 429
+        expected_lane = "review??31m" + "x" * 69 if "\x1b" in lane else lane
+        assert f"stand_in_refused_review_lane lane={expected_lane}" in caplog.text
+        assert "\x1b" not in caplog.text
         assert "rate_limit_error" in response.text
         return
     assert response.status_code == 200 and "fake sol answer" in response.text

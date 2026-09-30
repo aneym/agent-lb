@@ -121,8 +121,8 @@ def resolve_lane_tags(argv: list[str]) -> str:
             except FileNotFoundError:
                 kind = {}
             review_lane = any(
-                re.search(r"review|verif|audit", str(value), re.IGNORECASE)
-                for value in (kind.get("lane", ""), kind.get("title", ""), os.environ.get("HERDR_TAB_TITLE", ""))
+                re.search(r"(?<![A-Za-z])(?:review|verif|audit)", str(value), re.IGNORECASE)
+                for value in (kind.get("lane", ""), kind.get("title", ""))
             ) or str(kind.get("kind", "")).lower() == "review"
             lane = kind.get("lane") or tab
             if not isinstance(lane, str) or re.fullmatch(r"[A-Za-z0-9._:/-]{1,128}", lane) is None:
@@ -153,6 +153,18 @@ def resolve_lane_tags(argv: list[str]) -> str:
     if reader.is_alive() or not result:
         return "policy lookup timed out"
     intent, lane, reason = result[0]
+    if intent:
+        label = ""
+        try:
+            lookup = subprocess.run(
+                ["herdr", "tab", "get", tab], capture_output=True, text=True, timeout=2,
+            )
+            if lookup.returncode == 0:
+                label = json.loads(lookup.stdout)["result"]["tab"]["label"]
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+            pass
+        if re.search(r"(?<![A-Za-z])(?:review|verif|audit)", str(label), re.IGNORECASE):
+            return "review lane"
     previous = {name: os.environ.get(name) for name in ("AGENT_LB_INTENT", "AGENT_LB_LANE")}
     try:
         if intent:
@@ -169,12 +181,16 @@ def resolve_lane_tags(argv: list[str]) -> str:
     return reason
 
 
+def _safe_tag(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._:/-]", "?", value)[:128]
+
+
 def stand_in_banner() -> str:
     intent = os.environ.get("AGENT_LB_INTENT")
     if not intent:
         return "stand-in: off"
-    lane = os.environ.get("AGENT_LB_LANE") or os.environ.get("HERDR_TAB_ID")
-    return f"stand-in: {intent}" + (f" ({lane})" if lane else "")
+    lane = os.environ.get("AGENT_LB_LANE")
+    return f"stand-in: {_safe_tag(intent)}" + (f" ({_safe_tag(lane)})" if lane else " (lane: none)")
 
 
 AGENT_LB_BASE_URL = os.environ.get("CLAUDE_LB_BASE_URL", "http://127.0.0.1:2455").rstrip("/")
@@ -957,7 +973,9 @@ def run_lb_proxy(
     server.tag_headers = tag_headers(os.environ) if not shared else {}
     server.ccgpt_mode = CCGPT_MODE and not shared
     server.upstream_base_url = upstream_base_url.rstrip("/")
-    server.activity = _LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
+    server.activity = (
+        _LbActivity(activity_path(session_id, parent_pid)) if not shared and parent_pid is not None else None
+    )
     if shared:
         server.client_activity = {}
         server.client_activity_lock = threading.Lock()
@@ -2442,8 +2460,8 @@ def main() -> None:
     if os.environ.get("CLAUDE_LB_DRY_RUN") == "1":
         print(" ".join(command))
         print(
-            f"agent-lb tags: intent={resolved_tags.get('x-agent-lb-intent', 'none')} "
-            f"lane={resolved_tags.get('x-agent-lb-lane', 'none')} reason={tag_reason}",
+            f"agent-lb tags: intent={_safe_tag(resolved_tags.get('x-agent-lb-intent', 'none'))} "
+            f"lane={_safe_tag(resolved_tags.get('x-agent-lb-lane', 'none'))} reason={tag_reason}",
             file=sys.stderr,
         )
         return

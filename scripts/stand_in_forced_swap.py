@@ -18,7 +18,8 @@ def main() -> int:
              "test_stand_in_forced_swap_and_recovery[build]", "-q"],
             cwd=repo, env=env, capture_output=True, text=True, timeout=60,
         )
-    if result.returncode:
+    output = result.stdout + result.stderr
+    if result.returncode or "passed" not in output or "skipped" in output:
         print("FAIL forced swap/recovery harness", file=sys.stderr)
         print(result.stdout + result.stderr, file=sys.stderr, end="")
         return 1

@@ -18,7 +18,7 @@ _DEFAULT_MODELS = {"orchestrator": "sol-latest-high", "lane-tab": "sol-latest-hi
 
 
 def is_review_lane(lane: str | None) -> bool:
-    return bool(lane and re.search(r"review|verif|audit", lane, re.IGNORECASE))
+    return bool(lane and re.search(r"(?<![A-Za-z])(?:review|verif|audit)", lane, re.IGNORECASE))
 
 
 def stand_in_model(intent: str | None) -> str | None:

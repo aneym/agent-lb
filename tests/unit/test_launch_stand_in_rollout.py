@@ -103,6 +103,9 @@ def test_launch_lookup_failure_proceeds_untagged(monkeypatch, capsys, failure):
     spec = importlib.util.spec_from_loader(loader.name, loader)
     launcher = importlib.util.module_from_spec(spec)
     loader.exec_module(launcher)
+    monkeypatch.setattr(launcher.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(
+        args[0], 0, '{"result":{"tab":{"label":""}}}', "",
+    ))
     monkeypatch.setenv("HERDR_TAB_ID", "w5H:tC8")
     monkeypatch.setenv("CLAUDE_LB_DRY_RUN", "1")
     monkeypatch.setenv("CLAUDE_LB_DISABLE", "1")
