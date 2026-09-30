@@ -11,6 +11,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "clients" / "route"
 TABLE = REPO / "config" / "coding-agents" / "routing-table.json"
@@ -73,3 +75,35 @@ def test_the_last_claude_account_is_kept_for_orchestrators(tmp_path: Path) -> No
     # A healthy pool changes nothing.
     healthy = pick(env_for(tmp_path, "healthy", eligible=3, headroom=80.0), "review")
     assert healthy["seat"] == "plan-reviewer" and healthy["reserve"]["active"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("min_eligible", None),
+    ("min_eligible", "2"),
+    ("min_eligible", True),
+    ("headroom_min_percent", None),
+    ("headroom_min_percent", "40"),
+    ("headroom_min_percent", False),
+    ("admit_classes", None),
+    ("admit_classes", "plan"),
+    ("pool", None),
+    ("pool", []),
+])
+def test_malformed_reserve_keeps_pick_and_menu_working(tmp_path: Path, field: str, value: object) -> None:
+    env = env_for(tmp_path, "malformed", eligible=1, headroom=35.0)
+    table = json.loads(TABLE.read_text())
+    if value is None:
+        del table["policy"]["reserve"][field]
+    else:
+        table["policy"]["reserve"][field] = value
+    table_path = tmp_path / "routing-table.json"
+    table_path.write_text(json.dumps(table))
+    env["ROUTE_TABLE"] = str(table_path)
+
+    review = pick(env, "review")
+    assert review["seat"] == "plan-reviewer"
+    assert review["reserve"] is None
+    result = subprocess.run([sys.executable, str(SCRIPT), "menu", "--class", "review", "--json"], capture_output=True,
+                            text=True, timeout=60, env=env, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["classes"]["review"]["seats"][0]["seat"] == "plan-reviewer"

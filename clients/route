@@ -1172,6 +1172,40 @@ class ServedModels:
         return self._models
 
 
+def reserve_state(
+    table: dict[str, Any], pools: dict[str, dict[str, Any]], class_name: str
+) -> dict[str, Any] | None:
+    policy = table.get("policy")
+    reserve = policy.get("reserve") if isinstance(policy, dict) else None
+    if not isinstance(reserve, dict):
+        return None
+    pool = reserve.get("pool")
+    min_eligible = reserve.get("min_eligible")
+    min_headroom = reserve.get("headroom_min_percent")
+    admit_classes = reserve.get("admit_classes")
+    if not isinstance(pool, str) or not isinstance(admit_classes, list):
+        return None
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in (min_eligible, min_headroom)):
+        return None
+    pool_doc = pools.get(pool, {})
+    eligible = pool_doc.get("eligibleAccounts")
+    headroom = pool_doc.get("headroomPercent")
+    why = None
+    if isinstance(eligible, (int, float)) and not isinstance(eligible, bool) and eligible < min_eligible:
+        noun = "account" if eligible == 1 else "accounts"
+        why = f"{eligible:g} eligible {noun} (keep {min_eligible:g})"
+    elif isinstance(headroom, (int, float)) and not isinstance(headroom, bool) and headroom < min_headroom:
+        why = f"headroom {headroom:g}% (keep {min_headroom:g}%)"
+    return {
+        "pool": pool,
+        "active": why is not None,
+        "admitted": class_name in admit_classes,
+        "eligible": eligible,
+        "headroom": headroom,
+        "why": why,
+    }
+
+
 def class_candidates(
     table: dict[str, Any],
     class_name: str,
@@ -1283,6 +1317,17 @@ def class_candidates(
             }
         )
 
+    reserve = reserve_state(table, pools, class_name)
+    if reserve and reserve["active"] and not reserve["admitted"]:
+        kept = []
+        reserved = []
+        for entry in routable:
+            if entry["pool"] == reserve["pool"]:
+                entry["reserved"] = f"reserved for orchestrators: {reserve['why']}"
+                reserved.append(entry)
+            else:
+                kept.append(entry)
+        routable = kept + reserved
     return routable, skipped, paced
 
 
@@ -1297,7 +1342,10 @@ def command_pick(args: argparse.Namespace) -> int:
         fail(f"class {args.task_class!r} is malformed")
 
     if spec.get("driver"):
+        state = read_state()
+        document = state.get("pools") if isinstance(state.get("pools"), dict) else None
         result = {
+            "reserve": reserve_state(table, pools_by_id(document), args.task_class),
             "class": args.task_class,
             "state_age_s": None,
             "seat": "driver",
@@ -1349,6 +1397,8 @@ def command_pick(args: argparse.Namespace) -> int:
 
     chosen = routable[0]
     reasons = ["first chain entry with the seat up and its pool not exhausted"]
+    if chosen.get("reserved"):
+        reasons.insert(0, f"{chosen['reserved']}; no other seat open")
     if cross_vendor:
         reasons.append(f"cross_vendor: excluded author vendor {args.author_vendor}")
     if stale:
@@ -1366,6 +1416,7 @@ def command_pick(args: argparse.Namespace) -> int:
         "class": args.task_class,
         "state_age_s": None if age is None else round(age, 1),
         "audit": auditor,
+        "reserve": reserve_state(table, pools, args.task_class),
         "seat": chosen["seat"],
         "model": chosen["model"],
         "alias": chosen["alias"],
@@ -1505,6 +1556,9 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
     age = result.get("state_age_s")
     print(f"state age {'no state file' if age is None else f'{age}s'}")
     print(f"reason    {result['reason']}")
+    reserve = result.get("reserve")
+    if reserve and reserve["active"] and not reserve["admitted"]:
+        print(f"reserve: {reserve['why']}")
     fallbacks = ", ".join(f"{entry['seat']}/{entry['model']}" for entry in result["fallbacks"]) or "none"
     print(f"fallbacks {fallbacks}")
     auditor = result.get("audit")

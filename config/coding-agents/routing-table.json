@@ -345,6 +345,13 @@
   "policy": {
     "mode": "adaptive",
     "owner_date": "2026-09-20",
+    "reserve": {
+      "pool": "anthropic-general",
+      "min_eligible": 2,
+      "headroom_min_percent": 40,
+      "admit_classes": ["orchestrator", "lane-tab", "plan", "council"],
+      "note": "2026-09-30 (Alex: orchestrators must never go down). Under this line only these classes start on the pool; the rest start elsewhere and use it only when nothing else is open."
+    },
     "pace": {
       "ahead_gt": 15,
       "behind_lt": -10,
