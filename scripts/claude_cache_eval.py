@@ -94,7 +94,12 @@ def main() -> int:
     for sub in sorted((project / session_id / "subagents").glob("*.jsonl")):
         conversations[sub.stem] = sub
 
-    report = {"session_id": session_id, "model": args.model, "seconds": round(time.time() - started), "conversations": {}}
+    report = {
+        "session_id": session_id,
+        "model": args.model,
+        "seconds": round(time.time() - started),
+        "conversations": {},
+    }
     failures = []
     for name, path in conversations.items():
         rows = calls(path) if path.exists() else []
