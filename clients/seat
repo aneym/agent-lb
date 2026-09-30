@@ -42,6 +42,7 @@ import getpass
 import hashlib
 import json
 import os
+import random
 import re
 import runpy
 import shlex
@@ -54,6 +55,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
+from urllib.parse import urlsplit
 
 VENDORS = ("cursor", "devin")
 SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat"}
@@ -65,6 +67,7 @@ EXIT_NO_ACCOUNT = 2
 PROBE_TIMEOUT_SECONDS = 20.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
 DEFAULT_COOLDOWN = timedelta(hours=1)
+MODEL_UNAVAILABLE_TTL = timedelta(hours=1)
 RUNS_KEPT = 200
 LEASES_KEPT = timedelta(days=7)
 ERROR_CHARS = 400
@@ -86,6 +89,10 @@ AUTH_RE = re.compile(
     r"log ?in again|token (?:has )?expired|reauth",
     re.I,
 )
+MODEL_UNAVAILABLE_RE = re.compile(r"Cannot use this model:\s*\S+", re.I)
+TRANSIENT_RE = re.compile(r"Failed to reach the Cursor API|connect ETIMEDOUT", re.I)
+PROXY_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")
+
 RETRY_AFTER_RE = re.compile(r"try again in (\d+)\s*(second|minute|hour)", re.I)
 
 
@@ -239,10 +246,25 @@ def devin_data_dir(account: dict[str, Any]) -> Path:
     return expand(account.get("data_dir")) or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
 
 
+def local_proxy_vars(env: dict[str, str]) -> list[str]:
+    removed = []
+    for key in PROXY_VARS:
+        value = env.get(key, "")
+        try:
+            host = urlsplit(value if "://" in value else "//" + value).hostname
+        except ValueError:
+            continue
+        if host in ("127.0.0.1", "localhost"):
+            removed.append(key)
+    return removed
+
+
 def account_env(account: dict[str, Any]) -> dict[str, str]:
     """The environment that points the vendor CLI at this account and no other."""
     env = dict(os.environ)
     vendor, auth = account.get("vendor"), account.get("auth")
+    for key in local_proxy_vars(env):
+        env.pop(key, None)
     if vendor == "cursor" and auth == "api-key":
         env["CURSOR_API_KEY"] = read_cursor_key(account)
         config_dir = seat_home() / "cursor" / account["id"]
@@ -334,15 +356,22 @@ def probe_account(account: dict[str, Any]) -> dict[str, Any]:
 def apply_probe(account_id: str, probe: dict[str, Any]) -> None:
     def apply(registry: list[dict[str, Any]], state: dict[str, Any]) -> None:
         if any(account["id"] == account_id for account in registry):
-            state["accounts"].setdefault(account_id, {}).update(probe)
+            record = state["accounts"].setdefault(account_id, {})
+            record.update(probe)
+            record.pop("model_unavailable", None)
+            record.pop("model_unavailable_text", None)
 
     update_state(apply)
 
 
 def command_probe(args: argparse.Namespace) -> int:
     registry = load_registry()
+    if args.account and not any(account["id"] == args.account for account in registry):
+        fail(f"no account {args.account!r} registered", EXIT_NO_ACCOUNT)
     results = {}
     for account in registry:
+        if args.account and account["id"] != args.account:
+            continue
         if args.vendor and account.get("vendor") != args.vendor:
             continue
         if account.get("enabled", True) is False:
@@ -456,6 +485,11 @@ def command_accounts(args: argparse.Namespace) -> int:
                     for pool, value in (record.get("cooldowns") or {}).items()
                     if (stamp := parse_ts(value)) and stamp > now()
                 },
+                "model_unavailable": {
+                    model: value
+                    for model, value in (record.get("model_unavailable") or {}).items()
+                    if (stamp := parse_ts(value)) and stamp > now()
+                },
                 "last_error": record.get("last_error"),
                 "last_run_at": record.get("last_run_at"),
                 "last_24h": usage_since(record, day_ago),
@@ -490,9 +524,12 @@ def command_accounts(args: argparse.Namespace) -> int:
             status = "ok " + (row["identity"].get("tier") or "")
         usage = row["last_24h"]
         print(
-            f"{row['id'] + (' [' + row['plan'] + ']' if row['plan'] else ''):<22} {row['vendor']:<7} {row['auth']:<8} {status:<22} "
+            f"{row['id'] + (' [' + row['plan'] + ']' if row['plan'] else ''):<22} "
+            f"{row['vendor']:<7} {row['auth']:<8} {status:<22} "
             f"{usage['runs']:>8} {usage['tokens_in']:>9} {usage['tokens_out']:>8} {row['leases']['active']:>6}"
         )
+        for model, until in row["model_unavailable"].items():
+            print(f"  model unavailable: {model} until {until}")
     return EXIT_OK
 
 
@@ -716,6 +753,10 @@ def classify(text: str) -> str | None:
         return "auth"
     if LIMIT_RE.search(text):
         return "limit"
+    if MODEL_UNAVAILABLE_RE.search(text):
+        return "model_unavailable"
+    if TRANSIENT_RE.search(text):
+        return "transient_infra"
     return None
 
 
@@ -794,7 +835,8 @@ def order_accounts(
         pool_cooling = pool and any(
             (until := parse_ts((peer.get("cooldowns") or {}).get(pool))) and until > now() for peer in peers
         )
-        if record.get("auth_ok") is False or cooling(record) or pool_cooling:
+        unavailable = parse_ts((record.get("model_unavailable") or {}).get(model)) if model else None
+        if record.get("auth_ok") is False or cooling(record) or pool_cooling or (unavailable and unavailable > now()):
             continue
         leases = [lease for lease in state.get("leases", {}).values() if lease.get("account") == account["id"]]
         recent = usage_since(record, window)["runs"] + len(active_leases(state, account["id"], now()))
@@ -1006,6 +1048,8 @@ def release_error(lease_id: str, json_output: bool) -> Any:
 def release_diagnostic(kind: str, text: str, reported: bool) -> str:
     if reported:
         return f"outcome {kind} reported by caller"
+    if kind in ("model_unavailable", "transient_infra"):
+        return f"{kind} in seat log"
     if kind == "error":
         return "seat failed; no limit or auth text in its log"
     match = (AUTH_RE if kind == "auth" else LIMIT_RE).search(text)
@@ -1031,6 +1075,8 @@ def command_release(args: argparse.Namespace) -> int:
     text, log_read = release_log(args.log)
     usage = release_usage(args.model, args.usage_file)
     outcome = args.outcome or ((classify(text) or "error") if log_read else "unknown")
+    if outcome in ("model_unavailable", "transient_infra"):
+        outcome = "error"
     snapshot = load_state().get("leases", {}).get(args.lease)
     if snapshot is None:
         release_error(args.lease, args.json)
@@ -1161,6 +1207,19 @@ def command_run(args: argparse.Namespace) -> int:
         ready = order_accounts(registry, state, args.vendor, model)
         candidates = [account for account in candidates if account in ready]
     if not candidates:
+        misses = [
+            record for account_id, record in state["accounts"].items()
+            if any(a["id"] == account_id and a.get("vendor") == args.vendor for a in registry)
+            and (until := parse_ts((record.get("model_unavailable") or {}).get(model))) and until > now()
+            and (not args.account or account_id == args.account)
+        ]
+        if misses:
+            error = (misses[-1].get("model_unavailable_text") or {}).get(model) or f"Cannot use this model: {model}"
+            print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model,
+                              "run_id": f"seat-{uuid.uuid4()}", "vendor_session_id": None,
+                              "wall_s": 0, "tokens_in": None, "tokens_out": None,
+                              "attempts": [], "error": error, "result": None}, indent=2))
+            return EXIT_NO_ACCOUNT
         fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
     if args.vendor == "cursor":
         candidates = check_cursor_model(model, candidates)
@@ -1186,6 +1245,9 @@ def command_run(args: argparse.Namespace) -> int:
     outcome: dict[str, Any] = {}
     account: dict[str, Any] = candidates[0]
     started_all = time.monotonic()
+    removed_proxies = local_proxy_vars(dict(os.environ))
+    if removed_proxies:
+        print(f"seat: debug: dropped local proxy variables: {', '.join(removed_proxies)}", file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="seat-") as scratch:
         prompt_file = Path(scratch) / "prompt.md"
         prompt_file.write_text(prompt, encoding="utf-8")
@@ -1203,59 +1265,82 @@ def command_run(args: argparse.Namespace) -> int:
                 continue
             export_file = Path(scratch) / f"{account['id']}.export.json"
             command = build_command(args.vendor, model, args.mode, prompt_file, export_file)
-            started = time.monotonic()
-            try:
-                completed = subprocess.run(
-                    command,
-                    cwd=cwd,
-                    env=account_env(account),
-                    input=prompt_file.read_text(encoding="utf-8") if args.vendor == "cursor" else None,
-                    stdin=None if args.vendor == "cursor" else subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
-                    timeout=args.timeout,
-                    check=False,
+            for retry in range(2):
+                started = time.monotonic()
+                try:
+                    completed = subprocess.run(
+                        command,
+                        cwd=cwd,
+                        env=account_env(account),
+                        input=prompt_file.read_text(encoding="utf-8") if args.vendor == "cursor" else None,
+                        stdin=None if args.vendor == "cursor" else subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=args.timeout,
+                        check=False,
+                    )
+                    outcome = parse_outcome(args.vendor, completed, export_file)
+                except subprocess.TimeoutExpired:
+                    outcome = {"ok": False, "error": f"timeout after {args.timeout:.0f}s"}
+                except (OSError, RuntimeError) as error:
+                    outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
+                wall = round(time.monotonic() - started, 1)
+                kind = None if outcome["ok"] else classify(outcome.get("error") or "")
+                change = changes.setdefault(account["id"], {"fields": {}, "runs": []})
+                fields = change["fields"]
+                fields["last_run_at"] = iso(now())
+                change["runs"].append(
+                    {
+                        "ts": iso(now()),
+                        "model": model,
+                        "ok": outcome["ok"],
+                        "wall_s": wall,
+                        "tokens_in": outcome.get("tokens_in"),
+                        "tokens_out": outcome.get("tokens_out"),
+                        "cache_read": outcome.get("cache_read_tokens"),
+                        "run_id": run_id,
+                    }
                 )
-                outcome = parse_outcome(args.vendor, completed, export_file)
-            except subprocess.TimeoutExpired:
-                outcome = {"ok": False, "error": f"timeout after {args.timeout:.0f}s"}
-            except (OSError, RuntimeError) as error:
-                outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
-            wall = round(time.monotonic() - started, 1)
-            kind = None if outcome["ok"] else classify(outcome.get("error") or "")
-            change = changes.setdefault(account["id"], {"fields": {}, "runs": []})
-            fields = change["fields"]
-            fields["last_run_at"] = iso(now())
-            change["runs"].append(
-                {
-                    "ts": iso(now()),
-                    "model": model,
-                    "ok": outcome["ok"],
-                    "wall_s": wall,
-                    "tokens_in": outcome.get("tokens_in"),
-                    "tokens_out": outcome.get("tokens_out"),
-                    "cache_read": outcome.get("cache_read_tokens"),
-                    "run_id": run_id,
-                }
-            )
-            attempts.append(
-                {"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"), "wall_s": wall}
-            )
-            if outcome["ok"]:
-                fields["last_error"] = None
-                fields["auth_ok"] = True
+                attempts.append(
+                    {"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"), "wall_s": wall}
+                )
+                if outcome["ok"]:
+                    fields["last_error"] = None
+                    fields["auth_ok"] = True
+                    break
+                fields["last_error"] = {"ts": iso(now()), "kind": kind or "error", "text": outcome.get("error")}
+                if kind == "limit":
+                    mark_limit(fields, args.vendor, model, outcome.get("error") or "")
+                    if args.vendor == "cursor" and account.get("plan"):
+                        limited_plans.add(account["plan"])
+                elif kind == "auth":
+                    fields["auth_ok"] = False
+                    if args.vendor == "cursor":
+                        fields["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
+                elif kind == "model_unavailable":
+                    until = iso(now() + MODEL_UNAVAILABLE_TTL)
+                    fields.setdefault("model_unavailable", {})[model] = until
+                    vendor_text = outcome.get("error") or f"Cannot use this model: {model}"
+                    fields.setdefault("model_unavailable_text", {})[model] = vendor_text
+
+                    def mark_unavailable(registry: list[dict[str, Any]], state: dict[str, Any]) -> None:
+                        if any(entry["id"] == account["id"] for entry in registry):
+                            record = state["accounts"].setdefault(account["id"], {})
+                            record.setdefault("model_unavailable", {})[model] = until
+                            record.setdefault("model_unavailable_text", {})[model] = vendor_text
+
+                    update_state(mark_unavailable)
+                elif kind == "transient_infra":
+                    if retry == 0:
+                        lo, hi = map(float, os.environ.get("SEAT_RETRY_JITTER_S", "5,15").split(","))
+                        time.sleep(random.uniform(lo, hi))
+                        continue
+                else:
+                    # A task failure is not the account's fault; another account would repeat it.
+                    break
+
                 break
-            fields["last_error"] = {"ts": iso(now()), "kind": kind or "error", "text": outcome.get("error")}
-            if kind == "limit":
-                mark_limit(fields, args.vendor, model, outcome.get("error") or "")
-                if args.vendor == "cursor" and account.get("plan"):
-                    limited_plans.add(account["plan"])
-            elif kind == "auth":
-                fields["auth_ok"] = False
-                if args.vendor == "cursor":
-                    fields["cooldown_until"] = iso(cooldown_until(outcome.get("error") or ""))
-            else:
-                # A task failure is not the account's fault; another account would repeat it.
+            if outcome.get("ok") or kind not in ("limit", "auth", "model_unavailable", "transient_infra"):
                 break
 
     def apply_run(fresh_registry: list[dict[str, Any]], fresh: dict[str, Any]) -> None:
@@ -1265,7 +1350,7 @@ def command_run(args: argparse.Namespace) -> int:
                 continue
             record = fresh["accounts"].setdefault(account_id, {})
             fields = change["fields"].copy()
-            for key in ("cooldowns", "limits"):
+            for key in ("cooldowns", "limits", "model_unavailable", "model_unavailable_text"):
                 if key in fields:
                     record.setdefault(key, {}).update(fields.pop(key))
             record.update(fields)
@@ -1308,7 +1393,10 @@ def command_run(args: argparse.Namespace) -> int:
     print(json.dumps(envelope, indent=2))
     if closeout["ok"]:
         return EXIT_OK
-    exhausted = attempts and all(a["outcome"] in ("limit", "auth", "untrusted_workspace") for a in attempts)
+    exhausted = attempts and all(
+        a["outcome"] in ("limit", "auth", "untrusted_workspace", "model_unavailable", "transient_infra")
+        for a in attempts
+    )
     return EXIT_NO_ACCOUNT if exhausted else EXIT_FAILED
 
 
@@ -1337,6 +1425,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     setting.set_defaults(handler=command_set)
 
     probe = commands.add_parser("probe", help="check each account's auth and record it")
+    probe.add_argument("account", nargs="?", help="probe one account and clear its model misses")
     probe.add_argument("--vendor", choices=VENDORS)
     probe.add_argument("--json", action="store_true")
     probe.set_defaults(handler=command_probe)
