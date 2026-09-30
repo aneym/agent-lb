@@ -639,16 +639,74 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
     return {"generatedAt": now_iso(), "pools": pools, "source": "accounts_fallback"}
 
 
-def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS) -> tuple[dict[str, Any] | None, str | None]:
+def add_pool_refills(document: dict[str, Any], body: Any) -> None:
+    """Attach weekly reset cohorts from the same account windows used by status."""
+    accounts = body.get("accounts") if isinstance(body, dict) else body
+    if not isinstance(accounts, list):
+        return
+    for pool in pools_by_id(document).values():
+        if pool.get("windowLabel") == "month" or pool.get("id") == "anthropic-fable":
+            continue
+        resets = []
+        now = datetime.now(timezone.utc)
+        for account in accounts:
+            if not isinstance(account, dict) or account.get("status") not in _ROUTABLE_STATUSES:
+                continue
+            subscription = account.get("subscription")
+            if isinstance(subscription, dict) and str(subscription.get("status") or "").strip().lower() == "canceled":
+                continue
+            if pool.get("id") not in _pool_ids(account):
+                continue
+            stamp = _parse_ts(account.get("resetAtSecondary"))
+            remaining = _window(account.get("usage"), "secondaryRemainingPercent", 100.0)
+            if stamp is not None and stamp.tzinfo is not None and stamp > now:
+                resets.append((stamp.astimezone(timezone.utc), remaining))
+        if not resets:
+            continue
+        cohorts = []
+        low_resets = []
+        for stamp, remaining in sorted(resets):
+            if not cohorts or (stamp - cohorts[-1][0]).total_seconds() > 3600:
+                cohorts.append([stamp, 0, 0.0])
+            cohorts[-1][1] += 1
+            cohorts[-1][2] += remaining
+            if remaining < 10 and stamp > now:
+                low_resets.append(stamp)
+        pool["refills"] = [{"at": stamp.isoformat().replace("+00:00", "Z"), "accounts": count,
+                            "remaining_percent": round(remaining, 1)} for stamp, count, remaining in cohorts]
+        if low_resets:
+            pool.setdefault("pace", {})["next_refill_h"] = (min(low_resets) - now).total_seconds() / 3600
+
+
+def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
+                accounts: HttpResult | None = None, refills: bool = False) -> tuple[dict[str, Any] | None, str | None]:
     """C1 from the LB, else an approximation from /api/accounts, else an error string."""
     direct = http_get("/api/pools", timeout=timeout)
     if direct.json_ok and isinstance(direct.body, dict) and isinstance(direct.body.get("pools"), list):
         document = dict(direct.body)
         document.setdefault("source", "lb")
+        if not refills:
+            return document, None
+        accounts = accounts or http_get("/api/accounts", timeout=timeout)
+        if accounts.json_ok:
+            try:
+                add_pool_refills(document, accounts.body)
+            except Exception:
+                for pool in pools_by_id(document).values():
+                    pool.pop("refills", None)
+                    pool.pop("pace", None)
         return document, None
-    accounts = http_get("/api/accounts", timeout=timeout)
+    accounts = accounts or http_get("/api/accounts", timeout=timeout)
     if accounts.json_ok:
-        return pools_from_accounts(accounts.body), None
+        document = pools_from_accounts(accounts.body)
+        if refills:
+            try:
+                add_pool_refills(document, accounts.body)
+            except Exception:
+                for pool in pools_by_id(document).values():
+                    pool.pop("refills", None)
+                    pool.pop("pace", None)
+        return document, None
     reason = direct.error or f"HTTP {direct.status}"
     return None, f"/api/pools unavailable ({reason}); /api/accounts unavailable ({accounts.error})"
 
@@ -781,7 +839,8 @@ def record_pool_history(document: dict, now: datetime) -> None:
 
 def pace_state(pool: dict, history: list[dict], policy: dict, now: datetime) -> dict:
     result = dict(state="unknown", remaining=None, hours_left=None, burn_per_hour=None,
-                  empties_in_h=None, leftover=None, basis="none")
+                  empties_in_h=None, leftover=None, basis="none", next_refill_h=None)
+    result["next_refill_h"] = pool.get("pace", {}).get("next_refill_h")
     if pool.get("status") == "exhausted":
         result["state"] = "exhausted"
         return result
@@ -854,7 +913,7 @@ def _percent(value: Any) -> str:
 
 
 def command_pools(args: argparse.Namespace) -> int:
-    document, error = fetch_pools()
+    document, error = fetch_pools(refills=True)
     if document is None:
         print(f"route: {error}", file=sys.stderr)
         return EXIT_DEGRADED
@@ -884,6 +943,12 @@ def command_pools(args: argparse.Namespace) -> int:
             f"{_percent(pool.get('headroomPercent')):>9} {_percent(pool.get('aggregateRemainingPercent')):>10} "
             f"{usable:>8}  {pool.get('resetAt') or '-'}"
         )
+        if "refills" in pool:
+            refills = []
+            for refill in pool["refills"]:
+                stamp = _parse_ts(refill["at"])
+                refills.append(f"{stamp:%m-%d %H:%MZ} +{refill['accounts']}")
+            print("  refills: " + (", ".join(refills) or "none"))
     return EXIT_OK
 
 
@@ -1830,13 +1895,13 @@ def build_menu(class_names: list[str] | None = None) -> dict[str, Any]:
     age = state_age_seconds(state)
     stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
     seats = None if stale else state.get("seats")
-    document, pools_error = fetch_pools(timeout=3.0)
+    accounts = http_get("/api/accounts", timeout=3.0)
+    document, pools_error = fetch_pools(timeout=3.0, accounts=accounts, refills=True)
     if document is not None:
         record_pool_history(document, datetime.now(timezone.utc))
     if document is None and isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)
-    accounts = http_get("/api/accounts", timeout=3.0)
     windows = _five_hour_windows(accounts.body) if accounts.json_ok else {}
 
     now = datetime.now(timezone.utc)
