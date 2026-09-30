@@ -95,6 +95,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--rate-mbps", type=float, default=None, help="Cap in megabytes per second when turning it on (default 1.5)."
     )
 
+    throttle.add_argument("--owner", default="manual")
+    throttle.add_argument("--reason", default="")
+    throttle.add_argument("--all", action="store_true", help="Release every hold (off only).")
+
     codex_sessions = subparsers.add_parser(
         "codex-sessions",
         help="Manage local Codex session metadata.",
@@ -269,17 +273,23 @@ def _parse_server_timeout_graceful_shutdown(raw_timeout: str) -> int:
 def _run_throttle(args: argparse.Namespace) -> None:
     from app.core import upload_throttle
 
+    if args.all and args.mode != "off":
+        raise SystemExit("--all requires throttle off")
     if args.mode in {"on", "off"}:
         rate = None
         if args.rate_mbps is not None:
             rate = args.rate_mbps * 1_000_000
             if not upload_throttle.valid_rate(rate):
                 raise SystemExit("--rate-mbps must be between 0.065 and 1000.")
-        upload_throttle.write_state(enabled=args.mode == "on", bytes_per_sec=rate)
+        upload_throttle.write_state(
+            enabled=args.mode == "on", bytes_per_sec=rate, owner=args.owner, reason=args.reason, clear_all=args.all
+        )
     enabled, rate = upload_throttle.read_state()
     state = "on" if enabled else "off"
     print(f"upload throttle {state}: {rate / 1_000_000:.2f} MB/s ({rate * 8 / 1_000_000:.1f} Mbps) cap")
     print(f"state file {upload_throttle.state_path()} (the running service re-reads it within a second)")
+    for owner, hold in upload_throttle.read_policy()["holds"].items():
+        print(f"  hold {owner}: {hold['bytes_per_sec'] / 1_000_000:.2f} MB/s since {hold['since']} {hold['reason']}")
 
 
 def _run_codex_sessions_retag(args: argparse.Namespace) -> None:

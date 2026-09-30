@@ -26,15 +26,14 @@ def _setup(tmp_path: Path, tasklist: str | None) -> dict[str, str]:
     ssh.chmod(0o755)
     throttle = tmp_path / "throttle"
     state = home / ".agent-lb" / "state" / "upload-throttle.json"
-    throttle.write_text(
-        "#!/bin/sh\n"
-        f'if [ "$2" = on ]; then echo \'{{"enabled": true}}\' > {state}; '
-        f"else echo '{{\"enabled\": false}}' > {state}; fi\n"
-    )
+    on = json.dumps({"version": 2, "holds": {"gaming-detector": {"bytes_per_sec": 1500000}}, "rate": 1500000})
+    off = json.dumps({"version": 2, "holds": {}, "rate": 1500000})
+    throttle.write_text(f"#!/bin/sh\nif [ \"$2\" = on ]; then echo '{on}' > {state}; else echo '{off}' > {state}; fi\n")
     throttle.chmod(0o755)
     return {
         **os.environ,
         "GAMING_MODE_HOME": str(home),
+        "AGENT_LB_THROTTLE_FILE": str(state),
         "GAMING_MODE_SSH": str(ssh),
         "GAMING_MODE_THROTTLE_CMD": str(throttle),
     }
@@ -46,34 +45,32 @@ def _poll(env: dict[str, str]) -> None:
 
 def _throttle(env: dict[str, str]) -> bool | None:
     path = Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "state" / "upload-throttle.json"
-    return json.loads(path.read_text())["enabled"] if path.exists() else None
+    return bool(json.loads(path.read_text())["holds"]) if path.exists() else None
 
 
 def _set_tasklist(env: dict[str, str], tmp_path: Path, text: str) -> None:
     (tmp_path / "tasklist.txt").write_text(text)
 
 
-CSV_GAME = '"System","4","Services","0","5,844 K"\n"VALORANT-Win64-Shipping.exe","11172","Console","1","1,197,300 K"\n'
-CSV_IDLE = '"System","4","Services","0","5,844 K"\n"explorer.exe","900","Console","1","90,000 K"\n'
+CSV_GAME = (
+    '"System.exe","4","Services","0","5,844 K"\n"VALORANT-Win64-Shipping.exe","11172","Console","1","1,197,300 K"\n'
+)
+CSV_IDLE = '"System.exe","4","Services","0","5,844 K"\n"explorer.exe","900","Console","1","90,000 K"\n'
 
 
-def test_idle_first_deploy_releases_the_default_throttle_after_two_polls(tmp_path: Path) -> None:
+def test_idle_first_deploy_does_not_release_an_unowned_default_throttle(tmp_path: Path) -> None:
     env = _setup(tmp_path, CSV_IDLE)
     _poll(env)
     assert _throttle(env) is None  # one empty poll: nothing changes yet
     _poll(env)
-    assert _throttle(env) is False
-    assert (
-        "OFF no game for 2 consecutive polls"
-        in (Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "logs" / "gaming-mode.log").read_text()
-    )
+    assert _throttle(env) is None
 
 
 def test_long_game_names_are_detected_and_turn_the_throttle_on(tmp_path: Path) -> None:
     env = _setup(tmp_path, CSV_IDLE)
     _poll(env)
     _poll(env)
-    assert _throttle(env) is False
+    assert _throttle(env) is None
     _set_tasklist(env, tmp_path, CSV_GAME)
     _poll(env)
     assert _throttle(env) is True
@@ -96,7 +93,7 @@ def test_ssh_failure_keeps_the_last_state(tmp_path: Path) -> None:
 def test_a_failed_poll_restarts_the_idle_count(tmp_path: Path) -> None:
     env = _setup(tmp_path, CSV_IDLE)
     state = Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "state" / "upload-throttle.json"
-    state.write_text('{"enabled": true}')
+    state.write_text('{"version": 2, "holds": {"gaming-detector": {"bytes_per_sec": 1500000}}, "rate": 1500000}')
     _poll(env)  # idle 1
     good_ssh = (tmp_path / "ssh").read_text()
     (tmp_path / "ssh").write_text("#!/bin/sh\nexit 255\n")

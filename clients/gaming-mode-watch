@@ -16,7 +16,6 @@ gaming-mode.json. Log: ~/.agent-lb/logs/gaming-mode.log.
 """
 
 import csv
-import io
 import json
 import os
 import subprocess
@@ -28,7 +27,10 @@ HOME = Path(os.environ.get("GAMING_MODE_HOME") or Path.home())
 STATE = HOME / ".agent-lb" / "state" / "gaming-mode.json"
 GAMES_FILE = HOME / ".agent-lb" / "state" / "gaming-games.txt"
 LOG = HOME / ".agent-lb" / "logs" / "gaming-mode.log"
-THROTTLE = Path(os.environ.get("GAMING_MODE_THROTTLE_CMD") or HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb")
+THROTTLE = Path(
+    os.environ.get("GAMING_MODE_THROTTLE_CMD")
+    or HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb"
+)
 SSH = os.environ.get("GAMING_MODE_SSH") or "/usr/bin/ssh"
 DEFAULT_GAMES = (
     "League of Legends.exe",
@@ -93,18 +95,24 @@ def running_images():
         return None
     images = set()
     lines = [line for line in result.stdout.splitlines() if line.strip() and not line.startswith("**")]
-    for row in csv.reader(io.StringIO("\n".join(lines))):
-        # CSV rows carry the full image name; the default table format cuts it at
-        # 25 characters (VALORANT-Win64-Shipping.exe is 27).
-        if row and row[0].strip():
+    try:
+        for line in lines:
+            row = next(csv.reader([line], strict=True))
+            # Reject truncated, table-format, and diagnostic output wholesale.
+            # Real tasklist also lists "System" and "System Idle Process", so check the PID, not ".exe".
+            if len(row) != 5 or not row[0].strip() or not row[1].strip().isdigit():
+                return None
             images.add(row[0].strip().lower())
+    except csv.Error:
+        return None
     return images or None
 
 
-def set_throttle(on: bool) -> bool:
+def set_throttle(on: bool, reason: str = "") -> bool:
     try:
         result = subprocess.run(
-            [str(THROTTLE), "throttle", "on" if on else "off"],
+            [str(THROTTLE), "throttle", "on" if on else "off", "--owner", "gaming-detector"]
+            + (["--reason", reason] if on else []),
             capture_output=True,
             text=True,
             timeout=30,
@@ -119,13 +127,22 @@ def set_throttle(on: bool) -> bool:
 
 
 def throttle_enabled() -> bool:
-    """The throttle's actual state, so the watcher reconciles instead of trusting its memory."""
-    path = HOME / ".agent-lb" / "state" / "upload-throttle.json"
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return True  # the service's default when no state file exists
-    return not (isinstance(data, dict) and data.get("enabled") is False)
+    """Whether this detector owns a hold, not whether another owner caps uploads."""
+    path = Path(
+        os.environ.get("AGENT_LB_THROTTLE_FILE") or HOME / ".agent-lb" / "state" / "upload-throttle.json"
+    ).expanduser()
+    for candidate in (path, Path(str(path) + ".last-good.json")):
+        try:
+            data = json.loads(candidate.read_text())
+            if isinstance(data, dict):
+                if data.get("version") != 2:
+                    return False  # Legacy enabled protection is not detector-owned.
+                holds = data.get("holds")
+                if isinstance(holds, dict):
+                    return "gaming-detector" in holds
+        except (OSError, ValueError):
+            pass
+    return False
 
 
 def main() -> int:
@@ -136,6 +153,8 @@ def main() -> int:
     if images is None:
         # ssh failed or timed out: keep the throttle as it is, and restart the
         # idle count so only two consecutive successful idle polls release it.
+        if state.get("last_poll_ok") is not False:
+            log("UNKNOWN tasklist poll failed or did not parse; keeping protection")
         state["misses"] = 0
         state["last_poll"] = now()
         state["last_poll_ok"] = False
@@ -144,7 +163,7 @@ def main() -> int:
     wanted = [name for name in games() if name.lower() in images or name.lower()[:25] in images]
     if wanted:
         misses = 0
-        if not gaming and set_throttle(True):
+        if not gaming and set_throttle(True, ", ".join(wanted)):
             gaming = True
             log(f"ON  game running: {', '.join(wanted)} -> agent-lb upload throttle on")
     else:
@@ -152,7 +171,16 @@ def main() -> int:
         if gaming and misses >= MISSES_TO_RELEASE and set_throttle(False):
             gaming = False
             log(f"OFF no game for {misses} consecutive polls -> agent-lb upload throttle off")
-    state.update({"gaming": gaming, "note": "gaming mirrors the throttle state; the watcher owns the toggle", "misses": misses, "last_poll": now(), "last_poll_ok": True, "seen": wanted})
+    state.update(
+        {
+            "gaming": gaming,
+            "note": "gaming mirrors the gaming-detector hold",
+            "misses": misses,
+            "last_poll": now(),
+            "last_poll_ok": True,
+            "seen": wanted,
+        }
+    )
     save_state(state)
     return 0
 

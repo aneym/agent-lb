@@ -16,7 +16,7 @@ connections are never shaped.
 State lives in a small JSON file so `agent-lb throttle on|off|status` changes
 it without a restart; the running service re-reads it at most once a second:
 
-    {"enabled": true, "bytes_per_sec": 1500000}
+    {"version": 2, "holds": {"manual": {"bytes_per_sec": 1500000}}, "rate": 1500000}
 
 With no file the cap is on at AGENT_LB_UPSTREAM_UPLOAD_BYTES_PER_SEC
 (default 1.5 MB/s).
@@ -27,11 +27,13 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextvars
+import fcntl
 import json
 import logging
 import math
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -88,31 +90,125 @@ def default_rate() -> float:
     return value if valid_rate(value) else float(DEFAULT_BYTES_PER_SEC)
 
 
-def read_state() -> tuple[bool, float]:
-    """(enabled, bytes_per_sec) from the state file, or the defaults."""
-    try:
-        data = json.loads(state_path().read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return True, default_rate()
+_FALLBACK_WARNINGS: set[tuple[str, str]] = set()
+
+
+def _default_policy(rate: float) -> dict[str, Any]:
+    return {"holds": {"manual": {"bytes_per_sec": rate, "since": "", "reason": "default protection"}}, "rate": rate}
+
+
+def _decode_policy(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
-        return True, default_rate()
-    enabled = data.get("enabled", True) is not False
-    rate = data.get("bytes_per_sec")
-    if not valid_rate(rate):
-        rate = default_rate()
-    return enabled, float(rate)
+        raise ValueError("state must be an object")
+    if data.get("version") != 2:
+        if not isinstance(data.get("enabled"), bool) or not valid_rate(data.get("bytes_per_sec")):
+            raise ValueError("invalid legacy policy")
+        rate = float(data["bytes_per_sec"])
+        return {
+            "holds": {"manual": {"bytes_per_sec": rate, "since": "", "reason": "legacy hold"}}
+            if data["enabled"]
+            else {},
+            "rate": rate,
+        }
+    if not valid_rate(data.get("rate")) or not isinstance(data.get("holds"), dict):
+        raise ValueError("invalid policy")
+    holds = {}
+    for owner, hold in data["holds"].items():
+        if not isinstance(hold, dict) or not valid_rate(hold.get("bytes_per_sec")):
+            _warn_fallback(state_path(), "invalid hold rate for " + owner)
+            continue
+        holds[owner] = {
+            "bytes_per_sec": float(hold["bytes_per_sec"]),
+            "since": str(hold.get("since", "")),
+            "reason": str(hold.get("reason", "")),
+        }
+    if data["holds"] and not holds:
+        raise ValueError("all hold rates invalid")
+    return {"holds": holds, "rate": float(data["rate"])}
 
 
-def write_state(*, enabled: bool, bytes_per_sec: float | None = None) -> dict[str, Any]:
-    if bytes_per_sec is not None and not valid_rate(bytes_per_sec):
-        raise ValueError(f"rate must be between {MIN_BYTES_PER_SEC} and {MAX_BYTES_PER_SEC} bytes/s")
-    current_enabled, current_rate = read_state()
-    state = {"enabled": enabled, "bytes_per_sec": float(bytes_per_sec or current_rate)}
+def _warn_fallback(path: Path, error: str) -> None:
+    key = (str(path), error)
+    if key not in _FALLBACK_WARNINGS:
+        _FALLBACK_WARNINGS.add(key)
+        logger.warning("upload throttle state %s: %s", path, error)
+
+
+def read_policy() -> dict[str, Any]:
     path = state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".tmp")
+    data = None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {**_decode_policy(data), "source": "file"}
+    except (OSError, ValueError) as error:
+        failure = str(error)
+    try:
+        policy = _decode_policy(json.loads(Path(str(path) + ".last-good.json").read_text(encoding="utf-8")))
+        _warn_fallback(path, failure)
+        return {**policy, "source": "last_good"}
+    except (OSError, ValueError):
+        pass
+    rate = default_rate()
+    if isinstance(data, dict):
+        candidates = [data.get("rate"), data.get("bytes_per_sec")]
+        if isinstance(data.get("holds"), dict):
+            candidates.extend(hold.get("bytes_per_sec") for hold in data["holds"].values() if isinstance(hold, dict))
+        rate = min([rate] + [float(value) for value in candidates if valid_rate(value)])
+    _warn_fallback(path, failure)
+    return {**_default_policy(rate), "source": "default"}
+
+
+def read_state() -> tuple[bool, float]:
+    """Effective cap, including every owner's protective hold."""
+    policy = read_policy()
+    holds = policy["holds"]
+    return bool(holds), min(hold["bytes_per_sec"] for hold in holds.values()) if holds else policy["rate"]
+
+
+def _atomic_policy(path: Path, state: dict[str, Any]) -> None:
+    temp = Path(str(path) + ".tmp")
     temp.write_text(json.dumps(state) + "\n", encoding="utf-8")
     os.replace(temp, path)
+
+
+def write_state(
+    *,
+    enabled: bool,
+    bytes_per_sec: float | None = None,
+    owner: str = "manual",
+    reason: str = "",
+    clear_all: bool = False,
+) -> dict[str, Any]:
+    if bytes_per_sec is not None and not valid_rate(bytes_per_sec):
+        raise ValueError(f"rate must be between {MIN_BYTES_PER_SEC} and {MAX_BYTES_PER_SEC} bytes/s")
+    if not owner.strip():
+        raise ValueError("owner must not be empty")
+    path = state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with Path(str(path) + ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        policy = read_policy()
+        # With no persisted policy, the default protects uploads but is not an
+        # operator-owned hold to carry into a detector's first write.
+        holds = policy["holds"] if policy["source"] != "default" or path.exists() else {}
+        rate = policy["rate"]
+        if clear_all:
+            holds.clear()
+            logger.warning("upload throttle: operator released all holds")
+        elif enabled:
+            hold_rate = bytes_per_sec if bytes_per_sec is not None else holds.get(owner, {}).get("bytes_per_sec", rate)
+            holds[owner] = {
+                "bytes_per_sec": float(hold_rate),
+                "since": datetime.now(timezone.utc).isoformat(),
+                "reason": reason,
+            }
+            if owner == "manual" and bytes_per_sec is not None:
+                rate = float(bytes_per_sec)
+        else:
+            holds.pop(owner, None)
+        state = {"version": 2, "holds": holds, "rate": rate}
+        _atomic_policy(path, state)
+        _atomic_policy(Path(str(path) + ".last-good.json"), state)
     return state
 
 

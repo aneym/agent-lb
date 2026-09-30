@@ -28,7 +28,38 @@ def test_state_defaults_to_on_and_round_trips(_state: Path) -> None:
     assert upload_throttle.read_state()[0] is False
     upload_throttle.write_state(enabled=True, bytes_per_sec=2_000_000)
     assert upload_throttle.read_state() == (True, 2_000_000.0)
-    assert json.loads(_state.read_text())["bytes_per_sec"] == 2_000_000.0
+    assert json.loads(_state.read_text())["holds"]["manual"]["bytes_per_sec"] == 2_000_000.0
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_legacy_policy_converts_without_losing_manual_hold(_state: Path, enabled: bool) -> None:
+    _state.write_text(json.dumps({"enabled": enabled, "bytes_per_sec": 200_000}))
+    assert upload_throttle.read_state() == (enabled, 200_000.0)
+    upload_throttle.write_state(enabled=True, owner="detector", bytes_per_sec=500_000)
+    policy = json.loads(_state.read_text())
+    assert policy["version"] == 2
+    assert ("manual" in policy["holds"]) is enabled
+    upload_throttle.write_state(enabled=False, owner="detector")
+    assert upload_throttle.read_state() == (enabled, 200_000.0)
+
+
+def test_malformed_policy_without_backup_keeps_parsed_protective_rate(_state: Path) -> None:
+    _state.write_text(json.dumps({"version": 2, "rate": 200_000, "holds": "broken"}))
+    assert upload_throttle.read_state() == (True, 200_000.0)
+    assert upload_throttle.read_policy()["source"] == "default"
+
+
+def test_concurrent_owners_are_not_lost(_state: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def hold(index: int) -> None:
+        upload_throttle.write_state(enabled=True, owner=str(index), bytes_per_sec=200_000 + index)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(hold, range(16)))
+    assert set(upload_throttle.read_policy()["holds"]) == {str(index) for index in range(16)}
+    assert upload_throttle.read_state() == (True, 200_000.0)
+    assert json.loads(Path(str(_state) + ".last-good.json").read_text()) == json.loads(_state.read_text())
 
 
 class _FakeTransport(asyncio.Transport):
