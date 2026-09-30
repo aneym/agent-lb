@@ -292,6 +292,12 @@ def _primary_window_pool(
         accounts=len(summaries),
         candidates=candidates,
     )
+    if not candidates and any(
+        summary.status == AccountStatus.PAUSED.value
+        and (summary.deactivation_reason or "").startswith("balance_exhausted:")
+        for summary in summaries
+    ):
+        pool = pool.model_copy(update={"unavailable_reason": "no balance"})
     # Kimi and GLM have one short window and no weekly cap; report it as five-hour only when it is one.
     remaining, reset = _five_hour_fields(summaries)
     return pool.model_copy(update={"five_hour_remaining_percent": remaining, "five_hour_reset_at": reset})

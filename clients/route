@@ -622,6 +622,11 @@ def pools_from_accounts(body: Any) -> dict[str, Any]:
                 "aggregateRemainingPercent": round(aggregate, 1),
                 "resetAt": resets[0] if resets else None,
                 "status": pool_status(headroom),
+                **({"unavailableReason": "no balance"} if not routable and any(
+                    account.get("status") == "paused"
+                    and str(account.get("deactivationReason") or "").startswith("balance_exhausted:")
+                    for account in members
+                ) else {}),
                 "source": "accounts_fallback",
                 "weeklyRemainingPercent": (
                     round(
@@ -939,7 +944,7 @@ def command_pools(args: argparse.Namespace) -> int:
                       "exhausted": "empty", "unknown": "unknown"}.get(
                           pool.get("pace", {}).get("state", "unknown"), "unknown")
         print(
-            f"{pool.get('id', '?'):<20} {pool.get('status', '?'):<10} {pace_label:<12} "
+            f"{pool.get('id', '?'):<20} {pool.get('unavailableReason') or pool.get('status', '?'):<10} {pace_label:<12} "
             f"{_percent(pool.get('headroomPercent')):>9} {_percent(pool.get('aggregateRemainingPercent')):>10} "
             f"{usable:>8}  {pool.get('resetAt') or '-'}"
         )

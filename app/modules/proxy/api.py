@@ -3870,7 +3870,10 @@ def _anthropic_proxy_error_response(exc: AnthropicProxyError) -> JSONResponse:
     # reset time or ride out short waits with its own retry loop.
     if exc.retry_at is not None or exc.status_code == 429:
         return _anthropic_error_response(429, "rate_limit_error", exc.message, retry_at=exc.retry_at)
-    return _anthropic_error_response(exc.status_code, exc.code, exc.message, details=exc.details)
+    response = _anthropic_error_response(exc.status_code, exc.code, exc.message, details=exc.details)
+    if exc.code == "balance_exhausted":
+        response.headers["x-should-retry"] = "false"
+    return response
 
 
 async def _collect_anthropic_body(body: AsyncIterator[bytes]) -> bytes:

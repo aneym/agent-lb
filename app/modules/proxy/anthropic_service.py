@@ -51,6 +51,7 @@ from app.modules.accounts.credits import (
     credits_exhausted,
     window_from_usage,
 )
+from app.modules.accounts.service import AccountsService
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
@@ -452,6 +453,41 @@ class AnthropicProxyService:
                                 attempts=get_settings().upstream_connect_attempts,
                                 label=_provider_label(provider_name),
                             ) as resp:
+                                if (provider_name == "glm" and resp.status >= 400) or (
+                                    provider_name == "kimi" and resp.status in {402, 403, 429}
+                                ):
+                                    raw_error = await resp.read()
+                                    try:
+                                        error_payload = json.loads(raw_error)
+                                    except (UnicodeDecodeError, json.JSONDecodeError):
+                                        error_payload = None
+                                    balance_code = get_anthropic_compat_profile(provider_name).balance_exhausted_code(
+                                        error_payload
+                                    )
+                                    if balance_code is not None:
+                                        async with self._repo_factory() as repos:
+                                            await AccountsService(repos.accounts).pause_account(
+                                                account.id, reason=f"balance_exhausted: {balance_code}"
+                                            )
+                                        await self._persist_request_log(
+                                            account=account,
+                                            provider_name=provider_name,
+                                            request_id=request_id,
+                                            model=payload.model,
+                                            started_at=started_at,
+                                            status="error",
+                                            error_code="balance_exhausted",
+                                            error_message=f"No balance ({balance_code})",
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            useragent=useragent,
+                                            useragent_group=useragent_group,
+                                        )
+                                        last_error_status = 503
+                                        last_error_message = (
+                                            f"No balance for {_provider_label(provider_name)} ({balance_code})"
+                                        )
+                                        continue
                                 if resp.status in {401, 403}:
                                     error_message = await _read_error_message(resp)
                                     error_code = f"upstream_{resp.status}"
@@ -882,6 +918,20 @@ class AnthropicProxyService:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
         eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=model)
+        if not eligibility.account_ids and eligibility.blocked_count == 0 and provider_name in {"glm", "kimi"}:
+            async with self._repo_factory() as repos:
+                has_no_balance = any(
+                    account.provider == provider_name
+                    and account.status == AccountStatus.PAUSED
+                    and (account.deactivation_reason or "").startswith("balance_exhausted:")
+                    for account in await repos.accounts.list_accounts()
+                )
+            if has_no_balance:
+                raise AnthropicProxyError(
+                    503,
+                    f"No balance for {_provider_label(provider_name)}; restore balance and reactivate the account.",
+                    code="balance_exhausted",
+                )
         if not eligibility.account_ids and eligibility.blocked_count > 0:
             reset_suffix = (
                 f" Reset at {datetime.fromtimestamp(eligibility.next_reset_at, tz=timezone.utc).isoformat()}."

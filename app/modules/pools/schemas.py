@@ -34,6 +34,7 @@ class PoolSummary(DashboardModel):
     five_hour_reset_at: datetime | None = None
     window_label: str | None = Field(default=None, pattern=r"^(week|month)$")
     status: str = Field(pattern=r"^(ok|low|exhausted)$")
+    unavailable_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
     # Fable pool only: which signal the numbers came from.
     source: str | None = None
     # Weekly pools only: the mean weekly (secondary) remaining over usable accounts,

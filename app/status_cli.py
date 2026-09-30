@@ -286,6 +286,8 @@ def _account_usability(status: str, subscription: str | None, account: dict[str,
     }
     if status not in known_statuses:
         return "unknown", ["account status is unknown"]
+    if status == "paused" and str(account.get("deactivationReason") or "").startswith("balance_exhausted:"):
+        return "blocked", ["no balance"]
     if status != "active":
         return "blocked", [f"account status is {status}"]
     if not _subscription_usable(subscription):
@@ -469,8 +471,9 @@ def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
             if "fable" in payload.get("model", {}).get("name", "").casefold()
             else ""
         )
+        status_label = "no balance" if "no balance" in account["usability_reasons"] else account["status"]
         print(
-            f"  {account['account_id']} [{account['status']}/{account['usable']}]: "
+            f"  {account['account_id']} [{status_label}/{account['usable']}]: "
             f"primary {_format_window(account['primary'])}; weekly {_format_window(account['weekly'])}; "
             f"banked resets {_format_reset_credits(account['reset_credits_available'])}; "
             f"last primed {account['last_primed_at'] or 'never'}{fable}"

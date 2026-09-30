@@ -645,7 +645,7 @@ class AccountsService:
             get_account_selection_cache().invalidate()
         return result
 
-    async def pause_account(self, account_id: str) -> bool:
+    async def pause_account(self, account_id: str, *, reason: str | None = None) -> bool:
         account = await self._repo.get_by_id(account_id)
         if account is None:
             return False
@@ -658,7 +658,7 @@ class AccountsService:
         result = await self._repo.update_status_if_current(
             account_id,
             AccountStatus.PAUSED,
-            None,
+            reason,
             None,
             blocked_at=None,
             expected_status=account.status,
@@ -667,6 +667,16 @@ class AccountsService:
             expected_blocked_at=account.blocked_at,
         )
         if not result:
+            current = await self._repo.reload_by_id(account_id)
+            if (
+                reason is not None
+                and reason.startswith("balance_exhausted:")
+                and current is not None
+                and current.status == AccountStatus.PAUSED
+                and (current.deactivation_reason or "").startswith("balance_exhausted:")
+            ):
+                get_account_selection_cache().invalidate()
+                return True
             raise AccountStateTransitionError("Account state changed; retry the operation")
         if result:
             get_account_selection_cache().invalidate()

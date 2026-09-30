@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Any
 
 from app.core.auth.refresh import TokenRefreshResult
 
@@ -38,6 +40,24 @@ class AnthropicCompatProfile:
     # separate refresh token on import; API-key providers must not, so their
     # import contract stays exactly "the key is both access and refresh".
     supports_oauth_bundle_import: bool = False
+
+    def balance_exhausted_code(self, payload: Any) -> str | None:
+        if self.provider_name not in {"glm", "kimi"} or not isinstance(payload, dict):
+            return None
+        error = payload.get("error", payload)
+        if not isinstance(error, dict):
+            error = payload
+        code = error.get("code", error.get("type", payload.get("code")))
+        if self.provider_name == "glm":
+            return "1113" if str(code) == "1113" else None
+        message = str(error.get("message", "")).casefold()
+        normalized_code = str(code or "").casefold()
+        if normalized_code in {"suspended", "account_suspended", "insufficient_balance"} or any(
+            marker in message for marker in ("suspended", "insufficient balance", "insufficient_balance")
+        ):
+            fallback = "suspended" if "suspended" in message else "insufficient_balance"
+            return re.sub(r"[^a-zA-Z0-9_-]", "_", str(code))[:40] if code is not None else fallback
+        return None
 
     @property
     def supports_api_key_import(self) -> bool:
