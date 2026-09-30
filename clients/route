@@ -378,6 +378,8 @@ def reduced_entry(entry: dict[str, Any], table: dict[str, Any]) -> dict[str, Any
 def command_seats(args: argparse.Namespace) -> int:
     table, rules, _ = versioned_rules(args.rules, args.json)
     ladder_entries(table, "verify")
+    for name in table.get("ladders", {}):
+        ladder_entries({**table, "ladder": name}, "verify")
     classes = {name: {"chain": [reduced_entry(entry, table) for entry in spec["chain"] if isinstance(entry, dict)]}
                for name, spec in table["classes"].items()
                if isinstance(spec, dict) and isinstance(spec.get("chain"), list)}

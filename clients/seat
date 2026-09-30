@@ -43,6 +43,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -675,7 +676,15 @@ def check_cursor_model(model: str, candidates: list[dict[str, Any]]) -> list[dic
         print(f"seat: {model} is superseded by {newest}", file=sys.stderr)
     supported = [account for account, models in lists if not models or model in models]
     if not supported:
-        closest = [value for value in listed if value.startswith(prefix)][:3]
+        route_path = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
+        closest = [value for value in listed if value.startswith(prefix)]
+        try:
+            router = runpy.run_path(route_path)
+            retired = router["retired_patterns"](router["load_table"]())
+            closest = [value for value in closest if not router["is_retired"](value, retired)]
+        except (Exception, SystemExit):
+            pass
+        closest = closest[:3]
         fail(f"{model} is not a Cursor model; closest: {', '.join(closest) or 'none'}")
     return supported
 
