@@ -48,6 +48,8 @@ BURST_BYTES = 64 * 1024
 # a busy loop of 1-byte writes that held the event loop for the whole upload.
 MIN_RELEASE_BYTES = 16 * 1024
 STATE_REFRESH_SECONDS = 1.0
+# A hold that yields_to another owner is ignored while that owner's "since" is this recent.
+ADAPTIVE_FRESH_SECONDS = 90
 # Accepted cap range; anything outside it (or not finite) falls back to the default.
 MIN_BYTES_PER_SEC = 65_000
 MAX_BYTES_PER_SEC = 1_000_000_000
@@ -117,11 +119,15 @@ def _decode_policy(data: Any) -> dict[str, Any]:
         if not isinstance(hold, dict) or not valid_rate(hold.get("bytes_per_sec")):
             _warn_fallback(state_path(), "invalid hold rate for " + owner)
             continue
-        holds[owner] = {
+        entry = {
             "bytes_per_sec": float(hold["bytes_per_sec"]),
             "since": str(hold.get("since", "")),
             "reason": str(hold.get("reason", "")),
         }
+        yields_to = hold.get("yields_to")
+        if isinstance(yields_to, str) and yields_to.strip():
+            entry["yields_to"] = yields_to.strip()
+        holds[owner] = entry
     if data["holds"] and not holds:
         raise ValueError("all hold rates invalid")
     return {"holds": holds, "rate": float(data["rate"])}
@@ -158,11 +164,48 @@ def read_policy() -> dict[str, Any]:
     return {**_default_policy(rate), "source": "default"}
 
 
+def _parse_since(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc)
+
+
+def _hold_is_fresh(hold: dict[str, Any], now: datetime) -> bool:
+    stamp = _parse_since(hold.get("since"))
+    if stamp is None:
+        return False
+    return abs((now - stamp).total_seconds()) <= ADAPTIVE_FRESH_SECONDS
+
+
+def _hold_yields(holds: dict[str, Any], hold: dict[str, Any], now: datetime) -> bool:
+    """True when this hold steps aside for a target owner whose hold is fresh."""
+    target = hold.get("yields_to")
+    if not isinstance(target, str) or not target:
+        return False
+    other = holds.get(target)
+    return isinstance(other, dict) and _hold_is_fresh(other, now)
+
+
 def read_state() -> tuple[bool, float]:
-    """Effective cap, including every owner's protective hold."""
+    """Effective cap. A hold that yields to a fresh owner is skipped; the minimum of the rest wins."""
     policy = read_policy()
     holds = policy["holds"]
-    return bool(holds), min(hold["bytes_per_sec"] for hold in holds.values()) if holds else policy["rate"]
+    if not holds:
+        return False, policy["rate"]
+    now = datetime.now(timezone.utc)
+    counted = [hold["bytes_per_sec"] for hold in holds.values() if not _hold_yields(holds, hold, now)]
+    return True, min(counted) if counted else policy["rate"]
 
 
 def _atomic_policy(path: Path, state: dict[str, Any]) -> None:
@@ -178,6 +221,7 @@ def write_state(
     owner: str = "manual",
     reason: str = "",
     clear_all: bool = False,
+    yields_to: str | None = None,
 ) -> dict[str, Any]:
     if bytes_per_sec is not None and not valid_rate(bytes_per_sec):
         raise ValueError(f"rate must be between {MIN_BYTES_PER_SEC} and {MAX_BYTES_PER_SEC} bytes/s")
@@ -196,12 +240,19 @@ def write_state(
             holds.clear()
             logger.warning("upload throttle: operator released all holds")
         elif enabled:
-            hold_rate = bytes_per_sec if bytes_per_sec is not None else holds.get(owner, {}).get("bytes_per_sec", rate)
-            holds[owner] = {
+            previous = holds.get(owner)
+            if not isinstance(previous, dict):
+                previous = {}
+            hold_rate = bytes_per_sec if bytes_per_sec is not None else previous.get("bytes_per_sec", rate)
+            entry: dict[str, Any] = {
                 "bytes_per_sec": float(hold_rate),
                 "since": datetime.now(timezone.utc).isoformat(),
                 "reason": reason,
             }
+            kept = previous.get("yields_to") if yields_to is None else yields_to
+            if isinstance(kept, str) and kept.strip():
+                entry["yields_to"] = kept.strip()
+            holds[owner] = entry
             if owner == "manual" and bytes_per_sec is not None:
                 rate = float(bytes_per_sec)
         else:

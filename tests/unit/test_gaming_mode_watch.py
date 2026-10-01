@@ -28,7 +28,12 @@ def _setup(tmp_path: Path, tasklist: str | None) -> dict[str, str]:
     state = home / ".agent-lb" / "state" / "upload-throttle.json"
     on = json.dumps({"version": 2, "holds": {"gaming-detector": {"bytes_per_sec": 1500000}}, "rate": 1500000})
     off = json.dumps({"version": 2, "holds": {}, "rate": 1500000})
-    throttle.write_text(f"#!/bin/sh\nif [ \"$2\" = on ]; then echo '{on}' > {state}; else echo '{off}' > {state}; fi\n")
+    args_log = tmp_path / "throttle-args"
+    throttle.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> {args_log}\n"
+        f"if [ \"$2\" = on ]; then echo '{on}' > {state}; else echo '{off}' > {state}; fi\n"
+    )
     throttle.chmod(0o755)
     return {
         **os.environ,
@@ -78,6 +83,7 @@ def test_long_game_names_are_detected_and_turn_the_throttle_on(tmp_path: Path) -
     _set_tasklist(env, tmp_path, CSV_GAME)
     _poll(env)
     assert _throttle(env) is True
+    assert "--yields-to gaming-adaptive" in (tmp_path / "throttle-args").read_text()
     log = (Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "logs" / "gaming-mode.log").read_text()
     assert "ON  game running: VALORANT-Win64-Shipping.exe" in log
 

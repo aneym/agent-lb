@@ -1,0 +1,563 @@
+#!/usr/bin/python3
+"""Raise the upload cap while the PC's ping stays near its baseline.
+
+Launchd runs this once every 30s. While some other hold yields to
+gaming-adaptive, the cap starts at 0.2 MB/s for two minutes, then steps up
+0.1 MB/s every two minutes up to 1.0 MB/s while internet and game ping p95 stay
+within baseline + 15 ms and loss stays 0. Any breach drops it to 0.2 MB/s for
+10 minutes. Stale samples, or the game ending, release the hold so the floor
+holds apply again.
+
+GAMING_ADAPTIVE_MODE=enforce writes the hold; anything else (the default) only
+logs. GAMING_ADAPTIVE_NOW is an ISO UTC clock for tests. Samples come from
+GAMING_ADAPTIVE_SAMPLES_CMD (ssh to the PC HUD by default).
+"""
+
+import csv
+import json
+import math
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+FLOOR = 200000
+STEP = 100000
+CEILING = 1000000
+BASELINE_SECONDS = 120
+STEP_SECONDS = 120
+BREACH_HOLD_SECONDS = 600
+MARGIN_MS = 15
+WINDOW_SECONDS = 60
+STALE_SECONDS = 90
+SAMPLES_TIMEOUT_SECONDS = 25
+OWNER = "gaming-adaptive"
+
+# iso_utc,router_avg,router_max,router_loss,mesh_avg,mesh_max,mesh_loss,
+# inet_avg,inet_max,inet_loss,game_avg,game_max,game_loss,down_mbps,up_mbps,wifi_signal
+INET_AVG = 7
+INET_LOSS = 9
+GAME_AVG = 10
+GAME_LOSS = 12
+MIN_COLUMNS = 13
+
+DEFAULT_SAMPLES_CMD = (
+    "ssh pc powershell -NoProfile -Command "
+    "'Get-Content -Tail 15 \"$env:LOCALAPPDATA\\PingHud\\samples.csv\"'"
+)
+
+
+def home():
+    return Path(os.environ.get("GAMING_ADAPTIVE_HOME") or str(Path.home()))
+
+
+def state_path():
+    return home() / ".agent-lb" / "state" / "gaming-adaptive.json"
+
+
+def log_path():
+    return home() / ".agent-lb" / "logs" / "gaming-adaptive.tsv"
+
+
+def throttle_file():
+    configured = (os.environ.get("AGENT_LB_THROTTLE_FILE") or "").strip()
+    if configured:
+        return Path(configured)
+    return home() / ".agent-lb" / "state" / "upload-throttle.json"
+
+
+def throttle_bin():
+    return os.environ.get("GAMING_ADAPTIVE_THROTTLE_CMD") or str(
+        home() / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb"
+    )
+
+
+def mode_name():
+    return "enforce" if os.environ.get("GAMING_ADAPTIVE_MODE") == "enforce" else "shadow"
+
+
+def iso(when):
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_stamp(value):
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc)
+
+
+def clock():
+    override = (os.environ.get("GAMING_ADAPTIVE_NOW") or "").strip()
+    if override:
+        stamp = parse_stamp(override)
+        if stamp is not None:
+            return stamp
+    return datetime.now(timezone.utc)
+
+
+def blank_state(phase):
+    return {
+        "phase": phase,
+        "rate": FLOOR,
+        "baseline_start": None,
+        "baseline_inet": None,
+        "baseline_game": None,
+        "game_excluded": False,
+        "game_exclusion_logged": False,
+        "last_change": None,
+        "hold_until": None,
+        "rows": [],
+    }
+
+
+def load_state():
+    path = state_path()
+    if not path.exists():
+        return blank_state("idle"), False
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return blank_state("baseline"), True
+    if not isinstance(data, dict) or data.get("phase") not in ("idle", "baseline", "stepping"):
+        return blank_state("baseline"), True
+    if data.get("phase") == "stepping" and not isinstance(data.get("baseline_inet"), (int, float)):
+        return blank_state("baseline"), True
+    if not isinstance(data.get("rows"), list):
+        data["rows"] = []
+    return data, False
+
+
+def save_state(state):
+    path = state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = Path(str(path) + ".tmp")
+    temp.write_text(json.dumps(state) + "\n")
+    os.replace(temp, path)
+
+
+def read_holds():
+    try:
+        data = json.loads(throttle_file().read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    holds = data.get("holds")
+    return holds if isinstance(holds, dict) else {}
+
+
+def gaming(holds):
+    for owner, hold in holds.items():
+        if owner == OWNER or not isinstance(hold, dict):
+            continue
+        if hold.get("yields_to") == OWNER:
+            return True
+    return False
+
+
+def parse_cell(cell):
+    text = cell.strip()
+    if not text:
+        return None, True
+    try:
+        return float(text), True
+    except ValueError:
+        return None, False
+
+
+def parse_samples(text):
+    rows = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            cells = next(csv.reader([line]))
+        except csv.Error:
+            continue
+        if not cells or cells[0].strip() == "iso_utc":
+            continue
+        if len(cells) < MIN_COLUMNS:
+            continue
+        stamp = parse_stamp(cells[0])
+        if stamp is None:
+            continue
+        parsed = []
+        ok = True
+        for index in (INET_AVG, INET_LOSS, GAME_AVG, GAME_LOSS):
+            value, good = parse_cell(cells[index])
+            if not good:
+                ok = False
+                break
+            parsed.append(value)
+        if not ok:
+            continue
+        rows.append(
+            {
+                "at": iso(stamp),
+                "inet_avg": parsed[0],
+                "inet_loss": parsed[1],
+                "game_avg": parsed[2],
+                "game_loss": parsed[3],
+            }
+        )
+    return rows
+
+
+def read_samples():
+    command = os.environ.get("GAMING_ADAPTIVE_SAMPLES_CMD") or DEFAULT_SAMPLES_CMD
+    try:
+        result = subprocess.run(
+            ["sh", "-c", command],
+            capture_output=True,
+            text=True,
+            timeout=SAMPLES_TIMEOUT_SECONDS,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return [], False
+    if result.returncode != 0:
+        return [], False
+    return parse_samples(result.stdout), True
+
+
+def row_at(row):
+    return parse_stamp(row.get("at"))
+
+
+def window_rows(rows, now):
+    kept = []
+    for row in rows:
+        stamp = row_at(row)
+        if stamp is None:
+            continue
+        age = (now - stamp).total_seconds()
+        if 0 <= age <= WINDOW_SECONDS:
+            kept.append(row)
+    return kept
+
+
+def samples_stale(rows, now):
+    if not rows:
+        return True
+    newest = None
+    for row in rows:
+        stamp = row_at(row)
+        if stamp is None:
+            continue
+        if newest is None or stamp > newest:
+            newest = stamp
+    if newest is None or (now - newest).total_seconds() > STALE_SECONDS:
+        return True
+    return not window_rows(rows, now)
+
+
+def percentile_95(values):
+    if not values:
+        return None
+    ordered = sorted(values)
+    # Nearest rank: ceil(0.95 * n), computed in integers so it does not drift.
+    rank = (95 * len(ordered) + 99) // 100
+    if rank < 1:
+        rank = 1
+    if rank > len(ordered):
+        rank = len(ordered)
+    return ordered[rank - 1]
+
+
+def game_dropped(rows):
+    return bool(rows) and all(row.get("game_loss") == 100 for row in rows)
+
+
+def measure(rows, exclude_game):
+    inet_vals = [row["inet_avg"] for row in rows if row.get("inet_avg") is not None]
+    game_vals = [row["game_avg"] for row in rows if row.get("game_avg") is not None]
+    losses = []
+    for row in rows:
+        if row.get("inet_loss") is not None:
+            losses.append(row["inet_loss"])
+        if not exclude_game and row.get("game_loss") is not None:
+            losses.append(row["game_loss"])
+    return {
+        "inet_p95": percentile_95(inet_vals),
+        "game_p95": percentile_95(game_vals),
+        "loss": max(losses) if losses else 0.0,
+    }
+
+
+def is_breach(current, baseline_inet, baseline_game, exclude_game):
+    if baseline_inet is not None and current["inet_p95"] is not None:
+        if current["inet_p95"] > baseline_inet + MARGIN_MS:
+            return True
+    if (
+        not exclude_game
+        and baseline_game is not None
+        and current["game_p95"] is not None
+        and current["game_p95"] > baseline_game + MARGIN_MS
+    ):
+        return True
+    return current["loss"] > 0
+
+
+def breach_reason(current, baseline_inet, baseline_game):
+    def num(value):
+        return "" if value is None else ("%.4g" % float(value))
+
+    return "inet %s/%s game %s/%s loss %s" % (
+        num(current["inet_p95"]),
+        num(baseline_inet),
+        num(current["game_p95"]),
+        num(baseline_game),
+        num(current["loss"]),
+    )
+
+
+def restart_baseline(now, rows):
+    state = blank_state("baseline")
+    state["baseline_start"] = iso(now)
+    state["rows"] = rows
+    return state
+
+
+def snap_rate(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return FLOOR
+    if number < FLOOR:
+        return FLOOR
+    steps = int(math.floor((number - FLOOR) / float(STEP) + 1e-9))
+    rate = FLOOR + steps * STEP
+    if rate > CEILING:
+        return CEILING
+    return rate
+
+
+def run_baseline(state, now, window):
+    start = parse_stamp(state.get("baseline_start"))
+    if start is None:
+        state = restart_baseline(now, [])
+        start = now
+    prior = list(state.get("rows") or [])
+    exclude = game_dropped(prior) if prior else game_dropped(window)
+    current = measure(window, exclude)
+    if not prior and current["inet_p95"] is None:
+        return state, "stale", "no inet samples", current
+    if prior and is_breach(current, percentile_95(
+        [row["inet_avg"] for row in prior if row.get("inet_avg") is not None]
+    ), percentile_95(
+        [row["game_avg"] for row in prior if row.get("game_avg") is not None]
+    ) if not exclude else None, exclude):
+        # A breach before the baseline is committed starts the two minutes over.
+        restarted = restart_baseline(now, list(window))
+        return restarted, "breach", breach_reason(current, None, None), current
+    if not prior and current["loss"] > 0:
+        restarted = restart_baseline(now, list(window))
+        return restarted, "breach", breach_reason(current, None, None), current
+    state["rows"] = prior + list(window)
+    state["rate"] = FLOOR
+    state["phase"] = "baseline"
+    if (now - start).total_seconds() < BASELINE_SECONDS:
+        return state, "baseline", "baseline", current
+    exclude = game_dropped(state["rows"])
+    baseline = measure(state["rows"], exclude)
+    if is_breach(current, baseline["inet_p95"], None if exclude else baseline["game_p95"], exclude):
+        restarted = restart_baseline(now, list(window))
+        return restarted, "breach", breach_reason(current, baseline["inet_p95"], baseline["game_p95"]), current
+    state["phase"] = "stepping"
+    state["baseline_inet"] = baseline["inet_p95"]
+    state["baseline_game"] = baseline["game_p95"]
+    state["game_excluded"] = exclude
+    state["game_exclusion_logged"] = False
+    state["last_change"] = iso(now)
+    state["hold_until"] = None
+    state["rate"] = FLOOR
+    state["rows"] = []
+    reason = "baseline"
+    if exclude:
+        reason = "baseline; game icmp excluded"
+        state["game_exclusion_logged"] = True
+    return state, "baseline", reason, current
+
+
+def run_stepping(state, now, window):
+    exclude = bool(state.get("game_excluded"))
+    current = measure(window, exclude)
+    if current["inet_p95"] is None:
+        return state, "stale", "no inet samples", current
+    baseline_inet = state.get("baseline_inet")
+    baseline_game = state.get("baseline_game")
+    rate = snap_rate(state.get("rate"))
+    if is_breach(current, baseline_inet, baseline_game, exclude):
+        state["phase"] = "stepping"
+        state["rate"] = FLOOR
+        state["hold_until"] = iso(now + timedelta(seconds=BREACH_HOLD_SECONDS))
+        state["last_change"] = iso(now)
+        return state, "breach", breach_reason(current, baseline_inet, baseline_game), current
+    hold_until = parse_stamp(state.get("hold_until"))
+    if hold_until is not None and now < hold_until:
+        state["rate"] = FLOOR
+        return state, "hold", "breach hold", current
+    last_change = parse_stamp(state.get("last_change")) or now
+    anchor = last_change
+    if hold_until is not None and hold_until > anchor:
+        anchor = hold_until
+    if (now - anchor).total_seconds() >= STEP_SECONDS and rate < CEILING:
+        rate = rate + STEP
+        if rate > CEILING:
+            rate = CEILING
+        state["rate"] = rate
+        state["last_change"] = iso(now)
+        return state, "step", "step", current
+    state["rate"] = rate
+    return state, "hold", "hold", current
+
+
+def decide(state, now, window):
+    if state.get("phase") == "stepping" and isinstance(state.get("baseline_inet"), (int, float)):
+        return run_stepping(state, now, window)
+    return run_baseline(state, now, window)
+
+
+def rate_mbps_arg(rate):
+    whole, frac = divmod(int(rate), 1000000)
+    if frac == 0:
+        return "%d.0" % whole
+    return ("%d.%06d" % (whole, frac)).rstrip("0")
+
+
+def throttle(on, rate, reason):
+    command = [throttle_bin(), "throttle", "on" if on else "off", "--owner", OWNER]
+    if on:
+        command.extend(["--rate-mbps", rate_mbps_arg(rate), "--reason", reason])
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        sys.stderr.write("throttle %s failed: %s\n" % ("on" if on else "off", error))
+        return False
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr[:400])
+        return False
+    return True
+
+
+def append_log(now, mode, phase, rate, current, baseline_inet, baseline_game, action, reason):
+    path = log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new = not path.exists()
+
+    def cell(value):
+        if value is None:
+            return ""
+        return "%.4g" % float(value)
+
+    with path.open("a") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        if new:
+            writer.writerow(
+                [
+                    "now",
+                    "mode",
+                    "phase",
+                    "rate_mbps",
+                    "inet_p95",
+                    "game_p95",
+                    "baseline_inet",
+                    "baseline_game",
+                    "loss",
+                    "action",
+                    "reason",
+                ]
+            )
+        writer.writerow(
+            [
+                iso(now),
+                mode,
+                phase,
+                "%.2f" % (int(rate) / 1000000.0),
+                cell(None if current is None else current.get("inet_p95")),
+                cell(None if current is None else current.get("game_p95")),
+                cell(baseline_inet),
+                cell(baseline_game),
+                cell(None if current is None else current.get("loss")),
+                action,
+                reason,
+            ]
+        )
+
+
+def release_if_held(holds, mode):
+    if mode != "enforce" or OWNER not in holds:
+        return True
+    return throttle(False, FLOOR, "")
+
+
+def main():
+    now = clock()
+    mode = mode_name()
+    state, corrupt = load_state()
+    holds = read_holds()
+    if not gaming(holds):
+        ok = release_if_held(holds, mode)
+        state = blank_state("idle")
+        save_state(state)
+        reason = "corrupt state" if corrupt else "not gaming"
+        append_log(now, mode, "idle", FLOOR, None, None, None, "idle", reason)
+        return 0 if ok else 1
+    rows, ok_read = read_samples()
+    if not ok_read or samples_stale(rows, now):
+        ok = release_if_held(holds, mode)
+        state = blank_state("baseline")
+        save_state(state)
+        reason = "stale"
+        if corrupt:
+            reason = "corrupt state; stale"
+        append_log(now, mode, "baseline", FLOOR, None, None, None, "stale", reason)
+        return 0 if ok else 1
+    window = window_rows(rows, now)
+    if corrupt:
+        state = blank_state("baseline")
+    state, action, reason, current = decide(state, now, window)
+    if action == "stale":
+        ok = release_if_held(holds, mode)
+        state = blank_state("baseline")
+        save_state(state)
+        append_log(now, mode, "baseline", FLOOR, current, None, None, "stale", reason)
+        return 0 if ok else 1
+    if corrupt and action == "baseline":
+        reason = "corrupt state; " + reason
+    save_state(state)
+    ok = True
+    if mode == "enforce":
+        ok = throttle(True, state["rate"], reason)
+        if not ok:
+            reason = reason + "; throttle failed"
+    append_log(
+        now,
+        mode,
+        state["phase"],
+        state["rate"],
+        current,
+        state.get("baseline_inet"),
+        state.get("baseline_game"),
+        action,
+        reason,
+    )
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -5,8 +5,10 @@ Launchd polls the read-only `ssh pc tasklist` once a minute. Shadow mode
 (default) keeps the tasklist decision: a game takes the detector's hold, two
 idle polls release it, and failed polls keep protection. Enforce mode follows
 a fresh factory gaming signal, retaining the hold on unknown and falling back
-to tasklist when no valid signal is available. Each signal poll logs a TSV
-comparison and atomically acknowledges the applied mode and throttle success.
+to tasklist when no valid signal is available. The detector's hold yields to
+a fresh gaming-adaptive hold, so a closed-loop cap can rise above this floor.
+Each signal poll logs a TSV comparison and atomically acknowledges the applied
+mode and throttle success.
 
 Factory signal, network ack, and game list default to ~/.agent-rails/factory/
 state/pc-game-signal.json, state/pc-game-ack/network.json, and
@@ -125,7 +127,7 @@ def set_throttle(on: bool, reason: str = "") -> bool:
     try:
         result = subprocess.run(
             [str(THROTTLE), "throttle", "on" if on else "off", "--owner", "gaming-detector"]
-            + (["--reason", reason] if on else []),
+            + (["--yields-to", "gaming-adaptive", "--reason", reason] if on else []),
             capture_output=True,
             text=True,
             timeout=30,

@@ -49,6 +49,19 @@ def test_malformed_policy_without_backup_keeps_parsed_protective_rate(_state: Pa
     assert upload_throttle.read_policy()["source"] == "default"
 
 
+def test_a_yielding_hold_steps_aside_only_while_its_target_is_fresh(_state: Path) -> None:
+    upload_throttle.write_state(enabled=True, owner="p6-gaming", bytes_per_sec=200_000, yields_to="gaming-adaptive")
+    upload_throttle.write_state(enabled=True, owner="gaming-adaptive", bytes_per_sec=500_000)
+    assert upload_throttle.read_state() == (True, 500_000.0)
+    # Omitting yields_to on a later enable keeps the yield that was already stored.
+    upload_throttle.write_state(enabled=True, owner="p6-gaming", bytes_per_sec=200_000, reason="still")
+    assert upload_throttle.read_policy()["holds"]["p6-gaming"]["yields_to"] == "gaming-adaptive"
+    state = json.loads(_state.read_text())
+    state["holds"]["gaming-adaptive"]["since"] = "not-a-timestamp"
+    _state.write_text(json.dumps(state))
+    assert upload_throttle.read_state() == (True, 200_000.0)
+
+
 def test_concurrent_owners_are_not_lost(_state: Path) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
