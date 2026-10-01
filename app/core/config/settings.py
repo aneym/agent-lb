@@ -363,6 +363,8 @@ class Settings(BaseSettings):
 
     federation_peer_url: str | None = None
     federation_mirror_interval_seconds: int = Field(default=300, gt=0)
+    # when true the mirror also carries accounts other instances own (pushed in or mirrored), access token only; the owner keeps refreshing them.  # noqa: E501
+    federation_mirror_include_pushed: bool = False
     federation_usage_window_days: int = Field(default=7, gt=0)
     # Account push (openspec add-federation-account-push). Sender side: which of
     # this instance's owned accounts to push to which peer LBs. Receiver side:

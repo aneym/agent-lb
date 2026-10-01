@@ -183,6 +183,12 @@ class FederationRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_mirrorable_accounts(self, local_instance_id: str, *, include_foreign: bool) -> list[Account]:
+        if not include_foreign:
+            return await self.list_locally_owned_accounts(local_instance_id)
+        result = await self._session.execute(select(Account))
+        return list(result.scalars().all())
+
     async def release_for_checkout(
         self, account_id: str, taker_instance_id: str, *, local_instance_id: str, nonce: str
     ) -> AccountTransfer | None:
@@ -411,9 +417,9 @@ class FederationRepository:
         return True
 
     async def has_owner_accounts(self, owner_instance_id: str) -> bool:
-        return (await self._session.scalar(
-            select(Account.id).where(Account.owner_instance == owner_instance_id).limit(1)
-        )) is not None
+        return (
+            await self._session.scalar(select(Account.id).where(Account.owner_instance == owner_instance_id).limit(1))
+        ) is not None
 
     async def deactivate_mirrored_accounts_not_in(
         self, *, owner_instance_id: str, keep_ids: set[str], encryptor: TokenEncryptor | None = None

@@ -87,10 +87,16 @@ class FederationService:
 
     async def build_mirror_response(self) -> FederationMirrorResponse:
         local_id = self._settings.local_instance_id
-        accounts = await self._repo.list_locally_owned_accounts(local_id)
+        accounts = await self._repo.list_mirrorable_accounts(
+            local_id, include_foreign=self._settings.federation_mirror_include_pushed
+        )
         mirror_accounts = []
         for account in accounts:
-            access_token = self._encryptor.decrypt(account.access_token_encrypted)
+            try:
+                access_token = self._encryptor.decrypt(account.access_token_encrypted)
+            except Exception:
+                logger.warning("Federation mirror skipped account_id=%s", account.id)
+                continue
             mirror_accounts.append(
                 FederationMirrorAccount(
                     account_id=account.id,
