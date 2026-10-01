@@ -1,18 +1,19 @@
 #!/usr/bin/python3
-"""Automatic gaming mode: throttle agent-lb uploads while a game runs on the PC.
+"""Throttle agent-lb uploads while a game runs on the PC.
 
-Run once a minute by launchd (com.aneyman.agent-lb-gaming-mode). Each run:
-  1. `ssh pc tasklist` (read-only; the only thing ever sent to the PC), with the
-     OpenSSH post-quantum warning lines stripped. A timeout or failure keeps
-     the last known state.
-  2. If any process in the game list is running, turn the Studio upload
-     throttle ON. When no game has been seen for 2 consecutive polls, turn it
-     OFF.
-  3. Log every transition with a UTC timestamp.
+Launchd polls the read-only `ssh pc tasklist` once a minute. Shadow mode
+(default) keeps the tasklist decision: a game takes the detector's hold, two
+idle polls release it, and failed polls keep protection. Enforce mode follows
+a fresh factory gaming signal, retaining the hold on unknown and falling back
+to tasklist when no valid signal is available. Each signal poll logs a TSV
+comparison and atomically acknowledges the applied mode and throttle success.
 
-Game list: ~/.agent-lb/state/gaming-games.txt (one executable name per line,
-case-insensitive), else the defaults below. State: ~/.agent-lb/state/
-gaming-mode.json. Log: ~/.agent-lb/logs/gaming-mode.log.
+Factory signal, network ack, and game list default to ~/.agent-rails/factory/
+state/pc-game-signal.json, state/pc-game-ack/network.json, and
+~/factory/fleet/config/pc-games.json respectively, with GAMING_MODE_* overrides.
+The game list falls back to ~/.agent-lb/state/gaming-games.txt then defaults.
+Local state, shadow TSV, and transition logs live under GAMING_MODE_HOME (home
+by default). GAMING_MODE_SIGNAL_MODE accepts "enforce"; anything else is shadow.
 """
 
 import csv
@@ -27,6 +28,11 @@ HOME = Path(os.environ.get("GAMING_MODE_HOME") or Path.home())
 STATE = HOME / ".agent-lb" / "state" / "gaming-mode.json"
 GAMES_FILE = HOME / ".agent-lb" / "state" / "gaming-games.txt"
 LOG = HOME / ".agent-lb" / "logs" / "gaming-mode.log"
+SIGNAL = Path(os.environ.get("GAMING_MODE_SIGNAL_FILE") or Path.home() / ".agent-rails/factory/state/pc-game-signal.json").expanduser()
+ACK = Path(os.environ.get("GAMING_MODE_ACK_FILE") or Path.home() / ".agent-rails/factory/state/pc-game-ack/network.json").expanduser()
+GAMES_JSON = Path(os.environ.get("GAMING_MODE_GAMES_JSON") or Path.home() / "factory/fleet/config/pc-games.json").expanduser()
+SHADOW = HOME / ".agent-lb" / "state" / "gaming-signal-shadow.tsv"
+SIGNAL_MODE = os.environ.get("GAMING_MODE_SIGNAL_MODE", "shadow")
 THROTTLE = Path(
     os.environ.get("GAMING_MODE_THROTTLE_CMD")
     or HOME / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "agent-lb"
@@ -54,6 +60,13 @@ def log(message: str) -> None:
 
 
 def games() -> list:
+    try:
+        data = json.loads(GAMES_JSON.read_text())
+        names = data.get("games") if isinstance(data, dict) else None
+        if isinstance(names, list) and names and all(isinstance(name, str) and name.strip() for name in names):
+            return [name + ".exe" for name in names]
+    except (OSError, ValueError):
+        pass
     try:
         names = [line.strip() for line in GAMES_FILE.read_text().splitlines()]
         names = [name for name in names if name and not name.startswith("#")]
@@ -145,39 +158,95 @@ def throttle_enabled() -> bool:
     return False
 
 
+def read_signal():
+    """Return a valid, fresh factory signal, or None for unavailable input."""
+    try:
+        signal = json.loads(SIGNAL.read_text())
+        if not isinstance(signal, dict) or type(signal.get("generation")) is not int:
+            return None
+        if signal.get("state") not in ("active", "idle", "unknown") or signal.get("mode") not in ("gaming", "normal"):
+            return None
+        read_at = datetime.fromisoformat(signal["read_at"].replace("Z", "+00:00"))
+        if read_at.utcoffset() is None or (datetime.now(timezone.utc) - read_at).total_seconds() > 180:
+            return None
+        return signal
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def record_signal(signal: dict, gaming: bool, own: str, ok: bool) -> None:
+    applied = "gaming" if gaming else "normal"
+    SHADOW.parent.mkdir(parents=True, exist_ok=True)
+    needs_header = not SHADOW.exists()
+    with SHADOW.open("a") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        if needs_header:
+            writer.writerow(["at", "generation", "signal_state", "signal_mode", "applied_mode", "tasklist", "agreement"])
+        disagree = signal["state"] != "unknown" and signal["mode"] != applied
+        writer.writerow([now(), signal["generation"], signal["state"], signal["mode"], applied, own, "disagree" if disagree else "agree"])
+    ACK.parent.mkdir(parents=True, exist_ok=True)
+    temp = ACK.with_suffix(".tmp")
+    temp.write_text(json.dumps({"generation": signal["generation"], "mode": applied, "ok": ok, "at": now()}) + "\n")
+    os.replace(temp, ACK)
+
+
 def main() -> int:
     state = load_state()
     gaming = throttle_enabled()
     misses = int(state.get("misses", 0))
     images = running_images()
+    wanted = [] if images is None else [
+        name for name in games() if name.lower() in images or name.lower()[:25] in images
+    ]
+    own = "unknown" if images is None else "game" if wanted else "idle"
+    signal = read_signal()
+    if signal is not None:
+        previous = state.get("signal_generation")
+        if type(previous) is int and signal["generation"] < previous:
+            log(f"factory restart: generation {previous} -> {signal['generation']}")
+        state["signal_generation"] = signal["generation"]
+    fallback = SIGNAL_MODE == "enforce" and signal is None
+    if fallback and not state.get("signal_fallback"):
+        log("No readable factory signal; falling back to tasklist")
+    state["signal_fallback"] = fallback
+    ok = True
     if images is None:
-        # ssh failed or timed out: keep the throttle as it is, and restart the
-        # idle count so only two consecutive successful idle polls release it.
         if state.get("last_poll_ok") is not False:
             log("UNKNOWN tasklist poll failed or did not parse; keeping protection")
-        state["misses"] = 0
-        state["last_poll"] = now()
-        state["last_poll_ok"] = False
-        save_state(state)
-        return 0
-    wanted = [name for name in games() if name.lower() in images or name.lower()[:25] in images]
-    if wanted:
         misses = 0
-        if not gaming and set_throttle(True, ", ".join(wanted)):
-            gaming = True
-            log(f"ON  game running: {', '.join(wanted)} -> agent-lb upload throttle on")
+    elif wanted:
+        misses = 0
     else:
         misses += 1
-        if gaming and misses >= MISSES_TO_RELEASE and set_throttle(False):
+
+    if SIGNAL_MODE == "enforce" and signal is not None:
+        if signal["state"] != "unknown":
+            desired = signal["mode"] == "gaming"
+            if desired != gaming:
+                ok = set_throttle(desired, f"factory signal gen {signal['generation']}")
+                if ok:
+                    gaming = desired
+                    log(f"{'ON' if gaming else 'OFF'} factory signal gen {signal['generation']}")
+    elif wanted:
+        if not gaming:
+            ok = set_throttle(True, ", ".join(wanted))
+            if ok:
+                gaming = True
+                log(f"ON  game running: {', '.join(wanted)} -> agent-lb upload throttle on")
+    elif images is not None and gaming and misses >= MISSES_TO_RELEASE:
+        ok = set_throttle(False)
+        if ok:
             gaming = False
             log(f"OFF no game for {misses} consecutive polls -> agent-lb upload throttle off")
+    if signal is not None:
+        record_signal(signal, gaming, own, ok)
     state.update(
         {
             "gaming": gaming,
             "note": "gaming mirrors the gaming-detector hold",
             "misses": misses,
             "last_poll": now(),
-            "last_poll_ok": True,
+            "last_poll_ok": images is not None,
             "seen": wanted,
         }
     )

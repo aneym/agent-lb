@@ -36,6 +36,10 @@ def _setup(tmp_path: Path, tasklist: str | None) -> dict[str, str]:
         "AGENT_LB_THROTTLE_FILE": str(state),
         "GAMING_MODE_SSH": str(ssh),
         "GAMING_MODE_THROTTLE_CMD": str(throttle),
+        "GAMING_MODE_SIGNAL_FILE": str(tmp_path / "signal.json"),
+        "GAMING_MODE_ACK_FILE": str(tmp_path / "ack" / "network.json"),
+        "GAMING_MODE_GAMES_JSON": str(tmp_path / "games.json"),
+        "GAMING_MODE_SIGNAL_MODE": "shadow",
     }
 
 
@@ -103,3 +107,36 @@ def test_a_failed_poll_restarts_the_idle_count(tmp_path: Path) -> None:
     assert _throttle(env) is True
     _poll(env)  # idle 2
     assert _throttle(env) is False
+
+
+def test_stale_signal_falls_back_without_ack(tmp_path: Path) -> None:
+    env = _setup(tmp_path, CSV_GAME)
+    env["GAMING_MODE_SIGNAL_MODE"] = "enforce"
+    Path(env["GAMING_MODE_SIGNAL_FILE"]).write_text(json.dumps({
+        "generation": 7, "state": "idle", "mode": "normal",
+        "read_at": "2000-01-01T00:00:00Z",
+    }))
+    _poll(env)
+    assert _throttle(env) is True
+    assert not Path(env["GAMING_MODE_ACK_FILE"]).exists()
+    log = (Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "logs" / "gaming-mode.log").read_text()
+    assert "falling back" in log
+
+
+def test_generation_drop_is_accepted_and_logged_once(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    env = _setup(tmp_path, CSV_IDLE)
+    env["GAMING_MODE_SIGNAL_MODE"] = "enforce"
+    signal = Path(env["GAMING_MODE_SIGNAL_FILE"])
+    for generation, state, mode in [(9, "active", "gaming"), (1, "idle", "normal"), (1, "idle", "normal")]:
+        signal.write_text(json.dumps({
+            "generation": generation, "state": state, "mode": mode,
+            "read_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        _poll(env)
+    assert _throttle(env) is False
+    ack = json.loads(Path(env["GAMING_MODE_ACK_FILE"]).read_text())
+    assert (ack["generation"], ack["mode"], ack["ok"]) == (1, "normal", True)
+    log = (Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "logs" / "gaming-mode.log").read_text()
+    assert log.count("factory restart") == 1
