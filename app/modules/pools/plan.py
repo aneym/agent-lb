@@ -108,10 +108,6 @@ _RISK = {
         "Risk. When Cursor refuses and the OpenAI plans are low at the same time, code falls "
         "to Claude Sonnet, the pool we guard."
     ),
-    "balanced": (
-        "Watch. Grok 4.7 low first rests on six units. If the 20-unit round drops it, Sol goes "
-        "back to first with one switch."
-    ),
     "unlimited": (
         "Why not Opus for everything. In our code trial (E12, six units each) Opus medium "
         "finished 4 of 6 and Sol 6 of 6, at almost twice the tokens per finished unit. And "
@@ -260,12 +256,20 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                 "Spend least while keeping review quality. Keep the installed code head and drop the "
                 "accounts that were slowest."
             )
+        if level == "balanced":
+            label = _entry(head, table, costs)["model"] if head else "the installed head"
+            risk = (
+                f"Watch. {label} first rests on the latest eval. If the next round drops it, Sol goes "
+                "back to first with one switch."
+            )
+        else:
+            risk = _RISK[level]
         levels[level] = {
             "title": "Balanced (recommended)" if level == "balanced" else level.title(),
             "why": why,
             "accounts": accounts,
             "ladders": ladders,
-            "risk": _RISK[level],
+            "risk": risk,
         }
     return {
         "generatedAt": response.generated_at.isoformat().replace("+00:00", "Z"),

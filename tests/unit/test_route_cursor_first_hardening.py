@@ -86,7 +86,7 @@ def test_read_only_rung_reaches_seat_adapter(tmp_path: Path, vendor: str) -> Non
 
     def readonly_worker(table):
         rung = next(row for row in table["ladders"]["interim"]["implement"]
-                    if row["id"] == ("grok-low" if vendor == "cursor" else "swe2-high"))
+                    if row["id"] == ("grok-medium" if vendor == "cursor" else "swe2-high"))
         rung["read_only"] = True
         table["ladders"]["interim"]["implement"] = [rung]
 

@@ -35,7 +35,7 @@ def installed_pick(env: dict[str, str], task: str, *args: str) -> dict:
 
 
 @pytest.mark.parametrize("task,rung", [
-    ("implement", "grok-low"), ("mechanical", "composer"), ("explore", "sol-low"),
+    ("implement", "grok-medium"), ("mechanical", "composer"), ("explore", "sol-low"),
 ])
 def test_low_codex_stays_first(tmp_path: Path, task: str, rung: str) -> None:
     env, _ = installed_policy(tmp_path)
@@ -44,7 +44,7 @@ def test_low_codex_stays_first(tmp_path: Path, task: str, rung: str) -> None:
     assert selected["rung"] == rung
     assert selected["reason"] == "first open rung"
     if task == "implement":
-        assert selected["model"] == "grok-4.7-low"
+        assert selected["model"] == "grok-4.7-medium"
 
 
 @pytest.mark.parametrize("task,rung", [

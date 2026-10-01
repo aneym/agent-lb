@@ -69,20 +69,20 @@ def pick(env: dict[str, str], table: Path, *args: str) -> dict:
     return json.loads(result.stdout)
 
 
-def test_best_first_ladder_starts_with_approved_grok_low(tmp_path: Path) -> None:
+def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> None:
     env = setup(tmp_path)
 
     held = pick(env, CANONICAL_TABLE, "implement")
     assert (held["ladder"], held["rung"], held["seat"], held["model"]) == (
-        "interim", "grok-low", "cursor-seat", "grok-4.7-low")
+        "interim", "grok-medium", "cursor-seat", "grok-4.7-medium")
     assert held["reason"] == "first open rung"
     assert held["pace"]["openai-codex"]["state"] == "low"
     assert (held["audit"]["rung"], held["audit"]["seat"], held["audit"]["model"], held["audit"]["effort"]) == (
         "sonnet-high", "sonnet-verifier", "claude-sonnet-5-5", "high")
-    assert held["intended"] == "grok-low"
+    assert held["intended"] == "grok-medium"
     text = route(env, CANONICAL_TABLE, "pick", "implement")
     assert text.returncode == 0, text.stderr
-    assert text.stdout.strip().splitlines()[-1] == "→ grok-4.7-low (cursor-models)"
+    assert text.stdout.strip().splitlines()[-1] == "→ grok-4.7-medium (cursor-models)"
 
     # Grok's work never goes to Grok or to Sonnet's own pool twice: Sonnet high, then Sol high.
     review = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai")

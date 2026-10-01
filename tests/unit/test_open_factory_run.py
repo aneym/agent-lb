@@ -39,7 +39,7 @@ def world(tmp_path: Path) -> dict[str, str]:
         HOME=str(home), PATH=f"{bins}:/usr/bin:/bin", AGENT_LB_URL="http://127.0.0.1:1",
         ROUTE_TABLE=str(TABLE), ROUTE_FIXTURE_DIR=str(fixtures), ROUTE_MODELS_CACHE=str(tmp_path / "models.json"),
         ROUTE_LEDGER=str(tmp_path / "dispatch.jsonl"),
-        ROUTE_CURSOR_MODELS_CMD="printf 'grok-4.7-medium-fast - Grok\\ncomposer-2.5 - Composer\\n'",
+        ROUTE_CURSOR_MODELS_CMD="printf 'grok-4.7-medium - Grok\\ncomposer-2.5 - Composer\\n'",
         # Codex is out of quota; Claude and Cursor answer.
         OF_BIN_CODEX=stub(bins / "codex", log + "echo 'ERROR: You have hit your usage limit (429)' >&2\nexit 1\n"),
         OF_BIN_CLAUDE_LB_LAUNCH=stub(bins / "claude-lb-launch", log + "echo '{\"result\": \"renamed\"}'\n"),
@@ -61,30 +61,34 @@ def rows(env: dict[str, str], name: str) -> list[dict]:
 
 def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path) -> None:
     env = world(tmp_path)
-
+    # Grok, the implement head, is out of quota too; Composer answers.
+    seat = Path(env["OF_BIN_SEAT"])
+    guard = "case \"$*\" in *grok-4.7-medium*) echo 'usage limit (429)' >&2; exit 1;; esac\n"
+    _, logged, answer = seat.read_text().split("\n", 2)
+    stub(seat, f"{logged}\n{guard}{answer}")
     done = of(env, "run", "implement", "--json", "--", "Rename helper x to y in a.py")
     assert done.returncode == 0, done.stderr
     receipt = json.loads(done.stdout)
-    assert receipt["intended"] == {"seat": "gpt-implementer", "model": "gpt-6.1-sol"}
+    assert receipt["intended"] == {"seat": "cursor-seat", "model": "grok-4.7-medium"}
     assert receipt["ran"] == {"seat": "cursor-seat", "model": "composer-2.5"}
     assert receipt["standing_in"] is True
-    assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("gpt-implementer", "limit"), ("cursor-seat", "ok")]
+    assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("cursor-seat", "limit"), ("cursor-seat", "ok")]
     assert all(set(attempt) == {"seat", "model", "pool", "maker", "outcome", "exit", "wall_s"}
                for attempt in receipt["attempts"])
     assert [(attempt["pool"], attempt["maker"]) for attempt in receipt["attempts"]] == [
-        ("openai-codex", "openai"), ("cursor", "cursor")]
+        ("cursor", "xai"), ("cursor", "cursor")]
     assert "renamed" in Path(receipt["out"]).read_text()
 
     calls = rows(env, "CALLS")
-    codex, cursor = calls[0], calls[1]
-    assert codex["argv"][1:4] == ["exec", "-m", "gpt-6.1-sol"] and codex["argv"][-1] == "Rename helper x to y in a.py"
+    grok, cursor = calls[0], calls[1]
+    assert grok["argv"][1:6] == ["run", "--vendor", "cursor", "--model", "grok-4.7-medium"]
     assert cursor["argv"][1:6] == ["run", "--vendor", "cursor", "--model", "composer-2.5"] and cursor["intent"] == "implement"
 
     ledger = rows(env, "ROUTE_LEDGER")
     decision = [r for r in ledger if r["event"] == "of_decision"]
     outcomes = [r for r in ledger if r["event"] == "of_outcome"]
     assert len(decision) == 1 and decision[0]["decision_id"] == receipt["decision_id"]
-    assert (decision[0]["decider"], decision[0]["task_class"], decision[0]["seat"]) == ("ladder", "implement", "gpt-implementer")
+    assert (decision[0]["decider"], decision[0]["task_class"], decision[0]["seat"]) == ("ladder", "implement", "cursor-seat")
     assert [(o["decision_id"], o["attempt"], o["outcome"]) for o in outcomes] == [
         (receipt["decision_id"], 1, "limit"), (receipt["decision_id"], 2, "ok")]
 
@@ -128,7 +132,7 @@ def test_decision_pick_is_a_seat_id(tmp_path: Path) -> None:
     done = of(env, "run", "implement", "--json", "--", "Rename helper")
     assert done.returncode == 0, done.stderr
     decision = next(row for row in rows(env, "ROUTE_LEDGER") if row["event"] == "of_decision")
-    assert decision["pick"] == "gpt-implementer"
+    assert decision["pick"] == "cursor-seat"
 
 
 def test_intended_menu_seat_keeps_ladder_fallback(tmp_path: Path) -> None:
