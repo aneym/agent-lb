@@ -21,6 +21,7 @@ struct PoolSection: View {
   var menuTimeZone: TimeZone = .current
 
   private var isScoped: Bool { scope != .all }
+  var showsPoolTiles: Bool { scope == .all && !menuPools.isEmpty }
   var displayedWindows: [ProviderScope.Window] {
     scope == .openai ? [.secondary] : [.primary, .secondary]
   }
@@ -29,12 +30,16 @@ struct PoolSection: View {
   // label 14, cards 128, metric lines 14 (spacing 8/3).
   var body: some View {
     VStack(alignment: .leading, spacing: PanelMetrics.poolSpacing) {
-      SectionLabel("POOLS")
+      SectionLabel(showsPoolTiles ? "POOLS" : "POOL")
         .frame(height: PanelMetrics.poolLabel)
       if hasError && summary == nil && !isScoped {
         RetryRow(retry: retry)
-      } else if !menuPools.isEmpty {
-        menuRows
+      } else if showsPoolTiles {
+        poolTiles
+        metricsStrip
+        if hasError {
+          RetryRow(retry: retry)
+        }
       } else {
         cards
         metricsStrip
@@ -45,22 +50,19 @@ struct PoolSection: View {
     }
   }
 
-  private var menuRows: some View {
+  private var poolTiles: some View {
     let rows = PoolMenu.rows(pools: menuPools, now: menuNow, timeZone: menuTimeZone)
-    let footer = PoolMenu.footer(plan: plan)
-    return VStack(alignment: .leading, spacing: 8) {
+    return HStack(alignment: .top, spacing: 0) {
       ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-        PoolMenuRowView(row: row)
-      }
-      if let footer {
-        Text(footer)
-          .font(.system(size: 11))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
+        PoolTileView(row: row)
+          .frame(maxWidth: .infinity)
       }
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .frame(minHeight: PanelMetrics.poolCard, alignment: .top)
+    .padding(12)
+    .frame(maxWidth: .infinity)
+    .frame(height: PanelMetrics.poolCard, alignment: .center)
+    .background(.thinMaterial, in: .rect(cornerRadius: 8))
+    .help(PoolMenu.footer(plan: plan) ?? "")
   }
 
   private var cards: some View {
@@ -225,63 +227,34 @@ struct PoolSection: View {
   }
 }
 
-// One self-contained limit card (§9.3): title + scoped account count,
-// 30 pt ring beside the 26 pt percent, credits, countdown, optional status.
-private struct PoolMenuRowView: View {
+private struct PoolTileView: View {
   let row: PoolMenuRow
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(row.name)
-          .font(.system(size: 12, weight: .semibold))
-        Spacer(minLength: 8)
-        Text(row.value)
-          .font(.system(size: 12, weight: .medium, design: .monospaced))
-          .monospacedDigit()
-      }
-      PoolCapsule(fraction: row.fraction, tone: row.tone, ticks: row.ticks)
-      if let subline = row.subline {
-        Text(subline)
-          .font(.system(size: 10))
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
+    VStack(alignment: .center, spacing: 5) {
+      RingGauge(percent: row.percent, lineWidth: 3)
+        .frame(width: 30, height: 30)
+      Text(row.value == "out" ? "out" : row.percent.map(Format.percent) ?? "—")
+        .font(.system(size: 13, weight: lowRemaining ? .bold : .semibold, design: .monospaced))
+        .monospacedDigit()
+        .lineLimit(1)
+      Text(row.shortName)
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+      Text(row.caption.isEmpty ? " " : row.caption)
+        .font(.system(size: 9, design: .monospaced))
+        .foregroundStyle(.tertiary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
     }
+    .help(row.help)
     .accessibilityElement(children: .combine)
   }
-}
 
-private struct PoolCapsule: View {
-  let fraction: Double
-  let tone: PoolTone
-  let ticks: [Double]
-
-  var body: some View {
-    GeometryReader { geo in
-      let width = geo.size.width
-      ZStack(alignment: .leading) {
-        Capsule().fill(Color.primary.opacity(0.12))
-        Capsule()
-          .fill(fill)
-          .frame(width: max(0, width * fraction))
-        ForEach(Array(ticks.enumerated()), id: \.offset) { _, tick in
-          Capsule()
-            .fill(Color.primary)
-            .frame(width: 2, height: 10)
-            .offset(x: width * tick - 1)
-        }
-      }
-    }
-    .frame(height: 6)
-  }
-
-  private var fill: Color {
-    switch tone {
-    case .success: Color.green
-    case .warning: Color.orange
-    case .danger: Color.red
-    }
+  private var lowRemaining: Bool {
+    row.value == "out" || (row.percent ?? 100) < 15
   }
 }
 

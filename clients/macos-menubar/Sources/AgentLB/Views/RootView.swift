@@ -208,8 +208,8 @@ struct RootView: View {
         arbitrage: arbitrage,
         hasError: appState.sectionErrors.contains(.pool),
         retry: retrySection,
-        menuPools: appState.pools,
-        plan: appState.poolPlan
+        menuPools: scope == .all ? appState.pools : [],
+        plan: scope == .all ? appState.poolPlan : nil
       )
       .padding(.horizontal, 14)
       .padding(.vertical, 6)

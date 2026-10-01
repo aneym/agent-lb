@@ -20,6 +20,12 @@ final class PoolMenuTests: XCTestCase {
       "28% · 3/8", "17% · 4/5", "98% · 1/1", "out", "50% · 1/2",
     ])
     XCTAssertEqual(rows.map(\.tone), [.warning, .warning, .success, .danger, .success])
+    XCTAssertEqual(rows[0].percent, 28.4)
+    XCTAssertEqual(rows[0].shortName, "Claude")
+    XCTAssertEqual(rows[0].caption, "3/8")
+    XCTAssertEqual(rows[3].percent, 0)
+    XCTAssertEqual(rows[3].shortName, "Cursor other")
+    XCTAssertEqual(rows[3].caption, "back Oct 30")
     XCTAssertEqual(rows[0].subline, "+1 at 12:59 PM")
     XCTAssertEqual(rows[1].subline, "+3 Oct 3, 12:58 PM")
     XCTAssertEqual(rows[2].subline, "estimate · resets Oct 30")
@@ -65,13 +71,13 @@ final class PoolMenuTests: XCTestCase {
       menuNow: now,
       menuTimeZone: zone
     )
-    .frame(width: 320)
     .padding(12)
-    .background(Color.white)
+    .frame(width: 292)
+    .background(Color(nsColor: .windowBackgroundColor))
 
     let renderer = ImageRenderer(content: view)
     renderer.scale = 2
-    renderer.proposedSize = ProposedViewSize(width: 320, height: nil)
+    renderer.proposedSize = ProposedViewSize(width: 292, height: nil)
     guard let image = renderer.nsImage else {
       XCTFail("ImageRenderer produced no image")
       return

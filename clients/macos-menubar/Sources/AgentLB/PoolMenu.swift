@@ -13,6 +13,10 @@ struct PoolMenuRow: Equatable, Sendable {
   let tone: PoolTone
   let ticks: [Double]
   let subline: String?
+  let percent: Double?
+  let shortName: String
+  let caption: String
+  let help: String
 }
 
 enum PoolMenu {
@@ -80,13 +84,30 @@ enum PoolMenu {
       value = "— · \(usable)/\(total)"
       fraction = 0
     }
+    let percent = out ? 0 : remaining.map { min(100, max(0, $0)) }
+    let shortName = id == "cursor-models" ? "Cursor" : name(for: id)
+    let detail = subline(pool, out: out, now: now, calendar: calendar)
+    let reset = pool.cycleResetAt ?? pool.weeklyResetAt ?? pool.resetAt
+    let caption = out
+      ? reset.map { "back \(monthDay($0, calendar: calendar))" } ?? "\(usable)/\(total)"
+      : "\(usable)/\(total)"
+    let help = [
+      name(for: id),
+      out ? "out" : percent.map { "\(percentText($0)) left" },
+      "\(usable) of \(total) accounts usable",
+      detail,
+    ].compactMap { $0 }.joined(separator: " · ")
     return PoolMenuRow(
       name: name(for: id),
       value: value,
       fraction: fraction,
       tone: tone(remaining: remaining, out: out),
       ticks: ticks(pool),
-      subline: subline(pool, out: out, now: now, calendar: calendar)
+      subline: detail,
+      percent: percent,
+      shortName: shortName,
+      caption: caption,
+      help: help
     )
   }
 
