@@ -147,10 +147,10 @@ def _connect_backoff_seconds(attempt: int) -> float:
 
 @asynccontextmanager
 async def _admitted_http_session(
-    session_key: str | None, nbytes: int
+    session_key: str | None, nbytes: int, upload_class: str
 ) -> AsyncIterator[tuple[aiohttp.ClientSession, AsyncExitStack]]:
     async with AsyncExitStack() as admission_stack:
-        await admission_stack.enter_async_context(upload_admission.admission().admit(session_key, nbytes))
+        await admission_stack.enter_async_context(upload_admission.admission().admit(session_key, nbytes, upload_class))
         async with lease_http_session() as session:
             yield session, admission_stack
 
@@ -348,6 +348,7 @@ class AnthropicProxyService:
             provider_name=provider_name,
             quota_key=affinity_quota_key,
         )
+        upload_class = upload_admission.upload_class(inbound_headers)
         wait_enabled = (
             bool(payload.stream)
             and provider_name == ANTHROPIC_PROVIDER_NAME
@@ -454,7 +455,7 @@ class AnthropicProxyService:
                             body_payload = ensure_claude_code_identity_body(body_payload)
 
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
-                        async with _admitted_http_session(session_id or sticky_key, nbytes) as (
+                        async with _admitted_http_session(session_id or sticky_key, nbytes, upload_class) as (
                             session,
                             admission_stack,
                         ):
@@ -874,8 +875,9 @@ class AnthropicProxyService:
         started_at = time.monotonic()
         session_id = _anthropic_session_header(inbound_headers)
         nbytes = len(json.dumps(body, separators=(",", ":")).encode())
+        upload_class = upload_admission.upload_class(inbound_headers)
         try:
-            async with _admitted_http_session(session_id, nbytes) as (session, admission_stack):
+            async with _admitted_http_session(session_id, nbytes, upload_class) as (session, admission_stack):
                 async with self._open_count_tokens_response(
                     session,
                     provider_name=provider_name,
