@@ -843,7 +843,7 @@ def daily_report(report, outcome_records_for_day, rungs, percent, errors):
             _metric("pins_ignored", pins_ignored, "pieces"),
             _metric("fell_back_pieces", fell_back, "pieces"),
             _metric("cursor_models_pct", percent, "%"),
-            _metric("unverified_sources", len(errors), "count"),
+            _metric("unverified_sources", len({str(item).split(":", 1)[0] for item in errors}), "count"),
         ],
         "link": {
             "url": "https://app.rails.so/workspace/rails-admin?route=scoping/routing-next",
@@ -893,7 +893,6 @@ def main():
     rolling = until - timedelta(days=7)
     runs = dispatch(home / ".claude/logs/dispatch.jsonl", min(since, rolling), until + timedelta(hours=1), errors)
     requests, usage = store(home / ".agent-lb/store.db", min(since, rolling), until, errors)
-    verdicts, merges, reverts = prs(min(since, rolling), until, errors)
     pools = document(["route", "pools", "--json"], errors, "route pools")
     pool_rows = pools.get("pools", []) if isinstance(pools, dict) else []
     cursor = next((p for p in pool_rows if p.get("id") == "cursor-models"), {})
@@ -921,6 +920,20 @@ def main():
                     run["rung"] = candidates[0]["id"]
     except (OSError, ValueError, AttributeError):
         errors.append("ladder ordering: unavailable")
+    outcomes_source, outcome_records = load_outcomes(
+        home / ".agent-lb/audits/routing/outcomes.jsonl", min(since, rolling), until, errors)
+    day_records = [row for row in outcome_records if since <= date(row["ts"]) < until]
+    et_day = until.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    report_root = args.out if args.out else home / ".agent-rails/factory"
+    # 2026-10-01: the C5 file is due by 07:20 ET and needs none of the PR data, so write it before prs().
+    try:
+        payload = daily_report(
+            {"since": since.isoformat(), "until": until.isoformat()},
+            day_records, ladder, percent, list(errors))
+        write_daily_report(payload, report_root / "daily" / et_day / "routing.json", errors)
+    except Exception as exc:
+        errors.append(f"daily report: {type(exc).__name__}")
+    verdicts, merges, reverts = prs(min(since, rolling), until, errors)
     joined = fold_acceptance(home, runs, errors)
     # PR branch fallback is read-only and only joins existing worktrees.
     for run in runs:
@@ -934,8 +947,6 @@ def main():
     usage = timestamp_rows(usage, "recorded_at", "usage", errors)
     rows = summarize(runs, verdicts, merges, reverts, requests, usage, since, until)
     week = summarize(runs, verdicts, merges, reverts, requests, usage, rolling, until)
-    outcomes_source, outcome_records = load_outcomes(
-        home / ".agent-lb/audits/routing/outcomes.jsonl", min(since, rolling), until, errors)
     daily_rungs = summarize_outcomes(
         [row for row in outcome_records if since <= date(row["ts"]) < until])
     rolling_rungs = summarize_outcomes(
@@ -968,11 +979,11 @@ def main():
     # An explicit output directory is a dry-run boundary: do not overwrite the published page.
     page = out / "routing-daily-audit.html" if args.out else home / ".claude/pretty-docs/routing-daily-audit.html"
     write_outputs(report, out, page)
-    day_records = [row for row in outcome_records if since <= date(row["ts"]) < until]
-    et_day = until.astimezone(ZoneInfo("America/New_York")).date().isoformat()
-    report_root = args.out if args.out else home / ".agent-rails/factory"
-    payload = daily_report(report, day_records, ladder, percent, errors)
-    write_daily_report(payload, report_root / "daily" / et_day / "routing.json", errors)
+    try:
+        payload = daily_report(report, day_records, ladder, percent, errors)
+        write_daily_report(payload, report_root / "daily" / et_day / "routing.json", errors)
+    except Exception as exc:
+        errors.append(f"daily report: {type(exc).__name__}")
     if args.post:
         before = len(errors)
         command(["lane-post", "post", "--to", "w5H:pNE", "--from", "routing-audit", "--kind", "info",

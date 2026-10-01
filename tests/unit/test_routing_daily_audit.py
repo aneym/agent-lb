@@ -262,6 +262,10 @@ def test_routing_daily_audit_daily_report_counts_ladder_mix():
     assert counted["pinned_pieces"] == 1
     assert counted["pins_ignored"] == 1
     assert counted["fell_back_pieces"] == 1
+    repeated = ["PR comments: TimeoutExpired"] * 3 + ["live quota: x"]
+    sources = daily_report(report, rows, {"implement": [head]}, 12.5, repeated)
+    source_metrics = {item["key"]: item["value"] for item in sources["metrics"]}
+    assert source_metrics["unverified_sources"] == 2
 
 
 def test_routing_daily_audit_main_writes_factory_report(tmp_path, monkeypatch):
@@ -276,3 +280,40 @@ def test_routing_daily_audit_main_writes_factory_report(tmp_path, monkeypatch):
     payload = json.loads(path.read_text())
     assert payload["contract"] == "daily-report@0"
     assert payload["source"] == "routing"
+
+
+def test_routing_daily_audit_writes_c5_before_prs(tmp_path, monkeypatch):
+    monkeypatch.setattr(routing_daily_audit.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(routing_daily_audit, "command", lambda *args, **kwargs: "")
+
+    def fail_prs(*_args, **_kwargs):
+        raise RuntimeError("prs")
+
+    monkeypatch.setattr(routing_daily_audit, "prs", fail_prs)
+    monkeypatch.setattr(sys, "argv", [
+        "routing_daily_audit.py", "--out", str(tmp_path / "out"),
+        "--since", "2026-09-30T11:00:00Z", "--until", "2026-10-01T11:00:00Z",
+    ])
+    with pytest.raises(RuntimeError, match="prs"):
+        routing_daily_audit.main()
+    path = tmp_path / "out" / "daily" / "2026-10-01" / "routing.json"
+    payload = json.loads(path.read_text())
+    assert payload["contract"] == "daily-report@0"
+
+
+def test_routing_daily_audit_daily_report_error_still_prints(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(routing_daily_audit.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(routing_daily_audit, "command", lambda *args, **kwargs: "")
+
+    def fail_report(*_args, **_kwargs):
+        raise ValueError("bad row")
+
+    monkeypatch.setattr(routing_daily_audit, "daily_report", fail_report)
+    monkeypatch.setattr(sys, "argv", [
+        "routing_daily_audit.py", "--out", str(tmp_path / "out"),
+        "--since", "2026-09-30T11:00:00Z", "--until", "2026-10-01T11:00:00Z",
+    ])
+    routing_daily_audit.main()
+    assert capsys.readouterr().out.startswith("routing audit 2026-10-01:")
+    report = json.loads((tmp_path / "out" / "2026-10-01.json").read_text())
+    assert "daily report: ValueError" in report["errors"]
