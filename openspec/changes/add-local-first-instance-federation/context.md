@@ -18,7 +18,7 @@ restart with no physical access loses routing until someone can reach the box.
 3. **Laptop** (this MacBook): stand up a local instance per GETTING-STARTED
    (launchd service on 127.0.0.1:2455) with
    `AGENT_LB_LOCAL_INSTANCE_ID=<name>`, `AGENT_LB_FEDERATION_TOKEN=<token>`,
-   `AGENT_LB_FEDERATION_PEER_URL=https://studio.tailf266ac.ts.net:2455`.
+   `AGENT_LB_FEDERATION_PEER_URL=https://studio.example.ts.net:2455`.
    Within ~5 min the mirror pull materializes studio's accounts as mirrors
    (dashboard shows "mirror: studio" badges); the launcher automatically
    prefers the local instance for new sessions (`CLAUDE_LB_LOCAL_URL` default)

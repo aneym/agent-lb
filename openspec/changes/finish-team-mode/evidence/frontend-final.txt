@@ -6,7 +6,7 @@
 (node:27894) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
 
- RUN  v4.1.8 /Volumes/StudioExt/repos/agent-lb-worktrees/team-mode/frontend
+ RUN  v4.1.8 /path/to/repos/agent-lb-worktrees/team-mode/frontend
 
 (node:27896) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
 (Use `node --trace-warnings ...` to show where the warning was created)

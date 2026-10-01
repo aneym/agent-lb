@@ -826,7 +826,7 @@ async def test_oauth_start_falls_back_to_device_on_os_error(async_client, monkey
 async def test_oauth_endpoints_blocked_on_federation_follower(async_client, monkeypatch):
     await oauth_module._OAUTH_STORE.reset()
 
-    owner_url = "https://studio.tailf266ac.ts.net:2455"
+    owner_url = "https://studio.example.ts.net:2455"
     follower_settings = Settings(federation_peer_url=owner_url)
     monkeypatch.setattr(oauth_api_module, "get_settings", lambda: follower_settings)
 

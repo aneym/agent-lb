@@ -6,7 +6,7 @@ error: plugins/codex/scripts/app-server-broker.mjs: patch does not apply
 ERROR: codex-plugin-cc patch is incompatible in /private/tmp/broker-reap-8njNtL/plugin; file/hunk diagnostics above. No files changed. Rebase the repo-owned patch on the updated plugin.
 PASS checked application, idempotence, atomic drift rejection
 PASS invalid idle windows rejected before app-server spawn
-Real Codex: /Users/aneyman/.codex/packages/standalone/releases/0.155.1-aarch64-apple-darwin/bin/codex
+Real Codex: /Users/you/.codex/packages/standalone/releases/0.155.1-aarch64-apple-darwin/bin/codex
 codex-cli 0.155.1
 A-real-zero-clients before shutdown: ps -axo pid=,ppid=,pgid=,stat=,comm=
 [

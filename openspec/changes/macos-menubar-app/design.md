@@ -30,7 +30,7 @@ Panel: **340 pt wide × max 560 pt tall** (height hugs content; accounts list sc
 │  $6,159.25 · 7d    60.8k req    err 0.68%        │
 ├──────────────────────────────────────────────────┤
 │  ACCOUNTS (7)                                    │
-│  ● a.neyman17@gmail.com           62% ▮▮▮▮▮▮▯▯▯▯ │
+│  ● a1-owner@example.com           62% ▮▮▮▮▮▮▯▯▯▯ │
 │      claude · weekly 51% · resets 23:50          │
 │  ◐ work@example.com  rate-limited 18:20          │
 │      claude · weekly 12% · resets 20:59          │

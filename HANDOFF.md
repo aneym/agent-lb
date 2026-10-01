@@ -1,7 +1,7 @@
 # Handoff - agent-lb public release readiness
 
 Date: 2026-06-13
-Repo: `/Users/aneyman/repos/agent-lb`
+Repo: `/Users/you/repos/agent-lb`
 Branch: `main`
 Remote: `origin -> https://github.com/aneym/agent-lb.git`
 
@@ -313,7 +313,7 @@ Lint, formatting, and proxy architecture:
 ```bash
 uvx ruff format --check .
 uvx ruff check .
-PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make lint
+PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make lint
 git diff --check
 ```
 
@@ -550,7 +550,7 @@ Results:
   2026-06-14T04:18:50Z confirmed exactly those seven `2880x1800` JPEGs remain
   and no public docs reference the deleted `apis-assigned-accounts` or
   `codex-session-retag-*` screenshot artifacts; `cd frontend && bun run lint` and
-  `cd frontend && bun run build` passed; `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package`
+  `cd frontend && bun run build` passed; `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package`
   passed frontend build, import smoke, wheel/sdist build, and wheel asset
   verification; `uvx --from twine==6.2.0 twine check dist/*` passed; the sdist
   forbidden-path scan returned no matches; `uv sync --dev --frozen` restored
@@ -906,7 +906,7 @@ Results:
 Local package artifacts:
 
 ```bash
-PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package
+PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package
 ls -lh dist
 tar -tzf dist/agent_lb-1.20.0b3.tar.gz | rg '^agent_lb-1\.20\.0b3/(\.agents|\.github|clients|frontend|tests|docs|openspec|\.build|__pycache__|\.venv|node_modules)(/|$)' || true
 uvx --from twine==6.2.0 twine check dist/*
@@ -1168,10 +1168,10 @@ only if the maintainer wants the release PR attached to a specific issue.
 ## Test plan
 
 - `uv run pytest -q` -> `3675 passed, 43 skipped, 4 warnings in 213.60s`
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make lint` -> proxy architecture checks and Ruff passed
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make lint` -> proxy architecture checks and Ruff passed
 - `cd frontend && bun run test && bun run screenshots && bun run lint && bun run build` -> Vitest, screenshots, lint, and build passed
 - `cd clients/macos-menubar && swift test` -> `111 tests, 0 failures`
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package` -> wheel/sdist built and wheel assets verified
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package` -> wheel/sdist built and wheel assets verified
 - `uvx --from twine==6.2.0 twine check dist/*` -> passed
 - `./scripts/public-release-local-artifact-proof.sh v1.20.0-beta.3` -> passed on 2026-06-14T05:35:44Z after printing `localArtifactProofAt=2026-06-14T05:35:44Z`; verified the selected tag's local wheel/sdist, sdist README freshness, dev-only path exclusion, wheel metadata, README image tag references, and `twine check`
 - `uv run python -m scripts.verify_release_version --tag v1.20.0-beta.3 --require-channel beta` -> `channel=beta`, `pypi_version=1.20.0b3`
@@ -1386,10 +1386,10 @@ Highlights:
 
 Validation:
 - `uv run pytest -q` -> `3675 passed, 43 skipped, 4 warnings in 213.60s`
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make lint` -> proxy architecture checks and Ruff passed
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make lint` -> proxy architecture checks and Ruff passed
 - `cd frontend && bun run test && bun run screenshots && bun run lint && bun run build` -> Vitest, screenshots, lint, and build passed
 - `cd clients/macos-menubar && swift test` -> `111 tests, 0 failures`
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package` -> wheel/sdist built and wheel assets verified
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package` -> wheel/sdist built and wheel assets verified
 - `uvx --from twine==6.2.0 twine check dist/*` -> passed
 - `./scripts/public-release-local-artifact-proof.sh v1.20.0-beta.3` -> passed on 2026-06-14T05:35:44Z after printing `localArtifactProofAt=2026-06-14T05:35:44Z`
 - `uv run python -m scripts.verify_release_version --tag v1.20.0-beta.3` -> `pypi_version=1.20.0b3`

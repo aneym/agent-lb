@@ -3,7 +3,7 @@
 - **Date:** 2026-05-28
 - **Owner / requester:** Alex Neyman
 - **Status:** Not started (infra cutover ~done this session; this brief sequences the remaining verification + features)
-- **Repo / worktree:** `/Users/aneyman/repos/agent-lb` ← **canonical checkout** (the old `/Users/aneyman/repos/swap-lb` was deleted; `GOAL.md`/`HANDOFF.md` still say `swap-lb` — that path is stale, do not use it)
+- **Repo / worktree:** `/Users/you/repos/agent-lb` ← **canonical checkout** (the old `/Users/you/repos/swap-lb` was deleted; `GOAL.md`/`HANDOFF.md` still say `swap-lb` — that path is stale, do not use it)
 - **Branch:** `feat/anthropic-provider`
 - **origin:** `https://github.com/aneym/agent-lb` (fork) · **upstream:** `https://github.com/aneym/agent-lb.git`
 - **Canonical product spec for the Anthropic work:** `GOAL.md` (owns Anthropic product scope, Stage A/B/C). This file is a **companion** — it owns the cross-session infra decisions, the end-to-end objective spanning three phases, and the run progress log. On conflict about *Anthropic provider scope*, `GOAL.md` wins; on conflict about *runtime/infra/architecture state*, this file wins.
@@ -31,8 +31,8 @@
 
 ## 2. Relevant conversation context (decided — do not re-litigate)
 
-- **Single shared service, Studio is canonical.** Studio (`alexs-Mac-Studio`, macOS 26.3) runs agent-lb on `feat/anthropic-provider`, reachable over Tailscale at `https://studio.tailf266ac.ts.net:2455`. Verified this session: `/health` 200, dashboard `/` 200, `/api/accounts` → 5 OpenAI accounts active, migrated+reconciled DB (~143k `request_logs`, ~199k `usage_history`, 371M `~/.agent-lb/store.db`). Studio set to never sleep (`pmset sleep 0`, `womp 1`).
-- **MacBook (`macbook-pro-110`) is CLIENT-ONLY now.** `~/.codex/config.toml`: `model_provider="agent-lb"`, `base_url="https://studio.tailf266ac.ts.net:2455/backend-api/codex"`. The local agent-lb LaunchAgent `com.aneyman.agent-lb` was **disabled** and moved to `~/.agent-lb/disabled-launchagents/com.aneyman.agent-lb.plist.disabled`. Stale `tailscale serve` rules for `:2455`/`:2456` (which proxied to the now-dead local backend) were removed; the unrelated `:8787` serve rule is preserved.
+- **Single shared service, Studio is canonical.** Studio (`studio-host`, macOS 26.3) runs agent-lb on `feat/anthropic-provider`, reachable over Tailscale at `https://studio.example.ts.net:2455`. Verified this session: `/health` 200, dashboard `/` 200, `/api/accounts` → 5 OpenAI accounts active, migrated+reconciled DB (~143k `request_logs`, ~199k `usage_history`, 371M `~/.agent-lb/store.db`). Studio set to never sleep (`pmset sleep 0`, `womp 1`).
+- **MacBook (`macbook`) is CLIENT-ONLY now.** `~/.codex/config.toml`: `model_provider="agent-lb"`, `base_url="https://studio.example.ts.net:2455/backend-api/codex"`. The local agent-lb LaunchAgent `com.aneyman.agent-lb` was **disabled** and moved to `~/.agent-lb/disabled-launchagents/com.aneyman.agent-lb.plist.disabled`. Stale `tailscale serve` rules for `:2455`/`:2456` (which proxied to the now-dead local backend) were removed; the unrelated `:8787` serve rule is preserved.
 - **The earlier "broke it" symptom was a stale process, not a bad config.** Connection-refused errors hit `http://127.0.0.1:2455` because a Codex session predated the config edit; on-disk config already points at Studio. **A Codex restart resolves it** (P1 verifies this).
 - **"Sync" = one-way DR backup ONLY.** Single writer (Studio) ⇒ bidirectional sync would *re-create* split-brain. The correct artifact is a consistent SQLite snapshot pulled to the MacBook. Implemented this session: `~/.agent-lb/bin/backup-from-studio.sh` + launchd `~/Library/LaunchAgents/com.aneyman.agent-lb-backup.plist` (12h `StartInterval`, `RunAtLoad`). The timer was **not yet loaded/verified** when this brief was written — P0 finishes that.
 - **NEW requirement (this session): public anonymized usage.** Alex wants all usage canonically tracked (P0 guarantees that) and wants to expose an anonymized view on his personal website — "how many tokens I'm using and requests I'm making", **not exact times** ("likely DoD" → interpreted as **day-level granularity**; confirm in P3 design gate). This is a personal/fork-local feature, **flag-gated and excluded from any upstream PR diff**.
@@ -75,11 +75,11 @@
 
 ### P1 — Prove Codex end-to-end through Studio  *(local critical path)*
 - Restart/spawn a fresh `cx`/codex CLI session (picks up the Studio base_url) and make one real model call. Capture that it returns a completion (HTTP 200, streamed).
-- Raw curl smoke: `POST https://studio.tailf266ac.ts.net:2455/backend-api/codex/responses` with a valid minimal body + auth as Codex sends it; expect a streamed 200 (a bare `{}` returns 400 — that only proves routing).
+- Raw curl smoke: `POST https://studio.example.ts.net:2455/backend-api/codex/responses` with a valid minimal body + auth as Codex sends it; expect a streamed 200 (a bare `{}` returns 400 — that only proves routing).
 - **Accept when:** both calls succeed AND appear in Studio `request_logs` (query over SSH: `sqlite3 ~/.agent-lb/store.db "select provider,count(*) from request_logs where created_at > <t0>;"`), with selection spread across the 5 OpenAI accounts over a handful of calls. OpenAI path otherwise unchanged.
 
 ### P2 — Anthropic load balancing == GOAL.md Stage B  *(human-gated start)*
-- **Add ≥2 Anthropic accounts on the *canonical Studio* dashboard** (`https://studio.tailf266ac.ts.net:2455`), not a local runtime. Open the Anthropic OAuth flow; **pause** for Alex to complete Claude login + Cloudflare + consent in a browser; then submit the `code#state` to the active/manual flow per `HANDOFF.md`. Repeat for a second account.
+- **Add ≥2 Anthropic accounts on the *canonical Studio* dashboard** (`https://studio.example.ts.net:2455`), not a local runtime. Open the Anthropic OAuth flow; **pause** for Alex to complete Claude login + Cloudflare + consent in a browser; then submit the `code#state` to the active/manual flow per `HANDOFF.md`. Repeat for a second account.
 - If token exchange fails, diagnose against Claude Code's real OAuth shape (`HANDOFF.md` records the working URL shape) and patch only minimal provider/OAuth code with focused tests. No changes to the OpenAI path or `service.py`.
 - Stage B smoke: point `ANTHROPIC_BASE_URL` at the service, run **≥20** Claude Code requests; verify 200 + correct SSE, distribution across ≥2 accounts, 429 failover (real or forced), per-account Claude usage incl. `cache_creation_input_tokens`/`cache_read_input_tokens`, and an OpenAI/Codex regression smoke.
 - **Accept when:** all Stage B bullets in `GOAL.md` §1 are evidenced in the Progress Log.
@@ -107,13 +107,13 @@
 
 Scoped to changed files by default; full `ci` is informational, not a goal blocker for unrelated pre-existing failures.
 
-- **Python:** `cd /Users/aneyman/repos/agent-lb && uv run ruff check . && uv run pytest <changed test paths>` (Anthropic SSE/OAuth/selection tests for P2; sanitization + aggregate tests for P3).
+- **Python:** `cd /Users/you/repos/agent-lb && uv run ruff check . && uv run pytest <changed test paths>` (Anthropic SSE/OAuth/selection tests for P2; sanitization + aggregate tests for P3).
 - **Migrations (if schema touched):** `make migration-check`.
 - **Frontend (if dashboard/widget touched):** `make frontend-lint frontend-typecheck frontend-test`.
 - **Codex e2e (P1):** real `cx` call + curl, then Studio DB query for `request_logs`/`usage_history` deltas and per-account distribution.
-- **Anthropic e2e (P2):** `ANTHROPIC_BASE_URL=https://studio.tailf266ac.ts.net:2455 ...` Claude Code loop ≥20 reqs; dashboard request log shows ≥2 accounts; force/observe a 429 failover; usage rows include cache token columns.
+- **Anthropic e2e (P2):** `ANTHROPIC_BASE_URL=https://studio.example.ts.net:2455 ...` Claude Code loop ≥20 reqs; dashboard request log shows ≥2 accounts; force/observe a 429 failover; usage rows include cache token columns.
 - **Public stats (P3):** sanitization test (asserts allow-listed fields only) green; live payload manual inspection; website fetch works.
-- **Self-review:** `git -C /Users/aneyman/repos/agent-lb diff` before each checkpoint commit; confirm OpenAI path + `service.py` untouched.
+- **Self-review:** `git -C /Users/you/repos/agent-lb diff` before each checkpoint commit; confirm OpenAI path + `service.py` untouched.
 
 ---
 
@@ -122,7 +122,7 @@ Scoped to changed files by default; full `ci` is informational, not a goal block
 **Current checkpoint:** P2 complete (Anthropic load-balancing verified) → P3 next (public anonymized usage)
 **Outcome metric:** see §1 table (writers→1; Codex verified ≥1+1; providers 1→2; public surface 0→1)
 **Current value:** P0–P2 DONE — writers 2→1; Codex verified live; **providers 1→2 (openai + anthropic), both Claude accounts active, Stage B passed**
-**Last verified:** Stage B on Studio (2026-05-29 ~02:15Z): 26/26 `/v1/messages` 200, distributed neyman 8 / kinetic 12, failover OK (paused→reroute), cost $0.0671 computed, OpenAI route live (400 on `{}`), 5 OpenAI accounts active
+**Last verified:** Stage B on Studio (2026-05-29 ~02:15Z): 26/26 `/v1/messages` 200, distributed owner 8 / work 12, failover OK (paused→reroute), cost $0.0671 computed, OpenAI route live (400 on `{}`), 5 OpenAI accounts active
 **Remaining:** P3 public anonymized usage · gap #3b (per-account subscription limits from `anthropic-ratelimit-*` headers) · fix GOAL.md/HANDOFF.md stale `swap-lb`/`.runtime` paths · **commit (awaiting user)**
 **Blocked:** No (P3 pauses at the design + security gates)
 **Uncommitted:** OAuth + usage/cost fixes are live on MacBook + Studio checkouts but NOT committed (awaiting user per stop rules).
@@ -133,10 +133,10 @@ Scoped to changed files by default; full `ci` is informational, not a goal block
 | 2026-05-28 21:30 | P0 ✅ | DR backup verified (integrity=ok, accounts=5, 2 snapshots retained); single-flight lock added after a concurrent-run collision; launchd timer loaded | writers 2→1 (done) | P1: real `cx` call + curl, confirm Studio `request_logs` delta + account spread |
 | 2026-05-29 01:33 | P1 ✅ | Codex path proven by live traffic: 143k OpenAI request_logs, 5,607/24h across all 5 accounts, recording in real time | Codex verified 0→live | P2: add Anthropic accounts |
 | 2026-05-29 01:50 | P2 OAuth fix | Anthropic token exchange was form-urlencoded w/o `state` → Anthropic "Invalid request format". Fixed to JSON body + `state` (matches Claude Code), threaded through both callback paths; ruff+tests green | — | open OAuth flows |
-| 2026-05-29 01:50 | P2 accounts | 2 distinct Anthropic accounts active (neyman=2c436b54, kinetic=ddb5ff1a); aliases set (mapping by login order — verify) | providers 1→2 | gap fixes + Stage B |
+| 2026-05-29 01:50 | P2 accounts | 2 distinct Anthropic accounts active (owner=2c436b54, work=ddb5ff1a); aliases set (mapping by login order — verify) | providers 1→2 | gap fixes + Stage B |
 | 2026-05-29 02:05 | P2 gap #1 | Non-stream `/v1/messages` usage now parsed from JSON body (was dropped; SSE-only). +integration test | usage capture complete | — |
 | 2026-05-29 02:05 | P2 gap #2 | Cost was null: 4.5-gen models missing from price table (`claude-haiku-4-5` no alias; `claude-opus-4-5` would mis-map to Opus-4 $15/$75). Added haiku/sonnet/opus-4-5 prices+aliases (verified $1·5 / $3·15 / $5·25). +unit tests | cost 0→computed | — |
-| 2026-05-29 02:15 | P2 ✅ Stage B | 26/26 `/v1/messages` 200; distributed neyman 8/kinetic 12; failover OK; cost $0.0671; OpenAI regression clean | providers 1→2 verified | P3 public usage (design gate) |
+| 2026-05-29 02:15 | P2 ✅ Stage B | 26/26 `/v1/messages` 200; distributed owner 8/work 12; failover OK; cost $0.0671; OpenAI regression clean | providers 1→2 verified | P3 public usage (design gate) |
 
 ---
 

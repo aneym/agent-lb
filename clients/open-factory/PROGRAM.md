@@ -118,7 +118,7 @@ Publish numbers only from runs you observed. The design:
 - **Receipts.** Every run writes replayable receipts under `~/.agent-lb/of/runs/`
   (outside git). The report cites them.
 - **Publishing.** Build the report as a pretty-doc on the tailnet
-  (https://studio.tailf266ac.ts.net:8799/...). Posting it publicly is an
+  (https://studio.example.ts.net:8799/...). Posting it publicly is an
   outbound action: draft it and ask Alex first.
 
 ## First milestones
@@ -137,7 +137,7 @@ Publish numbers only from runs you observed. The design:
 
 ## Working rules
 
-- Work in `/Volumes/StudioExt/repos/agent-lb-worktrees/open-factory` on branch
+- Work in `/path/to/repos/agent-lb-worktrees/open-factory` on branch
   `of/program`. Follow agent-lb `AGENTS.md`. Merging to agent-lb `main` is
   allowed once your own tests and evals pass on the head you merge.
 - After any change under `app/core/anthropic` or `app/modules/proxy/anthropic*`,
@@ -205,7 +205,7 @@ D5. **Harbor runs the eval** (Alex via the fixer, 2026-09-25). harbor v0.23.0
     through agent-lb so it spends the subscriptions:
     (A1) stock `claude-code`, Opus; (A2) stock `claude-code`, Sonnet;
     (A3) `cc` + OF routing: a custom Harbor agent (reusing the useful parts of the
-    abandoned `/Volumes/StudioExt/repos/of-wt-harbor/adapters/harbor/agent.py`) whose
+    abandoned `/path/to/repos/of-wt-harbor/adapters/harbor/agent.py`) whose
     Claude Code driver dispatches per call through `route menu` + Jev with host
     re-check; its routing policy has sub-arms (static table, Jev, later CLM);
     (A4) `codex` on `sol-latest`; (A5) `cursor-cli` / `grok-build` on Grok;

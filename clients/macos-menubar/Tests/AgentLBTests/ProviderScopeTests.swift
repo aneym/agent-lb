@@ -123,7 +123,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(window.remainingPercent), 154.0 / 300.0 * 100, accuracy: 1e-9)
     XCTAssertEqual(window.resetAt, Format.iso8601.date(from: "2026-06-14T04:00:00Z"))
 
-    // §10: earliest secondary reset is prove-it (06-14T04:00, 100 − 53 = 47).
+    // §10: earliest secondary reset is a4-other (06-14T04:00, 100 − 53 = 47).
     XCTAssertEqual(try XCTUnwrap(scopedWindow.recoveredCredits), 47.0, accuracy: 1e-9)
   }
 
@@ -138,7 +138,7 @@ final class ProviderScopeTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(window.remainingPercent), 99.4, accuracy: 1e-9)
     XCTAssertEqual(window.resetAt, Format.iso8601.date(from: "2026-06-10T23:00:10Z"))
 
-    // §10: earliest is abreezyish (23:00:10, 1500 − 1470 = 30); the three
+    // §10: earliest is a2-second (23:00:10, 1500 − 1470 = 30); the three
     // 02:15:2x resets share a minute but are NOT the earliest bucket.
     XCTAssertEqual(try XCTUnwrap(scopedWindow.recoveredCredits), 30.0, accuracy: 1e-9)
   }
@@ -234,14 +234,14 @@ final class ProviderScopeTests: XCTestCase {
     let schedule = ProviderScope.resetSchedule(scoped, window: .primary, now: now)
 
     XCTAssertEqual(schedule.count, 3)
-    XCTAssertEqual(schedule[0].displayName, "alex@kineticapps.io")
+    XCTAssertEqual(schedule[0].displayName, "a3-work@example.com")
     XCTAssertEqual(schedule[0].resetAt, Format.iso8601.date(from: "2026-06-10T21:50:00Z"))
     XCTAssertEqual(try XCTUnwrap(schedule[0].recoveredCredits), 98.0, accuracy: 1e-9)
 
-    XCTAssertEqual(schedule[1].displayName, "a.neyman17@gmail.com")
+    XCTAssertEqual(schedule[1].displayName, "a1-owner@example.com")
     XCTAssertEqual(try XCTUnwrap(schedule[1].recoveredCredits), 93.0, accuracy: 1e-9)
 
-    XCTAssertEqual(schedule[2].displayName, "alex@prove-it.io")
+    XCTAssertEqual(schedule[2].displayName, "a4-other@example.com")
     XCTAssertEqual(try XCTUnwrap(schedule[2].recoveredCredits), 97.0, accuracy: 1e-9)
   }
 

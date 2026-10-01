@@ -2,12 +2,12 @@
 
 - **Date:** 2026-06-13
 - **Owner / requester:** Alex Neyman
-- **Repo:** `/Users/aneyman/repos/agent-lb`
+- **Repo:** `/Users/you/repos/agent-lb`
 - **Branch:** `main` on fork `aneym/agent-lb`
 - **Status:** In progress - local gates, OpenSpec validation, local package
   artifacts, and focused release-risk audits are green; account-visible GitHub
   metadata/release actions remain approval-gated
-- **This brief:** `/Users/aneyman/repos/agent-lb/GOAL.md`
+- **This brief:** `/Users/you/repos/agent-lb/GOAL.md`
 
 ## Objective
 
@@ -280,7 +280,7 @@ Current local evidence from this release-readiness pass, refreshed through the
 
 - `uv run pytest -q`
   - Result: `3675 passed, 43 skipped, 4 warnings in 213.60s`
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make lint`
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make lint`
   - Result: proxy architecture checks passed; Ruff check passed; Ruff format
     check passed (`661 files already formatted`)
 - `uvx ruff format --check . && uvx ruff check .`
@@ -289,7 +289,7 @@ Current local evidence from this release-readiness pass, refreshed through the
   - Result: clean
 - `npx --yes @fission-ai/openspec@latest validate hide-canceled-subscription-accounts --strict`, `fix-runtime-release-repository --strict`, `harden-trusted-proxy-api-key-auth --strict`, `fix-anthropic-quota-selection-diagnostics --strict`, `fix-menubar-limit-status-sync --strict`, `require-beta-candidate-validation --strict`, and `npx --yes @fission-ai/openspec@latest validate --specs`
   - Result: all 6 release-relevant active changes valid on the 2026-06-14T01:33:06Z refresh; all specs valid (`30 passed, 0 failed`)
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package`
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package`
   - Result: frontend production build passed, import smoke passed, Hatch built
     the wheel from the sdist, and `scripts/verify-wheel-assets.py` passed
 - `ls -lh dist`
@@ -493,7 +493,7 @@ Current local evidence from this release-readiness pass, refreshed through the
   - Result: passed.
 - `cd frontend && bun run build`
   - Result: passed.
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package`
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package`
   - Result: frontend build, import smoke, wheel/sdist build, and
     `scripts/verify-wheel-assets.py` passed.
 - `uvx --from twine==6.2.0 twine check dist/*`
@@ -837,7 +837,7 @@ Current local evidence from this release-readiness pass, refreshed through the
   - Result: generated plist contains `com.aneyman.agent-lb`
 - `npx --yes @fission-ai/openspec@latest validate macos-menubar-app --strict`
   - Result: `Change 'macos-menubar-app' is valid`
-- `PATH="/Users/aneyman/repos/agent-lb/.venv/bin:$PATH" make package`
+- `PATH="/Users/you/repos/agent-lb/.venv/bin:$PATH" make package`
   - Result: rerun after public README/service-label/runtime-release,
     package summary alignment, and OpenClaw metadata edits passed; frontend
     production build passed, import smoke passed, Hatch built the wheel from

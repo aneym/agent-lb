@@ -2,7 +2,7 @@
 
 ## Result
 
-Team mode is enabled on `https://studio.tailf266ac.ts.net:2455/team`. Jacob has one active key and aggregate caps of $5/day, $20/week, and $50/month. Windows and zsh onboarding snippets use that HTTPS origin. The key is not present in this repository or the evidence files.
+Team mode is enabled on `https://studio.example.ts.net:2455/team`. Jacob has one active key and aggregate caps of $5/day, $20/week, and $50/month. Windows and zsh onboarding snippets use that HTTPS origin. The key is not present in this repository or the evidence files.
 
 The raw Tailscale TCP route on 2456 was removed because it discards client identity. The HTTPS route on 2455 remains. Existing trusted-client CIDRs and unrelated Tailscale routes were not changed.
 
@@ -21,7 +21,7 @@ No migration was added or altered. Existing single head: `20260918_000000_add_te
 
 ## Verification
 
-Worktree `/Volumes/StudioExt/repos/agent-lb-worktrees/team-mode`, branch `feat/team-mode`, starting head `b74f333d`. All changes remain uncommitted. Reviewed files were also copied into the main checkout only after their previous content matched the worktree baseline. Main was concurrently advanced by another task; unrelated changes were preserved.
+Worktree `/path/to/repos/agent-lb-worktrees/team-mode`, branch `feat/team-mode`, starting head `b74f333d`. All changes remain uncommitted. Reviewed files were also copied into the main checkout only after their previous content matched the worktree baseline. Main was concurrently advanced by another task; unrelated changes were preserved.
 
 | Command | Result |
 | --- | --- |
@@ -67,7 +67,7 @@ These member-IP checks use the real local ingress with an explicit `X-Forwarded-
 
 ## Deployment and recovery
 
-Runtime backup and reviewed hash manifest: `/Users/aneyman/.agent-lb/runtime/backups/team-mode-20260919T121049/`.
+Runtime backup and reviewed hash manifest: `/Users/you/.agent-lb/runtime/backups/team-mode-20260919T121049/`.
 
 Only `app/modules/team/api.py`, `app/modules/team/service.py`, and built dashboard assets were deployed. Their original runtime bytes matched the feature baseline. Existing assets were retained. No broad sync ran. The startup script was verified to start the internal runtime without syncing source.
 
@@ -77,12 +77,12 @@ For rollback, disable team mode through the trusted settings API, restore the tw
 
 ## Remaining client-side work
 
-Jacob is online at `jacob.tailf266ac.ts.net`, but SSH port 22 times out. The username and an enabled SSH server are pending user input. There is no claim that Jacob's actual PC has run either CLI.
+Jacob is online at `jacob.example.ts.net`, but SSH port 22 times out. The username and an enabled SSH server are pending user input. There is no claim that Jacob's actual PC has run either CLI.
 
 Prepared outside the repository:
 
-- `/Users/aneyman/.agent-lb/team/jacob.key`, permissions 0600.
-- `/Users/aneyman/.agent-lb/team/jacob-setup.ps1`, prompts for the key and sets user-scoped Claude Code/Codex environment variables.
-- `/Users/aneyman/.agent-lb/team/jacob-onboarding.txt`, key-free instructions.
+- `/Users/you/.agent-lb/team/jacob.key`, permissions 0600.
+- `/Users/you/.agent-lb/team/jacob-setup.ps1`, prompts for the key and sets user-scoped Claude Code/Codex environment variables.
+- `/Users/you/.agent-lb/team/jacob-onboarding.txt`, key-free instructions.
 
 The server feature is operational. Jacob-machine acceptance and the unrelated full-repository failures are not resolved by this closeout.

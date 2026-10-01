@@ -18,7 +18,7 @@
 
 ### Mac Studio evidence
 
-Verified 2026-07-17: the installed LaunchAgent watched the resolved symlink target `/Users/aneyman/.codex-shared/config.toml`, restored a simulated `openai` rewrite to `agent-lb` in 2.6 seconds, and preserved the symlink. After restarting ChatGPT (new PID 97529), the bundled Codex 0.145.0-alpha.18 returned exactly `LB_STUDIO_GUARD_OK_163116` with provider `agent-lb`. Agent LB recorded successful websocket `codex_exec` requests at 20:31:27Z and 20:31:30Z using `gpt-5.6-sol`.
+Verified 2026-07-17: the installed LaunchAgent watched the resolved symlink target `/Users/you/.codex-shared/config.toml`, restored a simulated `openai` rewrite to `agent-lb` in 2.6 seconds, and preserved the symlink. After restarting ChatGPT (new PID 97529), the bundled Codex 0.145.0-alpha.18 returned exactly `LB_STUDIO_GUARD_OK_163116` with provider `agent-lb`. Agent LB recorded successful websocket `codex_exec` requests at 20:31:27Z and 20:31:30Z using `gpt-5.6-sol`.
 
 ### MacBook evidence
 

@@ -28,7 +28,7 @@ Prereqs: her Mac on the tailnet, repo cloned, `uv sync`,
 ```bash
 export AGENT_LB_FEDERATION_TOKEN=<shared-token>   # from the pool operator
 scripts/install-federation-follower.sh \
-  --peer-url https://studio.tailf266ac.ts.net:2455 \
+  --peer-url https://studio.example.ts.net:2455 \
   --instance-id partner-mba
 ./clients/agent-lb-federation status   # instance id, peer, mirror health
 ```

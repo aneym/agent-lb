@@ -2,7 +2,7 @@
 
 ## Verified facts (2026-07-13)
 
-- MacBook instance: `AGENT_LB_FEDERATION_PEER_URL=https://studio.tailf266ac.ts.net:2455`,
+- MacBook instance: `AGENT_LB_FEDERATION_PEER_URL=https://studio.example.ts.net:2455`,
   set only in the `com.aneyman.agent-lb` launchd service `EnvironmentVariables`
   (`launchctl print gui/$(id -u)/com.aneyman.agent-lb`) — not exported to an
   interactive shell, and not present in the repo's `.env`/`.env.local` (both

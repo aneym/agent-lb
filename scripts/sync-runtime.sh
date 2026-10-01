@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sync the agent-lb service runtime from the dev repo (StudioExt) to the internal disk.
+# Sync the agent-lb service runtime from the dev repo (external volume) to the internal disk.
 # Canonical source for ~/.agent-lb/bin/sync-runtime.sh (called by run-agent-lb.sh on
 # every service start; safe to run manually). Copy to ~/.agent-lb/bin/ after editing.
 # If the external volume is unreachable, exits 0 so the service runs the last-good copy.
@@ -38,7 +38,7 @@ run_rsync() {
     "$SRC/" "$DST/" >> "$LOG" 2>&1
 }
 
-# StudioExt TCC/BTM re-scans fail transiently with EPERM/EINTR at boot; retry
+# External-volume TCC/BTM re-scans fail transiently with EPERM/EINTR at boot; retry
 # once before giving up so a blip does not silently pin the last-good runtime.
 run_rsync
 rc=$?

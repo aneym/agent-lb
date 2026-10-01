@@ -3,7 +3,7 @@
 ## Decisions
 
 - **Instance id = user identity.** The federation `local_instance_id`
-  (e.g. `studio`, `macbook-pro-110`, a partner's machine) is the attribution
+  (e.g. `studio`, `macbook`, a partner's machine) is the attribution
   unit. One machine ≈ one person in this pool; no user/tenant entity is
   introduced. If finer-than-machine identity is ever needed, API keys already
   attribute per-request (`request_logs.api_key_id`) and can layer on top.
@@ -33,7 +33,7 @@
 ## Example
 
 Partner's Mac (`instance_id=partner-mba`) routes 300 requests against the
-studio-owned `alex@kineticapps.io` Anthropic account on 2026-07-30. Within
+studio-owned `a3-work@example.com` Anthropic account on 2026-07-30. Within
 one mirror interval (60 s) studio's `GET /api/usage/instances` shows under
 `partner-mba` → `2026-07-30` → that account: 300 requests, token totals, and
 cost, alongside studio's and macbook's own entries.

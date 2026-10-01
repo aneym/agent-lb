@@ -359,7 +359,7 @@ def test_early_shell_tool_keeps_idle_session_alive(tmp_path, capsys):
     ("args", "expected"),
     [
         (
-            "/bin/zsh -c source /Users/aneyman/.claude/shell-snapshots/"
+            "/bin/zsh -c source /Users/you/.claude/shell-snapshots/"
             "snapshot-zsh-....sh 2>/dev/null || true && python3 wait100.py",
             True,
         ),

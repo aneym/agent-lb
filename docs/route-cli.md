@@ -154,14 +154,14 @@ as a launchd job — label `com.aneyman.route-doctor`, every 30 minutes:
   <key>Label</key>            <string>com.aneyman.route-doctor</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/aneyman/.agent-lb/bin/route</string>
+    <string>/Users/you/.agent-lb/bin/route</string>
     <string>doctor</string>
     <string>--write</string>
   </array>
   <key>StartInterval</key>    <integer>1800</integer>
   <key>RunAtLoad</key>        <true/>
-  <key>StandardOutPath</key>  <string>/Users/aneyman/.agent-lb/logs/route-doctor.log</string>
-  <key>StandardErrorPath</key><string>/Users/aneyman/.agent-lb/logs/route-doctor.err</string>
+  <key>StandardOutPath</key>  <string>/Users/you/.agent-lb/logs/route-doctor.log</string>
+  <key>StandardErrorPath</key><string>/Users/you/.agent-lb/logs/route-doctor.err</string>
 </dict>
 </plist>
 ```

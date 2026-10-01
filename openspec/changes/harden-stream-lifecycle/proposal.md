@@ -6,7 +6,7 @@ On 2026-08-18 a launchd bootout without an immediate re-bootstrap severed every 
 
 - Drain in-flight requests on SIGTERM: the server passes a configurable graceful-shutdown window to uvicorn instead of severing active streams at restart.
 - Detect in-band Anthropic SSE `error` events on forwarded streams: log them with request and account identity, record a transient account error, and persist the request log as an error with any collected usage.
-- Fix the runtime sync script's failure reporting (real rsync rc), retry once on transient StudioExt failures, and emit an explicit ALERT line when the last-good runtime may be stale.
+- Fix the runtime sync script's failure reporting (real rsync rc), retry once on transient external-volume failures, and emit an explicit ALERT line when the last-good runtime may be stale.
 - Log plist mtime/checksum forensics from the watchdog on the first tick a launchd job goes missing, so an unattributed bootout is traceable.
 
 ## Capabilities

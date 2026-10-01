@@ -202,8 +202,8 @@ G-unrecorded-group-member after exit: ps -axo pid=,ppid=,pgid=,stat=,comm=
 []
 G-unrecorded-group-member TERM recipients: 74058, 74070, 74058
 AssertionError [ERR_ASSERTION]: 74070 is not ours to kill and must survive
-    at runCase (file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:325:7)
-    at async file:///private/tmp/claude-501/-Volumes-StudioExt-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:359:3 {
+    at runCase (file:///private/tmp/claude-501/-path-to-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:325:7)
+    at async file:///private/tmp/claude-501/-path-to-repos-agent-rails/e87de3e2-aa3d-48b4-9259-2efaf1b22e54/scratchpad/oldpatch/tests/integration/codex_broker_idle_reap.mjs:359:3 {
   generatedMessage: false,
   code: 'ERR_ASSERTION',
   actual: false,

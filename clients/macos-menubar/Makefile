@@ -20,7 +20,7 @@ APP      := AgentLB.app
 BIN      := .build/release/AgentLB
 BUNDLE_ID:= com.aneyman.agentlb.menubar
 # The LaunchAgent runs the copy in ~/Applications (internal disk): launchd
-# cannot reliably exec from /Volumes/StudioExt at login (TCC), and Raycast /
+# cannot reliably exec from an external volume at login (TCC), and Raycast /
 # Spotlight only index ~/Applications and /Applications.  Override with
 #   make install-agent APP_PATH=/some/other/AgentLB.app
 APP_PATH := $(HOME)/Applications/AgentLB.app

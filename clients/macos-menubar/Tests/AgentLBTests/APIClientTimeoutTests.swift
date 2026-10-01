@@ -18,7 +18,7 @@ final class APIClientTimeoutTests: XCTestCase {
   }
 
   func testTailnetHostUsesBoundedRemoteHealthAndReadEnvelopes() throws {
-    let url = try XCTUnwrap(URL(string: "https://studio.tailf266ac.ts.net:2455"))
+    let url = try XCTUnwrap(URL(string: "https://studio.example.ts.net:2455"))
     XCTAssertEqual(APIHealthTimeoutPolicy.forBaseURL(url), .remote)
     XCTAssertEqual(APIReadTimeoutPolicy.forBaseURL(url), .remote)
 

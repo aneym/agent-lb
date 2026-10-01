@@ -21,7 +21,7 @@ four things:
 
 ```bash
 export OF_HARBOR_KEY="$(cat ~/.agent-lb/of/of-harbor.key)"   # optional: the file is the default anyway
-export PYTHONPATH=/Volumes/StudioExt/repos/agent-lb-worktrees/open-factory/clients/open-factory/harbor
+export PYTHONPATH=/path/to/repos/agent-lb-worktrees/open-factory/clients/open-factory/harbor
 harbor run -p <task-or-dataset> -a agents:PrebakedClaudeCode -m claude-sonnet-5-5
 harbor run -p <task-or-dataset> -a agents:PrebakedCodex -m gpt-6-luna
 ```
@@ -53,7 +53,7 @@ AGENT_RAILS_BASE=<newest agent-rails base_sha> ./build-images.sh agent-rails
 
 The versions are pinned through env vars. The defaults are the versions Harbor's installers picked on
 2026-09-25. The script reads the agent-lb checkout and never modifies it. It does not fetch, so run
-`git -C /Volumes/StudioExt/repos/agent-lb fetch origin` first when you need a current `origin/main`.
+`git -C /path/to/repos/agent-lb fetch origin` first when you need a current `origin/main`.
 
 ## Per-task images
 

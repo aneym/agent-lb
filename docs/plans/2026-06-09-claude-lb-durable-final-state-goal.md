@@ -3,7 +3,7 @@
 - Date: 2026-06-09
 - Requester: Alex
 - Status: In progress
-- Repo/worktree: `/Users/aneyman/repos/agent-lb`
+- Repo/worktree: `/Users/you/repos/agent-lb`
 - Branch policy: work directly on `main` per `AGENTS.md`; preserve unrelated dirty worktree changes.
 
 ## Objective and Stopping Condition
@@ -26,19 +26,19 @@ Stop only when a fresh Claude Code session through `cclb` can run Fable/default 
 
 Read these first:
 
-- `/Users/aneyman/repos/agent-lb/AGENTS.md` - branch policy, OpenSpec-first workflow, review trapdoors.
-- `/Users/aneyman/repos/agent-lb/openspec/changes/add-anthropic-provider/` - active Anthropic provider context/tasks already in flight.
-- `/Users/aneyman/repos/agent-lb/app/modules/proxy/anthropic_service.py` - current Claude `/v1/messages` proxy and Anthropic account selection path.
-- `/Users/aneyman/repos/agent-lb/app/modules/proxy/load_balancer.py` - existing selector, sticky affinity, caps, leases, and rate-limit handling.
-- `/Users/aneyman/repos/agent-lb/app/modules/proxy/affinity.py` - Codex/OpenAI sticky key extraction and prompt-cache affinity helpers.
-- `/Users/aneyman/repos/agent-lb/app/modules/proxy/sticky_repository.py` and `/Users/aneyman/repos/agent-lb/app/modules/sticky_sessions/` - sticky session storage and dashboard API.
-- `/Users/aneyman/repos/agent-lb/app/modules/usage/updater.py`, `/Users/aneyman/repos/agent-lb/app/modules/usage/repository.py`, `/Users/aneyman/repos/agent-lb/app/core/usage/refresh_scheduler.py` - Codex/OpenAI usage refresh pattern and any in-flight Anthropic usage work.
-- `/Users/aneyman/repos/agent-lb/app/core/clients/anthropic_usage.py` - untracked/in-flight Anthropic usage client; inspect before editing.
-- `/Users/aneyman/repos/agent-lb/app/core/anthropic/models.py` - Claude Code payload compatibility; Fable sends newer fields and system-role messages.
-- `/Users/aneyman/repos/agent-lb/frontend/src/features/accounts/components/account-list-item.tsx`
-- `/Users/aneyman/repos/agent-lb/frontend/src/features/accounts/components/account-usage-panel.tsx`
-- `/Users/aneyman/repos/agent-lb/frontend/src/features/accounts/schemas.ts`
-- `/Users/aneyman/.zshrc` - `claude-lb` / `cclb` launcher. Verify it does not set `ANTHROPIC_AUTH_TOKEN` and does not inject a model default.
+- `/Users/you/repos/agent-lb/AGENTS.md` - branch policy, OpenSpec-first workflow, review trapdoors.
+- `/Users/you/repos/agent-lb/openspec/changes/add-anthropic-provider/` - active Anthropic provider context/tasks already in flight.
+- `/Users/you/repos/agent-lb/app/modules/proxy/anthropic_service.py` - current Claude `/v1/messages` proxy and Anthropic account selection path.
+- `/Users/you/repos/agent-lb/app/modules/proxy/load_balancer.py` - existing selector, sticky affinity, caps, leases, and rate-limit handling.
+- `/Users/you/repos/agent-lb/app/modules/proxy/affinity.py` - Codex/OpenAI sticky key extraction and prompt-cache affinity helpers.
+- `/Users/you/repos/agent-lb/app/modules/proxy/sticky_repository.py` and `/Users/you/repos/agent-lb/app/modules/sticky_sessions/` - sticky session storage and dashboard API.
+- `/Users/you/repos/agent-lb/app/modules/usage/updater.py`, `/Users/you/repos/agent-lb/app/modules/usage/repository.py`, `/Users/you/repos/agent-lb/app/core/usage/refresh_scheduler.py` - Codex/OpenAI usage refresh pattern and any in-flight Anthropic usage work.
+- `/Users/you/repos/agent-lb/app/core/clients/anthropic_usage.py` - untracked/in-flight Anthropic usage client; inspect before editing.
+- `/Users/you/repos/agent-lb/app/core/anthropic/models.py` - Claude Code payload compatibility; Fable sends newer fields and system-role messages.
+- `/Users/you/repos/agent-lb/frontend/src/features/accounts/components/account-list-item.tsx`
+- `/Users/you/repos/agent-lb/frontend/src/features/accounts/components/account-usage-panel.tsx`
+- `/Users/you/repos/agent-lb/frontend/src/features/accounts/schemas.ts`
+- `/Users/you/.zshrc` - `claude-lb` / `cclb` launcher. Verify it does not set `ANTHROPIC_AUTH_TOKEN` and does not inject a model default.
 - Claude Code bundle/local state discovery targets:
   - `zsh -ic 'whence -a claude'`
   - `/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code`
@@ -46,13 +46,13 @@ Read these first:
 
 Known local Anthropic accounts:
 
-- `neyman`: `a.neyman17@gmail.com`, account id `2c436b54-a7e2-4299-9d6b-689ad2dda8cb`
-- `kinetic`: `alex@kineticapps.io`, account id `ddb5ff1a-4aea-4810-9f10-196fb49b5d80`
+- `owner`: `a1-owner@example.com`, account id `2c436b54-a7e2-4299-9d6b-689ad2dda8cb`
+- `work`: `a3-work@example.com`, account id `ddb5ff1a-4aea-4810-9f10-196fb49b5d80`
 
 Useful current-state probes:
 
 ```sh
-cd /Users/aneyman/repos/agent-lb
+cd /Users/you/repos/agent-lb
 zsh -ic 'functions claude-lb; functions cclb'
 curl -sS --max-time 5 http://127.0.0.1:2455/api/accounts | jq -r '.accounts[] | select(.provider=="anthropic") | [.accountId,.email,.status,(.rateLimitResetAt // ""),(.requestUsage.requestCount|tostring)] | @tsv'
 curl -sS --max-time 5 'http://127.0.0.1:2455/api/request-logs?limit=30' | jq -r '.requests[] | select(.provider=="anthropic" or (.model|tostring|startswith("claude"))) | [.requestedAt,.accountId,.model,.status,(.errorCode // ""),(.errorMessage // "")] | @tsv'
@@ -156,7 +156,7 @@ Acceptance:
 Use focused checks first, then broader checks after integration:
 
 ```sh
-cd /Users/aneyman/repos/agent-lb
+cd /Users/you/repos/agent-lb
 uv run pytest tests/unit/test_anthropic_core.py tests/unit/test_anthropic_oauth.py tests/integration/test_anthropic_proxy.py
 uv run pytest tests/unit tests/integration -k "anthropic or sticky or usage or account"
 openspec validate --specs
@@ -183,7 +183,7 @@ Live smoke checks should include:
 | Time | Checkpoint | Change | Verification | Next |
 | --- | --- | --- | --- | --- |
 | 2026-06-09 16:06 EDT | 3-6 | Added Anthropic quota-key cooldown routing, durable hashed Claude session stickiness, quota labels, and focused integration coverage for sticky reuse/failover/dashboard payload. | `uv run pytest tests/integration/test_anthropic_proxy.py` -> 7 passed. Broader related run: 136 passed, 3 existing OpenAI usage/account recovery failures outside the Anthropic proxy path. | Restart local service, run live default/Fable `cclb`, inspect `/api/accounts` and request logs, then decide default `cc` rollout. |
-| 2026-06-09 16:33 EDT | 7 | Made `cc` the local Claude LB launcher path, added proxy-claimed Anthropic session routing, preserved Claude Max/OAuth billing by avoiding `ANTHROPIC_AUTH_TOKEN`, and added a per-launch header-injecting shim so sticky session routing is durable for Claude Code. | `cc -p "Reply with exactly: CC-LB-LOG-OK"` -> banner picked `alex@prove-it.io` for `fable-5/top-thinking`, response `CC-LB-LOG-OK`, request log persisted `claude-fable-5 ok` on account `502ebd48-a6e4-42fc-b7cf-849cae280c14_0b155c6f`; `uv run pytest tests/unit/test_anthropic_core.py tests/unit/test_anthropic_oauth.py tests/unit/test_anthropic_usage_client.py tests/unit/test_usage_updater.py tests/integration/test_accounts_api.py tests/integration/test_accounts_api_extended.py tests/integration/test_anthropic_proxy.py` -> 139 passed. `openspec validate --specs` blocked: command not found. | Keep `cc` as daily command; use `CLAUDE_LB_DISABLE=1 cc ...` only as direct-account escape hatch if needed. |
+| 2026-06-09 16:33 EDT | 7 | Made `cc` the local Claude LB launcher path, added proxy-claimed Anthropic session routing, preserved Claude Max/OAuth billing by avoiding `ANTHROPIC_AUTH_TOKEN`, and added a per-launch header-injecting shim so sticky session routing is durable for Claude Code. | `cc -p "Reply with exactly: CC-LB-LOG-OK"` -> banner picked `a4-other@example.com` for `fable-5/top-thinking`, response `CC-LB-LOG-OK`, request log persisted `claude-fable-5 ok` on account `502ebd48-a6e4-42fc-b7cf-849cae280c14_0b155c6f`; `uv run pytest tests/unit/test_anthropic_core.py tests/unit/test_anthropic_oauth.py tests/unit/test_anthropic_usage_client.py tests/unit/test_usage_updater.py tests/integration/test_accounts_api.py tests/integration/test_accounts_api_extended.py tests/integration/test_anthropic_proxy.py` -> 139 passed. `openspec validate --specs` blocked: command not found. | Keep `cc` as daily command; use `CLAUDE_LB_DISABLE=1 cc ...` only as direct-account escape hatch if needed. |
 
 ## Stop / Pause Rules
 
@@ -196,5 +196,5 @@ Live smoke checks should include:
 ## Handoff Prompt
 
 ```text
-/goal Implement the durable final state for Claude Code load balancing: OAuth/Claude Max billing only, no default model downgrade, per-session sticky account affinity, per-model/effort quota-aware account selection, clean failover/reset handling, and dashboard usage/limit parity for Anthropic. Work in /Users/aneyman/repos/agent-lb on main, follow AGENTS.md and OpenSpec-first rules, and treat /Users/aneyman/repos/agent-lb/docs/plans/2026-06-09-claude-lb-durable-final-state-goal.md as the source of truth. Read the brief first, then continue in checkpoints until fresh cclb Fable/default traffic is verified end to end across the local proxy with Claude Max billing, sticky routing, quota-key failover, actionable dashboard state, focused tests passing, OpenSpec validated, and the brief's Progress Log updated. Preserve unrelated dirty worktree changes, keep edits surgical, self-review the diff, and pause only for the brief's explicit stop rules or if live code conflicts with the source map.
+/goal Implement the durable final state for Claude Code load balancing: OAuth/Claude Max billing only, no default model downgrade, per-session sticky account affinity, per-model/effort quota-aware account selection, clean failover/reset handling, and dashboard usage/limit parity for Anthropic. Work in /Users/you/repos/agent-lb on main, follow AGENTS.md and OpenSpec-first rules, and treat /Users/you/repos/agent-lb/docs/plans/2026-06-09-claude-lb-durable-final-state-goal.md as the source of truth. Read the brief first, then continue in checkpoints until fresh cclb Fable/default traffic is verified end to end across the local proxy with Claude Max billing, sticky routing, quota-key failover, actionable dashboard state, focused tests passing, OpenSpec validated, and the brief's Progress Log updated. Preserve unrelated dirty worktree changes, keep edits surgical, self-review the diff, and pause only for the brief's explicit stop rules or if live code conflicts with the source map.
 ```

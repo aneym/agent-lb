@@ -11,6 +11,6 @@
 
 - [x] 2.1 `tests/unit/test_account_pulse.py` passes; ruff clean; strict
   OpenSpec validation passes
-- [x] 2.2 Live: stale reason on alex@kineticapps.io cleared via `/reactivate`
+- [x] 2.2 Live: stale reason on a3-work@example.com cleared via `/reactivate`
   on both instances (studio + MacBook); `/api/accounts` returns
   `status=active`, `deactivationReason=null`

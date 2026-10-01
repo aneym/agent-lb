@@ -4,8 +4,8 @@ import XCTest
 final class AccountFilterTests: XCTestCase {
 
   // Fixed "now" between the fixture's past rateLimitResetAt
-  // (2026-06-05T22:17:58Z, openai alex@prove-it.io) and the future one
-  // (2026-06-10T18:20:00Z, anthropic a.neyman17@gmail.com).
+  // (2026-06-05T22:17:58Z, openai a4-other@example.com) and the future one
+  // (2026-06-10T18:20:00Z, anthropic a1-owner@example.com).
   private let now = Format.iso8601.date(from: "2026-06-10T17:00:00Z")!
 
   private var accounts: [Account] = []
@@ -195,7 +195,7 @@ final class AccountFilterTests: XCTestCase {
     let filter = AccountFilter(query: "KINETIC")
     let result = filter.apply(to: accounts, now: now)
     XCTAssertEqual(result.count, 2)
-    XCTAssertTrue(result.allSatisfy { $0.displayName == "alex@kineticapps.io" })
+    XCTAssertTrue(result.allSatisfy { $0.displayName == "a3-work@example.com" })
   }
 
   func testQueryMatchesAlias() {
@@ -218,9 +218,9 @@ final class AccountFilterTests: XCTestCase {
   // MARK: - Sorting
 
   // Earliest future reset per fixture account at now = 17:00Z:
-  //   ddb5ff1a… 21:50:00 < abreezyish 23:00:10 < 2c436b54… 23:49:59
-  //   < prove-it/anthropic 23:50:00 < openai a.neyman17 23:55:02
-  //   < prove-it/openai 00:29:22+1d < kinetic/openai 02:15:22+1d
+  //   ddb5ff1a… 21:50:00 < a2-second 23:00:10 < 2c436b54… 23:49:59
+  //   < a4-other/anthropic 23:50:00 < openai a1-owner 23:55:02
+  //   < a4-other/openai 00:29:22+1d < a3-work/openai 02:15:22+1d
   //   < yahoo 02:15:29+1d
   func testSortResetSoonest() {
     let filter = AccountFilter(sort: .resetSoonest)
@@ -264,12 +264,12 @@ final class AccountFilterTests: XCTestCase {
 
   func testSortNameAscAndDesc() {
     let asc = AccountFilter(sort: .nameAsc).apply(to: accounts, now: now)
-    XCTAssertEqual(asc.first?.displayName, "a.neyman17@gmail.com")
-    XCTAssertEqual(asc.last?.displayName, "aneym1@yahoo.com")
+    XCTAssertEqual(asc.first?.displayName, "a1-owner@example.com")
+    XCTAssertEqual(asc.last?.displayName, "a5-spare@example.com")
 
     let desc = AccountFilter(sort: .nameDesc).apply(to: accounts, now: now)
-    XCTAssertEqual(desc.first?.displayName, "aneym1@yahoo.com")
-    XCTAssertEqual(desc.last?.displayName, "a.neyman17@gmail.com")
+    XCTAssertEqual(desc.first?.displayName, "a5-spare@example.com")
+    XCTAssertEqual(desc.last?.displayName, "a1-owner@example.com")
   }
 
   func testSortRemainingUsesOnlyWeeklyAcrossProviders() {
@@ -338,7 +338,7 @@ final class AccountFilterTests: XCTestCase {
   func testProviderCountsApplyStatusAndQueryButNotProvider() {
     // Counts must reflect the other active filters (query) while ignoring
     // the provider selection itself — chips preview what switching yields.
-    let filter = AccountFilter(provider: .anthropic, query: "kinetic")
+    let filter = AccountFilter(provider: .anthropic, query: "work")
     let counts = filter.providerCounts(in: accounts, now: now)
     XCTAssertEqual(counts[.all], 2)
     XCTAssertEqual(counts[.anthropic], 1)

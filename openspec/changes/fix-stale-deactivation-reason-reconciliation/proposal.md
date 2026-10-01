@@ -3,7 +3,7 @@
 ## Why
 
 An account can end up `active` while still carrying a stored
-`deactivation_reason` (observed live: alex@kineticapps.io was `active`, probed
+`deactivation_reason` (observed live: a3-work@example.com was `active`, probed
 HTTP 200, yet kept "Authentication failed: invalid_api_key"). Balancer recovery
 transitions (rate-limit/quota re-admission) restore status without touching the
 reason, and concurrent reauth/persist races can strand one. Clients treat a

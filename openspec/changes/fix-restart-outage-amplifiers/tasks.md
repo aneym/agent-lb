@@ -38,6 +38,6 @@
       bootstrap front on 2455 → app healthy on 2457 → `/health` 200 via 2455 →
       unpause watchdog
 - [x] 5.4 End-to-end: `/backend-api/codex/models` 200 via
-      `https://studio.tailf266ac.ts.net:2455` after cutover; restart drill
+      `https://studio.example.ts.net:2455` after cutover; restart drill
       shows held connection completing instead of 502
 - [x] 5.5 Fast-forward the studio checkout to origin/main

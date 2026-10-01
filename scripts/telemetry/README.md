@@ -66,7 +66,7 @@ call query-logs {"query": {"serviceNames": ["agent-lb"], "filterGroup": [{"key":
 Filter to one file:
 
 ```
-call query-logs {"query": {"serviceNames": ["agent-lb"], "filterGroup": [{"key": "file", "type": "log_attribute", "operator": "exact", "value": "/Users/aneyman/.agent-lb/watchdog.log"}], "dateRange": {"date_from": "-1h"}}}
+call query-logs {"query": {"serviceNames": ["agent-lb"], "filterGroup": [{"key": "file", "type": "log_attribute", "operator": "exact", "value": "/Users/you/.agent-lb/watchdog.log"}], "dateRange": {"date_from": "-1h"}}}
 ```
 
 Full-text search body content — **note**: text-filtered search

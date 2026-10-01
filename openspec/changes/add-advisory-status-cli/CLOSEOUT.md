@@ -1,7 +1,7 @@
 # Advisory status CLI closeout
 
 ## Scope
-Worktree: `/Volumes/StudioExt/repos/agent-lb-worktrees/status-cli`.
+Worktree: `/path/to/repos/agent-lb-worktrees/status-cli`.
 Branch: `feat/status-cli`, based on `6f8f77d5`.
 Main checkout and unrelated dirty work preserved.
 
@@ -13,7 +13,7 @@ Main checkout and unrelated dirty work preserved.
 - Active account `2c436b54-a7e2-4299-9d6b-689ad2dda8cb` changed from
   `fableEligible=false` to `true` at the same 90-percent Fable usage.
 - Runtime settings backup:
-  `/Users/aneyman/.agent-lb/backups/status-cli-20260921T193240Z/settings.py`.
+  `/Users/you/.agent-lb/backups/status-cli-20260921T193240Z/settings.py`.
 - Actual upstream quota, auth, explicit spend settings, and other accounts unchanged.
 
 ## Verification so far
@@ -34,8 +34,8 @@ were not changed. The installed policy symlink targets the foreign dirty main
 checkout, so that prose was preserved; the exact owner override will be sent to
 the resumed coordinator. The worktree contains the durable advisory hook and
 updated policy for integration. Backup paths:
-- `/Users/aneyman/.claude/hooks/seat-guard.py.pre-model-advisory-20260921T193454Z`
-- `/Users/aneyman/.claude/settings.json.pre-seat-guard-advisory-20260921T193454Z`
+- `/Users/you/.claude/hooks/seat-guard.py.pre-model-advisory-20260921T193454Z`
+- `/Users/you/.claude/settings.json.pre-seat-guard-advisory-20260921T193454Z`
 
 No PR, merge, or public release has been performed.
 
@@ -54,8 +54,8 @@ No PR, merge, or public release has been performed.
   failing before the correction.
 - Source changes installed selectively into internal runtime `app/cli.py` and
   `app/status_cli.py`, with matching hashes in
-  `/Users/aneyman/.agent-lb/backups/status-cli-20260921T193240Z/cli-manifest.json`.
-- PATH entry: `/Users/aneyman/.local/bin/agent-lb`.
+  `/Users/you/.agent-lb/backups/status-cli-20260921T193240Z/cli-manifest.json`.
+- PATH entry: `/Users/you/.local/bin/agent-lb`.
 - Live human and JSON command
   `agent-lb status --provider anthropic --model claude-fable-5-1 --thinking --json`
   returned ready, 5 accounts, 1 usable, Fable thinking usable, 10% scoped remaining.
