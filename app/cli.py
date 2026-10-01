@@ -59,7 +59,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--base-url", metavar="URL", default=None, help="Service URL (default: AGENT_LB_BASE_URL or localhost)."
     )
     status.add_argument(
-        "--timeout", type=float, default=3.0, metavar="SECONDS", help="Per-request timeout (default: 3)."
+        "--timeout", type=float, default=15.0, metavar="SECONDS", help="Per-request timeout (default: 15)."
     )
 
     accounts = subparsers.add_parser("accounts", help="Alias for `status`.", formatter_class=_CliHelpFormatter)
@@ -71,7 +71,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--base-url", metavar="URL", default=None, help="Service URL (default: AGENT_LB_BASE_URL or localhost)."
     )
     accounts.add_argument(
-        "--timeout", type=float, default=3.0, metavar="SECONDS", help="Per-request timeout (default: 3)."
+        "--timeout", type=float, default=15.0, metavar="SECONDS", help="Per-request timeout (default: 15)."
     )
 
     resets = subparsers.add_parser("resets", help="Inspect or redeem account reset credits.")

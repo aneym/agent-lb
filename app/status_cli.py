@@ -8,11 +8,15 @@ local service.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import sys
+import tempfile
+import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -20,6 +24,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 SCHEMA_VERSION = 1
 DEFAULT_BASE_URL = "http://127.0.0.1:2455"
+STATUS_CACHE_MAX_AGE_SECONDS = 600
 
 
 class StatusObservationError(Exception):
@@ -28,15 +33,24 @@ class StatusObservationError(Exception):
 
 def run(args: Any) -> None:
     """Observe the running service and exit nonzero only when observation fails."""
+    base_url = args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL)
+    provider = args.provider
+    model = args.model
+    thinking = bool(args.thinking)
     try:
         payload = observe(
-            base_url=args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL),
+            base_url=base_url,
             timeout=args.timeout,
-            provider=args.provider,
-            model=args.model,
-            thinking=args.thinking,
+            provider=provider,
+            model=model,
+            thinking=thinking,
         )
     except StatusObservationError as exc:
+        cached = _read_status_cache(base_url, provider, model, thinking)
+        if cached is not None:
+            snapshot, age_seconds = cached
+            _emit_stale(snapshot, age_seconds=age_seconds, message=str(exc), json_output=args.json)
+            return
         payload = {
             "schema_version": SCHEMA_VERSION,
             "observed_at": _now(),
@@ -48,6 +62,7 @@ def run(args: Any) -> None:
         _emit(payload, json_output=args.json)
         raise SystemExit(2) from exc
 
+    _write_status_cache(base_url, provider, model, thinking, payload)
     _emit(payload, json_output=args.json)
 
 
@@ -455,9 +470,89 @@ def _future(value: str | None) -> bool:
         return False
 
 
+def _projected_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _cache_dir() -> Path:
+    configured = os.getenv("AGENT_LB_STATUS_CACHE_DIR")
+    if configured:
+        return Path(configured)
+    return Path.home() / ".agent-lb" / "state" / "status-cache"
+
+
+def _status_cache_path(base_url: str, provider: str | None, model: str | None, thinking: bool) -> Path | None:
+    try:
+        normalized = _validated_base_url(base_url)
+    except StatusObservationError:
+        return None
+    material = "|".join((normalized, provider or "", model or "", "true" if thinking else "false"))
+    digest = hashlib.sha256(material.encode()).hexdigest()[:16]
+    return _cache_dir() / f"status-{digest}.json"
+
+
+def _write_status_cache(
+    base_url: str, provider: str | None, model: str | None, thinking: bool, payload: dict[str, Any]
+) -> None:
+    path = _status_cache_path(base_url, provider, model, thinking)
+    if path is None:
+        return
+    temporary: str | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
+        fd, temporary = tempfile.mkstemp(prefix=".status-", dir=path.parent)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(_projected_json(payload) + "\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        temporary = None
+    except Exception:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
+def _read_status_cache(
+    base_url: str, provider: str | None, model: str | None, thinking: bool
+) -> tuple[dict[str, Any], int] | None:
+    path = _status_cache_path(base_url, provider, model, thinking)
+    if path is None:
+        return None
+    try:
+        age_seconds = int(time.time() - path.stat().st_mtime)
+        if age_seconds < 0 or age_seconds >= STATUS_CACHE_MAX_AGE_SECONDS:
+            return None
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, UnicodeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("observed_at"), str):
+        return None
+    return payload, age_seconds
+
+
+def _emit_stale(snapshot: dict[str, Any], *, age_seconds: int, message: str, json_output: bool) -> None:
+    if json_output:
+        _emit(
+            {
+                **snapshot,
+                "stale": True,
+                "cached_at": snapshot["observed_at"],
+                "cache_age_seconds": age_seconds,
+                "error": {"kind": "observation_failed", "message": message},
+            },
+            json_output=True,
+        )
+        return
+    print(f"agent-lb status: stale snapshot ({age_seconds}s old)")
+    _emit(snapshot, json_output=False)
+
+
 def _emit(payload: dict[str, Any], *, json_output: bool) -> None:
     if json_output:
-        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        print(_projected_json(payload))
         return
     print(f"agent-lb status: {payload['health']['state']} ({payload['observed_at']})")
     if error := payload.get("error"):

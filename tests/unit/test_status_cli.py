@@ -12,6 +12,11 @@ from app import cli, status_cli
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def status_cache_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_LB_STATUS_CACHE_DIR", str(tmp_path))
+
+
 class _Handler(BaseHTTPRequestHandler):
     routes: dict[str, tuple[int, object]] = {}
     requests: list[str] = []
