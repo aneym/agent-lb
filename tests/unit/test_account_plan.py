@@ -90,10 +90,15 @@ async def test_live_plan_endpoint_and_cli(tmp_path, monkeypatch, capsys):
         "unlimited": {"anthropic": 5, "openai": 1, "cursor": 1, "devin": 0},
     }
     assert plan["levels"]["budget"]["ladders"]["implement"][0]["model"] == "grok-4.7-low"
+    head_row = next(item for item in costs if item["rung"] == "grok-low")
+    risk = plan["levels"]["balanced"]["risk"]
+    assert f"passed {head_row['accepted']} of {head_row['of']} units" in risk
+    assert f"({head_row['source']})" in risk
+    assert ("20-unit round" in risk) == (head_row["of"] < 20)
     assert all(r["harness"] != "Devin" for job in plan["levels"]["budget"]["ladders"].values() for r in job)
     assert [r["model"] for r in plan["levels"]["unlimited"]["ladders"]["review"]] == [
         "claude-opus-5-5", "gpt-6.1-sol"]
-    assert plan["costs"][0]["minutesPerUnit"] == 4.1
+    assert plan["costs"][0]["minutesPerUnit"] == costs[0]["minutesPerUnit"]
     env = setup(tmp_path)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -106,6 +111,24 @@ async def test_live_plan_endpoint_and_cli(tmp_path, monkeypatch, capsys):
     assert "Drop 2" in capsys.readouterr().out
     assert cli["main"](["plan", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == plan
+
+
+def test_balanced_risk_settles_at_twenty_units():
+    table, costs = inputs(head_maker="xai")
+    costs = deepcopy(costs)
+    row = next(item for item in costs if item["rung"] == "grok-low")
+    row["of"] = 20
+    risk = build_plan(live_pools(), table, costs)["levels"]["balanced"]["risk"]
+    assert "20 units" in risk
+    assert "20-unit round" not in risk
+
+
+def test_balanced_risk_offers_a_twenty_unit_round_under_twenty():
+    table, costs = inputs(head_maker="xai")
+    costs = deepcopy(costs)
+    next(item for item in costs if item["rung"] == "grok-low")["of"] = 6
+    risk = build_plan(live_pools(), table, costs)["levels"]["balanced"]["risk"]
+    assert "20-unit round" in risk
 
 
 def test_policy_and_capacity_change_recommendations():

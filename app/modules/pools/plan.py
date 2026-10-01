@@ -116,6 +116,19 @@ _RISK = {
 }
 
 
+def _balanced_risk(head: dict, costs: list[dict]) -> str:
+    row = next((item for item in costs if item.get("rung") == head.get("id")), None)
+    if row is None:
+        return "Watch. The first code step has no trial on record."
+    line = (
+        f"Watch. The first code step passed {row['accepted']} of {row['of']} units "
+        f"in its trial ({row['source']})."
+    )
+    if row["of"] < 20:
+        line += " A 20-unit round settles it; if it drops, Sol goes back to first with one switch."
+    return line
+
+
 def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[str, Any]:
     pools = {pool.id: pool for pool in response.pools}
     selected = table.get("ladders", {}).get(table.get("ladder"), {})
@@ -205,7 +218,7 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                 if level == "unlimited" and remaining is not None and remaining < 25:
                     delta, reason = 1, "Add 1 for Sol reviews of Claude work."
             elif vendor == "cursor":
-                reason = "Flag a second plan if Cursor models passes 60% before day 20 of the cycle"
+                reason = "Flag a second plan if Cursor models passes 60% before day 20 of the cycle."
                 # Balanced keeps everything, except the already-triggered Cursor warning.
                 if level == "balanced" and cursor_over:
                     delta = 1
@@ -256,20 +269,12 @@ def build_plan(response: PoolsResponse, table: dict, costs: list[dict]) -> dict[
                 "Spend least while keeping review quality. Keep the installed code head and drop the "
                 "accounts that were slowest."
             )
-        if level == "balanced":
-            label = _entry(head, table, costs)["model"] if head else "the installed head"
-            risk = (
-                f"Watch. {label} first rests on the latest eval. If the next round drops it, Sol goes "
-                "back to first with one switch."
-            )
-        else:
-            risk = _RISK[level]
         levels[level] = {
             "title": "Balanced (recommended)" if level == "balanced" else level.title(),
             "why": why,
             "accounts": accounts,
             "ladders": ladders,
-            "risk": risk,
+            "risk": _balanced_risk(head, costs) if level == "balanced" else _RISK[level],
         }
     return {
         "generatedAt": response.generated_at.isoformat().replace("+00:00", "Z"),

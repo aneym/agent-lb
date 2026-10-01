@@ -90,9 +90,9 @@ const plan: AccountPlan = {
         { pool: "openai", label: "OpenAI", count: 5, change: "drop", delta: -2, reason: "Drop 2. Sol keeps reviews and reading." },
       ],
       ladders: {
-        implement: [{ id: "grok", model: "Grok 4.7 low", harness: "Cursor CLI" }],
-        mechanical: [{ id: "composer", model: "Composer 2.5", harness: "Cursor CLI" }],
-        explore: [{ id: "sol", model: "GPT-6.1 Sol low", harness: "Codex CLI" }],
+        implement: [{ id: "grok", model: "grok-4.7-low", harness: "Cursor CLI" }],
+        mechanical: [{ id: "composer", model: "composer-2.5", harness: "Cursor CLI" }],
+        explore: [{ id: "sol", model: "gpt-6.1-sol", harness: "Codex CLI" }],
         review: [
           { id: "sonnet", model: "Claude Sonnet 5.5 for GPT and Grok work", harness: "Claude Code" },
           { id: "sol-review", model: "GPT-6.1 Sol for Claude work", harness: "Codex CLI" },
@@ -107,15 +107,15 @@ const plan: AccountPlan = {
         { pool: "cursor", label: "Cursor Ultra", count: 1, change: "keep", delta: 0, reason: "Flag a second plan if Cursor models passes 60% before day 20." },
       ],
       ladders: {
-        implement: [{ id: "grok", model: "Grok 4.7 low", harness: "Cursor CLI" }],
-        mechanical: [{ id: "composer", model: "Composer 2.5", harness: "Cursor CLI" }],
-        explore: [{ id: "sol", model: "GPT-6.1 Sol low", harness: "Codex CLI" }],
+        implement: [{ id: "grok", model: "grok-4.7-low", harness: "Cursor CLI" }],
+        mechanical: [{ id: "composer", model: "composer-2.5", harness: "Cursor CLI" }],
+        explore: [{ id: "sol", model: "gpt-6.1-sol", harness: "Codex CLI" }],
         review: [
           { id: "sonnet", model: "Claude Sonnet 5.5 for GPT and Grok work", harness: "Claude Code" },
           { id: "sol-review", model: "GPT-6.1 Sol for Claude work", harness: "Codex CLI" },
         ],
       },
-      risk: "Grok 4.7 low first rests on six units.",
+      risk: "Watch. The first code step passed 20 of 20 units in its trial (E17).",
     },
     unlimited: {
       title: "Unlimited",
@@ -124,9 +124,9 @@ const plan: AccountPlan = {
         { pool: "anthropic", label: "Claude", count: 8, change: "add", delta: 5, reason: "Add until no week runs dry." },
       ],
       ladders: {
-        implement: [{ id: "grok", model: "Grok 4.7 low", harness: "Cursor CLI" }],
-        mechanical: [{ id: "composer", model: "Composer 2.5", harness: "Cursor CLI" }],
-        explore: [{ id: "sol", model: "GPT-6.1 Sol low", harness: "Codex CLI" }],
+        implement: [{ id: "grok", model: "grok-4.7-low", harness: "Cursor CLI" }],
+        mechanical: [{ id: "composer", model: "composer-2.5", harness: "Cursor CLI" }],
+        explore: [{ id: "sol", model: "gpt-6.1-sol", harness: "Codex CLI" }],
         review: [
           { id: "opus", model: "Claude Opus on every piece", harness: "Claude Code" },
           { id: "sol-review", model: "GPT-6.1 Sol for Claude work", harness: "Codex CLI" },
@@ -148,13 +148,15 @@ function renderDashboard(nextPlan: AccountPlan | null) {
 describe("routing dashboard", () => {
   it("renders pool rows and the recommended plan", async () => {
     const user = userEvent.setup();
-    renderDashboard(plan);
+    const { container } = renderDashboard(plan);
     expect(screen.getByRole("heading", { name: "Account plan" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Balanced/ })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText(/recommended/)).toBeInTheDocument();
+    expect(screen.getByText("Recommended: Balanced")).toBeInTheDocument();
+    expect(screen.getByText("Grok 4.7 low")).toBeInTheDocument();
     expect(screen.getByText("Same accounts as today.")).toBeInTheDocument();
     expect(screen.getByText("keep")).toBeInTheDocument();
-    expect(screen.getByText("Grok 4.7 low first rests on six units.")).toBeInTheDocument();
+    expect(screen.getByText("Watch. The first code step passed 20 of 20 units in its trial (E17).")).toBeInTheDocument();
+    expect(container.querySelector(".steps, .step, .chip")).toBeNull();
     expect(screen.getByText("Claude Sonnet 5.5 for GPT and Grok work")).toBeInTheDocument();
     expect(screen.queryByText("→", { exact: false })).not.toBeNull();
 

@@ -2,18 +2,31 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.routing-dashboard > .card + .card {
+  margin-top: 0;
 }
 .routing-dashboard .plan-head {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  column-gap: 12px;
+  row-gap: 10px;
 }
 .routing-dashboard .plan-head h2 {
   margin: 0;
 }
-.routing-dashboard .rec {
-  font-weight: 600;
+.routing-dashboard .plan-rec {
+  order: 1;
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 2px 0 0;
+}
+.routing-dashboard .plan-head .seg {
+  order: 0;
 }
 .routing-dashboard .plan-why,
 .routing-dashboard .plan-reason,
@@ -23,9 +36,13 @@
   color: var(--ink-2);
   margin: 6px 0 0;
 }
+.routing-dashboard .plan-reason,
+.routing-dashboard .pool-sub,
+.routing-dashboard .pool-foot {
+  font-size: 12px;
+}
 .routing-dashboard .plan-reason {
   display: block;
-  font-size: 12px;
 }
 .routing-dashboard .plan-accounts {
   width: 100%;
@@ -41,7 +58,7 @@
   text-align: right;
   width: 72px;
 }
-.routing-dashboard .chip {
+.routing-dashboard .rd-change {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
@@ -49,15 +66,15 @@
   font-weight: 600;
   background: var(--fill);
 }
-.routing-dashboard .chip.add {
+.routing-dashboard .rd-change.add {
   background: var(--ok-bg);
   color: var(--ok);
 }
-.routing-dashboard .chip.drop {
+.routing-dashboard .rd-change.drop {
   background: var(--bad-bg);
   color: var(--bad);
 }
-.routing-dashboard .chip.keep {
+.routing-dashboard .rd-change.keep {
   background: var(--fill);
   color: var(--ink-2);
 }
@@ -74,18 +91,26 @@
   gap: 8px;
 }
 .routing-dashboard .plan-ladders li {
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 13px;
 }
-.routing-dashboard .job {
-  width: 120px;
-  flex: none;
+.routing-dashboard .rd-job {
   color: var(--ink-2);
 }
-.routing-dashboard .steps {
+.routing-dashboard .rd-rungs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.routing-dashboard .rd-rung {
+  white-space: nowrap;
+}
+.routing-dashboard .rd-arrow {
+  color: var(--ink-2);
+  margin-right: 8px;
 }
 .routing-dashboard .pool-rows {
   display: flex;
@@ -123,4 +148,16 @@
   width: 2px;
   height: 10px;
   background: var(--ink);
+}
+@media (max-width: 720px) {
+  .routing-dashboard .plan-ladders li {
+    grid-template-columns: 1fr;
+  }
+  .routing-dashboard .plan-head .seg {
+    width: 100%;
+  }
+  .routing-dashboard .plan-head .seg button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }

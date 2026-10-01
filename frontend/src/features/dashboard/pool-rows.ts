@@ -177,11 +177,25 @@ export type AccountPlan = {
   levels: { budget: PlanLevel; balanced: PlanLevel; unlimited: PlanLevel };
 };
 
+const MODEL_LABELS: Record<string, string> = {
+  "grok-4.7-low": "Grok 4.7 low",
+  "grok-4.7-medium": "Grok 4.7 medium",
+  "gpt-6.1-sol": "GPT-6.1 Sol",
+  "composer-2.5": "Composer 2.5",
+  "swe-2": "SWE-2",
+  "claude-sonnet-5-5": "Sonnet 5.5",
+  "claude-opus-5-5": "Opus 5.5",
+};
+
+export function modelLabel(id: string): string {
+  return MODEL_LABELS[id] ?? id;
+}
+
 export function planFooter(plan: AccountPlan | null | undefined): string | null {
   if (!plan) return null;
   const level = plan.levels[plan.recommended];
   const code = level?.ladders.implement?.[0]?.model;
   const edits = level?.ladders.mechanical?.[0]?.model;
   if (!code || !edits) return null;
-  return `Code → ${code} · Edits → ${edits}`;
+  return `Code → ${modelLabel(code)} · Edits → ${modelLabel(edits)}`;
 }

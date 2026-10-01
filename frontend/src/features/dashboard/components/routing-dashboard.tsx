@@ -2,6 +2,7 @@ import { useState } from "react";
 import "./routing-dashboard.css";
 
 import {
+  modelLabel,
   planFooter,
   poolRows,
   type AccountPlan,
@@ -10,6 +11,7 @@ import {
 } from "../pool-rows";
 
 const LEVELS = ["budget", "balanced", "unlimited"] as const;
+const LEVEL_LABEL = { budget: "Budget", balanced: "Balanced", unlimited: "Unlimited" } as const;
 const LADDERS = [
   ["implement", "Write code"],
   ["mechanical", "Small edits"],
@@ -71,6 +73,7 @@ function AccountPlanCard({ plan }: { plan: AccountPlan }) {
     <section className="card" aria-label="Account plan">
       <div className="plan-head">
         <h2>Account plan</h2>
+        <p className="plan-rec">Recommended: {LEVEL_LABEL[plan.recommended]}</p>
         <div className="seg" role="group" aria-label="Budget level">
           {LEVELS.map((key) => (
             <button
@@ -79,8 +82,7 @@ function AccountPlanCard({ plan }: { plan: AccountPlan }) {
               aria-pressed={level === key}
               onClick={() => setLevel(key)}
             >
-              {key === "budget" ? "Budget" : key === "balanced" ? "Balanced" : "Unlimited"}
-              {plan.recommended === key ? <span className="rec"> recommended</span> : null}
+              {LEVEL_LABEL[key]}
             </button>
           ))}
         </div>
@@ -97,7 +99,7 @@ function AccountPlanCard({ plan }: { plan: AccountPlan }) {
                 <span className="plan-reason">{account.reason}</span>
               </td>
               <td>
-                <span className={`chip ${account.change}`}>{account.change}</span>
+                <span className={`rd-change ${account.change}`}>{account.change}</span>
               </td>
             </tr>
           ))}
@@ -109,12 +111,14 @@ function AccountPlanCard({ plan }: { plan: AccountPlan }) {
           const steps = current.ladders[key] ?? [];
           return (
             <li key={key}>
-              <span className="job">{label}</span>
-              <span className="steps">
+              <span className="rd-job">{label}</span>
+              <span className="rd-rungs">
                 {steps.map((step, index) => (
-                  <span key={step.id} className="step">
-                    {key !== "review" && index > 0 ? <span className="arrow"> → </span> : null}
-                    {step.model}
+                  <span key={step.id} className="rd-rung">
+                    {index > 0 ? (
+                      <span className="rd-arrow">{key === "review" ? "·" : "→"}</span>
+                    ) : null}
+                    {modelLabel(step.model)}
                   </span>
                 ))}
               </span>

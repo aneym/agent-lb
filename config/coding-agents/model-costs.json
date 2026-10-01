@@ -1,7 +1,7 @@
 [
-  {"rung": "sol-medium", "model": "gpt-6.1-sol", "harness": "Claude Code", "accepted": 5, "of": 6, "minutesPerUnit": 4.1, "claudePct": 0.034, "openaiPct": 0.083, "source": "E16 2026-09-30, n=6"},
-  {"rung": "grok-low", "model": "grok-4.7-low", "harness": "Cursor CLI", "accepted": 6, "of": 6, "minutesPerUnit": 3.9, "claudePct": 0.034, "openaiPct": 0.027, "source": "E16 2026-09-30, n=6"},
-  {"rung": "grok-medium", "model": "grok-4.7-medium", "harness": "Cursor CLI", "accepted": 6, "of": 6, "minutesPerUnit": 4.4, "claudePct": 0.025, "openaiPct": 0.0, "source": "E16 2026-09-30, n=6"},
-  {"rung": "composer", "model": "composer-2.5", "harness": "Cursor CLI", "accepted": 5, "of": 6, "minutesPerUnit": 7.8, "claudePct": 0.049, "openaiPct": 0.086, "source": "E16 2026-09-30, n=6"},
+  {"rung": "sol-medium", "model": "gpt-6.1-sol", "harness": "Claude Code", "accepted": 19, "of": 20, "minutesPerUnit": 3.9, "claudePct": 0.019, "openaiPct": 0.045, "source": "E17 2026-09-30, n=20"},
+  {"rung": "grok-low", "model": "grok-4.7-low", "harness": "Cursor CLI", "accepted": 19, "of": 20, "minutesPerUnit": 6.8, "claudePct": 0.055, "openaiPct": 0.0, "source": "E17 2026-09-30, n=20"},
+  {"rung": "grok-medium", "model": "grok-4.7-medium", "harness": "Cursor CLI", "accepted": 20, "of": 20, "minutesPerUnit": 3.9, "claudePct": 0.019, "openaiPct": 0.0, "source": "E17 2026-09-30, n=20"},
+  {"rung": "composer", "model": "composer-2.5", "harness": "Cursor CLI", "accepted": 19, "of": 20, "minutesPerUnit": 3.4, "claudePct": 0.035, "openaiPct": 0.0, "source": "E17 2026-09-30, n=20"},
   {"rung": "swe2-high", "model": "swe-2", "harness": "Devin", "accepted": 5, "of": 6, "minutesPerUnit": 15.0, "claudePct": 0.055, "openaiPct": 0.071, "source": "E16 2026-09-30, n=6"}
 ]

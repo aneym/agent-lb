@@ -317,7 +317,7 @@ export function ProvidersPage() {
       <RoutingDashboard pools={pools.data?.pools ?? []} plan={plan.data ?? null} />
       <section>
         <div className="sec-h">
-          <h2>Pools</h2>
+          <h2>Pool details</h2>
           <span className="aside">Groups of accounts that can take work right now</span>
         </div>
         <div className="rows pools">
