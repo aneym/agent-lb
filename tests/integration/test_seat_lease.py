@@ -413,6 +413,72 @@ def test_writers_keep_each_others_changes(home: tuple) -> None:
     assert seat(env, "release", meta["lease"], "--outcome", "ok", "--json").returncode == 0
 
 
+def test_box_run_uses_shipped_lease(home: tuple) -> None:
+    env, root, key, _ = home
+    add_cursor(env, root, "acct-a", key)
+    out = root / "bundle"
+    issued = seat(
+        env, "lease", "--vendor", "cursor", "--for", "unit-1", "--ttl", "3600", "--out", str(out), "--json"
+    )
+    assert issued.returncode == 0, issued.stderr
+    meta = json.loads(issued.stdout)
+    box = root / "box"
+    dest = box / "leases" / meta["lease"]
+    dest.parent.mkdir(parents=True)
+    shutil.move(out, dest)
+    saw = root / "saw-key"
+    cursor = script(
+        root / "box-cursor",
+        """#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+Path(os.environ["SAW_KEY"]).write_text(os.environ.get("CURSOR_API_KEY", ""))
+if sys.argv[1:] == ["models"]:
+    print("Available models")
+    raise SystemExit(0)
+print(json.dumps({"type": "result", "is_error": False, "result": "done",
+                  "usage": {"inputTokens": 120, "outputTokens": 7, "cacheReadTokens": 4}}))
+""",
+    )
+    box_env = dict(env, SEAT_HOME=str(box), SEAT_CURSOR_BIN=str(cursor), SAW_KEY=str(saw))
+    result = seat(box_env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(root), "--", "task")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["ok"] is True
+    assert saw.read_text() == key
+    lines = (dest / "usage.jsonl").read_text().splitlines()
+    assert len(lines) == 1
+    recorded = json.loads(lines[0])
+    assert set(recorded) == {"ts", "model", "ok", "wall_s", "tokens_in", "tokens_out", "cache_read_tokens"}
+    assert recorded["ok"] is True and recorded["tokens_in"] == 120
+    usage = json.loads((dest / "usage.json").read_text())
+    assert usage["tokens_in"] == 120 and usage["tokens_out"] == 7 and usage["cache_read_tokens"] == 4
+    assert usage["model"] == recorded["model"]
+    listed = seat(box_env, "accounts", "--json")
+    assert listed.returncode == 0, listed.stderr
+    assert key not in listed.stdout
+    rows = json.loads(listed.stdout)["accounts"]
+    assert len(rows) == 1 and rows[0]["auth"] == "lease" and rows[0]["expires_at"] == meta["expires_at"]
+    assert rows[0]["id"] == "acct-a"
+
+    stale = json.loads((dest / "lease.json").read_text())
+    stale["expires_at"] = "2000-01-01T00:00:00Z"
+    (dest / "lease.json").write_text(json.dumps(stale))
+    expired = seat(box_env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(root), "--", "task")
+    assert expired.returncode == 2 and "no cursor account is ready" in expired.stderr
+
+    stale["expires_at"] = meta["expires_at"]
+    (dest / "lease.json").write_text(json.dumps(stale))
+    other = "registry-key-" + uuid.uuid4().hex
+    add_cursor(box_env, root, "acct-a", other)
+    won = seat(box_env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(root), "--", "task")
+    assert won.returncode == 0, won.stderr
+    assert saw.read_text() == other
+    again = seat(box_env, "accounts", "--json")
+    assert other not in again.stdout and key not in again.stdout
+    kept = json.loads(again.stdout)["accounts"]
+    assert len(kept) == 1 and kept[0]["id"] == "acct-a" and kept[0]["auth"] == "api-key"
+
+
 def test_secret_containment(home: tuple) -> None:
     env, root, key, devin_key = home
     add_cursor(env, root, "acct-a", key)

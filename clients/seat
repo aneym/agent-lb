@@ -33,6 +33,8 @@
 #   ROUTE_LEDGER  dispatch ledger (default ~/.claude/logs/dispatch.jsonl)
 #   ROUTE_BIN     route CLI used to resolve family aliases (default ~/.agent-lb/bin/route)
 #   SEAT_CURSOR_BIN / SEAT_DEVIN_BIN  CLI binaries (default cursor-agent / devin on PATH)
+#
+# 2026-10-01: a box's run also uses unexpired lease bundles under <seat_home>/leases/.
 from __future__ import annotations
 
 import argparse
@@ -164,6 +166,50 @@ def load_registry() -> list[dict[str, Any]]:
     return [account for account in accounts or [] if isinstance(account, dict) and account.get("id")]
 
 
+def lease_accounts(vendor: str | None = None) -> list[dict[str, Any]]:
+    root = seat_home() / "leases"
+    if not root.is_dir():
+        return []
+    registered = {account["id"] for account in load_registry()}
+    horizon = now() + timedelta(seconds=60)
+    newest: dict[str, tuple[datetime, dict[str, Any]]] = {}
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return []
+    for directory in children:
+        if not directory.is_dir():
+            continue
+        try:
+            meta = json.loads((directory / "lease.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict) or meta.get("lease") != directory.name:
+            continue
+        meta_vendor = meta.get("vendor")
+        if meta_vendor not in VENDORS or (vendor is not None and meta_vendor != vendor):
+            continue
+        expires = parse_ts(meta.get("expires_at"))
+        if expires is None or expires <= horizon:
+            continue
+        account_id = meta.get("account")
+        if not isinstance(account_id, str) or not account_id or account_id in registered:
+            continue
+        record = {
+            "id": account_id,
+            "vendor": meta_vendor,
+            "auth": "lease",
+            "lease": meta["lease"],
+            "lease_dir": str(directory),
+            "expires_at": meta["expires_at"],
+            "enabled": True,
+        }
+        previous = newest.get(account_id)
+        if previous is None or expires >= previous[0]:
+            newest[account_id] = (expires, record)
+    return [record for _, record in newest.values()]
+
+
 def load_state() -> dict[str, Any]:
     state = read_json(state_path(), {})
     if not isinstance(state, dict):
@@ -243,7 +289,33 @@ def read_cursor_key(account: dict[str, Any]) -> str:
 
 
 def devin_data_dir(account: dict[str, Any]) -> Path:
+    if account.get("auth") == "lease":
+        return Path(account["lease_dir"]) / "data"
     return expand(account.get("data_dir")) or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
+def read_lease_cursor_env(account: dict[str, Any]) -> dict[str, str]:
+    path = Path(account["lease_dir"]) / "env"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise RuntimeError(f"key file missing for {account['id']}") from None
+    parsed: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, raw = line.split("=", 1)
+        if key not in ("CURSOR_API_KEY", "AGENT_CLI_CREDENTIAL_STORE"):
+            continue
+        try:
+            values = shlex.split(raw, posix=True)
+        except ValueError:
+            continue
+        if len(values) == 1:
+            parsed[key] = values[0]
+    if not parsed.get("CURSOR_API_KEY"):
+        raise RuntimeError(f"key file empty for {account['id']}")
+    return parsed
 
 
 def local_proxy_vars(env: dict[str, str]) -> list[str]:
@@ -271,9 +343,16 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
         config_dir.mkdir(parents=True, exist_ok=True)
         env["CURSOR_CONFIG_DIR"] = str(config_dir)
         env["AGENT_CLI_CREDENTIAL_STORE"] = "memory"
+    elif vendor == "cursor" and auth == "lease":
+        env.update(read_lease_cursor_env(account))
+        config_dir = Path(account["lease_dir"]) / "cursor-config"
+        private_dir(config_dir)
+        env["CURSOR_CONFIG_DIR"] = str(config_dir)
     elif vendor == "cursor":
         env.pop("CURSOR_API_KEY", None)
         env.pop("AGENT_CLI_CREDENTIAL_STORE", None)
+    elif vendor == "devin" and auth == "lease":
+        env["XDG_DATA_HOME"] = str(devin_data_dir(account))
     elif vendor == "devin":
         if expand(account.get("data_dir")) is not None:
             env["XDG_DATA_HOME"] = str(devin_data_dir(account))
@@ -461,7 +540,7 @@ def active_leases(state: dict[str, Any], account_id: str, current: datetime) -> 
 
 
 def command_accounts(args: argparse.Namespace) -> int:
-    registry = load_registry()
+    registry = load_registry() + lease_accounts()
     state = load_state()
     day_ago = now() - timedelta(hours=24)
     rows = []
@@ -499,6 +578,8 @@ def command_accounts(args: argparse.Namespace) -> int:
                 },
             }
         )
+        if account.get("expires_at"):
+            rows[-1]["expires_at"] = account["expires_at"]
     if args.json:
         print(json.dumps({"state": str(state_path()), "accounts": rows}, indent=2, sort_keys=True))
         return EXIT_OK
@@ -530,6 +611,8 @@ def command_accounts(args: argparse.Namespace) -> int:
         )
         for model, until in row["model_unavailable"].items():
             print(f"  model unavailable: {model} until {until}")
+        if row.get("expires_at"):
+            print(f"  expires {row['expires_at']}")
     return EXIT_OK
 
 
@@ -599,6 +682,52 @@ def command_set(args: argparse.Namespace) -> int:
     result = update_state(apply)
     print(json.dumps(result, sort_keys=True) if args.json else f"updated {args.id}")
     return EXIT_OK
+
+
+def _count(value: Any) -> int:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return number if number >= 0 else 0
+
+
+def record_lease_usage(account: dict[str, Any], row: dict[str, Any]) -> None:
+    line = {
+        "ts": row.get("ts"),
+        "model": row.get("model"),
+        "ok": bool(row.get("ok")),
+        "wall_s": row.get("wall_s"),
+        "tokens_in": _count(row.get("tokens_in")),
+        "tokens_out": _count(row.get("tokens_out")),
+        "cache_read_tokens": _count(row.get("cache_read_tokens")),
+    }
+    try:
+        lease_dir = Path(account["lease_dir"])
+        log_path = lease_dir / "usage.jsonl"
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(line, sort_keys=True) + "\n")
+        totals = {"tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0}
+        last_model = row.get("model")
+        for line in log_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(item, dict):
+                continue
+            for field in totals:
+                try:
+                    totals[field] += int(item.get(field) or 0)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+            if item.get("model"):
+                last_model = item["model"]
+        write_json(lease_dir / "usage.json", {"model": last_model, **totals})
+    except (OSError, UnicodeError, TypeError, ValueError):
+        return
 
 
 def record_run(record: dict[str, Any], run: dict[str, Any]) -> None:
@@ -1195,7 +1324,7 @@ def command_run(args: argparse.Namespace) -> int:
         fail("empty prompt: pass --prompt-file or a prompt after --")
     cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
     model = resolve_model(args.vendor, args.model)
-    registry = load_registry()
+    registry = load_registry() + lease_accounts(args.vendor)
     state = load_state()
     if args.account:
         candidates = [a for a in registry if a["id"] == args.account and a.get("vendor") == args.vendor]
@@ -1304,6 +1433,19 @@ def command_run(args: argparse.Namespace) -> int:
                 attempts.append(
                     {"account": account["id"], "outcome": "ok" if outcome["ok"] else (kind or "error"), "wall_s": wall}
                 )
+                if account.get("auth") == "lease":
+                    record_lease_usage(
+                        account,
+                        {
+                            "ts": iso(now()),
+                            "model": model,
+                            "ok": outcome.get("ok"),
+                            "wall_s": wall,
+                            "tokens_in": outcome.get("tokens_in"),
+                            "tokens_out": outcome.get("tokens_out"),
+                            "cache_read_tokens": outcome.get("cache_read_tokens"),
+                        },
+                    )
                 if outcome["ok"]:
                     fields["last_error"] = None
                     fields["auth_ok"] = True
