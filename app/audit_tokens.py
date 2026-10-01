@@ -223,7 +223,12 @@ def transcript_digest(path):
     except (OSError, ValueError, KeyError):
         pass
     result = {
-        "prompt": "", "cwd": "", "title": "", "entrypoint": "", "originator": "", "events": [],
+        "prompt": "",
+        "cwd": "",
+        "title": "",
+        "entrypoint": "",
+        "originator": "",
+        "events": [],
         "compact_boundaries": [],
     }
     seen = set()
@@ -425,9 +430,7 @@ def session_agents(path, since, until):
         ]
         agent["events"].extend(events)
     for agent in agents.values():
-        agent["weight"] = sum(
-            input_cost(event) for event in agent["events"] if event["model"].startswith("claude-")
-        )
+        agent["weight"] = sum(input_cost(event) for event in agent["events"] if event["model"].startswith("claude-"))
         agent["openai_weight"] = sum(
             input_cost(event) for event in agent["events"] if event["model"].startswith("gpt-")
         )
@@ -505,8 +508,7 @@ def cache_kind(row, previous):
     if row.get("account_id") and row.get("account_id") != previous.get("account_id"):
         return "account_switch"
     if any(
-        (stamp := event_time({"timestamp": boundary}))
-        and event_time(previous) < stamp <= event_time(row)
+        (stamp := event_time({"timestamp": boundary})) and event_time(previous) < stamp <= event_time(row)
         for boundary in row.get("compact_boundaries", [])
     ):
         return "compaction"
@@ -543,6 +545,7 @@ WITH base AS (
  SELECT id, account_id, provider, model, reasoning_effort, useragent_group, source, request_kind,
  service_tier, input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, cache_read_tokens,
  reasoning_tokens, cost_usd, status, error_code, upstream_status_code, requested_at, request_id,
+ caller_seat,
  coalesce(nullif(client_session_id,''),nullif(session_id,''),'receipt:' || id::text) AS sid
  FROM request_logs WHERE deleted_at IS NULL AND requested_at >= %s AND requested_at < %s
 )
@@ -596,6 +599,7 @@ def quota_allocation(rows, snapshots, since, until):
     allocated = [dict(weekly=0.0, **{"5h": 0.0}) for _ in rows]
     missing, accounts, calibration = [], [], defaultdict(list)
     binned_calibration = defaultdict(list)
+    quanta: dict[tuple[str, str], float] = {}
     for (provider, account, window_name), history in grouped.items():
         history.sort(key=lambda v: v["recorded_at"])
         history = [v for v in history if v["used_percent"] is not None and v["reset_at"] is not None]
@@ -630,6 +634,11 @@ def quota_allocation(rows, snapshots, since, until):
                 observed = True
                 periods.add((reset - period_length, reset))
             if previous is not None and since < stamp <= until:
+                if delta > 0:
+                    key = (provider, window_name)
+                    prior = quanta.get(key)
+                    if prior is None or delta < prior:
+                        quanta[key] = delta
                 used += delta
                 quota_bins[bin_start(stamp - timedelta(microseconds=1))] += delta
                 left = bisect_left(times, max(previous, since))
@@ -684,7 +693,7 @@ def quota_allocation(rows, snapshots, since, until):
                     missing.append(
                         {"provider": provider, "account_id": account, "window": window_name, "points": delta}
                     )
-        for hours in (1, 3):
+        for hours in (1, 3, 6):
             bins = defaultdict(lambda: [0.0, 0.0])
             for stamp, candidates in receipt_bins.items():
                 bins[bin_start(stamp, hours)][0] += sum(row_weight(row) for _, row in candidates)
@@ -760,21 +769,46 @@ def quota_allocation(rows, snapshots, since, until):
         slope = sum(x * y for x, y in training) / denominator if denominator else None
         mean = sum(y for _, y in holdout) / len(holdout) if holdout else 0.0
         variance = sum((y - mean) ** 2 for _, y in holdout)
-        fits.append(
-            {
-                "provider": provider,
-                "window": window_name,
-                "model": "all",
-                "bin_hours": hours,
-                "intervals": len(bins),
-                "training_intervals": len(training),
-                "holdout_intervals": len(holdout),
-                "points_per_weight": slope,
-                "holdout_r2": 1 - sum((y - slope * x) ** 2 for x, y in holdout) / variance
-                if slope is not None and variance > 1e-20
-                else None,
-            }
+        holdout_points = sum(y for _, y in holdout)
+        holdout_predicted_points = slope * sum(x for x, _ in holdout) if slope is not None else None
+        holdout_total_error = (
+            (holdout_predicted_points - holdout_points) / holdout_points
+            if slope is not None and holdout_points
+            else None
         )
+        holdout_points_per_bin = holdout_points / len(holdout) if holdout else None
+        quantum_points = quanta.get((provider, window_name))
+        if quantum_points is not None:
+            quantum_points = round(quantum_points, 4)
+        quantized = (
+            quantum_points is not None
+            and holdout_points_per_bin is not None
+            and holdout_points_per_bin < 3 * quantum_points
+        )
+        fit = {
+            "provider": provider,
+            "window": window_name,
+            "model": "all",
+            "bin_hours": hours,
+            "intervals": len(bins),
+            "training_intervals": len(training),
+            "holdout_intervals": len(holdout),
+            "points_per_weight": slope,
+            "holdout_r2": 1 - sum((y - slope * x) ** 2 for x, y in holdout) / variance
+            if slope is not None and variance > 1e-20
+            else None,
+            "quantum_points": quantum_points,
+            "holdout_points": holdout_points,
+            "holdout_predicted_points": holdout_predicted_points,
+            "holdout_total_error": holdout_total_error,
+            "holdout_points_per_bin": holdout_points_per_bin,
+            "quantized": quantized,
+        }
+        if quantized:
+            fit["note"] = (
+                "bins average under 3 quota steps; holdout_r2 is mostly rounding noise, read holdout_total_error"
+            )
+        fits.append(fit)
     return allocated, {"providers": providers, "accounts": accounts, "calibration": fits, "unattributed": missing}
 
 
@@ -869,9 +903,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
             looping = False
             for events in sequences.values():
                 calls = [
-                    tuple(call)
-                    for event in sorted(events, key=event_time)
-                    for call in event.get("tool_calls", [])
+                    tuple(call) for event in sorted(events, key=event_time) for call in event.get("tool_calls", [])
                 ]
                 counts = Counter()
                 for index, call in enumerate(calls):
@@ -968,7 +1000,18 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                     "workflow-verify" if re.search(r"verify|review", agent.get("label", ""), re.I) else "workflow"
                 )
             if not agents:
-                if row["provider"] == "openai":
+                caller_seat = row.get("caller_seat")
+                if isinstance(caller_seat, str):
+                    caller_seat = caller_seat.strip()
+                if caller_seat:
+                    seat = safe_label(caller_seat)
+                    if row["provider"] == "openai":
+                        kind = "codex"
+                    elif metas.get(sid, {}).get("entrypoint", "").startswith("sdk-"):
+                        kind = "headless"
+                    elif row["provider"] != "anthropic":
+                        kind = "other"
+                elif row["provider"] == "openai":
                     origin = metas.get(sid, {}).get("originator") or row.get("useragent_group") or "unknown"
                     seat, kind = "codex:" + safe_label(origin.split()[0]), "codex"
                 elif metas.get(sid, {}).get("entrypoint", "").startswith("sdk-"):

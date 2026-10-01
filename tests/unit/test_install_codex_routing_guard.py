@@ -13,6 +13,7 @@ ROUTED_PROVIDER = """base_url = "http://127.0.0.1:2455/backend-api/codex"
 wire_api = "responses"
 supports_websockets = true
 requires_openai_auth = true
+env_http_headers = { "x-agent-lb-seat" = "AGENT_LB_SEAT" }
 """
 
 LAUNCHCTL_SHIM = r"""#!/usr/bin/env bash

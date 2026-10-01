@@ -249,6 +249,7 @@ class RequestLog(Base):
     caller_user_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     caller_machine: Mapped[str | None] = mapped_column(String(48), nullable=True)
     caller_machine_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    caller_seat: Mapped[str | None] = mapped_column(String(64), nullable=True)
     request_id: Mapped[str] = mapped_column(String, nullable=False)
     request_kind: Mapped[str] = mapped_column(
         String,

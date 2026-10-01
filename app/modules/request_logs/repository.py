@@ -20,7 +20,7 @@ from app.core.usage.types import (
     UsageCostSummary,
     UsageMetricsSummary,
 )
-from app.core.utils.client_session import get_client_session_id
+from app.core.utils.client_session import get_caller_seat, get_client_session_id
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, RequestKind, RequestLog
@@ -436,6 +436,7 @@ class RequestLogsRepository:
                 caller_user_source=caller.caller_user_source,
                 caller_machine=caller.caller_machine,
                 caller_machine_source=caller.caller_machine_source,
+                caller_seat=get_caller_seat(),
                 request_id=resolved_request_id,
                 model=model,
                 plan_type=resolved_plan_type,

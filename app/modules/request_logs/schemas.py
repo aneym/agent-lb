@@ -24,6 +24,7 @@ class RequestLogEntry(DashboardModel):
     caller_user_source: str | None = None
     caller_machine: str | None = None
     caller_machine_source: str | None = None
+    caller_seat: str | None = None
     session_id: str | None = None
     request_id: str
     request_kind: str = "normal"

@@ -43,6 +43,7 @@ def to_request_log_entry(log: RequestLog, *, api_key_name: str | None = None) ->
         caller_user_source=log.caller_user_source,
         caller_machine=log.caller_machine,
         caller_machine_source=log.caller_machine_source,
+        caller_seat=log.caller_seat,
         session_id=log.session_id,
         request_id=log.request_id,
         request_kind=log.request_kind,

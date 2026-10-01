@@ -36,6 +36,7 @@ base_url = "http://127.0.0.1:2455/backend-api/codex"
 wire_api = "responses"
 supports_websockets = true
 requires_openai_auth = true
+env_http_headers = { "x-agent-lb-seat" = "AGENT_LB_SEAT" }
 
 [mcp_servers.keep]
 command = "keep-me"
@@ -76,8 +77,8 @@ model = "gpt-5.6-sol"
     assert 'model_provider = "agent-lb" # ChatGPT rewrote this' in repaired
     assert 'base_url = "http://127.0.0.1:2455/backend-api/codex" # keep comment' in repaired
     assert 'wire_api = "responses"' in repaired
-    assert 'supports_websockets = true' in repaired
-    assert 'requires_openai_auth = true' in repaired
+    assert "supports_websockets = true" in repaired
+    assert "requires_openai_auth = true" in repaired
     assert 'name = "keep this name"' in repaired
     assert 'extra = "untouched"' in repaired
     assert '[profiles.personal]\nmodel = "gpt-5.6-sol"' in repaired

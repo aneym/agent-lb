@@ -79,7 +79,11 @@ from pathlib import Path
 def tag_headers(environ: Mapping[str, str]) -> dict[str, str]:
     return {
         header: environ[name]
-        for name, header in (("AGENT_LB_INTENT", "x-agent-lb-intent"), ("AGENT_LB_LANE", "x-agent-lb-lane"))
+        for name, header in (
+            ("AGENT_LB_INTENT", "x-agent-lb-intent"),
+            ("AGENT_LB_LANE", "x-agent-lb-lane"),
+            ("AGENT_LB_SEAT", "x-agent-lb-seat"),
+        )
         if environ.get(name)
     }
 
