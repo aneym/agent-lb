@@ -6,6 +6,7 @@ import argparse
 import concurrent.futures
 import html
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -14,6 +15,7 @@ from bisect import bisect_right
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 VERDICT = re.compile(r"<!--\s*rails-verdict\s+(\{.*?\})\s*-->", re.S)
 JOBS = ("implement", "mechanical", "explore", "review")
@@ -359,8 +361,49 @@ def summarize_outcomes(records):
     return sorted(rungs, key=lambda row: (row["job"], row["seat"], row["model"]))
 
 
-def _matching_rungs(rungs, rung_id, kind):
-    return [row for row in rungs if row["job"] == kind and rung_id in (
+def _rung_name(entry):
+    if isinstance(entry, dict):
+        return str(entry.get("id") or "")
+    return entry
+
+
+def resolve_rungs(rungs, errors):
+    """Resolve each ladder alias once. A failed resolve leaves that rung unmatched."""
+    cache = {}
+    resolved = []
+    for rung in rungs:
+        item = dict(rung)
+        alias = item.get("model")
+        if alias not in cache:
+            if not alias:
+                cache[alias] = None
+            else:
+                raw = command(["route", "resolve", str(alias)], errors, f"route resolve {alias}")
+                cache[alias] = raw.strip() or None
+        item["resolved"] = cache[alias]
+        resolved.append(item)
+    return resolved
+
+
+def row_matches_rung(row, rung):
+    """Seat must match. Cursor and Devin also need the resolved model; other seats allow a null model."""
+    if not isinstance(rung, dict) or row.get("seat") != rung.get("seat"):
+        return False
+    resolved = rung.get("resolved")
+    if not resolved:
+        return False
+    model = row.get("model")
+    if model == resolved:
+        return True
+    if rung.get("seat") in ("cursor-seat", "devin-seat"):
+        return False
+    return model is None or model == "unknown"
+
+
+def _matching_rungs(rungs, rung, kind):
+    if isinstance(rung, dict):
+        return [row for row in rungs if (row.get("job") or "implement") == kind and row_matches_rung(row, rung)]
+    return [row for row in rungs if row["job"] == kind and rung in (
         row["model"], row["seat"], f"{row['seat']}/{row['model']}")]
 
 
@@ -401,8 +444,8 @@ def _outcome_proposals(rungs, ladder):
     for kind in ("implement", "mechanical"):
         order = ladder.get(kind, [])
         chosen = []
-        for rung_id in order:
-            matches = _matching_rungs(rungs, rung_id, kind)
+        for rung in order:
+            matches = _matching_rungs(rungs, rung, kind)
             count = sum(row["pieces"] - row["infra_blocked"] - row.get("dropped", 0) for row in matches)
             if count < 20:
                 insufficient.append(f"not enough outcomes (n={count})")
@@ -419,7 +462,7 @@ def _outcome_proposals(rungs, ladder):
                 if (slower["accepted_rate"] >= faster["accepted_rate"] - 1 / 6
                         and slower["median_wall_s"] <= 1.10 * faster["median_wall_s"]):
                     result.append(
-                        f"propose: move {lower} above {upper} ({kind}; "
+                        f"propose: move {_rung_name(lower)} above {_rung_name(upper)} ({kind}; "
                         f"accepted {slower['accepted']}/{slower['acceptance_observed']} vs "
                         f"{faster['accepted']}/{faster['acceptance_observed']}; "
                         f"median wall_s {slower['median_wall_s']:.2f} vs {faster['median_wall_s']:.2f})"
@@ -614,7 +657,7 @@ def proposals(rows, ladder, outcome_rungs=None):
         return _outcome_proposals(outcome_rungs, ladder)
     result = []
     for kind in ("implement", "mechanical"):
-        order = ladder.get(kind, [])
+        order = [_rung_name(item) for item in ladder.get(kind, [])]
         eligible = {r["model"]: r for r in rows if r["job"] == kind and r["finished"] >= 6
                     and r["acceptance_observed"] >= 6 and r["accepted_rate"] is not None}
         for i, upper in enumerate(order):
@@ -700,6 +743,135 @@ def write_outputs(report, out, page):
                     + body + '</table></main></html>')
 
 
+def _zulu(value):
+    stamp = date(value)
+    if stamp is None:
+        return str(value)
+    return stamp.astimezone(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _clip_line(text, limit=120):
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    if " " in head:
+        head = head.rsplit(" ", 1)[0]
+    return head.rstrip(" ,;")
+
+
+def _head_label(model):
+    text = str(model or "").replace("-", " ").strip()
+    if not text:
+        return "the head"
+    return text[0].upper() + text[1:]
+
+
+def _implement_rows(records):
+    rows = []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("job") or "implement").lower()
+        if kind not in JOBS:
+            kind = "implement"
+        if kind == "implement":
+            rows.append(row)
+    return rows
+
+
+def _metric(key, value, unit):
+    return {"key": key, "value": value, "unit": unit}
+
+
+def _keyed_count(records, rows, key, predicate):
+    if not any(isinstance(row, dict) and key in row for row in records):
+        return None
+    return sum(1 for row in rows if predicate(row))
+
+
+def daily_report(report, outcome_records_for_day, rungs, percent, errors):
+    """C5 factory line for the routing source. Counts and model ids only."""
+    records = [row for row in outcome_records_for_day if isinstance(row, dict)]
+    implement = _implement_rows(records)
+    order = rungs.get("implement", []) if isinstance(rungs, dict) else list(rungs or [])
+    head_rung = next((rung for rung in order if isinstance(rung, dict)), None)
+    head_rows = [row for row in implement if head_rung and row_matches_rung(row, head_rung)]
+    summarized = summarize_outcomes(head_rows)
+    head_accepted = sum(row["accepted"] for row in summarized)
+    head_observed = sum(row["acceptance_observed"] for row in summarized)
+    n = len(implement)
+    head = len(head_rows)
+    cursor_devin = sum(row.get("seat") in ("cursor-seat", "devin-seat") for row in implement)
+    sol = sum(row.get("seat") == "gpt-implementer" for row in implement)
+    claude = sum(row.get("seat") in ("sonnet-implementer", "opus-seat", "effort-xhigh") for row in implement)
+    pinned = _keyed_count(records, implement, "pinned", lambda row: row.get("pinned") is True)
+    pins_ignored = _keyed_count(records, implement, "pin_ignored", lambda row: row.get("pin_ignored") is True)
+    fell_back = _keyed_count(
+        records, implement, "first_seat",
+        lambda row: row.get("first_seat") is not None and row.get("first_seat") != row.get("seat"))
+    if n == 0:
+        line = "No fold code pieces finished in the window."
+    else:
+        model = (head_rung or {}).get("resolved") or (head_rung or {}).get("model")
+        line = (f"{head} of {n} fold code pieces ran on {_head_label(model)}, "
+                f"{sol} on Sol, {claude} on Claude; {head_accepted} of {head_observed} accepted.")
+    ratio = (sol + claude) / n if n else 0
+    ladder_unread = any("ladder ordering: unavailable" in str(item) for item in errors)
+    if n >= 10 and ratio > 0.5:
+        status = "red"
+    elif n == 0 or ratio > 0.2 or ladder_unread:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "contract": "daily-report@0",
+        "source": "routing",
+        "owner": "w5H:pNE",
+        "window": {"since": _zulu(report.get("since")), "until": _zulu(report.get("until"))},
+        "line": _clip_line(line),
+        "status": status,
+        "metrics": [
+            _metric("fold_code_pieces", n, "pieces"),
+            _metric("ladder_head_pieces", head, "pieces"),
+            _metric("ladder_head_pct", round(head * 100 / n, 1) if n else None, "%"),
+            _metric("cursor_devin_pieces", cursor_devin, "pieces"),
+            _metric("sol_pieces", sol, "pieces"),
+            _metric("claude_pieces", claude, "pieces"),
+            _metric("ladder_head_accepted", head_accepted, "pieces"),
+            _metric("ladder_head_observed", head_observed, "pieces"),
+            _metric("pinned_pieces", pinned, "pieces"),
+            _metric("pins_ignored", pins_ignored, "pieces"),
+            _metric("fell_back_pieces", fell_back, "pieces"),
+            _metric("cursor_models_pct", percent, "%"),
+            _metric("unverified_sources", len(errors), "count"),
+        ],
+        "link": {
+            "url": "https://app.rails.so/workspace/rails-admin?route=scoping/routing-next",
+            "label": "Routing",
+        },
+    }
+
+
+def write_daily_report(payload, path, errors):
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".routing-", dir=path.parent, suffix=".json")
+        with os.fdopen(fd, "w") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+        os.replace(temporary, path)
+        temporary = None
+    except OSError as exc:
+        errors.append(f"daily report: {type(exc).__name__}")
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--since")
@@ -732,7 +904,8 @@ def main():
         table = json.loads((home / ".agents/policy/coding-agents/routing-table.json").read_text())
         for kind in ("implement", "mechanical"):
             rungs = table.get("ladders", {}).get(table.get("ladder", "interim"), {}).get(kind, [])
-            ladder[kind] = [r.get("id") for r in rungs if isinstance(r, dict) and r.get("id")]
+            ladder[kind] = resolve_rungs(
+                [r for r in rungs if isinstance(r, dict) and r.get("id")], errors)
             for run in runs:
                 if job(run) != kind or run.get("rung"):
                     continue
@@ -795,6 +968,11 @@ def main():
     # An explicit output directory is a dry-run boundary: do not overwrite the published page.
     page = out / "routing-daily-audit.html" if args.out else home / ".claude/pretty-docs/routing-daily-audit.html"
     write_outputs(report, out, page)
+    day_records = [row for row in outcome_records if since <= date(row["ts"]) < until]
+    et_day = until.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    report_root = args.out if args.out else home / ".agent-rails/factory"
+    payload = daily_report(report, day_records, ladder, percent, errors)
+    write_daily_report(payload, report_root / "daily" / et_day / "routing.json", errors)
     if args.post:
         before = len(errors)
         command(["lane-post", "post", "--to", "w5H:pNE", "--from", "routing-audit", "--kind", "info",

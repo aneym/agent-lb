@@ -8,9 +8,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import install_routing_audit
+from scripts import install_routing_audit, routing_daily_audit
 from scripts.routing_daily_audit import (
-    dispatch, load_outcomes, proposals, quota_points, store, summarize, summarize_outcomes, write_outputs,
+    _matching_rungs,
+    daily_report,
+    dispatch,
+    load_outcomes,
+    proposals,
+    quota_points,
+    row_matches_rung,
+    store,
+    summarize,
+    summarize_outcomes,
+    write_outputs,
 )
 
 
@@ -196,3 +206,73 @@ def test_routing_daily_audit_outcome_ledger(tmp_path):
     assert proposals([], ladder, outcome_rungs=summarize_outcomes(records)) == [
         "not enough outcomes (n=4)", "not enough outcomes (n=0)",
     ]
+
+
+def test_routing_daily_audit_matches_resolved_rungs_not_ids():
+    head = {"id": "grok-medium", "seat": "cursor-seat", "model": "grok-latest", "resolved": "grok-4.7-medium"}
+    sol = {"id": "sol-medium", "seat": "gpt-implementer", "model": "sol-latest", "resolved": "gpt-6.1-sol"}
+    grok = _outcome(seat="cursor-seat", model="grok-4.7-medium", piece="grok")
+    assert row_matches_rung(grok, head)
+    assert row_matches_rung(_outcome(seat="gpt-implementer", model=None, piece="open"), sol)
+    rows = [_outcome(seat="cursor-seat", model="grok-4.7-medium", piece=str(index), outcome="accepted", wall_s=10)
+            for index in range(20)]
+    summarized = summarize_outcomes(rows)
+    matches = _matching_rungs(summarized, head, "implement")
+    assert sum(row["pieces"] for row in matches) == 20
+    assert "n=0" not in " ".join(proposals([], {"implement": [head]}, outcome_rungs=summarized))
+
+
+def test_routing_daily_audit_daily_report_counts_ladder_mix():
+    head = {"id": "grok-medium", "seat": "cursor-seat", "model": "grok-latest", "resolved": "grok-4.7-medium"}
+    rows = [_outcome(seat="cursor-seat", model="grok-4.7-medium", outcome="accepted", piece=f"g{index}")
+            for index in range(2)]
+    rows.append(_outcome(seat="cursor-seat", model="grok-4.7-medium", outcome="rejected", piece="rej"))
+    rows.extend(_outcome(seat="gpt-implementer", model="gpt-6.1-sol", outcome="accepted", piece=f"s{index}")
+                for index in range(6))
+    rows.append(_outcome(seat="opus-seat", model="claude-opus-5", outcome="accepted", piece="opus"))
+    report = {"since": "2026-09-30T11:00:00+00:00", "until": "2026-10-01T11:00:00+00:00"}
+    payload = daily_report(report, rows, {"implement": [head]}, 12.5, [])
+    assert payload["status"] == "red"
+    assert len(payload["line"]) <= 120
+    assert payload["line"].startswith("3 of 10")
+    assert payload["window"] == {"since": "2026-09-30T11:00:00Z", "until": "2026-10-01T11:00:00Z"}
+    metrics = {item["key"]: item["value"] for item in payload["metrics"]}
+    assert metrics == {
+        "fold_code_pieces": 10,
+        "ladder_head_pieces": 3,
+        "ladder_head_pct": 30.0,
+        "cursor_devin_pieces": 3,
+        "sol_pieces": 6,
+        "claude_pieces": 1,
+        "ladder_head_accepted": 2,
+        "ladder_head_observed": 3,
+        "pinned_pieces": None,
+        "pins_ignored": None,
+        "fell_back_pieces": None,
+        "cursor_models_pct": 12.5,
+        "unverified_sources": 0,
+    }
+    marked = [dict(row) for row in rows]
+    marked[0]["pinned"] = True
+    marked[1]["pinned"] = False
+    marked[2]["pin_ignored"] = True
+    marked[3]["first_seat"] = "cursor-seat"
+    marked_report = daily_report(report, marked, {"implement": [head]}, 12.5, [])
+    counted = {item["key"]: item["value"] for item in marked_report["metrics"]}
+    assert counted["pinned_pieces"] == 1
+    assert counted["pins_ignored"] == 1
+    assert counted["fell_back_pieces"] == 1
+
+
+def test_routing_daily_audit_main_writes_factory_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(routing_daily_audit.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(routing_daily_audit, "command", lambda *args, **kwargs: "")
+    monkeypatch.setattr(sys, "argv", [
+        "routing_daily_audit.py", "--out", str(tmp_path / "out"),
+        "--since", "2026-09-30T11:00:00Z", "--until", "2026-10-01T11:00:00Z",
+    ])
+    routing_daily_audit.main()
+    path = tmp_path / "out" / "daily" / "2026-10-01" / "routing.json"
+    payload = json.loads(path.read_text())
+    assert payload["contract"] == "daily-report@0"
+    assert payload["source"] == "routing"
