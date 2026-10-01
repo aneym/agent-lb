@@ -136,6 +136,8 @@ def test_enforce_without_a_readable_signal_falls_back_to_the_tasklist(tmp_path: 
     _tasklist(tmp_path, LEAGUE)
     _poll(env)
     assert _detector_holds(env) is True
+    log = (Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "logs" / "gaming-mode.log").read_text()
+    assert "falling back to tasklist" in log
 
 
 def test_the_factory_game_list_is_used(tmp_path: Path) -> None:
