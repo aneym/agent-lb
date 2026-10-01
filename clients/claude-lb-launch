@@ -909,6 +909,8 @@ class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
 
     daemon_threads = True
     allow_reuse_address = True
+    # Buffer tunnel bursts while accept is slow; the default 5 overflowed and macOS refused connections.
+    request_queue_size = 1024
 
     def handle_error(self, request: object, client_address: object) -> None:
         # Proxy teardown races (a client hanging up mid-tunnel) raise benign
