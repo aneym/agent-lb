@@ -55,8 +55,7 @@ Effort is fixed per stage; no per-request router sits in the hot path. Higher ef
 | Relay a contract (forwarders) | low |
 | Search and read | low to medium |
 | Implement to a spec | medium on Sol, high on Sonnet |
-| Plan, second opinion | high |
-| Spec writing (E19 2026-10-01, provisional: Opus high no better than medium at +33% cost) | medium |
+| Plan, second opinion high; spec writing medium (E19 2026-10-01, provisional) | high / medium |
 | Verify | high; `codex-verifier` xhigh |
 | Money path and security | xhigh |
 | Max | only after asking |
