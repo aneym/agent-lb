@@ -275,6 +275,10 @@ class Settings(BaseSettings):
     # excluded even at pool exhaustion, when true they become last-resort
     # candidates only.
     anthropic_route_to_extra_usage: bool = False
+    # Codex bills paid credits once a 5-hour or weekly window is spent.
+    # False (default) keeps those accounts out of rotation whatever their
+    # balance; true restores the old credit override.
+    openai_route_to_credits: bool = False
     # Opt-in only: holding an exhausted pool open hides the error from clients
     # for hours. By default return the quota error and reset headers immediately.
     anthropic_pool_exhausted_wait_enabled: bool = False

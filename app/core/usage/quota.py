@@ -89,6 +89,10 @@ def _has_credit_override(
     credits_unlimited: bool | None,
     credits_balance: float | None,
 ) -> bool:
+    from app.core.config.settings import get_settings
+
+    if not get_settings().openai_route_to_credits:
+        return False
     return _has_usable_credits(
         credits_has=credits_has,
         credits_unlimited=credits_unlimited,

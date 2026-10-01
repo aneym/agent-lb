@@ -39,6 +39,16 @@ from app.modules.proxy.load_balancer import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture
+def openai_credit_override(monkeypatch):
+    monkeypatch.setenv("AGENT_LB_OPENAI_ROUTE_TO_CREDITS", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 def test_select_account_picks_lowest_used_percent():
     states = [
         AccountState("a", AccountStatus.ACTIVE, used_percent=50.0),
@@ -1014,7 +1024,8 @@ def test_apply_usage_quota_secondary_exhausted_without_credits_sets_quota_exceed
     assert reset_at == secondary_reset
 
 
-def test_apply_usage_quota_secondary_exhausted_with_credits_reactivates_account():
+def test_apply_usage_quota_secondary_exhausted_with_credits_reactivates_account(openai_credit_override):
+    del openai_credit_override
     future_reset = 1_700_000_000.0
     status, used_percent, reset_at = apply_usage_quota(
         status=AccountStatus.QUOTA_EXCEEDED,
@@ -2208,7 +2219,10 @@ def test_state_from_account_recovers_quota_exceeded_on_restart_without_blocked_a
     assert state.status == AccountStatus.ACTIVE
 
 
-def test_state_from_account_uses_secondary_credits_when_primary_lacks_credit_fields(monkeypatch):
+def test_state_from_account_uses_secondary_credits_when_primary_lacks_credit_fields(
+    monkeypatch, openai_credit_override
+):
+    del openai_credit_override
     now = 1_700_000_000.0
     future_reset = int(now + 3600)
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
@@ -2268,7 +2282,10 @@ def test_state_from_account_readmits_quota_exceeded_on_restart_without_blocked_a
     assert state.blocked_at is None
 
 
-def test_state_from_account_preserves_credits_when_weekly_primary_replaces_secondary(monkeypatch):
+def test_state_from_account_preserves_credits_when_weekly_primary_replaces_secondary(
+    monkeypatch, openai_credit_override
+):
+    del openai_credit_override
     now = 1_700_000_000.0
     future_reset = int(now + 3600)
     monkeypatch.setattr("app.modules.proxy.load_balancer.time.time", lambda: now)
@@ -4151,7 +4168,8 @@ def test_select_account_capacity_weighted_with_prefer_falls_back_when_earliest_b
         assert result.account.account_id == "earliest-lower-usage"
 
 
-def test_apply_usage_quota_allows_secondary_100_when_credits_exist():
+def test_apply_usage_quota_allows_secondary_100_when_credits_exist(openai_credit_override):
+    del openai_credit_override
     status, used_percent, reset_at = apply_usage_quota(
         status=AccountStatus.ACTIVE,
         primary_used=11.0,
@@ -4169,7 +4187,8 @@ def test_apply_usage_quota_allows_secondary_100_when_credits_exist():
     assert reset_at is None
 
 
-def test_apply_usage_quota_keeps_primary_100_rate_limited_with_credits():
+def test_apply_usage_quota_keeps_primary_100_rate_limited_with_credits(openai_credit_override):
+    del openai_credit_override
     status, used_percent, reset_at = apply_usage_quota(
         status=AccountStatus.ACTIVE,
         primary_used=100.0,
@@ -4205,7 +4224,10 @@ def test_apply_usage_quota_keeps_primary_100_rate_limited_without_credits():
     assert reset_at == 1_700_005_000
 
 
-def test_apply_usage_quota_preserves_rate_limited_runtime_reset_when_credits_balance_positive(monkeypatch):
+def test_apply_usage_quota_preserves_rate_limited_runtime_reset_when_credits_balance_positive(
+    monkeypatch, openai_credit_override
+):
+    del openai_credit_override
     now = 1_700_000_000.0
     future = now + 3600.0
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -4249,7 +4271,8 @@ def test_apply_usage_quota_preserves_rate_limited_when_status_rate_limited_with_
     assert reset_at == 1_700_005_000
 
 
-def test_apply_usage_quota_clears_quota_exceeded_when_credits_balance_positive(monkeypatch):
+def test_apply_usage_quota_clears_quota_exceeded_when_credits_balance_positive(monkeypatch, openai_credit_override):
+    del openai_credit_override
     now = 1_700_000_000.0
     future = now + 3600.0
     monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
@@ -4917,10 +4940,16 @@ def test_state_from_account_anthropic_opt_in_does_not_globally_clear_quota(monke
 
 
 @pytest.mark.parametrize("status", [AccountStatus.ACTIVE, AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED])
-@pytest.mark.parametrize("age, deadline, selectable", [
-    (30, 86400, False), (61, 86400, True), (61, 300, False),
-    (61, 3600, False), (3600, 3600, True),
-])
+@pytest.mark.parametrize(
+    "age, deadline, selectable",
+    [
+        (30, 86400, False),
+        (61, 86400, True),
+        (61, 300, False),
+        (61, 3600, False),
+        (3600, 3600, True),
+    ],
+)
 @pytest.mark.parametrize("fraction", [0.0, 0.75])
 def test_selector_enforces_same_bounded_refusal_for_runtime_and_persisted_guards(
     monkeypatch, status, age, deadline, selectable, fraction

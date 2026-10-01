@@ -9835,7 +9835,7 @@ async def test_ccgpt_turn_moves_to_another_account_when_its_account_rejects_it(a
     response = await async_client.post(
         "/v1/messages",
         json={
-            "model": "gpt-6-sol",
+            "model": "sol-latest",
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "hello"}],
             "metadata": {"user_id": json.dumps({"session_id": "ccgpt-reject-session"})},
@@ -9887,7 +9887,7 @@ async def test_ccgpt_session_survives_its_account_needing_reauth_across_a_blue_g
         response = await client.post(
             "/v1/messages",
             json={
-                "model": "gpt-6-sol",
+                "model": "sol-latest",
                 "max_tokens": 1024,
                 "messages": list(history),
                 "metadata": {"user_id": json.dumps({"session_id": "ccgpt-reauth-session"})},

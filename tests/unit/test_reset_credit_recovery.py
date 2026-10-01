@@ -108,4 +108,4 @@ async def test_credit_capacity_on_primary_row_suppresses_exhaustion_reset():
         )
 
     repo.latest_entry_for_account.side_effect = latest
-    assert await refresh_standard_capacity(account, updater, repo) is True
+    assert await refresh_standard_capacity(account, updater, repo) is False

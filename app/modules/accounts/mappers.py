@@ -350,7 +350,8 @@ def _account_to_summary(
         is_locally_owned=account_is_locally_owned,
         owner_label=(
             (owner_source_names or {}).get(account.owner_instance, account.owner_instance)
-            if not account_is_locally_owned and account.owner_instance else None
+            if not account_is_locally_owned and account.owner_instance
+            else None
         ),
     )
 
@@ -558,7 +559,13 @@ def _has_credit_override(
     credits_unlimited: bool | None,
     credits_balance: float | None,
 ) -> bool:
-    return credits_unlimited is True or credits_has is True or (credits_balance is not None and credits_balance > 0)
+    from app.core.usage.quota import _has_credit_override as quota_has_credit_override
+
+    return quota_has_credit_override(
+        credits_has=credits_has,
+        credits_unlimited=credits_unlimited,
+        credits_balance=credits_balance,
+    )
 
 
 def _first_not_none(primary_usage: UsageHistory | None, secondary_usage: UsageHistory | None, field: str):

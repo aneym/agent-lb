@@ -52,10 +52,11 @@ from app.core.metrics.prometheus import (
 )
 from app.core.openai.model_registry import get_model_registry
 from app.core.plan_types import account_plan_matches_allowed, normalize_account_plan_type
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, normalize_provider_name
+from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
 from app.core.resilience.circuit_breaker import are_all_account_circuit_breakers_open
 from app.core.resilience.degradation import get_status as get_degradation_status
 from app.core.resilience.degradation import set_degraded, set_normal
+from app.core.usage.quota import _has_usable_credits, apply_usage_quota
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, AdditionalUsageHistory, StickySessionKind, UsageHistory
@@ -2105,14 +2106,16 @@ def _state_from_account(
     # dollars, so usable credits must not make every request see the account as
     # healthy. The Anthropic prefilter passes exact paid-fallback account IDs
     # into _build_states for a request-scoped primary-quota bypass.
-    if account.provider == ANTHROPIC_PROVIDER_NAME:
-        credits_has, credits_unlimited, credits_balance = None, None, None
-    else:
-        credits_has, credits_unlimited, credits_balance = _extract_credit_status(
-            primary_entry,
-            effective_secondary_entry,
-            secondary_entry,
-        )
+    # OpenAI is the same while openai_route_to_credits is false: Codex bills
+    # paid credits once a window is spent, so the balance must not keep the
+    # account selectable.
+    raw_credits_has, raw_credits_unlimited, raw_credits_balance = _extract_credit_status(
+        primary_entry,
+        effective_secondary_entry,
+        secondary_entry,
+    )
+    route_openai_credits = bool(getattr(get_settings(), "openai_route_to_credits", False))
+    openai_account = normalize_provider_name(account.provider) == OPENAI_PROVIDER_NAME
 
     # If the usage window has reset (reset_at is in the past) but the last
     # recorded sample still shows 100 % usage, the data is stale.  Zero it
@@ -2202,6 +2205,36 @@ def _state_from_account(
         if effective_blocked_at is None or reset_at is None or reset_at <= time.time():
             status = AccountStatus.ACTIVE
             reset_at = None
+
+    # Codex answers 200 and bills credits when a window is spent. A snapshot
+    # stays a ranking signal until the account actually has credits to bill;
+    # then a spent window leaves it out of rotation.
+    if (
+        openai_account
+        and not route_openai_credits
+        and _has_usable_credits(
+            credits_has=raw_credits_has,
+            credits_unlimited=raw_credits_unlimited,
+            credits_balance=raw_credits_balance,
+        )
+    ):
+        quota_status, quota_used, quota_reset = apply_usage_quota(
+            status=status,
+            primary_used=primary_used,
+            primary_reset=primary_reset,
+            primary_window_minutes=primary_window_minutes,
+            runtime_reset=reset_at,
+            secondary_used=secondary_used,
+            secondary_reset=secondary_reset,
+            credits_has=None,
+            credits_unlimited=None,
+            credits_balance=None,
+        )
+        if quota_status in (AccountStatus.RATE_LIMITED, AccountStatus.QUOTA_EXCEEDED):
+            status = quota_status
+            if quota_used is not None:
+                used_percent = quota_used
+            reset_at = quota_reset
 
     if status == AccountStatus.QUOTA_EXCEEDED:
         next_blocked_at = effective_blocked_at

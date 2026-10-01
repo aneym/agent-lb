@@ -427,6 +427,46 @@ class _HTTPBridgeMixin(
                 inflight_future.exception()
             return stale_key
 
+    async def _http_bridge_account_still_servable(self, account) -> bool:
+        """Whether a bridge session's account can still take a turn.
+
+        The session holds the Account captured when it opened. A pause or a
+        spent window lands on the row and the usage history, not on that
+        object, so reuse has to read both before keeping the upstream.
+        """
+        if account is None:
+            return False
+        if getattr(account, "id", None) is None:
+            return getattr(account, "status", None) == AccountStatus.ACTIVE
+        from app.core.providers import OPENAI_PROVIDER_NAME, normalize_provider_name
+        from app.modules.proxy.load_balancer import (
+            RuntimeState,
+            _select_long_window_entry,
+            _state_from_account,
+        )
+
+        async with self._repo_factory() as repos:
+            fresh = await repos.accounts.get_by_id(account.id)
+            if fresh is None or fresh.status != AccountStatus.ACTIVE:
+                return False
+            if normalize_provider_name(fresh.provider) != OPENAI_PROVIDER_NAME:
+                return True
+            primary = await repos.usage.latest_entry_for_account(fresh.id, window="primary")
+            secondary = await repos.usage.latest_entry_for_account(fresh.id, window="secondary")
+            monthly = await repos.usage.latest_entry_for_account(fresh.id, window="monthly")
+            long_window = _select_long_window_entry(
+                account=fresh,
+                monthly_entry=monthly,
+                secondary_entry=secondary,
+            )
+            state = _state_from_account(
+                account=fresh,
+                primary_entry=primary,
+                secondary_entry=long_window,
+                runtime=RuntimeState(),
+            )
+            return state.status == AccountStatus.ACTIVE
+
     @overload
     async def _get_or_create_http_bridge_session(
         self,
@@ -584,7 +624,7 @@ class _HTTPBridgeMixin(
                         if (
                             alias_session is None
                             or alias_session.closed
-                            or alias_session.account.status != AccountStatus.ACTIVE
+                            or not await self._http_bridge_account_still_servable(alias_session.account)
                             or not _http_bridge_session_matches_preferred_account(
                                 session=alias_session,
                                 previous_response_id=previous_response_id,
@@ -618,7 +658,7 @@ class _HTTPBridgeMixin(
                             if (
                                 previous_session is not None
                                 and not previous_session.closed
-                                and previous_session.account.status == AccountStatus.ACTIVE
+                                and await self._http_bridge_account_still_servable(previous_session.account)
                                 and _http_bridge_session_matches_preferred_account(
                                     session=previous_session,
                                     previous_response_id=previous_response_id,
@@ -663,7 +703,7 @@ class _HTTPBridgeMixin(
                 if (
                     existing is not None
                     and not existing.closed
-                    and existing.account.status == AccountStatus.ACTIVE
+                    and await self._http_bridge_account_still_servable(existing.account)
                     and _http_bridge_session_allows_api_key(existing, api_key)
                     and _http_bridge_session_reusable_for_request(
                         session=existing,
@@ -705,7 +745,11 @@ class _HTTPBridgeMixin(
                         force_durable_takeover = True
                         self._schedule_http_bridge_session_closes([detached], reason="registry_detach")
                     existing = None
-                if existing is not None and not existing.closed and existing.account.status == AccountStatus.ACTIVE:
+                if (
+                    existing is not None
+                    and not existing.closed
+                    and await self._http_bridge_account_still_servable(existing.account)
+                ):
                     old_account_id = existing.account.id
                     retiring_with_visible_requests = _http_bridge_session_retiring_with_visible_requests(existing)
                     detached = self._detach_http_bridge_session_locked(
@@ -1086,7 +1130,11 @@ class _HTTPBridgeMixin(
                     if (
                         previous_response_id is not None
                         and inflight_future is None
-                        and (existing is None or existing.closed or existing.account.status != AccountStatus.ACTIVE)
+                        and (
+                            existing is None
+                            or existing.closed
+                            or not await self._http_bridge_account_still_servable(existing.account)
+                        )
                     ):
                         previous_alias_key = _http_bridge_previous_response_alias_key(previous_response_id, api_key_id)
                         previous_key = self._http_bridge_previous_response_index.get(previous_alias_key)
@@ -1095,7 +1143,7 @@ class _HTTPBridgeMixin(
                             if (
                                 previous_session is not None
                                 and not previous_session.closed
-                                and previous_session.account.status == AccountStatus.ACTIVE
+                                and await self._http_bridge_account_still_servable(previous_session.account)
                             ):
                                 key = previous_session.key
                                 existing = previous_session
@@ -1345,7 +1393,7 @@ class _HTTPBridgeMixin(
                     continue
                 if (
                     not session.closed
-                    and session.account.status == AccountStatus.ACTIVE
+                    and await self._http_bridge_account_still_servable(session.account)
                     and _http_bridge_session_allows_api_key(session, api_key)
                     and _http_bridge_session_reusable_for_request(
                         session=session,
@@ -1366,7 +1414,7 @@ class _HTTPBridgeMixin(
                         session.request_model = request_model
                         session.last_used_at = _service_time().monotonic()
                         return session
-                if not session.closed and session.account.status == AccountStatus.ACTIVE:
+                if not session.closed and await self._http_bridge_account_still_servable(session.account):
                     old_account_id = session.account.id
                     retiring_with_visible_requests = _http_bridge_session_retiring_with_visible_requests(session)
                     async with self._http_bridge_lock:

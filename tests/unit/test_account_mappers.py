@@ -11,6 +11,16 @@ from app.modules.accounts import mappers, reset_credit_cache
 from app.modules.accounts.mappers import _effective_status_from_usage, _normalize_account_routing_policy
 
 
+@pytest.fixture
+def openai_credit_override(monkeypatch):
+    monkeypatch.setenv("AGENT_LB_OPENAI_ROUTE_TO_CREDITS", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 def _usage(
     *,
     recorded_at: datetime,
@@ -80,7 +90,10 @@ def _secondary_usage(**overrides) -> UsageHistory:
     return UsageHistory(**values)
 
 
-def test_effective_status_uses_secondary_credits_to_reactivate_quota_exceeded_account() -> None:
+def test_effective_status_uses_secondary_credits_to_reactivate_quota_exceeded_account(
+    openai_credit_override,
+) -> None:
+    del openai_credit_override
     account = _account()
     primary = _primary_usage()
     secondary = _secondary_usage(
@@ -105,7 +118,10 @@ def test_effective_status_uses_secondary_credits_to_reactivate_quota_exceeded_ac
     )
 
 
-def test_effective_status_uses_primary_credits_when_secondary_has_no_credit_fields() -> None:
+def test_effective_status_uses_primary_credits_when_secondary_has_no_credit_fields(
+    openai_credit_override,
+) -> None:
+    del openai_credit_override
     account = _account()
     primary = _primary_usage(credits_balance=25.0)
     secondary = _secondary_usage()
@@ -126,7 +142,10 @@ def test_effective_status_uses_primary_credits_when_secondary_has_no_credit_fiel
     )
 
 
-def test_effective_status_keeps_primary_exhaustion_rate_limited_with_credits() -> None:
+def test_effective_status_keeps_primary_exhaustion_rate_limited_with_credits(
+    openai_credit_override,
+) -> None:
+    del openai_credit_override
     account = _account(AccountStatus.ACTIVE)
     primary = _primary_usage(used_percent=100.0, reset_at=1_700_000_300, credits_balance=25.0)
     secondary = _secondary_usage(used_percent=100.0, credits_balance=25.0)

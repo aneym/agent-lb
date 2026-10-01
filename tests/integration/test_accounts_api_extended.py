@@ -20,6 +20,16 @@ from app.modules.usage.repository import UsageRepository
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture
+def openai_credit_override(monkeypatch):
+    monkeypatch.setenv("AGENT_LB_OPENAI_ROUTE_TO_CREDITS", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 def _encode_jwt(payload: dict) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     body = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -1186,7 +1196,10 @@ async def test_accounts_list_recovers_zero_capacity_rate_limited_status(async_cl
 
 
 @pytest.mark.asyncio
-async def test_accounts_list_preserves_credit_backed_rate_limited_reset_guard(async_client, db_setup):
+async def test_accounts_list_preserves_credit_backed_rate_limited_reset_guard(
+    async_client, db_setup, openai_credit_override
+):
+    del openai_credit_override
     future_reset = int((utcnow() + timedelta(hours=2)).timestamp())
     account = _make_account("acc_credit_rate_limited", "credit-rate-limited@example.com")
     account.status = AccountStatus.RATE_LIMITED
