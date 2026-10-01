@@ -445,6 +445,41 @@ factory("public-text", not private_lines, f"public policy has no private literal
 # Retired and older-than-newest model ids, anywhere a seat could be pinned.
 retired = tuple(source_table.get("retired") or ())
 aliases = source_table.get("aliases") or {}
+older_allowed = source_table.get("older_allowed") if isinstance(source_table.get("older_allowed"), dict) else {}
+
+
+def eval_reference_ok(value) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    if re.search(r"\bE\d+\b", value):
+        return True
+    return any(token.strip("`'\",;:)]").endswith((".md", ".jsonl")) for token in value.split())
+
+
+def older_allowed_index() -> dict:
+    return {key.lower(): value for key, value in older_allowed.items() if isinstance(key, str)}
+
+
+def retired_id(model_id: str) -> bool:
+    bare = model_id.strip().lower()
+    return any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare) for pattern in retired)
+
+
+allowed_problems = []
+if not isinstance(source_table.get("older_allowed"), dict):
+    allowed_problems.append("older_allowed entry has no eval reference")
+else:
+    for allowed_id, reference in source_table["older_allowed"].items():
+        if not isinstance(allowed_id, str) or retired_id(allowed_id):
+            allowed_problems.append(f"older_allowed lists retired id {allowed_id}")
+        elif not eval_reference_ok(reference):
+            allowed_problems.append(f"older_allowed entry has no eval reference ({allowed_id})")
+check(
+    not allowed_problems,
+    "older_allowed names only live ids with eval references"
+    if not allowed_problems
+    else "; ".join(allowed_problems),
+)
 check(bool(retired) and bool(aliases), "the table declares family aliases and retired models")
 newest_by_family = {}
 if not SOURCE_ONLY:
@@ -547,7 +582,12 @@ def stale_reason(model):
         return None
     match = GPT_ID.match(bare)
     if match and match.group(2) in newest_by_family and newest_by_family[match.group(2)] != bare:
-        return f"older than {newest_by_family[match.group(2)]}"
+        newest = newest_by_family[match.group(2)]
+        if bare in older_allowed_index():
+            if eval_reference_ok(older_allowed_index()[bare]):
+                return None
+            return "older_allowed entry has no eval reference"
+        return f"older than {newest}; add it to older_allowed with an eval reference"
     return None
 
 
@@ -580,7 +620,11 @@ env_slots = settings.get("env", {}) if isinstance(settings.get("env"), dict) els
 for key, value in env_slots.items():
     if key.startswith("ANTHROPIC_DEFAULT_") and isinstance(value, str) and stale_reason(value):
         stale.append(f"settings.json env {key}: {value} ({stale_reason(value)})")
-check(not stale, "no retired or older-than-newest model is pinned" + (": " + "; ".join(stale) if stale else ""))
+check(
+    not stale,
+    "no retired model, and no older model without an eval reference, is pinned"
+    + (": " + "; ".join(stale) if stale else ""),
+)
 
 # Seat guard behaviour: deny a pinned Fable model and a Fable-defined type.
 hook = SOURCE / "hooks" / "seat-guard.py"

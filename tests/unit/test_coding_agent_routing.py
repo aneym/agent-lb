@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -51,6 +54,8 @@ def test_source_canon_passes_verify_routing(tmp_path: Path) -> None:
         ("missing-definition", "factory:seat-definitions"),
         ("private-path", "factory:public-text"),
         ("retired", "retired"),
+        ("older-allowed-retired", "older_allowed lists retired id"),
+        ("older-allowed-empty-ref", "older_allowed entry has no eval reference"),
         ("seat-missing", "factory:seats-map"),
         ("seat-vendor", "factory:seats-map"),
         ("seat-model-on-chain-seat", "factory:seats-map"),
@@ -91,6 +96,10 @@ def test_verify_routing_rejects_each_factory_violation(
         del classes["plan"]["second_opinion"]
     elif violation == "retired":
         classes["implement"]["chain"][0]["model"] = "gpt-5.6-sol"
+    elif violation == "older-allowed-retired":
+        table["older_allowed"] = {"gpt-5.6-sol": "E13"}
+    elif violation == "older-allowed-empty-ref":
+        table["older_allowed"] = {"some-old-id": ""}
     elif violation == "seat-missing":
         del table["seats"]["verifier"]
     elif violation == "seat-vendor":
@@ -137,10 +146,38 @@ def test_verify_routing_rejects_each_factory_violation(
     result = _verify(source, home)
     assert result.returncode == 1, result.stdout + result.stderr
     if expected == "retired":
-        assert "FAIL no retired or older-than-newest model is pinned" in result.stdout
+        assert "FAIL no retired model, and no older model without an eval reference, is pinned" in result.stdout
         assert "gpt-5.6-sol (retired)" in result.stdout
     else:
         assert f"FAIL {expected} " in result.stdout
+
+
+def test_stale_reason_accepts_an_older_id_only_with_an_eval_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_LB_USER_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["verify-routing", "--source-only"])
+    script = ROOT / "config" / "coding-agents" / "verify-routing"
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        module = runpy.run_path(str(script), run_name="verify_routing_older_allowed")
+    stale_reason = module["stale_reason"]
+    state = stale_reason.__globals__
+    state["newest_by_family"] = {"sol": "gpt-5.8-sol"}
+    state["older_allowed"] = {"gpt-5.7-sol": "E13"}
+    assert stale_reason("gpt-5.7-sol") is None
+    state["older_allowed"] = {"gpt-5.7-sol": "orch-lab/e16/SUMMARY.md: Grok arm"}
+    assert stale_reason("gpt-5.7-sol") is None
+    state["older_allowed"] = {"gpt-5.7-sol": "runs/sample.jsonl"}
+    assert stale_reason("gpt-5.7-sol") is None
+    state["older_allowed"] = {"gpt-5.7-sol": ""}
+    assert stale_reason("gpt-5.7-sol") == "older_allowed entry has no eval reference"
+    state["older_allowed"] = {"gpt-5.7-sol": "no cite"}
+    assert stale_reason("gpt-5.7-sol") == "older_allowed entry has no eval reference"
+    state["older_allowed"] = {}
+    assert stale_reason("gpt-5.7-sol") == (
+        "older than gpt-5.8-sol; add it to older_allowed with an eval reference"
+    )
+    state["older_allowed"] = {"gpt-5.6-sol": "E13"}
+    assert stale_reason("gpt-5.6-sol") == "retired"
 
 
 def test_fable_telemetry_and_historical_fixtures_are_not_route_migrated() -> None:

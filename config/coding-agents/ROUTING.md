@@ -145,6 +145,6 @@ The factory's doctor, map, hourly canary and scoreboard are planned, not built. 
 - `install-policy.py` installs every seat definition in `agents/` (off-default seats too), `routing-table.json`
   (keeping live `overrides`), the seat guard and the CLAUDE.md block. `route seat` resolves one seat at a commit.
 - `verify-routing` checks an install; `verify-routing --source-only` checks this directory with no home and no LB.
-  Both fail on a retired or older-than-newest id and on the factory rules `implement-head`, `off-default`,
-  `audit-cross-vendor`, `review-policy`, `stage-effort`, `second-opinion`, `routing-doc`, `seat-definitions`,
-  `public-text`, `seats-map`, `escalation`.
+  Both fail on a retired id, and on an older-than-newest id unless routing-table.json `older_allowed` names it
+  with an eval reference (Alex, 2026-09-29), and on the factory rules `implement-head`, `off-default`,
+  `audit-cross-vendor`, `review-policy`, `stage-effort`, `second-opinion`, `routing-doc`, `seat-definitions`, `public-text`, `seats-map`, `escalation`.

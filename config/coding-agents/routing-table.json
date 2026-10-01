@@ -745,5 +745,7 @@
     "gpt-5-*",
     "gpt-5"
   ],
-  "off_default": []
+  "off_default": [],
+  "older_allowed": {},
+  "older_allowed_note": "2026-10-01: retired ids always fail; an older id passes only when it carries an eval reference."
 }
