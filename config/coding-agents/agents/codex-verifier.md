@@ -64,7 +64,7 @@ eval command, which files the contract owned) followed verbatim by this procedur
    has NO writable temp directory, so pytest and most build tooling die before
    collecting a single test. Execution belongs to the `codex-test-runner` seat,
    which runs it in a disposable worktree at the PR head and leaves the captured
-   output at `<repo>-worktrees/.verify-runs/pr<pr>-<sha8>.txt`.
+   output at `<repo>-wt/.verify-runs/pr<pr>-<sha8>.txt`.
    `cat` that file and quote its tail.
    **Never claim a suite ran unless the runner's output file is present.** If
    the brief names no such file, or the file is absent or empty, say

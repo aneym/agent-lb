@@ -26,8 +26,8 @@ Work in a **disposable** worktree, never in a lane's worktree and never in the
 main checkout.
 
 1. Resolve the head SHA and take its first 8 characters. Set
-   `RUN=<repo>-worktrees/verify-<pr>-<sha8>` and
-   `OUT=<repo>-worktrees/.verify-runs/pr<pr>-<sha8>.txt`.
+   `RUN=<repo>-wt/verify-<pr>-<sha8>` and
+   `OUT=<repo>-wt/.verify-runs/pr<pr>-<sha8>.txt`.
 2. `mkdir -p` the `.verify-runs` directory, then create the worktree detached at
    that exact SHA:
    `git -C <repo> worktree add --detach "$RUN" <sha>`
@@ -84,7 +84,7 @@ base and head itself, in its own sandbox. The brief gives the piece id, the
 base and head revisions (full 40-character shas; resolve a ref with
 `git -C <repo> rev-parse`), and `<repo>`.
 
-1. Set `OUT=<repo>-worktrees/.verify-runs/scenario-<piece>-<head8>` and
+1. Set `OUT=<repo>-wt/.verify-runs/scenario-<piece>-<head8>` and
    `mkdir -p` its parent. Write the spec verbatim to `"$OUT.spec.json"`.
 2. Run one command, with the Bash call's `timeout: 600000`:
 
