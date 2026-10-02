@@ -117,9 +117,71 @@ def test_missing_transcript_writes_null_cost(interpreter: str, tmp_path: Path) -
 
     assert len(closeouts) == 1
     closeout = closeouts[0]
-    for field in ("model", "tokens_in", "tokens_out", "cache_read_tokens", "wall_s"):
+    for field in ("model", "tokens_in", "tokens_out", "cache_read_tokens", "wall_s", "nav"):
         assert closeout[field] is None
     assert closeout["matched"] is True
+
+
+def _tool_turn(message_id: str, call_id: str, name: str, tool_input: dict, result: str, is_error: bool) -> list:
+    """One assistant row per call plus its result. The call row is written twice,
+    as a streamed reply repeats rows that share a message id."""
+    call = {
+        "type": "assistant",
+        "timestamp": "2026-09-22T10:00:30.000Z",
+        "message": {
+            "role": "assistant",
+            "id": message_id,
+            "model": "claude-opus-5-5",
+            "content": [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}],
+        },
+    }
+    answer = {
+        "type": "user",
+        "timestamp": "2026-09-22T10:00:31.000Z",
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": call_id, "content": result, "is_error": is_error}],
+        },
+    }
+    return [call, call, answer]
+
+
+@pytest.mark.parametrize("interpreter", INTERPRETERS)
+def test_closeout_records_navigation_counters(interpreter: str, tmp_path: Path) -> None:
+    transcript = tmp_path / "subagents" / "agent-1.jsonl"
+    transcript.parent.mkdir()
+    rows = [{"type": "user", "timestamp": "2026-09-22T10:00:00.000Z", "message": {"role": "user", "content": PROMPT}}]
+    rows += _tool_turn(
+        "m1", "t1", "Read", {"file_path": "/repo/app.py"}, "1\tprint('No such file or directory')", False
+    )
+    rows += _tool_turn(
+        "m2",
+        "t2",
+        "Bash",
+        {"command": "grep -n x --include=*.py ."},
+        "(eval):1: no matches found: --include=*.py",
+        True,
+    )
+    rows += _tool_turn("m3", "t3", "Read", {"file_path": "/repo/gone.py"}, "File does not exist.", True)
+    rows += _tool_turn("m4", "t4", "Bash", {"command": "cat /repo/app.py"}, "x" * 20001, False)
+    rows += _tool_turn("m5", "t5", "Bash", {"command": "gh pr checks 12"}, "pass", False)
+    rows += _tool_turn("m6", "t6", "Edit", {"file_path": "/repo/app.py"}, "ok", False)
+    rows += _tool_turn("m7", "t7", "Bash", {"command": "rg -n x . | head"}, "app.py:1:x", False)
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    nav = _run(interpreter, tmp_path, transcript)[0]["nav"]
+
+    assert nav["calls"] == 7
+    assert nav["nav"] == 5
+    assert nav["nav_before_write"] == 4
+    # grep and cat run through rtk; rg does not.
+    assert nav["nav_rtk"] == 2
+    # A Read that succeeds on text quoting an error is not a failed lookup.
+    assert nav["failed"] == {"zsh_glob": 1, "missing_path": 1, "cmd_not_found": 0, "too_large": 0}
+    assert nav["failed_lookups"] == 2
+    assert nav["repeat_reads"] == 1
+    assert nav["outputs_over_20k"] == 1
+    assert nav["status_polls"] == 1
 
 
 @pytest.mark.parametrize("interpreter", INTERPRETERS)
