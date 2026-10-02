@@ -279,6 +279,9 @@ class Settings(BaseSettings):
     # False (default) keeps those accounts out of rotation whatever their
     # balance; true restores the old credit override.
     openai_route_to_credits: bool = False
+    # Claude-week rule (a) (p6, 2026-10-01): when true, /v1/messages refuses Opus requests from
+    # headless Claude Code (user agent "sdk-cli") that carry no x-agent-lb-seat header.
+    refuse_untagged_headless_opus: bool = False
     # Opt-in only: holding an exhausted pool open hides the error from clients
     # for hours. By default return the quota error and reset headers immediately.
     anthropic_pool_exhausted_wait_enabled: bool = False

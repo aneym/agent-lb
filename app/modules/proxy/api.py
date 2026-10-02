@@ -84,6 +84,7 @@ from app.core.providers import get_anthropic_compat_profile
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
+from app.core.utils.client_session import get_caller_seat
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
 from app.core.utils.sse import (
@@ -767,6 +768,26 @@ async def responses_websocket(
     )
 
 
+_UNTAGGED_HEADLESS_OPUS_MESSAGE = (
+    "agent-lb: untagged headless Opus refused (claude-week rule (a), p6 2026-10-01). "
+    "Set the seat: ANTHROPIC_CUSTOM_HEADERS='x-agent-lb-seat: <seat>' or launch through "
+    "claude-lb-launch / run-workflow, which tag it."
+)
+
+
+def _untagged_headless_opus_refusal(request: Request, model: str | None) -> Response | None:
+    if not get_settings().refuse_untagged_headless_opus:
+        return None
+    if not re.match(r"^claude-opus(?:-|$)", model or ""):
+        return None
+    if "sdk-cli" not in (request.headers.get("user-agent") or ""):
+        return None
+    if get_caller_seat() is not None:
+        return None
+    logger.info("untagged_headless_opus_refused model=%s", model)
+    return _anthropic_error_response(403, "permission_error", _UNTAGGED_HEADLESS_OPUS_MESSAGE)
+
+
 @v1_router.post(
     "/messages",
     response_model=None,
@@ -818,6 +839,9 @@ async def v1_messages(
     resolved_request = await context.service.resolve_message_request(payload)
     payload = resolved_request.payload
     validate_model_access(api_key, payload.model)
+    refusal = _untagged_headless_opus_refusal(request, payload.model)
+    if refusal is not None:
+        return refusal
     try:
         # Only API-key traffic is reservation-limited; OAuth sessions skip the
         # estimate entirely. The raw body is already buffered by Starlette, so
