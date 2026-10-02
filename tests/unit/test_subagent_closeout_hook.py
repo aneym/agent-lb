@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,23 @@ def test_closeout_records_navigation_counters(interpreter: str, tmp_path: Path) 
     assert nav["repeat_reads"] == 1
     assert nav["outputs_over_20k"] == 1
     assert nav["status_polls"] == 1
+
+
+@pytest.mark.parametrize("interpreter", INTERPRETERS)
+def test_a_huge_command_does_not_stall_the_closeout(interpreter: str, tmp_path: Path) -> None:
+    transcript = tmp_path / "subagents" / "agent-1.jsonl"
+    transcript.parent.mkdir()
+    # One line of repeated openers: uncapped, the edit and parser patterns took 10 s here.
+    command = "python3 - <<EOF " + "open(json.load(" * 13000
+    rows = [{"type": "user", "timestamp": "2026-09-22T10:00:00.000Z", "message": {"role": "user", "content": PROMPT}}]
+    rows += _tool_turn("m1", "t1", "Bash", {"command": command}, "ok", False)
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    started = time.monotonic()
+
+    nav = _run(interpreter, tmp_path, transcript)[0]["nav"]
+
+    assert time.monotonic() - started < 1.0
+    assert nav["calls"] == 1
 
 
 @pytest.mark.parametrize("interpreter", INTERPRETERS)

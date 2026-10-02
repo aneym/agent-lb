@@ -249,6 +249,7 @@ READ_ARG = re.compile(
     r"([~/][^\s;&|>]+|[\w.-]+/[^\s;&|>]+)"
 )
 BIG_OUTPUT = 20000
+COMMAND_CAP = 20000
 INLINE_OUTPUT = 15000
 
 
@@ -300,7 +301,9 @@ def classify_call(name: str, tool_input, output: str, is_error: bool) -> dict:
     """One call's navigation facts. `output` is the tool_result text as stored,
     which is after rtk filtering and Claude's own large-output spill."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
-    command = str(tool_input.get("command") or "") if name == "Bash" else ""
+    # EDIT_BASH and RESULT_PARSER backtrack quadratically; a 100 KB heredoc took 8 s,
+    # past the hook timeout. The verb and target sit at the start of a command.
+    command = (str(tool_input.get("command") or "") if name == "Bash" else "")[:COMMAND_CAP]
     ran = rtk_rewrite(command) if command else ""
     edit = name in EDIT_TOOLS or bool(command and EDIT_BASH.search(command))
     nav = not edit and (name in NAV_TOOLS or bool(ran and NAV_BASH.search(ran)))
