@@ -250,6 +250,9 @@ class RequestLog(Base):
     caller_machine: Mapped[str | None] = mapped_column(String(48), nullable=True)
     caller_machine_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     caller_seat: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    room: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    unified_5h_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unified_7d_utilization: Mapped[float | None] = mapped_column(Float, nullable=True)
     request_id: Mapped[str] = mapped_column(String, nullable=False)
     request_kind: Mapped[str] = mapped_column(
         String,

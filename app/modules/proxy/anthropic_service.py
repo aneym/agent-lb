@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 import time
@@ -482,6 +483,15 @@ class AnthropicProxyService:
                                 label=_provider_label(provider_name),
                             ) as resp:
                                 await admission_stack.aclose()
+                                unified_5h_utilization = None
+                                unified_7d_utilization = None
+                                if provider_name == ANTHROPIC_PROVIDER_NAME:
+                                    unified_5h_utilization = _parse_unified_utilization(
+                                        resp.headers.get("anthropic-ratelimit-unified-5h-utilization")
+                                    )
+                                    unified_7d_utilization = _parse_unified_utilization(
+                                        resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
+                                    )
                                 if (provider_name == "glm" and resp.status >= 400) or (
                                     provider_name == "kimi" and resp.status in {402, 403, 429}
                                 ):
@@ -511,6 +521,8 @@ class AnthropicProxyService:
                                             session_id=session_id,
                                             useragent=useragent,
                                             useragent_group=useragent_group,
+                                            unified_5h_utilization=unified_5h_utilization,
+                                            unified_7d_utilization=unified_7d_utilization,
                                         )
                                         last_error_status = 503
                                         last_error_message = (
@@ -550,6 +562,8 @@ class AnthropicProxyService:
                                         session_id=session_id,
                                         useragent=useragent,
                                         useragent_group=useragent_group,
+                                        unified_5h_utilization=unified_5h_utilization,
+                                        unified_7d_utilization=unified_7d_utilization,
                                     )
                                     if error_code == "mirror_token_unavailable":
                                         raise AnthropicProxyError(503, error_message, code=error_code)
@@ -578,6 +592,8 @@ class AnthropicProxyService:
                                         session_id=session_id,
                                         useragent=useragent,
                                         useragent_group=useragent_group,
+                                        unified_5h_utilization=unified_5h_utilization,
+                                        unified_7d_utilization=unified_7d_utilization,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -603,6 +619,8 @@ class AnthropicProxyService:
                                         session_id=session_id,
                                         useragent=useragent,
                                         useragent_group=useragent_group,
+                                        unified_5h_utilization=unified_5h_utilization,
+                                        unified_7d_utilization=unified_7d_utilization,
                                     )
                                     last_error_status = resp.status
                                     last_error_message = error_message
@@ -633,6 +651,8 @@ class AnthropicProxyService:
                                         session_id=session_id,
                                         useragent=useragent,
                                         useragent_group=useragent_group,
+                                        unified_5h_utilization=unified_5h_utilization,
+                                        unified_7d_utilization=unified_7d_utilization,
                                     )
                                     raise AnthropicProxyError(
                                         resp.status,
@@ -683,6 +703,8 @@ class AnthropicProxyService:
                                         session_id=session_id,
                                         useragent=useragent,
                                         useragent_group=useragent_group,
+                                        unified_5h_utilization=unified_5h_utilization,
+                                        unified_7d_utilization=unified_7d_utilization,
                                     )
                                     last_error_status = 429
                                     last_error_message = "Anthropic response billed extra usage"
@@ -766,6 +788,8 @@ class AnthropicProxyService:
                                         session_id=session_id,
                                         useragent=useragent,
                                         useragent_group=useragent_group,
+                                        unified_5h_utilization=unified_5h_utilization,
+                                        unified_7d_utilization=unified_7d_utilization,
                                         usage=usage,
                                         latency_first_token_ms=latency_first_token_ms,
                                     )
@@ -790,6 +814,8 @@ class AnthropicProxyService:
                                     session_id=session_id,
                                     useragent=useragent,
                                     useragent_group=useragent_group,
+                                    unified_5h_utilization=unified_5h_utilization,
+                                    unified_7d_utilization=unified_7d_utilization,
                                     usage=usage,
                                     latency_first_token_ms=latency_first_token_ms,
                                 )
@@ -1669,6 +1695,8 @@ class AnthropicProxyService:
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
         latency_first_token_ms: int | None = None,
+        unified_5h_utilization: float | None = None,
+        unified_7d_utilization: float | None = None,
     ) -> None:
         # The member lookup adds an await. Keep the log task alive if the client
         # disconnects, as the proxy request logger does.
@@ -1689,6 +1717,8 @@ class AnthropicProxyService:
                 usage=usage,
                 latency_first_token_ms=latency_first_token_ms,
                 identity=get_request_identity(),
+                unified_5h_utilization=unified_5h_utilization,
+                unified_7d_utilization=unified_7d_utilization,
             )
         )
         try:
@@ -1725,6 +1755,8 @@ class AnthropicProxyService:
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
         latency_first_token_ms: int | None = None,
+        unified_5h_utilization: float | None = None,
+        unified_7d_utilization: float | None = None,
         identity: RequestIdentity | None = None,
     ) -> None:
         try:
@@ -1749,6 +1781,8 @@ class AnthropicProxyService:
                     error_message=error_message,
                     plan_type=account.plan_type if account else None,
                     provider=provider_name,
+                    unified_5h_utilization=unified_5h_utilization,
+                    unified_7d_utilization=unified_7d_utilization,
                     transport="http",
                     session_id=session_id,
                     useragent=useragent,
@@ -2437,3 +2471,13 @@ def _get_header(headers: Mapping[str, str], name: str) -> str | None:
         if key.lower() == lowered:
             return value
     return None
+
+
+def _parse_unified_utilization(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None

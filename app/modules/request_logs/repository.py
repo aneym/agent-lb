@@ -20,7 +20,7 @@ from app.core.usage.types import (
     UsageCostSummary,
     UsageMetricsSummary,
 )
-from app.core.utils.client_session import get_caller_seat, get_client_session_id
+from app.core.utils.client_session import get_caller_seat, get_client_session_id, get_room
 from app.core.utils.request_id import ensure_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, RequestKind, RequestLog
@@ -415,6 +415,8 @@ class RequestLogsRepository:
         cache_creation_tokens: int | None = None,
         cache_read_tokens: int | None = None,
         identity: RequestIdentity | None = None,
+        unified_5h_utilization: float | None = None,
+        unified_7d_utilization: float | None = None,
     ) -> RequestLog:
         caller = identity_for_log(identity)
         async with sqlite_writer_section():
@@ -437,6 +439,9 @@ class RequestLogsRepository:
                 caller_machine=caller.caller_machine,
                 caller_machine_source=caller.caller_machine_source,
                 caller_seat=get_caller_seat(),
+                room=get_room(),
+                unified_5h_utilization=unified_5h_utilization,
+                unified_7d_utilization=unified_7d_utilization,
                 request_id=resolved_request_id,
                 model=model,
                 plan_type=resolved_plan_type,

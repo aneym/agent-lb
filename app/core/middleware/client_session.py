@@ -5,8 +5,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.core.utils.client_session import (
     reset_caller_seat,
     reset_client_session_id,
+    reset_room,
     set_caller_seat_from_scope,
     set_client_session_id_from_scope,
+    set_room_from_scope,
 )
 
 
@@ -22,8 +24,10 @@ class ClientSessionMiddleware:
             return
         token = set_client_session_id_from_scope(scope)
         seat = set_caller_seat_from_scope(scope)
+        room = set_room_from_scope(scope)
         try:
             await self.app(scope, receive, send)
         finally:
+            reset_room(room)
             reset_caller_seat(seat)
             reset_client_session_id(token)

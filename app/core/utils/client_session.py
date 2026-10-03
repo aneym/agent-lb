@@ -66,3 +66,23 @@ def _caller_seat(scope: Scope) -> str | None:
     if _SEAT_RE.fullmatch(value):
         return value
     return None
+
+
+_ROOM_HEADER = b"x-agent-lb-room"
+_ROOM_RE = re.compile(r"[a-z0-9][a-z0-9@._:/-]{0,127}\Z")
+_ROOM: ContextVar[str | None] = ContextVar("room", default=None)
+
+
+def get_room() -> str | None:
+    return _ROOM.get()
+
+
+def set_room_from_scope(scope: Scope) -> Token[str | None]:
+    headers = dict(scope.get("headers") or ())
+    raw = headers.get(_ROOM_HEADER)
+    value = raw.decode("latin-1").strip().lower() if raw else ""
+    return _ROOM.set(value if _ROOM_RE.fullmatch(value) else None)
+
+
+def reset_room(token: Token[str | None]) -> None:
+    _ROOM.reset(token)

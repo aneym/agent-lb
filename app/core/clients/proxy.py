@@ -88,6 +88,7 @@ IGNORE_INBOUND_HEADERS = {
     "x-agent-lb-intent",
     "x-agent-lb-lane",
     "x-agent-lb-seat",
+    "x-agent-lb-room",
 }
 
 _ERROR_TYPE_CODE_MAP = {

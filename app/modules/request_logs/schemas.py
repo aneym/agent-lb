@@ -25,6 +25,9 @@ class RequestLogEntry(DashboardModel):
     caller_machine: str | None = None
     caller_machine_source: str | None = None
     caller_seat: str | None = None
+    room: str | None = None
+    unified_5h_utilization: float | None = None
+    unified_7d_utilization: float | None = None
     session_id: str | None = None
     request_id: str
     request_kind: str = "normal"
