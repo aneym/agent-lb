@@ -75,6 +75,15 @@ def _header_value(headers: Mapping[str, str], name: str) -> str | None:
     return None
 
 
+HEADLESS_CLAUDE_UA_MARKERS = ("sdk-cli", "sdk-ts", "agent-sdk/")
+
+
+def is_headless_claude_user_agent(ua: str | None) -> bool:
+    if not ua:
+        return False
+    return any(marker in ua for marker in HEADLESS_CLAUDE_UA_MARKERS)
+
+
 def upload_class(headers: Mapping[str, str]) -> str:
     priority = _header_value(headers, "x-agent-lb-priority")
     if isinstance(priority, str) and priority.strip().lower() in {"high", "batch"}:
@@ -84,7 +93,7 @@ def upload_class(headers: Mapping[str, str]) -> str:
     user_agent = _header_value(headers, "user-agent")
     if not isinstance(user_agent, str):
         user_agent = ""
-    if "sdk-cli" in user_agent or "workload/" in user_agent:
+    if is_headless_claude_user_agent(user_agent) or "workload/" in user_agent:
         return "batch"
     if user_agent.startswith("claude-cli/") and "(external, cli" in user_agent:
         return "high"

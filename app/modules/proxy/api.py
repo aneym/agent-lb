@@ -84,6 +84,7 @@ from app.core.providers import get_anthropic_compat_profile
 from app.core.resilience.overload import is_local_overload_error_code, merge_retry_after_headers
 from app.core.runtime_logging import log_error_response
 from app.core.types import JsonValue
+from app.core.upload_admission import is_headless_claude_user_agent
 from app.core.utils.client_session import get_caller_seat, get_client_session_id
 from app.core.utils.json_guards import is_json_mapping
 from app.core.utils.request_id import get_request_id
@@ -778,9 +779,11 @@ _UNTAGGED_HEADLESS_OPUS_MESSAGE = (
 def _untagged_headless_opus_refusal(request: Request, model: str | None) -> Response | None:
     if not re.match(r"^claude-opus(?:-|$)", model or "", re.IGNORECASE):
         return None
-    if "sdk-cli" not in (request.headers.get("user-agent") or ""):
+    if not is_headless_claude_user_agent(request.headers.get("user-agent")):
         return None
     if get_caller_seat() is not None:
+        return None
+    if (request.headers.get("x-agent-lb-priority") or "").strip().lower() == "high":
         return None
     session = (get_client_session_id() or "-")[:80]
     if not get_settings().refuse_untagged_headless_opus:

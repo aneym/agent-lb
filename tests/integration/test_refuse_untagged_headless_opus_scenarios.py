@@ -22,6 +22,8 @@ pytestmark = pytest.mark.integration
 
 _HEADLESS = "claude-cli/2.1.280 (external, sdk-cli)"
 _INTERACTIVE = "claude-cli/2.1.280 (external, cli)"
+_SDK_TS = "claude-cli/2.1.288 (external, sdk-ts, agent-sdk/0.3.288)"
+_TUI = "claude-cli/2.1.288 (external, cli)"
 _WOULD_REFUSE = "untagged_headless_opus_would_refuse"
 
 
@@ -39,12 +41,22 @@ def _flag(monkeypatch: pytest.MonkeyPatch, on: bool | None) -> None:
     get_settings.cache_clear()
 
 
-async def _send(async_client, *, model: str, user_agent: str, seat: str | None = None, session: str | None = None):
+async def _send(
+    async_client,
+    *,
+    model: str,
+    user_agent: str,
+    seat: str | None = None,
+    session: str | None = None,
+    priority: str | None = None,
+):
     headers = {"anthropic-beta": "oauth-2025-04-20", "user-agent": user_agent}
     if session is not None:
         headers["x-claude-code-session-id"] = session
     if seat is not None:
         headers["x-agent-lb-seat"] = seat
+    if priority is not None:
+        headers["x-agent-lb-priority"] = priority
     return await async_client.post(
         "/v1/messages",
         json={"model": model, "max_tokens": 8, "messages": [{"role": "user", "content": "hi"}]},
@@ -103,3 +115,47 @@ async def test_flag_off_logs_what_it_would_refuse_with_the_session(async_client,
     would = [r.getMessage() for r in caplog.records if _WOULD_REFUSE in r.getMessage()]
     assert len(would) == 1, would
     assert "sess-untagged-1" in would[0]
+
+
+def test_refuse_untagged_headless_opus_defaults_off(monkeypatch):
+    monkeypatch.delenv("AGENT_LB_REFUSE_UNTAGGED_HEADLESS_OPUS", raising=False)
+    get_settings.cache_clear()
+    assert get_settings().refuse_untagged_headless_opus is False
+
+
+@pytest.mark.asyncio
+async def test_sdk_ts_opus_is_refused_unless_seated_or_priority_high(async_client, monkeypatch):
+    _flag(monkeypatch, True)
+
+    untagged = await _send(async_client, model="claude-opus-5-5", user_agent=_SDK_TS)
+    seated = await _send(async_client, model="claude-opus-5-5", user_agent=_SDK_TS, seat="fold:test")
+    priority = await _send(async_client, model="claude-opus-5-5", user_agent=_SDK_TS, priority="HIGH")
+    tui = await _send(async_client, model="claude-opus-5-5", user_agent=_TUI)
+    sonnet = await _send(async_client, model="claude-sonnet-5-5", user_agent=_SDK_TS)
+
+    assert _refused(untagged), untagged.text
+    for response in (seated, priority, tui, sonnet):
+        assert not _refused(response), response.text
+
+
+@pytest.mark.asyncio
+async def test_flag_off_sdk_ts_logs_unless_priority_is_high(async_client, monkeypatch, caplog):
+    _flag(monkeypatch, False)
+    caplog.set_level(logging.INFO, logger="app.modules.proxy.api")
+
+    untagged = await _send(
+        async_client, model="claude-opus-5-5", user_agent=_SDK_TS, session="sess-sdk-ts-1"
+    )
+    await _send(
+        async_client,
+        model="claude-opus-5-5",
+        user_agent=_SDK_TS,
+        session="sess-sdk-ts-high",
+        priority="high",
+    )
+
+    assert not _refused(untagged), untagged.text
+    would = [r.getMessage() for r in caplog.records if _WOULD_REFUSE in r.getMessage()]
+    assert len(would) == 1, would
+    assert "sess-sdk-ts-1" in would[0]
+    assert "sess-sdk-ts-high" not in would[0]

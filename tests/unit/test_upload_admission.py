@@ -202,3 +202,13 @@ def test_upload_class_header_lookup_is_case_insensitive() -> None:
     headers = {"User-Agent": "claude-cli/2.1.286 (external, cli)", "X-Claude-Code-Agent-Id": "a1"}
     assert upload_admission.upload_class(headers) == "batch"
     assert upload_admission.upload_class({"x-agent-lb-priority": "  High  "}) == "high"
+
+
+def test_sdk_ts_and_agent_sdk_are_batch_unless_priority_is_high() -> None:
+    sdk_ts = "claude-cli/2.1.288 (external, sdk-ts, agent-sdk/0.3.288)"
+    agent_sdk = "claude-cli/2.1.288 (external, agent-sdk/0.3.288)"
+    tui = "claude-cli/2.1.288 (external, cli)"
+    assert upload_admission.upload_class({"user-agent": sdk_ts}) == "batch"
+    assert upload_admission.upload_class({"user-agent": agent_sdk}) == "batch"
+    assert upload_admission.upload_class({"user-agent": sdk_ts, "x-agent-lb-priority": "high"}) == "high"
+    assert upload_admission.upload_class({"user-agent": tui}) == "high"
