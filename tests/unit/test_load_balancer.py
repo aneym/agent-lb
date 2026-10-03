@@ -1742,6 +1742,82 @@ async def test_anthropic_eligibility_ignores_tripwire_after_primary_recovers(mon
     assert eligibility.blocked_count == 0
 
 
+@pytest.mark.asyncio
+async def test_anthropic_eligibility_tripwire_stays_until_secondary_headroom_is_newer(monkeypatch):
+    """A primary snapshot at 8% recorded after the tripwire does not lift it
+    while the latest secondary snapshot (99%) is older. A secondary snapshot
+    under 100% recorded after the tripwire does."""
+    account = _make_test_account(account_id="anthropic-secondary-stale")
+    account.provider = "anthropic"
+    future = int(time.time()) + 3600
+    tripwire_recorded_at = datetime(2026, 7, 22, 10, 0)
+    primary_recorded_at = datetime(2026, 7, 22, 11, 0)
+    secondary_recorded_at = {"value": datetime(2026, 7, 22, 9, 0)}
+
+    def _latest_usage(*, window: str, account_ids: list[str]) -> dict:
+        del account_ids
+        if window == "primary":
+            return {
+                account.id: SimpleNamespace(
+                    used_percent=8.0,
+                    reset_at=future,
+                    credits_unlimited=False,
+                    credits_has=False,
+                    credits_balance=None,
+                    recorded_at=primary_recorded_at,
+                )
+            }
+        if window == "secondary":
+            return {
+                account.id: SimpleNamespace(
+                    used_percent=99.0,
+                    reset_at=future,
+                    recorded_at=secondary_recorded_at["value"],
+                )
+            }
+        return {}
+
+    class _RepoBundle:
+        def __init__(self) -> None:
+            self.accounts = SimpleNamespace(list_accounts=AsyncMock(return_value=[account]))
+            self.additional_usage = SimpleNamespace(
+                latest_by_account=AsyncMock(
+                    side_effect=lambda quota_key, window, *, account_ids: (
+                        {
+                            account.id: SimpleNamespace(
+                                used_percent=100.0,
+                                reset_at=future,
+                                recorded_at=tripwire_recorded_at,
+                            )
+                        }
+                        if quota_key == anthropic_service_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY
+                        else {}
+                    )
+                )
+            )
+            self.usage = SimpleNamespace(latest_by_account=AsyncMock(side_effect=_latest_usage))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    monkeypatch.setattr(anthropic_service_module, "get_settings", _anthropic_eligibility_settings)
+    service = AnthropicProxyService(lambda: _RepoBundle())
+
+    blocked = await service._provider_quota_eligibility("anthropic", "anthropic_top")
+
+    assert blocked.account_ids == []
+    assert blocked.blocked_count == 1
+
+    secondary_recorded_at["value"] = datetime(2026, 7, 22, 12, 0)
+    recovered = await service._provider_quota_eligibility("anthropic", "anthropic_top")
+
+    assert recovered.account_ids == [account.id]
+    assert recovered.blocked_count == 0
+
+
 def _quota_scoped_additional_usage(quota_key: str, entries: dict) -> AsyncMock:
     """latest_by_account stub that returns entries only for the given quota key
     (the eligibility path also queries the extra-usage tripwire key)."""

@@ -643,12 +643,50 @@ class AnthropicProxyService:
 
                                 # A 200 whose unified rate-limit headers report
                                 # the subscription window exhausted was served by
-                                # billing extra-usage credits; cool the account
-                                # down now instead of waiting ~60s for the next
-                                # usage refresh to notice.
+                                # billing extra-usage credits. Drop the body only
+                                # when extra-usage routing is off and this account
+                                # was not the paid last resort. With the setting
+                                # on, stream the body and record the cooldown.
                                 tripwire_error: UpstreamError | None = None
                                 if provider_name == ANTHROPIC_PROVIDER_NAME:
                                     tripwire_error = _extra_usage_tripwire_error(resp.headers)
+                                paid_fallback = account.id in wake_eligibility.paid_fallback_account_ids
+                                if (
+                                    tripwire_error is not None
+                                    and not paid_fallback
+                                    and not get_settings().anthropic_route_to_extra_usage
+                                ):
+                                    header_name = _extra_usage_tripwire_header(resp.headers) or "unknown"
+                                    logger.warning(
+                                        "Anthropic extra-usage response refused account_id_prefix=%s "
+                                        "header=%s reset_at=%s",
+                                        account.id[:8],
+                                        header_name,
+                                        tripwire_error.get("resets_at"),
+                                    )
+                                    await self._record_quota_cooldown(
+                                        account,
+                                        quota_key=_ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+                                        error=tripwire_error,
+                                    )
+                                    await _release_upstream_response(resp)
+                                    await self._persist_request_log(
+                                        account=account,
+                                        provider_name=provider_name,
+                                        request_id=request_id,
+                                        model=payload.model,
+                                        started_at=started_at,
+                                        status="error",
+                                        error_code="extra_usage_refused",
+                                        error_message="Anthropic response billed extra usage",
+                                        api_key=api_key,
+                                        session_id=session_id,
+                                        useragent=useragent,
+                                        useragent_group=useragent_group,
+                                    )
+                                    last_error_status = 429
+                                    last_error_message = "Anthropic response billed extra usage"
+                                    continue
                                 if tripwire_error is not None:
                                     logger.warning(
                                         "Anthropic response reports extra-usage billing; recording quota "
@@ -1283,10 +1321,20 @@ class AnthropicProxyService:
                 )
             weekly_usage_used_percent: dict[str, float] = {}
             secondary_exhaustion: dict[str, int | None] = {}
+            secondary_snapshot_recorded_at: dict[str, int] = {}
+            secondary_headroom_recorded_at: dict[str, int] = {}
             if extra_usage_gate or fable_routing:
                 secondary_usage = await repos.usage.latest_by_account(window="secondary", account_ids=account_ids)
                 weekly_usage_used_percent = {
                     account_id: float(entry.used_percent) for account_id, entry in secondary_usage.items()
+                }
+                secondary_snapshot_recorded_at = {
+                    account_id: naive_utc_to_epoch(entry.recorded_at) for account_id, entry in secondary_usage.items()
+                }
+                secondary_headroom_recorded_at = {
+                    account_id: naive_utc_to_epoch(entry.recorded_at)
+                    for account_id, entry in secondary_usage.items()
+                    if entry.used_percent is not None and float(entry.used_percent) < 100.0
                 }
                 secondary_exhaustion = {
                     account_id: int(entry.reset_at) if entry.reset_at is not None else None
@@ -1378,12 +1426,30 @@ class AnthropicProxyService:
         blocked_count = 0
         request_quota_blocked_account_ids: set[str] = set()
 
+        route_paid_extra = bool(getattr(settings, "anthropic_route_to_extra_usage", False))
+
+        def _subscription_window_recovered(recorded_at: int | None, tripwire_recorded_at: int) -> bool:
+            return recorded_at is not None and recorded_at > tripwire_recorded_at
+
         def _active_extra_usage_tripwire_blocks(account_id: str) -> bool:
             tripwire = extra_usage_tripwire_cooldowns.get(account_id)
             if tripwire is None or not _anthropic_cooldown_is_active(tripwire[0], tripwire[1], now=now):
                 return False
-            recovered_at = primary_headroom_recorded_at.get(account_id)
-            return recovered_at is None or recovered_at <= tripwire[2]
+            primary_recovered = _subscription_window_recovered(
+                primary_headroom_recorded_at.get(account_id),
+                tripwire[2],
+            )
+            # Paid fallback keeps the primary-only lift. With the flag off, a
+            # weekly snapshot must also show headroom recorded after the
+            # tripwire; an account with no secondary snapshot stays primary-only.
+            if route_paid_extra or account_id not in secondary_snapshot_recorded_at:
+                return not primary_recovered
+            if not primary_recovered:
+                return True
+            return not _subscription_window_recovered(
+                secondary_headroom_recorded_at.get(account_id),
+                tripwire[2],
+            )
 
         for account_id in model_scope_account_ids:
             # A response-written requested-quota cooldown remains a real
@@ -1399,7 +1465,15 @@ class AnthropicProxyService:
                 request_quota_blocked_account_ids.add(account_id)
                 blocked_reset_by_account_id[account_id] = min(int(request_cooldown[1]), request_cooldown[2] + 60)
                 continue
-            # Primary and secondary usage snapshots are ranking only.
+            # Weekly exhaustion is a hard gate for billable messages when paid
+            # extra usage is off. The paid-fallback path still treats the
+            # snapshot as ranking and excludes it only from last-resort candidates.
+            if extra_usage_gate and not route_paid_extra and account_id in secondary_exhaustion:
+                blocked_count += 1
+                weekly_reset = secondary_exhaustion[account_id]
+                if weekly_reset is not None:
+                    blocked_reset_by_account_id[account_id] = int(weekly_reset)
+                continue
             tripwire_cooldown = extra_usage_tripwire_cooldowns.get(account_id)
             if tripwire_cooldown is not None and _active_extra_usage_tripwire_blocks(account_id):
                 blocked_count += 1
@@ -2223,6 +2297,29 @@ def _pool_wait_delay_seconds(retry_at: int | None, *, now: float, remaining: flo
     base = float(retry_at) - now if retry_at is not None else _POOL_WAIT_MIN_POLL_SECONDS
     base = min(max(base, _POOL_WAIT_MIN_POLL_SECONDS), _POOL_WAIT_MAX_POLL_SECONDS)
     return max(0.0, min(base + _POOL_WAIT_JITTER(), remaining))
+
+
+async def _release_upstream_response(resp: object) -> None:
+    release = getattr(resp, "release", None)
+    if release is None:
+        return
+    released = release()
+    if asyncio.iscoroutine(released) or asyncio.isfuture(released):
+        await released
+
+
+def _extra_usage_tripwire_header(headers: Mapping[str, str]) -> str | None:
+    overage_in_use = _get_header(headers, _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER)
+    if isinstance(overage_in_use, str) and overage_in_use.strip().lower() == "true":
+        return _ANTHROPIC_UNIFIED_OVERAGE_IN_USE_HEADER
+    for name in _ANTHROPIC_UNIFIED_STATUS_HEADERS:
+        value = _get_header(headers, name)
+        if value is None:
+            continue
+        normalized = value.strip().lower()
+        if normalized and normalized not in _ANTHROPIC_UNIFIED_ALLOWED_STATUSES:
+            return name
+    return None
 
 
 def _extra_usage_tripwire_error(headers: Mapping[str, str]) -> UpstreamError | None:

@@ -3500,7 +3500,16 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(
     def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
         del self, session, provider_name, json_body
         upstream_calls.append(headers["Authorization"])
-        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+        return _FakeResponseContext(
+            _FakeResponse(
+                200,
+                ANTHROPIC_SSE_BYTES,
+                headers={
+                    "anthropic-ratelimit-unified-overage-in-use": "true",
+                    "anthropic-ratelimit-unified-reset": str(paid_reset_at),
+                },
+            )
+        )
 
     monkeypatch.setattr(
         anthropic_proxy_module.AnthropicProxyService,
@@ -3520,6 +3529,7 @@ async def test_route_to_extra_usage_opt_in_serves_as_last_resort(
     )
 
     assert response.status_code == 200
+    assert response.content == ANTHROPIC_SSE_BYTES
     assert upstream_calls == ["Bearer anthropic-access-exhausted"]
 
 
@@ -3931,8 +3941,8 @@ _OVERAGE_BILLING_HEADERS = {
 
 @pytest.mark.asyncio
 async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(async_client, monkeypatch):
-    """First 200 served on extra-usage credits records the same cooldown a 429
-    would, so the session's next request rotates instead of billing again."""
+    """A 200 billed to extra usage records the cooldown and the same request
+    fails over; the billed body is not the client response."""
     await _insert_account(
         account_id="anthropic-tripwire",
         provider="anthropic",
@@ -3996,7 +4006,11 @@ async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(a
 
     first = await async_client.post("/v1/messages", json=payload, headers=headers)
     assert first.status_code == 200
-    assert serving_tokens[0] == "Bearer anthropic-access-tripwire"
+    assert serving_tokens == [
+        "Bearer anthropic-access-tripwire",
+        "Bearer anthropic-access-fallback",
+    ]
+    assert first.content == ANTHROPIC_SSE_BYTES
 
     async with SessionLocal() as session:
         result = await session.execute(
@@ -4012,6 +4026,349 @@ async def test_credit_billing_response_trips_cooldown_and_rotates_next_request(a
     second = await async_client.post("/v1/messages", json=payload, headers=headers)
     assert second.status_code == 200
     assert serving_tokens[-1] == "Bearer anthropic-access-fallback"
+
+
+_BILLED_BODY = b'{"text":"billed-extra-usage"}'
+_ALLOWED_BODY = b'{"text":"subscription-covered"}'
+
+
+class _BodyTrackingResponse(_FakeResponse):
+    def __init__(self, status: int, body: bytes, headers: dict[str, str] | None = None) -> None:
+        super().__init__(status, body, headers)
+        self.body_consumed = False
+        response = self
+
+        class _Content(_FakeContent):
+            async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+                response.body_consumed = True
+                async for chunk in super().iter_chunked(size):
+                    yield chunk
+
+        self.content = _Content([body])
+
+    async def read(self) -> bytes:
+        self.body_consumed = True
+        return await super().read()
+
+
+def _messages_payload() -> dict[str, object]:
+    return {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+
+async def _pin_sticky(account_id: str, payload: dict[str, object]) -> None:
+    request = AnthropicMessageRequest.model_validate(payload)
+    headers = {"anthropic-beta": "oauth-2025-04-20", "x-claude-session-id": f"session-{account_id}"}
+    sticky_key = anthropic_proxy_module._anthropic_sticky_key(
+        request,
+        headers,
+        quota_key=anthropic_proxy_module._messages_affinity_quota_key(request, provider_name="anthropic"),
+    )
+    assert sticky_key is not None
+    async with SessionLocal() as session:
+        session.add(
+            StickySession(
+                key=sticky_key,
+                account_id=account_id,
+                kind=StickySessionKind.CODEX_SESSION,
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_weekly_exhausted_account_is_not_selected_after_primary_recovers(async_client, monkeypatch):
+    """Secondary 100% with a future reset stays ineligible for /v1/messages even
+    when a newer primary snapshot is at 8% and postdates an extra-usage tripwire."""
+    from app.core.config.settings import get_settings
+
+    monkeypatch.delenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", raising=False)
+    get_settings.cache_clear()
+    spent_id = "anthropic-weekly-spent"
+    healthy_id = "anthropic-weekly-healthy"
+    await _insert_account(
+        account_id=spent_id,
+        provider="anthropic",
+        access_token="anthropic-access-weekly-spent",
+        email="weekly-spent@example.com",
+    )
+    await _insert_account(
+        account_id=healthy_id,
+        provider="anthropic",
+        access_token="anthropic-access-weekly-healthy",
+        email="weekly-healthy@example.com",
+    )
+    weekly_reset = int((utcnow() + timedelta(days=5)).replace(tzinfo=timezone.utc).timestamp())
+    primary_reset = int((utcnow() + timedelta(hours=4)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id=spent_id,
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=primary_reset,
+        recorded_at=utcnow() - timedelta(minutes=10),
+    )
+    await _insert_primary_usage(account_id=spent_id, used_percent=8.0, reset_at=primary_reset)
+    await _insert_weekly_usage(account_id=spent_id, used_percent=100.0, reset_at=weekly_reset)
+    await _insert_primary_usage(account_id=healthy_id, used_percent=8.0)
+    await _insert_weekly_usage(account_id=healthy_id, used_percent=12.0)
+    payload = _messages_payload()
+    await _pin_sticky(spent_id, payload)
+    upstream_calls: list[str] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        upstream_calls.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(200, _ALLOWED_BODY))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=payload,
+        headers={"anthropic-beta": "oauth-2025-04-20", "x-claude-session-id": f"session-{spent_id}"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == _ALLOWED_BODY
+    assert upstream_calls == ["Bearer anthropic-access-weekly-healthy"]
+
+
+@pytest.mark.asyncio
+async def test_weekly_exhausted_only_account_returns_usage_limit_with_weekly_reset(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.delenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", raising=False)
+    get_settings.cache_clear()
+    await _insert_account(
+        account_id="anthropic-weekly-only",
+        provider="anthropic",
+        access_token="anthropic-access-weekly-only",
+        email="weekly-only@example.com",
+    )
+    weekly_reset = int((utcnow() + timedelta(days=4)).replace(tzinfo=timezone.utc).timestamp())
+    primary_reset = int((utcnow() + timedelta(hours=3)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_quota_cooldown(
+        account_id="anthropic-weekly-only",
+        quota_key=anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY,
+        reset_at=primary_reset,
+        recorded_at=utcnow() - timedelta(minutes=10),
+    )
+    await _insert_primary_usage(account_id="anthropic-weekly-only", used_percent=8.0, reset_at=primary_reset)
+    await _insert_weekly_usage(account_id="anthropic-weekly-only", used_percent=100.0, reset_at=weekly_reset)
+    upstream_calls: list[str] = []
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        upstream_calls.append(headers["Authorization"])
+        return _FakeResponseContext(_FakeResponse(200, _BILLED_BODY))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=_messages_payload(),
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(weekly_reset)
+    assert response.json()["error"]["type"] == "rate_limit_error"
+    assert upstream_calls == []
+    assert _BILLED_BODY not in response.content
+
+
+@pytest.mark.asyncio
+async def test_overage_200_fails_over_without_forwarding_billed_body(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.delenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", raising=False)
+    get_settings.cache_clear()
+    await _insert_account(
+        account_id="anthropic-overage-a",
+        provider="anthropic",
+        access_token="anthropic-access-overage-a",
+        email="overage-a@example.com",
+    )
+    await _insert_account(
+        account_id="anthropic-overage-b",
+        provider="anthropic",
+        access_token="anthropic-access-overage-b",
+        email="overage-b@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    payload = _messages_payload()
+    await _pin_sticky("anthropic-overage-a", payload)
+    billed = _BodyTrackingResponse(
+        200,
+        _BILLED_BODY,
+        headers={
+            "anthropic-ratelimit-unified-overage-in-use": "true",
+            "anthropic-ratelimit-unified-reset": str(reset_at),
+        },
+    )
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        if headers["Authorization"] == "Bearer anthropic-access-overage-a":
+            return _FakeResponseContext(billed)
+        return _FakeResponseContext(_FakeResponse(200, _ALLOWED_BODY))
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=payload,
+        headers={"anthropic-beta": "oauth-2025-04-20", "x-claude-session-id": "session-anthropic-overage-a"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == _ALLOWED_BODY
+    assert billed.body_consumed is False
+    async with SessionLocal() as session:
+        logs = list(
+            (
+                await session.execute(select(RequestLog).where(RequestLog.account_id == "anthropic-overage-a"))
+            ).scalars()
+        )
+        cooldown = (
+            await session.execute(
+                select(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == "anthropic-overage-a")
+            )
+        ).scalars()
+        cooldown_rows = list(cooldown)
+    refused = [row for row in logs if row.status == "error" and row.error_code == "extra_usage_refused"]
+    assert len(logs) == 1
+    assert len(refused) == 1
+    assert any(
+        row.quota_key == anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY and row.reset_at == reset_at
+        for row in cooldown_rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_overage_200_only_account_returns_usage_limit_not_body(async_client, monkeypatch):
+    from app.core.config.settings import get_settings
+
+    monkeypatch.delenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", raising=False)
+    get_settings.cache_clear()
+    await _insert_account(
+        account_id="anthropic-overage-only",
+        provider="anthropic",
+        access_token="anthropic-access-overage-only",
+        email="overage-only@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    billed = _BodyTrackingResponse(
+        200,
+        _BILLED_BODY,
+        headers={
+            "anthropic-ratelimit-unified-overage-in-use": "true",
+            "anthropic-ratelimit-unified-reset": str(reset_at),
+        },
+    )
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        return _FakeResponseContext(billed)
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=_messages_payload(),
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["anthropic-ratelimit-unified-reset"] == str(reset_at)
+    assert response.json()["error"]["type"] == "rate_limit_error"
+    assert billed.body_consumed is False
+    assert _BILLED_BODY not in response.content
+
+
+@pytest.mark.asyncio
+async def test_overage_200_is_streamed_when_routing_on_and_account_is_not_paid_fallback(
+    async_client, monkeypatch
+):
+    """With extra-usage routing on, a non-fallback account that answers 200
+    with overage-in-use still streams that body and records the cooldown."""
+    from app.core.config.settings import get_settings
+
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_ROUTE_TO_EXTRA_USAGE", "true")
+    get_settings.cache_clear()
+    account_id = "anthropic-overage-routed"
+    await _insert_account(
+        account_id=account_id,
+        provider="anthropic",
+        access_token="anthropic-access-overage-routed",
+        email="overage-routed@example.com",
+    )
+    reset_at = int((utcnow() + timedelta(hours=2)).replace(tzinfo=timezone.utc).timestamp())
+    await _insert_primary_usage(account_id=account_id, used_percent=8.0, reset_at=reset_at)
+    eligibility = await anthropic_proxy_module.AnthropicProxyService(
+        _proxy_repo_context
+    )._provider_quota_eligibility("anthropic", "anthropic_top", model="claude-sonnet-4-20250514")
+    assert account_id in eligibility.account_ids
+    assert account_id not in eligibility.paid_fallback_account_ids
+    billed = _BodyTrackingResponse(
+        200,
+        _BILLED_BODY,
+        headers={
+            "anthropic-ratelimit-unified-overage-in-use": "true",
+            "anthropic-ratelimit-unified-reset": str(reset_at),
+        },
+    )
+
+    def fake_open_upstream_response(self, session, *, provider_name, headers, json_body):
+        del self, session, provider_name, json_body
+        return _FakeResponseContext(billed)
+
+    monkeypatch.setattr(
+        anthropic_proxy_module.AnthropicProxyService,
+        "_open_upstream_response",
+        fake_open_upstream_response,
+    )
+
+    response = await async_client.post(
+        "/v1/messages",
+        json=_messages_payload(),
+        headers={"anthropic-beta": "oauth-2025-04-20"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == _BILLED_BODY
+    assert billed.body_consumed is True
+    async with SessionLocal() as session:
+        cooldown_rows = list(
+            (
+                await session.execute(
+                    select(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == account_id)
+                )
+            ).scalars()
+        )
+    assert any(
+        row.quota_key == anthropic_proxy_module._ANTHROPIC_EXTRA_USAGE_QUOTA_KEY and row.reset_at == reset_at
+        for row in cooldown_rows
+    )
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -4528,11 +4885,12 @@ async def test_anthropic_selection_failure_separates_cooldowns_from_exhausted_wi
     message = response.json()["error"]["message"]
     quota_sentence = message.split("Model quota: ", 1)[1].split(". ", 1)[0]
     clauses = [clause.strip() for clause in quota_sentence.split(";")]
-    # 82ed714b: the weekly-spent account is ranked, not blocked, so only the
-    # live cooldown is reported, dated by its bounded retry.
+    # Weekly exhaustion is its own gate. The cooldown clause still names
+    # only the live cooldown, dated by its bounded retry.
     assert clauses == [
         f"anthropic_opus cooldown excluded 1 account until {datetime.fromtimestamp(bounded_retry_at).isoformat()}",
-        "2 accounts remained after the anthropic_opus prefilter",
+        "1 account out of window or capped",
+        "1 account remained after the anthropic_opus prefilter",
     ]
     assert 0 < bounded_retry_at - time.time() <= 60
     assert datetime.fromtimestamp(weekly_reset_at).isoformat() not in message
