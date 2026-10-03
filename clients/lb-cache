@@ -16,7 +16,18 @@ from pathlib import Path
 
 DEFAULT_DB = "postgresql://agent_lb:agent_lb@127.0.0.1:5432/agent_lb"
 ACK_FILE = Path.home() / ".agent-lb" / "cache-watch.ack.json"
-GROUPS = ("anthropic", "ccgpt-bridge", "codex-cli")
+GROUPS = ("anthropic", "agent-sdk", "ccgpt-bridge", "codex-cli")
+# cache-watch pages on lb-cache ALERT. A new client group is thin by nature, so
+# agent-sdk is printed in the report and omitted from checks.
+REPORT_ONLY_GROUPS = frozenset({"agent-sdk"})
+ANTHROPIC_GROUPS = frozenset({"anthropic", "agent-sdk"})
+GROUP_SQL = (
+    "CASE WHEN provider = 'anthropic' AND useragent ILIKE '%agent-sdk/%' THEN 'agent-sdk' "
+    "WHEN provider = 'anthropic' THEN 'anthropic' "
+    "WHEN provider = 'openai' AND (useragent_group IN ('claude-cli', 'Claude') OR "
+    "useragent ILIKE 'Claude Code/%') THEN 'ccgpt-bridge' "
+    "ELSE 'codex-cli' END"
+)
 # launchd jobs (cache-watch) run with PATH=/usr/bin:/bin, which has no Homebrew psql.
 PSQL = shutil.which("psql") or next(
     (p for p in ("/opt/homebrew/bin/psql", "/usr/local/bin/psql") if os.access(p, os.X_OK)), "psql")
@@ -54,11 +65,7 @@ def request_metrics(start: datetime, end: datetime) -> tuple[dict, list[dict]]:
     rows = query(f"""
         WITH req AS (
             SELECT provider,
-                   CASE WHEN provider = 'anthropic' THEN 'anthropic'
-                        WHEN provider = 'openai' AND
-                             (useragent_group IN ('claude-cli', 'Claude') OR
-                              useragent ILIKE 'Claude Code/%') THEN 'ccgpt-bridge'
-                        ELSE 'codex-cli' END AS grp,
+                   {GROUP_SQL} AS grp,
                    COALESCE(NULLIF(client_session_id, ''), NULLIF(session_id, '')) AS sid,
                    account_id, requested_at, id,
                    COALESCE(input_tokens, 0) AS input,
@@ -72,7 +79,7 @@ def request_metrics(start: datetime, end: datetime) -> tuple[dict, list[dict]]:
               AND deleted_at IS NULL
         ), ordered AS (
             SELECT *, row_number() OVER (PARTITION BY grp, sid ORDER BY requested_at, id) AS turn,
-                   CASE WHEN grp = 'anthropic' THEN cache_write > 20000
+                   CASE WHEN grp IN ('anthropic', 'agent-sdk') THEN cache_write > 20000
                         ELSE cached_input = 0 AND input > 4000 END AS rewrite
             FROM req
         ), sessions AS (
@@ -102,10 +109,11 @@ def request_metrics(start: datetime, end: datetime) -> tuple[dict, list[dict]]:
         requests, tokens, writes, reads, input_, cached, steady, rewrites, multi, switched = map(
             int, (requests, tokens, writes, reads, input_, cached, steady, rewrites, multi, switched)
         )
-        denominator = input_ + reads + writes if grp == "anthropic" else input_
+        anthropic = grp in ANTHROPIC_GROUPS
+        denominator = input_ + reads + writes if anthropic else input_
         metrics[grp] = {
             "requests": requests, "total_tokens": tokens, "cache_writes": writes,
-            "read_ratio": (reads if grp == "anthropic" else cached) / denominator if denominator else None,
+            "read_ratio": (reads if anthropic else cached) / denominator if denominator else None,
             "steady_turns": steady, "steady_rewrites": rewrites,
             "rewrite_rate": rewrites / steady if steady else None,
             "multi_request_sessions": multi, "switching_sessions": switched,
@@ -117,9 +125,7 @@ def request_metrics(start: datetime, end: datetime) -> tuple[dict, list[dict]]:
 def top_sessions(start: datetime, end: datetime) -> list[dict]:
     rows = query(f"""
         WITH req AS (
-            SELECT CASE WHEN provider = 'anthropic' THEN 'anthropic'
-                        WHEN useragent_group IN ('claude-cli', 'Claude') OR useragent ILIKE 'Claude Code/%'
-                        THEN 'ccgpt-bridge' ELSE 'codex-cli' END AS grp,
+            SELECT {GROUP_SQL} AS grp,
                    COALESCE(NULLIF(client_session_id, ''), NULLIF(session_id, '')) AS sid,
                    useragent_group, account_id, requested_at, id,
                    COALESCE(cache_creation_tokens, 0) AS written,
@@ -135,12 +141,12 @@ def top_sessions(start: datetime, end: datetime) -> list[dict]:
         )
         SELECT left(sid, 12), grp,
                count(*) FILTER (WHERE n > 1 AND
-                   (CASE WHEN grp = 'anthropic' THEN written > 20000
+                   (CASE WHEN grp IN ('anthropic', 'agent-sdk') THEN written > 20000
                          ELSE cached = 0 AND input > 4000 END)),
                count(DISTINCT account_id), coalesce(min(useragent_group), '-')
         FROM turns GROUP BY grp, sid
         HAVING count(*) FILTER (WHERE n > 1 AND
-                   (CASE WHEN grp = 'anthropic' THEN written > 20000
+                   (CASE WHEN grp IN ('anthropic', 'agent-sdk') THEN written > 20000
                          ELSE cached = 0 AND input > 4000 END)) > 0
         ORDER BY 3 DESC, 4 DESC, 1 LIMIT 5
     """)
@@ -188,6 +194,8 @@ def quota_burn(start: datetime, end: datetime) -> dict:
 def evaluate(metrics: dict, acknowledgements: list[dict], now: datetime) -> tuple[str, list[dict]]:
     checks = []
     for grp in GROUPS:
+        if grp in REPORT_ONLY_GROUPS:
+            continue
         m = metrics.get(grp, {})
         if grp == "anthropic":
             specs = [("anthropic.read_ratio", m.get("read_ratio"), 0.90, 50, m.get("requests", 0), "low")]
@@ -229,6 +237,18 @@ def report(start: datetime, end: datetime) -> dict:
             "quota_burn_per_hour": quota_burn(start, end), "worst_sessions": sessions,
             "checks": checks, "verdict": verdict,
             "failing_checks": [c["check"] for c in checks if c["state"] == "ALERT"]}
+
+
+def client_group(provider: str, useragent: str | None = None, useragent_group: str | None = None) -> str:
+    ua = useragent or ""
+    group = useragent_group or ""
+    if provider == "anthropic" and "agent-sdk/" in ua.lower():
+        return "agent-sdk"
+    if provider == "anthropic":
+        return "anthropic"
+    if provider == "openai" and (group in ("claude-cli", "Claude") or ua.lower().startswith("claude code/")):
+        return "ccgpt-bridge"
+    return "codex-cli"
 
 
 def percent(value: float | None) -> str:
