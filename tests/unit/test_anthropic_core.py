@@ -149,7 +149,7 @@ def test_collect_usage_from_chunk_detects_in_band_error_event():
     usage = None
     error = None
     for chunk in (stream[:41], stream[41:]):
-        buffer, usage, chunk_error = _collect_usage_from_chunk(buffer, chunk, usage)
+        buffer, usage, chunk_error, _saw_output = _collect_usage_from_chunk(buffer, chunk, usage)
         if chunk_error is not None:
             error = chunk_error
 
@@ -170,11 +170,12 @@ def test_collect_usage_from_chunk_without_error_returns_none():
         + "\n\n"
     ).encode("utf-8")
 
-    buffer, usage, error = _collect_usage_from_chunk("", stream, None)
+    buffer, usage, error, saw_output = _collect_usage_from_chunk("", stream, None)
 
     assert buffer == ""
     assert usage == AnthropicUsage(output_tokens=5)
     assert error is None
+    assert saw_output is False
 
 
 def test_parse_messages_sse_stream_yields_tool_use_block_details():

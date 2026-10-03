@@ -46,6 +46,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     tokens.add_argument("--top", type=int, default=30)
     tokens.add_argument("--snapshot-panes-only", action="store_true")
 
+    from app.latency_cli import add_parser as add_latency_parser
+
+    add_latency_parser(subparsers)
+
     status = subparsers.add_parser(
         "status",
         help="Read a safe status snapshot from a running local agent-lb service.",
@@ -172,6 +176,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             from app.audit_tokens import run
 
         run(args)
+        return
+
+    if args.command == "latency":
+        from app.latency_cli import run as run_latency
+
+        run_latency(args)
         return
 
     if args.command == "throttle":

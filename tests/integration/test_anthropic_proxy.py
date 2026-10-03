@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -101,19 +102,32 @@ async def test_session_route_defaults_omitted_model_to_opus_5(async_client):
 
 
 class _FakeContent:
-    def __init__(self, chunks: list[bytes]) -> None:
+    def __init__(self, chunks: list[bytes], *, delay_before_chunk: dict[int, float] | None = None) -> None:
         self._chunks = chunks
+        self._delay_before_chunk = delay_before_chunk or {}
 
     async def iter_chunked(self, _: int) -> AsyncIterator[bytes]:
-        for chunk in self._chunks:
+        for index, chunk in enumerate(self._chunks):
+            delay = self._delay_before_chunk.get(index)
+            if delay:
+                await asyncio.sleep(delay)
             yield chunk
 
 
 class _FakeResponse:
-    def __init__(self, status: int, body: bytes, headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        body: bytes,
+        headers: dict[str, str] | None = None,
+        *,
+        chunks: list[bytes] | None = None,
+        delay_before_chunk: dict[int, float] | None = None,
+    ) -> None:
         self.status = status
-        self.content = _FakeContent([body])
-        self._body = body
+        body_chunks = chunks if chunks is not None else [body]
+        self.content = _FakeContent(body_chunks, delay_before_chunk=delay_before_chunk)
+        self._body = b"".join(body_chunks)
         self.headers = headers or {}
 
     async def read(self) -> bytes:
@@ -851,7 +865,15 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
         assert provider_name == "anthropic"
         captured["headers"] = dict(headers)
         captured["json_body"] = dict(json_body)
-        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+        split_at = ANTHROPIC_SSE_BYTES.index(b"event: content_block_start")
+        return _FakeResponseContext(
+            _FakeResponse(
+                200,
+                ANTHROPIC_SSE_BYTES,
+                chunks=[ANTHROPIC_SSE_BYTES[:split_at], ANTHROPIC_SSE_BYTES[split_at:]],
+                delay_before_chunk={1: 0.05},
+            )
+        )
 
     monkeypatch.setattr(
         anthropic_proxy_module.AnthropicProxyService,
@@ -927,6 +949,8 @@ async def test_anthropic_messages_streams_sse_and_logs_usage(async_client, monke
     assert log.useragent == "claude-cli/2.1.210 (external, sdk-cli)"
     assert log.useragent_group == "claude-cli"
     assert log.cost_usd is not None
+    assert log.latency_first_token_ms is not None
+    assert log.latency_first_token_ms >= 50
 
 
 @pytest.mark.asyncio
@@ -1330,6 +1354,7 @@ async def test_anthropic_messages_non_streaming_logs_usage(async_client, monkeyp
     assert log.cache_creation_tokens == 2
     assert log.cache_read_tokens == 1
     assert log.cost_usd is not None
+    assert log.latency_first_token_ms is None
 
 
 @pytest.mark.asyncio

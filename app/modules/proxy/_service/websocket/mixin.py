@@ -308,6 +308,7 @@ from app.modules.proxy._service.support import (
     _WebSocketReceiveTimeout,
     _WebSocketRequestState,
     _WebSocketUpstreamControl,
+    is_first_output_event,
 )
 from app.modules.proxy._service.support import (
     _HTTPBridgeOwnerForward as _HTTPBridgeOwnerForward,
@@ -2615,6 +2616,8 @@ class _WebSocketMixin:
             else:
                 release_create_gate = False
             if request_state is not None:
+                if request_state.latency_first_token_ms is None and is_first_output_event(event_type):
+                    request_state.latency_first_token_ms = int((time.monotonic() - request_state.started_at) * 1000)
                 actual_service_tier = _facade()._service_tier_from_event_payload(payload)
                 if actual_service_tier is not None:
                     request_state.actual_service_tier = actual_service_tier

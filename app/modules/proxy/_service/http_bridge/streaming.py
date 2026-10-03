@@ -139,6 +139,7 @@ from app.modules.proxy._service.support import (
     _HTTPBridgeSession,
     _HTTPBridgeSessionKey,
     _WebSocketRequestState,
+    is_first_output_event,
     strip_encrypted_reasoning_from_request_text,
 )
 from app.modules.proxy._service.support import (
@@ -189,7 +190,6 @@ from app.modules.proxy.helpers import (
 
 logger = logging.getLogger("app.modules.proxy.service")
 T = TypeVar("T")
-_TEXT_DELTA_EVENT_TYPES = frozenset({"response.output_text.delta", "response.refusal.delta"})
 _REQUEST_TRANSPORT_HTTP = "http"
 _UPSTREAM_CLOSE_CODES_SKIP_SAME_ACCOUNT_RETRY = frozenset({1011})
 _WEBSOCKET_AUTH_INVALIDATED_FAILURE_CODE = "account_auth_invalidated"
@@ -855,7 +855,7 @@ class _HTTPBridgeStreamingMixin:
                         if retry_request_state.latency_first_token_ms is None:
                             block_payload = parse_sse_data_json(event_block)
                             block_event_type = _event_type_from_payload(None, block_payload)
-                            if block_event_type in _TEXT_DELTA_EVENT_TYPES:
+                            if is_first_output_event(block_event_type):
                                 retry_request_state.latency_first_token_ms = int(
                                     (_service_time().monotonic() - retry_request_state.started_at) * 1000
                                 )
@@ -1620,7 +1620,7 @@ class _HTTPBridgeStreamingMixin:
                 keepalive_count = 0
                 block_payload = parse_sse_data_json(event_block)
                 block_event_type = _event_type_from_payload(None, block_payload)
-                if request_state.latency_first_token_ms is None and block_event_type in _TEXT_DELTA_EVENT_TYPES:
+                if request_state.latency_first_token_ms is None and is_first_output_event(block_event_type):
                     request_state.latency_first_token_ms = int(
                         (_service_time().monotonic() - request_state.started_at) * 1000
                     )

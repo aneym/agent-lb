@@ -21,6 +21,8 @@ from pydantic import ValidationError
 from app.core import upload_admission
 from app.core.anthropic.identity import ensure_claude_code_identity_body
 from app.core.anthropic.models import (
+    AnthropicContentBlockDeltaEvent,
+    AnthropicContentBlockStartEvent,
     AnthropicErrorEvent,
     AnthropicMessageRequest,
     AnthropicUsage,
@@ -381,6 +383,7 @@ class AnthropicProxyService:
             last_error_status: int | None = None
             last_error_message: str | None = None
             streamed_bytes = False
+            latency_first_token_ms: int | None = None
             wait_deadline = (
                 _POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds if wait_enabled else None
             )
@@ -663,9 +666,11 @@ class AnthropicProxyService:
                                     if raw_body is not None:
                                         raw_body.extend(chunk_bytes)
                                     else:
-                                        text_buffer, usage, chunk_error = _collect_usage_from_chunk(
+                                        text_buffer, usage, chunk_error, saw_output = _collect_usage_from_chunk(
                                             text_buffer, chunk_bytes, usage
                                         )
+                                        if latency_first_token_ms is None and saw_output:
+                                            latency_first_token_ms = int((time.monotonic() - started_at) * 1000)
                                         if chunk_error is not None:
                                             stream_error = chunk_error
                                     streamed_bytes = True
@@ -715,6 +720,7 @@ class AnthropicProxyService:
                                         useragent=useragent,
                                         useragent_group=useragent_group,
                                         usage=usage,
+                                        latency_first_token_ms=latency_first_token_ms,
                                     )
                                     await self._finalize_api_key_reservation(
                                         api_key_reservation,
@@ -738,6 +744,7 @@ class AnthropicProxyService:
                                     useragent=useragent,
                                     useragent_group=useragent_group,
                                     usage=usage,
+                                    latency_first_token_ms=latency_first_token_ms,
                                 )
                                 await self._finalize_api_key_reservation(
                                     api_key_reservation,
@@ -1578,6 +1585,7 @@ class AnthropicProxyService:
         error_code: str | None = None,
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
+        latency_first_token_ms: int | None = None,
     ) -> None:
         # The member lookup adds an await. Keep the log task alive if the client
         # disconnects, as the proxy request logger does.
@@ -1596,6 +1604,7 @@ class AnthropicProxyService:
                 error_code=error_code,
                 error_message=error_message,
                 usage=usage,
+                latency_first_token_ms=latency_first_token_ms,
                 identity=get_request_identity(),
             )
         )
@@ -1632,6 +1641,7 @@ class AnthropicProxyService:
         error_code: str | None = None,
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
+        latency_first_token_ms: int | None = None,
         identity: RequestIdentity | None = None,
     ) -> None:
         try:
@@ -1650,6 +1660,7 @@ class AnthropicProxyService:
                     cache_creation_tokens=usage.cache_creation_input_tokens if usage else None,
                     cache_read_tokens=usage.cache_read_input_tokens if usage else None,
                     latency_ms=latency_ms,
+                    latency_first_token_ms=latency_first_token_ms,
                     status=status,
                     error_code=error_code,
                     error_message=error_message,
@@ -2058,23 +2069,35 @@ def _merge_anthropic_beta_header(headers: dict[str, str], required_betas: list[s
         headers[beta_key] = ", ".join(merged)
 
 
+_FIRST_OUTPUT_EVENT_RE = re.compile(r"^event:[ \t]*content_block_(?:start|delta)[ \t]*$", re.MULTILINE)
+
+
 def _collect_usage_from_chunk(
     text_buffer: str,
     chunk: bytes,
     usage: AnthropicUsage | None,
-) -> tuple[str, AnthropicUsage | None, AnthropicErrorEvent | None]:
-    """Parse forwarded SSE chunks for usage and in-band error events.
+) -> tuple[str, AnthropicUsage | None, AnthropicErrorEvent | None, bool]:
+    """Parse forwarded SSE chunks for usage, in-band errors, and first output.
 
     Anthropic reports mid-stream failures as an SSE ``error`` event on an
     HTTP 200 stream; without inspecting the forwarded bytes those failures
-    are invisible to account health and request logging.
+    are invisible to account health and request logging. The same parse
+    records whether a content block start or delta arrived.
     """
     error_event: AnthropicErrorEvent | None = None
+    saw_output = False
     text_buffer += chunk.decode("utf-8", errors="replace")
     normalized = text_buffer.replace("\r\n", "\n")
     while "\n\n" in normalized:
         block, normalized = normalized.split("\n\n", 1)
+        # Match the SSE event name, not the parsed model: block types the
+        # strict union does not know (redacted_thinking, server_tool_use)
+        # parse to None but are still the model's first output.
+        if _FIRST_OUTPUT_EVENT_RE.search(block):
+            saw_output = True
         event = parse_sse_event(block)
+        if isinstance(event, AnthropicContentBlockStartEvent | AnthropicContentBlockDeltaEvent):
+            saw_output = True
         if event is None:
             continue
         if isinstance(event, AnthropicErrorEvent):
@@ -2085,7 +2108,7 @@ def _collect_usage_from_chunk(
         if event_usage is None and message is not None:
             event_usage = message.usage
         usage = merge_usage_values(usage, event_usage)
-    return normalized, usage, error_event
+    return normalized, usage, error_event, saw_output
 
 
 def _usage_from_json_body(raw: bytes) -> AnthropicUsage | None:

@@ -519,6 +519,13 @@ class _WebSocketReceiveTimeout:
     fail_all_pending: bool = False
 
 
+def is_first_output_event(event_type: str | None) -> bool:
+    """First Responses event that carries model output, for TTFT."""
+    if not event_type:
+        return False
+    return event_type == "response.output_item.added" or event_type.endswith(".delta")
+
+
 def _event_type_from_payload(event: OpenAIEvent | None, payload: dict[str, JsonValue] | None) -> str | None:
     if event is not None:
         return event.type
