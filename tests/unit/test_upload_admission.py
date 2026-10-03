@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
+from hashlib import sha256
 
 import pytest
 
@@ -120,6 +123,76 @@ async def test_anonymous_calls_do_not_share_one_flow(monkeypatch: pytest.MonkeyP
         await asyncio.sleep(0)
     await asyncio.wait_for(asyncio.gather(large, small), timeout=1)
     assert admitted == [10, 900_000]
+
+
+@pytest.mark.asyncio
+async def test_hopeless_queue_is_rejected_before_the_wait_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(upload_admission.upload_throttle, "read_state", lambda: (True, 1_000))
+    monkeypatch.setenv("AGENT_LB_UPLOAD_ADMISSION_MAX_WAIT_SECONDS", "30")
+    gate = upload_admission.Admission()
+    session = "seat-secret-do-not-log"
+
+    async with gate.admit("holder", 100_000):
+        started = time.monotonic()
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(upload_admission.UploadAdmissionRejected) as caught:
+                async with gate.admit(session, 100_000):
+                    pass
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    exc = caught.value
+    assert exc.rate == 1_000
+    assert exc.backlog_bytes == 100_000
+    assert exc.projected_wait_s > 30
+    assert exc.max_wait_s == 30
+    assert exc.upload_class == "batch"
+    assert "1 KB/s" in str(exc)
+    assert "0.1 MB queued ahead" in str(exc)
+    assert "projected wait" in str(exc)
+    assert session not in caplog.text
+    assert sha256(session.encode()).hexdigest()[:12] in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("holders", "new"),
+    [
+        ([("h1", 100_000, "high")], ("s2", 8_000_000, "high")),
+        ([("h1", 7_000_000, "high"), ("b1", 100_000, "batch")], ("s2", 100_000, "batch")),
+    ],
+)
+async def test_queue_that_drains_inside_the_ceiling_is_admitted(
+    monkeypatch: pytest.MonkeyPatch,
+    holders: list[tuple[str, int, str]],
+    new: tuple[str, int, str],
+) -> None:
+    monkeypatch.setattr(upload_admission.upload_throttle, "read_state", lambda: (True, 200_000))
+    monkeypatch.setenv("AGENT_LB_UPLOAD_ADMISSION_MAX_WAIT_SECONDS", "30")
+    gate = upload_admission.Admission()
+    release = asyncio.Event()
+
+    async def hold(session: str, nbytes: int, upload_class: str) -> None:
+        async with gate.admit(session, nbytes, upload_class):
+            await release.wait()
+
+    tasks = [asyncio.create_task(hold(*holder)) for holder in holders]
+    await asyncio.sleep(0.05)
+
+    async def release_soon() -> None:
+        await asyncio.sleep(1.0)
+        release.set()
+
+    releaser = asyncio.create_task(release_soon())
+    started = time.monotonic()
+    async with gate.admit(*new):
+        pass
+    assert time.monotonic() - started < 5
+    release.set()
+    await asyncio.wait_for(asyncio.gather(*tasks, releaser), timeout=2)
 
 
 def test_upload_class_header_lookup_is_case_insensitive() -> None:

@@ -19,7 +19,52 @@ HIGH_SHARE = 0.8
 
 
 class UploadAdmissionTimeout(Exception):
+    def __init__(
+        self,
+        *,
+        rate: float,
+        backlog_bytes: int,
+        projected_wait_s: float,
+        max_wait_s: float,
+        upload_class: str,
+        waited_s: float | None = None,
+    ) -> None:
+        self.rate = rate
+        self.backlog_bytes = backlog_bytes
+        self.projected_wait_s = projected_wait_s
+        self.max_wait_s = max_wait_s
+        self.upload_class = upload_class
+        self.waited_s = waited_s
+        super().__init__(failure_message(self))
+
+
+class UploadAdmissionRejected(UploadAdmissionTimeout):
     pass
+
+
+def _kb_per_s(rate: float) -> str:
+    kb = rate / 1000
+    if kb == int(kb):
+        return str(int(kb))
+    return f"{kb:.1f}"
+
+
+def failure_message(exc: UploadAdmissionTimeout) -> str:
+    if isinstance(exc, UploadAdmissionRejected) or exc.waited_s is None:
+        kind = "projected wait"
+        seconds = exc.projected_wait_s
+    else:
+        kind = "waited"
+        seconds = exc.waited_s
+    return (
+        f"upload throttle on at {_kb_per_s(exc.rate)} KB/s; "
+        f"{exc.backlog_bytes / 1_000_000:.1f} MB queued ahead; "
+        f"{kind} {round(seconds)} s > limit {round(exc.max_wait_s)} s; retry shortly"
+    )
+
+
+def _session_digest(session_key: str | None) -> str:
+    return sha256((session_key or "anonymous").encode()).hexdigest()[:12]
 
 
 def _header_value(headers: Mapping[str, str], name: str) -> str | None:
@@ -72,6 +117,83 @@ class Admission:
         self._flows: dict[tuple[str, object], _Flow] = {}
         self._last_served: dict[str, tuple[str, object] | None] = {"high": None, "batch": None}
         self._last_any: tuple[str, object] | None = None
+
+    def _backlog_bytes(self, upload_class: str, *, behind: _Waiter | None = None) -> int:
+        if upload_class == "high":
+            outstanding = self._outstanding["high"]
+            classes = {"high"}
+        else:
+            outstanding = self._outstanding["high"] + self._outstanding["batch"]
+            classes = {"high", "batch"}
+        queued = 0
+        for key, flow in self._flows.items():
+            if key[0] not in classes:
+                continue
+            for waiter in flow.queue:
+                if waiter is behind:
+                    break
+                queued += waiter.nbytes
+        return outstanding + queued
+
+    def _admits_without_wait(self, upload_class: str) -> bool:
+        if self._outstanding[upload_class] != 0:
+            return False
+        return all(not flow.queue for key, flow in self._flows.items() if key[0] == upload_class)
+
+    def _projection(
+        self,
+        upload_class: str,
+        nbytes: int,
+        rate: float,
+        *,
+        behind: _Waiter | None = None,
+    ) -> tuple[int, float]:
+        backlog = self._backlog_bytes(upload_class, behind=behind)
+        budget = max(rate * OUTSTANDING_SECONDS, 1)
+        if rate <= 0:
+            return backlog, float("inf")
+        cap = HIGH_SHARE * budget if upload_class == "high" else budget
+        if upload_class != "high":
+            high = self._outstanding["high"]
+            backlog -= high - min(high, HIGH_SHARE * budget)
+            backlog = max(0, int(backlog))
+        need = min(float(nbytes), cap)
+        return backlog, max(0.0, backlog + need - cap) / rate
+
+    def _timeout(
+        self,
+        waiter: _Waiter,
+        upload_class: str,
+        started: float,
+        max_wait: float,
+        session_key: str | None,
+    ) -> UploadAdmissionTimeout:
+        _, rate = upload_throttle.read_state()
+        waited = time.monotonic() - started
+        backlog, projected = self._projection(upload_class, waiter.nbytes, rate, behind=waiter)
+        timed_out = UploadAdmissionTimeout(
+            rate=rate,
+            backlog_bytes=backlog,
+            projected_wait_s=projected,
+            max_wait_s=max_wait,
+            upload_class=upload_class,
+            waited_s=waited,
+        )
+        self._warn(timed_out, session_key)
+        return timed_out
+
+    def _warn(self, exc: UploadAdmissionTimeout, session_key: str | None) -> None:
+        seconds = exc.waited_s if exc.waited_s is not None else exc.projected_wait_s
+        logger.warning(
+            "upload admission class=%s rate_kb_s=%s backlog_mb=%.1f seconds=%.0f limit_s=%.0f session=%s %s",
+            exc.upload_class,
+            _kb_per_s(exc.rate),
+            exc.backlog_bytes / 1_000_000,
+            seconds,
+            exc.max_wait_s,
+            _session_digest(session_key),
+            failure_message(exc),
+        )
 
     def _within_budget(self, upload_class: str, nbytes: int, budget: float) -> bool:
         if upload_class == "high":
@@ -174,15 +296,28 @@ class Admission:
         nbytes: int,
         upload_class: str = "batch",
     ) -> AsyncIterator[None]:
-        enabled, _ = upload_throttle.read_state()
+        enabled, rate = upload_throttle.read_state()
         if not enabled or os.environ.get("AGENT_LB_UPLOAD_FAIR", "1") == "0":
             yield
             return
-        max_wait = float(os.environ.get("AGENT_LB_UPLOAD_ADMISSION_MAX_WAIT_SECONDS", "180"))
+        max_wait = float(os.environ.get("AGENT_LB_UPLOAD_ADMISSION_MAX_WAIT_SECONDS", "30"))
         started = time.monotonic()
         cls = _normalize_class(upload_class)
+        nbytes = max(nbytes, 0)
+        if not self._admits_without_wait(cls):
+            backlog, projected = self._projection(cls, nbytes, rate)
+            if projected > max_wait:
+                rejected = UploadAdmissionRejected(
+                    rate=rate,
+                    backlog_bytes=backlog,
+                    projected_wait_s=projected,
+                    max_wait_s=max_wait,
+                    upload_class=cls,
+                )
+                self._warn(rejected, session_key)
+                raise rejected
         key = (cls, session_key if session_key is not None else object())
-        waiter = _Waiter(max(nbytes, 0), started + max_wait, cls)
+        waiter = _Waiter(nbytes, started + max_wait, cls)
         flow = self._flows.setdefault(key, _Flow())
         flow.queue.append(waiter)
         try:
@@ -192,7 +327,8 @@ class Admission:
                     break
                 remaining = max_wait - (time.monotonic() - started)
                 if remaining <= 0:
-                    raise UploadAdmissionTimeout()
+                    timed_out = self._timeout(waiter, cls, started, max_wait, session_key)
+                    raise timed_out
                 try:
                     await asyncio.wait_for(waiter.event.wait(), timeout=min(1.0, remaining))
                 except asyncio.TimeoutError:
@@ -201,7 +337,7 @@ class Admission:
             if waited > 5:
                 logger.info(
                     "Upload admission session=%s class=%s bytes=%s wait_seconds=%.3f",
-                    sha256((session_key or "anonymous").encode()).hexdigest()[:12],
+                    _session_digest(session_key),
                     cls,
                     nbytes,
                     waited,

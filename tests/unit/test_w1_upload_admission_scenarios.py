@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,11 +89,17 @@ async def test_waiting_for_admission_has_its_own_deadline(monkeypatch: pytest.Mo
     holders = [asyncio.create_task(_hold(admission, "big", MB, admitted, release)) for _ in range(4)]
     await asyncio.sleep(0.2)
     started = time.monotonic()
-    with pytest.raises(module.UploadAdmissionTimeout):
-        async with admission.admit("late", MB):
+    with pytest.raises(module.UploadAdmissionTimeout) as caught:
+        async with admission.admit("late", 100_000):
             pass
     waited = time.monotonic() - started
     assert 0.4 <= waited < 2.0
+    exc = caught.value
+    assert not isinstance(exc, module.UploadAdmissionRejected)
+    assert exc.waited_s is not None and exc.waited_s >= 0.4
+    assert exc.max_wait_s == 0.5
+    assert exc.upload_class == "batch"
+    assert "waited" in str(exc)
     release.set()
     await asyncio.wait_for(asyncio.gather(*holders), timeout=2)
 
@@ -110,3 +117,129 @@ async def test_turning_the_throttle_off_lets_every_waiter_through(_throttle: Pat
     assert len(admitted) == 6
     release.set()
     await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_records_a_rejected_upload_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.modules.proxy.anthropic_service import AnthropicProxyError, AnthropicProxyService
+
+    module = _module()
+    service = AnthropicProxyService(lambda: None)
+    logged: dict[str, object] = {}
+
+    async def select(self, *args, **kwargs):
+        del self, args, kwargs
+        return SimpleNamespace(id="acct-1")
+
+    async def fresh(self, account, **kwargs):
+        del self, account, kwargs
+        return "token"
+
+    async def persist(self, **kwargs):
+        del self
+        logged.update(kwargs)
+
+    monkeypatch.setattr(AnthropicProxyService, "_select_account", select)
+    monkeypatch.setattr(AnthropicProxyService, "_fresh_access_token", fresh)
+    monkeypatch.setattr(AnthropicProxyService, "_persist_request_log", persist)
+
+    rejected = module.UploadAdmissionRejected(
+        rate=200_000,
+        backlog_bytes=4_100_000,
+        projected_wait_s=21,
+        max_wait_s=30,
+        upload_class="batch",
+    )
+
+    class _Reject:
+        async def __aenter__(self):
+            raise rejected
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(module.admission(), "admit", lambda *args, **kwargs: _Reject())
+    with pytest.raises(AnthropicProxyError) as caught:
+        await service.count_tokens(
+            {"model": "claude-sonnet-4-5", "messages": [{"role": "user", "content": "hi"}]},
+            {"x-claude-code-session-id": "s1"},
+            model="claude-sonnet-4-5",
+        )
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "upload_admission_rejected"
+    assert logged["error_code"] == "upload_admission_rejected"
+    assert logged["status"] == "error"
+    message = str(logged["error_message"])
+    assert message == caught.value.message
+    assert "200 KB/s" in message
+    assert "4.1 MB queued ahead" in message
+    assert "projected wait 21 s > limit 30 s" in message
+
+
+@pytest.mark.asyncio
+async def test_messages_records_a_rejected_upload_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.anthropic.models import AnthropicMessageRequest
+    from app.modules.proxy.anthropic_service import AnthropicProxyError, AnthropicProxyService
+
+    module = _module()
+    service = AnthropicProxyService(lambda: None)
+    logged: dict[str, object] = {}
+
+    async def select(self, *args, **kwargs):
+        del self, args, kwargs
+        return SimpleNamespace(id="acct-1")
+
+    async def fresh(self, account, **kwargs):
+        del self, account, kwargs
+        return "token"
+
+    async def persist(self, **kwargs):
+        del self
+        logged.update(kwargs)
+
+    async def eligibility(self, *args, **kwargs):
+        del self, args, kwargs
+        return SimpleNamespace(account_ids=["acct-1"])
+
+    monkeypatch.setattr(AnthropicProxyService, "_select_account", select)
+    monkeypatch.setattr(AnthropicProxyService, "_fresh_access_token", fresh)
+    monkeypatch.setattr(AnthropicProxyService, "_persist_request_log", persist)
+    monkeypatch.setattr(AnthropicProxyService, "_provider_quota_eligibility", eligibility)
+
+    rejected = module.UploadAdmissionRejected(
+        rate=200_000,
+        backlog_bytes=4_100_000,
+        projected_wait_s=21,
+        max_wait_s=30,
+        upload_class="batch",
+    )
+
+    class _Reject:
+        async def __aenter__(self):
+            raise rejected
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(module.admission(), "admit", lambda *args, **kwargs: _Reject())
+    payload = AnthropicMessageRequest(
+        model="claude-sonnet-4-5",
+        max_tokens=16,
+        messages=[{"role": "user", "content": "hi"}],
+        stream=False,
+    )
+    stream = await service.stream_messages(payload, {"x-claude-code-session-id": "s1"})
+    with pytest.raises(AnthropicProxyError) as caught:
+        async for _chunk in stream.body:
+            pass
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "upload_admission_rejected"
+    assert logged["error_code"] == "upload_admission_rejected"
+    assert logged["status"] == "error"
+    message = str(logged["error_message"])
+    assert message == caught.value.message
+    assert "200 KB/s" in message
+    assert "4.1 MB queued ahead" in message
+    assert "projected wait 21 s > limit 30 s" in message

@@ -316,6 +316,15 @@ class AnthropicProxyError(Exception):
         self.details = details
 
 
+def _upload_admission_error(exc: upload_admission.UploadAdmissionTimeout) -> tuple[str, str]:
+    code = (
+        "upload_admission_rejected"
+        if isinstance(exc, upload_admission.UploadAdmissionRejected)
+        else "upload_admission_timeout"
+    )
+    return code, upload_admission.failure_message(exc)
+
+
 class AnthropicProxyService:
     def __init__(self, repo_factory: ProxyRepoFactory) -> None:
         self._repo_factory = repo_factory
@@ -753,7 +762,7 @@ class AnthropicProxyService:
                                 )
                                 return
                 except upload_admission.UploadAdmissionTimeout as exc:
-                    message = "Upload admission wait exceeded while the upload throttle is on; retry shortly."
+                    code, message = _upload_admission_error(exc)
                     await self._persist_request_log(
                         account=last_account,
                         provider_name=provider_name,
@@ -761,14 +770,14 @@ class AnthropicProxyService:
                         model=payload.model,
                         started_at=started_at,
                         status="error",
-                        error_code="upload_admission_timeout",
+                        error_code=code,
                         error_message=message,
                         api_key=api_key,
                         session_id=session_id,
                         useragent=useragent,
                         useragent_group=useragent_group,
                     )
-                    raise AnthropicProxyError(503, message, code="upload_admission_timeout") from exc
+                    raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
                     # Never hold once response bytes have gone out: appending a
                     # second upstream stream to a partial one would corrupt it.
@@ -896,7 +905,7 @@ class AnthropicProxyService:
                     media_type = resp.headers.get("content-type") or "application/json"
                     return AnthropicCountTokensResult(status_code=resp.status, body=raw, media_type=media_type)
         except upload_admission.UploadAdmissionTimeout as exc:
-            message = "Upload admission wait exceeded while the upload throttle is on; retry shortly."
+            code, message = _upload_admission_error(exc)
             useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
             await self._persist_request_log(
                 account=account,
@@ -905,14 +914,14 @@ class AnthropicProxyService:
                 model=model,
                 started_at=started_at,
                 status="error",
-                error_code="upload_admission_timeout",
+                error_code=code,
                 error_message=message,
                 api_key=None,
                 session_id=session_id,
                 useragent=useragent,
                 useragent_group=useragent_group,
             )
-            raise AnthropicProxyError(503, message, code="upload_admission_timeout") from exc
+            raise AnthropicProxyError(503, message, code=code) from exc
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise AnthropicProxyError(
                 502,
