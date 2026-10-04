@@ -82,7 +82,7 @@ tight spec stays on Opus at xhigh.
 - **Relaunching a Codex lane writer resumes its thread** (`codex exec resume <thread-id>`) instead of starting a new thread with the same prompt.
   A supervisor that has relaunched one lane 3 times in 6 hours stops and writes the failure to the lane's inbox instead of relaunching. (2026-09-29 token audit: 505 cold failover relaunches of identical prompts on 09-23/24, about 28 OpenAI points; one prompt was relaunched 75 times in 31.6 h.)
 - Sessions compact at 400k; keep state in files and do not poll for status. The one exception is a subagent waiting
-  on a job it launched, which polls as the wait rule above allows (270 s or less per wait). Tests (2026-09-24): load the test-audit skill first.
+  on a job it launched, which polls as the wait rule above allows (270 s or less per wait). Tests (2026-09-24): load the test-audit skill first. Kinds, best first (owner, 2026-10-03): e2e with test accounts, integration (no mocks of our own code), golden; a new unit test needs a pure algorithm with many edge cases (parser, ranking, money math), else a reviewer's must-fix. Never thin a money-path floor.
 
 ## Parallelism (owner, 2026-09-25; 2026-09-26)
 
