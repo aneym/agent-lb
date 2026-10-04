@@ -149,6 +149,13 @@ def repaired_text(text: str, parsed: dict[str, object], provider: str) -> tuple[
                     index = managed_indices[key]
                     lines[index] = _replace_assignment(lines[index], key, value)
                     changes.append(f"repair {key}")
+            elif actual == expected:
+                # Set through a sub-table such as [model_providers.agent-lb.env_http_headers]
+                # (Codex rewrites the inline form that way); adding the inline key too would
+                # make a duplicate key and break every codex start (2026-10-04).
+                continue
+            elif actual is not None:
+                raise GuardError(f"{key} is set outside the [{table_name}] line block; not editing")
             else:
                 lines.insert(insertion, f"{key} = {value}\n")
                 insertion += 1

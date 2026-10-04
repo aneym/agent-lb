@@ -179,3 +179,27 @@ def test_guard_requires_healthy_local_agent_lb_before_repair(tmp_path: Path) -> 
     assert result.returncode != 0
     assert "local Agent LB is unavailable" in result.stderr
     assert config.read_bytes() == original
+
+
+def test_guard_accepts_seat_header_subtable_without_adding_duplicate(tmp_path: Path) -> None:
+    # Codex rewrites the inline env_http_headers as a sub-table; the guard must not add the
+    # inline key again (that duplicate key broke every codex start on 2026-10-04).
+    config = tmp_path / "config.toml"
+    original = """model_provider = "agent-lb"
+
+[model_providers.agent-lb]
+name = "OpenAI"
+base_url = "http://127.0.0.1:2455/backend-api/codex"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true
+
+[model_providers.agent-lb.env_http_headers]
+x-agent-lb-seat = "AGENT_LB_SEAT"
+"""
+    config.write_text(original)
+    result = _run(config)
+    assert result.returncode == 0, result.stderr
+    assert config.read_text() == original
+    import tomllib
+    tomllib.loads(config.read_text())
