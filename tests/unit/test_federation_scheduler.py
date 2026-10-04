@@ -15,8 +15,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, RequestLog
 from app.db.session import SessionLocal
 from app.modules.federation.exceptions import FederationPeerRequestError
-from app.modules.federation.repository import FederationRepository
-from app.modules.federation.scheduler import FederationMirrorScheduler
+from app.modules.federation.scheduler import FederationMirrorScheduler, _default_federation_repo_factory
 from app.modules.federation.schemas import (
     CALLER_MACHINE_MAX_LENGTH,
     CALLER_MACHINE_SOURCE_MAX_LENGTH,
@@ -177,12 +176,9 @@ class _RequestLogPeer(_PeerClient):
 
 
 def _log_repo_factory():
-    @asynccontextmanager
-    async def factory():
-        async with SessionLocal() as session:
-            yield FederationRepository(session)
-
-    return factory
+    # The production factory: its background session expires ORM rows on its
+    # exit rollback, which a plain SessionLocal factory hid (edge crash 2026-10-04).
+    return _default_federation_repo_factory
 
 
 async def _seed_forward_logs() -> list[int]:

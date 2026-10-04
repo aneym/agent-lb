@@ -177,26 +177,27 @@ class FederationMirrorScheduler:
             cursor = await self._cursor_for_forward()
             for _ in range(_REQUEST_LOG_BATCHES_PER_CYCLE):
                 since = None if cursor is not None else utcnow() - _REQUEST_LOG_LOOKBACK
+                # Snapshot the rows inside the session: the background session
+                # expires ORM rows when it rolls back on exit, and reading log.id afterwards
+                # raised on every edge (2026-10-04 00:05Z, ax42).
                 async with self.repo_factory() as repo:
                     logs = await repo.list_request_logs_to_forward(
                         after_id=cursor,
                         since=since,
                         limit=_REQUEST_LOG_BATCH_SIZE,
                     )
-                if not logs:
+                    rows = [_request_log_row(log) for log in logs]
+                if not rows:
                     return
-                body = FederationRequestLogsRequest(
-                    instance_id=self.local_instance_id,
-                    rows=[_request_log_row(log) for log in logs],
-                )
+                body = FederationRequestLogsRequest(instance_id=self.local_instance_id, rows=rows)
                 await self.peer_client.push_request_logs(
                     peer_url=self.peer_url,
                     token=self.federation_token,
                     body=body,
                 )
-                cursor = max(log.id for log in logs)
+                cursor = max(row.source_row_id for row in rows)
                 _write_request_log_cursor(self.request_log_cursor_path, cursor)
-                if len(logs) < _REQUEST_LOG_BATCH_SIZE:
+                if len(rows) < _REQUEST_LOG_BATCH_SIZE:
                     return
         except Exception:
             logger.warning("Federation request-log forward failed; mirror pull remains successful", exc_info=True)
