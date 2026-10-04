@@ -63,6 +63,24 @@ class UtcAccessFormatter(AccessFormatter):
     converter: Callable[[float | None], time.struct_time] = staticmethod(_utc_converter)
 
 
+class ArgsPreservingQueueHandler(logging.handlers.QueueHandler):
+    """Queue records without clearing ``args``.
+
+    Uvicorn's access formatter unpacks the record's args while formatting.
+    Stock ``QueueHandler.prepare`` sets ``args`` to None after merging the
+    message, so the listener drops the access line.
+    """
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        record = copy.copy(record)
+        if record.exc_info and not record.exc_text:
+            formatter = self.formatter or logging.Formatter()
+            record.exc_text = formatter.formatException(record.exc_info)
+        record.exc_info = None
+        record.stack_info = None
+        return record
+
+
 class JsonFormatter(logging.Formatter):
     def __init__(self) -> None:
         super().__init__()
@@ -208,12 +226,17 @@ def _queue_stream_handlers(handlers: dict[str, object]) -> None:
     """
     for name in _QUEUED_HANDLER_NAMES:
         stream = handlers.get(name)
-        if not isinstance(stream, dict) or stream.get("class") == "logging.handlers.QueueHandler":
+        if not isinstance(stream, dict) or str(stream.get("class", "")).endswith("QueueHandler"):
             continue
         stream_name = f"{name}{_STREAM_SUFFIX}"
         handlers[stream_name] = stream
+        handler_class = (
+            "app.core.runtime_logging.ArgsPreservingQueueHandler"
+            if name == "access"
+            else "logging.handlers.QueueHandler"
+        )
         handlers[name] = {
-            "class": "logging.handlers.QueueHandler",
+            "class": handler_class,
             "handlers": [stream_name],
             "respect_handler_level": True,
         }

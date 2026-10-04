@@ -303,7 +303,12 @@ def test_build_log_config_queues_stream_handlers(monkeypatch):
     handlers = cast(dict, config["handlers"])
     for name in ("default", "access"):
         queued = cast(dict, handlers[name])
-        assert queued["class"] == "logging.handlers.QueueHandler"
+        expected_class = (
+            "app.core.runtime_logging.ArgsPreservingQueueHandler"
+            if name == "access"
+            else "logging.handlers.QueueHandler"
+        )
+        assert queued["class"] == expected_class
         assert queued["handlers"] == [f"{name}_stream"]
         stream = cast(dict, handlers[f"{name}_stream"])
         assert stream["class"] == "logging.StreamHandler"
@@ -340,6 +345,47 @@ def test_configure_runtime_logging_emits_through_listener(monkeypatch, capsys):
         else:
             raise AssertionError("listener never flushed the record")
         assert "app.test.queued" in err
+    finally:
+        for listener in start_log_listeners():
+            listener.stop()
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+        get_settings.cache_clear()
+
+
+def test_queued_access_line_keeps_request_args(monkeypatch, capsys):
+    """A uvicorn access record queued in text mode still formats on the listener.
+
+    Stock QueueHandler.prepare clears args after merging the message. The
+    access formatter unpacks that 5-tuple, so the line is dropped and stderr
+    reports a logging error.
+    """
+    import logging.config
+
+    monkeypatch.setenv("AGENT_LB_LOG_FORMAT", "text")
+    from app.core.config.settings import get_settings
+    from app.core.runtime_logging import start_log_listeners
+
+    get_settings.cache_clear()
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    try:
+        logging.config.dictConfig(build_log_config())
+        listeners = start_log_listeners()
+        assert listeners
+        logging.getLogger("uvicorn.access").info(
+            '%s - "%s %s HTTP/%s" %d',
+            "127.0.0.1:1",
+            "POST",
+            "/x",
+            "1.1",
+            200,
+        )
+        for listener in listeners:
+            listener.stop()
+        captured = capsys.readouterr()
+        assert '"POST /x HTTP/1.1" 200' in captured.out
+        assert "Logging error" not in captured.err
     finally:
         for listener in start_log_listeners():
             listener.stop()
