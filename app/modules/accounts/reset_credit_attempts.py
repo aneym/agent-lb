@@ -77,7 +77,7 @@ class ResetCreditAttemptsRepository:
         )
         self._session.add(row)
         try:
-            async with sqlite_writer_section():
+            async with sqlite_writer_section(self._session):
                 await self._session.commit()
         except IntegrityError:
             await self._session.rollback()
@@ -98,7 +98,7 @@ class ResetCreditAttemptsRepository:
             .returning(ResetCreditAttempt.id)
             .execution_options(synchronize_session="fetch")
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(stmt)
             claimed = result.scalar_one_or_none() is not None
             await self._session.commit()
@@ -115,7 +115,7 @@ class ResetCreditAttemptsRepository:
             .values(state="applied", result_code=code, windows_reset=windows_reset, applied_at=utcnow())
             .returning(ResetCreditAttempt.id)
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(stmt)
             if result.scalar_one_or_none() is None:
                 await self._session.rollback()
@@ -133,7 +133,7 @@ class ResetCreditAttemptsRepository:
             .values(state="settled", result_code=code, active_slot=None)
             .returning(ResetCreditAttempt.id)
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(stmt)
             if result.scalar_one_or_none() is None:
                 await self._session.rollback()

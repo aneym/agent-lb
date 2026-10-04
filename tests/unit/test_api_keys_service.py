@@ -4,9 +4,11 @@ import asyncio
 from collections.abc import Collection
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, ApiKeyLimit, LimitType, UsageHistory
@@ -50,6 +52,7 @@ def test_is_sqlite_database_locked_matches_transient_lock_messages(message: str)
 
 class _FakeApiKeysRepository(ApiKeysRepositoryProtocol):
     def __init__(self) -> None:
+        self._session = AsyncMock(spec=AsyncSession)
         self.rows: dict[str, ApiKey] = {}
         self._limits: dict[str, list[ApiKeyLimit]] = {}
         self._account_assignments: dict[str, list[ApiKeyAccountAssignment]] = {}
@@ -63,6 +66,10 @@ class _FakeApiKeysRepository(ApiKeysRepositoryProtocol):
         self.commit_count = 0
         self.update_last_used_commit_flags: list[bool] = []
         self.touched_reservations: list[str] = []
+
+    @property
+    def session(self) -> AsyncSession:
+        return self._session
 
     async def create(self, row: ApiKey, *, commit: bool = True) -> ApiKey:
         del commit

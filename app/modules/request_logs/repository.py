@@ -421,7 +421,7 @@ class RequestLogsRepository:
         unified_7d_utilization: float | None = None,
     ) -> RequestLog:
         caller = identity_for_log(identity)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             resolved_plan_type = plan_type
             if resolved_plan_type is None and account_id:
@@ -503,7 +503,7 @@ class RequestLogsRepository:
 
         Returns the number of rows that were updated.
         """
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             resolved_request_id = ensure_request_id(request_id)
             try:
                 # Fetch the affected rows so we can recompute ``cost_usd``

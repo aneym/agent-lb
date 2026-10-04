@@ -11,6 +11,7 @@ from math import ceil
 from typing import Protocol
 
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
@@ -51,6 +52,9 @@ _SUPPORTED_TRAFFIC_CLASSES = frozenset({TRAFFIC_CLASS_FOREGROUND, TRAFFIC_CLASS_
 
 
 class ApiKeysRepositoryProtocol(Protocol):
+    @property
+    def session(self) -> AsyncSession: ...
+
     async def create(self, row: ApiKey, *, commit: bool = True) -> ApiKey: ...
 
     async def get_by_id(self, key_id: str) -> ApiKey | None: ...
@@ -740,7 +744,7 @@ class ApiKeysService:
         request_usage_budget: ApiKeyRequestUsageBudget | None,
     ) -> ApiKeyUsageReservationData:
         now = utcnow()
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._repository.session):
             row = _ensure_valid_api_key_row(await self._repository.get_by_id(key_id))
             if row.expires_at is not None and row.expires_at < now:
                 raise ApiKeyInvalidError("API key has expired")
@@ -869,7 +873,7 @@ class ApiKeysService:
         service_tier: str | None,
         status: str,
     ) -> None:
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._repository.session):
             reservation = await self._repository.get_usage_reservation(reservation_id)
             if reservation is None or reservation.status != "reserved":
                 return
@@ -932,7 +936,7 @@ class ApiKeysService:
     async def touch_usage_reservation(self, reservation_id: str) -> bool:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
             try:
-                async with sqlite_writer_section():
+                async with sqlite_writer_section(self._repository.session):
                     touched = await self._repository.touch_usage_reservation(reservation_id)
                     await self._repository.commit()
                     return touched
@@ -958,7 +962,7 @@ class ApiKeysService:
         raise RuntimeError("unreachable")
 
     async def _release_usage_reservation_once(self, reservation_id: str) -> None:
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._repository.session):
             reservation = await self._repository.get_usage_reservation(reservation_id)
             if reservation is None or reservation.status != "reserved":
                 return

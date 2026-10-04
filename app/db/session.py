@@ -249,12 +249,14 @@ async def get_background_session() -> AsyncIterator[AsyncSession]:
 
 
 @asynccontextmanager
-async def sqlite_writer_section() -> AsyncIterator[None]:
+async def sqlite_writer_section(session: AsyncSession) -> AsyncIterator[None]:
     """Serialize local SQLite write transactions without throttling upstream work."""
     global _sqlite_writer_lock
     if not _is_sqlite_url(_settings.database_url) or _is_sqlite_memory_url(_settings.database_url):
         yield
         return
+    # Never hold the writer lock while waiting for a pooled connection.
+    await session.connection()
     if _sqlite_writer_lock is None:
         _sqlite_writer_lock = anyio.Lock()
     async with _sqlite_writer_lock:

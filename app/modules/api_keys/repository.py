@@ -99,6 +99,10 @@ class ApiKeysRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @property
+    def session(self) -> AsyncSession:
+        return self._session
+
     @staticmethod
     def _build_account_costs(rows: Sequence[object]) -> list[ApiKeyAccountCost]:
         account_costs: list[ApiKeyAccountCost] = []
@@ -709,7 +713,7 @@ class ApiKeysRepository:
 
         try:
             while True:
-                async with sqlite_writer_section():
+                async with sqlite_writer_section(self._session):
                     result = await self._session.execute(
                         select(ApiKeyUsageReservation.id)
                         .where(ApiKeyUsageReservation.status == "reserved")

@@ -2270,7 +2270,7 @@ async def test_release_stale_usage_reservations_restores_reserved_usage(async_cl
     writer_section_entries = 0
 
     @contextlib.asynccontextmanager
-    async def fake_sqlite_writer_section():
+    async def fake_sqlite_writer_section(session):
         nonlocal writer_section_entries
         writer_section_entries += 1
         yield
@@ -2347,7 +2347,7 @@ async def test_release_stale_usage_reservations_uses_sqlite_writer_section(async
     entered = False
 
     @contextlib.asynccontextmanager
-    async def fake_sqlite_writer_section():
+    async def fake_sqlite_writer_section(session):
         nonlocal entered
         entered = True
         yield

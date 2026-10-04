@@ -82,7 +82,7 @@ class QuotaPlannerRepository:
         row.allow_synthetic_traffic = settings.allow_synthetic_traffic
         row.warmup_model_preference = settings.warmup_model_preference
         row.dry_run = settings.dry_run
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.commit()
             await self._session.refresh(row)
         return _settings_from_row(row)
@@ -127,7 +127,7 @@ class QuotaPlannerRepository:
             idempotency_key=idempotency_key,
         )
         self._session.add(row)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.commit()
             await self._session.refresh(row)
         return row
@@ -164,7 +164,7 @@ class QuotaPlannerRepository:
             else:
                 stmt = stmt.where(QuotaPlannerDecision.status.in_(tuple(expected_status)))
         stmt = stmt.returning(QuotaPlannerDecision.id)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             updated_id = await self._session.scalar(stmt)
             await self._session.commit()
         if updated_id is None:
@@ -242,7 +242,7 @@ class QuotaPlannerRepository:
             confidence=confidence,
         )
         self._session.add(row)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.commit()
             await self._session.refresh(row)
         return row

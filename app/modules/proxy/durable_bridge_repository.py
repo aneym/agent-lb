@@ -59,7 +59,7 @@ class DurableBridgeRepository:
         self._session = session
 
     async def _commit_writer_section(self) -> None:
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.commit()
 
     async def get_session(
@@ -227,7 +227,7 @@ class DurableBridgeRepository:
             else:
                 next_epoch = existing.owner_epoch
 
-            async with sqlite_writer_section():
+            async with sqlite_writer_section(self._session):
                 existing.owner_instance_id = instance_id
                 existing.owner_epoch = next_epoch
                 existing.lease_expires_at = lease_expires_at
@@ -308,7 +308,7 @@ class DurableBridgeRepository:
         owner_epoch: int,
         draining: bool,
     ) -> DurableBridgeSessionSnapshot | None:
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             row = await self._session.get(HttpBridgeSessionRecord, session_id, populate_existing=True)
             if row is None:
                 return None
@@ -354,7 +354,7 @@ class DurableBridgeRepository:
             session_ids = list(result.scalars().all())
             if not session_ids:
                 return deleted_count
-            async with sqlite_writer_section():
+            async with sqlite_writer_section(self._session):
                 await self._session.execute(
                     delete(HttpBridgeSessionAlias).where(
                         HttpBridgeSessionAlias.session_id.in_(
@@ -428,7 +428,7 @@ class DurableBridgeRepository:
             )
         else:
             raise RuntimeError(f"DurableBridgeRepository alias upsert unsupported for dialect={dialect!r}")
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.execute(statement)
             await self._session.commit()
 

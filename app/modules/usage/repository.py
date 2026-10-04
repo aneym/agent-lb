@@ -479,7 +479,7 @@ class UsageRepository:
             recorded_at=recorded_at or utcnow(),
         )
         self._session.add(entry)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.commit()
             await self._session.refresh(entry)
         return entry
@@ -904,7 +904,7 @@ class AdditionalUsageRepository:
             recorded_at=recorded_at or utcnow(),
         )
         self._session.add(entry)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.commit()
 
     async def clear_cooldown_if_latest(
@@ -964,14 +964,14 @@ class AdditionalUsageRepository:
             ],
             values,
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(statement)
             await self._session.commit()
         return result.rowcount == 1
 
     async def delete_for_account(self, account_id: str) -> None:
         stmt = delete(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == account_id)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.execute(stmt)
             await self._session.commit()
 
@@ -983,7 +983,7 @@ class AdditionalUsageRepository:
             AdditionalUsageHistory.account_id == account_id,
             _additional_quota_match_clause(scope),
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.execute(stmt)
             await self._session.commit()
 
@@ -1004,7 +1004,7 @@ class AdditionalUsageRepository:
             _additional_quota_match_clause(scope),
             AdditionalUsageHistory.window == window,
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             await self._session.execute(stmt)
             await self._session.commit()
 

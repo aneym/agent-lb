@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+import anyio
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.db.session as session_module
@@ -89,6 +93,59 @@ def test_import_session_with_postgres_url_does_not_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sqlite_mixed_writers_do_not_wedge_connection_pool(monkeypatch, tmp_path) -> None:
+    """Exercise the edge incident against a real bounded SQLite connection pool."""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'mixed-writers.db'}"
+    engine = create_async_engine(url, pool_size=2, max_overflow=0, pool_timeout=2)
+    sessions = async_sessionmaker(engine)
+    monkeypatch.setattr(session_module, "_settings", _FakeSettings(database_url=url))
+    writer_lock = anyio.Lock()
+    monkeypatch.setattr(session_module, "_sqlite_writer_lock", writer_lock)
+    readers_ready = [asyncio.Event(), asyncio.Event()]
+    release_readers = asyncio.Event()
+
+    async def query_first(index: int) -> None:
+        async with sessions() as session:
+            await session.execute(text("SELECT 1"))
+            if index < 2:
+                readers_ready[index].set()
+            await release_readers.wait()
+            async with session_module.sqlite_writer_section(session):
+                await session.execute(text("INSERT INTO writes DEFAULT VALUES"))
+                await session.commit()
+
+    async def section_first() -> None:
+        async with sessions() as session:
+            async with session_module.sqlite_writer_section(session):
+                await session.execute(text("SELECT 1"))
+                await session.execute(text("INSERT INTO writes DEFAULT VALUES"))
+                await session.commit()
+
+    async def run_writers() -> list[object]:
+        await writer_lock.acquire()
+        readers = [asyncio.create_task(query_first(index)) for index in range(4)]
+        await asyncio.gather(*(event.wait() for event in readers_ready))
+        fresh_writers = [asyncio.create_task(section_first()) for _ in range(4)]
+        # Queue fresh writers before the two connection holders request the lock.
+        await asyncio.sleep(0)
+        release_readers.set()
+        await asyncio.sleep(0)
+        writer_lock.release()
+        return await asyncio.gather(*readers, *fresh_writers, return_exceptions=True)
+
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("CREATE TABLE writes (id INTEGER PRIMARY KEY)"))
+        results = await asyncio.wait_for(run_writers(), timeout=10)
+        assert not any(isinstance(result, PoolTimeoutError) for result in results), results
+        assert results == [None] * 8, results
+        async with sessions() as session:
+            assert await session.scalar(text("SELECT count(*) FROM writes")) == 8
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_sqlite_writer_section_serializes_file_sqlite_writers(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         session_module,
@@ -96,19 +153,21 @@ async def test_sqlite_writer_section_serializes_file_sqlite_writers(monkeypatch,
         _FakeSettings(database_url=f"sqlite+aiosqlite:///{tmp_path / 'store.db'}"),
     )
     monkeypatch.setattr(session_module, "_sqlite_writer_lock", None)
+    engine = create_async_engine(session_module._settings.database_url)
+    sessions = async_sessionmaker(engine)
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
     order: list[str] = []
 
     async def first_writer() -> None:
-        async with session_module.sqlite_writer_section():
+        async with sessions() as session, session_module.sqlite_writer_section(session):
             order.append("first-start")
             first_entered.set()
             await release_first.wait()
             order.append("first-end")
 
     async def second_writer() -> None:
-        async with session_module.sqlite_writer_section():
+        async with sessions() as session, session_module.sqlite_writer_section(session):
             order.append("second-start")
             order.append("second-end")
 
@@ -123,6 +182,7 @@ async def test_sqlite_writer_section_serializes_file_sqlite_writers(monkeypatch,
     await asyncio.gather(first_task, second_task)
 
     assert order == ["first-start", "first-end", "second-start", "second-end"]
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -133,13 +193,13 @@ async def test_sqlite_writer_section_does_not_serialize_memory_sqlite(monkeypatc
     second_entered = asyncio.Event()
 
     async def first_writer() -> None:
-        async with session_module.sqlite_writer_section():
+        async with AsyncSession() as session, session_module.sqlite_writer_section(session):
             first_entered.set()
             await second_entered.wait()
 
     async def second_writer() -> None:
         await first_entered.wait()
-        async with session_module.sqlite_writer_section():
+        async with AsyncSession() as session, session_module.sqlite_writer_section(session):
             second_entered.set()
 
     await asyncio.wait_for(asyncio.gather(first_writer(), second_writer()), timeout=1)

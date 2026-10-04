@@ -106,7 +106,7 @@ class LimitWarmupRepository:
             )
             .returning(AccountLimitWarmup.id)
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(stmt)
             await self._session.commit()
         if result.scalar_one_or_none() is None:
@@ -138,7 +138,7 @@ class LimitWarmupRepository:
         )
         self._session.add(row)
         try:
-            async with sqlite_writer_section():
+            async with sqlite_writer_section(self._session):
                 await self._session.commit()
                 await self._session.refresh(row)
         except IntegrityError:
@@ -167,7 +167,7 @@ class LimitWarmupRepository:
             )
             .returning(AccountLimitWarmup.id)
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(stmt)
             await self._session.commit()
         if result.scalar_one_or_none() is None:

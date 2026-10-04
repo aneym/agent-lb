@@ -70,7 +70,7 @@ class StickySessionsRepository:
     async def upsert(self, key: str, account_id: str, *, kind: StickySessionKind) -> StickySession:
         statement = self._build_upsert_statement(key, account_id, kind)
         for attempt in range(3):
-            async with sqlite_writer_section():
+            async with sqlite_writer_section(self._session):
                 await self._session.execute(statement)
                 await self._session.commit()
             row = await self.get_entry(key, kind=kind)
@@ -88,7 +88,7 @@ class StickySessionsRepository:
             StickySession.key == key,
             StickySession.kind == kind,
         )
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(statement.returning(StickySession.key))
             await self._session.commit()
         return result.scalar_one_or_none() is not None
@@ -108,7 +108,7 @@ class StickySessionsRepository:
             statement = delete(StickySession).where(
                 or_(*(and_(StickySession.key == key, StickySession.kind == kind) for key, kind in chunk))
             )
-            async with sqlite_writer_section():
+            async with sqlite_writer_section(self._session):
                 result = await self._session.execute(statement.returning(StickySession.key, StickySession.kind))
                 await self._session.commit()
             deleted.extend((key, kind) for key, kind in result.all())
@@ -199,7 +199,7 @@ class StickySessionsRepository:
         stmt = delete(StickySession).where(StickySession.updated_at < to_utc_naive(cutoff))
         if kind is not None:
             stmt = stmt.where(StickySession.kind == kind)
-        async with sqlite_writer_section():
+        async with sqlite_writer_section(self._session):
             result = await self._session.execute(stmt.returning(StickySession.key))
             deleted = len(result.scalars().all())
             await self._session.commit()
