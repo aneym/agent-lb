@@ -26,6 +26,7 @@ from app.core.utils.time import utcnow
 from app.db.models import Account, ApiKey, RequestKind, RequestLog
 from app.db.session import sqlite_writer_section
 from app.modules.accounts.subscription_status import CANCELED_SUBSCRIPTION_STATUS
+from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,7 @@ class RequestLogsRepository:
             RequestLog.request_id == response_id_value,
             RequestLog.status == "success",
             RequestLog.account_id.is_not(None),
+            exclude_forwarded_edge_logs(),
         ]
         if api_key_id is not None:
             base_conditions.append(RequestLog.api_key_id == api_key_id)

@@ -23,7 +23,10 @@ from app.modules.public_usage.schemas import (
 )
 
 # Mirrors the warm-up exclusion used by the dashboard usage aggregations.
+# Source catches local limit-warmup rows. Forwarded copies are stored as
+# source=edge:<id>, so request_kind is what still identifies them.
 _INTERNAL_LIMIT_WARMUP_SOURCE = "limit_warmup"
+_WARMUP_REQUEST_KINDS = ("warmup", "limit_warmup")
 
 _MIN_DAYS = 7
 _MAX_DAYS = 730
@@ -88,6 +91,7 @@ async def build_public_usage(session: AsyncSession, days: int) -> PublicUsageRes
         )
         .where(RequestLog.requested_at >= cutoff)
         .where((RequestLog.source.is_(None)) | (RequestLog.source != _INTERNAL_LIMIT_WARMUP_SOURCE))
+        .where(RequestLog.request_kind.not_in(_WARMUP_REQUEST_KINDS))
         .group_by(date_expr, RequestLog.model, RequestLog.provider)
     )
     rows = (await session.execute(stmt)).all()

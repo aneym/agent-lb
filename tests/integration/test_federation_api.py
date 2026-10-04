@@ -1013,3 +1013,127 @@ async def test_mirror_snapshot_cannot_overwrite_concurrent_local_checkout(db_set
     current = await _get_account("mirror-owner-race")
     assert current.owner_instance == _LOCAL_INSTANCE_ID
     assert encryptor.decrypt(current.refresh_token_encrypted) == "local-live"
+
+
+def _request_log_row(source_row_id: int, request_id: str, account_id: str | None) -> dict[str, object]:
+    return {
+        "source_row_id": source_row_id,
+        "account_id": account_id,
+        "provider": "anthropic",
+        "api_key_id": "edge-local-key",
+        "request_id": request_id,
+        "request_kind": "normal",
+        "requested_at": "2026-10-03T15:00:00Z",
+        "model": "claude-opus",
+        "status": "success",
+        "room": "lab",
+        "caller_seat": "alex",
+        "unified_5h_utilization": 0.25,
+        "unified_7d_utilization": 0.5,
+        "input_tokens": 11,
+    }
+
+
+@pytest.mark.asyncio
+async def test_request_logs_ingest_is_idempotent_and_requires_mirror_auth(async_client, monkeypatch) -> None:
+    _enable_federation(monkeypatch)
+    await _seed_account("known-acct", owner_instance=None)
+    payload = {
+        "instance_id": "ax42",
+        "rows": [
+            _request_log_row(11, "req-known", "known-acct"),
+            _request_log_row(12, "req-unknown", "missing-acct"),
+        ],
+    }
+
+    denied = await async_client.post("/api/federation/request-logs", json=payload)
+    assert denied.status_code == 403
+    wrong = await async_client.post(
+        "/api/federation/request-logs", json=payload, headers={"Authorization": "Bearer wrong-token"}
+    )
+    assert wrong.status_code == 403
+
+    accepted = await async_client.post("/api/federation/request-logs", json=payload, headers=_auth_headers())
+    assert accepted.status_code == 200
+    assert accepted.json() == {"accepted": 2, "skipped": 0, "max_source_row_id": 12}
+
+    again = await async_client.post("/api/federation/request-logs", json=payload, headers=_auth_headers())
+    assert again.status_code == 200
+    assert again.json() == {"accepted": 0, "skipped": 2, "max_source_row_id": 12}
+
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(RequestLog).order_by(RequestLog.request_id))).scalars().all()
+    assert len(rows) == 2
+    by_request = {row.request_id: row for row in rows}
+    known = by_request["req-known"]
+    unknown = by_request["req-unknown"]
+    assert known.source == "edge:ax42"
+    assert unknown.source == "edge:ax42"
+    assert known.api_key_id is None
+    assert unknown.api_key_id is None
+    assert known.account_id == "known-acct"
+    assert unknown.account_id is None
+    assert known.room == "lab"
+    assert known.caller_seat == "alex"
+    assert known.unified_5h_utilization == 0.25
+    assert known.unified_7d_utilization == 0.5
+    assert known.input_tokens == 11
+
+
+@pytest.mark.asyncio
+async def test_request_logs_rejects_batches_over_500(async_client, monkeypatch) -> None:
+    _enable_federation(monkeypatch)
+    rows = [_request_log_row(index, f"bulk-{index}", None) for index in range(1, 502)]
+    response = await async_client.post(
+        "/api/federation/request-logs",
+        json={"instance_id": "ax42", "rows": rows},
+        headers=_auth_headers(),
+    )
+    assert response.status_code in {413, 422}
+
+
+@pytest.mark.asyncio
+async def test_list_local_usage_rollups_excludes_edge_rows(db_setup) -> None:
+    del db_setup
+    now = utcnow()
+    async with SessionLocal() as session:
+        session.add(
+            Account(
+                id="rollup-acct",
+                provider="anthropic",
+                email="rollup-acct@example.com",
+                plan_type="claude",
+                access_token_encrypted=b"access",
+                refresh_token_encrypted=b"refresh",
+                last_refresh=now,
+                status=AccountStatus.ACTIVE,
+            )
+        )
+        session.add(
+            RequestLog(
+                account_id="rollup-acct",
+                request_id="local-row",
+                model="claude-opus",
+                status="success",
+                requested_at=now,
+                input_tokens=5,
+                source=None,
+            )
+        )
+        session.add(
+            RequestLog(
+                account_id="rollup-acct",
+                request_id="edge-row",
+                model="claude-opus",
+                status="success",
+                requested_at=now,
+                input_tokens=9,
+                source="edge:ax42",
+            )
+        )
+        await session.commit()
+        rollups = await FederationRepository(session).list_local_usage_rollups(window_days=7)
+    assert len(rollups) == 1
+    assert rollups[0].account_id == "rollup-acct"
+    assert rollups[0].requests == 1
+    assert rollups[0].input_tokens == 5

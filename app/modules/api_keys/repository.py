@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Integer, cast, delete, func, select, true, update
+from sqlalchemy import Integer, and_, cast, delete, func, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
@@ -24,6 +24,7 @@ from app.db.models import (
 )
 from app.db.session import sqlite_writer_section
 from app.modules.api_keys.limit_windows import advance_limit_reset
+from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +136,10 @@ class ApiKeysRepository:
 
     @staticmethod
     def _exclude_warmup_clause():
-        return RequestLog.request_kind.not_in(("warmup", "limit_warmup"))
+        return and_(
+            RequestLog.request_kind.not_in(("warmup", "limit_warmup")),
+            exclude_forwarded_edge_logs(),
+        )
 
     def _select_api_key(self):
         return (

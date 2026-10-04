@@ -12,6 +12,8 @@ from app.modules.federation.schemas import (
     FederationMirrorResponse,
     FederationPushRequest,
     FederationPushResponse,
+    FederationRequestLogsRequest,
+    FederationRequestLogsResponse,
     FederationTransferStatusResponse,
     FederationUsageReportRequest,
 )
@@ -35,6 +37,10 @@ class FederationPeerClient(Protocol):
     async def push_accounts(self, *, url: str, request: FederationPushRequest) -> FederationPushResponse: ...
 
     async def push_usage_report(self, *, peer_url: str, token: str, report: FederationUsageReportRequest) -> None: ...
+
+    async def push_request_logs(
+        self, *, peer_url: str, token: str, body: FederationRequestLogsRequest
+    ) -> FederationRequestLogsResponse: ...
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str
@@ -91,6 +97,18 @@ class AiohttpFederationPeerClient:
                 headers=_bearer_headers(token),
             ) as response:
                 await _json_or_raise(response)
+
+    async def push_request_logs(
+        self, *, peer_url: str, token: str, body: FederationRequestLogsRequest
+    ) -> FederationRequestLogsResponse:
+        async with aiohttp.ClientSession(timeout=self._timeout(), trust_env=False) as session:
+            async with session.post(
+                f"{peer_url}/api/federation/request-logs",
+                json=body.model_dump(mode="json"),
+                headers=_bearer_headers(token),
+            ) as response:
+                data = await _json_or_raise(response)
+        return FederationRequestLogsResponse.model_validate(data)
 
     async def checkout(
         self, *, peer_url: str, token: str, account_id: str, taker_instance_id: str, nonce: str

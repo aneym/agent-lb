@@ -23,6 +23,8 @@ async def _insert_log(
     cost_usd: float,
     status: str = "success",
     latency_ms: int | None = 200,
+    source: str | None = None,
+    request_kind: str = "normal",
 ) -> None:
     async with SessionLocal() as session:
         session.add(
@@ -40,6 +42,8 @@ async def _insert_log(
                 cost_usd=cost_usd,
                 latency_ms=latency_ms,
                 status=status,
+                source=source,
+                request_kind=request_kind,
             )
         )
         await session.commit()
@@ -78,6 +82,20 @@ async def test_public_usage_aggregates_without_auth(async_client):
         status="error",
         latency_ms=100,
     )
+    # Forwarded edge copies keep request_kind and replace source with edge:<id>,
+    # so a source-only warmup filter would count them.
+    for kind in ("limit_warmup", "warmup"):
+        await _insert_log(
+            request_id=f"edge-{kind}",
+            provider="openai",
+            model="gpt-5.4-mini",
+            when=now,
+            input_tokens=10_000,
+            output_tokens=10_000,
+            cost_usd=9.0,
+            source="edge:ax42",
+            request_kind=kind,
+        )
 
     # No auth headers — this surface is public.
     response = await async_client.get("/api/usage/public?days=30")

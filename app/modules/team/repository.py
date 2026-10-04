@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ApiKey, RequestLog, TeamMember
+from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +109,7 @@ class TeamRepository:
         ).where(
             RequestLog.api_key_id.in_(member_key_ids),
             RequestLog.requested_at >= since,
+            exclude_forwarded_edge_logs(),
         )
         cost_usd, tokens = (await self._session.execute(stmt)).one()
         return TeamUsageTotals(cost_usd=float(cost_usd or 0.0), tokens=int(tokens or 0))
@@ -124,6 +126,7 @@ class TeamRepository:
             .where(
                 RequestLog.api_key_id.in_(member_key_ids),
                 RequestLog.requested_at >= since,
+                exclude_forwarded_edge_logs(),
             )
             .group_by(RequestLog.model)
             .order_by(func.coalesce(func.sum(RequestLog.cost_usd), 0.0).desc())
@@ -151,6 +154,7 @@ class TeamRepository:
             .where(
                 RequestLog.api_key_id.in_(member_key_ids),
                 RequestLog.requested_at >= since,
+                exclude_forwarded_edge_logs(),
             )
             .group_by(day_expression)
             .order_by(day_expression.asc())

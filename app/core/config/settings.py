@@ -369,6 +369,8 @@ class Settings(BaseSettings):
     # when true the mirror also carries accounts other instances own (pushed in or mirrored), access token only; the owner keeps refreshing them.  # noqa: E501
     federation_mirror_include_pushed: bool = False
     federation_usage_window_days: int = Field(default=7, gt=0)
+    # Mirrors forward request_logs to the peer. Set false to stop that push.
+    federation_forward_request_logs: bool = True
     # Account push (openspec add-federation-account-push). Sender side: which of
     # this instance's owned accounts to push to which peer LBs. Receiver side:
     # which Tailscale logins may push, and the tailscale CLI used to identify them.

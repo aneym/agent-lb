@@ -215,3 +215,80 @@ class FederationAbortRequest(BaseModel):
     account_id: str
     direction: str
     caller_instance_id: str
+
+
+_INSTANCE_ID_PATTERN = r"^[A-Za-z0-9_.:-]{1,64}$"
+_REQUEST_LOG_BATCH_LIMIT = 500
+# Match RequestLog String(n) columns. Unbounded String/Text columns stay uncapped.
+CALLER_USER_MAX_LENGTH = 32
+CALLER_USER_SOURCE_MAX_LENGTH = 32
+CALLER_MACHINE_MAX_LENGTH = 48
+CALLER_MACHINE_SOURCE_MAX_LENGTH = 16
+CALLER_SEAT_MAX_LENGTH = 64
+ROOM_MAX_LENGTH = 128
+
+
+class FederationRequestLogRow(BaseModel):
+    """One edge request_logs row. No headers, bodies, or tokens."""
+
+    source_row_id: int
+    account_id: str | None = None
+    provider: str
+    api_key_id: str | None = None
+    session_id: str | None = None
+    client_session_id: str | None = None
+    caller_user: str | None = Field(default=None, max_length=CALLER_USER_MAX_LENGTH)
+    caller_user_source: str | None = Field(default=None, max_length=CALLER_USER_SOURCE_MAX_LENGTH)
+    caller_machine: str | None = Field(default=None, max_length=CALLER_MACHINE_MAX_LENGTH)
+    caller_machine_source: str | None = Field(default=None, max_length=CALLER_MACHINE_SOURCE_MAX_LENGTH)
+    caller_seat: str | None = Field(default=None, max_length=CALLER_SEAT_MAX_LENGTH)
+    room: str | None = Field(default=None, max_length=ROOM_MAX_LENGTH)
+    unified_5h_utilization: float | None = None
+    unified_7d_utilization: float | None = None
+    request_id: str
+    request_kind: str
+    requested_at: datetime
+    model: str
+    plan_type: str | None = None
+    source: str | None = None
+    useragent: str | None = None
+    useragent_group: str | None = None
+    transport: str | None = None
+    service_tier: str | None = None
+    requested_service_tier: str | None = None
+    actual_service_tier: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    cost_usd: float | None = None
+    reasoning_effort: str | None = None
+    latency_ms: int | None = None
+    latency_first_token_ms: int | None = None
+    status: str
+    error_code: str | None = None
+    error_message: str | None = None
+    failure_phase: str | None = None
+    failure_detail: str | None = None
+    failure_exception_type: str | None = None
+    upstream_status_code: int | None = None
+    upstream_error_code: str | None = None
+    bridge_stage: str | None = None
+    upstream_proxy_route_mode: str | None = None
+    upstream_proxy_pool_id: str | None = None
+    upstream_proxy_endpoint_id: str | None = None
+    upstream_proxy_fallback_used: bool | None = None
+    upstream_proxy_fail_closed_reason: str | None = None
+
+
+class FederationRequestLogsRequest(BaseModel):
+    instance_id: str = Field(pattern=_INSTANCE_ID_PATTERN)
+    rows: list[FederationRequestLogRow] = Field(max_length=_REQUEST_LOG_BATCH_LIMIT)
+
+
+class FederationRequestLogsResponse(BaseModel):
+    accepted: int
+    skipped: int
+    max_source_row_id: int

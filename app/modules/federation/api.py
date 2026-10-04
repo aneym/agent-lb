@@ -35,6 +35,8 @@ from app.modules.federation.schemas import (
     FederationMirrorStatus,
     FederationPushRequest,
     FederationPushResponse,
+    FederationRequestLogsRequest,
+    FederationRequestLogsResponse,
     FederationStatusResponse,
     FederationTransferStateResponse,
     FederationTransferStatusResponse,
@@ -105,6 +107,18 @@ async def post_usage_report(
     context: FederationContext = Depends(get_federation_context),
 ) -> FederationUsageReportResponse:
     return await context.service.accept_usage_report(request.instance_id, request.rollups)
+
+
+@router.post(
+    "/request-logs",
+    response_model=FederationRequestLogsResponse,
+    dependencies=[Depends(require_federation_mirror_auth)],
+)
+async def post_request_logs(
+    request: FederationRequestLogsRequest,
+    context: FederationContext = Depends(get_federation_context),
+) -> FederationRequestLogsResponse:
+    return await context.service.accept_request_logs(request.instance_id, request.rows)
 
 
 @dashboard_router.get("/status", response_model=FederationStatusResponse)

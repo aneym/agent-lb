@@ -24,6 +24,8 @@ from app.modules.federation.schemas import (
     FederationCheckoutResponse,
     FederationMirrorAccount,
     FederationMirrorResponse,
+    FederationRequestLogRow,
+    FederationRequestLogsResponse,
     FederationTransferStatusResponse,
     FederationUsageAccount,
     FederationUsageDay,
@@ -62,6 +64,16 @@ class FederationService:
             instance_id=instance_id,
             accepted=len(rollups),
             reported_at=reported_at,
+        )
+
+    async def accept_request_logs(
+        self, instance_id: str, rows: list[FederationRequestLogRow]
+    ) -> FederationRequestLogsResponse:
+        accepted, skipped, max_source_row_id = await self._repo.ingest_forwarded_request_logs(instance_id, rows)
+        return FederationRequestLogsResponse(
+            accepted=accepted,
+            skipped=skipped,
+            max_source_row_id=max_source_row_id,
         )
 
     async def get_usage_instances(self) -> FederationUsageInstancesResponse:

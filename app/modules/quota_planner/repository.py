@@ -17,6 +17,7 @@ from app.db.models import (
 )
 from app.db.session import sqlite_writer_section
 from app.modules.quota_planner.logic import PlannerSettings, encode_working_days, parse_working_days
+from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 _SETTINGS_ID = 1
 
@@ -190,6 +191,7 @@ class QuotaPlannerRepository:
                 RequestLog.request_kind == "warmup",
                 RequestLog.requested_at >= since,
                 RequestLog.deleted_at.is_(None),
+                exclude_forwarded_edge_logs(),
             )
         )
         return float(await self._session.scalar(stmt) or 0.0)
@@ -281,7 +283,13 @@ class QuotaPlannerRepository:
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
                 func.count(RequestLog.id).label("request_count"),
             )
-            .where(and_(RequestLog.requested_at >= since, RequestLog.deleted_at.is_(None)))
+            .where(
+                and_(
+                    RequestLog.requested_at >= since,
+                    RequestLog.deleted_at.is_(None),
+                    exclude_forwarded_edge_logs(),
+                )
+            )
             .group_by(bucket_col, request_kind)
             .order_by(bucket_col)
         )
@@ -333,7 +341,13 @@ class QuotaPlannerRepository:
                 func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
                 func.count(RequestLog.id).label("request_count"),
             )
-            .where(and_(RequestLog.requested_at >= since, RequestLog.deleted_at.is_(None)))
+            .where(
+                and_(
+                    RequestLog.requested_at >= since,
+                    RequestLog.deleted_at.is_(None),
+                    exclude_forwarded_edge_logs(),
+                )
+            )
             .group_by(
                 bucket_col,
                 RequestLog.account_id,

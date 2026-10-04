@@ -21,6 +21,7 @@ from sqlalchemy import DateTime, Integer, String, and_, case, column, func, sele
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, AccountStatus, ApiKey, ApiKeyAccountAssignment, RequestLog, UsageHistory
+from app.modules.request_logs.edge_source import exclude_forwarded_edge_logs
 
 _CACHE_SECONDS = 5.0
 _CACHE_SIZE = 1024
@@ -191,6 +192,7 @@ async def _aggregate(
         .where(
             RequestLog.account_id.in_({snapshot.account_id for snapshot in snapshots}),
             RequestLog.requested_at >= min(snapshot.start for snapshot in snapshots),
+            exclude_forwarded_edge_logs(),
         )
         .group_by(windows.c.account_id, windows.c.length)
     )
