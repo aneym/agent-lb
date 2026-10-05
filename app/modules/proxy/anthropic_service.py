@@ -158,6 +158,74 @@ async def _admitted_http_session(
             yield session, admission_stack
 
 
+class UpstreamStallTimeout(Exception):
+    """A streamed upstream call sent no bytes within its bound.
+
+    ``first_byte``: nothing arrived between send and the first body chunk, so
+    no bytes reached the client and the attempt can move to another account.
+    ``stream_idle``: the stream went silent after bytes already went out.
+    """
+
+    def __init__(self, phase: str, seconds: float) -> None:
+        self.phase = phase
+        self.seconds = seconds
+        self.code = f"upstream_{phase}_timeout"
+        what = "first response bytes" if phase == "first_byte" else "the next stream chunk"
+        super().__init__(f"Anthropic sent no {what} within {seconds:g} s ({self.code})")
+
+
+class _StallCatcher:
+    """Ends an upstream attempt on a stall and records it for the attempt loop."""
+
+    def __init__(self) -> None:
+        self.stall: UpstreamStallTimeout | None = None
+
+    async def __aenter__(self) -> _StallCatcher:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        if isinstance(exc, UpstreamStallTimeout):
+            self.stall = exc
+            return True
+        return False
+
+
+async def _stall_bounded_chunks(
+    chunks: AsyncIterator[bytes],
+    *,
+    first_byte_deadline: float | None,
+    first_byte_seconds: float,
+    idle_seconds: float,
+) -> AsyncIterator[bytes]:
+    """Yield upstream chunks, bounding the wait for the first and each later one.
+
+    Each bound wraps a single read and never spans a yield: the route drives
+    this stream from a fresh task per chunk (SSE keepalive merging), so a
+    timeout scope left open across a yield would cancel the wrong task.
+    """
+    iterator = chunks.__aiter__()
+    loop = asyncio.get_running_loop()
+    deadline = first_byte_deadline
+    seen_bytes = False
+    while True:
+        bound = asyncio.timeout_at(deadline)
+        try:
+            async with bound:
+                chunk = await anext(iterator)
+        except StopAsyncIteration:
+            return
+        except TimeoutError:
+            if not bound.expired():
+                raise
+            if seen_bytes:
+                raise UpstreamStallTimeout("stream_idle", idle_seconds) from None
+            raise UpstreamStallTimeout("first_byte", first_byte_seconds) from None
+        if chunk:
+            seen_bytes = True
+            deadline = loop.time() + idle_seconds if idle_seconds > 0 else None
+        yield chunk
+
+
 class _ConnectRetryingResponse:
     """Async context manager that retries the upstream *connect* phase.
 
@@ -165,7 +233,9 @@ class _ConnectRetryingResponse:
     refused, connect timeout) are retried; anything after headers arrive is
     the caller's responsibility. Exhausting the attempts raises a 503
     ``upstream_unreachable`` proxy error so clients retry instead of seeing a
-    generic 500.
+    generic 500. A ``first_byte_deadline`` (event-loop time) bounds the whole
+    wait for response headers, connect retries included, and raises
+    ``UpstreamStallTimeout("first_byte")`` instead of retrying the same account.
     """
 
     def __init__(
@@ -174,13 +244,27 @@ class _ConnectRetryingResponse:
         *,
         attempts: int,
         label: str,
+        first_byte_deadline: float | None = None,
+        first_byte_seconds: float = 0.0,
     ) -> None:
         self._open_response = open_response
         self._attempts = max(1, attempts)
         self._label = label
+        self._first_byte_deadline = first_byte_deadline
+        self._first_byte_seconds = first_byte_seconds
         self._context: AsyncContextManager[aiohttp.ClientResponse] | None = None
 
     async def __aenter__(self) -> aiohttp.ClientResponse:
+        bound = asyncio.timeout_at(self._first_byte_deadline)
+        try:
+            async with bound:
+                return await self._open_with_retries()
+        except TimeoutError:
+            if not bound.expired():
+                raise
+            raise UpstreamStallTimeout("first_byte", self._first_byte_seconds) from None
+
+    async def _open_with_retries(self) -> aiohttp.ClientResponse:
         last_error: BaseException | None = None
         for attempt in range(self._attempts):
             context = self._open_response()
@@ -472,10 +556,23 @@ class AnthropicProxyService:
                         )
 
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
-                        async with _admitted_http_session(session_id or sticky_key, nbytes, upload_class) as (
-                            session,
-                            admission_stack,
+                        # Streamed calls only: a non-streamed reply legitimately
+                        # sends nothing until the whole message is generated.
+                        first_byte_seconds = get_settings().anthropic_first_byte_timeout_seconds
+                        idle_seconds = get_settings().anthropic_stream_idle_timeout_seconds if payload.stream else 0.0
+                        stall_catcher = _StallCatcher()
+                        async with (
+                            stall_catcher,
+                            _admitted_http_session(session_id or sticky_key, nbytes, upload_class) as (
+                                session,
+                                admission_stack,
+                            ),
                         ):
+                            first_byte_deadline = (
+                                asyncio.get_running_loop().time() + first_byte_seconds
+                                if payload.stream and first_byte_seconds > 0
+                                else None
+                            )
                             async with _ConnectRetryingResponse(
                                 lambda: self._open_upstream_response(
                                     session,
@@ -485,6 +582,8 @@ class AnthropicProxyService:
                                 ),
                                 attempts=get_settings().upstream_connect_attempts,
                                 label=_provider_label(provider_name),
+                                first_byte_deadline=first_byte_deadline,
+                                first_byte_seconds=first_byte_seconds,
                             ) as resp:
                                 await admission_stack.aclose()
                                 unified_5h_utilization = None
@@ -732,7 +831,12 @@ class AnthropicProxyService:
                                 # Non-streaming responses are a single JSON document, not SSE, so the
                                 # SSE collector never sees usage. Buffer the raw body and parse it at the end.
                                 raw_body = bytearray() if not payload.stream else None
-                                async for chunk in resp.content.iter_chunked(_STREAM_CHUNK_SIZE):
+                                async for chunk in _stall_bounded_chunks(
+                                    resp.content.iter_chunked(_STREAM_CHUNK_SIZE),
+                                    first_byte_deadline=first_byte_deadline,
+                                    first_byte_seconds=first_byte_seconds,
+                                    idle_seconds=idle_seconds,
+                                ):
                                     if not chunk:
                                         continue
                                     chunk_bytes = bytes(chunk)
@@ -831,6 +935,59 @@ class AnthropicProxyService:
                                     usage=usage,
                                 )
                                 return
+                        stall = stall_catcher.stall
+                        if stall is None:
+                            continue
+                        # The stalled connection is already closed. Anthropic
+                        # answers retries with overload-type errors, so clients
+                        # retry; the account takes a transient health hit.
+                        logger.warning(
+                            "anthropic_upstream_stall request_id=%s account_id=%s phase=%s bound_seconds=%g "
+                            "streamed_bytes=%s",
+                            request_id,
+                            account.id,
+                            stall.phase,
+                            stall.seconds,
+                            streamed_bytes,
+                        )
+                        await self._load_balancer.record_error(account)
+                        await self._persist_request_log(
+                            account=account,
+                            provider_name=provider_name,
+                            request_id=request_id,
+                            model=payload.model,
+                            started_at=started_at,
+                            status="error",
+                            error_code=stall.code,
+                            error_message=str(stall),
+                            api_key=api_key,
+                            session_id=session_id,
+                            useragent=useragent,
+                            useragent_group=useragent_group,
+                            usage=usage,
+                            latency_first_token_ms=latency_first_token_ms,
+                        )
+                        if not streamed_bytes:
+                            # Nothing reached the client: fail over at once.
+                            last_error_status = 529
+                            last_error_message = str(stall)
+                            continue
+                        # Bytes already went out, so the request cannot move to
+                        # another account; end the stream with an error event
+                        # the client retries instead of holding it open. The
+                        # leading blank lines close any event cut mid-way and
+                        # are no-ops at an event boundary.
+                        error_event = json.dumps(
+                            {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
+                            separators=(",", ":"),
+                        )
+                        yield f"\n\nevent: error\ndata: {error_event}\n\n".encode()
+                        await self._finalize_api_key_reservation(
+                            api_key_reservation,
+                            model=payload.model,
+                            usage=usage,
+                        )
+                        return
                 except upload_admission.UploadAdmissionTimeout as exc:
                     code, message = _upload_admission_error(exc)
                     await self._persist_request_log(

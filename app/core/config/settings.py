@@ -184,6 +184,13 @@ class Settings(BaseSettings):
     http_responses_stream_request_budget_seconds: float = Field(default=7200.0, gt=0)
     compact_request_budget_seconds: float = Field(default=180.0, gt=0)
     stream_idle_timeout_seconds: float = 600.0
+    # Streamed Anthropic /v1/messages calls: the longest wait, from send, for the
+    # first response body bytes before the attempt moves to another account, and
+    # the longest silence between later chunks before the stream ends with a
+    # retryable error event. 0 disables either bound. Without them, one call on
+    # 2026-10-05 waited 553.6 s for its first byte (normal-day maximum: 75 s).
+    anthropic_first_byte_timeout_seconds: float = Field(default=180.0, ge=0)
+    anthropic_stream_idle_timeout_seconds: float = Field(default=300.0, ge=0)
     sse_keepalive_interval_seconds: float = Field(default=10.0, ge=0)
     proxy_downstream_websocket_idle_timeout_seconds: float = Field(default=120.0, gt=0)
     # Applies to both upstream SSE event buffering and upstream websocket message

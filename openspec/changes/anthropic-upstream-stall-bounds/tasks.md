@@ -1,0 +1,5 @@
+- [x] Bound the wait for the first response body bytes of a streamed call and fail over to another account when it runs out.
+- [x] Bound silence between later chunks and end the stream with a retryable error event.
+- [x] Keep connect retries from re-trying a header wait that ran past the bound.
+- [x] Leave non-streamed calls unbounded.
+- [x] Integration check: an upstream that stays silent for 8 s is bounded at 0.5 s before headers (fails over to the second account) and mid-stream (error event); fails on the old code at 8.0 s against a 4 s bound.
