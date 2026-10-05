@@ -38,19 +38,19 @@ FRAMINGS = [
 ]
 
 
-def _release(chunks: list[bytes]) -> bytes:
-    """Feed reads the way the streaming loop does and return what it forwards."""
+def _releases(chunks: list[bytes]) -> list[bytes]:
+    """Feed reads the way the streaming loop does and return each forward it makes."""
     unsent = bytearray()
     scanned = 0
-    released = bytearray()
+    released: list[bytes] = []
     for chunk in chunks:
         unsent.extend(chunk)
         cut = _sse_event_boundary(unsent, scanned)
         if cut:
-            released.extend(unsent[:cut])
+            released.append(bytes(unsent[:cut]))
             del unsent[:cut]
         scanned = len(unsent)
-    return bytes(released)
+    return released
 
 
 def _events(stream: bytes) -> list[bytes]:
@@ -77,10 +77,13 @@ def test_any_split_into_reads_releases_the_same_events_and_never_half_of_one(buf
     splits = [[buffer[:i], buffer[i:]] for i in range(len(buffer) + 1)]
     splits.append([buffer[i : i + 1] for i in range(len(buffer))])
     for chunks in splits:
-        released = _release(chunks)
+        forwards = _releases(chunks)
+        released = b"".join(forwards)
         assert buffer.startswith(released), chunks
         assert _events(released) == _events(complete), chunks
-        assert _sse_event_boundary(released) == len(released), chunks
+        for forward in forwards:
+            # Each forward on its own ends on a blank line, so no read sends half an event.
+            assert _sse_event_boundary(forward) == len(forward), (chunks, forward)
 
 
 def test_one_huge_event_over_many_reads_is_scanned_once() -> None:
@@ -89,6 +92,6 @@ def test_one_huge_event_over_many_reads_is_scanned_once() -> None:
     event = b"data: " + b"x" * (4 * 1024 * 1024) + b"\n\n"
     chunks = [event[i : i + 8192] for i in range(0, len(event), 8192)]
     started = time.monotonic()
-    released = _release(chunks)
-    assert released == event
+    forwards = _releases(chunks)
+    assert forwards == [event]
     assert time.monotonic() - started < 1.0
