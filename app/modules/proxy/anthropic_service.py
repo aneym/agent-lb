@@ -198,10 +198,15 @@ class _StallCatcher:
 _SSE_BLANK_LINE = re.compile(rb"(?>\r\n|\r|\n)(?>\r\n|\r|\n)")
 
 
-def _sse_event_boundary(buffer: bytes | bytearray) -> int:
-    """Length of the longest prefix of ``buffer`` that ends a complete SSE event."""
+def _sse_event_boundary(buffer: bytes | bytearray, start: int = 0) -> int:
+    """Length of the prefix of ``buffer`` that ends on its last complete SSE event.
+
+    Only bytes from ``start`` on are searched, less 3 bytes of lookback for a
+    blank line split across reads, so a caller that passes how much it already
+    scanned reads each byte about once even when one event spans many reads.
+    """
     end = 0
-    for match in _SSE_BLANK_LINE.finditer(buffer):
+    for match in _SSE_BLANK_LINE.finditer(buffer, max(0, start - 3)):
         end = match.end()
     return end
 
@@ -869,6 +874,7 @@ class AnthropicProxyService:
                                 # error event can follow cleanly, and a keepalive
                                 # comment never lands inside an event.
                                 unsent = bytearray()
+                                scanned = 0
                                 async for chunk in _stall_bounded_chunks(
                                     resp.content.iter_chunked(_STREAM_CHUNK_SIZE),
                                     first_byte_deadline=first_byte_deadline,
@@ -889,11 +895,13 @@ class AnthropicProxyService:
                                         if chunk_error is not None:
                                             stream_error = chunk_error
                                         unsent.extend(chunk_bytes)
-                                        cut = _sse_event_boundary(unsent)
+                                        cut = _sse_event_boundary(unsent, scanned)
+                                        if cut:
+                                            chunk_bytes = bytes(unsent[:cut])
+                                            del unsent[:cut]
+                                        scanned = len(unsent)
                                         if not cut:
                                             continue
-                                        chunk_bytes = bytes(unsent[:cut])
-                                        del unsent[:cut]
                                     streamed_bytes = True
                                     yield chunk_bytes
                                 if unsent:
