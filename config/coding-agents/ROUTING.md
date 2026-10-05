@@ -33,6 +33,7 @@ An incident fix ships with a check that catches it next time (2026-09-26). Prove
 ## Capacity and quota (2026-10-05)
 
 No slot counts or job caps on any host. Alex, 2026-10-05: "we're removing slots, and going by usage and space"; 2026-10-04: "blow away any job limit". All hosts cut over at once (2026-10-05 09:20).
+- Where checks, builds and jobs run (Alex, 2026-10-05 10:09: every job goes through placement): placement puts each one on the host with the most measured room, and `factory-admit` on that host admits it. No host is the default. Mac-only steps run on the Mac host; whole-fold pins to it are refused.
 Hosts admit by measured use and free space through `factory-admit`: memory, pressure, load, disk and provider holds. `factory-admit status` gives live admission facts; `factory machines` gives the registry. The Mac host is one more placement candidate and keeps Mac-only steps (2026-10-05 10:09).
 Once architecture is agreed, start independent pieces together; only true dependencies go in order (2026-09-28). An open product call need not hold unrelated work: use a seam with a reasonable default.
 Hundreds of agents must remain possible (Alex, 2026-09-25). Back off on real upstream 429s, usage-limit errors, an account under about 15% of its 5h window, or climbing error rates. `route pools` hides spent accounts; use live provider status. Agent-lb throttling is a bug; report request IDs to the usage audit owner.
