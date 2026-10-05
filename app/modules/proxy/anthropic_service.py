@@ -262,6 +262,12 @@ async def _stall_bounded_chunks(
         yield chunk
 
 
+def _compression_deadline_error() -> AnthropicProxyError:
+    # The request budget ran out while the body waited to be gzipped; nothing
+    # was sent upstream. Same code and message as the Codex paths.
+    return AnthropicProxyError(504, "Proxy request budget exhausted", code="upstream_request_timeout")
+
+
 class _ConnectRetryingResponse:
     """Async context manager that retries the upstream *connect* phase.
 
@@ -318,6 +324,8 @@ class _ConnectRetryingResponse:
             context = self._open_response()
             try:
                 response = await context.__aenter__()
+            except upstream_body.CompressionDeadlineExceeded as exc:
+                raise _compression_deadline_error() from exc
             except _CONNECT_ERRORS as exc:
                 last_error = exc
                 logger.warning(
@@ -1232,6 +1240,8 @@ class AnthropicProxyService:
                 useragent_group=useragent_group,
             )
             raise AnthropicProxyError(503, message, code=code) from exc
+        except upstream_body.CompressionDeadlineExceeded as exc:
+            raise _compression_deadline_error() from exc
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise AnthropicProxyError(
                 502,
