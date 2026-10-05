@@ -17,8 +17,10 @@ Run exactly one command, from the directory the brief assigns:
 
 - `seat run` picks a healthy registered Devin account (`seat accounts`), fails over
   to the next one on a limit or auth error, and writes the dispatch and closeout
-  rows to the ledger. Write the contract to a file under the scratchpad first and
-  pass it with `--prompt-file`.
+  rows to the ledger. Write the contract to a fresh file
+  (`f=$(mktemp "${TMPDIR:-/tmp}/devin-seat-contract.XXXXXX")`) and pass it with
+  `--prompt-file "$f"`. Never a fixed or reused name such as `p.md`: parallel
+  seats share the scratchpad and overwrite each other's contracts.
 - `<alias>` is `swe-latest` unless the brief names `swe-2-medium` or `swe-2-max`.
   `seat` refuses every other Devin model: they are billed per token, and this seat
   spends nothing past the subscription. Never substitute one.

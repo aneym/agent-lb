@@ -17,8 +17,10 @@ Run exactly one command, from the worktree the brief assigns:
 
 - `seat run` picks a healthy registered Cursor account (`seat accounts`), fails over
   to the next one on a usage limit or auth error, and writes the dispatch and
-  closeout rows to the ledger. Write the contract to a file under the scratchpad
-  first and pass it with `--prompt-file`.
+  closeout rows to the ledger. Write the contract to a fresh file
+  (`f=$(mktemp "${TMPDIR:-/tmp}/cursor-seat-contract.XXXXXX")`) and pass it with
+  `--prompt-file "$f"`. Never a fixed or reused name such as `p.md`: parallel
+  seats share the scratchpad and overwrite each other's contracts.
 - `<alias>` is the family alias the brief names (`grok-latest` when it names none,
   `grok-latest-low` for scouting); `seat` resolves it through `route resolve`,
   which refuses retired models. `glm-*`/`kimi-*` ids pass through as given.
