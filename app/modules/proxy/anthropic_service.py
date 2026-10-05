@@ -193,11 +193,17 @@ class _StallCatcher:
         return False
 
 
+# A blank line: a line terminator (CRLF, LF or CR) right after another. The
+# groups are atomic so a CRLF is never read as CR then LF.
+_SSE_BLANK_LINE = re.compile(rb"(?>\r\n|\r|\n)(?>\r\n|\r|\n)")
+
+
 def _sse_event_boundary(buffer: bytes | bytearray) -> int:
     """Length of the longest prefix of ``buffer`` that ends a complete SSE event."""
-    lf = buffer.rfind(b"\n\n")
-    crlf = buffer.rfind(b"\r\n\r\n")
-    return max(lf + 2 if lf >= 0 else 0, crlf + 4 if crlf >= 0 else 0)
+    end = 0
+    for match in _SSE_BLANK_LINE.finditer(buffer):
+        end = match.end()
+    return end
 
 
 async def _stall_bounded_chunks(
