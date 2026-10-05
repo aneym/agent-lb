@@ -178,6 +178,8 @@ class Settings(BaseSettings):
     upstream_stream_transport: Literal["http", "websocket", "auto"] = "auto"
     upstream_connect_timeout_seconds: float = 8.0
     upstream_connect_attempts: int = Field(default=3, ge=1)
+    # Gzip model-call request bodies of 16 KiB or more (Anthropic, Codex). Off sends them as before.
+    upstream_request_gzip_enabled: bool = True
     upstream_compact_timeout_seconds: float | None = None
     upstream_websocket_trust_env: bool = Field(default_factory=_default_upstream_websocket_trust_env)
     proxy_request_budget_seconds: float = Field(default=600.0, gt=0)

@@ -6,3 +6,8 @@
 ## 2. Proof
 
 - [x] 2.1 Against a real local HTTP upstream, a large `/v1/messages` call through the app and a large Codex responses stream both arrive gzipped and decode to the request.
+
+## 3. Bounds
+
+- [x] 3.1 `AGENT_LB_UPSTREAM_REQUEST_GZIP_ENABLED` turns compression off.
+- [x] 3.2 Compression waits at most until the request deadline; past it, the request fails with `upstream_request_timeout` before upload.

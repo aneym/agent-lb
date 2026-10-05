@@ -2287,7 +2287,18 @@ async def _stream_responses_with_session(
         upstream_headers = _build_upstream_headers(headers, access_token, account_id)
         method = "POST"
     # Websocket streams fall back to HTTP on a rejected handshake, so compress either way.
-    gzipped_payload = await upstream_body.gzip_body(payload_json.encode("utf-8"))
+    try:
+        gzipped_payload = await upstream_body.gzip_body(
+            payload_json.encode("utf-8"),
+            deadline=None if request_total_timeout is None else pre_request_started_at + request_total_timeout,
+        )
+    except upstream_body.CompressionDeadlineExceeded:
+        error_code = "upstream_request_timeout"
+        error_message = "Proxy request budget exhausted"
+        yield format_sse_event(
+            response_failed_event(error_code, error_message, response_id=get_request_id()),
+        )
+        return
     remaining_request_timeout = _remaining_total_timeout(
         request_total_timeout,
         pre_request_started_at,
@@ -2932,9 +2943,19 @@ class _CompactCommandTransport:
                 _as_image_fetch_session(self.session),
                 effective_connect_timeout,
             )
-        gzipped_payload = await upstream_body.gzip_body(
-            json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-        )
+        try:
+            gzipped_payload = await upstream_body.gzip_body(
+                json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":")).encode("utf-8"),
+                deadline=None if compact_timeout_seconds is None else pre_request_started_at + compact_timeout_seconds,
+            )
+        except upstream_body.CompressionDeadlineExceeded as exc:
+            raise ProxyResponseError(
+                504,
+                openai_error("upstream_request_timeout", "Proxy request budget exhausted"),
+                failure_phase="request",
+                failure_detail="request budget ran out while compressing the body",
+                failure_exception_type=type(exc).__name__,
+            ) from exc
         now = time.monotonic()
         compact_timeout_seconds = _remaining_total_timeout(
             compact_timeout_seconds,

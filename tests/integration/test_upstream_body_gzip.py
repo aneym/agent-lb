@@ -8,7 +8,10 @@ uncompressed or if the gzipped body decodes to anything but the request.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -18,7 +21,8 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 
-from app.core.clients.proxy import stream_responses
+from app.core.clients import upstream_body
+from app.core.clients.proxy import pop_stream_timeout_overrides, push_stream_timeout_overrides, stream_responses
 from app.core.clients.upstream_body import UPSTREAM_GZIP_MIN_BYTES
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
@@ -118,10 +122,8 @@ async def test_large_anthropic_messages_body_goes_upstream_gzipped(async_client,
     assert call["json"]["messages"][0]["content"] == LARGE_TEXT
 
 
-@pytest.mark.asyncio
-async def test_large_codex_responses_body_goes_upstream_gzipped(upstream):
-    base_url, seen = upstream
-    payload = ResponsesRequest.model_validate(
+def _large_codex_payload() -> ResponsesRequest:
+    return ResponsesRequest.model_validate(
         {
             "model": "gpt-6.1-sol",
             "instructions": "hi",
@@ -129,13 +131,22 @@ async def test_large_codex_responses_body_goes_upstream_gzipped(upstream):
             "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": LARGE_TEXT}]}],
         }
     )
+
+
+async def _stream_codex(base_url: str) -> list[str]:
     async with aiohttp.ClientSession() as session:
-        events = [
+        return [
             event
             async for event in stream_responses(
-                payload, {}, "openai-access", "acct-1", base_url=base_url, session=session
+                _large_codex_payload(), {}, "openai-access", "acct-1", base_url=base_url, session=session
             )
         ]
+
+
+@pytest.mark.asyncio
+async def test_large_codex_responses_body_goes_upstream_gzipped(upstream):
+    base_url, seen = upstream
+    events = await _stream_codex(base_url)
 
     assert any("response.completed" in event for event in events)
     [call] = seen
@@ -143,3 +154,46 @@ async def test_large_codex_responses_body_goes_upstream_gzipped(upstream):
     assert call["encoding"] == "gzip"
     assert call["wire_bytes"] < len(LARGE_TEXT) // 4
     assert call["json"]["input"][0]["content"][0]["text"] == LARGE_TEXT
+
+
+@pytest.mark.asyncio
+async def test_gzip_off_switch_sends_large_body_uncompressed(upstream, monkeypatch):
+    base_url, seen = upstream
+    monkeypatch.setenv("AGENT_LB_UPSTREAM_REQUEST_GZIP_ENABLED", "false")
+    get_settings.cache_clear()
+    try:
+        events = await _stream_codex(base_url)
+    finally:
+        monkeypatch.delenv("AGENT_LB_UPSTREAM_REQUEST_GZIP_ENABLED")
+        get_settings.cache_clear()
+
+    assert any("response.completed" in event for event in events)
+    [call] = seen
+    assert call["encoding"] is None
+    assert call["json"]["input"][0]["content"][0]["text"] == LARGE_TEXT
+
+
+@pytest.mark.asyncio
+async def test_budget_spent_waiting_for_compression_fails_before_upload(upstream):
+    """Release-review settling check: with every gzip worker busy, a request whose
+    budget runs out fails at its deadline and never reaches the upstream."""
+    base_url, seen = upstream
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    blockers = [
+        loop.run_in_executor(upstream_body._GZIP_EXECUTOR, release.wait, 5.0)
+        for _ in range(upstream_body._GZIP_EXECUTOR._max_workers)
+    ]
+    tokens = push_stream_timeout_overrides(total_timeout_seconds=0.05)
+    started = time.monotonic()
+    try:
+        events = await _stream_codex(base_url)
+        elapsed = time.monotonic() - started
+    finally:
+        pop_stream_timeout_overrides(tokens)
+        release.set()
+        await asyncio.gather(*blockers)
+
+    assert elapsed < 1.0
+    assert any("upstream_request_timeout" in event for event in events)
+    assert seen == []

@@ -12,12 +12,15 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import time
 from collections.abc import AsyncIterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any
 
 import aiohttp
+
+from app.core.config.settings import get_settings
 
 # Below this, compression saves too little upload time to be worth the CPU.
 UPSTREAM_GZIP_MIN_BYTES = 16 * 1024
@@ -30,17 +33,31 @@ def json_body_bytes(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
-async def gzip_body(raw: bytes) -> bytes | None:
-    """Gzip ``raw`` on the module's own threads, or return None when it is too small to bother.
+class CompressionDeadlineExceeded(Exception):
+    """The request's deadline passed before its body finished compressing; nothing was sent."""
 
-    A dedicated pool keeps compression off the event loop without queueing
-    behind unrelated ``asyncio.to_thread`` work, so its delay stays near the
-    ~10 ms a 650 KB body takes. Callers compress before computing a request's
-    remaining deadline, so that time counts against the budget.
+
+async def gzip_body(raw: bytes, *, deadline: float | None) -> bytes | None:
+    """Gzip ``raw`` on the module's own threads, or return None to send it as is.
+
+    None means gzip is off (``upstream_request_gzip_enabled``) or ``raw`` is
+    under the threshold. ``deadline`` is a ``time.monotonic()`` instant: when
+    it passes before compression finishes, even while waiting for a free
+    worker, this raises ``CompressionDeadlineExceeded`` so the caller fails the
+    request before upload instead of starting it on an expired budget.
     """
-    if len(raw) < UPSTREAM_GZIP_MIN_BYTES:
+    if not get_settings().upstream_request_gzip_enabled or len(raw) < UPSTREAM_GZIP_MIN_BYTES:
         return None
-    return await asyncio.get_running_loop().run_in_executor(_GZIP_EXECUTOR, gzip.compress, raw, _GZIP_LEVEL)
+    future = asyncio.get_running_loop().run_in_executor(_GZIP_EXECUTOR, gzip.compress, raw, _GZIP_LEVEL)
+    if deadline is None:
+        return await future
+    try:
+        compressed = await asyncio.wait_for(future, timeout=max(0.0, deadline - time.monotonic()))
+    except TimeoutError as exc:
+        raise CompressionDeadlineExceeded from exc
+    if time.monotonic() >= deadline:
+        raise CompressionDeadlineExceeded
+    return compressed
 
 
 def gzip_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -59,7 +76,9 @@ async def post_json(
     timeout: aiohttp.ClientTimeout,
 ) -> AsyncIterator[aiohttp.ClientResponse]:
     """``session.post(url, json=...)``, with the body gzipped when it is large."""
-    gzipped = await gzip_body(json_body_bytes(json_body))
+    # aiohttp's total timer starts at post(); bound compression by the same budget.
+    deadline = time.monotonic() + timeout.total if timeout.total is not None else None
+    gzipped = await gzip_body(json_body_bytes(json_body), deadline=deadline)
     if gzipped is None:
         request = session.post(url, json=json_body, headers=headers, timeout=timeout)
     else:
