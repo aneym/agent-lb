@@ -32,11 +32,11 @@ An incident fix ships with a check that catches it next time (2026-09-26). Prove
 
 ## Capacity and quota (2026-10-05)
 
-No slot counts or job caps anywhere, forge included. Alex, 2026-10-05 T7: "we're removing slots, and going by usage and space"; 2026-10-04: "blow away any job limit". All hosts cut over at once (2026-10-05 09:20).
-Hosts admit by measured use and free space through `factory-admit`: memory, pressure, load, disk and provider holds. `factory-admit status` gives live admission facts; `factory machines` gives the registry. Studio is one more placement candidate and keeps Mac-only steps (2026-10-05 10:09).
+No slot counts or job caps on any host. Alex, 2026-10-05: "we're removing slots, and going by usage and space"; 2026-10-04: "blow away any job limit". All hosts cut over at once (2026-10-05 09:20).
+Hosts admit by measured use and free space through `factory-admit`: memory, pressure, load, disk and provider holds. `factory-admit status` gives live admission facts; `factory machines` gives the registry. The Mac host is one more placement candidate and keeps Mac-only steps (2026-10-05 10:09).
 Once architecture is agreed, start independent pieces together; only true dependencies go in order (2026-09-28). An open product call need not hold unrelated work: use a seam with a reasonable default.
-Hundreds of agents must remain possible (Alex, 2026-09-25). Back off on real upstream 429s, usage-limit errors, an account under about 15% of its 5h window, or climbing error rates. `route pools` hides spent accounts; use live provider status. Agent-lb throttling is a bug; report request IDs to usage-audit.
-Anthropic limits become an item only when the final usable account is under 15% of its week; orch-watch alerts there (2026-09-27). Design as if accounts are not the bottleneck: optimize hosts, filesystem and dispatch width. Real 429s still move work.
+Hundreds of agents must remain possible (Alex, 2026-09-25). Back off on real upstream 429s, usage-limit errors, an account under about 15% of its 5h window, or climbing error rates. `route pools` hides spent accounts; use live provider status. Agent-lb throttling is a bug; report request IDs to the usage audit owner.
+Anthropic limits become an item only when the final usable account is under 15% of its week; the orchestrator monitor alerts there (2026-09-27). Design as if accounts are not the bottleneck: optimize hosts, filesystem and dispatch width. Real 429s still move work.
 
 ## Seats and effort (2026-09-30; updated 2026-10-05)
 
@@ -79,7 +79,7 @@ Use family aliases, not versions: `opus-latest`, `sonnet-latest`, `haiku-latest`
 Don't use `implementer`, `general-purpose` as an implementer, `luna-implementer` or `sonnet-implementer` as default implementer. Don't use gpt-5.6 or older, Astra, Fable or Terra. Don't use Haiku for Claude Code background calls: `ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5-5` stays pinned (2026-09-30).
 Rules carry dates (2026-09-26). Revisit on a new model, moving accept rate, incident or Alex's steer. Older non-retired models are allowed only with eval evidence (Alex, 2026-09-29: "we can use older modlels when they're better purpose built for what we need"). Log which rung passed each task; history stays in the ledger, not this document.
 The factory doctor and live dashboard exist (2026-10-05). `routing-table.json` carries executable routing; `route pick <class> --author-vendor <vendor>` returns an admitted seat and its auditor. The seat guard denies retired models; `verify-routing` checks installs and `--source-only` checks source. `install-policy.py` installs rules and seats; never hand-edit generated local rules.
-A scope that closes adds conclusions to `~/.agent-rails/scoping/factory-program/CONTEXT/CONCLUSIONS.md`, with date and the fact that would overturn each. The weekly lookback job rechecks them against that week's Alex calls (2026-10-05 T5).
+A scope that closes adds conclusions to the conclusions list (see `WORKSPACE.md`), with date and the fact that would overturn each. The weekly lookback job rechecks them against that week's Alex calls (2026-10-05).
 Tests (2026-10-03): load the test-audit skill before writing, changing or auditing tests. Prefer e2e with test accounts, integration without mocks of our own code, then golden tests. New unit tests need a pure algorithm with many edge cases or a reviewer's must-fix. Never thin a money-path floor.
 
 ## Asking Alex (2026-09-25)
