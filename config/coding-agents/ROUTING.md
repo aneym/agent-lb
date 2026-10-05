@@ -65,7 +65,7 @@ Fixed effort per stage, no per-request router (2026-09-26).
 | Security, money path, brownfield bugs, parsers, perf, concurrency | xhigh | security-reviewer; money-path verify stages |
 | Fully autonomous hard problem, no human in loop | max | ask first |
 
-Open-ended work stays Opus xhigh. Lane, orchestrator and scoping tabs use medium; audit and planner tabs high (2026-10-01). Sonnet is not a talk or scoping default.
+Open-ended work stays Opus xhigh. Lane, orchestrator and scoping tabs use medium; audit and planner tabs high (2026-10-01). Scoping tabs also launch with ultracode on, so they use workflows by default: `herdr-agent-spawn --scoping` adds `--effort medium --settings '{"ultracode":true}'` (Alex, 2026-10-05 12:06 ET). Sonnet is not a talk or scoping default.
 
 ## Workflows, waits and leads (2026-09-29; updated 2026-10-05)
 
