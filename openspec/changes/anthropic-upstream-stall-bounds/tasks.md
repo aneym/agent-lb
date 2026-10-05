@@ -1,5 +1,7 @@
 - [x] Bound the wait for the first response body bytes of a streamed call and fail over to another account when it runs out.
 - [x] Bound silence between later chunks and end the stream with a retryable error event.
-- [x] Keep connect retries from re-trying a header wait that ran past the bound.
+- [x] Keep connect retries from re-trying a header wait that ran past the bound; read error bodies inside it.
+- [x] Return `overloaded_error` without a pool hold when candidates run out after a stall.
+- [x] Forward streamed bytes on SSE event boundaries; settle the reservation before the terminal event.
 - [x] Leave non-streamed calls unbounded.
-- [x] Integration check: an upstream that stays silent for 8 s is bounded at 0.5 s before headers (fails over to the second account) and mid-stream (error event); fails on the old code at 8.0 s against a 4 s bound.
+- [x] Integration check (5 scenarios): an upstream silent for 8 s before headers, behind a 529 status, or mid-event is bounded at 0.5 s; running out of accounts after a stall is an overload; a slow non-streamed reply is not cut. The four stall scenarios fail on the code without bounds at about 8 s against a 4 s bound; the three post-review scenarios also fail on 63606e8b.

@@ -6,7 +6,9 @@ On 2026-10-05 two Claude Code calls from one tab waited 9 and 13 minutes while w
 
 - A streamed `/v1/messages` attempt that receives no response body bytes within `anthropic_first_byte_timeout_seconds` (default 180 s, counted from send) is closed, logged as `upstream_first_byte_timeout`, counted as a transient account error, and moved to another account at once. Nothing has reached the client, so the failover is invisible to it. When every candidate stalls, the client gets a retryable `overloaded_error`.
 - A stream that goes silent for `anthropic_stream_idle_timeout_seconds` (default 300 s) after bytes went out ends with an `overloaded_error` SSE event, logged as `upstream_stream_idle_timeout`, instead of hanging until the total budget.
-- The connect-retry helper no longer retries a header wait that ran past the first-byte bound on the same account.
+- The connect-retry helper no longer retries a header wait that ran past the first-byte bound on the same account, and reads an error status's body inside the bound, so a 529 with a silent body also fails over.
+- When candidates run out right after a stall, the client gets `overloaded_error` with no pool hold and no reset hint from an unrelated quota cooldown.
+- Streamed bytes go to the client one whole SSE event at a time, so the terminal error event never follows half an event and a keepalive comment never lands inside one. The API key reservation is settled before the terminal event is sent.
 - Non-streamed calls are not bounded this way, because a non-streamed reply legitimately sends nothing until the message is done.
 
 ## Capabilities

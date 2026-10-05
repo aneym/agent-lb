@@ -170,8 +170,11 @@ class UpstreamStallTimeout(Exception):
         self.phase = phase
         self.seconds = seconds
         self.code = f"upstream_{phase}_timeout"
-        what = "first response bytes" if phase == "first_byte" else "the next stream chunk"
-        super().__init__(f"Anthropic sent no {what} within {seconds:g} s ({self.code})")
+        if phase == "first_byte":
+            message = f"Anthropic sent no response bytes within {seconds:g} s ({self.code})"
+        else:
+            message = f"Anthropic stream went silent for {seconds:g} s ({self.code})"
+        super().__init__(message)
 
 
 class _StallCatcher:
@@ -188,6 +191,13 @@ class _StallCatcher:
             self.stall = exc
             return True
         return False
+
+
+def _sse_event_boundary(buffer: bytes | bytearray) -> int:
+    """Length of the longest prefix of ``buffer`` that ends a complete SSE event."""
+    lf = buffer.rfind(b"\n\n")
+    crlf = buffer.rfind(b"\r\n\r\n")
+    return max(lf + 2 if lf >= 0 else 0, crlf + 4 if crlf >= 0 else 0)
 
 
 async def _stall_bounded_chunks(
@@ -256,13 +266,25 @@ class _ConnectRetryingResponse:
 
     async def __aenter__(self) -> aiohttp.ClientResponse:
         bound = asyncio.timeout_at(self._first_byte_deadline)
+        response: aiohttp.ClientResponse | None = None
         try:
             async with bound:
-                return await self._open_with_retries()
-        except TimeoutError:
-            if not bound.expired():
-                raise
-            raise UpstreamStallTimeout("first_byte", self._first_byte_seconds) from None
+                response = await self._open_with_retries()
+                if self._first_byte_deadline is not None and response.status >= 400:
+                    # Callers read error bodies in full; read them inside the
+                    # bound so an error status with a silent body cannot hang
+                    # the attempt. aiohttp keeps the body for later reads.
+                    await response.read()
+                return response
+        except BaseException as exc:
+            if response is not None:
+                # The caller's ``async with`` never entered, so it will not
+                # release this response: close its connection here.
+                response.close()
+                self._context = None
+            if isinstance(exc, TimeoutError) and bound.expired():
+                raise UpstreamStallTimeout("first_byte", self._first_byte_seconds) from None
+            raise
 
     async def _open_with_retries(self) -> aiohttp.ClientResponse:
         last_error: BaseException | None = None
@@ -477,6 +499,9 @@ class AnthropicProxyService:
             last_error_status: int | None = None
             last_error_message: str | None = None
             streamed_bytes = False
+            # Set when the latest attempt ended on a silent upstream before any
+            # bytes went out; cleared when the next account is picked.
+            last_stall: UpstreamStallTimeout | None = None
             latency_first_token_ms: int | None = None
             wait_deadline = (
                 _POOL_WAIT_CLOCK() + get_settings().anthropic_pool_exhausted_wait_max_seconds if wait_enabled else None
@@ -490,6 +515,7 @@ class AnthropicProxyService:
                     selected_account_ids.clear()
                     last_error_status = None
                     last_error_message = None
+                    last_stall = None
                 try:
                     # Try every eligible account once before declaring the pool
                     # exhausted; a healthy account can be fifth in a large pool.
@@ -510,6 +536,7 @@ class AnthropicProxyService:
                             )
                             selected_account_ids.add(account.id)
                         last_account = account
+                        last_stall = None
                         try:
                             access_token = await self._fresh_access_token(account)
                         except AnthropicProxyError as exc:
@@ -831,6 +858,11 @@ class AnthropicProxyService:
                                 # Non-streaming responses are a single JSON document, not SSE, so the
                                 # SSE collector never sees usage. Buffer the raw body and parse it at the end.
                                 raw_body = bytearray() if not payload.stream else None
+                                # Streamed bytes go out whole SSE events at a time,
+                                # so the client always sits on an event boundary: an
+                                # error event can follow cleanly, and a keepalive
+                                # comment never lands inside an event.
+                                unsent = bytearray()
                                 async for chunk in _stall_bounded_chunks(
                                     resp.content.iter_chunked(_STREAM_CHUNK_SIZE),
                                     first_byte_deadline=first_byte_deadline,
@@ -850,8 +882,17 @@ class AnthropicProxyService:
                                             latency_first_token_ms = int((time.monotonic() - started_at) * 1000)
                                         if chunk_error is not None:
                                             stream_error = chunk_error
+                                        unsent.extend(chunk_bytes)
+                                        cut = _sse_event_boundary(unsent)
+                                        if not cut:
+                                            continue
+                                        chunk_bytes = bytes(unsent[:cut])
+                                        del unsent[:cut]
                                     streamed_bytes = True
                                     yield chunk_bytes
+                                if unsent:
+                                    streamed_bytes = True
+                                    yield bytes(unsent)
                                 if raw_body is not None:
                                     usage = _usage_from_json_body(bytes(raw_body)) or usage
 
@@ -969,24 +1010,25 @@ class AnthropicProxyService:
                         )
                         if not streamed_bytes:
                             # Nothing reached the client: fail over at once.
+                            last_stall = stall
                             last_error_status = 529
                             last_error_message = str(stall)
                             continue
                         # Bytes already went out, so the request cannot move to
                         # another account; end the stream with an error event
-                        # the client retries instead of holding it open. The
-                        # leading blank lines close any event cut mid-way and
-                        # are no-ops at an event boundary.
-                        error_event = json.dumps(
-                            {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
-                            separators=(",", ":"),
-                        )
-                        yield f"\n\nevent: error\ndata: {error_event}\n\n".encode()
+                        # the client retries instead of holding it open. Only
+                        # whole events were forwarded, so it follows cleanly.
+                        # Settle first: the client may be gone after the yield.
                         await self._finalize_api_key_reservation(
                             api_key_reservation,
                             model=payload.model,
                             usage=usage,
                         )
+                        error_event = json.dumps(
+                            {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
+                            separators=(",", ":"),
+                        )
+                        yield f"event: error\ndata: {error_event}\n\n".encode()
                         return
                 except upload_admission.UploadAdmissionTimeout as exc:
                     code, message = _upload_admission_error(exc)
@@ -1006,6 +1048,11 @@ class AnthropicProxyService:
                     )
                     raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
+                    if last_stall is not None:
+                        # Candidates ran out right after a silent upstream:
+                        # that is an overload, not a quota wall, so no pool
+                        # hold and no unrelated reset hint.
+                        raise AnthropicProxyError(529, str(last_stall), code="overloaded_error") from exc
                     # Never hold once response bytes have gone out: appending a
                     # second upstream stream to a partial one would corrupt it.
                     if not streamed_bytes and _pool_wait_should_hold(
@@ -1025,6 +1072,9 @@ class AnthropicProxyService:
                         ) from exc
                     raise
 
+                if last_stall is not None:
+                    await self._release_api_key_reservation(api_key_reservation)
+                    raise AnthropicProxyError(529, str(last_stall), code="overloaded_error")
                 message = last_error_message or f"No available {_provider_label(provider_name)} accounts"
                 # Upstream 429s above recorded cooldowns, so eligibility now knows the
                 # earliest reset; surface it so clients can schedule a retry.
