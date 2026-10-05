@@ -38,6 +38,7 @@ from aiohttp.http_websocket import WS_KEY, WebSocketReader, WebSocketWriter
 from curl_cffi.const import CurlWsFlag
 from multidict import CIMultiDict
 
+from app.core.clients import upstream_body
 from app.core.clients.codex import (
     CodexClient,
     CodexTransportError,
@@ -482,6 +483,16 @@ def _build_upstream_headers(
     if account_id:
         headers["chatgpt-account-id"] = account_id
     return headers
+
+
+def _json_body_kwargs(
+    payload_dict: Mapping[str, Any],
+    gzipped_payload: bytes | None,
+    headers: Mapping[str, str],
+) -> dict[str, Any]:
+    if gzipped_payload is None:
+        return {"json": payload_dict, "headers": headers}
+    return {"data": gzipped_payload, "headers": upstream_body.gzip_headers(headers)}
 
 
 _TRANSCRIBE_FORWARD_HEADER_PREFIXES = ("x-openai-", "x-codex-")
@@ -2275,6 +2286,8 @@ async def _stream_responses_with_session(
     else:
         upstream_headers = _build_upstream_headers(headers, access_token, account_id)
         method = "POST"
+    # Websocket streams fall back to HTTP on a rejected handshake, so compress either way.
+    gzipped_payload = await upstream_body.gzip_body(payload_json.encode("utf-8"))
     remaining_request_timeout = _remaining_total_timeout(
         request_total_timeout,
         pre_request_started_at,
@@ -2293,13 +2306,13 @@ async def _stream_responses_with_session(
     ) -> AsyncIterator[str]:
         nonlocal status_code, last_stream_activity_at, error_code, error_message, seen_terminal
 
+        body_kwargs = _json_body_kwargs(payload_dict, gzipped_payload, current_headers)
         if route is not None:
             owns_codex_client = codex_client is None
             active_codex_client = codex_client or CodexClient(create_codex_session())
             try:
                 request_kwargs: dict[str, Any] = {
-                    "json": payload_dict,
-                    "headers": current_headers,
+                    **body_kwargs,
                     "timeout": remaining_request_timeout or request_total_timeout,
                     "stream": True,
                 }
@@ -2383,8 +2396,7 @@ async def _stream_responses_with_session(
         async with _service_circuit_breaker_context(
             client_session.post(
                 url,
-                json=payload_dict,
-                headers=current_headers,
+                **body_kwargs,
                 timeout=current_timeout,
             ),
             settings=settings,
@@ -2920,6 +2932,9 @@ class _CompactCommandTransport:
                 _as_image_fetch_session(self.session),
                 effective_connect_timeout,
             )
+        gzipped_payload = await upstream_body.gzip_body(
+            json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        )
         now = time.monotonic()
         compact_timeout_seconds = _remaining_total_timeout(
             compact_timeout_seconds,
@@ -2969,11 +2984,12 @@ class _CompactCommandTransport:
             url=url,
             headers=upstream_headers,
         )
+        body_kwargs = _json_body_kwargs(payload_dict, gzipped_payload, upstream_headers)
         try:
             if self.route is not None:
                 owns_codex_client = self.codex_client is None
                 active_codex_client = self.codex_client or CodexClient(create_codex_session())
-                request_kwargs: dict[str, Any] = {"json": payload_dict, "headers": upstream_headers}
+                request_kwargs: dict[str, Any] = dict(body_kwargs)
                 if compact_timeout_seconds is not None:
                     request_kwargs["timeout"] = compact_timeout_seconds
                 try:
@@ -3061,8 +3077,7 @@ class _CompactCommandTransport:
             async with _service_circuit_breaker_context(
                 self.session.post(
                     url,
-                    json=payload_dict,
-                    headers=upstream_headers,
+                    **body_kwargs,
                     timeout=timeout,
                 ),
                 settings=settings,

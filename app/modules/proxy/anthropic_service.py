@@ -33,6 +33,7 @@ from app.core.anthropic.parsing import parse_sse_event
 from app.core.anthropic.quota_keys import model_quota_key
 from app.core.auth.refresh import RefreshError, classify_refresh_error
 from app.core.balancer.types import UpstreamError
+from app.core.clients import upstream_body
 from app.core.clients.http import lease_http_session
 from app.core.clients.proxy import filter_inbound_headers
 from app.core.config.settings import get_settings
@@ -1252,6 +1253,8 @@ class AnthropicProxyService:
             total=settings.proxy_request_budget_seconds,
             connect=settings.upstream_connect_timeout_seconds,
         )
+        if provider_name == ANTHROPIC_PROVIDER_NAME:
+            return upstream_body.post_json(session, url, json_body=json_body, headers=headers, timeout=timeout)
         return session.post(url, json=json_body, headers=headers, timeout=timeout)
 
     def _open_count_tokens_response(
@@ -1268,6 +1271,8 @@ class AnthropicProxyService:
             total=_COUNT_TOKENS_TIMEOUT_SECONDS,
             connect=settings.upstream_connect_timeout_seconds,
         )
+        if provider_name == ANTHROPIC_PROVIDER_NAME:
+            return upstream_body.post_json(session, url, json_body=json_body, headers=headers, timeout=timeout)
         return session.post(url, json=json_body, headers=headers, timeout=timeout)
 
     async def _select_account(
