@@ -1,0 +1,370 @@
+{
+  "version": 1,
+  "glossary": "rails",
+  "source": "https://app.rails.so/workspace/rails-admin?route=scoping/rails-glossary (r32, approved 2026-10-05 09:26 ET)",
+  "retired": [
+    {
+      "old": "team (as the container), space, team space",
+      "new": "workspace",
+      "status": "settled",
+      "forms": [
+        "team space",
+        "Switch space"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "team agent, company agent",
+      "new": "Chief of staff (for you) or the area's specialist (for the work)",
+      "status": "settled",
+      "forms": [
+        "team agent",
+        "company agent"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "HQ, Rails HQ, <Team> HQ",
+      "new": "Chief of staff, or the workspace name",
+      "status": "settled",
+      "forms": [
+        "Rails HQ",
+        "Team HQ"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "orchestrator (on screens)",
+      "new": "Chief of staff",
+      "status": "settled",
+      "forms": [
+        "Rails orchestrator"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "your agent (as a label)",
+      "new": "Chief of staff (CoS)",
+      "status": "settled",
+      "forms": [
+        "your agent label"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "automation (on screens)",
+      "new": "routine",
+      "status": "settled",
+      "forms": [
+        "Rails automation"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Developer (for the Development specialist)",
+      "new": "PM",
+      "status": "settled",
+      "forms": [
+        "Development Developer"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "page agent, PM agent (as separate agents)",
+      "new": "a session of the specialist",
+      "status": "settled",
+      "forms": [
+        "page agent",
+        "PM agent"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "project agent",
+      "new": "a session of PM (one project) or the specialist (the area)",
+      "status": "settled",
+      "forms": [
+        "project agent"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "product agent, vertical agent (on screens), the app's agent",
+      "new": "specialist",
+      "status": "settled",
+      "forms": [
+        "product agent",
+        "vertical agent",
+        "app's agent"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Personal (as a container), private space",
+      "new": "Chief of staff, and your personal connections",
+      "status": "settled",
+      "forms": [
+        "private space",
+        "Personal container"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "workspace (for Claude, ChatGPT or Herdr Shell)",
+      "new": "host",
+      "status": "settled",
+      "forms": [
+        "Claude workspace",
+        "ChatGPT workspace",
+        "Herdr Shell workspace"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Focus",
+      "new": "Needs you",
+      "status": "settled",
+      "forms": [
+        "Focus queue"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Main, Main chat",
+      "new": "the Chief of staff chat",
+      "status": "settled",
+      "forms": [
+        "Main chat"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Rails Admin",
+      "new": "Chief of staff, and the Development and Raise areas",
+      "status": "settled",
+      "forms": [
+        "Rails Admin"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "desk, agent app",
+      "new": "home",
+      "status": "settled",
+      "forms": [
+        "agent desk",
+        "agent app"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "app home",
+      "new": "home, as in Recruiter home",
+      "status": "settled",
+      "forms": [
+        "app home"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "mini-app",
+      "new": "page (full screen) or card (in a chat)",
+      "status": "settled",
+      "forms": [
+        "mini-app"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "connector (on Rails screens)",
+      "new": "plugin or connection",
+      "status": "settled",
+      "forms": [
+        "Rails connector"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "integration (on screens)",
+      "new": "connection",
+      "status": "settled",
+      "forms": [
+        "Rails integration"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Setup",
+      "new": "Settings",
+      "status": "settled",
+      "forms": [
+        "Rails Setup"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Signed-in apps",
+      "new": "Hosts (a Settings section)",
+      "status": "settled",
+      "forms": [
+        "Signed-in apps"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "Connected accounts",
+      "new": "Connections",
+      "status": "settled",
+      "forms": [
+        "Connected accounts"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "inbox",
+      "new": "Needs you or Chats",
+      "status": "settled",
+      "forms": [
+        "Rails inbox"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "native Rails agent",
+      "new": "cloud agent (where it runs) or the Rails app (where you work)",
+      "status": "settled",
+      "forms": [
+        "native Rails agent"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "thread (for a margin note)",
+      "new": "comment",
+      "status": "settled",
+      "forms": [
+        "scope threads",
+        "margin thread"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    },
+    {
+      "old": "prepackaged plugin",
+      "new": "building block",
+      "status": "settled",
+      "forms": [
+        "prepackaged plugin"
+      ],
+      "keep": [
+        "docs/history/**",
+        "docs/owner/steers/**",
+        "rails/migrations/**"
+      ]
+    }
+  ],
+  "allowlist": []
+}

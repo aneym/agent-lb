@@ -1,0 +1,6 @@
+- [x] Implement words check, read-only rename plans and status reports.
+- [x] Implement glossary completeness checks.
+- [x] Define the version-1 terms schema and default terms paths.
+- [x] Exercise tokens, classifications, diffs, multi-repository read-only plans and glossary pass/fail through the CLI.
+- [x] Validate base specs and this change with OpenSpec (40 specs passed; change valid).
+- [x] Run ruff on clients/open-factory (clean) and the words tests on ax42 (6 passed).

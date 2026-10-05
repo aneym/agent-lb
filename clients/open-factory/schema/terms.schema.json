@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "glossary",
+    "source",
+    "retired",
+    "allowlist"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "glossary": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "retired": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "old",
+          "forms",
+          "new",
+          "status",
+          "keep"
+        ],
+        "properties": {
+          "old": {
+            "type": "string",
+            "minLength": 1
+          },
+          "new": {
+            "type": "string",
+            "minLength": 1
+          },
+          "forms": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "keep": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "status": {
+            "enum": [
+              "settled",
+              "proposed"
+            ]
+          }
+        }
+      }
+    },
+    "allowlist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "word",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "word": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "enforce": {}
+  }
+}

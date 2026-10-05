@@ -445,6 +445,10 @@ def build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--path", default=None, help="only decisions made under this directory")
     rep.set_defaults(func=cmd_report)
 
+    from .commands import glossary, words
+
+    words.build_parser(sub)
+    glossary.build_parser(sub)
     return p
 
 
