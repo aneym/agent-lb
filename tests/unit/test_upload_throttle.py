@@ -120,7 +120,8 @@ async def test_off_writes_straight_through() -> None:
     upload_throttle.write_state(enabled=False)
     fake = _FakeTransport()
     transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
-    transport.write(b"x" * 400_000)
+    with upload_throttle.bulk_transfer():
+        transport.write(b"x" * 400_000)
     assert [size for _, size in fake.writes] == [400_000]
 
 
@@ -276,7 +277,9 @@ async def test_real_and_queue_pauses_merge_into_one_pause_and_one_resume() -> No
     fake.get_protocol = lambda: protocol  # type: ignore[method-assign]
     transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
     protocol.pause_writing()  # the real transport's socket buffer fills
-    transport.write(b"x" * 600_000)  # the queue also wants a pause
+    with upload_throttle.bulk_transfer():
+        transport.write(b"x" * 600_000)  # the queue also wants a pause
+    assert transport.get_write_buffer_size() > upload_throttle.PAUSE_HIGH_BYTES  # the queue really holds it
     assert protocol.events == ["pause"]
     while transport.get_write_buffer_size() > upload_throttle.PAUSE_LOW_BYTES:
         await asyncio.sleep(0.01)
