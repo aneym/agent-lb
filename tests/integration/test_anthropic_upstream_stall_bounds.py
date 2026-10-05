@@ -59,6 +59,7 @@ REST = (
     b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
 )
 SSE = MESSAGE_START + REST
+CRLF_SSE = SSE.replace(b"\n", b"\r\n")
 CUT = REST.index(b'"text":"') + 4  # inside an event's JSON
 JSON_MESSAGE = {
     "id": "msg_1",
@@ -109,6 +110,11 @@ class StandIn:
             await response.write(REST[CUT:])
         elif first and self.mode == "closes_mid_event":
             await response.write(MESSAGE_START + REST[:CUT])
+        elif self.mode == "crlf_split_last_terminator":
+            # The final CRLF arrives in two reads: the CR, then the LF.
+            await response.write(CRLF_SSE[:-1])
+            await asyncio.sleep(0.05)
+            await response.write(CRLF_SSE[-1:])
         else:
             await response.write(SSE)
         await response.write_eof()
@@ -370,3 +376,15 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_the_api_key_
     async with SessionLocal() as session:
         reservation = await session.get(ApiKeyUsageReservation, "stall-reservation")
     assert reservation is not None and reservation.status == "finalized"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream", ["crlf_split_last_terminator"], indirect=True)
+async def test_a_whole_crlf_stream_whose_last_terminator_is_split_is_a_success(upstream, async_client):
+    await _insert_anthropic_accounts(1)
+
+    status, body, _ = await _call(async_client, stream=True)
+
+    assert status == 200
+    assert body == CRLF_SSE
+    assert [(log.status, log.error_code) for log in await _logs()] == [("success", None)]

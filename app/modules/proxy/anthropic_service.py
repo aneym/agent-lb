@@ -920,8 +920,12 @@ class AnthropicProxyService:
                                             continue
                                     streamed_bytes = True
                                     yield chunk_bytes
-                                if unsent:
+                                if unsent.strip(b"\r\n"):
                                     raise UpstreamTruncatedEvent()
+                                if unsent:
+                                    # Only the tail of a blank line split across
+                                    # reads (the LF of a CRLF): no event is cut.
+                                    yield bytes(unsent)
                                 if raw_body is not None:
                                     usage = _usage_from_json_body(bytes(raw_body)) or usage
 
