@@ -88,8 +88,8 @@ tight spec stays on Opus at xhigh.
 
 Owner, 2026-09-25: "hundreds of agents in parallel must always be possible". Fan out as wide as the work splits.
 Back off only on 429 or usage-limit errors, an account near the end of its 5-hour window, or rising error rates.
-Host CPU sets the width: job steps slowed from 5 s to 16 s past about 15 concurrent jobs on one 16-core host
-(2026-09-26). `route pools` is advisory and its aggregate hides spent accounts. If agent-lb throttles, that is a bug.
+Target: no fixed job count per host or workflow (owner, 2026-10-04); hosts admit from measured signals (`factory-admit status`). Every host runs `observe` today, so its legacy caps (verify-slot, cx-slot, ready-worker, boxes.json) set width until it runs `signals` and its wrappers defer.
+`route pools` is advisory and its aggregate hides spent accounts. If agent-lb throttles, that is a bug.
 
 ## Rules change with evidence (owner, 2026-09-26)
 
