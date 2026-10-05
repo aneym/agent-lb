@@ -5,3 +5,6 @@
 - [x] Forward streamed bytes on SSE event boundaries; settle the reservation before the terminal event.
 - [x] Leave non-streamed calls unbounded.
 - [x] Integration check (5 scenarios): an upstream silent for 8 s before headers, behind a 529 status, or mid-event is bounded at 0.5 s; running out of accounts after a stall is an overload; a slow non-streamed reply is not cut. The four stall scenarios fail on the code without bounds at about 8 s against a 4 s bound; the three post-review scenarios also fail on 63606e8b.
+- [x] Drop an event cut by an orderly upstream close (`upstream_truncated_event`); forward a tail of line terminators only.
+- [x] Run stall bookkeeping (settlement, health mark, request log) as one shielded task; release the reservation when the client leaves before any byte went out.
+- [ ] Follow-up: drive the disconnect cases through a real HTTP client disconnect instead of cancelling the service iterator, and settle the reservation when a client leaves a healthy stream mid-way (today the stale-reservation sweep releases it).

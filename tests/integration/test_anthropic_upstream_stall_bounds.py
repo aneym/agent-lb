@@ -108,6 +108,8 @@ class StandIn:
             await response.write(MESSAGE_START + REST[:CUT])
             await self._silence()
             await response.write(REST[CUT:])
+        elif first and self.mode == "closes_mid_first_event":
+            await response.write(MESSAGE_START[:40])
         elif first and self.mode == "closes_mid_event":
             await response.write(MESSAGE_START + REST[:CUT])
         elif self.mode == "crlf_split_last_terminator":
@@ -216,6 +218,42 @@ async def _call(async_client, *, stream: bool, headers: dict[str, str] | None = 
     ) as response:
         body = await response.aread()
     return response.status_code, body, time.monotonic() - started
+
+
+async def _insert_reservation() -> None:
+    async with SessionLocal() as session:
+        session.add(ApiKey(id="key-1", name="stall key", key_hash="hash-1", key_prefix="sk-stall"))
+        await session.flush()
+        session.add(
+            ApiKeyUsageReservation(id="stall-reservation", api_key_id="key-1", model="claude-sonnet-4-20250514")
+        )
+        await session.commit()
+
+
+async def _reservation_status() -> str | None:
+    async with SessionLocal() as session:
+        reservation = await session.get(ApiKeyUsageReservation, "stall-reservation")
+    return None if reservation is None else reservation.status
+
+
+async def _stream_with_reservation(service: AnthropicProxyService):
+    """Start a streamed API-key call straight on the service, as the route does, and return its chunk iterator."""
+    payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+    stream = await service.stream_messages(
+        payload,
+        {"anthropic-beta": "oauth-2025-04-20", "user-agent": "claude-cli/2.1.289 (external, cli)"},
+        api_key_reservation=ApiKeyUsageReservationData(
+            reservation_id="stall-reservation", key_id="key-1", model="claude-sonnet-4-20250514"
+        ),
+    )
+    return stream.body.__aiter__()
 
 
 async def _logs() -> list[RequestLog]:
@@ -332,13 +370,7 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_
     upstream, async_client, monkeypatch, held
 ):
     await _insert_anthropic_accounts(1)
-    async with SessionLocal() as session:
-        session.add(ApiKey(id="key-1", name="stall key", key_hash="hash-1", key_prefix="sk-stall"))
-        await session.flush()
-        session.add(
-            ApiKeyUsageReservation(id="stall-reservation", api_key_id="key-1", model="claude-sonnet-4-20250514")
-        )
-        await session.commit()
+    await _insert_reservation()
     service = AnthropicProxyService(repo_factory=_proxy_repo_context)
     # Holds one bookkeeping write open, so the disconnect lands in the middle of it.
     entered, release = asyncio.Event(), asyncio.Event()
@@ -361,22 +393,7 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_
 
     monkeypatch.setattr(ApiKeysService, "finalize_usage_reservation", finalize)
     monkeypatch.setattr(service._load_balancer, "record_error", record_error)
-    payload = AnthropicMessageRequest.model_validate(
-        {
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 32,
-            "stream": True,
-            "messages": [{"role": "user", "content": "hello"}],
-        }
-    )
-    stream = await service.stream_messages(
-        payload,
-        {"anthropic-beta": "oauth-2025-04-20", "user-agent": "claude-cli/2.1.289 (external, cli)"},
-        api_key_reservation=ApiKeyUsageReservationData(
-            reservation_id="stall-reservation", key_id="key-1", model="claude-sonnet-4-20250514"
-        ),
-    )
-    chunks = stream.body.__aiter__()
+    chunks = await _stream_with_reservation(service)
     assert await anext(chunks) == MESSAGE_START
 
     # The stream stalls; the client disconnects mid-bookkeeping, which then finishes.
@@ -391,9 +408,7 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_
             break
         await asyncio.sleep(0.02)
 
-    async with SessionLocal() as session:
-        reservation = await session.get(ApiKeyUsageReservation, "stall-reservation")
-    assert reservation is not None and reservation.status == "finalized"
+    assert await _reservation_status() == "finalized"
     assert health_errors == ["anthropic-stall-0"]
     assert [(log.status, log.error_code) for log in await _logs()] == [("error", "upstream_stream_idle_timeout")]
 
@@ -408,3 +423,37 @@ async def test_a_whole_crlf_stream_whose_last_terminator_is_split_is_a_success(u
     assert status == 200
     assert body == CRLF_SSE
     assert [(log.status, log.error_code) for log in await _logs()] == [("success", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream", ["closes_mid_first_event"], indirect=True)
+async def test_a_client_gone_before_any_event_went_out_releases_the_api_key_reservation(
+    upstream, async_client, monkeypatch
+):
+    await _insert_anthropic_accounts(1)
+    await _insert_reservation()
+    service = AnthropicProxyService(repo_factory=_proxy_repo_context)
+    # Holds the health write for the cut first event open, so the disconnect lands there.
+    entered, release = asyncio.Event(), asyncio.Event()
+    real_record_error = service._load_balancer.record_error
+
+    async def record_error(account):
+        entered.set()
+        await release.wait()
+        await real_record_error(account)
+
+    monkeypatch.setattr(service._load_balancer, "record_error", record_error)
+    chunks = await _stream_with_reservation(service)
+
+    reader = asyncio.ensure_future(anext(chunks))
+    await asyncio.wait_for(entered.wait(), BOUNDED_SECONDS)
+    reader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+    release.set()
+    for _ in range(100):
+        if await _reservation_status() != "reserved":
+            break
+        await asyncio.sleep(0.02)
+
+    assert await _reservation_status() == "released"

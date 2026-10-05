@@ -1142,7 +1142,10 @@ class AnthropicProxyService:
                 )
                 raise exhausted_error
 
-        return AnthropicProxyStream(body=body(), media_type=media_type)
+        return AnthropicProxyStream(
+            body=self._release_on_early_disconnect(body(), api_key_reservation),
+            media_type=media_type,
+        )
 
     async def resolve_message_request(
         self,
@@ -2100,6 +2103,25 @@ class AnthropicProxyService:
             usage=usage,
             latency_first_token_ms=latency_first_token_ms,
         )
+
+    async def _release_on_early_disconnect(
+        self,
+        body: AsyncIterator[bytes],
+        reservation: ApiKeyUsageReservationData | None,
+    ) -> AsyncIterator[bytes]:
+        """Release the reservation when the client leaves before any byte went out.
+
+        Once bytes went out, the body settles the reservation itself.
+        """
+        forwarded = False
+        try:
+            async for chunk in body:
+                forwarded = True
+                yield chunk
+        except asyncio.CancelledError:
+            if not forwarded and reservation is not None:
+                await self._shielded(self._release_api_key_reservation(reservation))
+            raise
 
     async def _shielded(self, work: Coroutine[Any, Any, None]) -> None:
         """Run ``work`` to the end even if the caller is cancelled (a client disconnect)."""
