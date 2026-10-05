@@ -8,7 +8,7 @@ import random
 import re
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -464,7 +464,7 @@ class AnthropicProxyService:
         self._load_balancer = LoadBalancer(repo_factory)
         self._encryptor = TokenEncryptor()
         self._pending_request_logs: set[asyncio.Task[None]] = set()
-        self._pending_settlements: set[asyncio.Task[None]] = set()
+        self._pending_bookkeeping: set[asyncio.Task[None]] = set()
 
     async def stream_messages(
         self,
@@ -1012,15 +1012,6 @@ class AnthropicProxyService:
                         stall = stall_catcher.stall
                         if stall is None:
                             continue
-                        if streamed_bytes:
-                            # The stream ends here. Settle before any other
-                            # await: the client may disconnect during the
-                            # health and log writes below.
-                            await self._settle_api_key_reservation(
-                                api_key_reservation,
-                                model=payload.model,
-                                usage=usage,
-                            )
                         # The stalled connection is already closed. Anthropic
                         # answers retries with overload-type errors, so clients
                         # retry; the account takes a transient health hit.
@@ -1033,22 +1024,25 @@ class AnthropicProxyService:
                             stall.seconds,
                             streamed_bytes,
                         )
-                        await self._load_balancer.record_error(account)
-                        await self._persist_request_log(
-                            account=account,
-                            provider_name=provider_name,
-                            request_id=request_id,
-                            model=payload.model,
-                            started_at=started_at,
-                            status="error",
-                            error_code=stall.code,
-                            error_message=str(stall),
-                            api_key=api_key,
-                            session_id=session_id,
-                            useragent=useragent,
-                            useragent_group=useragent_group,
-                            usage=usage,
-                            latency_first_token_ms=latency_first_token_ms,
+                        # Once bytes went out the stream ends here, so the
+                        # reservation is settled too. The client may disconnect
+                        # meanwhile; the bookkeeping still runs to the end.
+                        await self._shielded(
+                            self._record_stall(
+                                account,
+                                stall,
+                                reservation=api_key_reservation if streamed_bytes else None,
+                                provider_name=provider_name,
+                                request_id=request_id,
+                                model=payload.model,
+                                started_at=started_at,
+                                api_key=api_key,
+                                session_id=session_id,
+                                useragent=useragent,
+                                useragent_group=useragent_group,
+                                usage=usage,
+                                latency_first_token_ms=latency_first_token_ms,
+                            )
                         )
                         if not streamed_bytes:
                             # Nothing reached the client: fail over at once.
@@ -2071,32 +2065,60 @@ class AnthropicProxyService:
                 cached_input_tokens=cached_tokens,
             )
 
-    async def _settle_api_key_reservation(
+    async def _record_stall(
         self,
-        reservation: ApiKeyUsageReservationData | None,
+        account: Account,
+        stall: UpstreamStallTimeout,
         *,
+        reservation: ApiKeyUsageReservationData | None,
+        provider_name: str,
+        request_id: str,
         model: str,
+        started_at: float,
+        api_key: ApiKeyData | None,
+        session_id: str | None,
+        useragent: str | None,
+        useragent_group: str | None,
         usage: AnthropicUsage | None,
+        latency_first_token_ms: int | None,
     ) -> None:
-        """Finalize ``reservation``, finishing even if the client disconnects meanwhile."""
-        if reservation is None:
-            return
-        task = asyncio.create_task(self._finalize_api_key_reservation(reservation, model=model, usage=usage))
+        await self._finalize_api_key_reservation(reservation, model=model, usage=usage)
+        await self._load_balancer.record_error(account)
+        await self._persist_request_log(
+            account=account,
+            provider_name=provider_name,
+            request_id=request_id,
+            model=model,
+            started_at=started_at,
+            status="error",
+            error_code=stall.code,
+            error_message=str(stall),
+            api_key=api_key,
+            session_id=session_id,
+            useragent=useragent,
+            useragent_group=useragent_group,
+            usage=usage,
+            latency_first_token_ms=latency_first_token_ms,
+        )
+
+    async def _shielded(self, work: Coroutine[Any, Any, None]) -> None:
+        """Run ``work`` to the end even if the caller is cancelled (a client disconnect)."""
+        task = asyncio.create_task(work)
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            self._pending_settlements.add(task)
-            task.add_done_callback(self._settlement_finished)
+            self._pending_bookkeeping.add(task)
+            task.add_done_callback(self._bookkeeping_finished)
             raise
 
-    def _settlement_finished(self, task: asyncio.Task[None]) -> None:
-        self._pending_settlements.discard(task)
+    def _bookkeeping_finished(self, task: asyncio.Task[None]) -> None:
+        self._pending_bookkeeping.discard(task)
         try:
             task.result()
         except asyncio.CancelledError:
-            logger.warning("Anthropic reservation settlement task cancelled")
+            logger.warning("Anthropic bookkeeping task cancelled")
         except Exception:
-            logger.warning("Anthropic reservation settlement task failed", exc_info=True)
+            logger.warning("Anthropic bookkeeping task failed", exc_info=True)
 
     async def _release_api_key_reservation(self, reservation: ApiKeyUsageReservationData | None) -> None:
         if reservation is None:

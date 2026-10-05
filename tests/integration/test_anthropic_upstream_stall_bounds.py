@@ -33,7 +33,7 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.dependencies import _proxy_repo_context
-from app.modules.api_keys.service import ApiKeyUsageReservationData
+from app.modules.api_keys.service import ApiKeysService, ApiKeyUsageReservationData
 from app.modules.proxy.anthropic_service import AnthropicProxyService
 
 pytestmark = pytest.mark.integration
@@ -327,8 +327,9 @@ async def test_a_stream_that_closes_mid_event_ends_with_a_clean_retryable_error_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("upstream", ["silent_mid_event"], indirect=True)
-async def test_a_client_gone_during_stall_bookkeeping_still_settles_the_api_key_reservation(
-    upstream, async_client, monkeypatch
+@pytest.mark.parametrize("held", ["settlement", "health"])
+async def test_a_client_gone_during_stall_bookkeeping_still_settles_and_records_the_stall(
+    upstream, async_client, monkeypatch, held
 ):
     await _insert_anthropic_accounts(1)
     async with SessionLocal() as session:
@@ -339,15 +340,27 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_the_api_key_
         )
         await session.commit()
     service = AnthropicProxyService(repo_factory=_proxy_repo_context)
-    # Holds the account-health write open, so the disconnect lands mid-bookkeeping.
-    in_bookkeeping = asyncio.Event()
+    # Holds one bookkeeping write open, so the disconnect lands in the middle of it.
+    entered, release = asyncio.Event(), asyncio.Event()
+    health_errors: list[str] = []
+    real_finalize = ApiKeysService.finalize_usage_reservation
+    real_record_error = service._load_balancer.record_error
 
-    async def record_error_until_cancelled(account):
-        del account
-        in_bookkeeping.set()
-        await asyncio.Event().wait()
+    async def finalize(self, *args, **kwargs):
+        if held == "settlement":
+            entered.set()
+            await release.wait()
+        await real_finalize(self, *args, **kwargs)
 
-    monkeypatch.setattr(service._load_balancer, "record_error", record_error_until_cancelled)
+    async def record_error(account):
+        if held == "health":
+            entered.set()
+            await release.wait()
+        await real_record_error(account)
+        health_errors.append(account.id)
+
+    monkeypatch.setattr(ApiKeysService, "finalize_usage_reservation", finalize)
+    monkeypatch.setattr(service._load_balancer, "record_error", record_error)
     payload = AnthropicMessageRequest.model_validate(
         {
             "model": "claude-sonnet-4-20250514",
@@ -366,16 +379,23 @@ async def test_a_client_gone_during_stall_bookkeeping_still_settles_the_api_key_
     chunks = stream.body.__aiter__()
     assert await anext(chunks) == MESSAGE_START
 
-    # The stream stalls; the client disconnects while health is being recorded.
+    # The stream stalls; the client disconnects mid-bookkeeping, which then finishes.
     reader = asyncio.ensure_future(anext(chunks))
-    await asyncio.wait_for(in_bookkeeping.wait(), BOUNDED_SECONDS)
+    await asyncio.wait_for(entered.wait(), BOUNDED_SECONDS)
     reader.cancel()
     with pytest.raises(asyncio.CancelledError):
         await reader
+    release.set()
+    for _ in range(100):
+        if await _logs():
+            break
+        await asyncio.sleep(0.02)
 
     async with SessionLocal() as session:
         reservation = await session.get(ApiKeyUsageReservation, "stall-reservation")
     assert reservation is not None and reservation.status == "finalized"
+    assert health_errors == ["anthropic-stall-0"]
+    assert [(log.status, log.error_code) for log in await _logs()] == [("error", "upstream_stream_idle_timeout")]
 
 
 @pytest.mark.asyncio
