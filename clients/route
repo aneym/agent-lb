@@ -17,6 +17,8 @@
 #   route seat <name> [--class C] [--rules COMMIT] [--json]   one seat at a pinned rules commit
 #   route seats [--rules COMMIT] [--json]   seats, chains, audit and escalation at a pinned rules commit
 #   route models [--json]                        every family alias with what it resolves to now
+#   route workflow-args                          JSON for Workflow scripts: per class, the agent() options
+#                                                (agentType, model, effort) and brief line of the live pick
 #
 # Env:
 #   AGENT_LB_URL       LB base URL (default http://127.0.0.1:2455)
@@ -46,7 +48,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fnmatch
+import io
 import hashlib
 import json
 import math
@@ -2095,6 +2099,144 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
         _print_stand_in(record)
 
 
+# --- workflow args -----------------------------------------------------------
+# Claude Code Workflow scripts have no shell, so a script cannot call `route
+# pick`. `route workflow-args` runs the picks once in the launching turn and
+# prints, per class, the agent() options that reach the picked seat and model;
+# the caller passes the JSON as the Workflow `args`. How each seat kind takes a
+# model and effort (measured 2026-10-05, ROUTING.md "Workflows"):
+# - Bridge seats run in Claude Code on GPT through the ccgpt bridge. The bridge
+#   locks reasoning effort from the model name suffix (`sol-latest-medium`) and
+#   ignores the request's own effort, so the effort rides in opts.model.
+# - Brief seats are thin forwarders whose CLI model is named in the brief
+#   (`Seat model: <id>`, the pick's resolved id, which `seat` accepts); their
+#   own Claude wrapper stays at low effort. codex-sol takes only its effort
+#   from the brief (`Effort: <effort>`).
+# - Fixed forwarders pin their CLI model and effort in the seat definition.
+# - Every other seat is a Claude seat: opts.model and opts.effort override the
+#   definition's frontmatter.
+WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "gpt-explorer", "sol-consult"})
+WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat"})
+WORKFLOW_EFFORT_BRIEF_SEATS = frozenset({"codex-sol"})
+WORKFLOW_FIXED_FORWARDERS = frozenset({"codex-verifier", "codex-test-runner", "computer-use"})
+WORKFLOW_AUTHOR_VENDORS = ("anthropic", "openai", "xai", "cursor", "cognition", "devin", "glm", "kimi")
+CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
+# Claude Code's own cap on concurrent agent() calls in one workflow.
+WORKFLOW_AGENT_CAP = 16
+
+
+def _chain_effort(table: dict[str, Any], class_name: str, seat: str) -> str | None:
+    spec = (table.get("classes") or {}).get(class_name)
+    for entry in (spec.get("chain") or []) if isinstance(spec, dict) else []:
+        if isinstance(entry, dict) and entry.get("seat") == seat:
+            return entry.get("effort")
+    return None
+
+
+def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Turn one pick entry into the agent() options and brief line that reach it."""
+    seat = entry["seat"]
+    model = entry.get("model")
+    alias = entry.get("alias") or model
+    effort = entry.get("effort") if "effort" in entry else _chain_effort(table, class_name, seat)
+    if model and is_retired(model, retired_patterns(table)):
+        raise ValueError(f"{seat} picked retired model {model}")
+    opts: dict[str, Any] = {"agentType": seat}
+    brief = ""
+    if seat in WORKFLOW_BRIDGE_SEATS:
+        if alias:
+            base = next((alias[: -len(f"-{e}")] for e in CCGPT_EFFORTS if alias.endswith(f"-{e}")), alias)
+            opts["model"] = f"{base}-{effort}" if effort in CCGPT_EFFORTS else alias
+    elif seat in WORKFLOW_BRIEF_SEATS:
+        opts["effort"] = "low"
+        brief = f"Seat model: {model or alias}\n"
+        if class_name == "verify":
+            brief += "Seat mode: ask\nReviewer instructions: read ~/.claude/agents/verifier.md and follow it.\n"
+        elif entry.get("read_only"):
+            brief += "Seat mode: ask\n"
+    elif seat in WORKFLOW_EFFORT_BRIEF_SEATS:
+        brief = f"Effort: {effort}\n" if effort else ""
+    elif seat not in WORKFLOW_FIXED_FORWARDERS:
+        if model:
+            opts["model"] = model
+        if effort:
+            opts["effort"] = effort
+    out = {key: entry.get(key) for key in ("rung", "seat", "model", "alias", "vendor", "pool") if entry.get(key)}
+    seat_spec = (table.get("seats") or {}).get(seat)
+    if "vendor" not in out and isinstance(seat_spec, dict) and seat_spec.get("vendor"):
+        out["vendor"] = seat_spec["vendor"]
+    out.update(effort=effort, opts=opts, brief=brief)
+    return out
+
+
+def _pick_json(table: dict[str, Any], class_name: str, author_vendor: str | None) -> dict[str, Any]:
+    args = argparse.Namespace(task_class=class_name, author_vendor=author_vendor, skip=[], json=True)
+    buffer, errors = io.StringIO(), io.StringIO()
+    code = EXIT_OK
+    try:
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(errors):
+            code = command_pick(args, table)
+    except SystemExit as stop:
+        code = stop.code if isinstance(stop.code, int) else EXIT_UNROUTABLE
+    text = buffer.getvalue().strip()
+    result = json.loads(text) if text.startswith("{") else {}
+    if code != EXIT_OK or "error" in result or not result.get("seat"):
+        message = result.get("message") or errors.getvalue().strip().removeprefix("route: ") or f"exit {code}"
+        raise ValueError(message)
+    return result
+
+
+def _workflow_pick(table: dict[str, Any], class_name: str, author_vendor: str | None) -> dict[str, Any]:
+    picked = _pick_json(table, class_name, author_vendor)
+    if picked.get("seat") == "driver":
+        raise ValueError("driver class: stays on the driver session, no subagent")
+    out = workflow_seat(table, class_name, picked)
+    fallbacks = []
+    for entry in picked.get("fallbacks") or []:
+        try:
+            fallbacks.append(workflow_seat(table, class_name, entry))
+        except ValueError:
+            continue
+    out["fallbacks"] = fallbacks
+    audit = picked.get("audit")
+    if isinstance(audit, dict) and audit.get("seat"):
+        try:
+            out["audit"] = workflow_seat(table, "verify", audit)
+        except ValueError as error:
+            out["audit_error"] = str(error)
+    return out
+
+
+def command_workflow_args(args: argparse.Namespace) -> int:
+    table = load_table()
+    classes = table.get("classes") if isinstance(table.get("classes"), dict) else {}
+    document: dict[str, Any] = {
+        "generated_at": now_iso(),
+        "ladder": table.get("ladder"),
+        "table_sha256": hashlib.sha256(table_path().read_bytes()).hexdigest() if table_path().is_file() else None,
+        "agent_cap": min(WORKFLOW_AGENT_CAP, max(1, (os.cpu_count() or 3) - 2)),
+        "seats": {},
+        "review_for": {},
+        "errors": {},
+    }
+    for class_name in sorted(classes):
+        if class_name == "verify":
+            continue
+        try:
+            document["seats"][class_name] = _workflow_pick(table, class_name, None)
+        except ValueError as error:
+            document["errors"][class_name] = str(error)
+    for vendor in WORKFLOW_AUTHOR_VENDORS:
+        try:
+            document["review_for"][vendor] = _workflow_pick(table, "verify", vendor)
+        except ValueError as error:
+            document["errors"][f"review_for.{vendor}"] = str(error)
+    print(json.dumps(document, indent=2, sort_keys=True))
+    if not document["seats"] and not document["review_for"]:
+        return EXIT_UNROUTABLE
+    return EXIT_DEGRADED if document["errors"] else EXIT_OK
+
+
 # --- doctor ------------------------------------------------------------------
 
 
@@ -2852,6 +2994,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     models = sub.add_parser("models", help="every family alias and what it resolves to now")
     models.add_argument("--json", action="store_true")
     models.set_defaults(handler=command_models)
+
+    workflow_args = sub.add_parser("workflow-args",
+                                   help="JSON of agent() options per class for Workflow scripts (always JSON)")
+    workflow_args.set_defaults(handler=command_workflow_args)
 
     learn = sub.add_parser("learn", help="propose chain demotions from recorded outcomes")
     learn.add_argument("--apply", action="store_true", help="write the overrides into the routing table")

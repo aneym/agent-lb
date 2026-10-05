@@ -15,11 +15,13 @@ POLICY = ROOT / 'config/coding-agents'
 HOOK = POLICY / 'hooks/workflow-seat-guard.py'
 
 
-def invoke(script=None, *, script_path=None, table=None, raw=None, env=None):
+def invoke(script=None, *, script_path=None, table=None, raw=None, env=None, args=None):
     payload = (
         {'tool_input': {'script': script}} if script_path is None
         else {'tool_input': {'scriptPath': str(script_path)}}
     )
+    if args is not None:
+        payload['tool_input']['args'] = args
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=raw if raw is not None else json.dumps(payload), text=True, capture_output=True,
@@ -84,6 +86,24 @@ def test_real_fold_script_allows_inline_and_by_path():
         assert output['hookEventName'] == 'PreToolUse'
         assert 'permissionDecision' not in output
         assert 'could not be parsed' not in output.get('additionalContext', '')
+
+
+ROUTED = "agent(p, {...R.seats.implement.opts, label: 'x'})"
+
+
+@pytest.mark.parametrize('args,denied', [
+    ({'route': {'seats': {'implement': {'opts': {'agentType': 'opus-seat', 'model': 'claude-sonnet-5'}}}}}, True),
+    ({'pieces': [{'implementer': 'cursor-seat', 'model': 'gpt-5.6-sol'}]}, True),
+    ({'route': {'seats': {'implement': {'opts': {'agentType': 'opus-seat', 'model': 'claude-opus-5-5'}}}}}, False),
+    ({'rows': [{'model': 'claude-sonnet-5', 'requests': 3}]}, False),
+    ('not an object', False),
+])
+def test_seat_options_in_workflow_args_are_checked(args, denied):
+    """Options a script reads from args are invisible to the static scan; `route workflow-args` output lands here."""
+    output = invoke(ROUTED, args=args)
+    assert ('permissionDecision' in output) is denied
+    if denied:
+        assert 'Workflow args pin retired model' in output['permissionDecisionReason']
 
 
 @pytest.mark.parametrize('alias', ['sonnet', 'haiku'])

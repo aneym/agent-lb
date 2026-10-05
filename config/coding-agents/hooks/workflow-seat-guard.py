@@ -163,6 +163,34 @@ def split(items: list[tuple[str, str]], pairs: dict[int, int], start: int, end: 
     return parts
 
 
+def is_retired(value: str, table: dict) -> bool:
+    if value in ('sonnet', 'haiku'):
+        pinned = table.get('aliases', {}).get(value + '-latest', {}).get('pinned', value)
+        value = os.environ.get('ANTHROPIC_DEFAULT_' + value.upper() + '_MODEL') or pinned
+    return any(fnmatch.fnmatchcase(value, pattern) for pattern in table['retired'])
+
+
+def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
+    """Seat options a script reads from Workflow args (`route workflow-args`) never reach the static scan.
+
+    Only a `model` beside a seat key counts, so data that merely mentions an old model passes."""
+    if isinstance(value, dict):
+        seat_like = any(key in value for key in ('agentType', 'seat', 'implementer'))
+        for key, item in value.items():
+            if seat_like and key == 'model' and isinstance(item, str) and is_retired(item, table):
+                return (f'Workflow args pin retired model {item!r} at {path}.model: '
+                        'regenerate them with `route workflow-args` (models.md, Workflows)')
+            found = retired_in_args(item, table, f'{path}.{key}')
+            if found:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found = retired_in_args(item, table, f'{path}[{index}]')
+            if found:
+                return found
+    return None
+
+
 def inspect(script: str, table: dict) -> tuple[str | None, bool]:
     interpolations: list[str] = []
     items = tokens(script, interpolations)
@@ -211,12 +239,8 @@ def inspect(script: str, table: dict) -> tuple[str | None, bool]:
         if 'agentType' not in keys:
             reasons.append('agent() without agentType: pass agentType (models.md, Workflows)')
         model = keys.get('model')
-        if model and model[0] == 'string':
-            value = model[1]
-            if value in ('sonnet', 'haiku'):
-                value = os.environ.get('ANTHROPIC_DEFAULT_' + value.upper() + '_MODEL') or table.get('aliases', {}).get(value + '-latest', {}).get('pinned', value)
-            if any(fnmatch.fnmatchcase(value, pattern) for pattern in retired):
-                reasons.append(f'agent() pins retired model {model[1]!r}: use a current model alias (models.md, Workflows)')
+        if model and model[0] == 'string' and is_retired(model[1], table):
+            reasons.append(f'agent() pins retired model {model[1]!r}: use a current model alias (models.md, Workflows)')
     for body in interpolations:
         reason, body_warning = inspect(body, table)
         if reason:
@@ -236,7 +260,9 @@ def main() -> None:
         table_path = Path(os.environ.get('ROUTE_TABLE') or Path.home() / '.agent-lb/managed/coding-agents/routing-table.json')
         if not table_path.exists() and 'ROUTE_TABLE' not in os.environ:
             table_path = Path(__file__).resolve().parent.parent / 'routing-table.json'
-        reason, warning = inspect(script, json.loads(table_path.read_text()))
+        table = json.loads(table_path.read_text())
+        reason, warning = inspect(script, table)
+        reason = reason or retired_in_args(tool_input.get('args'), table)
         if reason:
             output.update(permissionDecision='deny', permissionDecisionReason=reason)
         elif warning:
