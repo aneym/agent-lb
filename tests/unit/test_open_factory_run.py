@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.unit.test_route_ladder import reopen_cursor
+
 REPO = Path(__file__).resolve().parents[2]
 OF = REPO / "clients" / "open-factory" / "bin" / "open-factory"
 TABLE = REPO / "config" / "coding-agents" / "routing-table.json"
@@ -63,9 +65,7 @@ def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path)
     env = world(tmp_path)
     # Grok, the implement head when its gate is open, is out of quota too; Composer answers.
     table = json.loads(TABLE.read_text())
-    for row in table["ladders"]["interim"]["implement"]:
-        if row["id"] == "grok-medium":
-            row.pop("gate", None)
+    reopen_cursor(table)
     grok_open = tmp_path / "grok-open.json"
     grok_open.write_text(json.dumps(table), encoding="utf-8")
     env["ROUTE_TABLE"] = str(grok_open)
@@ -139,7 +139,8 @@ def test_decision_pick_is_a_seat_id(tmp_path: Path) -> None:
     done = of(env, "run", "implement", "--json", "--", "Rename helper")
     assert done.returncode == 0, done.stderr
     decision = next(row for row in rows(env, "ROUTE_LEDGER") if row["event"] == "of_decision")
-    assert decision["pick"] == "cursor-seat"
+    assert decision["pick"] == json.loads(done.stdout)["intended"]["seat"]
+    assert "." not in decision["pick"]
 
 
 def test_intended_menu_seat_keeps_ladder_fallback(tmp_path: Path) -> None:

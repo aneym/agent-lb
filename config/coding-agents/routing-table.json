@@ -26,8 +26,8 @@
             "maker": "cursor",
             "pool": "cursor-models",
             "gate": {
-              "open": true,
-              "until": "E17 2026-09-30 (passed)"
+              "open": false,
+              "until": "2026-10-05: Composer out of usage on cursor-main and cursor-gmail (seat runs on Studio and ax42 fail with \"You're out of usage\"); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"
             }
           },
           {
@@ -67,7 +67,8 @@
             "model": "composer-latest",
             "effort": null,
             "maker": "cursor",
-            "pool": "cursor-models"
+            "pool": "cursor-models",
+            "gate": {"open": false, "until": "2026-10-05: Composer out of usage on cursor-main and cursor-gmail (seat runs on Studio and ax42 fail with \"You're out of usage\"); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
           },
           {
             "id": "grok-low",
@@ -109,7 +110,8 @@
             "effort": null,
             "maker": "cursor",
             "pool": "cursor-models",
-            "read_only": true
+            "read_only": true,
+            "gate": {"open": false, "until": "2026-10-05: Composer out of usage on cursor-main and cursor-gmail (seat runs on Studio and ax42 fail with \"You're out of usage\"); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
           },
           {
             "id": "swe2-medium",

@@ -50,9 +50,9 @@ def test_ladder_pick_preserves_standing_in(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("task,seat,rung", [
     ("implement", "devin-seat", "swe2-high"),
-    ("explore", "cursor-seat", "composer"),
+    ("explore", "devin-seat", "swe2-medium"),
 ])
-def test_unresolvable_sol_uses_cursor_worker(tmp_path: Path, task: str, seat: str, rung: str) -> None:
+def test_unresolvable_sol_uses_next_worker(tmp_path: Path, task: str, seat: str, rung: str) -> None:
     env = setup(tmp_path)
     (Path(env["ROUTE_FIXTURE_DIR"]) / "api_models.json").write_text(json.dumps({"models": [{"id": "gpt-6-luna"}]}))
     if task == "implement":

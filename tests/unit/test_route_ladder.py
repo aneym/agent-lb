@@ -58,6 +58,18 @@ def table_copy(tmp_path: Path, name: str, edit) -> Path:
     return path
 
 
+def reopen_cursor(table: dict) -> None:
+    """Drop the out-of-usage gates on every Cursor rung, for tests of Cursor mechanics."""
+    for rows in table["ladders"]["interim"].values():
+        for row in rows if isinstance(rows, list) else ():
+            if row.get("pool") == "cursor-models":
+                row.pop("gate", None)
+
+
+def cursor_open(tmp_path: Path) -> Path:
+    return table_copy(tmp_path, "cursor-open", reopen_cursor)
+
+
 def route(env: dict[str, str], table: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=60,
                           env={**env, "ROUTE_TABLE": str(table)}, check=False)
@@ -72,18 +84,12 @@ def pick(env: dict[str, str], table: Path, *args: str) -> dict:
 def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> None:
     env = setup(tmp_path)
 
-    # While Grok is out of usage the canonical table gates it and Composer leads.
+    # While Grok and Composer are out of usage the canonical table gates both and Devin leads.
     gated = pick(env, CANONICAL_TABLE, "implement")
-    assert gated["rung"] == "composer"
-    assert any(row["rung"] == "grok-medium" and row["reason"].startswith("gated:") for row in gated["skipped"])
+    assert gated["rung"] == "swe2-high"
+    assert {row["rung"] for row in gated["skipped"] if row["reason"].startswith("gated:")} >= {"grok-medium", "composer"}
 
-    def reopen_grok(table):
-        for rows in (table["ladders"]["interim"]["implement"], table["ladders"]["interim"]["mechanical"]):
-            for row in rows:
-                if row["id"].startswith("grok-"):
-                    row.pop("gate", None)
-
-    grok_open = table_copy(tmp_path, "grok-open", reopen_grok)
+    grok_open = cursor_open(tmp_path)
     held = pick(env, grok_open, "implement")
     assert (held["ladder"], held["rung"], held["seat"], held["model"]) == (
         "interim", "grok-medium", "cursor-seat", "grok-4.7-medium")
@@ -102,9 +108,11 @@ def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> N
     retry = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-high")
     assert (retry["rung"], retry["seat"], retry["effort"]) == ("sol-high", "codex-verifier", "high")
 
-    # Mechanical work starts with Composer.
-    mechanical = pick(env, CANONICAL_TABLE, "mechanical")
+    # Mechanical work starts with Composer when Cursor has usage, else Devin SWE medium.
+    mechanical = pick(env, grok_open, "mechanical")
     assert (mechanical["rung"], mechanical["seat"], mechanical["model"]) == ("composer", "cursor-seat", "composer-2.5")
+    held = pick(env, CANONICAL_TABLE, "mechanical")
+    assert (held["rung"], held["seat"], held["model"]) == ("swe2-medium", "devin-seat", "swe-2-medium")
 
     # Claude on its last account, Codex healthy: orchestrators keep Claude, and Grok's review moves to Sol high.
     last = setup(tmp_path, claude_eligible=1, codex_low=False)

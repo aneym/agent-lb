@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests.unit.test_open_factory_run import of, rows, stub, world
-from tests.unit.test_route_ladder import CANONICAL_TABLE, pick, setup, table_copy
+from tests.unit.test_route_ladder import cursor_open, pick, setup, table_copy
 
 
 @pytest.mark.parametrize("vendor", ["cursor", "devin"])
@@ -27,8 +27,9 @@ def test_hung_model_list_skips_rung_and_caches_failure(tmp_path: Path, vendor: s
     previous = json.dumps({"ts": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
                            "models": ["grok-4.7-low" if vendor == "cursor" else "swe-2-medium"]})
     success.write_text(previous)
+    table = cursor_open(tmp_path)
     started = time.monotonic()
-    selected = pick(env, CANONICAL_TABLE, task, *args)
+    selected = pick(env, table, task, *args)
     assert time.monotonic() - started < 12
     assert selected["pool"] == "openai-codex"
     cache = tmp_path / f"route-{vendor}-models.failed.json"
@@ -37,7 +38,7 @@ def test_hung_model_list_skips_rung_and_caches_failure(tmp_path: Path, vendor: s
     cache.write_text(json.dumps({"ts": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()}))
     calls.unlink()
     started = time.monotonic()
-    assert pick(env, CANONICAL_TABLE, task, *args)["pool"] == "openai-codex"
+    assert pick(env, table, task, *args)["pool"] == "openai-codex"
     assert time.monotonic() - started < 2
     assert not calls.exists()
     # A negative result expires after five minutes, not after the success cache's day.
@@ -45,7 +46,7 @@ def test_hung_model_list_skips_rung_and_caches_failure(tmp_path: Path, vendor: s
     cached["ts"] = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
     cache.write_text(json.dumps(cached))
     script.write_text(f"from pathlib import Path\nPath({str(calls)!r}).write_text('called')\n")
-    pick(env, CANONICAL_TABLE, task, *args)
+    pick(env, table, task, *args)
     assert calls.exists()
 
 
@@ -120,8 +121,9 @@ def test_both_hung_model_lists_leave_pick_within_factory_timeout(tmp_path: Path)
     script.write_text("import time\ntime.sleep(60)\n")
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
     env.update(ROUTE_CURSOR_MODELS_CMD=command, ROUTE_DEVIN_MODELS_CMD=command)
+    table = cursor_open(tmp_path)
     started = time.monotonic()
-    selected = pick(env, CANONICAL_TABLE, "implement")
+    selected = pick(env, table, "implement")
     assert time.monotonic() - started < 25
     assert selected["pool"] == "openai-codex"
     assert all((tmp_path / f"route-{vendor}-models.failed.json").exists() for vendor in ("cursor", "devin"))

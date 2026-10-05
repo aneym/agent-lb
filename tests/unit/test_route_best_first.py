@@ -9,14 +9,17 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.test_route_ladder import CANONICAL_TABLE, SCRIPT, setup
+from tests.unit.test_route_ladder import CANONICAL_TABLE, SCRIPT, reopen_cursor, setup
 
 
-def installed_policy(tmp_path: Path) -> tuple[dict[str, str], Path]:
+def installed_policy(tmp_path: Path, *, cursor_open: bool = False) -> tuple[dict[str, str], Path]:
     env = setup(tmp_path)
     table = Path(env["HOME"]) / ".agent-lb" / "managed" / "coding-agents" / "routing-table.json"
     table.parent.mkdir(parents=True)
-    table.write_text(CANONICAL_TABLE.read_text(), encoding="utf-8")
+    document = json.loads(CANONICAL_TABLE.read_text())
+    if cursor_open:
+        reopen_cursor(document)
+    table.write_text(json.dumps(document), encoding="utf-8")
     return env, table
 
 
@@ -34,36 +37,45 @@ def installed_pick(env: dict[str, str], task: str, *args: str) -> dict:
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("task,sol", [
-    ("implement", "sol-medium"), ("mechanical", "sol-low"), ("explore", "sol-low"),
+@pytest.mark.parametrize("task,rung,sol", [
+    ("implement", "swe2-high", "sol-medium"), ("mechanical", "swe2-medium", "sol-low"),
+    ("explore", "swe2-medium", "sol-low"),
 ])
-def test_low_codex_goes_soft_behind_composer(tmp_path: Path, task: str, sol: str) -> None:
+def test_low_codex_goes_soft_behind_devin_while_composer_is_gated(
+        tmp_path: Path, task: str, rung: str, sol: str) -> None:
     env, _ = installed_policy(tmp_path)
     selected = installed_pick(env, task)
     assert selected["pace"]["openai-codex"]["state"] == "low"
-    assert selected["rung"] == "composer"
+    assert selected["rung"] == rung
     assert selected["reason"] == "first open rung"
-    assert any(row["rung"] == sol and row["reason"].startswith("running low")
-               for row in selected["skipped"])
+    skipped = {row["rung"]: row["reason"] for row in selected["skipped"]}
+    assert skipped["composer"].startswith("gated:")
+    assert skipped[sol].startswith("running low")
 
 
 @pytest.mark.parametrize("task,rung", [
     ("implement", "swe2-high"), ("mechanical", "swe2-medium"), ("explore", "swe2-medium"),
 ])
 def test_empty_cursor_falls_back(tmp_path: Path, task: str, rung: str) -> None:
-    env, _ = installed_policy(tmp_path)
+    # Gates reopened so the exhausted pool, not a gate, is what skips the Cursor rungs.
+    env, _ = installed_policy(tmp_path, cursor_open=True)
     pool_update(env, "cursor-models", status="exhausted", eligibleAccounts=0)
-    assert installed_pick(env, task)["rung"] == rung
+    selected = installed_pick(env, task)
+    assert selected["rung"] == rung
+    assert {"rung": "composer", "reason": "pool cursor-models exhausted"} in selected["skipped"]
 
 
 @pytest.mark.parametrize("task,rung", [
     ("implement", "swe2-high"), ("mechanical", "swe2-medium"), ("explore", "swe2-medium"),
 ])
 def test_empty_codex_and_cursor_fall_back_to_swe(tmp_path: Path, task: str, rung: str) -> None:
-    env, _ = installed_policy(tmp_path)
+    # Gates reopened so the exhausted pool, not a gate, is what skips the Cursor rungs.
+    env, _ = installed_policy(tmp_path, cursor_open=True)
     for pool in ("openai-codex", "cursor-models"):
         pool_update(env, pool, status="exhausted", eligibleAccounts=0)
-    assert installed_pick(env, task)["rung"] == rung
+    selected = installed_pick(env, task)
+    assert selected["rung"] == rung
+    assert {"rung": "composer", "reason": "pool cursor-models exhausted"} in selected["skipped"]
 
 
 def test_claude_stays_pace_guarded(tmp_path: Path) -> None:
@@ -94,6 +106,6 @@ def test_missing_guarded_pools_keeps_old_pace_demotion(tmp_path: Path) -> None:
     table["policy"]["pace"].pop("guarded_pools", None)
     table_path.write_text(json.dumps(table), encoding="utf-8")
     selected = installed_pick(env, "explore")
-    assert selected["rung"] == "composer"
+    assert selected["rung"] == "swe2-medium"
     assert any(row["rung"] == "sol-low" and row["reason"].startswith("running low")
                for row in selected["skipped"])
