@@ -104,6 +104,7 @@ def calculated_cost_from_log(log: RequestLogLike, *, precision: int | None = Non
                 cache_read_input_tokens=log.cache_read_tokens,
             ),
             anthropic_price,
+            cache_creation_tier="1h" if getattr(log, "cache_creation_tier", None) == "1h" else "5m",
         )
         if cost is None:
             return None

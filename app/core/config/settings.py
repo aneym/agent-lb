@@ -231,6 +231,7 @@ class Settings(BaseSettings):
     # the proxy directly does not, and upstream answers 429. Prepending it (the
     # client's own system prompt is kept, second) makes a plain API request
     # behave like a Claude Code one. Off only for diagnosing that gate.
+    anthropic_helper_cache_1h_enabled: bool = True
     anthropic_claude_code_identity_enabled: bool = True
     anthropic_fable_routing_enabled: bool = True
     anthropic_fable_weekly_max_used_percent: float = Field(default=50.0, ge=0, le=100)

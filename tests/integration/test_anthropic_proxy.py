@@ -5090,3 +5090,75 @@ async def test_session_route_retry_uses_earliest_live_guard_across_disjoint_acco
     if not tripwire:
         assert "anthropic_opus cooldown excluded 1 account" in error["message"]
     assert "runtime cooldown excluded 1 account" in error["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_id", "enabled", "expected_ttl"),
+    [("helper-123", True, "1h"), (None, True, None), ("helper-123", False, None)],
+)
+async def test_helper_cache_ttl_at_upstream_boundary(async_client, monkeypatch, agent_id, enabled, expected_ttl):
+    """Protect breakpoint TTLs, unchanged lead bytes, and persisted write tier.
+
+    Existing billing-first coverage has no helper header or 5m breakpoints;
+    this golden request catches missing upgrades and accidental lead changes.
+    Only the third-party upstream is replaced, not our proxy collaborators.
+    """
+    monkeypatch.setenv("AGENT_LB_ANTHROPIC_HELPER_CACHE_1H_ENABLED", str(enabled).lower())
+    anthropic_proxy_module.get_settings.cache_clear()
+    await _insert_account(
+        account_id="helper-cache-account",
+        provider="anthropic",
+        access_token="helper-cache-test-access",
+        email="cache@example.com",
+    )
+    forwarded = []
+
+    def upstream(self, session, *, provider_name, headers, json_body):
+        forwarded.append((headers, json_body))
+        return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
+
+    monkeypatch.setattr(anthropic_proxy_module.AnthropicProxyService, "_open_upstream_response", upstream)
+    request = {
+        "model": "claude-sonnet-5",
+        "max_tokens": 32,
+        "stream": True,
+        "system": [
+            {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.282; cch=probe;"},
+            {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
+            {"type": "text", "text": "Stable system", "cache_control": {"type": "ephemeral"}},
+        ],
+        "tools": [
+            {"name": "probe", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+        ],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "reply ok", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+                ],
+            }
+        ],
+    }
+    try:
+        response = await async_client.post(
+            "/v1/messages",
+            json=request,
+            headers={"x-claude-code-agent-id": agent_id} if agent_id else {},
+        )
+        assert response.status_code == 200
+        headers, body = forwarded[0]
+        expected = json.loads(json.dumps(request))
+        if expected_ttl:
+            for block in (expected["system"][2], expected["tools"][0], expected["messages"][0]["content"][0]):
+                block["cache_control"]["ttl"] = expected_ttl
+            assert "extended-cache-ttl-2025-04-11" in headers["anthropic-beta"]
+        else:
+            assert "extended-cache-ttl-2025-04-11" not in headers["anthropic-beta"]
+        assert json.dumps(body, sort_keys=True) == json.dumps(expected, sort_keys=True)
+        async with SessionLocal() as session:
+            log = (await session.execute(select(RequestLog))).scalar_one()
+        assert log.cache_creation_tokens == 3
+        assert log.cache_creation_tier == expected_ttl
+    finally:
+        anthropic_proxy_module.get_settings.cache_clear()
