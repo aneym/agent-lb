@@ -19,11 +19,22 @@ import pytest
 from aiohttp import web
 from sqlalchemy import select
 
+from app.core.anthropic.models import AnthropicMessageRequest
 from app.core.config.settings import get_settings
 from app.core.crypto import TokenEncryptor
 from app.core.utils.time import utcnow
-from app.db.models import Account, AccountStatus, AdditionalUsageHistory, RequestLog
+from app.db.models import (
+    Account,
+    AccountStatus,
+    AdditionalUsageHistory,
+    ApiKey,
+    ApiKeyUsageReservation,
+    RequestLog,
+)
 from app.db.session import SessionLocal
+from app.dependencies import _proxy_repo_context
+from app.modules.api_keys.service import ApiKeyUsageReservationData
+from app.modules.proxy.anthropic_service import AnthropicProxyService
 
 pytestmark = pytest.mark.integration
 
@@ -96,6 +107,8 @@ class StandIn:
             await response.write(MESSAGE_START + REST[:CUT])
             await self._silence()
             await response.write(REST[CUT:])
+        elif first and self.mode == "closes_mid_event":
+            await response.write(MESSAGE_START + REST[:CUT])
         else:
             await response.write(SSE)
         await response.write_eof()
@@ -287,3 +300,73 @@ async def test_a_slow_non_streamed_reply_is_not_cut_by_the_stream_bounds(upstrea
     assert status == 200
     assert json.loads(body)["content"] == [{"type": "text", "text": "ok"}]
     assert [(log.status, log.error_code) for log in await _logs()] == [("success", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream", ["closes_mid_event"], indirect=True)
+async def test_a_stream_that_closes_mid_event_ends_with_a_clean_retryable_error_event(upstream, async_client):
+    await _insert_anthropic_accounts(1)
+
+    status, body, _ = await _call(async_client, stream=True)
+
+    assert status == 200
+    assert body.startswith(MESSAGE_START)
+    # The unfinished event is dropped, and the call counts as an error.
+    events = [block for block in body[len(MESSAGE_START) :].split(b"\n\n") if block.strip()]
+    assert len(events) == 1 and events[0].startswith(b"event: error\ndata: "), body
+    error = json.loads(events[0].split(b"data: ", 1)[1])
+    assert error["error"]["type"] == "overloaded_error"
+    assert [(log.status, log.error_code) for log in await _logs()] == [("error", "upstream_truncated_event")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream", ["silent_mid_event"], indirect=True)
+async def test_a_client_gone_during_stall_bookkeeping_still_settles_the_api_key_reservation(
+    upstream, async_client, monkeypatch
+):
+    await _insert_anthropic_accounts(1)
+    async with SessionLocal() as session:
+        session.add(ApiKey(id="key-1", name="stall key", key_hash="hash-1", key_prefix="sk-stall"))
+        await session.flush()
+        session.add(
+            ApiKeyUsageReservation(id="stall-reservation", api_key_id="key-1", model="claude-sonnet-4-20250514")
+        )
+        await session.commit()
+    service = AnthropicProxyService(repo_factory=_proxy_repo_context)
+    # Holds the account-health write open, so the disconnect lands mid-bookkeeping.
+    in_bookkeeping = asyncio.Event()
+
+    async def record_error_until_cancelled(account):
+        del account
+        in_bookkeeping.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service._load_balancer, "record_error", record_error_until_cancelled)
+    payload = AnthropicMessageRequest.model_validate(
+        {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+    stream = await service.stream_messages(
+        payload,
+        {"anthropic-beta": "oauth-2025-04-20", "user-agent": "claude-cli/2.1.289 (external, cli)"},
+        api_key_reservation=ApiKeyUsageReservationData(
+            reservation_id="stall-reservation", key_id="key-1", model="claude-sonnet-4-20250514"
+        ),
+    )
+    chunks = stream.body.__aiter__()
+    assert await anext(chunks) == MESSAGE_START
+
+    # The stream stalls; the client disconnects while health is being recorded.
+    reader = asyncio.ensure_future(anext(chunks))
+    await asyncio.wait_for(in_bookkeeping.wait(), BOUNDED_SECONDS)
+    reader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+
+    async with SessionLocal() as session:
+        reservation = await session.get(ApiKeyUsageReservation, "stall-reservation")
+    assert reservation is not None and reservation.status == "finalized"

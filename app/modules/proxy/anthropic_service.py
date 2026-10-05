@@ -178,6 +178,20 @@ class UpstreamStallTimeout(Exception):
         super().__init__(message)
 
 
+class UpstreamTruncatedEvent(UpstreamStallTimeout):
+    """The upstream closed the stream cleanly in the middle of an SSE event.
+
+    Handled like a stall: the fragment never reaches the client, and the
+    attempt fails over or ends with a retryable error event.
+    """
+
+    def __init__(self) -> None:
+        Exception.__init__(self, "Anthropic closed the stream inside an event (upstream_truncated_event)")
+        self.phase = "truncated_event"
+        self.seconds = 0.0
+        self.code = "upstream_truncated_event"
+
+
 class _StallCatcher:
     """Ends an upstream attempt on a stall and records it for the attempt loop."""
 
@@ -450,6 +464,7 @@ class AnthropicProxyService:
         self._load_balancer = LoadBalancer(repo_factory)
         self._encryptor = TokenEncryptor()
         self._pending_request_logs: set[asyncio.Task[None]] = set()
+        self._pending_settlements: set[asyncio.Task[None]] = set()
 
     async def stream_messages(
         self,
@@ -906,8 +921,7 @@ class AnthropicProxyService:
                                     streamed_bytes = True
                                     yield chunk_bytes
                                 if unsent:
-                                    streamed_bytes = True
-                                    yield bytes(unsent)
+                                    raise UpstreamTruncatedEvent()
                                 if raw_body is not None:
                                     usage = _usage_from_json_body(bytes(raw_body)) or usage
 
@@ -994,6 +1008,15 @@ class AnthropicProxyService:
                         stall = stall_catcher.stall
                         if stall is None:
                             continue
+                        if streamed_bytes:
+                            # The stream ends here. Settle before any other
+                            # await: the client may disconnect during the
+                            # health and log writes below.
+                            await self._settle_api_key_reservation(
+                                api_key_reservation,
+                                model=payload.model,
+                                usage=usage,
+                            )
                         # The stalled connection is already closed. Anthropic
                         # answers retries with overload-type errors, so clients
                         # retry; the account takes a transient health hit.
@@ -1033,12 +1056,6 @@ class AnthropicProxyService:
                         # another account; end the stream with an error event
                         # the client retries instead of holding it open. Only
                         # whole events were forwarded, so it follows cleanly.
-                        # Settle first: the client may be gone after the yield.
-                        await self._finalize_api_key_reservation(
-                            api_key_reservation,
-                            model=payload.model,
-                            usage=usage,
-                        )
                         error_event = json.dumps(
                             {"type": "error", "error": {"type": "overloaded_error", "message": str(stall)}},
                             separators=(",", ":"),
@@ -2049,6 +2066,33 @@ class AnthropicProxyService:
                 output_tokens=usage.output_tokens or 0,
                 cached_input_tokens=cached_tokens,
             )
+
+    async def _settle_api_key_reservation(
+        self,
+        reservation: ApiKeyUsageReservationData | None,
+        *,
+        model: str,
+        usage: AnthropicUsage | None,
+    ) -> None:
+        """Finalize ``reservation``, finishing even if the client disconnects meanwhile."""
+        if reservation is None:
+            return
+        task = asyncio.create_task(self._finalize_api_key_reservation(reservation, model=model, usage=usage))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._pending_settlements.add(task)
+            task.add_done_callback(self._settlement_finished)
+            raise
+
+    def _settlement_finished(self, task: asyncio.Task[None]) -> None:
+        self._pending_settlements.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("Anthropic reservation settlement task cancelled")
+        except Exception:
+            logger.warning("Anthropic reservation settlement task failed", exc_info=True)
 
     async def _release_api_key_reservation(self, reservation: ApiKeyUsageReservationData | None) -> None:
         if reservation is None:
