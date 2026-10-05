@@ -203,7 +203,8 @@ def test_active_policy_fallback_overrides_and_canonical_table():
                for level in plan["levels"].values() for a in level["accounts"])
     canonical = json.loads((REPO / "config/coding-agents/routing-table.json").read_text())
     cli = runpy.run_path(str(REPO / "clients/route"))
-    expected = cli["ladder_entries"](canonical, "implement")[0]["id"]
+    expected = next(entry["id"] for entry in cli["ladder_entries"](canonical, "implement")
+                    if entry.get("gate", {"open": True}).get("open") is True)
     assert build_plan(live_pools(), canonical, costs)["levels"]["balanced"]["ladders"]["implement"][0]["id"] == expected
     pools = live_pools()
     pools.pools[2].accounts = 3  # Only one drop is safe when two accounts must remain.

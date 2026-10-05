@@ -22,7 +22,7 @@ def test_hung_model_list_skips_rung_and_caches_failure(tmp_path: Path, vendor: s
     script.write_text(f"from pathlib import Path\nimport time\nPath({str(calls)!r}).write_text('called')\ntime.sleep(60)\n")
     env[f"ROUTE_{vendor.upper()}_MODELS_CMD"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
     task = "implement" if vendor == "cursor" else "mechanical"
-    args = () if vendor == "cursor" else ("--skip", "composer", "--skip", "grok-low")
+    args = ("--skip", "swe2-high") if vendor == "cursor" else ("--skip", "composer", "--skip", "grok-low")
     success = tmp_path / f"route-{vendor}-models.json"
     previous = json.dumps({"ts": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
                            "models": ["grok-4.7-low" if vendor == "cursor" else "swe-2-medium"]})
@@ -88,6 +88,7 @@ def test_read_only_rung_reaches_seat_adapter(tmp_path: Path, vendor: str) -> Non
         rung = next(row for row in table["ladders"]["interim"]["implement"]
                     if row["id"] == ("grok-medium" if vendor == "cursor" else "swe2-high"))
         rung["read_only"] = True
+        rung.pop("gate", None)
         table["ladders"]["interim"]["implement"] = [rung]
 
     table = table_copy(tmp_path, "readonly", readonly_worker)

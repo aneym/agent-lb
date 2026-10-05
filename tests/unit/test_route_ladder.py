@@ -72,7 +72,19 @@ def pick(env: dict[str, str], table: Path, *args: str) -> dict:
 def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> None:
     env = setup(tmp_path)
 
-    held = pick(env, CANONICAL_TABLE, "implement")
+    # While Grok is out of usage the canonical table gates it and Composer leads.
+    gated = pick(env, CANONICAL_TABLE, "implement")
+    assert gated["rung"] == "composer"
+    assert any(row["rung"] == "grok-medium" and row["reason"].startswith("gated:") for row in gated["skipped"])
+
+    def reopen_grok(table):
+        for rows in (table["ladders"]["interim"]["implement"], table["ladders"]["interim"]["mechanical"]):
+            for row in rows:
+                if row["id"].startswith("grok-"):
+                    row.pop("gate", None)
+
+    grok_open = table_copy(tmp_path, "grok-open", reopen_grok)
+    held = pick(env, grok_open, "implement")
     assert (held["ladder"], held["rung"], held["seat"], held["model"]) == (
         "interim", "grok-medium", "cursor-seat", "grok-4.7-medium")
     assert held["reason"] == "first open rung"
@@ -80,7 +92,7 @@ def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> N
     assert (held["audit"]["rung"], held["audit"]["seat"], held["audit"]["model"], held["audit"]["effort"]) == (
         "sonnet-high", "sonnet-verifier", "claude-sonnet-5-5", "high")
     assert held["intended"] == "grok-medium"
-    text = route(env, CANONICAL_TABLE, "pick", "implement")
+    text = route(env, grok_open, "pick", "implement")
     assert text.returncode == 0, text.stderr
     assert text.stdout.strip().splitlines()[-1] == "→ grok-4.7-medium (cursor-models)"
 

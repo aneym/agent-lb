@@ -15,7 +15,8 @@
             "model": "grok-latest",
             "effort": "medium",
             "maker": "xai",
-            "pool": "cursor-models"
+            "pool": "cursor-models",
+            "gate": {"open": false, "until": "2026-10-05: Grok out of usage on cursor-main and cursor-gmail (seat runs fail with zero tokens); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
           },
           {
             "id": "composer",
@@ -74,7 +75,8 @@
             "model": "grok-latest-low",
             "effort": "low",
             "maker": "xai",
-            "pool": "cursor-models"
+            "pool": "cursor-models",
+            "gate": {"open": false, "until": "2026-10-05: Grok out of usage on cursor-main and cursor-gmail (seat runs fail with zero tokens); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
           },
           {
             "id": "swe2-medium",
@@ -568,7 +570,8 @@
       }
     },
     "pace": {
-      "guarded_pools": ["anthropic-general", "anthropic-fable"],
+      "guarded_pools": ["anthropic-general", "anthropic-fable", "openai-codex"],
+      "guarded_note": "2026-10-05: openai-codex added while Codex runs low before the 10-09 reset; Sol rungs go soft (after every open rung) only while the pool is behind pace, so this releases itself on refill.",
       "ahead_gt": 15,
       "behind_lt": -10,
       "cycle_hours": 168

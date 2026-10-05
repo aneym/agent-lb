@@ -61,7 +61,14 @@ def rows(env: dict[str, str], name: str) -> list[dict]:
 
 def test_of_run_stands_in_when_codex_is_out_and_leaves_a_receipt(tmp_path: Path) -> None:
     env = world(tmp_path)
-    # Grok, the implement head, is out of quota too; Composer answers.
+    # Grok, the implement head when its gate is open, is out of quota too; Composer answers.
+    table = json.loads(TABLE.read_text())
+    for row in table["ladders"]["interim"]["implement"]:
+        if row["id"] == "grok-medium":
+            row.pop("gate", None)
+    grok_open = tmp_path / "grok-open.json"
+    grok_open.write_text(json.dumps(table), encoding="utf-8")
+    env["ROUTE_TABLE"] = str(grok_open)
     seat = Path(env["OF_BIN_SEAT"])
     guard = "case \"$*\" in *grok-4.7-medium*) echo 'usage limit (429)' >&2; exit 1;; esac\n"
     _, logged, answer = seat.read_text().split("\n", 2)

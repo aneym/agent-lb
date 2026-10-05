@@ -34,21 +34,21 @@ def installed_pick(env: dict[str, str], task: str, *args: str) -> dict:
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("task,rung", [
-    ("implement", "grok-medium"), ("mechanical", "composer"), ("explore", "sol-low"),
+@pytest.mark.parametrize("task,sol", [
+    ("implement", "sol-medium"), ("mechanical", "sol-low"), ("explore", "sol-low"),
 ])
-def test_low_codex_stays_first(tmp_path: Path, task: str, rung: str) -> None:
+def test_low_codex_goes_soft_behind_composer(tmp_path: Path, task: str, sol: str) -> None:
     env, _ = installed_policy(tmp_path)
     selected = installed_pick(env, task)
     assert selected["pace"]["openai-codex"]["state"] == "low"
-    assert selected["rung"] == rung
+    assert selected["rung"] == "composer"
     assert selected["reason"] == "first open rung"
-    if task == "implement":
-        assert selected["model"] == "grok-4.7-medium"
+    assert any(row["rung"] == sol and row["reason"].startswith("running low")
+               for row in selected["skipped"])
 
 
 @pytest.mark.parametrize("task,rung", [
-    ("implement", "sol-medium"), ("mechanical", "swe2-medium"), ("explore", "sol-low"),
+    ("implement", "swe2-high"), ("mechanical", "swe2-medium"), ("explore", "swe2-medium"),
 ])
 def test_empty_cursor_falls_back(tmp_path: Path, task: str, rung: str) -> None:
     env, _ = installed_policy(tmp_path)
