@@ -8,6 +8,7 @@ DB mocks or test-only production hooks.
 import json
 import tomllib
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -247,6 +248,39 @@ def test_report_reconciles_aggregate_prices_and_token_totals():
     assert report["priced_by"] == {"log": 2, "recomputed": 3}
     assert report["waste"]["unattributed"]["share"] == 1
     assert report["account_shares"][0]["usd_share"] == 1
+
+
+@pytest.mark.parametrize(
+    "meta,label",
+    [
+        ({"pane": "w5H:p11Y"}, "w5H:p11Y"),
+        ({"pane": "w5H:p11Y", "pane_title": "Token audit"}, "w5H:p11Y Token audit"),
+        ({"pane": "w5H:p11Y", "pane_title": "x" * 200}, "w5H:p11Y " + "x" * 151),
+        ({"pane_title": "Token audit"}, "unknown"),
+        ({"pane": "w5H:p11Y", "pane_title": "private@example.invalid"}, "unknown"),
+    ],
+)
+def test_report_pane_attribution_reconciles_costs(meta, label):
+    """Pure receipt attribution arithmetic covers missing, bounded and private labels."""
+    rows = [receipt(cost_usd=0.04), receipt(sid="other", cost_usd=0.02)]
+    report = build_report(rows, {}, {}, {"session": meta}, [], ["pane"], 10)
+    expected = {label: 0.04}
+    expected["unknown"] = expected.get("unknown", 0) + 0.02
+    assert {item["name"]: item["usd"] for item in report["by"]["pane"]} == pytest.approx(expected)
+    assert sum(item["usd"] for item in report["by"]["pane"]) == pytest.approx(0.06)
+
+
+@pytest.mark.parametrize("dimensions", ["pane", "provider,pane"])
+def test_pane_dimension_passes_cli_validation(monkeypatch, capsys, dimensions):
+    from app import audit_tokens
+
+    monkeypatch.setattr(audit_tokens, "pane_maps", lambda: ({}, []))
+    audit_tokens.run(
+        SimpleNamespace(
+            window="24h", since=None, until=None, by=dimensions, top=10, snapshot_panes_only=True
+        )
+    )
+    assert capsys.readouterr().out == "Pane snapshot complete. \n"
 
 
 def test_quota_reset_jitter_allocation_and_empty_interval():

@@ -21,7 +21,7 @@ from app.core.anthropic.pricing import get_pricing_for_model as anthropic_price
 from app.core.usage.pricing import UsageTokens, calculate_cost_breakdown_from_usage, get_pricing_for_model
 
 CLASSES = ("fresh_input", "cache_read", "cache_write", "output", "reasoning")
-DIMS = ("account", "purpose", "lane", "seat", "kind", "model", "effort", "provider", "useragent")
+DIMS = ("account", "purpose", "lane", "seat", "kind", "model", "effort", "provider", "useragent", "pane")
 CACHE_KINDS = ("first_write", "ttl_expiry", "account_switch", "bust", "growth", "other_miss")
 DETECTORS = CACHE_KINDS + (
     "retried",
@@ -987,6 +987,11 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
     for row, value in financial_rows.values():
         sid = row["sid"]
         purpose, lane, rule = classify(row, metas.get(sid, {}), rules)
+        meta = metas.get(sid, {})
+        pane = meta.get("pane")
+        if pane and meta.get("pane_title"):
+            pane = f"{pane} {meta['pane_title']}"
+        pane = safe_label(pane)
         account = aliases.get(row["account_id"], safe_label(str(row["account_id"] or "unknown")[:8]))
         bridge = row["provider"] == "openai" and row.get("useragent_group") == "claude-cli"
         agents = agents_by_session.get(sid, []) if row["provider"] == "anthropic" or bridge else []
@@ -1023,6 +1028,7 @@ def build_report(rows, aliases, weekly, metas, rules, dimensions, top, agents_by
                 provider=row["provider"],
                 purpose=agent_purpose,
                 lane=lane,
+                pane=pane,
                 seat=seat,
                 kind=kind,
                 model=row["model"] or "unknown",
