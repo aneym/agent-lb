@@ -1086,6 +1086,10 @@ class AnthropicProxyService:
                     )
                     raise AnthropicProxyError(503, message, code=code) from exc
                 except AnthropicProxyError as exc:
+                    if exc.code == "upstream_request_timeout":
+                        # The request budget is spent: no other account or
+                        # hold can serve it, and it is not an overload.
+                        raise
                     if last_stall is not None:
                         # Candidates ran out right after a silent upstream:
                         # that is an overload, not a quota wall, so no pool

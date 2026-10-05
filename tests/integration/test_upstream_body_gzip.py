@@ -12,7 +12,7 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -69,6 +69,12 @@ async def upstream() -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
         sse = ANTHROPIC_SSE if request.path.endswith("/v1/messages") else CODEX_SSE
         return web.Response(body=sse, content_type="text/event-stream")
 
+    async with _serve(handler) as base_url:
+        yield base_url, seen
+
+
+@asynccontextmanager
+async def _serve(handler: Callable[[web.Request], Awaitable[web.StreamResponse]]) -> AsyncIterator[str]:
     app = web.Application(client_max_size=64 * 1024 * 1024)
     app.router.add_post("/{tail:.*}", handler)
     runner = web.AppRunner(app)
@@ -77,23 +83,23 @@ async def upstream() -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
     await site.start()
     port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
     try:
-        yield f"http://127.0.0.1:{port}", seen
+        yield f"http://127.0.0.1:{port}"
     finally:
         await runner.cleanup()
 
 
-async def _insert_anthropic_account() -> None:
+async def _insert_anthropic_account(account_id: str = "anthropic-gzip") -> None:
     encryptor = TokenEncryptor()
     async with SessionLocal() as session:
         session.add(
             Account(
-                id="anthropic-gzip",
+                id=account_id,
                 provider="anthropic",
-                chatgpt_account_id="anthropic-gzip",
-                email="claude@example.com",
+                chatgpt_account_id=account_id,
+                email=f"{account_id}@example.com",
                 plan_type="max",
-                access_token_encrypted=encryptor.encrypt("anthropic-access"),
-                refresh_token_encrypted=encryptor.encrypt("refresh-anthropic-gzip"),
+                access_token_encrypted=encryptor.encrypt(f"access-{account_id}"),
+                refresh_token_encrypted=encryptor.encrypt(f"refresh-{account_id}"),
                 id_token_encrypted=None,
                 last_refresh=utcnow() + timedelta(days=1),
                 status=AccountStatus.ACTIVE,
@@ -103,14 +109,18 @@ async def _insert_anthropic_account() -> None:
         await session.commit()
 
 
-@asynccontextmanager
-async def _gzip_workers_busy() -> AsyncIterator[None]:
-    release = threading.Event()
+def _occupy_gzip_workers(release: threading.Event) -> list[asyncio.Future[bool]]:
     loop = asyncio.get_running_loop()
-    blockers = [
+    return [
         loop.run_in_executor(upstream_body._GZIP_EXECUTOR, release.wait, 5.0)
         for _ in range(upstream_body._GZIP_EXECUTOR._max_workers)
     ]
+
+
+@asynccontextmanager
+async def _gzip_workers_busy() -> AsyncIterator[None]:
+    release = threading.Event()
+    blockers = _occupy_gzip_workers(release)
     try:
         yield
     finally:
@@ -270,3 +280,45 @@ async def test_anthropic_budget_spent_waiting_for_compression_is_a_timeout_and_r
             .all()
         )
     assert [reservation.status for reservation in reservations] == ["released"]
+
+
+@pytest.mark.asyncio
+async def test_a_compression_deadline_after_an_overloaded_account_stays_a_timeout(async_client, monkeypatch):
+    """Post-merge review of 4abb84af: the first account answers 529, the gzip workers
+    then stay busy past the second attempt's budget. The 504 timeout used to be
+    rewritten as 529 overloaded_error by the after-529s branch."""
+    calls: list[str] = []
+    release = threading.Event()
+    blockers: list[asyncio.Future[bool]] = []
+
+    async def overloaded_then_busy(request: web.Request) -> web.StreamResponse:
+        calls.append(request.headers["Authorization"])
+        blockers.extend(_occupy_gzip_workers(release))
+        return web.json_response(
+            {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}, status=529
+        )
+
+    await _insert_anthropic_account("anthropic-gzip-a")
+    await _insert_anthropic_account("anthropic-gzip-b")
+    try:
+        async with _serve(overloaded_then_busy) as base_url:
+            monkeypatch.setenv("AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL", base_url)
+            monkeypatch.setenv("AGENT_LB_PROXY_REQUEST_BUDGET_SECONDS", "1")
+            get_settings.cache_clear()
+            response = await async_client.post(
+                "/v1/messages",
+                json={
+                    "model": "claude-sonnet-5-5",
+                    "max_tokens": 32,
+                    "messages": [{"role": "user", "content": LARGE_TEXT}],
+                },
+                headers={"anthropic-beta": "oauth-2025-04-20"},
+            )
+    finally:
+        get_settings.cache_clear()
+        release.set()
+        await asyncio.gather(*blockers)
+
+    assert len(calls) == 1
+    assert response.status_code == 504, response.text
+    assert response.json()["error"]["type"] == "upstream_request_timeout"
