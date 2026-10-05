@@ -46,6 +46,17 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     assert 1 <= args["agent_cap"] <= 16
 
 
+def test_bridge_model_with_effort_suffix_does_not_double_it(tmp_path: Path) -> None:
+    """The real CLI must pass a usable model when the picked alias already has effort."""
+    def suffix_explore_model(table: dict) -> None:
+        table["aliases"]["sol-latest-low"] = table["aliases"]["sol-latest"]
+        table["classes"]["explore"]["chain"][0]["model"] = "sol-latest-low"
+
+    table = table_copy(tmp_path, "suffixed-model", suffix_explore_model)
+    explore = workflow_args(setup(tmp_path), table)["seats"]["explore"]
+    assert explore["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
+
+
 def test_cursor_exhausted_moves_implement_to_the_sol_bridge_seat(tmp_path: Path) -> None:
     env = setup(tmp_path, codex_low=False)
     pools_file = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"

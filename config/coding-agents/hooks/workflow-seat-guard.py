@@ -261,8 +261,10 @@ def main() -> None:
         if not table_path.exists() and 'ROUTE_TABLE' not in os.environ:
             table_path = Path(__file__).resolve().parent.parent / 'routing-table.json'
         table = json.loads(table_path.read_text())
-        reason, warning = inspect(script, table)
-        reason = reason or retired_in_args(tool_input.get('args'), table)
+        reason = retired_in_args(tool_input.get('args'), table)
+        warning = False
+        if not reason:
+            reason, warning = inspect(script, table)
         if reason:
             output.update(permissionDecision='deny', permissionDecisionReason=reason)
         elif warning:

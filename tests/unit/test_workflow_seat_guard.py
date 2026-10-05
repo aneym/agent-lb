@@ -106,6 +106,16 @@ def test_seat_options_in_workflow_args_are_checked(args, denied):
         assert 'Workflow args pin retired model' in output['permissionDecisionReason']
 
 
+def test_retired_args_are_denied_even_when_script_cannot_be_parsed():
+    """The hook must enforce args retirement before its fail-open script parser."""
+    output = invoke(
+        'if (false) /[)]/.test(")"); await agent("x", args.opts);',
+        args={'opts': {'agentType': 'opus-seat', 'model': 'claude-sonnet-5'}},
+    )
+    assert output['permissionDecision'] == 'deny'
+    assert 'Workflow args pin retired model' in output['permissionDecisionReason']
+
+
 @pytest.mark.parametrize('alias', ['sonnet', 'haiku'])
 def test_alias_is_checked_against_resolved_retirement(tmp_path, alias):
     table = tmp_path / 'routing.json'
