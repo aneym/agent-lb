@@ -467,6 +467,10 @@ class AnthropicProxyService:
                             # a plain API client does not.
                             body_payload = ensure_claude_code_identity_body(body_payload)
 
+                        cache_creation_tier = _upgrade_helper_cache(
+                            body_payload, headers, inbound_headers, provider_name
+                        )
+
                         nbytes = len(json.dumps(body_payload, separators=(",", ":")).encode())
                         async with _admitted_http_session(session_id or sticky_key, nbytes, upload_class) as (
                             session,
@@ -791,6 +795,7 @@ class AnthropicProxyService:
                                         unified_5h_utilization=unified_5h_utilization,
                                         unified_7d_utilization=unified_7d_utilization,
                                         usage=usage,
+                                        cache_creation_tier=cache_creation_tier,
                                         latency_first_token_ms=latency_first_token_ms,
                                     )
                                     await self._finalize_api_key_reservation(
@@ -817,6 +822,7 @@ class AnthropicProxyService:
                                     unified_5h_utilization=unified_5h_utilization,
                                     unified_7d_utilization=unified_7d_utilization,
                                     usage=usage,
+                                    cache_creation_tier=cache_creation_tier,
                                     latency_first_token_ms=latency_first_token_ms,
                                 )
                                 await self._finalize_api_key_reservation(
@@ -1694,6 +1700,7 @@ class AnthropicProxyService:
         error_code: str | None = None,
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
+        cache_creation_tier: str | None = None,
         latency_first_token_ms: int | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
@@ -1715,6 +1722,7 @@ class AnthropicProxyService:
                 error_code=error_code,
                 error_message=error_message,
                 usage=usage,
+                cache_creation_tier=cache_creation_tier,
                 latency_first_token_ms=latency_first_token_ms,
                 identity=get_request_identity(),
                 unified_5h_utilization=unified_5h_utilization,
@@ -1754,6 +1762,7 @@ class AnthropicProxyService:
         error_code: str | None = None,
         error_message: str | None = None,
         usage: AnthropicUsage | None = None,
+        cache_creation_tier: str | None = None,
         latency_first_token_ms: int | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
@@ -1773,6 +1782,7 @@ class AnthropicProxyService:
                     output_tokens=usage.output_tokens if usage else None,
                     cached_input_tokens=usage.cache_read_input_tokens if usage else None,
                     cache_creation_tokens=usage.cache_creation_input_tokens if usage else None,
+                    cache_creation_tier=cache_creation_tier,
                     cache_read_tokens=usage.cache_read_input_tokens if usage else None,
                     latency_ms=latency_ms,
                     latency_first_token_ms=latency_first_token_ms,
@@ -2137,6 +2147,46 @@ def _anthropic_cooldown_is_active(used_percent: float, reset_at: int | None, *, 
     if reset_at is None:
         return False
     return int(reset_at) > now
+
+
+def _upgrade_helper_cache(
+    body: dict[str, Any],
+    headers: dict[str, str],
+    inbound_headers: Mapping[str, str],
+    provider_name: str,
+) -> str | None:
+    # Claude Code already sends this conversation ID for subagents, not leads.
+    agent_id = next((value for key, value in inbound_headers.items() if key.lower() == "x-claude-code-agent-id"), "")
+    if (
+        provider_name != ANTHROPIC_PROVIDER_NAME
+        or not get_settings().anthropic_helper_cache_1h_enabled
+        or not isinstance(agent_id, str)
+        or not agent_id.strip()
+    ):
+        return None
+    blocks: list[Any] = [body]
+    for key in ("system", "tools"):
+        if isinstance(body.get(key), list):
+            blocks.extend(body[key])
+    for message in body.get("messages", []):
+        if isinstance(message, dict) and isinstance(message.get("content"), list):
+            blocks.extend(message["content"])
+    upgraded = 0
+    for block in blocks:
+        if not isinstance(block, dict) or "cache_control" not in block:
+            continue
+        control = block["cache_control"]
+        if not isinstance(control, dict) or control.get("type") != "ephemeral":
+            logger.warning("Helper cache breakpoint is invalid; leaving request unchanged")
+            return None
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("cache_control"), dict):
+            block["cache_control"]["ttl"] = "1h"
+            upgraded += 1
+    if upgraded:
+        _merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
+        return "1h"
+    return None
 
 
 def _build_anthropic_headers(
