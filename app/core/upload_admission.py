@@ -305,6 +305,11 @@ class Admission:
         nbytes: int,
         upload_class: str = "batch",
     ) -> AsyncIterator[None]:
+        if not upload_throttle.is_bulk():
+            # Model requests are never queued or refused for upload room
+            # (incident 2026-10-05); holds apply to bulk transfers only.
+            yield
+            return
         enabled, rate = upload_throttle.read_state()
         if not enabled or os.environ.get("AGENT_LB_UPLOAD_FAIR", "1") == "0":
             yield

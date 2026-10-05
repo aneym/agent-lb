@@ -1,4 +1,14 @@
-"""Outbound upload cap for the proxy's upstream connections ("gaming mode").
+"""Outbound upload cap for bulk transfers on the proxy's upstream connections.
+
+Model API traffic is never paced (incident 2026-10-05): a game-mode hold of
+0.2 MB/s queued Claude Code request bodies until upload admission answered 503
+("upload throttle on at 200 KB/s; 3.4 MB queued ahead"). Holds now apply only
+to writes made inside ``bulk_transfer()``; every other write, including every
+model request body and websocket frame, goes straight to the socket whatever
+the holds say. Game mode protects the shared uplink by pausing torrents,
+pacing box pushes and capping the gaming PC instead.
+
+Original design notes (2026-09-22), still true for bulk transfers:
 
 agent-lb sends whole model request bodies (hundreds of KB to several MB each)
 to Anthropic and OpenAI. On a home uplink of ~43 Mbps those bursts (measured
@@ -26,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import contextvars
 import fcntl
 import json
@@ -35,7 +46,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +75,23 @@ _IN_PROXY_CONNECTION: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "agent_lb_upload_throttle_in_proxy", default=False
 )
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+# Set only around bulk transfers. Writes outside it (all model API traffic) are
+# never paced or queued by a hold.
+_BULK: contextvars.ContextVar[bool] = contextvars.ContextVar("agent_lb_upload_bulk", default=False)
+
+
+@contextlib.contextmanager
+def bulk_transfer() -> Iterator[None]:
+    """Mark the writes made inside this block (and tasks it starts) as bulk, so holds pace them."""
+    token = _BULK.set(True)
+    try:
+        yield
+    finally:
+        _BULK.reset(token)
+
+
+def is_bulk() -> bool:
+    return _BULK.get()
 
 
 def state_path() -> Path:
@@ -329,6 +357,12 @@ class ThrottledTransport(asyncio.Transport):
         if not data:
             return
         if self._transport.is_closing():
+            self._transport.write(data)
+            return
+        if not self._pending and not is_bulk():
+            # Model API traffic: never paced by a hold. Anything still queued
+            # from a bulk write on this connection keeps its place, so byte
+            # order holds.
             self._transport.write(data)
             return
         chunk = bytes(data)

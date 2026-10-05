@@ -103,7 +103,8 @@ async def test_writes_are_paced_to_the_configured_rate() -> None:
     fake = _FakeTransport()
     transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
     started = time.monotonic()
-    transport.write(b"x" * 400_000)
+    with upload_throttle.bulk_transfer():
+        transport.write(b"x" * 400_000)
     transport.close()
     while not fake.closed:
         await asyncio.sleep(0.01)
@@ -146,8 +147,9 @@ async def test_installed_client_upload_is_paced_end_to_end(monkeypatch: pytest.M
     try:
         async with aiohttp.ClientSession() as session:
             started = time.monotonic()
-            async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
-                assert await response.text() == "ok"
+            with upload_throttle.bulk_transfer():
+                async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
+                    assert await response.text() == "ok"
             elapsed = time.monotonic() - started
     finally:
         await runner.cleanup()
@@ -191,8 +193,9 @@ async def test_a_paced_upload_leaves_the_event_loop_free(monkeypatch: pytest.Mon
     ticker = asyncio.create_task(tick())
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
-                assert await response.text() == "ok"
+            with upload_throttle.bulk_transfer():
+                async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
+                    assert await response.text() == "ok"
     finally:
         done.set()
         await ticker
@@ -224,7 +227,8 @@ async def test_a_large_queue_pauses_the_protocol_until_it_drains() -> None:
     protocol = _FakeProtocol()
     fake.get_protocol = lambda: protocol  # type: ignore[method-assign]
     transport = upload_throttle.ThrottledTransport(fake, asyncio.get_running_loop())
-    transport.write(b"x" * 600_000)
+    with upload_throttle.bulk_transfer():
+        transport.write(b"x" * 600_000)
     assert protocol.events == ["pause"]
     transport.close()
     while not fake.closed:
@@ -253,8 +257,9 @@ async def test_connections_built_for_an_upstream_proxy_are_left_raw(monkeypatch:
     try:
         async with aiohttp.ClientSession() as session:
             started = time.monotonic()
-            async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
-                assert await response.text() == "ok"
+            with upload_throttle.bulk_transfer():
+                async with session.post(f"http://127.0.0.1:{port}/", data=b"y" * 400_000) as response:
+                    assert await response.text() == "ok"
             elapsed = time.monotonic() - started
     finally:
         upload_throttle._IN_PROXY_CONNECTION.reset(token)

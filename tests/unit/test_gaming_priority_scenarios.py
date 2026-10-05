@@ -15,7 +15,18 @@ from pathlib import Path
 
 import pytest
 
+from app.core import upload_throttle
+
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _bulk_uploads(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Since 2026-10-05 holds and admission apply to bulk transfers only; model requests pass
+    # straight through (tests/integration/test_model_upload_never_throttled.py). These cases
+    # cover the admission algorithm itself, so they run as bulk uploads.
+    monkeypatch.setattr(upload_throttle, "is_bulk", lambda: True)
+
 
 RATE = 200_000  # bytes/s, the gaming hold; with the 4 s window the budget is 800 KB
 KB = 1_000

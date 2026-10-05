@@ -91,7 +91,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     throttle = subparsers.add_parser(
         "throttle",
-        help="Upstream upload cap (gaming mode): on, off or status. Takes effect within a second, no restart.",
+        help=(
+            "Upstream upload cap for bulk transfers (never model API traffic): on, off or status. "
+            "Takes effect within a second, no restart."
+        ),
         formatter_class=_CliHelpFormatter,
     )
     throttle.add_argument("mode", choices=("on", "off", "status"), nargs="?", default="status")
@@ -309,6 +312,7 @@ def _run_throttle(args: argparse.Namespace) -> None:
     state = "on" if enabled else "off"
     print(f"upload throttle {state}: {rate / 1_000_000:.2f} MB/s ({rate * 8 / 1_000_000:.1f} Mbps) cap")
     print(f"state file {upload_throttle.state_path()} (the running service re-reads it within a second)")
+    print("applies to bulk transfers only; model API traffic is never paced")
     for owner, hold in upload_throttle.read_policy()["holds"].items():
         line = f"  hold {owner}: {hold['bytes_per_sec'] / 1_000_000:.2f} MB/s since {hold['since']} {hold['reason']}"
         yields_to = hold.get("yields_to")

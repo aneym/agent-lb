@@ -405,7 +405,8 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    # Pace every upstream upload before any client session opens a connection.
+    # Install the bulk-transfer pacer before any client session opens a connection;
+    # holds never pace model API traffic (incident 2026-10-05).
     upload_throttle.install()
     settings = get_settings()
     register_stack_dump_signal()

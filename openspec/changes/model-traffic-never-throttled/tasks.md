@@ -1,0 +1,4 @@
+- [x] Pace only writes made inside `bulk_transfer()`; model traffic goes straight through.
+- [x] Skip upload admission for anything that is not a bulk transfer.
+- [x] Say so in `agent-lb throttle status`.
+- [x] Integration check: with the slowest hold on, two 400 KB `/v1/messages` calls through the real route and upstream client finish unpaced (fails on the old code at 11.4 s against a 4.1 s bound).
