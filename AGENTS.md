@@ -6,6 +6,7 @@ on the serving machine runs the live launchd service (label in
 `scripts/install-service.sh`) on `http://127.0.0.1:2455`. The long form of these rules,
 with the review trapdoors and the reasons, is
 [`.agents/conventions/agents-long-form.md`](.agents/conventions/agents-long-form.md).
+Worktree setup: `sh scripts/worktree-setup.sh`; use `.venv/bin/python -m ...` from the worktree (or `uv run --no-sync`), not `uv sync`, to keep dependencies shared and imports local.
 New machine setup: `GETTING-STARTED.md`. Account work: the
 `agent-lb-account-operator` skill.
 
