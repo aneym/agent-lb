@@ -264,8 +264,8 @@ factory(
         for entry in classes.get("verify", {}).get("chain", []))
     and review.get("money_path") == {"lenses": 3, "rule": "any-fail", "effort": "xhigh"}
     and all(review.get(key) is True for key in ("never_after_fail", "fresh_per_unit", "cross_vendor", "release_facts"))
-    and review.get("max_fix_rounds") == 2,
-    "fresh cross-vendor review, any-fail money path and two fix rounds",
+    and review.get("max_fix_rounds") == 1,
+    "fresh cross-vendor review, any-fail money path and one fix round",
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
 forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat"}

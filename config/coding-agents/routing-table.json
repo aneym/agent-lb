@@ -362,9 +362,9 @@
       },
       "escalation": {
         "seat": "opus-seat",
-        "at_fix_round": 2,
-        "since": "2026-09-27",
-        "evidence": "ROUTING.md (2026-09-26): opus-seat takes judgment code and anything the default implementer fails twice. The factory fold pipeline sends fix round 2 to opus-seat; factory scoreboard 2026-09-27: 18 of 32 pieces ended needs_orchestrator in 24 h, so a second failure goes to the escalation seat instead of a third cheap round."
+        "at_fix_round": 1,
+        "since": "2026-10-06",
+        "evidence": "ROUTING.md (2026-09-26): opus-seat takes judgment code and anything the default implementer fails twice. Until 2026-10-06 the factory fold pipeline sent fix round 2 to opus-seat; ROUTING.md now allows one fix round (policy.review.max_fix_rounds 1), so the escalated round is the one fix round; factory scoreboard 2026-09-27: 18 of 32 pieces ended needs_orchestrator in 24 h, so a second failure goes to the escalation seat instead of a third cheap round."
       }
     },
     "mechanical": {
@@ -617,7 +617,7 @@
       "cross_vendor": true,
       "release_facts": true,
       "never_after_fail": true,
-      "max_fix_rounds": 2,
+      "max_fix_rounds": 1,
       "money_path": {
         "lenses": 3,
         "rule": "any-fail",
