@@ -27,7 +27,8 @@
 #
 # Env:
 #   ROUTE_HOST         reservation owner host (default socket hostname)
-#   AGENT_LB_URL       LB base URL (default http://127.0.0.1:2455)
+#   AGENT_LB_URL       LB base URL (default: AGENT_LB_URL in ~/.config/agent-lb/client.env, which a
+#                      factory box's lb-proxy install writes, else http://127.0.0.1:2455)
 #   ROUTE_TABLE        routing table path (default ~/.agent-lb/managed/coding-agents/routing-table.json,
 #                      falling back to config/coding-agents/routing-table.json beside this script)
 #   ROUTE_STATE        routing state path (default ~/.claude/routing-state.json)
@@ -115,7 +116,21 @@ ANALYTICS_SESSION_CAP = 20
 
 
 def base_url() -> str:
-    return (os.environ.get("AGENT_LB_URL") or DEFAULT_BASE_URL).rstrip("/")
+    url = os.environ.get("AGENT_LB_URL") or _client_env_url() or DEFAULT_BASE_URL
+    return url.rstrip("/")
+
+
+def _client_env_url() -> str | None:
+    # A factory box has no LB on 2455; its lb-proxy install writes the box proxy URL here (2026-10-06).
+    try:
+        text = (Path.home() / ".config" / "agent-lb" / "client.env").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    for line in text.splitlines():
+        match = re.fullmatch(r"\s*(?:export\s+)?AGENT_LB_URL\s*=\s*['\"]?(https?://[^\s'\"]+)['\"]?\s*", line)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _env_path(name: str, default: Path) -> Path:
