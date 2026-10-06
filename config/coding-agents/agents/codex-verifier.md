@@ -14,8 +14,13 @@ Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot 
 
 Start by cd-ing into the worktree the brief assigns in the same Bash invocation.
 If `$HOME/.local/bin/seat-run` exists, use a short unique key K such as
-`codex-verifier-<worktree basename>-<epoch seconds>`. When the brief names a
-lens, include it in the key: `codex-verifier-<worktree basename>-<lens>-<epoch>`.
+`codex-verifier-<worktree basename>-<epoch seconds>-<4 random hex>`. When the
+brief names a lens, include it in the key:
+`codex-verifier-<worktree basename>-<lens>-<epoch>-<4 random hex>`. Two reviews
+launched in the same second once shared an epoch-only key and the second
+returned the first one's verdict (2026-10-06). If the launch exits 4 with a
+`NAME-COLLISION K` line, nothing was launched: pick a new K and launch again;
+never `--wait` the refused K.
 Launch (Bash `timeout: 600000`) with a fresh unique contract file created and
 written in the same Bash call:
 
