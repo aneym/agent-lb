@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, Field, StrictInt, model_validator
 
 _LOCK = threading.Lock()
 
@@ -31,6 +31,12 @@ class ReservationRequest(BaseModel):
     ttl_s: StrictInt = Field(ge=1, le=3600)
     pinned: bool = False
     candidates: list[Candidate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_pinned_candidates(self) -> ReservationRequest:
+        if self.pinned and len(self.candidates) != 1:
+            raise ValueError("pinned reservations require exactly one candidate")
+        return self
 
 
 class HeartbeatRequest(BaseModel):
