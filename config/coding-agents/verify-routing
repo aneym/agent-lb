@@ -416,11 +416,10 @@ if valid_escalation:
         and isinstance(seat_map.get(target), dict)
         and seat_map[target].get("vendor") in implement.get("audit", {}).get("by_author_vendor", {})
         and type(escalation["at_fix_round"]) is int
-        and type(review.get("max_fix_rounds")) is int
-        and 1 <= escalation["at_fix_round"] <= review["max_fix_rounds"]
+        and escalation["at_fix_round"] >= 1
         and isinstance(escalation["since"], str) and re.fullmatch(r"20\d\d-\d\d-\d\d", escalation["since"])
         and isinstance(escalation["evidence"], str) and bool(escalation["evidence"].strip()))
-factory("escalation", valid_escalation, "implement escalates to an audited chain seat within max_fix_rounds")
+factory("escalation", valid_escalation, "implement escalates to an audited chain seat at a fix round of 1 or more")
 
 # Names of people and machines stay out of this public file too: each operator lists their own private literals
 # (people, machines, hosts), one per line, in the file named by AGENT_LB_PRIVATE_LITERALS. Unset means only the

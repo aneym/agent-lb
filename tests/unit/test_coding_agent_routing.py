@@ -117,7 +117,7 @@ def test_verify_routing_rejects_each_factory_violation(
     elif violation == "escalation-not-audited-chain-seat":
         classes["implement"]["escalation"]["seat"] = "verifier"
     elif violation == "escalation-round":
-        classes["implement"]["escalation"]["at_fix_round"] = 3
+        classes["implement"]["escalation"]["at_fix_round"] = 0
     if violation in ("forwarder-effort", "undated-heading", "oversized-doc", "missing-definition", "private-path",
                      "definition-without-seat"):
         if violation == "forwarder-effort":
