@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import random
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -153,6 +154,13 @@ class _MergedAdditionalWindow:
 # process. Updated only after a successful refresh that wrote data.
 _last_successful_refresh: dict[str, datetime] = {}
 _usage_refresh_auth_cooldowns: dict[str, float] = {}
+# Consecutive usage-endpoint 429s per account. A 429 on the usage endpoint is
+# upstream throttling the poll, not a credential problem; without a cooldown the
+# stale entry was refetched every loop tick (~3/min per account, all 429, for
+# days, 2026-10-06). Back off exponentially with jitter; a success clears it.
+_usage_refresh_rate_limit_strikes: dict[str, int] = {}
+_USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS = 60.0
+_USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS = 900.0
 _USAGE_REFRESH_PROVIDERS = frozenset({ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME})
 # Mirrored in app/modules/proxy/anthropic_service.py (read side) — both must
 # agree on the quota_key/window identifying the Fable-scoped weekly marker.
@@ -1191,6 +1199,16 @@ async def _resolve_upstream_route_for_account(account: Account, *, operation: st
 
 
 def _mark_usage_refresh_auth_cooldown(account_id: str, status_code: int) -> None:
+    if status_code == 429:
+        strikes = _usage_refresh_rate_limit_strikes.get(account_id, 0) + 1
+        _usage_refresh_rate_limit_strikes[account_id] = strikes
+        delay = min(
+            _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS,
+            _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS * (2 ** min(strikes - 1, 10)),
+        )
+        delay *= random.uniform(0.8, 1.2)
+        _usage_refresh_auth_cooldowns[account_id] = time.monotonic() + delay
+        return
     if status_code not in {401, 403}:
         return
     cooldown_seconds = max(0.0, float(get_settings().usage_refresh_auth_failure_cooldown_seconds))
@@ -1211,6 +1229,7 @@ def _is_usage_refresh_in_cooldown(account_id: str) -> bool:
 
 def _clear_usage_refresh_auth_cooldown(account_id: str) -> None:
     _usage_refresh_auth_cooldowns.pop(account_id, None)
+    _usage_refresh_rate_limit_strikes.pop(account_id, None)
 
 
 def _prune_usage_refresh_auth_cooldowns() -> None:
@@ -1222,5 +1241,6 @@ def _prune_usage_refresh_auth_cooldowns() -> None:
 
 def _clear_usage_refresh_state() -> None:
     _usage_refresh_auth_cooldowns.clear()
+    _usage_refresh_rate_limit_strikes.clear()
     _last_successful_refresh.clear()
     _USAGE_REFRESH_SINGLEFLIGHT.clear()

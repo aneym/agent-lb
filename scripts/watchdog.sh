@@ -175,6 +175,34 @@ process_age_seconds() {
   }' <<<"$etime"
 }
 
+# Dependency gate (2026-10-06): after an unclean reboot Postgres spent ~2.5 min
+# in fsync + crash recovery. Restarting agent-lb (or booting a blue/green
+# standby against the same database) cannot fix that; it only adds churn and
+# killed the primary seconds before the database came up. When the configured
+# Postgres is not accepting connections, log it and wait instead of restarting.
+db_ready() {
+  local url="${AGENT_LB_DATABASE_URL:-}"
+  if [[ -z "$url" && -f "$PLIST_FILE" ]]; then
+    url=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:AGENT_LB_DATABASE_URL' "$PLIST_FILE" 2>/dev/null) || url=""
+  fi
+  case "$url" in postgresql*://*) ;; *) return 0 ;; esac
+  local hp="${url#*://}"; hp="${hp#*@}"; hp="${hp%%/*}"
+  local host="${hp%%:*}" port="${hp##*:}"
+  [[ "$port" == "$hp" || -z "$port" ]] && port=5432
+  local pgready
+  for pgready in /opt/homebrew/bin/pg_isready /opt/homebrew/opt/postgresql@17/bin/pg_isready ""; do
+    [[ -z "$pgready" || -x "$pgready" ]] && break
+  done
+  [[ -n "$pgready" ]] || return 0
+  "$pgready" -q -h "${host:-127.0.0.1}" -p "$port" -t 3 >/dev/null 2>&1
+}
+
+if (( count >= THRESHOLD )) && ! db_ready; then
+  log "unhealthy (http=$http_code) count=$count but postgres is not accepting connections — dependency not ready, not restarting agent-lb"
+  save_state
+  exit 0
+fi
+
 if (( count >= THRESHOLD )); then
   pid=$(service_pid)
   if [[ -n "$pid" ]]; then

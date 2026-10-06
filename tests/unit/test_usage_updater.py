@@ -1915,7 +1915,8 @@ async def test_usage_updater_deactivates_on_401_deactivated_message_without_code
 
 
 @pytest.mark.asyncio
-async def test_usage_updater_cools_down_repeated_403_failures(monkeypatch) -> None:
+@pytest.mark.parametrize("status_code", [403, 429])
+async def test_usage_updater_cools_down_repeated_403_failures(monkeypatch, status_code: int) -> None:
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_AUTH_FAILURE_COOLDOWN_SECONDS", "300")
     from app.core.clients.usage import UsageFetchError
@@ -1928,7 +1929,7 @@ async def test_usage_updater_cools_down_repeated_403_failures(monkeypatch) -> No
     async def stub_fetch_usage_403(**_: Any) -> UsagePayload:
         nonlocal fetch_calls
         fetch_calls += 1
-        raise UsageFetchError(403, "Forbidden")
+        raise UsageFetchError(status_code, "Forbidden" if status_code == 403 else "Rate limited")
 
     monkeypatch.setattr("app.modules.usage.updater.fetch_usage", stub_fetch_usage_403)
 
