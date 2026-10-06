@@ -42,10 +42,13 @@ main checkout.
    pytest command that does not already cap itself; never raise a cap the brief
    set lower.
 
-   Load cap (2026-09-26): if `$HOME/.local/bin/verify-slot` exists, start the
-   command with `"$HOME/.local/bin/verify-slot" codex-test-runner --` (in front
-   of `node`, after the `cd`) and give the Bash call `timeout: 600000`; it
-   waits for a Codex slot so parallel panels queue instead of pinning the host.
+   Load cap (2026-09-26): the `vs=` line in the command below sets the
+   verify-slot prefix as a shell array, empty when
+   `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so
+   parallel panels queue instead of pinning the host. Give the Bash call
+   `timeout: 600000`. Copy the `vs=` line and `"${vs[@]}"` exactly as written;
+   never quote the prefix as one word (a single argv entry that does not
+   exist, rc 127).
 
    One command, with the `cd` in the same shell invocation:
 
@@ -55,7 +58,8 @@ main checkout.
 cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
 <contract text built below>
 CONTRACT_EOF
-node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-test-runner --)
+"${vs[@]}" node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
    Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the `node` line.
