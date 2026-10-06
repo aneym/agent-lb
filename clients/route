@@ -66,6 +66,7 @@ import math
 import os
 import re
 import secrets
+import signal
 import shlex
 import socket
 import statistics
@@ -2071,6 +2072,29 @@ def _reservation_request(method: str, path: str, payload: dict | None = None) ->
                            "message": response.error or "invalid reservation response"}
 
 
+class ReserveStopped(Exception):
+    """SIGTERM or SIGINT while `route reserve` runs: whatever this job holds is released `cancelled`."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _stop_reserve(signum: int, _frame: Any) -> None:
+    for each in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(each, signal.SIG_IGN)  # the release below must not be cut short by a second signal
+    raise ReserveStopped(signum)
+
+
+def release_job_hold(job: str) -> None:
+    """Release whatever this job holds. Looked up by job, since a stop can land after agent-lb took the hold and
+    before route read its id."""
+    code, listing = _reservation_request("GET", "")
+    for row in (listing.get("live") or []) if code == EXIT_OK else []:
+        if row.get("job") == job:
+            _reservation_request("POST", f"/{row['reservation_id']}/release", {"outcome": "cancelled"})
+
+
 def command_reserve(args: argparse.Namespace) -> int:
     table = load_table()
     args.effort = None
@@ -2082,6 +2106,54 @@ def command_reserve(args: argparse.Namespace) -> int:
         setup_error("missing_ladder", f"class {args.task_class!r} has no ladder", args.json)
     if args.task_class == "verify" and not args.author_vendor:
         setup_error("unknown_author", "verify requires --author-vendor <maker>", args.json)
+    # A stop (seat stops route's process group, model listing included) releases this job's hold, never leaves it.
+    previous = {each: signal.signal(each, _stop_reserve) for each in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        code, result = reserve_walk(args, table)
+    except ReserveStopped as stop:
+        release_job_hold(args.job)
+        reason = f"cancelled by signal {signal.Signals(stop.signum).name}"
+        append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
+                       "status": "cancelled", "reason": reason})
+        print(json.dumps({"status": "cancelled", "reason": reason}))
+        return 128 + stop.signum
+    finally:
+        for each, handler in previous.items():
+            signal.signal(each, handler)
+    record_caller_choice(args, result)
+    append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
+                   **{key: result.get(key) for key in ("status", "rung", "seat", "reservation_id", "reason")}})
+    print(json.dumps(result))
+    return code
+
+
+def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | None, str | None]:
+    """Under the hold, list the models a deferred rung and its reviewer wait on. Returns the resolved worker and
+    reviewer models, or why the hold must go: a worker that resolves to another model than the caller's, or a worker
+    or reviewer that does not resolve (no reviewer, no implement or mechanical run: the admission floor)."""
+    allow_discovery()
+    resolved: dict = {}
+    try:
+        if row.get("model_pending"):
+            model, why = rung_model(table, {"model": row["alias"], "seat": row["seat"]}, ServedModels())
+            if not model:
+                return None, f"{row['rung']} unresolvable once held: {why}"
+            if wanted is not None and not same_model(wanted, model, row["alias"]):
+                return None, f"{row['rung']} runs {model}, not {wanted}"
+            resolved["model"] = model
+        audit = row.get("audit")
+        if isinstance(audit, dict) and audit.get("model_pending"):
+            model, why = rung_model(table, {"model": audit["alias"], "seat": audit["seat"]}, ServedModels())
+            if not model:
+                return None, f"{row['rung']}'s reviewer {audit['rung']} unresolvable once held: {why}"
+            resolved["audit"] = {**{k: v for k, v in audit.items() if k != "model_pending"}, "model": model}
+        return resolved, None
+    finally:
+        global _DEFER_DISCOVERY
+        _DEFER_DISCOVERY = True
+
+
+def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
     state = read_state()
     age = state_age_seconds(state)
     stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
@@ -2095,7 +2167,8 @@ def command_reserve(args: argparse.Namespace) -> int:
     pools = pools_by_id(document)
     policy = (table.get("policy") or {}).get("concurrency") or {}
     # No vendor CLI starts before capacity is held (A4d): a cold vendor model list is fetched only once the hold is
-    # taken, and a rung that then fails to resolve, or resolves to another model than the caller's, is released.
+    # taken, and a rung that then fails to resolve (or whose reviewer does not), or resolves to another model than the
+    # caller's, is released and the walk goes on.
     global _DEFER_DISCOVERY
     _DEFER_DISCOVERY = True
     skip = list(args.skip)
@@ -2108,11 +2181,10 @@ def command_reserve(args: argparse.Namespace) -> int:
                         f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder", args.json)
         chosen = walk["chosen"]
         if chosen is None:
-            reason = walk["refused"] or released or (next(row.get("reason") for row in walk["rungs"]
+            reason = released or walk["refused"] or (next(row.get("reason") for row in walk["rungs"]
                       if args.prefer in (row["rung"], row["seat"])) if args.prefer else
                       f"nothing routable for class {args.task_class!r}")
-            code, result = EXIT_UNROUTABLE, {"status": "refused", "reason": reason}
-            break
+            return EXIT_UNROUTABLE, {"status": "refused", "reason": reason}
         rows = [chosen] if args.prefer else walk["routable"]
         candidates = []
         for row in rows:
@@ -2126,29 +2198,38 @@ def command_reserve(args: argparse.Namespace) -> int:
         if code == EXIT_OK and result.get("status") == "wait":
             code = 75
         if code != EXIT_OK or result.get("status") != "reserved":
-            break
+            return code, result
         row = next((row for row in walk["rungs"] if row["rung"] == result.get("rung")), chosen)
         result.update(alias=row.get("alias"), effort=row.get("effort"), audit=row.get("audit"),
                       reason=row.get("reason"), heartbeat_s=policy.get("heartbeat_s", 300))
-        if not row.get("model_pending"):
-            break
-        allow_discovery()
-        model, why = rung_model(table, {"model": row["alias"], "seat": row["seat"]}, ServedModels())
-        _DEFER_DISCOVERY = True
-        if model and (args.model is None or same_model(args.model, model, row["alias"])):
-            result["model"] = model
-            break
-        _reservation_request("POST", f"/{result['reservation_id']}/release", {"outcome": "failed"})
-        released = (f"{row['rung']} runs {model}, not {args.model}" if model
-                    else f"{row['rung']} unresolvable once held: {why}")
+        audit = row.get("audit")
+        if not row.get("model_pending") and not (isinstance(audit, dict) and audit.get("model_pending")):
+            return code, result
+        resolved, released = settle_pending(table, row, args.model)
+        if resolved is not None:
+            # Renew the hold the listing ran under and store the model that will run: a lease that expired while
+            # models were listed is gone, and the reservation names what runs, not the alias.
+            beat, body = _reservation_request("POST", f"/{result['reservation_id']}/heartbeat",
+                                              {"model": resolved.get("model", result.get("model"))})
+            if beat == EXIT_OK and body.get("status") == "reserved":
+                result.update(resolved)
+                result["expires_at"] = body.get("expires_at", result.get("expires_at"))
+                return code, result
+            released = f"{row['rung']} hold was lost while its models were listed"
+        else:
+            # agent-lb hands a job its live hold back, so a hold that stays live would come back as the next rung's:
+            # one retry, then stop rather than report another rung's model.
+            for _attempt in range(2):
+                _freed, body = _reservation_request("POST", f"/{result['reservation_id']}/release",
+                                                    {"outcome": "failed"})
+                if body.get("status") in ("released", "gone"):
+                    break
+            else:
+                return EXIT_DEGRADED, {"status": "error", "reason": f"{released}; and releasing "
+                                       f"{result['reservation_id']} failed: {body.get('reason') or body.get('status')}"}
         append_ledger({"event": "route_reserve_released", "class": args.task_class, "job": args.job,
                        "rung": row["rung"], "reservation_id": result["reservation_id"], "reason": released})
         skip.append(row["rung"])
-    record_caller_choice(args, result)
-    append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
-                   **{key: result.get(key) for key in ("status", "rung", "seat", "reservation_id", "reason")}})
-    print(json.dumps(result))
-    return code
 
 
 def command_heartbeat(args: argparse.Namespace) -> int:

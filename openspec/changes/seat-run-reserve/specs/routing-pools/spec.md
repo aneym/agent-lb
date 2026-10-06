@@ -42,3 +42,14 @@
 - **GIVEN** a vendor CLI whose descendant ignores SIGTERM
 - **WHEN** the run is stopped
 - **THEN** the run ends and releases only after the descendant is gone (SIGKILL after 10 s, or at once on a second stop signal)
+- **AND** a process that outlives SIGKILL keeps the run waiting (SIGKILL resent each grace period) and the lease beating; nothing is released over a live group
+
+#### Scenario: A family alias names its rung at the ladder's effort
+- **GIVEN** `seat run --vendor cursor --class mechanical --model grok-latest`, whose ladder runs Grok low on Cursor
+- **WHEN** it reserves
+- **THEN** the grok-low rung is reserved and Grok low runs: a family alias or model id at another effort (`-low`, `-medium`, `-high`, `-xhigh`, `-max`) names the rung, and another family is refused with what the seat's rungs run
+
+#### Scenario: Models listed under the hold settle the reservation
+- **GIVEN** a cold vendor model cache
+- **WHEN** route lists models under the hold
+- **THEN** a stop ends the listing and releases the hold `cancelled`; the hold is renewed afterwards and stores the resolved model (a hold lost meanwhile runs nothing); a reviewer that waited on the listing must resolve too, or the worker's hold is released; a hold route gives up and cannot release ends the reserve with an error, never another rung's success

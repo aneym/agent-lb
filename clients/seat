@@ -794,12 +794,17 @@ def release_usage(model: str | None, path: str | None) -> dict[str, Any]:
 def resolve_model(vendor: str, model: str, control: RunControl | None = None) -> str:
     """Family aliases go through `route resolve`: an alias never reaches a retired model, a retired id named
     outright resolves as an explicit request and is logged, and a blocked id is refused. Route may list the
-    vendor's models to resolve an alias, so under a RunControl it runs stoppable, in its own process group."""
+    vendor's models to resolve an alias, so under a RunControl it runs stoppable, in its own process group; a stop
+    returns the name unresolved, for the caller's stop check."""
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     try:
         completed = run_stoppable([route, "resolve", model], control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
+        if control is not None and control.stop_reason():
+            return model  # the caller checks the stop first and ends with its envelope
         fail(f"route resolve {model} failed: {error}")
+    if control is not None and control.stop_reason():
+        return model
     if completed.returncode != 0:
         fail(completed.stderr.strip() or f"route resolve {model} exited {completed.returncode}")
     resolved = completed.stdout.strip().splitlines()[-1]
@@ -1337,18 +1342,18 @@ def command_release(args: argparse.Namespace) -> int:
 
 
 def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str | None,
-                     model: str) -> tuple[int, dict[str, Any]]:
+                     model: str, control: RunControl) -> tuple[int, dict[str, Any]]:
     """A4d: hold a `route reserve` lease for this run's seat, on the rung that runs the caller's model. Returns
     EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or
-    agent-lb cannot answer (fail closed). Route lists no vendor models before the hold is taken."""
+    agent-lb cannot answer (fail closed). Route lists no vendor models before the hold is taken, and lists them under
+    it; route runs stoppable, so a stop ends that listing and route releases what the job holds."""
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     argv = [route, "reserve", task_class, "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--model", model,
             "--reason", "seat run", "--json"]
     if author_vendor:
         argv[3:3] = ["--author-vendor", author_vendor]
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=90, check=False,
-                                   start_new_session=True)
+        completed = run_stoppable(argv, control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
         return EXIT_FAILED, {"status": "error", "reason": f"route reserve failed: {error}"}
     try:
@@ -1359,6 +1364,8 @@ def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str 
     status = body.get("status")
     if completed.returncode == EXIT_OK and status == "reserved" and body.get("reservation_id"):
         return EXIT_OK, body
+    if (stopped := control.stop_reason()):
+        return EXIT_FAILED, {"status": "cancelled", "reason": stopped}
     if completed.returncode == ROUTE_EXIT_WAIT and status == "wait":
         return EXIT_CAPACITY_WAIT, body
     if completed.returncode == EXIT_NO_ACCOUNT and status == "refused":
@@ -1473,13 +1480,19 @@ class GroupStop:
             self.killed_at = clock
 
     def drain(self) -> None:
-        """The leader is reaped; wait until no process is left in its group."""
+        """The leader is reaped; wait until no process is left in its group. A process that outlives SIGKILL (blocked
+        in uninterruptible I/O) still holds the run's capacity, so the wait goes on, with SIGKILL resent every grace
+        period, until it is gone: the lease keeps beating and nothing is released over a live group."""
+        warned = False
         while group_alive(self.pgid):
             self.step(leader_done=True)
             if self.killed_at is not None and time.monotonic() - self.killed_at > STOP_GRACE_SECONDS:
-                print(f"seat: process group {self.pgid} survived SIGKILL for {STOP_GRACE_SECONDS:.0f}s",
-                      file=sys.stderr)
-                return
+                if not warned:
+                    print(f"seat: process group {self.pgid} survived SIGKILL for {STOP_GRACE_SECONDS:.0f}s; "
+                          "waiting for it before the release", file=sys.stderr)
+                    warned = True
+                self.send(signal.SIGKILL)
+                self.killed_at = time.monotonic()
             time.sleep(STOP_POLL_SECONDS)
 
 
@@ -1608,11 +1621,15 @@ def command_run(args: argparse.Namespace) -> int:
     control.install()
     host = os.environ.get("ROUTE_HOST") or socket.gethostname()
     code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}", args.author_vendor,
-                                         args.model)
+                                         args.model, control)
+    if code == EXIT_OK and control.stop_reason():
+        # Stopped as route returned the hold: route released nothing, so release it here.
+        CapacityLease(reservation, control).release("cancelled")
+        code = EXIT_FAILED
     if code != EXIT_OK:
         control.restore()
-        run_envelope(args, args.model, run_id, f"capacity: {reservation.get('reason') or 'no capacity'}",
-                     wait=reservation.get("wait"))
+        run_envelope(args, args.model, run_id, control.stop_reason()
+                     or f"capacity: {reservation.get('reason') or 'no capacity'}", wait=reservation.get("wait"))
         return 128 + control.signals[0] if control.signals else code
     code = EXIT_FAILED
     lease: CapacityLease | None = None

@@ -433,7 +433,9 @@ case "$1" in
     echo "released $4" >> "$ROUTE_CALLS"
     echo '{"status": "released"}' ;;
   heartbeat) echo '{"status": "live"}' ;;
-  resolve) case "$2" in grok-latest-low) echo grok-4.7-low ;; *) echo "$2" ;; esac ;;
+  resolve)
+    [ -n "$SIGNAL_ON_RESOLVE" ] && kill -"$SIGNAL_ON_RESOLVE" "$PPID" && sleep 30
+    case "$2" in grok-latest-low) echo grok-4.7-low ;; *) echo "$2" ;; esac ;;
 esac
 """
 
@@ -580,3 +582,184 @@ def test_a_forwarder_default_alias_runs_its_rung_at_the_ladder_effort(env: dict[
     rc, refused = route(env, "reserve", "explore", "--job", "grok-explore", "--prefer", "cursor-seat",
                         "--model", "grok-latest-low", "--reason", "scouting")
     assert rc == 2 and refused["status"] == "refused" and "composer-latest" in refused["reason"], refused
+
+
+# Stands in for a slow `cursor-agent --list-models`: records its pid, then lists after ROUTE_TEST_LIST_SLEEP seconds.
+SLOW_DISCOVERY = """#!/usr/bin/env python3
+import os, time
+from pathlib import Path
+Path(os.environ["DISCOVERY_PID"]).write_text(str(os.getpid()))
+time.sleep(float(os.environ["ROUTE_TEST_LIST_SLEEP"]))
+print("grok-4.7-low - Grok 4.7 Low")
+print("composer-2.5 - Composer 2.5")
+"""
+
+
+def slow_discovery(env: dict[str, str], tmp_path: Path, seconds: float) -> dict[str, str]:
+    cold_cursor_cache(env)
+    return {**env, "DISCOVERY_PID": str(tmp_path / "discovery.pid"), "ROUTE_TEST_LIST_SLEEP": str(seconds),
+            "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'slow-discovery', SLOW_DISCOVERY)}"}
+
+
+def test_a_stop_during_the_model_listing_under_the_hold_ends_it_and_releases(env: dict[str, str],
+                                                                            tmp_path: Path) -> None:
+    env = slow_discovery(env, tmp_path, 8)
+    process = subprocess.Popen(seat_argv(env, "listed1", "--class", "mechanical"), stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, env=env)
+    HOLDERS.append(process)
+    marker = tmp_path / "discovery.pid"
+    deadline = time.monotonic() + 60
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    [lease] = mine(reservations(env)["live"])
+    stopped = time.monotonic()
+    process.send_signal(signal.SIGTERM)
+    out, err = process.communicate(timeout=60)
+    # Route's listing stops with the run, well before it would have finished, and the hold it ran under is released.
+    assert time.monotonic() - stopped < 5, "the model listing under the hold ran on after the stop"
+    assert process.returncode == 128 + signal.SIGTERM, out + err
+    assert json.loads(out)["error"] == "cancelled by signal SIGTERM", out
+    assert not pid_alive(int(marker.read_text()))
+    assert mine(reservations(env)["live"]) == [] and "listed1" not in invocations(env)
+    [ended] = [row for row in reservations(env)["recent"] if row["reservation_id"] == lease["reservation_id"]]
+    assert ended["outcome"] == "cancelled", ended
+
+
+def test_a_hold_that_expires_during_the_model_listing_runs_nothing(env: dict[str, str], tmp_path: Path) -> None:
+    # The fixture TTL is 4 s and seat's heartbeats start only once route returns: a 6 s listing outlives the hold.
+    env = slow_discovery(env, tmp_path, 6)
+    rc, refused = run_seat(env, "expired1", "--class", "mechanical")
+    assert rc == 2 and refused["ok"] is False and "lost while its models were listed" in refused["error"], refused
+    assert "expired1" not in invocations(env) and mine(reservations(env)["live"]) == []
+
+
+def test_the_reservation_stores_the_model_resolved_under_the_hold(env: dict[str, str]) -> None:
+    cold_cursor_cache(env)
+    holder = start_seat(env, "hold7")
+    [lease] = mine(reservations(env)["live"])
+    assert lease["model"] == launched_model(env, "hold7") == "grok-4.7-low", lease
+    open_gate(env, "hold7")
+    out, err = holder.communicate(timeout=90)
+    assert holder.returncode == 0, out + err
+    [ended] = [row for row in reservations(env)["recent"] if row["reservation_id"] == lease["reservation_id"]]
+    assert (ended["model"], ended["outcome"]) == ("grok-4.7-low", "ok"), ended
+
+
+def test_an_implement_rung_whose_only_reviewer_does_not_resolve_is_not_held(env: dict[str, str],
+                                                                            tmp_path: Path) -> None:
+    # Claude and Codex are spent, so Cursor's Sonnet is the only reviewer for Devin's work; Cursor's list (cold until
+    # the hold) has no Sonnet. Devin's own list is warm, so only the reviewer waits on discovery.
+    path = Path(env["ROUTE_FIXTURE_DIR"]) / "api_pools.json"
+    document = json.loads(path.read_text())
+    for pool in document["pools"]:
+        if pool["id"] in ("anthropic-general", "openai-codex"):
+            pool.update(status="exhausted", eligibleAccounts=0, aggregateRemainingPercent=0.0)
+    path.write_text(json.dumps(document))
+    env = slow_discovery(env, tmp_path, 0)
+    rc, refused = route(env, "reserve", "implement", "--job", "devin-unreviewed", "--prefer", "devin-seat",
+                        "--model", "swe-latest", "--reason", "devin implement")
+    assert rc == 2 and refused["status"] == "refused" and "reviewer" in refused["reason"], refused
+    assert [row for row in reservations(env)["live"] if row["job"] == "devin-unreviewed"] == []
+
+
+def test_a_signal_during_the_alias_resolution_returns_the_cancellation_envelope(scripted: dict[str, str]) -> None:
+    env = {**scripted, "SIGNAL_ON_RESOLVE": "TERM"}
+    result = subprocess.run(seat_argv(env, "resolving1", "--class", "mechanical", model="composer-latest"),
+                            capture_output=True, text=True, timeout=60, env=env, check=False)
+    assert result.returncode == 128 + signal.SIGTERM, result.stdout + result.stderr
+    assert json.loads(result.stdout)["error"] == "cancelled by signal SIGTERM", result.stdout + result.stderr
+    assert "released cancelled" in route_calls(env) and invocations(env) == []
+
+
+# Runs seat with a short grace and with its process group reported alive while SURVIVOR exists, as when a descendant
+# is blocked in uninterruptible I/O and outlives SIGKILL.
+UNKILLABLE = """import os, sys
+path = sys.argv[1]
+sys.argv = sys.argv[1:]
+seat = {"__name__": "seat_under_test", "__file__": path}
+exec(compile(open(path).read(), path, "exec"), seat)
+alive = seat["group_alive"]
+seat["group_alive"] = lambda pgid: os.path.exists(os.environ["SURVIVOR"]) or alive(pgid)
+seat["STOP_GRACE_SECONDS"] = 0.5
+raise SystemExit(seat["main"]())
+"""
+
+
+def test_a_stop_never_releases_while_a_process_survives_sigkill(scripted: dict[str, str], tmp_path: Path) -> None:
+    launcher = tmp_path / "unkillable.py"
+    launcher.write_text(UNKILLABLE)
+    survivor = tmp_path / "survivor"
+    env = {**scripted, "SURVIVOR": str(survivor)}
+    process = subprocess.Popen([sys.executable, str(launcher), *seat_argv(env, "hold6", "--class", "mechanical")[1:]],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    HOLDERS.append(process)
+    deadline = time.monotonic() + 30
+    while "hold6" not in invocations(env) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    survivor.write_text("D")
+    process.send_signal(signal.SIGTERM)
+    time.sleep(3)
+    assert process.poll() is None and not any(line.startswith("released") for line in route_calls(env)), \
+        "the run released its capacity while a process of its group was alive"
+    survivor.unlink()
+    out, err = process.communicate(timeout=30)
+    assert process.returncode == 128 + signal.SIGTERM, out + err
+    assert "released cancelled" in route_calls(env), route_calls(env)
+
+
+# A stand-in agent-lb whose release always fails, and which hands a job its live hold back as real agent-lb does.
+class FailingReleaseLB:
+    def __init__(self) -> None:
+        import http.server
+        import threading
+        holds: dict[str, dict] = {}
+        self.releases = 0
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args: object) -> None:
+                pass
+
+            def reply(self, code: int, body: dict) -> None:
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self) -> None:
+                self.reply(200, {"live": list(holds.values()), "recent": []})
+
+            def do_POST(self) -> None:
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
+                if self.path.endswith("/release"):
+                    outer.releases += 1
+                    self.reply(500, {"detail": "store unavailable"})
+                elif self.path.endswith("/heartbeat"):
+                    self.reply(200, {**next(iter(holds.values())), "status": "reserved"})
+                else:
+                    row = holds.get(body["job"]) or {**body["candidates"][0], "reservation_id": "rsv-00000000000a",
+                                                       "job": body["job"], "expires_at": "2099-01-01T00:00:00Z"}
+                    holds[body["job"]] = row
+                    self.reply(200, {**row, "status": "reserved"})
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+
+def test_a_provisional_hold_that_cannot_be_released_is_never_reported_as_another_rung(env: dict[str, str],
+                                                                                     tmp_path: Path) -> None:
+    # A concrete Grok id with a cold cache: route provisionally holds Composer (the first Cursor rung), lists, finds
+    # Composer runs composer-2.5, and must give that hold up. Its release fails; agent-lb would hand the next reserve
+    # for the job the Composer hold back, so route must stop, not report Composer as the Grok reservation.
+    lb = FailingReleaseLB()
+    try:
+        env = {**slow_discovery(env, tmp_path, 0), "AGENT_LB_URL": lb.url}
+        rc, body = route(env, "reserve", "mechanical", "--job", "grok-concrete", "--prefer", "cursor-seat",
+                         "--model", "grok-4.7-low", "--reason", "concrete grok")
+        assert rc != 0 and body["status"] != "reserved", body
+        assert "composer" in body["reason"] and lb.releases >= 1, body
+    finally:
+        lb.server.shutdown()
