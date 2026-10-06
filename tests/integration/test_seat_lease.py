@@ -150,6 +150,9 @@ def test_pick_and_spread(home: tuple) -> None:
     copied = dict(env, SEAT_HOME=str(copy), ROUTE_LEDGER=str(root / "copy-ledger"))
     assert run(copied, root)["account"] == "acct-c"
     assert lease(env, root)["account"] == "acct-c"
+    # A lease names no model, and acct-a's limit cooled only the Grok pool
+    # (cursor-pool-truth), so acct-a, used before acct-b, is next.
+    assert lease(env, root)["account"] == "acct-a"
     assert lease(env, root)["account"] == "acct-b"
 
 
@@ -332,11 +335,14 @@ def test_release_outcomes_as_the_lb_sees_them(tmp_path: Path, variant: str) -> N
     assert [row["event"] for row in ledger(root)] == ["lease", "release"]
     assert {row["session_id"] for row in ledger(root)} == {meta["lease"]}
     if variant == "limit":
-        until = datetime.fromisoformat(record["cooldown_until"].replace("Z", "+00:00"))
+        # A Cursor limit cools one pool, not the account; a release without --model
+        # names no model, so the limit lands on the catch-all cursor-other pool.
+        assert not record.get("cooldown_until")
+        until = datetime.fromisoformat(record["cooldowns"]["cursor-other"].replace("Z", "+00:00"))
         assert abs((until - datetime.now(timezone.utc) - timedelta(hours=2)).total_seconds()) < 60
         assert record["last_error"]["kind"] == "limit"
         assert record["last_error"]["text"] == "limit in seat log: usage limit; Try again in 2 hour"
-        assert (pool.status, pool.eligible_accounts) == ("exhausted", 0)
+        assert (pool.status, pool.eligible_accounts) == ("ok", 1)
     elif variant == "auth_rejected":
         assert (answer["auth_probe"], answer["auth_confirmed"], record["auth_ok"]) == ("rejected", True, False)
         assert pool.status == "exhausted"

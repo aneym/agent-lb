@@ -108,23 +108,27 @@ def test_limit_fails_over_then_exhausts_the_pool(tmp_path: Path) -> None:
     assert (closeout["account"], closeout["ok"], closeout["tokens_in"]) == ("cursor-b", True, 120)
     assert rows[0]["session_id"] == closeout["session_id"]
 
+    # A Cursor limit cools only the pool the model draws on (cursor-pool-truth), so
+    # cursor-a stays ready account-wide and the vendor pool still counts it.
     seats = read_seat_accounts(tmp_path / "seats" / "state.json")
     by_id = {account.id: account for account in seats.accounts}
-    assert by_id["cursor-a"].cooldown_until is not None and not by_id["cursor-a"].ready
+    assert by_id["cursor-a"].cooldown_until is None and by_id["cursor-a"].ready
+    assert set(by_id["cursor-a"].cooldowns) == {"cursor-models"}
     assert by_id["cursor-b"].ready and by_id["cursor-b"].last_day.tokens_in == 120
     (pool,) = cli_seat_pools(seats)
-    assert (pool.id, pool.status, pool.eligible_accounts, pool.observed_runs) == ("cursor", "ok", 1, 2)
+    assert (pool.id, pool.status, pool.eligible_accounts, pool.observed_runs) == ("cursor", "ok", 2, 2)
 
-    # The cooling account is not retried; once the other one is limited too the run
-    # reports no account and the pool is exhausted until the earliest cooldown ends.
+    # The cooling account is not retried for that pool; once the other one is limited
+    # too the run reports no account, and both hold a cursor-models cooldown.
     limited.write_text("key-a\nkey-b\n")
     second = _seat(env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(tmp_path), "--", "x")
     assert second.returncode == 2
     assert [attempt["account"] for attempt in json.loads(second.stdout)["attempts"]] == ["cursor-b"]
     seats = read_seat_accounts(tmp_path / "seats" / "state.json")
-    (pool,) = cli_seat_pools(seats)
-    assert (pool.status, pool.eligible_accounts) == ("exhausted", 0)
-    assert pool.reset_at == min(account.cooldown_until for account in seats.accounts)
+    assert all(set(account.cooldowns) == {"cursor-models"} for account in seats.accounts)
+    third = _seat(env, "run", "--vendor", "cursor", "--model", "grok-latest", "--cwd", str(tmp_path), "--", "y")
+    assert third.returncode == 2, third.stderr
+    assert "no cursor account is ready" in third.stderr, third.stderr
 
 
 def test_cursor_prompt_goes_on_stdin(tmp_path: Path) -> None:
