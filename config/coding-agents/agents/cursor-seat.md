@@ -32,6 +32,8 @@ Run exactly one command, from the worktree the brief assigns:
 - `--mode ask` for read-only exploration; the default `write` lets the agent edit
   and run commands (`cursor-agent --force`).
 - `--account <id>` only when the brief pins one; it disables failover.
+- `--class verify` also takes `--author-vendor <vendor>`, the vendor that wrote the work
+  under review, as the brief names it; `seat run` refuses verify without it.
 - Exit 4 is a capacity wait (`seat run` holds a reservation per `--class`): return the envelope
   as is and do not retry; the caller decides when to try again.
 - For long interactive work that must survive a disconnect, `cursor-agent persist`

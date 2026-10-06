@@ -60,7 +60,9 @@ def pick(task_class: str, author_vendor: str | None, skipped: list[str]) -> dict
     return body if code == 0 and isinstance(body, dict) and body.get("seat") else None
 
 
-def command(seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: Path) -> list[str]:
+def command(
+    seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: Path, author_vendor: str | None = None
+) -> list[str]:
     pool, model = seat.get("pool") or "", seat.get("model")
     readonly = bool(seat.get("read_only")) or task_class in READ_ONLY
     if pool.startswith("anthropic-"):
@@ -101,6 +103,8 @@ def command(seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: P
             "--prompt-file",
             str(prompt),
         ]
+        if author_vendor:
+            args.extend(["--author-vendor", author_vendor])
         if readonly:
             args.extend(["--mode", "ask"])
     else:
@@ -112,7 +116,8 @@ def command(seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: P
 
 
 def attempt(
-    seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: Path, timeout: float
+    seat: dict[str, Any], task_class: str, cwd: Path, brief: str, out: Path, timeout: float,
+    author_vendor: str | None = None,
 ) -> tuple[str, int, float, str]:
     started = time.monotonic()
     env = dict(os.environ, AGENT_LB_INTENT=task_class)
@@ -120,7 +125,7 @@ def attempt(
     try:
         with out.open("wb") as handle, stderr_path.open("wb") as errors:
             proc = subprocess.run(
-                command(seat, task_class, cwd, brief, out),
+                command(seat, task_class, cwd, brief, out, author_vendor),
                 cwd=cwd,
                 env=env,
                 stdout=handle,
@@ -134,9 +139,11 @@ def attempt(
         seat_pool = seat.get("pool", "").startswith("cursor") or seat.get("pool") == "devin"
         usage_error = seat_pool and code == 2 and stderr.lstrip().startswith("usage:")
         pool_miss = seat_pool and (code == 3 or code == 2 and not usage_error)
+        # seat run exits 4 when its reservation must wait (A4d): that seat is full, so stand in on the next.
         outcome = (
             "ok" if code == 0 else
             "fail" if usage_error else
+            "wait" if seat_pool and code == 4 else
             "limit" if pool_miss or LIMIT.search(text + "\n" + stderr) else
             "infra" if code in {75, 124} else "fail"
         )
@@ -204,7 +211,7 @@ def run(
         seen.add(identity)
         number = len(attempts) + 1
         out = directory / f"attempt-{number}.txt"
-        outcome, code, wall, line = attempt(current, task_class, cwd, brief, out, timeout)
+        outcome, code, wall, line = attempt(current, task_class, cwd, brief, out, timeout, author_vendor)
         row = {
             "ts": utc_now(),
             "event": "of_outcome",
@@ -243,6 +250,8 @@ def run(
             current = pick(task_class, author_vendor, skipped)
         else:
             current = next((seat for seat in fallbacks if (seat.get("seat"), seat.get("model")) not in seen), None)
+    if ran is None and attempts and all(item["outcome"] == "wait" for item in attempts):
+        exit_code = 4
     return {
         "decision_id": decision_id,
         "class": task_class,

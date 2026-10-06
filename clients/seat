@@ -14,10 +14,11 @@
 #   seat probe [--vendor V] [--json]             auth status per account, written to state
 #   seat lease --vendor V --for ID --ttl S --out DIR [--json]
 #   seat release LEASE [--log FILE] [--outcome OUTCOME] [--json]
-#   seat run --vendor V --model M [--account A] [--class C] [--cwd D] [--mode ask|write]
+#   seat run --vendor V --model M [--account A] [--class C [--author-vendor V]] [--cwd D] [--mode ask|write]
 #            [--timeout S] (--prompt-file F | -- <prompt>)
 #            With --class (and no --account) the run first holds a `route reserve` lease, renews it while the
-#            vendor CLI runs and releases it on exit; no capacity exits 4 and launches nothing (A4d).
+#            vendor CLI runs and releases it on exit; no capacity exits 4 and launches nothing (A4d). A signal
+#            or a lost lease stops the CLI's process group; the release then runs to the end.
 #
 # Account auth (never printed, never written anywhere but the key file):
 #   cursor  auth=login    the CLI's own login (`cursor-agent login`, macOS keychain). One per Mac:
@@ -72,6 +73,9 @@ EXIT_FAILED = 1
 EXIT_NO_ACCOUNT = 2
 EXIT_CAPACITY_WAIT = 4
 ROUTE_EXIT_WAIT = 75
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+STOP_GRACE_SECONDS = 10.0
+STOP_POLL_SECONDS = 0.2
 
 PROBE_TIMEOUT_SECONDS = 20.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
@@ -1322,14 +1326,17 @@ def command_release(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def reserve_capacity(task_class: str, vendor: str, job: str) -> tuple[int, dict[str, Any]]:
+def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str | None) -> tuple[int, dict[str, Any]]:
     """A4d: hold a `route reserve` lease for this run's seat. Returns EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a
     wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or agent-lb cannot answer (fail closed)."""
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     argv = [route, "reserve", task_class, "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--reason", "seat run",
             "--json"]
+    if author_vendor:
+        argv[3:3] = ["--author-vendor", author_vendor]
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=90, check=False)
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=90, check=False,
+                                   start_new_session=True)
     except (OSError, subprocess.TimeoutExpired) as error:
         return EXIT_FAILED, {"status": "error", "reason": f"route reserve failed: {error}"}
     try:
@@ -1349,13 +1356,89 @@ def reserve_capacity(task_class: str, vendor: str, job: str) -> tuple[int, dict[
     return EXIT_FAILED, {**body, "reason": reason}
 
 
-class CapacityLease:
-    """Renews a reservation every heartbeat_s while the vendor CLI runs, and releases it once."""
+class RunControl:
+    """What stops a reserved run. The signal handlers only record (a count and the first time) and never raise, so
+    nothing cuts the reserve, the run or the release short; the main loop polls stop_reason() and stops the vendor's
+    process group itself. The heartbeat thread marks the lease lost when route says it is gone."""
 
-    def __init__(self, reservation: dict[str, Any]) -> None:
+    def __init__(self) -> None:
+        self.signals: list[int] = []
+        self.first_signal_at: float | None = None
+        self.lost: str | None = None
+        self.previous: dict[int, Any] = {}
+
+    def record(self, signum: int, _frame: Any) -> None:
+        self.signals.append(signum)
+        if self.first_signal_at is None:
+            self.first_signal_at = time.monotonic()
+
+    def install(self) -> None:
+        for signum in STOP_SIGNALS:
+            self.previous[signum] = signal.signal(signum, self.record)
+
+    def restore(self) -> None:
+        for signum, handler in self.previous.items():
+            signal.signal(signum, handler)
+
+    def stop_reason(self) -> str | None:
+        if self.signals:
+            return f"cancelled by signal {signal.Signals(self.signals[0]).name}"
+        return self.lost
+
+
+def run_stoppable(command: list[str], control: RunControl | None, *, input: str | None, timeout: float,
+                  **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """subprocess.run, except that under a RunControl the command runs in its own process group, which is sent
+    SIGTERM once the run must stop and SIGKILL on a second signal or after STOP_GRACE_SECONDS."""
+    if control is None:
+        return subprocess.run(command, input=input, capture_output=True, text=True, timeout=timeout, check=False,
+                              **kwargs)
+    if input is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               start_new_session=True, **kwargs)
+    deadline = time.monotonic() + timeout
+    termed_at: float | None = None
+    killed = timed_out = False
+    pending = input
+    while True:
+        try:
+            stdout, stderr = process.communicate(pending, timeout=STOP_POLL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            pending = None
+        clock = time.monotonic()
+        if not killed and clock >= deadline:
+            timed_out = killed = signal_group(process, signal.SIGKILL)
+        elif termed_at is None and control.stop_reason():
+            signal_group(process, signal.SIGTERM)
+            termed_at = clock
+        elif termed_at is not None and not killed and (len(control.signals) > 1
+                                                      or clock - termed_at >= STOP_GRACE_SECONDS):
+            killed = signal_group(process, signal.SIGKILL)
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def signal_group(process: subprocess.Popen[str], signum: int) -> bool:
+    # The leader is unreaped until communicate() returns, so its pid is still this group's id.
+    try:
+        os.killpg(process.pid, signum)
+    except (ProcessLookupError, PermissionError):
+        pass
+    return True
+
+
+class CapacityLease:
+    """Renews a reservation every heartbeat_s while the vendor CLI runs, marks the run's control when route says the
+    lease is gone, and releases it once."""
+
+    def __init__(self, reservation: dict[str, Any], control: RunControl) -> None:
         self.reservation_id = reservation["reservation_id"]
         self.interval = max(1, int(reservation.get("heartbeat_s") or 300))
         self.route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
+        self.control = control
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._beat, name="seat-reservation-heartbeat", daemon=True)
 
@@ -1363,12 +1446,15 @@ class CapacityLease:
         while not self.stopped.wait(self.interval):
             try:
                 completed = subprocess.run([self.route, "heartbeat", self.reservation_id, "--json"],
-                                           capture_output=True, text=True, timeout=30, check=False)
+                                           capture_output=True, text=True, timeout=30, check=False,
+                                           start_new_session=True)
             except (OSError, subprocess.TimeoutExpired) as error:
                 print(f"seat: route heartbeat {self.reservation_id} failed: {error}", file=sys.stderr)
                 continue
             if completed.returncode == EXIT_NO_ACCOUNT:
-                print(f"seat: reservation {self.reservation_id} is gone; the run continues unrenewed", file=sys.stderr)
+                # The lease expired or was ended elsewhere, so another run may hold the slot: stop this one.
+                self.control.lost = f"capacity: reservation {self.reservation_id} was lost; the vendor CLI was stopped"
+                print(f"seat: reservation {self.reservation_id} is gone; stopping the vendor CLI", file=sys.stderr)
                 return
             if completed.returncode != EXIT_OK:
                 print(f"seat: route heartbeat {self.reservation_id} exited {completed.returncode}", file=sys.stderr)
@@ -1377,17 +1463,30 @@ class CapacityLease:
         self.thread.start()
 
     def release(self, outcome: str) -> None:
+        """Stops the heartbeat, then releases with stop signals blocked and route in its own session, so neither
+        SIGTERM nor a terminal Ctrl-C can cut the release short. One retry; a lease route calls gone is done."""
         self.stopped.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=5)
+        masked = hasattr(signal, "pthread_sigmask")
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS) if masked else None
         try:
-            completed = subprocess.run([self.route, "release", self.reservation_id, "--outcome", outcome, "--json"],
-                                       capture_output=True, text=True, timeout=30, check=False)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            print(f"seat: route release {self.reservation_id} failed: {error}; it expires at its TTL",
-                  file=sys.stderr)
-            return
-        if completed.returncode != EXIT_OK:
-            print(f"seat: route release {self.reservation_id} exited {completed.returncode}; it expires at its TTL",
-                  file=sys.stderr)
+            detail = "not attempted"
+            for _attempt in range(2):
+                try:
+                    completed = subprocess.run(
+                        [self.route, "release", self.reservation_id, "--outcome", outcome, "--json"],
+                        capture_output=True, text=True, timeout=30, check=False, start_new_session=True)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    detail = f"failed: {error}"
+                    continue
+                if completed.returncode in (EXIT_OK, EXIT_NO_ACCOUNT):
+                    return
+                detail = f"exited {completed.returncode}"
+            print(f"seat: route release {self.reservation_id} {detail}; it expires at its TTL", file=sys.stderr)
+        finally:
+            if previous is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
 def command_run(args: argparse.Namespace) -> int:
@@ -1426,41 +1525,42 @@ def command_run(args: argparse.Namespace) -> int:
                               "attempts": [], "error": error, "result": None}, indent=2))
             return EXIT_NO_ACCOUNT
         fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
-    if args.vendor == "cursor":
-        candidates = check_cursor_model(model, candidates)
 
     run_id = f"seat-{uuid.uuid4()}"
     if not args.task_class or args.account:
+        if args.vendor == "cursor":
+            candidates = check_cursor_model(model, candidates)
         why = "no --class" if not args.task_class else "--account pins one account; a lease is its own admission"
-        return run_on_accounts(args, prompt, cwd, model, candidates, run_id, None, why)
+        return run_on_accounts(args, prompt, cwd, model, candidates, run_id, None, why, None)
+    # Reserve before anything starts the vendor CLI, `cursor-agent models` included. The recording handlers go in
+    # first so a signal during the reserve is acted on inside the try/finally below, never by dying with a lease.
+    control = RunControl()
+    control.install()
     host = os.environ.get("ROUTE_HOST") or socket.gethostname()
-    code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}")
+    code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}", args.author_vendor)
     if code != EXIT_OK:
+        control.restore()
         print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model, "run_id": run_id,
                           "vendor_session_id": None, "wall_s": 0, "tokens_in": None, "tokens_out": None,
                           "attempts": [], "error": f"capacity: {reservation.get('reason') or 'no capacity'}",
                           "wait": reservation.get("wait"), "result": None}, indent=2))
-        return code
-    lease = CapacityLease(reservation)
-    signalled: list[int] = []
-
-    def cancel(signum: int, _frame: Any) -> None:
-        if not signalled:
-            signalled.append(signum)
-            raise SystemExit(128 + signum)
-
-    previous = signal.signal(signal.SIGTERM, cancel)
+        return 128 + control.signals[0] if control.signals else code
     code = EXIT_FAILED
-    lease.start()
+    lease: CapacityLease | None = None
     try:
-        code = run_on_accounts(args, prompt, cwd, model, candidates, run_id, reservation["reservation_id"], None)
-        return code
-    except KeyboardInterrupt:
-        signalled.append(signal.SIGINT)
-        raise
+        lease = CapacityLease(reservation, control)
+        lease.start()
+        if args.vendor == "cursor" and not control.stop_reason():
+            candidates = check_cursor_model(model, candidates)
+        code = run_on_accounts(args, prompt, cwd, model, candidates, run_id, reservation["reservation_id"], None,
+                               control)
     finally:
-        lease.release("cancelled" if signalled else "ok" if code == EXIT_OK else "failed")
-        signal.signal(signal.SIGTERM, previous)
+        outcome = "cancelled" if control.signals else "ok" if code == EXIT_OK and not control.lost else "failed"
+        if lease is None:
+            lease = CapacityLease(reservation, control)
+        lease.release(outcome)
+        control.restore()
+    return 128 + control.signals[0] if control.signals else code
 
 
 def run_on_accounts(
@@ -1472,6 +1572,7 @@ def run_on_accounts(
     run_id: str,
     reservation_id: str | None,
     why: str | None,
+    control: RunControl | None,
 ) -> int:
     seat = SEAT_FOR_VENDOR[args.vendor]
     prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -1504,6 +1605,9 @@ def run_on_accounts(
         prompt_file.write_text(prompt, encoding="utf-8")
         limited_plans: set[str] = set()
         for account in candidates:
+            if control and (stopped := control.stop_reason()):
+                outcome = {"ok": False, "error": stopped}
+                break
             if args.vendor == "cursor" and account.get("plan") in limited_plans:
                 continue
             if args.vendor == "devin" and not devin_trusted(account, cwd):
@@ -1517,18 +1621,19 @@ def run_on_accounts(
             export_file = Path(scratch) / f"{account['id']}.export.json"
             command = build_command(args.vendor, model, args.mode, prompt_file, export_file)
             for retry in range(2):
+                if control and (stopped := control.stop_reason()):
+                    outcome = {"ok": False, "error": stopped}
+                    break
                 started = time.monotonic()
                 try:
-                    completed = subprocess.run(
+                    completed = run_stoppable(
                         command,
+                        control,
                         cwd=cwd,
                         env=account_env(account),
                         input=prompt_file.read_text(encoding="utf-8") if args.vendor == "cursor" else None,
                         stdin=None if args.vendor == "cursor" else subprocess.DEVNULL,
-                        capture_output=True,
-                        text=True,
                         timeout=args.timeout,
-                        check=False,
                     )
                     outcome = parse_outcome(args.vendor, completed, export_file)
                 except subprocess.TimeoutExpired:
@@ -1536,6 +1641,12 @@ def run_on_accounts(
                 except (OSError, RuntimeError) as error:
                     outcome = {"ok": False, "error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}
                 wall = round(time.monotonic() - started, 1)
+                if control and (stopped := control.stop_reason()):
+                    # A signal or a lost lease stopped the CLI: not the account's fault, and nothing else runs.
+                    outcome, kind = {"ok": False, "error": stopped}, "stopped"
+                    attempts.append({"account": account["id"], "outcome": "cancelled" if control.signals
+                                     else "reservation_lost", "wall_s": wall})
+                    break
                 kind = None if outcome["ok"] else classify(outcome.get("error") or "")
                 change = changes.setdefault(account["id"], {"fields": {}, "runs": []})
                 fields = change["fields"]
@@ -1718,6 +1829,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     run.add_argument("--model", required=True, help="model id or family alias (grok-latest, swe-latest)")
     run.add_argument("--account", help="pin one account; no failover")
     run.add_argument("--class", dest="task_class", help="task class for the ledger (mechanical, explore, ...)")
+    run.add_argument("--author-vendor", help="the vendor that wrote the work under review; --class verify needs it")
     run.add_argument("--cwd", help="working directory (default: current)")
     run.add_argument(
         "--mode",
@@ -1739,6 +1851,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--trust must be an absolute path without a newline")
         if args.vendor == "devin" and not args.trust:
             parser.error("--vendor devin requires at least one --trust")
+    if args.command == "run" and args.task_class == "verify" and not args.account and not args.author_vendor:
+        parser.error("--class verify reserves a cross-vendor reviewer: pass --author-vendor <vendor that wrote it>")
     return args
 
 

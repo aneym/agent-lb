@@ -17,3 +17,13 @@
 - **GIVEN** `seat run` without `--class`, or with `--account`
 - **WHEN** it runs
 - **THEN** it takes no lease and its dispatch row carries `reservation: null` and the reason
+
+#### Scenario: A lost lease stops the run
+- **GIVEN** a running `seat run --class` whose lease route reports gone (it expired or was ended elsewhere)
+- **WHEN** the next heartbeat runs
+- **THEN** the vendor CLI's process group is stopped and the run exits 1 with an error naming the lost reservation
+
+#### Scenario: A signal never cuts the release short
+- **GIVEN** SIGTERM or Ctrl-C arrives during the reserve, the run or the release
+- **WHEN** the run ends
+- **THEN** the lease is released (`cancelled` when the signal came before the release began) and the run exits 128 plus the signal

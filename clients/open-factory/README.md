@@ -41,6 +41,7 @@ This starts the interactive Opus orchestrator using the existing factory infrast
 Decisions and attempt outcomes append to `~/.claude/logs/dispatch.jsonl` (override with `ROUTE_LEDGER`).
 Attempt output lives in `~/.agent-lb/of/runs/<decision_id>/attempt-<n>.txt`; JSON reports its path.
 `of run --json` reports intended and actual seats, stand-ins and outcomes; exits are 0 for success,
-1 for a job failure and 2 when no seat succeeds due to availability.
+1 for a job failure, 2 when no seat succeeds due to availability, and 4 when every seat tried was a
+Cursor or Devin seat whose `seat run` reservation had to wait (try again later).
 To turn ladder routing off, set `ladder: baseline` in your routing configuration; the baseline chain
 still provides bounded stand-ins. `of route` keeps the optional Jev decider; `of run` uses host policy.
