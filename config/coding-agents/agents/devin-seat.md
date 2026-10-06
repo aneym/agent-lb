@@ -13,7 +13,7 @@ The "Box prompt" section below is for the CLI when the seat runs on a factory bo
 
 Run exactly one command, from the directory the brief assigns:
 
-`$HOME/.agent-lb/bin/seat run --vendor devin --model <alias> --class <class> --cwd <dir> --prompt-file <file>`
+`python3 $HOME/.agent-lb/bin/seat run --vendor devin --model <alias> --class <class> --cwd <dir> --prompt-file <file>`
 
 - `seat run` picks a healthy registered Devin account (`seat accounts`), fails over
   to the next one on a limit or auth error, and writes the dispatch and closeout

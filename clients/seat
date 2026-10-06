@@ -149,6 +149,19 @@ def parse_ts(value: Any) -> datetime | None:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
+def route_command(*args: str) -> list[str]:
+    """The route CLI argv. A Python route runs under this interpreter rather than by its own path: on Studio a
+    stuck syspolicyd held every script exec at launch for over an hour while interpreter runs started at once
+    (2026-10-06), and seat waited on route the whole time."""
+    route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
+    try:
+        with open(route, "rb") as handle:
+            python = b"python" in handle.readline(200)
+    except OSError:
+        python = False
+    return [sys.executable, route, *args] if python else [route, *args]
+
+
 def fail(message: str, code: int = EXIT_FAILED) -> Any:
     print(f"seat: {message}", file=sys.stderr)
     raise SystemExit(code)
@@ -798,9 +811,8 @@ def resolve_model(vendor: str, model: str, control: RunControl | None = None) ->
     outright resolves as an explicit request and is logged, and a blocked id is refused. Route may list the
     vendor's models to resolve an alias, so under a RunControl it runs stoppable, in its own process group; a stop
     returns the name unresolved, for the caller's stop check."""
-    route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     try:
-        completed = run_stoppable([route, "resolve", model], control, input=None, timeout=90)
+        completed = run_stoppable(route_command("resolve", model), control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
         if control is not None and control.stop_reason():
             return model  # the caller checks the stop first and ends with its envelope
@@ -1349,11 +1361,9 @@ def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str 
     EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or
     agent-lb cannot answer (fail closed). Route lists no vendor models before the hold is taken, and lists them under
     it; route runs stoppable, so a stop ends that listing and route releases what the job holds."""
-    route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
-    argv = [route, "reserve", task_class, "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--model", model,
-            "--reason", "seat run", "--json"]
-    if author_vendor:
-        argv[3:3] = ["--author-vendor", author_vendor]
+    argv = route_command("reserve", task_class, *(["--author-vendor", author_vendor] if author_vendor else []),
+                         "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--model", model,
+                         "--reason", "seat run", "--json")
     try:
         completed = run_stoppable(argv, control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -1506,7 +1516,6 @@ class CapacityLease:
     def __init__(self, reservation: dict[str, Any], control: RunControl) -> None:
         self.reservation_id = reservation["reservation_id"]
         self.interval = max(1, int(reservation.get("heartbeat_s") or 300))
-        self.route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
         self.control = control
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._beat, name="seat-reservation-heartbeat", daemon=True)
@@ -1514,7 +1523,7 @@ class CapacityLease:
     def _beat(self) -> None:
         while not self.stopped.wait(self.interval):
             try:
-                completed = subprocess.run([self.route, "heartbeat", self.reservation_id, "--json"],
+                completed = subprocess.run(route_command("heartbeat", self.reservation_id, "--json"),
                                            capture_output=True, text=True, timeout=30, check=False,
                                            start_new_session=True)
             except (OSError, subprocess.TimeoutExpired) as error:
@@ -1549,7 +1558,7 @@ class CapacityLease:
                     break
                 try:
                     completed = subprocess.run(
-                        [self.route, "release", self.reservation_id, "--outcome", outcome, "--json"],
+                        route_command("release", self.reservation_id, "--outcome", outcome, "--json"),
                         capture_output=True, text=True, timeout=left, check=False, start_new_session=True)
                 except (OSError, subprocess.TimeoutExpired) as error:
                     detail = f"failed: {error}"

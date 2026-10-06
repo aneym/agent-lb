@@ -226,6 +226,20 @@ def test_a_second_seat_run_waits_without_launching_and_release_frees_the_slot(en
     assert rc == 0 and after["ok"] and "after" in invocations(env), after
 
 
+def test_a_python_route_runs_under_the_interpreter_not_by_exec(env: dict[str, str], tmp_path: Path) -> None:
+    # Studio, 2026-10-06: a stuck syspolicyd held every script exec for over an hour while interpreter runs started
+    # at once. A route seat cannot exec (no x bit) must still reserve, run and release the slot.
+    route = tmp_path / "route-noexec"
+    route.write_text(f"#!/usr/bin/env python3\nimport runpy, sys\nsys.argv[0] = {str(ROUTE)!r}\n"
+                     f"runpy.run_path({str(ROUTE)!r}, run_name='__main__')\n")
+    route.chmod(0o644)
+    rc, ran = run_seat({**env, "ROUTE_BIN": str(route)}, "noexec", "--class", "mechanical")
+    assert rc == 0 and ran["ok"] and "noexec" in invocations(env), ran
+    dispatch = {row["session_id"]: row for row in ledger(env, "dispatch")}
+    assert dispatch[ran["run_id"]]["reservation"], dispatch[ran["run_id"]]
+    assert mine(reservations(env)["live"]) == []
+
+
 def test_failure_and_sigterm_release_and_agent_lb_down_launches_nothing(env: dict[str, str]) -> None:
     rc, failed = run_seat(env, "fail1", "--class", "mechanical")
     assert rc == 1 and failed["ok"] is False, failed

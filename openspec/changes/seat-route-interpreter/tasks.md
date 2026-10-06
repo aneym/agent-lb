@@ -1,0 +1,3 @@
+- [x] `route_command` in `clients/seat` runs a Python route under `sys.executable`; resolve, reserve, heartbeat and release use it.
+- [x] Seat agent definitions call `python3 <path>` for `seat run` and `seat-submit`.
+- [x] `tests/integration/test_seat_run_reservation.py::test_a_python_route_runs_under_the_interpreter_not_by_exec` fails on base (Errno 13) and passes.
