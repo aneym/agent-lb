@@ -37,7 +37,9 @@ sleep/poll loops. `--wait` prints the last 40 lines of the finished command's
 exit code. Read the completed log if the full stdout (including identifiers)
 exceeds that tail. Continue with the procedure below on success. On 69/124/125/127,
 report `infra_error` and the code, never a verdict; 69 is `infra_error: no box`,
-never still running; after eight 75s, report
+never still running. Exit 3 with a `REVIEW-CAP` line (from the launch or the
+wait) is reported to the driver as `review_cap` with the printed text, and
+the review is never relaunched under another name. After eight 75s, report
 still running as unverified, not a verdict. Only if seat-run is missing, use
 the same block with `seat-run --bg --name K --timeout 4320 --` removed, so
 the last line starts `${vs[@]+"${vs[@]}"} node ...`, as one foreground
