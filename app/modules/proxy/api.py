@@ -1002,7 +1002,8 @@ async def v1_messages_count_tokens(
 # optionally suffixed with a pinned reasoning effort; None defers to the request's
 # own output_config.effort (bridge default: high).
 CCGPT_EFFORTS = ("low", "medium", "high", "xhigh")
-CCGPT_LATEST_FAMILIES = ("sol", "luna")
+# astra: the astra-consult seat only (readmitted 2026-10-05, routing-table.json `readmitted`).
+CCGPT_LATEST_FAMILIES = ("sol", "luna", "astra")
 
 
 def resolve_ccgpt_model(name: str | None) -> tuple[str, str | None] | None:

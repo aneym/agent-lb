@@ -93,6 +93,24 @@ def test_fable_model_pinned_on_a_subagent_is_denied_and_logged(tmp_path: Path) -
     assert record and record["denied"] == "this dispatch pins the retired model 'claude-fable-5-1' on a subagent"
 
 
+@pytest.mark.parametrize(
+    ("subagent", "model", "denied"),
+    [
+        pytest.param("fable-orchestrator", "claude-fable-5-1", False, id="fable-on-its-readmitted-seat"),
+        pytest.param("astra-consult", "gpt-6-astra", False, id="astra-on-its-readmitted-seat"),
+        pytest.param("astra-consult", "claude-fable-5-1", True, id="fable-on-the-astra-seat"),
+        pytest.param("sol-consult", "gpt-6-astra", True, id="astra-on-another-seat"),
+    ],
+)
+def test_readmitted_seats_may_use_only_their_own_retired_family(
+    tmp_path: Path, subagent: str, model: str, denied: bool
+) -> None:
+    payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": subagent, "model": model, "prompt": "x"}})
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
+    assert (output.get("permissionDecision") == "deny") is denied
+    assert record and ("denied" in record) is denied
+
+
 def test_subagent_type_defined_on_fable_is_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agents = tmp_path / "agents"
     agents.mkdir()

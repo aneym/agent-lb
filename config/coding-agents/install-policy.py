@@ -131,6 +131,18 @@ MANAGED_AGENTS = (
         Path("agents/sol-consult.md"),
     ),
     (
+        Path(".claude/agents/astra-consult.md"),
+        Path(".agent-lb/managed/coding-agents/astra-consult"),
+        "agent-lb:astra-consult:v1\n",
+        Path("agents/astra-consult.md"),
+    ),
+    (
+        Path(".claude/agents/fable-orchestrator.md"),
+        Path(".agent-lb/managed/coding-agents/fable-orchestrator"),
+        "agent-lb:fable-orchestrator:v1\n",
+        Path("agents/fable-orchestrator.md"),
+    ),
+    (
         Path(".claude/agents/sonnet-implementer.md"),
         Path(".agent-lb/managed/coding-agents/sonnet-implementer"),
         "agent-lb:sonnet-implementer:v1\n",

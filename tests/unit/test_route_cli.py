@@ -796,6 +796,15 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
     assert terra.returncode == 2 and "no non-retired terra" in terra.stderr
     assert retired.returncode == 2 and "retired" in retired.stderr
 
+    # Readmitted aliases (2026-10-05) reach their retired family; the bare ids stay retired.
+    write_fixture(fixtures, "api_models_anthropic.json", {"models": ["claude-fable-5", "claude-fable-5-1", "claude-opus-5-5"]})
+    astra = run("resolve", "astra-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    fable = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    bare_fable = run("resolve", "claude-fable-5-1", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert (astra.returncode, astra.stdout.strip()) == (0, "gpt-6-astra")
+    assert (fable.returncode, fable.stdout.strip()) == (0, "claude-fable-5-1")
+    assert bare_fable.returncode == 2 and "retired" in bare_fable.stderr
+
 
 def _pace_gated_table(tmp_path: Path) -> Path:
     """The canonical table with a pace-gated Opus ahead of Codex Sol: the chain the pace and audit rules act on."""

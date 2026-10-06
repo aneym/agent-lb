@@ -7,7 +7,8 @@ lineup nothing runs on a retired model (Fable, the claude-planner alias, the
 gpt-5.6 generation and older; the routing table's `retired` list). A dispatch
 is denied when it pins one, names a subagent type whose definition pins one,
 or carries a brief that tells a forwarder to use one (`--model <id>`,
-`model: <id>`).
+`model: <id>`). The table's `readmitted` map exempts named seats from named
+patterns (2026-10-05: fable-orchestrator on Fable, astra-consult on Astra).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ FORWARDER_SEATS = {
     "gpt-implementer",
     "gpt-explorer",
     "sol-consult",
+    "astra-consult",
 }
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
@@ -70,7 +72,8 @@ def emit_deny(reason: str) -> None:
                     "permissionDecision": "deny",
                     "permissionDecisionReason": (
                         "seat-guard: " + reason + ". No seat or subagent runs on Fable or a retired model "
-                        "(owner lineup 2026-09-22). Name a family alias instead: `opus`/`sonnet` for Claude "
+                        "(owner lineup 2026-09-22), except fable-orchestrator on Fable and astra-consult on "
+                        "Astra (2026-10-05). Name a family alias instead: `opus`/`sonnet` for Claude "
                         "seats, `route resolve sol-latest` for Codex; "
                         "`route pick <class>` picks the seat. Canon: ~/.agents/policy/coding-agents/ROUTING.md."
                     ),
@@ -80,14 +83,19 @@ def emit_deny(reason: str) -> None:
     )
 
 
-def retired_patterns(table: Path) -> tuple:
+def retired_patterns(table: Path, subagent: str = "") -> tuple:
+    """The table's retired patterns, less any the `readmitted` map grants this subagent type."""
     try:
-        configured = json.loads(table.read_text()).get("retired")
+        loaded = json.loads(table.read_text())
     except Exception:
         return DEFAULT_RETIRED
-    if isinstance(configured, list) and configured and all(isinstance(item, str) for item in configured):
-        return tuple(configured)
-    return DEFAULT_RETIRED
+    configured = loaded.get("retired") if isinstance(loaded, dict) else None
+    if not (isinstance(configured, list) and configured and all(isinstance(item, str) for item in configured)):
+        return DEFAULT_RETIRED
+    readmitted = loaded.get("readmitted") if isinstance(loaded.get("readmitted"), dict) else {}
+    entry = readmitted.get(subagent) if subagent else None
+    exempt = entry.get("patterns") if isinstance(entry, dict) and isinstance(entry.get("patterns"), list) else []
+    return tuple(item for item in configured if item not in exempt)
 
 
 def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
@@ -251,7 +259,7 @@ def main() -> None:
     advisories: list[str] = []
     agents_dir = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
     pinned = definition_model(subagent, agents_dir)
-    retired = retired_patterns(table)
+    retired = retired_patterns(table, subagent)
     brief_pins = retired_pins(prompt, retired)
     deny_reason = None
     if forbidden_model(model, retired):

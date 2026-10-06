@@ -50,6 +50,8 @@ MANAGED = (
     ("gpt-implementer", ".claude/agents/gpt-implementer.md", "agents/gpt-implementer.md"),
     ("gpt-explorer", ".claude/agents/gpt-explorer.md", "agents/gpt-explorer.md"),
     ("sol-consult", ".claude/agents/sol-consult.md", "agents/sol-consult.md"),
+    ("astra-consult", ".claude/agents/astra-consult.md", "agents/astra-consult.md"),
+    ("fable-orchestrator", ".claude/agents/fable-orchestrator.md", "agents/fable-orchestrator.md"),
     ("sonnet-implementer", ".claude/agents/sonnet-implementer.md", "agents/sonnet-implementer.md"),
     ("effort-xhigh", ".claude/agents/effort-xhigh.md", "agents/effort-xhigh.md"),
     ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
@@ -71,6 +73,17 @@ def read(path: Path) -> str:
 
 def forbidden(model: str) -> bool:
     return any(marker in model.lower() for marker in FORBIDDEN)
+
+
+def readmitted(seat: str) -> tuple:
+    """Retired patterns, and its alias with any effort suffix, the table's `readmitted` map grants this seat (2026-10-05)."""
+    try:
+        entry = (json.loads(read(SOURCE / "routing-table.json") or "{}").get("readmitted") or {}).get(seat)
+    except (json.JSONDecodeError, AttributeError):
+        return ()
+    if not isinstance(entry, dict):
+        return ()
+    return (*(entry.get("patterns") or ()), *((entry["alias"] + "*",) if entry.get("alias") else ()))
 
 
 def frontmatter_model(text: str) -> str | None:
@@ -128,10 +141,11 @@ if not SOURCE_ONLY:
         installed = (HOME / ".claude" / "agents" / f"{retired_seat}.md").exists()
         check(not installed, f"the retired {retired_seat} seat is not installed")
 
-    # No subagent type runs on Fable or Astra, managed or not.
+    # No subagent type runs on Fable or Astra, managed or not, except a seat the table readmits.
     for path in sorted((HOME / ".claude" / "agents").glob("*.md")):
         model = frontmatter_model(read(path)) or ""
-        check(not forbidden(model), f"{path.name} does not pin a Fable model ({model or 'unset'})")
+        allowed = any(fnmatch.fnmatchcase(model.lower(), pattern) for pattern in readmitted(path.stem))
+        check(not forbidden(model) or allowed, f"{path.name} does not pin a Fable model ({model or 'unset'})")
 for name in ("planner", "plan-reviewer", "frontend-designer"):
     model = frontmatter_model(read(SOURCE / "agents" / f"{name}.md"))
     check(model == "opus", f"{name} runs on the newest Opus via `model: opus` (got {model})")
@@ -377,7 +391,7 @@ for name, value in seat_map.items():
             head = read(SOURCE / "agents" / f"{name}.md").split("\n---", 1)[0]
             fields = dict(line.split(":", 1) for line in head.splitlines() if ":" in line)
             model = fields.get("model", "").strip()
-            match = re.fullmatch(r"(sol|luna)-latest-(low|medium|high|xhigh)", model)
+            match = re.fullmatch(r"(sol|luna|astra)-latest-(low|medium|high|xhigh)", model)
             if match and (value.get("model") != match.group(1) + "-latest"
                           or value.get("effort") != match.group(2)):
                 problems.append(f"{name} model effort disagrees with definition")
@@ -569,10 +583,11 @@ if not SOURCE_ONLY:
             check(False, f"served GPT alias pricing check unavailable: {exc}")
 
 
-def stale_reason(model):
+def stale_reason(model, exempt=()):
     bare = model.strip("`'\"").lower().split("[", 1)[0]
     # Retirement first: a wildcard pin such as gpt-5.6* is as retired as the ids it covers.
-    if any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare) for pattern in retired):
+    if any(fnmatch.fnmatchcase(bare, pattern) or fnmatch.fnmatchcase(pattern, bare)
+           for pattern in retired if pattern not in exempt):
         return "retired"
     if ("*" in bare or "?" in bare) and bare.startswith(("gpt-", "claude-")):
         # A version glob can overlap a retired generation without matching its pattern
@@ -601,7 +616,7 @@ else:
 stale = []
 for path, text in pinned_sources:
     for match in MODEL_PIN.finditer(text):
-        reason = stale_reason(match.group(1).rstrip(".,;:)"))
+        reason = stale_reason(match.group(1).rstrip(".,;:)"), readmitted(path.stem))
         if reason:
             stale.append(f"{path.name}: {match.group(1)} ({reason})")
 table_models = [entry.get("model", "") for spec in classes.values() for entry in spec.get("chain", [])]
@@ -663,6 +678,12 @@ with tempfile.TemporaryDirectory() as scratch:
     check(decision({"subagent_type": "opus-seat", "model": "fable"}) == "deny", "seat guard denies model=fable")
     check(decision({"subagent_type": "legacy-fable"}) == "deny", "seat guard denies a Fable-defined subagent type")
     check(decision({"subagent_type": "gpt-implementer"}) is None, "seat guard admits a cheap seat")
+    check(decision({"subagent_type": "fable-orchestrator", "model": "fable"}) is None,
+          "seat guard admits Fable on the readmitted fable-orchestrator seat")
+    check(decision({"subagent_type": "astra-consult", "model": "gpt-6-astra"}) is None,
+          "seat guard admits Astra on the readmitted astra-consult seat")
+    check(decision({"subagent_type": "sol-consult", "model": "gpt-6-astra"}) == "deny",
+          "seat guard denies Astra on any other seat")
 
 if not SOURCE_ONLY:
     # The installed router returns a live, non-retired seat for every class.

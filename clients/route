@@ -1028,6 +1028,17 @@ def retired_patterns(table: dict[str, Any]) -> tuple[str, ...]:
     return DEFAULT_RETIRED
 
 
+def readmitted_patterns(table: dict[str, Any], alias: str) -> tuple[str, ...]:
+    """Retired patterns the table's `readmitted` map lets this alias resolve to (2026-10-05)."""
+    readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
+    found: list[str] = []
+    for entry in readmitted.values():
+        if not isinstance(entry, dict) or entry.get("alias") != alias:
+            continue
+        found.extend(item for item in entry.get("patterns") or () if isinstance(item, str))
+    return tuple(found)
+
+
 def is_retired(model: str, patterns: tuple[str, ...]) -> bool:
     bare = model.lower().split("[", 1)[0]
     return any(fnmatch.fnmatchcase(bare, pattern) for pattern in patterns)
@@ -1230,6 +1241,9 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[
     retired = retired_patterns(table)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     spec = aliases.get(name)
+    if isinstance(spec, dict):
+        exempt = readmitted_patterns(table, name)
+        retired = tuple(pattern for pattern in retired if pattern not in exempt)
     if not isinstance(spec, dict):
         if re.search(r"-latest(?:-(?:low|medium|high|xhigh))?$", name):
             return None, f"unknown alias {name}"

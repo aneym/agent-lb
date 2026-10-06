@@ -11,7 +11,8 @@ Best first; only Claude is precious. Alex, 2026-09-30: "use things up that are b
 - Mechanical: `cursor-seat` Composer, then Grok low, then `devin-seat` SWE medium, then Sol low. Standard speed, never Fast; inputs under 256k.
 - Read/explore: `gpt-explorer` Sol low; no decision rides on it.
 - Review: Sonnet high `verifier` for non-Claude authors; `codex-verifier` Sol xhigh for Claude-authored work. Money path, migrations and gate config use an Opus panel. Grok and Composer never review.
-- Plans, specs, verdicts, design, build-lane tabs, fold runners and fact helpers stay Opus until an eval says otherwise. Tabs Alex talks to stay Opus. Claude decides; other seats advise or type.
+- Plans, specs, verdicts, design, build-lane tabs, fold runners and fact helpers stay Opus until an eval says otherwise. Tabs Alex talks to stay Opus unless he picks Fable. Claude decides; other seats advise or type.
+- Fable and Astra are readmitted for two roles (2026-10-05). Alex, 2026-10-05 20:05 ET: "right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens." `fable-orchestrator` (`fable-latest`) runs the orchestrator and lead tabs Alex talks to and the factory decider. `astra-consult` (`astra-latest`, high, read-only) gives plan second opinions: at most one per plan, brief under 2k tokens. Neither is on an implementer or review ladder; every other seat still treats both as retired (`readmitted` in `routing-table.json`).
 - Orchestrators come first (Alex, 2026-09-29: "we cant have any of these go down, especially orchestrators like claude"). While Claude is down to its last account or a 5h window is under 40%, Claude runs lane tabs, orchestrators and Opus plans/specs/verdicts only. Explore goes to `gpt-explorer`, never `Explore`; mechanical to Cursor; non-Claude review to Sonnet `verifier`. Use `ANTHROPIC_MODEL=claude-sonnet-5-5` for `review_pr.py`; no new Claude-driven eval judging or helper workflows.
 - Cursor-Sonnet is unavailable until 2026-10-30; on-demand billing stays off. Re-test then with `seat run --vendor cursor --model claude-sonnet-5-5-high`. While this overflow rung is empty, the next Claude overflow rung is Opus (2026-10-05).
 - Every GPT seat runs `sol-latest`, resolved at runtime (Alex, 2026-09-29: "swap all gpt routing to sol latest, 6.1 please").
@@ -46,6 +47,8 @@ Anthropic limits become an item only when the final usable account is under 15% 
 | Job | Seat | Model / effort |
 |---|---|---|
 | Plan second opinion | sol-consult (read-only) | sol-latest high |
+| Plan second opinion, light | astra-consult (read-only; one per plan, brief under 2k tokens) | astra-latest high |
+| Orchestrator and lead tabs Alex talks to, factory decider | fable-orchestrator | fable-latest medium |
 | Code to a spec | interim ladder; gpt-implementer | sol-latest medium |
 | Judgment code, fallback | opus-seat | Opus |
 | Read-only exploration | gpt-explorer / Explore | sol-latest low / Sonnet medium |
@@ -61,7 +64,7 @@ Fixed effort per stage, no per-request router (2026-09-26).
 | Relay a contract to another CLI | low | cursor-seat, devin-seat, codex-* forwarders, computer-use |
 | Search and read | low–medium | gpt-explorer low, Explore medium |
 | Implement to a spec | medium | interim ladder; Sonnet fallback high |
-| Plan, second opinion | high | planner, plan-reviewer, sol-consult |
+| Plan, second opinion | high | planner, plan-reviewer, sol-consult, astra-consult |
 | Spec writing | medium | Opus (2026-10-01) |
 | Verify, verdicts | high | verifier; codex-verifier xhigh |
 | Security, money path, brownfield bugs, parsers, perf, concurrency | xhigh | security-reviewer; money-path verify stages |
@@ -81,8 +84,8 @@ Reports to Alex list every open product call from each lane's `STATE.md`, not me
 
 ## Models and learning (2026-09-29; updated 2026-10-05)
 
-Use family aliases, not versions: `opus-latest`, `sonnet-latest`, `haiku-latest`, `sol-latest`, `grok-latest`, `swe-latest`. `route resolve <alias>` and `route models` report current models. Retired models stay out.
-Don't use `implementer`, `general-purpose` as an implementer, `luna-implementer` or `sonnet-implementer` as default implementer. Don't use gpt-5.6 or older, Astra, Fable or Terra. Don't use Haiku for Claude Code background calls: `ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5-5` stays pinned (2026-09-30).
+Use family aliases, not versions: `opus-latest`, `sonnet-latest`, `haiku-latest`, `sol-latest`, `grok-latest`, `swe-latest`; `fable-latest` and `astra-latest` only for their readmitted seats. `route resolve <alias>` and `route models` report current models. Retired models stay out.
+Don't use `implementer`, `general-purpose` as an implementer, `luna-implementer` or `sonnet-implementer` as default implementer. Don't use gpt-5.6 or older or Terra, and Fable or Astra anywhere but their two readmitted seats (2026-10-05). Don't use Haiku for Claude Code background calls: `ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5-5` stays pinned (2026-09-30).
 Rules carry dates (2026-09-26). Revisit on a new model, moving accept rate, incident or Alex's steer. Older non-retired models are allowed only with eval evidence (Alex, 2026-09-29: "we can use older modlels when they're better purpose built for what we need"). Log which rung passed each task; history stays in the ledger, not this document.
 The factory doctor and live dashboard exist (2026-10-05). `routing-table.json` carries executable routing; `route pick <class> --author-vendor <vendor>` returns an admitted seat and its auditor. The seat guard denies retired models; `verify-routing` checks installs and `--source-only` checks source. `install-policy.py` installs rules and seats; never hand-edit generated local rules.
 A scope that closes adds conclusions to the conclusions list (see `WORKSPACE.md`), with date and the fact that would overturn each. The weekly lookback job rechecks them against that week's Alex calls (2026-10-05).

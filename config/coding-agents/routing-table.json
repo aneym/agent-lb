@@ -493,6 +493,8 @@
     "plan-reviewer": {"vendor": "anthropic", "box": null},
     "codex-sol": {"vendor": "openai", "box": null},
     "sol-consult": {"vendor": "openai", "box": null},
+    "astra-consult": {"vendor": "openai", "box": null, "model": "astra-latest", "effort": "high"},
+    "fable-orchestrator": {"vendor": "anthropic", "box": null, "model": "fable-latest", "effort": "medium"},
     "gpt-explorer": {"vendor": "openai", "box": null},
     "Explore": {"vendor": "anthropic", "box": null},
     "gpt-implementer": {"vendor": "openai", "box": {"adapter": "codex"}},
@@ -731,6 +733,18 @@
       "family": "swe",
       "variant": "high",
       "note": "newest SWE on Devin (devin models list), high; free on the Devin subscription. The devin seat refuses every per-token Devin model."
+    },
+    "fable-latest": {
+      "vendor": "anthropic",
+      "family": "fable",
+      "pinned": "claude-fable-5-1",
+      "harness": "fable",
+      "note": "The newest claude-fable-N[-N] on the upstream Anthropic list; pinned, then Claude Code's fable alias, when no list is reachable. Readmitted for the fable-orchestrator seat only (2026-10-05, see `readmitted`)."
+    },
+    "astra-latest": {
+      "vendor": "openai",
+      "family": "astra",
+      "note": "newest gpt-*-astra the LB serves. Readmitted for the astra-consult seat only (2026-10-05, see `readmitted`)."
     }
   },
   "retired": [
@@ -750,6 +764,11 @@
     "gpt-5-*",
     "gpt-5"
   ],
+  "readmitted": {
+    "fable-orchestrator": {"alias": "fable-latest", "patterns": ["claude-fable-*", "fable"]},
+    "astra-consult": {"alias": "astra-latest", "patterns": ["gpt-*-astra", "gpt-*-astra-*", "astra"]}
+  },
+  "readmitted_note": "2026-10-05, Alex: \"right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens.\" Each seat named here, and the alias it names, may use the listed retired patterns; every other seat, alias and dispatch still treats them as retired. Fable and Astra are not on any ladder.",
   "off_default": [],
   "older_allowed": {},
   "older_allowed_note": "2026-10-01: retired ids always fail; an older id passes only when it carries an eval reference."

@@ -452,6 +452,8 @@ async def test_messages_route_serves_worker_alias_via_bridge(
         ("/v1/messages", "sol-latest", "gpt-7-sol", None),
         ("/v1/messages", "sol-latest-low", "gpt-7-sol", "low"),
         ("/v1/messages", "luna-latest-xhigh", "gpt-6-luna", "xhigh"),
+        # astra-consult's seat model (readmitted 2026-10-05).
+        ("/v1/messages", "astra-latest-high", "gpt-6-astra", "high"),
         ("/v1/messages", "gpt-7-sol-high", "gpt-7-sol", "high"),
         ("/v1/ccgpt/messages", "gpt-6.1-sol-low", CCGPT_WORKER_MODEL, "low"),
     ],
@@ -465,7 +467,7 @@ async def test_gpt_model_names_resolve_from_the_served_model_list(
     expected_effort: str | None,
 ) -> None:
     # gpt-7-sol stands in for a release the code has never heard of.
-    served = dict.fromkeys(["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "codex-auto-review"])
+    served = dict.fromkeys(["gpt-5.6-sol", "gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna", "gpt-6-astra", "codex-auto-review"])
     monkeypatch.setattr(
         proxy_api, "get_model_registry", lambda: SimpleNamespace(get_models_with_fallback=lambda: served)
     )
