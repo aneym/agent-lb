@@ -352,3 +352,50 @@ def test_credit_reset_superset_monotonicity_and_jitter():
     assert subset["accounts"][0]["quota_points"] == 100
     assert full["accounts"][0]["quota_points"] >= subset["accounts"][0]["quota_points"]
     assert sum(item["points"] for item in subset["unattributed"]) == 100
+
+
+@pytest.mark.parametrize("span,hours", [("24h", 24), ("2d", 48)])
+def test_since_relative_span_matches_window(span, hours):
+    from app.audit_tokens import window
+
+    until = "2026-10-06T00:00:00Z"
+    relative = window(SimpleNamespace(since=span, until=until, window="7d"))
+    assert relative == window(SimpleNamespace(since=None, until=until, window=span))
+    assert relative == (datetime(2026, 10, 6, tzinfo=UTC) - timedelta(hours=hours), datetime(2026, 10, 6, tzinfo=UTC))
+
+
+def test_since_iso_time_is_preserved():
+    from app.audit_tokens import window
+
+    assert window(SimpleNamespace(since="2026-10-05T00:00:00Z", until="2026-10-06T00:00:00Z", window="7d")) == (
+        datetime(2026, 10, 5, tzinfo=UTC), datetime(2026, 10, 6, tzinfo=UTC)
+    )
+
+
+def test_invalid_since_is_usage_error_on_stderr(capsys):
+    from app.audit_tokens import run
+
+    with pytest.raises(SystemExit) as error:
+        run(SimpleNamespace(since="yesterday", until=None, window="7d"))
+    assert error.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--since takes an ISO time or <n>h/<n>d" in captured.err
+
+
+def test_database_failure_keeps_generic_error(monkeypatch, capsys):
+    from app import audit_tokens
+
+    monkeypatch.setattr(audit_tokens, "pane_maps", lambda: ({}, []))
+
+    def unavailable(*args):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(audit_tokens, "load_receipts", unavailable)
+    with pytest.raises(SystemExit) as error:
+        audit_tokens.run(
+            SimpleNamespace(since=None, until=None, window="24h", by="pane", top=10, snapshot_panes_only=False)
+        )
+    assert error.value.code == "Token audit failed (RuntimeError); check local inputs and database availability."
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from bisect import bisect_left
 from collections import Counter, defaultdict
@@ -51,6 +52,10 @@ def add_parser(subparsers):
     tokens.add_argument("--snapshot-panes-only", action="store_true")
 
 
+class AuditUsageError(ValueError):
+    """Invalid audit arguments, safe to display without database details."""
+
+
 def window(args):
     def parse(value):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -60,7 +65,18 @@ def window(args):
     match = re.fullmatch(r"([1-9]\d*)([hd])", args.window)
     if not match:
         raise ValueError("--window must be a positive number followed by h or d")
-    since = parse(args.since) if args.since else until - timedelta(hours=int(match[1]) * (24 if match[2] == "d" else 1))
+    if args.since:
+        relative = re.fullmatch(r"([1-9]\d*)([hd])", args.since)
+        try:
+            since = (
+                until - timedelta(hours=int(relative[1]) * (24 if relative[2] == "d" else 1))
+                if relative
+                else parse(args.since)
+            )
+        except (ValueError, OverflowError):
+            raise AuditUsageError("--since takes an ISO time or <n>h/<n>d") from None
+    else:
+        since = until - timedelta(hours=int(match[1]) * (24 if match[2] == "d" else 1))
     if since >= until:
         raise ValueError("--since must precede --until")
     return since, until
@@ -1400,6 +1416,9 @@ def run(args):
             print(f"Wrote token audit: {args.out}")
         else:
             print(output, end="")
+    except AuditUsageError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
     except Exception as exc:
         # DB errors may include connection credentials: never echo those exceptions.
         message = f"Token audit failed ({type(exc).__name__}); check local inputs and database availability."
