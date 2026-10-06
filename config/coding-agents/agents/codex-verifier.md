@@ -28,10 +28,11 @@ $HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- ${vs[@]+"${vs[@]}"} no
 ```
 
 When the brief names a piece id, put `SEAT_RUN_PIECE=<that id>` before
-`$HOME/.local/bin/seat-run` on the last line, and `SEAT_RUN_DIFF=<diff id>` too
-when the brief names the diff under review. A brief without a piece leaves both
-unset: seat-run then takes the piece from the worktree's branch, and a review
-from main, master or a detached checkout is pieceless and never capped.
+`$HOME/.local/bin/seat-run` on the last line. When it names the diff under
+review, put `SEAT_RUN_DIFF=<diff id>` there too, with or without a piece, so
+another lens on an already-counted diff stays the same round. Without a piece,
+seat-run takes it from the worktree's branch, and a review from main, master or
+a detached checkout is pieceless and never capped.
 
 Never write the contract to a fixed or reused path (the scratchpad is shared
 by parallel agents), and never pass it inline.
