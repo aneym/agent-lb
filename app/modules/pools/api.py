@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
 from app.core.errors import dashboard_error
 from app.dependencies import AccountsContext, get_accounts_context
+from app.modules.pools import reservations
 from app.modules.pools.cli_seats import SeatAccountsResponse, read_seat_accounts
 from app.modules.pools.plan import build_plan, load_plan_inputs
 from app.modules.pools.schemas import PoolsResponse
@@ -48,3 +49,25 @@ async def list_seat_accounts() -> SeatAccountsResponse:
 @router.get("/stand-ins")
 async def list_stand_ins() -> dict:
     return snapshot()
+
+
+@router.post("/reservations")
+def create_reservation(body: reservations.ReservationRequest) -> dict:
+    return reservations.reserve(body)
+
+
+@router.post("/reservations/{reservation_id}/heartbeat")
+def heartbeat_reservation(reservation_id: str, body: reservations.HeartbeatRequest):
+    status, content = reservations.heartbeat(reservation_id, body)
+    return JSONResponse(status_code=status, content=content)
+
+
+@router.post("/reservations/{reservation_id}/release")
+def release_reservation(reservation_id: str, body: reservations.ReleaseRequest):
+    status, content = reservations.release(reservation_id, body)
+    return JSONResponse(status_code=status, content=content)
+
+
+@router.get("/reservations")
+def list_reservations() -> dict:
+    return reservations.snapshot()

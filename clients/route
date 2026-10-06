@@ -20,7 +20,13 @@
 #   route workflow-args                          JSON for Workflow scripts: per class, the agent() options
 #                                                (agentType, model, effort) and brief line of the live pick
 #
+#   route reserve <class> --job ID              lease provider capacity; exit 75 means wait and retry
+#   route heartbeat <id> [--ttl S]              renew a live reservation
+#   route release <id> --outcome ok|failed|cancelled  end a reservation
+#   route reservations [--json]                 list live and recent reservations
+#
 # Env:
+#   ROUTE_HOST         reservation owner host (default socket hostname)
 #   AGENT_LB_URL       LB base URL (default http://127.0.0.1:2455)
 #   ROUTE_TABLE        routing table path (default ~/.agent-lb/managed/coding-agents/routing-table.json,
 #                      falling back to config/coding-agents/routing-table.json beside this script)
@@ -37,27 +43,30 @@
 #   ROUTE_DEVIN_MODELS_CMD  Devin model list command (default "devin models list"), cached a day
 #   ROUTE_FIXTURE_DIR  TEST ONLY — serve HTTP reads from files in this directory instead of the
 #                      network. A request to /api/pools reads api_pools.json; a missing file is a
-#                      404. Never set this outside tests.
+#                      404. Reservation writes and reads always use the real network.
+#                      Never set this outside tests.
 #
 # Exit codes:
 #   0  success
 #   1  degraded (doctor: a probe failed) or operational failure
 #   2  nothing routable / usage error
 #   3  setup error / unknown latest alias
+#   75 reservation: provider capacity full; wait and retry
 
 from __future__ import annotations
 
 import argparse
 import contextlib
 import fnmatch
-import io
 import hashlib
+import io
 import json
 import math
 import os
 import re
 import secrets
 import shlex
+import socket
 import statistics
 import subprocess
 import sys
@@ -486,8 +495,9 @@ def _fixture_result(path: str) -> HttpResult:
     return HttpResult(ok=True, status=200, body=body, error=None)
 
 
-def _request(method: str, path: str, *, payload: dict[str, Any] | None, timeout: float) -> HttpResult:
-    if _fixture_file(path) is not None:
+def _request(method: str, path: str, *, payload: dict[str, Any] | None, timeout: float,
+             fixture: bool = True) -> HttpResult:
+    if fixture and _fixture_file(path) is not None:
         return _fixture_result(path)
     headers = {"accept": "application/json"}
     data = None
@@ -1961,6 +1971,106 @@ def record_caller_choice(args: argparse.Namespace, result: dict) -> None:
                    "effort_default": result.get("effort_default")})
 
 
+def reservation_capacity(row: dict, pools: dict, policy: dict) -> tuple[str, int]:
+    pool = row.get("pool")
+    facts = pools.get(pool, {})
+    provider = facts.get("provider")
+    key = provider if isinstance(provider, str) and provider.strip() else (
+        pool.split("-", 1)[0] if pool else f"seat:{row['seat']}")
+    eligible = next((facts[field] for field in ("eligibleAccounts", "usableAccounts")
+                     if isinstance(facts.get(field), int) and not isinstance(facts[field], bool)), 1)
+    multiplier = (policy.get("per_account") or {}).get(key, policy.get("default", 2))
+    return key, max(0, eligible) * multiplier
+
+
+def _reservation_request(method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    response = _request(method, "/api/pools/reservations" + path, payload=payload,
+                        timeout=READ_TIMEOUT_SECONDS, fixture=False)
+    if response.ok and isinstance(response.body, dict):
+        return EXIT_OK, response.body
+    if response.status in (404, 410) and path:
+        return EXIT_UNROUTABLE, {**(response.body if isinstance(response.body, dict) else {}), "status": "gone"}
+    return EXIT_DEGRADED, {"status": "error", "error": "reservations_unavailable",
+                           "message": response.error or "invalid reservation response"}
+
+
+def command_reserve(args: argparse.Namespace) -> int:
+    table = load_table()
+    args.effort = None
+    if args.prefer and not args.reason:
+        setup_error("missing_reason", "--prefer needs --reason <why>; it goes to the routing ledger", args.json)
+    if args.task_class not in (table.get("classes") or {}):
+        fail(f"unknown class {args.task_class!r}")
+    if ladder_entries(table, args.task_class) is None:
+        setup_error("missing_ladder", f"class {args.task_class!r} has no ladder", args.json)
+    if args.task_class == "verify" and not args.author_vendor:
+        setup_error("unknown_author", "verify requires --author-vendor <maker>", args.json)
+    state = read_state()
+    age = state_age_seconds(state)
+    stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
+    document, _error = fetch_pools(timeout=3.0)
+    now = datetime.now(timezone.utc)
+    history = load_pool_history(now)
+    if document is not None:
+        record_pool_history(document, now)
+    elif isinstance(state.get("pools"), dict):
+        document = state["pools"]
+    pools = pools_by_id(document)
+    walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
+                       ServedModels(), history, now, args.author_vendor, args.skip, args.prefer)
+    if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in walk["rungs"]):
+        setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder",
+                    args.json)
+    chosen = walk["chosen"]
+    if chosen is None:
+        reason = walk["refused"] or (next(row.get("reason") for row in walk["rungs"]
+                  if args.prefer in (row["rung"], row["seat"])) if args.prefer else
+                  f"nothing routable for class {args.task_class!r}")
+        code, result = EXIT_UNROUTABLE, {"status": "refused", "reason": reason}
+    else:
+        policy = (table.get("policy") or {}).get("concurrency") or {}
+        rows = [chosen] if args.prefer else walk["routable"]
+        candidates = []
+        for row in rows:
+            key, capacity = reservation_capacity(row, pools, policy)
+            candidates.append({**{field: row.get(field) for field in ("rung", "seat", "model", "pool")},
+                               "capacity_key": key, "capacity": capacity})
+        code, result = _reservation_request("POST", "", {"job": args.job, "class": args.task_class,
+            "host": os.environ.get("ROUTE_HOST") or socket.gethostname(),
+            "ttl_s": args.ttl if args.ttl is not None else policy.get("ttl_s", 1200),
+            "pinned": bool(args.prefer), "candidates": candidates})
+        if code == EXIT_OK and result.get("status") == "wait":
+            code = 75
+        elif code == EXIT_OK:
+            row = next((row for row in walk["rungs"] if row["rung"] == result.get("rung")), chosen)
+            result.update(effort=row.get("effort"), audit=row.get("audit"), reason=row.get("reason"),
+                          heartbeat_s=policy.get("heartbeat_s", 300))
+    record_caller_choice(args, result)
+    append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
+                   **{key: result.get(key) for key in ("status", "rung", "seat", "reservation_id", "reason")}})
+    print(json.dumps(result))
+    return code
+
+
+def command_heartbeat(args: argparse.Namespace) -> int:
+    code, result = _reservation_request("POST", f"/{args.reservation_id}/heartbeat",
+                                        {"ttl_s": args.ttl} if args.ttl is not None else {})
+    print(json.dumps(result))
+    return code
+
+
+def command_release(args: argparse.Namespace) -> int:
+    code, result = _reservation_request("POST", f"/{args.reservation_id}/release", {"outcome": args.outcome})
+    print(json.dumps(result))
+    return code
+
+
+def command_reservations(args: argparse.Namespace) -> int:
+    code, result = _reservation_request("GET", "")
+    print(json.dumps(result))
+    return code
+
+
 def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     table = load_table() if table is None else table
     for key in ("prefer", "effort", "reason"):
@@ -3103,6 +3213,33 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pick.add_argument("--reason", default=None, help="why the caller overrides the default; logged to dispatch.jsonl")
     pick.add_argument("--json", action="store_true")
     pick.set_defaults(handler=command_pick)
+
+    reservation = sub.add_parser("reserve", help="lease live provider capacity (a reservation)")
+    reservation.add_argument("task_class", metavar="class")
+    reservation.add_argument("--job", required=True)
+    reservation.add_argument("--author-vendor", default=None)
+    reservation.add_argument("--skip", action="append", default=[])
+    reservation.add_argument("--prefer", default=None)
+    reservation.add_argument("--reason", default=None)
+    reservation.add_argument("--ttl", type=int, default=None)
+    reservation.add_argument("--json", action="store_true")
+    reservation.set_defaults(handler=command_reserve)
+
+    heartbeat = sub.add_parser("heartbeat", help="renew a live reservation")
+    heartbeat.add_argument("reservation_id")
+    heartbeat.add_argument("--ttl", type=int, default=None)
+    heartbeat.add_argument("--json", action="store_true")
+    heartbeat.set_defaults(handler=command_heartbeat)
+
+    release = sub.add_parser("release", help="end a reservation")
+    release.add_argument("reservation_id")
+    release.add_argument("--outcome", required=True, choices=("ok", "failed", "cancelled"))
+    release.add_argument("--json", action="store_true")
+    release.set_defaults(handler=command_release)
+
+    reservations = sub.add_parser("reservations", help="list live and recent reservations")
+    reservations.add_argument("--json", action="store_true")
+    reservations.set_defaults(handler=command_reservations)
 
     menu = sub.add_parser("menu", help="every seat runnable now, per class, with pool facts")
     menu.add_argument("--class", dest="task_class", default=None, help="one class only")
