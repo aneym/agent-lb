@@ -1,0 +1,78 @@
+diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
+index fead00c..117e209 100644
+--- a/plugins/codex/scripts/lib/codex.mjs
++++ b/plugins/codex/scripts/lib/codex.mjs
+@@ -42,7 +42,7 @@ import path from "node:path";
+ import { readJsonFile } from "./fs.mjs";
+ import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV, CodexAppServerClient } from "./app-server.mjs";
+ import { loadBrokerSession } from "./broker-lifecycle.mjs";
+-import { binaryAvailable } from "./process.mjs";
++import { binaryAvailable, runCommand } from "./process.mjs";
+ 
+ const SERVICE_NAME = "claude_code_codex_plugin";
+ const TASK_THREAD_PREFIX = "Codex Companion Task";
+@@ -59,6 +59,44 @@ function cleanCodexStderr(stderr) {
+     .join("\n");
+ }
+ 
++// In a linked worktree, .git is a file pointing at <main>/.git/worktrees/<name>, and fetch,
++// commit and ref updates write there and in the common dir, both outside the workspace.
++function worktreeWritableRoots(cwd, sandbox) {
++  if (sandbox !== "workspace-write" || !cwd) {
++    return [];
++  }
++  const result = runCommand("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], {
++    cwd,
++    shell: false
++  });
++  if (result.error || result.status !== 0) {
++    return [];
++  }
++  const [gitDir, commonDir] = result.stdout.split(/\r?\n/).filter(Boolean).map((dir) => path.resolve(dir));
++  if (!gitDir || !commonDir || gitDir === commonDir) {
++    return [];
++  }
++  return [gitDir, commonDir];
++}
++
++// A config override replaces the writable_roots array instead of extending it, so the roots the
++// user already configured are read back from the app-server and kept ahead of the git dirs.
++async function sandboxConfig(client, cwd, sandbox) {
++  const gitRoots = worktreeWritableRoots(cwd, sandbox);
++  if (gitRoots.length === 0) {
++    return {};
++  }
++  let configured;
++  try {
++    const response = await client.request("config/read", { includeLayers: false, cwd });
++    configured = response?.config?.sandbox_workspace_write?.writable_roots ?? [];
++  } catch {
++    return {};
++  }
++  const writableRoots = [...new Set([...configured, ...gitRoots])];
++  return { config: { sandbox_workspace_write: { writable_roots: writableRoots } } };
++}
++
+ /** @returns {ThreadStartParams} */
+ function buildThreadParams(cwd, options = {}) {
+   return {
+@@ -730,7 +768,8 @@ async function requestExternalAgentSessionImport(client, params) {
+ }
+ 
+ async function startThread(client, cwd, options = {}) {
+-  const response = await client.request("thread/start", buildThreadParams(cwd, options));
++  const params = buildThreadParams(cwd, options);
++  const response = await client.request("thread/start", { ...params, ...(await sandboxConfig(client, cwd, params.sandbox)) });
+   const threadId = response.thread.id;
+   if (options.threadName) {
+     try {
+@@ -748,7 +787,8 @@ async function startThread(client, cwd, options = {}) {
+ }
+ 
+ async function resumeThread(client, threadId, cwd, options = {}) {
+-  return client.request("thread/resume", buildResumeParams(threadId, cwd, options));
++  const params = buildResumeParams(threadId, cwd, options);
++  return client.request("thread/resume", { ...params, ...(await sandboxConfig(client, cwd, params.sandbox)) });
+ }
+ 
+ function buildResultStatus(turnState) {
