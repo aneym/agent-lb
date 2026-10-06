@@ -61,6 +61,7 @@ import contextlib
 import fnmatch
 import hashlib
 import io
+import itertools
 import json
 import math
 import os
@@ -2086,13 +2087,84 @@ def _stop_reserve(signum: int, _frame: Any) -> None:
     raise ReserveStopped(signum)
 
 
-def release_job_hold(job: str) -> None:
+def live_in_group(pgid: int) -> list[int] | None:
+    """Pids in the process group that are not zombies (a zombie runs nothing and holds no capacity), or None when
+    the process table cannot be read."""
+    proc = Path("/proc")
+    if (proc / "self" / "stat").exists():
+        pids = []
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat = (entry / "stat").read_text()
+            except OSError:
+                continue
+            fields = stat[stat.rfind(")") + 2:].split()
+            if len(fields) > 2 and fields[0] not in ("Z", "X") and fields[2] == str(pgid):
+                pids.append(int(entry.name))
+        return pids
+    try:
+        listing = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, timeout=10,
+                                 check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+    rows = [line.split() for line in listing.stdout.splitlines()]
+    return [int(row[0]) for row in rows if len(row) >= 3 and row[1] == str(pgid) and not row[2].startswith("Z")]
+
+
+def drain_own_group(deadline_s: float = 30.0) -> bool:
+    """Once stopped, end every other process left in route's group (a model listing's descendant that ignores
+    SIGTERM) before the hold goes back. Route leads its group when seat runs it; in a group route does not lead
+    (a shell's job), the only processes route started are the listings subprocess.run has already killed and reaped.
+    False when the group cannot be read or a process outlives SIGKILL past the deadline: the hold then stays to its
+    TTL rather than being released over a live process."""
+    me = os.getpid()
+    if os.getpgrp() != me:
+        return True
+    deadline = time.monotonic() + deadline_s
+    while True:
+        members = live_in_group(me)
+        if members is None:
+            return False
+        others = [pid for pid in members if pid != me]
+        if not others:
+            return True
+        if time.monotonic() > deadline:
+            return False
+        for pid in others:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        time.sleep(0.05)
+
+
+def release_job_hold(job: str, within: float = 8.0) -> str | None:
     """Release whatever this job holds. Looked up by job, since a stop can land after agent-lb took the hold and
-    before route read its id."""
-    code, listing = _reservation_request("GET", "")
-    for row in (listing.get("live") or []) if code == EXIT_OK else []:
-        if row.get("job") == job:
-            _reservation_request("POST", f"/{row['reservation_id']}/release", {"outcome": "cancelled"})
+    before route read its id. A failed lookup or release is retried for up to `within` seconds (inside seat's stop
+    grace), and the listing is read again to confirm. Returns None once the job holds nothing, else why a hold may
+    still be live."""
+    why = "not attempted"
+    deadline = time.monotonic() + within
+    for attempt in itertools.count():
+        if attempt:
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
+        code, listing = _reservation_request("GET", "")
+        if code != EXIT_OK:
+            why = f"listing holds failed: {listing.get('message') or listing.get('status')}"
+            continue
+        held = [row for row in listing.get("live") or [] if row.get("job") == job]
+        if not held:
+            return None
+        for row in held:
+            _code, body = _reservation_request("POST", f"/{row['reservation_id']}/release", {"outcome": "cancelled"})
+            why = f"releasing {row['reservation_id']} failed: {body.get('message') or body.get('status')}"
+    return why
 
 
 def command_reserve(args: argparse.Namespace) -> int:
@@ -2111,11 +2183,15 @@ def command_reserve(args: argparse.Namespace) -> int:
     try:
         code, result = reserve_walk(args, table)
     except ReserveStopped as stop:
-        release_job_hold(args.job)
         reason = f"cancelled by signal {signal.Signals(stop.signum).name}"
+        status = "cancelled"
+        if not drain_own_group():
+            status, reason = "error", f"{reason}; a process of the run is still alive, so the hold stays to its TTL"
+        elif (left := release_job_hold(args.job)) is not None:
+            status, reason = "error", f"{reason}; the hold may still be live: {left}"
         append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
-                       "status": "cancelled", "reason": reason})
-        print(json.dumps({"status": "cancelled", "reason": reason}))
+                       "status": status, "reason": reason})
+        print(json.dumps({"status": status, "reason": reason}))
         return 128 + stop.signum
     finally:
         for each, handler in previous.items():
@@ -2206,6 +2282,7 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
         if not row.get("model_pending") and not (isinstance(audit, dict) and audit.get("model_pending")):
             return code, result
         resolved, released = settle_pending(table, row, args.model)
+        lost = False
         if resolved is not None:
             # Renew the hold the listing ran under and store the model that will run: a lease that expired while
             # models were listed is gone, and the reservation names what runs, not the alias.
@@ -2215,8 +2292,13 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
                 result.update(resolved)
                 result["expires_at"] = body.get("expires_at", result.get("expires_at"))
                 return code, result
-            released = f"{row['rung']} hold was lost while its models were listed"
-        else:
+            lost = beat == EXIT_UNROUTABLE
+            # A heartbeat that timed out or failed says nothing about the hold, which may still be live: it is
+            # released like any hold route gives up.
+            released = (f"{row['rung']} hold was lost while its models were listed" if lost else
+                        f"{row['rung']} hold could not be renewed after its models were listed: "
+                        f"{body.get('message') or body.get('status')}")
+        if not lost:
             # agent-lb hands a job its live hold back, so a hold that stays live would come back as the next rung's:
             # one retry, then stop rather than report another rung's model.
             for _attempt in range(2):

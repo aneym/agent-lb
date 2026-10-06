@@ -1434,14 +1434,45 @@ def run_stoppable(command: list[str], control: RunControl | None, *, input: str 
 
 
 def group_alive(pgid: int) -> bool:
-    """Whether any process is left in the group, portably (no /proc on macOS)."""
+    """Whether any process that is not a zombie is left in the group, portably (no /proc on macOS). A zombie runs
+    nothing and holds no capacity, and one whose reaper never reaps it (a subreaper that does not wait) would keep
+    the drain, and the lease, going after all work has stopped. When the process table cannot be read, any member
+    counts."""
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    return True
+    members = live_in_group(pgid)
+    return members is None or bool(members)
+
+
+def live_in_group(pgid: int) -> list[int] | None:
+    """Pids in the process group that are not zombies, or None when the process table cannot be read."""
+    proc = Path("/proc")
+    if (proc / "self" / "stat").exists():
+        pids = []
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat = (entry / "stat").read_text()
+            except OSError:
+                continue
+            fields = stat[stat.rfind(")") + 2:].split()
+            if len(fields) > 2 and fields[0] not in ("Z", "X") and fields[2] == str(pgid):
+                pids.append(int(entry.name))
+        return pids
+    try:
+        listing = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, timeout=10,
+                                 check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+    rows = [line.split() for line in listing.stdout.splitlines()]
+    return [int(row[0]) for row in rows if len(row) >= 3 and row[1] == str(pgid) and not row[2].startswith("Z")]
 
 
 class GroupStop:
