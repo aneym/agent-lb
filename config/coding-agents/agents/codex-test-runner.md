@@ -46,7 +46,7 @@ main checkout.
    verify-slot prefix as a shell array, empty when
    `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so
    parallel panels queue instead of pinning the host. Give the Bash call
-   `timeout: 600000`. Copy the `vs=` line and `"${vs[@]}"` exactly as written;
+   `timeout: 600000`. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written;
    never quote the prefix as one word (a single argv entry that does not
    exist, rc 127).
 
@@ -59,7 +59,7 @@ cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && 
 <contract text built below>
 CONTRACT_EOF
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-test-runner --)
-"${vs[@]}" node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
    Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the `node` line.

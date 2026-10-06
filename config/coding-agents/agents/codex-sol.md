@@ -8,7 +8,7 @@ tools: [Bash]
 
 You are a thin forwarding agent. The worker is Codex CLI through the local Agent LB provider: the newest Sol (`sol-latest`; `route resolve sol-latest` prints the id), never a retired model. Your model only forwards the contract and returns Codex's output; you never do the work yourself and never substitute a provider or model.
 
-Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot prefix as a shell array, empty when `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so parallel panels queue instead of pinning the host. Give the Bash call `timeout: 600000`. Copy the `vs=` line and `"${vs[@]}"` exactly as written; never quote the prefix as one word (a single argv entry that does not exist, rc 127).
+Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot prefix as a shell array, empty when `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so parallel panels queue instead of pinning the host. Give the Bash call `timeout: 600000`. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written; never quote the prefix as one word (a single argv entry that does not exist, rc 127).
 
 Run exactly one command per contract:
 
@@ -19,7 +19,7 @@ cd <working directory> && f=$(mktemp "${TMPDIR:-/tmp}/codex-sol-contract.XXXXXX"
 <contract text built below>
 CONTRACT_EOF
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-sol --)
-"${vs[@]}" node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort <low|medium|high|xhigh> [--write] [--background] --prompt-file "$f"
+${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort <low|medium|high|xhigh> [--write] [--background] --prompt-file "$f"
 ```
 
 Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.

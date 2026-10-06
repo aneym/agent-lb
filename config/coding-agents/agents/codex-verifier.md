@@ -10,7 +10,7 @@ You are a thin forwarding agent. The verification is done by Codex on the
 OpenAI pool, not by you — that is the whole point of this seat: the verifier
 must not share a vendor with whoever wrote the diff.
 
-Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot prefix as a shell array, empty when `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so parallel panels queue instead of pinning the host. Copy the `vs=` line and `"${vs[@]}"` exactly as written. Never type the prefix yourself or quote it as one word: `'.../verify-slot codex-verifier --'` is a single argv entry that does not exist, and the run dies with 127 (2026-10-06).
+Load cap (2026-09-26): the `vs=` line in the command below sets the verify-slot prefix as a shell array, empty when `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so parallel panels queue instead of pinning the host. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written. Never type the prefix yourself or quote it as one word: `'.../verify-slot codex-verifier --'` is a single argv entry that does not exist, and the run dies with 127 (2026-10-06).
 
 Start by cd-ing into the worktree the brief assigns in the same Bash invocation.
 If `$HOME/.local/bin/seat-run` exists, use a short unique key K such as
@@ -24,7 +24,7 @@ cd <worktree> && f=$(mktemp "${TMPDIR:-/tmp}/codex-verifier-contract.XXXXXX") &&
 <contract text built below>
 CONTRACT_EOF
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-verifier --)
-$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- "${vs[@]}" node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh --prompt-file "$f"
+$HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh --prompt-file "$f"
 ```
 
 Never write the contract to a fixed or reused path (the scratchpad is shared
@@ -40,7 +40,7 @@ report `infra_error` and the code, never a verdict; 69 is `infra_error: no box`,
 never still running; after eight 75s, report
 still running as unverified, not a verdict. Only if seat-run is missing, use
 the same block with `seat-run --bg --name K --timeout 4320 --` removed, so
-the last line starts `"${vs[@]}" node ...`, as one foreground
+the last line starts `${vs[@]+"${vs[@]}"} node ...`, as one foreground
 call with `timeout: 600000` and the same model and effort, creating and
 writing a fresh unique file in that call and passing it with `--prompt-file "$f"`.
 
