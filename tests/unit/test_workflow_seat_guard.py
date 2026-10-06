@@ -25,7 +25,8 @@ def invoke(script=None, *, script_path=None, table=None, raw=None, env=None, arg
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=raw if raw is not None else json.dumps(payload), text=True, capture_output=True,
-        env={**os.environ, 'ROUTE_TABLE': str(table or POLICY / 'routing-table.json'), **(env or {})},
+        env={**os.environ, 'ROUTE_TABLE': str(table or POLICY / 'routing-table.json'),
+             'ROUTE_LEDGER': os.devnull, 'SEAT_GUARD_AGENTS_DIR': str(POLICY / 'agents'), **(env or {})},
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)['hookSpecificOutput']
@@ -96,6 +97,9 @@ ROUTED = "agent(p, {...R.seats.implement.opts, label: 'x'})"
     ({'route': {'seats': {'implement': {'opts': {'agentType': 'opus-seat', 'model': 'claude-opus-5-5'}}}}}, False),
     ({'rows': [{'model': 'claude-sonnet-5', 'requests': 3}]}, False),
     ('not an object', False),
+    # Generated args are a default, not a request: Astra's bridge alias runs only on its readmitted seat.
+    ({'route': {'seats': {'plan': {'opts': {'agentType': 'sol-consult', 'model': 'astra-latest-high'}}}}}, True),
+    ({'route': {'seats': {'plan': {'opts': {'agentType': 'astra-consult', 'model': 'astra-latest-high'}}}}}, False),
 ])
 def test_seat_options_in_workflow_args_are_checked(args, denied):
     """Options a script reads from args are invisible to the static scan; `route workflow-args` output lands here."""
@@ -177,3 +181,24 @@ def test_settings_install_uninstall_is_idempotent_and_preserves_user_hook():
     assert removed['hooks'] == original['hooks']
     assert module.reconcile_settings(removed, True) == removed
     assert module.reconcile_settings({}, False)['hooks']['PreToolUse'][-1]['matcher'] == 'Workflow'
+
+
+def test_a_seat_defined_off_the_ladder_needs_a_request_and_the_request_is_logged(tmp_path):
+    agents = tmp_path / 'agents'
+    agents.mkdir()
+    (agents / 'legacy-fable.md').write_text('---\nname: legacy-fable\nmodel: claude-fable-5-1\n---\nbody\n')
+    ledger = tmp_path / 'dispatch.jsonl'
+    env = {'SEAT_GUARD_AGENTS_DIR': str(agents), 'ROUTE_LEDGER': str(ledger)}
+    silent = invoke("agent(p, {agentType: 'legacy-fable', label: 'x'})", env=env)
+    assert silent['permissionDecision'] == 'deny'
+    assert "defined on 'claude-fable-5-1', and nothing asked for it" in silent['permissionDecisionReason']
+    assert not ledger.exists()
+    asked = invoke("agent(p, {agentType: 'legacy-fable', model: 'claude-fable-5-1'});"
+                   "agent(q, {agentType: 'opus-seat', model: 'astra-latest-high'})", env=env)
+    assert 'permissionDecision' not in asked
+    [record] = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert (record['event'], record['explicit_models']) == ('workflow_dispatch', [
+        {'model': 'astra-latest-high', 'source': 'workflow'}, {'model': 'claude-fable-5-1', 'source': 'workflow'}])
+    # Readmitted seats run their own family without asking.
+    assert 'permissionDecision' not in invoke("agent(p, {agentType: 'fable-orchestrator'})")
+    assert 'permissionDecision' not in invoke("agent(p, {agentType: 'astra-consult'})")

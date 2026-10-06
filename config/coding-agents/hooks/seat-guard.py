@@ -4,8 +4,9 @@
 Capacity is advisory: pool state is surfaced as status so the caller can
 choose deliberately. Model rule (Alex, 2026-10-05: "we shouldnt just block model
 usage, we shoudl allow them if we request or we want t escalate things"):
-- a model on the table's `blocked` list (no longer served upstream) is always
-  denied, wherever it appears;
+- an exact pin (the dispatch's `model`, or the seat definition) on the table's
+  `blocked` list (no longer served upstream) is denied; a regex hit in the
+  brief's prose never denies, it is logged and surfaced as advice;
 - a model on the `retired` list is off the default ladder. A dispatch that
   names one itself (`model`) or whose brief tells the seat to use one
   (`--model <id>`, `model: <id>`) is an explicit request: it runs and the
@@ -285,22 +286,27 @@ def main() -> None:
     brief_pins = retired_pins(prompt, retired)
     blocked_pins = retired_pins(prompt, blocked)
     deny_reason = None
+    # Only an exact pin (the dispatch's model, the seat definition) can deny. A regex hit in
+    # the brief's prose is advisory and logged: it denied a verifier at 19:51Z on a mention
+    # (rules-vs-agent audit, 2026-10-06).
     if forbidden_model(model, blocked):
         deny_reason = f"this dispatch pins {model!r}, which is no longer served"
-    elif blocked_pins:
-        deny_reason = "the brief tells the seat to use " + ", ".join(repr(pin) for pin in blocked_pins) + ", no longer served"
     elif not model and pinned and forbidden_model(pinned, blocked):
         deny_reason = f"subagent type {subagent!r} is defined on {pinned!r}, which is no longer served"
     elif not model and pinned and forbidden_model(pinned, retired) and pinned not in [p.lower() for p in brief_pins]:
         deny_reason = (f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
                        "for it; name the model on the dispatch or in the brief to request it")
     explicit = [{"model": model, "source": "dispatch"}] if model and forbidden_model(model, retired) else []
-    explicit += [{"model": pin, "source": "brief"} for pin in brief_pins]
+    explicit += [{"model": pin, "source": "brief", **({"blocked": True} if pin in blocked_pins else {})}
+                 for pin in dict.fromkeys(brief_pins + blocked_pins)]
     if explicit and not deny_reason:
         record["explicit_models"] = explicit
         record["why"] = str(tool_input.get("description") or tool_input.get("name") or "") or None
         advisories.append("explicit request for a model off the default ladder ("
                           + ", ".join(item["model"] for item in explicit) + "), recorded in the routing ledger")
+        if blocked_pins:
+            advisories.append("the brief names " + ", ".join(repr(pin) for pin in blocked_pins)
+                              + ", no longer served upstream; prose is not enforced, the seat may fail on it")
     if deny_reason:
         record["denied"] = deny_reason
         append(record, ledger)

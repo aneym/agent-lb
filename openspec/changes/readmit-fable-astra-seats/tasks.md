@@ -4,4 +4,6 @@
 - [x] Resolve readmitted aliases past their own retired patterns only; exempt only the named seat in the seat guard.
 - [x] Resolve `astra-latest` in the ccgpt bridge.
 - [x] Cover alias resolution, seat guard allow and deny, and the bridge alias at their CLI and HTTP boundaries.
-- [ ] After reviewed landing, install-policy on Studio, restart the LB, and confirm ax42's coding-agents-sync applies the commit.
+- [x] Fall back from `fable-latest` to `opus-latest`; deny Workflow seats defined off the ladder; log Workflow requests.
+- [x] `route pick --prefer/--effort/--reason`, logged; explore needs no auditor; brief prose never denies.
+- [ ] After landing, install-policy on Studio, restart the LB, and confirm ax42's coding-agents-sync applies the commit.

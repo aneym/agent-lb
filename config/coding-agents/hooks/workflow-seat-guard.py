@@ -2,12 +2,15 @@
 """Check statically visible Workflow agent options; ambiguous scripts fail open."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import fnmatch
 import json
 import os
 from pathlib import Path
 import re
 import sys
+
+AGENT_MODEL = re.compile(r'^model:\s*(\S+)\s*$', re.MULTILINE)
 
 
 class ParseError(ValueError):
@@ -163,11 +166,52 @@ def split(items: list[tuple[str, str]], pairs: dict[int, int], start: int, end: 
     return parts
 
 
-def is_retired(value: str, table: dict) -> bool:
+def retired_for(table: dict, seat: str | None = None) -> list[str]:
+    """Retired patterns plus each readmitted alias (astra-latest-high reaches Astra through the
+    bridge); the readmitted seat itself is exempt from its own family (routing-table.json)."""
+    readmitted = table.get('readmitted') if isinstance(table.get('readmitted'), dict) else {}
+    names = [entry['alias'] + '*' for entry in readmitted.values()
+             if isinstance(entry, dict) and isinstance(entry.get('alias'), str) and entry['alias']]
+    entry = readmitted.get(seat) if seat else None
+    exempt = list(entry.get('patterns') or []) if isinstance(entry, dict) else []
+    if isinstance(entry, dict) and isinstance(entry.get('alias'), str) and entry['alias']:
+        exempt.append(entry['alias'] + '*')
+    return [pattern for pattern in [*table['retired'], *names] if pattern not in exempt]
+
+
+def is_retired(value: str, table: dict, seat: str | None = None) -> bool:
     if value in ('sonnet', 'haiku'):
         pinned = table.get('aliases', {}).get(value + '-latest', {}).get('pinned', value)
         value = os.environ.get('ANTHROPIC_DEFAULT_' + value.upper() + '_MODEL') or pinned
-    return any(fnmatch.fnmatchcase(value, pattern) for pattern in table['retired'])
+    return any(fnmatch.fnmatchcase(value, pattern) for pattern in retired_for(table, seat))
+
+
+def definition_model(seat: str) -> str | None:
+    """The model a seat definition pins, which agent() runs when it passes no `model`."""
+    if not seat or '/' in seat or seat.startswith('.'):
+        return None
+    agents = Path(os.environ.get('SEAT_GUARD_AGENTS_DIR') or Path.home() / '.claude' / 'agents')
+    try:
+        head = (agents / f'{seat}.md').read_text().split('\n---', 1)[0]
+    except OSError:
+        return None
+    match = AGENT_MODEL.search(head)
+    return match.group(1).strip().strip('\'"').lower() if match else None
+
+
+def record_explicit(models: list[str]) -> None:
+    """Log explicit agent() requests for off-ladder models to the routing ledger; never fail."""
+    ledger = Path(os.environ.get('ROUTE_LEDGER') or os.environ.get('DISPATCH_LEDGER')
+                  or Path.home() / '.claude' / 'logs' / 'dispatch.jsonl')
+    try:
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        with ledger.open('a') as handle:
+            handle.write(json.dumps({
+                'ts': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+                'event': 'workflow_dispatch', 'explicit_models': [{'model': m, 'source': 'workflow'} for m in models],
+                'cwd': os.getcwd()}) + '\n')
+    except OSError:
+        pass
 
 
 def is_blocked(value: str, table: dict) -> bool:
@@ -181,8 +225,11 @@ def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
     Only a `model` beside a seat key counts, so data that merely mentions an old model passes."""
     if isinstance(value, dict):
         seat_like = any(key in value for key in ('agentType', 'seat', 'implementer'))
+        seat = next((value[key] for key in ('agentType', 'seat', 'implementer')
+                     if isinstance(value.get(key), str)), None)
         for key, item in value.items():
-            if seat_like and key == 'model' and isinstance(item, str) and is_retired(item, table):
+            if seat_like and key == 'model' and isinstance(item, str) and (
+                    is_retired(item, table, seat) or is_blocked(item, table)):
                 return (f'Workflow args pin retired model {item!r} at {path}.model: '
                         'regenerate them with `route workflow-args` (models.md, Workflows)')
             found = retired_in_args(item, table, f'{path}.{key}')
@@ -198,8 +245,9 @@ def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
 
 def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str | None, bool]:
     """(first deny reason, warning). A literal retired model id is an explicit request
-    (Alex, 2026-10-05): it is allowed and appended to `explicit`; a blocked id, or a
-    harness alias that silently resolves to a retired model, is denied."""
+    (Alex, 2026-10-05): it is allowed and appended to `explicit`; a blocked id, a
+    harness alias that silently resolves to a retired model, or a seat whose definition
+    pins one with no `model` given, is denied."""
     explicit = [] if explicit is None else explicit
     interpolations: list[str] = []
     items = tokens(script, interpolations)
@@ -247,14 +295,22 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
             continue
         if 'agentType' not in keys:
             reasons.append('agent() without agentType: pass agentType (models.md, Workflows)')
+        seat_token = keys.get('agentType')
+        seat = seat_token[1] if seat_token and seat_token[0] == 'string' else None
         model = keys.get('model')
         if model and model[0] == 'string':
             if is_blocked(model[1], table):
                 reasons.append(f'agent() pins {model[1]!r}, which is no longer served: use a current model alias (models.md, Workflows)')
-            elif model[1] in ('sonnet', 'haiku') and is_retired(model[1], table):
+            elif model[1] in ('sonnet', 'haiku') and is_retired(model[1], table, seat):
                 reasons.append(f'agent() pins {model[1]!r}, which resolves to a retired model: use a current model alias (models.md, Workflows)')
-            elif is_retired(model[1], table):
+            elif is_retired(model[1], table, seat):
                 explicit.append(model[1])
+        elif 'model' not in keys and seat:
+            # No model: the seat definition's pin runs, a silent default when it is off the ladder.
+            pinned = definition_model(seat)
+            if pinned and (is_blocked(pinned, table) or is_retired(pinned, table, seat)):
+                reasons.append(f'agent() runs {seat!r}, defined on {pinned!r}, and nothing asked for it: '
+                               'name the model in agent() options to request it (models.md, Workflows)')
     for body in interpolations:
         reason, body_warning = inspect(body, table, explicit)
         if reason:
@@ -283,6 +339,7 @@ def main() -> None:
         if reason:
             output.update(permissionDecision='deny', permissionDecisionReason=reason)
         elif explicit:
+            record_explicit(sorted(set(explicit)))
             output['additionalContext'] = ('workflow-seat-guard: agent() explicitly requests a model off the default ladder ('
                                            + ', '.join(sorted(set(explicit))) + '); allowed on request (models.md).')
         elif warning:

@@ -808,6 +808,11 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
     fable = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert (astra.returncode, astra.stdout.strip()) == (0, "gpt-6-astra")
     assert (fable.returncode, fable.stdout.strip()) == (0, "claude-fable-5-1")
+    # When the upstream list answers without Fable, fable-latest falls back to opus-latest.
+    write_fixture(fixtures, "api_models_anthropic.json", {"models": ["claude-opus-5-5", "claude-sonnet-5-5"]})
+    (tmp_path / "route-anthropic-models.json").unlink()
+    gone = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    assert (gone.returncode, gone.stdout.strip()) == (0, "claude-opus-5-5")
     # A routed seat other than the one `readmitted` names never reaches the alias.
     table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
     table["classes"]["explore"]["chain"].insert(0, {"seat": "gpt-explorer", "vendor": "openai", "model": "astra-latest"})

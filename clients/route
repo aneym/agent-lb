@@ -1140,6 +1140,9 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
                 candidates.append(((int(match.group(1)), int(match.group(2) or 0)), model))
         if candidates:
             return max(candidates)[1], f"newest listed {family} ({source})"
+        if listed and spec.get("fallback"):
+            # The upstream list answered without this family: it is gone, so the fallback alias serves.
+            return None, f"no listed {family} ({source})"
     pinned = spec.get("pinned")
     if isinstance(pinned, str) and pinned and not is_retired(pinned, retired):
         return pinned, f"pinned fallback {pinned} (no Anthropic model list)"
@@ -1249,6 +1252,18 @@ def _version_key(version: str) -> tuple[int, ...]:
 
 def resolve_alias(table: dict[str, Any], name: str, served: list[str],
                   seat: str | None = None) -> tuple[str | None, str]:
+    """resolve_one, then the alias's `fallback` alias when it yields nothing (fable-latest -> opus-latest)."""
+    model, reason = resolve_one(table, name, served, seat)
+    aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
+    fallback = (aliases.get(name) or {}).get("fallback") if isinstance(aliases.get(name), dict) else None
+    if model or not isinstance(fallback, str) or fallback == name or reason.startswith(f"{name} is readmitted for"):
+        return model, reason
+    model, why = resolve_one(table, fallback, served, seat)
+    return model, f"{reason}; fallback {fallback}: {why}"
+
+
+def resolve_one(table: dict[str, Any], name: str, served: list[str],
+                seat: str | None = None) -> tuple[str | None, str]:
     """(model, reason). A name that is not an alias is returned unchanged unless retired.
 
     A routed seat (`seat` given) reaches a readmitted alias only when it is the seat the
@@ -1263,9 +1278,14 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str],
             return None, f"{name} is readmitted for {', '.join(owners)} only"
         exempt = readmitted_patterns(table, name)
         retired = tuple(pattern for pattern in retired if pattern not in exempt)
+    # Blocked models are gone upstream: no alias resolves to one and no readmit exempts it.
+    blocked = blocked_patterns(table)
+    retired = (*retired, *(pattern for pattern in blocked if pattern not in retired))
     if not isinstance(spec, dict):
         if re.search(r"-latest(?:-(?:low|medium|high|xhigh))?$", name):
             return None, f"unknown alias {name}"
+        if is_retired(name, blocked):
+            return None, f"{name} is no longer served (blocked)"
         if is_retired(name, retired):
             return None, f"{name} is retired"
         if "*" in name or "?" in name:
@@ -1310,16 +1330,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def record_explicit_model(model: str, source: str) -> None:
-    """Log an explicitly requested off-ladder model to the routing ledger; never fail the caller."""
+def append_ledger(record: dict[str, Any]) -> None:
+    """Append one event to the routing ledger (dispatch.jsonl); never fail the caller."""
     try:
         path = ledger_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"ts": _now_iso(), "event": "explicit_model", "model": model,
-                                     "source": source, "cwd": os.getcwd()}, sort_keys=True) + "\n")
+            handle.write(json.dumps({"ts": _now_iso(), **record, "cwd": os.getcwd()}, sort_keys=True) + "\n")
     except OSError:
         pass
+
+
+def record_explicit_model(model: str, source: str) -> None:
+    """Log an explicitly requested off-ladder model to the routing ledger."""
+    append_ledger({"event": "explicit_model", "model": model, "source": source})
 
 
 def command_resolve(args: argparse.Namespace) -> int:
@@ -1331,12 +1355,9 @@ def command_resolve(args: argparse.Namespace) -> int:
         model, reason = resolve_alias(table, name, served)
         if not model and reason == f"{name} is retired":
             # A retired id named outright is an explicit request (Alex, 2026-10-05): it resolves and
-            # the ledger records it; only a blocked id, gone upstream, stays refused.
-            if is_retired(name, blocked_patterns(table)):
-                reason = f"{name} is no longer served (blocked)"
-            else:
-                model = name
-                record_explicit_model(name, "route resolve")
+            # the ledger records it; a blocked id, gone upstream, never reaches here.
+            model = name
+            record_explicit_model(name, "route resolve")
         if model:
             print(model)
             return EXIT_OK
@@ -1722,7 +1743,10 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
 
 def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: ServedModels,
                 history: list[dict], now: datetime, author: str | None = None,
-                skip_ids: list[str] | None = None) -> dict:
+                skip_ids: list[str] | None = None, prefer: str | None = None) -> dict:
+    """Walk the ladder; the first open rung is the default. A caller's `prefer` (rung id or
+    seat) waives the table's policy holds on that rung (gate, when, reserve, stand-in), never
+    a physical or floor one (unresolvable, pool exhausted, seat down, same maker, no reviewer)."""
     author = "cognition" if author == "devin" else author
     entries = apply_overrides(ladder_entries(table, class_name, author) or [],
                               table.get("overrides"), class_name)
@@ -1763,6 +1787,9 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                               if not row.get("stand_in_only"))
             if not unavailable:
                 reason = "stand-in only when the default is unavailable"
+        waived = None
+        if reason is not None and prefer in (entry["id"], entry["seat"]):
+            waived, reason = reason, None
         if reason is None and entry["id"] in (skip_ids or []):
             reason = "skipped by caller"
         if reason is None and entry.get("pool") and entry["pool"] not in pools and pool is None:
@@ -1779,7 +1806,8 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                 and not entry.get("same_vendor_fallback")):
             reason = f"same maker {author}"
         audit = None
-        if reason is None and class_name in ("implement", "mechanical", "explore"):
+        # Explore is read-only and no decision rides on it, so it needs no auditor (2026-10-06).
+        if reason is None and class_name in ("implement", "mechanical"):
             review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"])
             audit = review["chosen"]
             primary = pools.get("anthropic-general", {})
@@ -1806,6 +1834,8 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                "vendor": entry["maker"], "stand_in_only": bool(entry.get("stand_in_only")),
                "pool": pool, "same_vendor": class_name == "verify" and entry["maker"] == author,
                "audit": audit, "read_only": bool(entry.get("read_only"))}
+        if waived:
+            row["waived"] = waived
         if reason:
             row.update(status="skipped", reason=reason)
         else:
@@ -1828,7 +1858,14 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     chosen = next(iter(opened or soft), None)
     if chosen is not None and not opened:
         chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
-    return {"chosen": chosen, "rungs": rows, "routable": opened + soft, "fallbacks": [row for row in opened + soft
+    default = chosen
+    if prefer is not None:
+        chosen = next((row for row in opened + soft if prefer in (row["rung"], row["seat"])), None)
+        if chosen is not None:
+            chosen = {**chosen, "reason": f"preferred by caller over {default['rung'] if default else 'none'}"
+                      + (f"; {chosen['reason']}" if chosen["status"] == "soft" else "")
+                      + (f"; waived {chosen['waived']}" if chosen.get("waived") else "")}
+    return {"chosen": chosen, "default": default["rung"] if default else None, "rungs": rows, "routable": opened + soft, "fallbacks": [row for row in opened + soft
             if chosen is None or row["rung"] != chosen["rung"]], "skipped": skipped,
             "intended": intended, "pace": pace}
 
@@ -1848,12 +1885,18 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
         document = state["pools"]
     pools = pools_by_id(document)
     walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
-                       ServedModels(), history, now, args.author_vendor, args.skip)
+                       ServedModels(), history, now, args.author_vendor, args.skip, args.prefer)
     chosen = walk.pop("chosen")
-    walk.pop("rungs")
+    rungs = walk.pop("rungs")
     walk.pop("routable")
+    if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in rungs):
+        setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder",
+                    args.json)
     if chosen is None:
         message = f"nothing routable for class {args.task_class!r}"
+        if args.prefer:
+            why = next(row.get("reason") for row in rungs if args.prefer in (row["rung"], row["seat"]))
+            message = f"preferred {args.prefer!r} cannot run: {why}"
         print(f"route: {message}", file=sys.stderr)
         if args.json:
             print(json.dumps({"error": "unroutable", "message": message, **walk}))
@@ -1869,6 +1912,7 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     result["standing_in"] = [{key: record.get(key) for key in fields} for record in fetch_stand_ins()["active"]]
     if error:
         result["reason"] += f"; pool status unknown ({error})"
+    record_caller_choice(args, result)
     if args.json:
         print(json.dumps(result))
     else:
@@ -1890,8 +1934,31 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     return EXIT_OK
 
 
+def record_caller_choice(args: argparse.Namespace, result: dict) -> None:
+    """Honor and log a caller's --prefer/--effort: the table is the default, a named choice
+    with a reason is allowed (Alex, 2026-10-05: allow models "if we request or we want t
+    escalate things")."""
+    prefer, effort = args.prefer, args.effort
+    if not prefer and not effort:
+        return
+    if effort:
+        result["effort_default"] = result.get("effort")
+        result["effort"] = effort
+        result["reason"] = f"{result.get('reason')}; effort {effort} by caller"
+    result["caller_choice"] = {"prefer": prefer, "effort": effort, "why": args.reason}
+    append_ledger({"event": "route_override", "class": args.task_class, "prefer": prefer, "effort": effort,
+                   "why": args.reason, "rung": result.get("rung"), "seat": result.get("seat"),
+                   "model": result.get("model"), "default": result.get("default"),
+                   "effort_default": result.get("effort_default")})
+
+
 def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     table = load_table() if table is None else table
+    for key in ("prefer", "effort", "reason"):
+        setattr(args, key, getattr(args, key, None))
+    if (args.prefer or args.effort) and not args.reason:
+        setup_error("missing_reason", "--prefer and --effort need --reason <why>; it goes to the routing ledger",
+                    args.json)
     classes = table.get("classes")
     if not isinstance(classes, dict) or args.task_class not in classes:
         known = ", ".join(sorted(classes)) if isinstance(classes, dict) else "none"
@@ -1958,6 +2025,15 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
 
     chosen = routable[0]
     reasons = ["first chain entry with the seat up and its pool not exhausted"]
+    if args.prefer:
+        preferred = next((entry for entry in routable if entry["seat"] == args.prefer), None)
+        if preferred is None:
+            why = next((entry["reason"] for entry in skipped_entries if entry["seat"] == args.prefer),
+                       "not a seat on this chain")
+            print(f"route: preferred {args.prefer!r} cannot run: {why}", file=sys.stderr)
+            return EXIT_UNROUTABLE
+        reasons = [f"preferred by caller over {chosen['seat']}"]
+        chosen = preferred
     if chosen.get("reserved"):
         reasons.insert(0, f"{chosen['reserved']}; no other seat open")
     if cross_vendor:
@@ -1984,9 +2060,13 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
         "pool": chosen["pool"],
         "reason": "; ".join(reasons),
         "fallbacks": [
-            {"seat": entry["seat"], "model": entry["model"], "pool": entry["pool"]} for entry in routable[1:]
+            {"seat": entry["seat"], "model": entry["model"], "pool": entry["pool"]}
+            for entry in routable if entry is not chosen
         ],
     }
+    if args.prefer:
+        result["default"] = routable[0]["seat"]
+    record_caller_choice(args, result)
     _print_pick(result, as_json=args.json)
     return EXIT_OK
 
@@ -2225,7 +2305,8 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
 
 
 def _pick_json(table: dict[str, Any], class_name: str, author_vendor: str | None) -> dict[str, Any]:
-    args = argparse.Namespace(task_class=class_name, author_vendor=author_vendor, skip=[], json=True)
+    args = argparse.Namespace(task_class=class_name, author_vendor=author_vendor, skip=[], json=True,
+                              prefer=None, effort=None, reason=None)
     buffer, errors = io.StringIO(), io.StringIO()
     code = EXIT_OK
     try:
@@ -2999,6 +3080,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     pick.add_argument("--author-vendor", "--author-maker", dest="author_vendor", default=None,
                       help="required for cross_vendor classes")
     pick.add_argument("--skip", action="append", default=[], help="skip a ladder rung id")
+    pick.add_argument("--prefer", default=None, help="run this rung id or seat instead of the default (needs --reason)")
+    pick.add_argument("--effort", default=None, choices=("low", "medium", "high", "xhigh", "max"),
+                      help="override the rung's effort (needs --reason)")
+    pick.add_argument("--reason", default=None, help="why the caller overrides the default; logged to dispatch.jsonl")
     pick.add_argument("--json", action="store_true")
     pick.set_defaults(handler=command_pick)
 

@@ -134,7 +134,7 @@ def test_a_definition_that_pins_an_off_ladder_model_with_nothing_asking_is_denie
     assert record and "defined on " in record["denied"] and pinned in record["denied"]
 
 
-def test_a_brief_that_names_a_retired_model_runs_and_a_blocked_one_is_denied(tmp_path: Path) -> None:
+def test_a_brief_that_names_an_off_ladder_model_runs_and_is_logged(tmp_path: Path) -> None:
     def brief(model: str) -> str:
         return json.dumps({"tool_name": "Agent", "tool_input": {
             "subagent_type": "cursor-seat", "description": "escalate after two failures",
@@ -146,8 +146,11 @@ def test_a_brief_that_names_a_retired_model_runs_and_a_blocked_one_is_denied(tmp
     assert record["why"] == "escalate after two failures"
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=brief("gpt-5.4-mini"),
                             ledger_path=tmp_path / "blocked.jsonl")
-    assert output["permissionDecision"] == "deny"
-    assert record and record["denied"] == "the brief tells the seat to use 'gpt-5.4-mini', no longer served"
+    # Prose is advisory even for a model gone upstream (a prose hit denied a verifier at 19:51Z, 2026-10-05).
+    assert "permissionDecision" not in output
+    assert "no longer served upstream" in output["additionalContext"]
+    assert record and "denied" not in record
+    assert record["explicit_models"] == [{"model": "gpt-5.4-mini", "source": "brief", "blocked": True}]
 
 
 def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) -> None:
