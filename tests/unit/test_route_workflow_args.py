@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.unit.test_route_ladder import CANONICAL_TABLE, route, setup, table_copy
+from tests.unit.test_route_ladder import CANONICAL_TABLE, reopen_cursor, route, setup, table_copy
 
 
 def workflow_args(env: dict[str, str], table: Path = CANONICAL_TABLE) -> dict:
@@ -18,7 +18,9 @@ def workflow_args(env: dict[str, str], table: Path = CANONICAL_TABLE) -> dict:
 
 
 def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> None:
-    args = workflow_args(setup(tmp_path))
+    # Each seat kind must head some class: Cursor's gates open, Codex on pace (the live table gates Cursor
+    # while it is out of usage, 87ccaf14 and 18f90918, and a low Codex pool moves explore off Sol).
+    args = workflow_args(setup(tmp_path, codex_low=False), table_copy(tmp_path, "cursor-open", reopen_cursor))
     seats = args["seats"]
     assert args["errors"] == {}
 
@@ -53,7 +55,7 @@ def test_bridge_model_with_effort_suffix_does_not_double_it(tmp_path: Path) -> N
         table["classes"]["explore"]["chain"][0]["model"] = "sol-latest-low"
 
     table = table_copy(tmp_path, "suffixed-model", suffix_explore_model)
-    explore = workflow_args(setup(tmp_path), table)["seats"]["explore"]
+    explore = workflow_args(setup(tmp_path, codex_low=False), table)["seats"]["explore"]
     assert explore["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
 
 
