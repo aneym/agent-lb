@@ -52,10 +52,13 @@ def test_bridge_model_with_effort_suffix_does_not_double_it(tmp_path: Path) -> N
     """The real CLI must pass a usable model when the picked alias already has effort."""
     def suffix_explore_model(table: dict) -> None:
         table["aliases"]["sol-latest-low"] = table["aliases"]["sol-latest"]
-        table["classes"]["explore"]["chain"][0]["model"] = "sol-latest-low"
+        # The canonical table runs the interim ladder, so its first explore rung is what route picks.
+        rung = table["ladders"]["interim"]["explore"][0]
+        rung.update(model="sol-latest-low", pool="openai-codex")
 
     table = table_copy(tmp_path, "suffixed-model", suffix_explore_model)
     explore = workflow_args(setup(tmp_path, codex_low=False), table)["seats"]["explore"]
+    assert explore["alias"] == "sol-latest-low"
     assert explore["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
 
 
