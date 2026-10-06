@@ -11,6 +11,7 @@
 # On timeout we exec anyway so the app's own error reaches the log and launchd
 # retries; we never hang forever.
 set -e
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/db-endpoint.sh"
 cd "$HOME/.agent-lb/runtime/agent-lb"
 
 wait_for_postgres() {
@@ -20,29 +21,16 @@ wait_for_postgres() {
     *) return 0 ;;
   esac
   local endpoint host port
-  if ! endpoint=$(python3 - 2>/dev/null <<'PYURL'
-import os
-import re
-from urllib.parse import urlsplit
-
-url = os.environ.get("AGENT_LB_DATABASE_URL", "")
-try:
-    scheme, rest = url.split("://", 1)
-    # Raw delimiters in SQLAlchemy userinfo must not truncate the authority.
-    endpoint = urlsplit(scheme + "://" + rest.rsplit("@", 1)[-1])
-    host = endpoint.hostname or "127.0.0.1"
-    port = endpoint.port or 5432
-    if not re.fullmatch(r"[A-Za-z0-9_.:%-]+", host):
-        raise ValueError("invalid host")
-    print(host, port)
-except (ValueError, TypeError):
-    raise SystemExit(1)
-PYURL
-  ); then
-    echo "db: unparseable url" >&2
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "db: no python3, skipping probe" >&2
+    return 0
+  fi
+  if ! endpoint=$(db_endpoint "$url"); then
+    echo "db: unparseable" >&2
     return 0
   fi
   read -r host port <<<"$endpoint"
+  port="${port:-5432}"
   local pgready=""
   for c in /opt/homebrew/bin/pg_isready /opt/homebrew/opt/postgresql@17/bin/pg_isready; do
     [[ -x "$c" ]] && { pgready="$c"; break; }
@@ -60,7 +48,7 @@ PYURL
     (( remaining < probe_timeout )) && probe_timeout=$remaining
     if [[ -n "$pgready" ]]; then
       if [[ -n "$timeout_bin" ]]; then
-        "$timeout_bin" "$remaining" "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 && rc=0 || rc=$?
+        "$timeout_bin" -k 2 "$remaining" "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 && rc=0 || rc=$?
       else
         # macOS without coreutils: terminate even a DNS-stalled probe.
         "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 &

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import os
+import plistlib
 import subprocess
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def _run_watchdog(
 
     call_log = tmp_path / "calls.log"
     plist = tmp_path / "com.aneyman.agent-lb.plist"
-    plist.touch()
+    plist.write_bytes(plistlib.dumps({}))
 
     service_logs = f"{tmp_path / 'service.err.log'} {tmp_path / 'service.out.log'}"
 

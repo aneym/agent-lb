@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/db-endpoint.sh"
 
 # agent-lb launchd watchdog. Canonical source for ~/.agent-lb/bin/watchdog.sh
 # (run by com.aneyman.agent-lb-watchdog every 30s).
@@ -182,8 +183,25 @@ process_age_seconds() {
 # Postgres is not accepting connections, log it and wait instead of restarting.
 db_ready() {
   local url="${AGENT_LB_DATABASE_URL:-}"
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "db: no python3, skipping probe"
+    return 1
+  fi
   if [[ -z "${AGENT_LB_DATABASE_URL+x}" ]]; then
-    if ! url=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:AGENT_LB_DATABASE_URL' "$PLIST_FILE" 2>/dev/null); then
+    # Read the whole plist: a missing key is a valid SQLite default, while
+    # unreadable or malformed configuration must block recovery.
+    if ! url=$(python3 - "$PLIST_FILE" 2>/dev/null <<'PYCONFIG'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    config = plistlib.load(source)
+url = config.get("EnvironmentVariables", {}).get("AGENT_LB_DATABASE_URL", "")
+if not isinstance(url, str):
+    raise SystemExit(1)
+print(url)
+PYCONFIG
+    ); then
       log "dependency readiness unknown, not restarting"
       return 1
     fi
@@ -194,29 +212,12 @@ db_ready() {
     *) log "dependency readiness unknown, not restarting"; return 1 ;;
   esac
   local endpoint host port
-  if ! endpoint=$(DB_PROBE_URL="$url" python3 - 2>/dev/null <<'PYURL'
-import os
-import re
-from urllib.parse import urlsplit
-
-url = os.environ["DB_PROBE_URL"]
-try:
-    scheme, rest = url.split("://", 1)
-    # Raw delimiters in SQLAlchemy userinfo must not truncate the authority.
-    endpoint = urlsplit(scheme + "://" + rest.rsplit("@", 1)[-1])
-    host = endpoint.hostname or "127.0.0.1"
-    port = endpoint.port or 5432
-    if not re.fullmatch(r"[A-Za-z0-9_.:%-]+", host):
-        raise ValueError("invalid host")
-    print(host, port)
-except (ValueError, TypeError):
-    raise SystemExit(1)
-PYURL
-  ); then
-    log "dependency readiness unknown, not restarting"
+  if ! endpoint=$(db_endpoint "$url"); then
+    log "db: unparseable"
     return 1
   fi
   read -r host port <<<"$endpoint"
+  port="${port:-5432}"
   local pgready
   for pgready in /opt/homebrew/bin/pg_isready /opt/homebrew/opt/postgresql@17/bin/pg_isready ""; do
     [[ -z "$pgready" || -x "$pgready" ]] && break
@@ -225,7 +226,7 @@ PYURL
     log "dependency readiness unknown, not restarting"
     return 1
   fi
-  "$pgready" -q -h "${host:-127.0.0.1}" -p "$port" -t 3 >/dev/null 2>&1
+  "$pgready" -q -h "$host" -p "$port" -t 3 >/dev/null 2>&1
 }
 
 if (( count >= THRESHOLD )) && ! db_ready; then
