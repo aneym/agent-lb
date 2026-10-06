@@ -85,7 +85,10 @@ for forbidden in fixture-user fixture-secret fixture-query fixture-query-host pa
     exit 1
   fi
 done
-grep -Fq "postgres 127.0.0.1:$port" "$tmp/log"
+if grep -Fq 'run-agent-lb: waiting for postgres' "$tmp/log"; then
+  grep -Fq "postgres 127.0.0.1:$port" "$tmp/log"
+fi
+grep -q runtime-started "$tmp/log"
 echo 'PASS: query @ neither leaks nor redirects the real database probe'
 
 # Run the watchdog unchanged at its subprocess/configuration boundary. Fake

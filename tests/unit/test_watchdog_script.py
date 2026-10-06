@@ -6,8 +6,33 @@ import plistlib
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "watchdog.sh"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://127.0.0.1 fixture-secret/db",
+        "postgresql://127.0.0.1:invalid/db",
+        "postgresql://127.0.0.1:65536/db",
+        "postgresql://fixture-secret!host/db",
+    ],
+)
+def test_invalid_database_endpoint_emits_only_failure(url: str) -> None:
+    """Exercise malformed configuration at the shell subprocess boundary."""
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; db_endpoint "$2"', "bash", str(ROOT / "scripts" / "db-endpoint.sh"), url],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stdout == "unparseable\n"
+    assert result.stderr == ""
+
 
 LAUNCHCTL_SHIM = """#!/usr/bin/env bash
 echo "$@" >> "$SHIM_CALL_LOG"
