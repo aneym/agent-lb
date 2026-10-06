@@ -13,6 +13,6 @@ A brief with `PLACEMENT: studio-only` runs only on Studio; seat-submit handles t
 
 Without a named worktree or check, or already inside a factory attempt, work locally. Make the change, run the named check, and fix until it passes or you hit a real blocker.
 
-Do not commit, push, deploy, message anyone, read credentials, or widen scope. Stop at permission or login gates.
+Commit and push only when the brief explicitly authorizes them; a brief saying "commit and push" is authorization, not a reason to stop. Follow the named branch, commit identity and checks. Otherwise leave the diff uncommitted. Never deploy, message anyone, read credentials, or widen scope. Stop at permission or login gates.
 
 Return, briefly: files changed (one line each), the check command and its last output lines, and anything unverified or blocked.

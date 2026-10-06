@@ -1,0 +1,7 @@
+if [[ ${CX_BG_FULL_HOME:-0} != 1 ]]; then
+  CH=~/.agent-rails/jobs/codex-homes/$N
+  if python3 ~/.agent-rails/workflows/codex-lab-home.py $CH >/dev/null; then
+    ln -sfn ~/.codex/sessions $CH/sessions; ln -sfn ~/.codex/AGENTS.md $CH/AGENTS.md
+    export CODEX_HOME=$CH CX_MCP_OFF=""
+  fi
+fi

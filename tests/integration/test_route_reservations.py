@@ -3,7 +3,8 @@ in agent-lb, not a count each caller makes alone (complaint 2026-10-05 21:51 ET:
 account, all nine silent for 55 minutes). Nine concurrent `route reserve` callers from two hosts get exactly what the
 fixture pools allow and the rest wait; a holder that never releases loses its lease at expiry; a heartbeat keeps it;
 a failed release frees at once; a pinned request waits or is refused, never moved to another seat; agent-lb down
-means nothing is reserved; `route pick` stays advisory and unchanged.
+means nothing is reserved; `route pick` remains advisory but observes reservation availability
+(user-directed board item 5, 10/06/2026).
 
 Runs a real agent-lb server (fresh data dir) and the real clients/route; pools come from the route fixture dir,
 reservations never do."""
@@ -108,11 +109,6 @@ def route(env: dict[str, str], *args: str, host: str = "host-a") -> tuple[int, d
     return result.returncode, body
 
 
-def without_clock(pick: dict) -> dict:
-    return {**pick, "pace": {pool: {k: v for k, v in facts.items() if k != "hours_left"}
-                             for pool, facts in (pick.get("pace") or {}).items()}}
-
-
 def live(env: dict[str, str]) -> list[dict]:
     rc, body = route(env, "reservations")
     assert rc == 0, body
@@ -191,10 +187,15 @@ def test_capacity_is_a_lease_every_host_shares(tmp_path: Path, server: str) -> N
     rc, gone = route(env, "heartbeat", beating["reservation_id"])
     assert rc == 2 and gone["status"] == "gone", gone
 
-    # `route pick` is advisory: reservations do not change what it prints. Pace `hours_left` is counted from the
-    # clock, so it is the one field allowed to move between the two calls.
+    # Board item 5 supersedes the original advisory-only pick oracle: picks observe
+    # holds but do not acquire one. Sol still has room; Devin's pinned hold is full.
+    before = len(live(env))
     _, advisory_after = route(env, "pick", "implement")
-    assert without_clock(advisory_after) == without_clock(advisory_before)
+    assert advisory_after["seat"] == advisory_before["seat"] == "gpt-implementer"
+    assert all(row["seat"] != "devin-seat" for row in advisory_after["fallbacks"])
+    assert any(row["rung"] == "swe2-high" and "lease capacity reserved" in row["reason"]
+               for row in advisory_after["skipped"])
+    assert len(live(env)) == before
 
 
 def test_a_pin_that_cannot_run_is_refused_and_agent_lb_down_reserves_nothing(tmp_path: Path, server: str) -> None:

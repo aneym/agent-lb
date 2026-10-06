@@ -373,7 +373,7 @@ def command_seat(args: argparse.Namespace) -> int:
         model_alias, effort = seats[name].get("model"), seats[name].get("effort")
         if not isinstance(model_alias, str):
             setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
-    served = ServedModels().get() if model_alias in table.get("aliases", {}) else []
+    served = ServedModels().get() if family_alias(table, model_alias) in table.get("aliases", {}) else []
     model, reason = rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served, name)
     if model is None:
         setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)
@@ -1360,9 +1360,21 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
+def family_alias(table: dict[str, Any], name: str) -> str:
+    """Keep explicit vendor variants; otherwise resolve an effort suffix via its base alias."""
+    aliases = table.get("aliases") or {}
+    if name in aliases:
+        return name
+    base, _, effort = name.rpartition("-")
+    if effort in ("low", "medium", "high", "xhigh") and base in aliases:
+        return base
+    return name
+
+
 def resolve_alias(table: dict[str, Any], name: str, served: list[str],
                   seat: str | None = None) -> tuple[str | None, str]:
     """resolve_one, then the alias's `fallback` alias when it yields nothing (fable-latest -> opus-latest)."""
+    name = family_alias(table, name)
     model, reason = resolve_one(table, name, served, seat)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     fallback = (aliases.get(name) or {}).get("fallback") if isinstance(aliases.get(name), dict) else None
@@ -1634,6 +1646,7 @@ def class_candidates(
     pools: dict[str, dict[str, Any]],
     seats: Any,
     served: ServedModels,
+    leases: dict | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """(routable, skipped, paced) for one class chain: the eligibility rule pick and menu share.
 
@@ -1659,7 +1672,7 @@ def class_candidates(
         alias = entry.get("model")
         if not isinstance(seat, str) or not isinstance(alias, str):
             continue
-        model, why = resolve_alias(table, alias, served.get() if alias in aliases else [], seat)
+        model, why = resolve_alias(table, alias, served.get() if family_alias(table, alias) in aliases else [], seat)
         if model is None:
             skip(seat, alias, why)
             continue
@@ -1675,6 +1688,10 @@ def class_candidates(
         status = pool_doc.get("status")
         if pool_exhausted(pool_doc):
             skip(seat, alias, f"pool {pool} exhausted")
+            continue
+        lease_reason = lease_unavailable(table, {"seat": seat, "pool": pool}, pools, leases)
+        if lease_reason:
+            skip(seat, alias, lease_reason)
             continue
         min_pace = entry.get("min_pace")
         if isinstance(min_pace, (int, float)) and not isinstance(min_pace, bool):
@@ -1704,17 +1721,19 @@ def class_candidates(
                 skip(seat, alias, f"no auditor declared for author vendor {vendor}")
                 continue
             audit_alias = audit_entry["model"]
-            audit_model, audit_why = resolve_alias(table, audit_alias, served.get() if audit_alias in aliases else [],
+            audit_model, audit_why = resolve_alias(table, audit_alias, served.get() if family_alias(table, audit_alias) in aliases else [],
                                                    str(audit_entry.get("seat") or ""))
             if audit_model is None:
                 # Work nobody can audit is not accepted work; route to a seat that can be.
                 skip(seat, alias, f"its auditor {audit_entry['model']} is unavailable: {audit_why}")
                 continue
             audit_pool = pool_for_model(table, audit_entry["model"])
+            audit_lease_reason = lease_unavailable(
+                table, {"seat": audit_entry["seat"], "pool": audit_pool}, pools, leases)
             audit_seat = str(audit_entry.get("seat") or "")
             audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
             audit_eligible = audit_pool_doc.get("eligibleAccounts")
-            audit_unavailable = None
+            audit_unavailable = f"its auditor: {audit_lease_reason}" if audit_lease_reason else None
             if pool_exhausted(audit_pool_doc):
                 audit_unavailable = f"its auditor's pool {audit_pool} is exhausted"
             elif isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
@@ -1738,6 +1757,8 @@ def class_candidates(
                         not alternate_doc
                         or pool_exhausted(alternate_doc)
                         or critical
+                        or lease_unavailable(table, {"seat": "cursor-seat", "pool": alternate["pool"]},
+                                             pools, leases)
                         or not seat_is_up(seats, "cursor-seat")
                         or alternate["model"] not in cursor_models()
                     ):
@@ -1848,11 +1869,11 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
     """(model, why). While `route reserve` defers discovery, a rung whose vendor list is not cached yet comes back
     as its alias with a `pending: ` why; the reserve resolves it once it holds capacity."""
     alias = entry["model"]
-    model, why = resolve_alias(table, alias, served.get() if alias in table.get("aliases", {}) else [],
+    model, why = resolve_alias(table, alias, served.get() if family_alias(table, alias) in table.get("aliases", {}) else [],
                                entry.get("seat") or "")
     if model is None and why.startswith("pending: "):
         return alias, why
-    if model and alias not in table.get("aliases", {}):
+    if model and family_alias(table, alias) not in table.get("aliases", {}):
         vendor = {"cursor-seat": "cursor", "devin-seat": "devin"}.get(entry["seat"])
         listed = cursor_models() if vendor == "cursor" else (devin_models() if vendor == "devin" else [])
         if not listed and vendor in _DEFERRED_DISCOVERY:
@@ -1876,7 +1897,8 @@ def same_model(wanted: str, *names: str | None) -> bool:
 
 def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: ServedModels,
                 history: list[dict], now: datetime, author: str | None = None,
-                skip_ids: list[str] | None = None, prefer: str | None = None, model: str | None = None) -> dict:
+                skip_ids: list[str] | None = None, prefer: str | None = None, model: str | None = None,
+                leases: dict | None = None) -> dict:
     """Walk the ladder; the first open rung is the default. A caller's `prefer` (rung id or
     seat) waives the table's policy holds on that rung (gate, when, reserve, stand-in), never
     a physical or floor one (unresolvable, pool exhausted, seat down, same maker, no reviewer).
@@ -1932,6 +1954,8 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             reason = f"unresolvable: pool {entry['pool']} unavailable"
         if reason is None and pool_exhausted(pools.get(pool, {})):
             reason = f"pool {pool} exhausted"
+        if reason is None:
+            reason = lease_unavailable(table, {"seat": entry["seat"], "pool": pool}, pools, leases)
         model, why = rung_model(table, entry, served) if reason is None else (None, "")
         pending = model is not None and why.startswith("pending: ")
         if reason is None and model is None:
@@ -1945,7 +1969,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
         audit = None
         # Explore is read-only and no decision rides on it, so it needs no auditor (2026-10-06).
         if reason is None and class_name in ("implement", "mechanical"):
-            review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"])
+            review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"], leases=leases)
             audit = review["chosen"]
             primary = pools.get("anthropic-general", {})
             eligible = primary.get("eligibleAccounts")
@@ -1958,7 +1982,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                     entry["maker"], entry["maker"])}
                 available, rejected, _ = class_candidates(
                     table, class_name, {"chain": [candidate], "audit": legacy},
-                    author_vendor=None, pools=pools, seats=seats, served=served)
+                    author_vendor=None, pools=pools, seats=seats, served=served, leases=leases)
                 audit = available[0]["auditor"] if available else None
                 if audit is not None:
                     audit.update(rung=None, maker="anthropic" if audit.get("via") else audit.get("vendor"))
@@ -2000,7 +2024,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     # The default is what the table alone would pick: a walk with no preference, since a
     # waived rung also changes later rungs' conditions (a stand-in opens only when all else is shut).
     default = chosen if prefer is None else ladder_walk(
-        table, class_name, pools, seats, served, history, now, author, skip_ids)["chosen"]
+        table, class_name, pools, seats, served, history, now, author, skip_ids, leases=leases)["chosen"]
     refused = None
     if prefer is not None:
         preferred = [row for row in opened + soft if prefer in (row["rung"], row["seat"])]
@@ -2039,8 +2063,10 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     elif isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)
+    leases = pick_leases()
     walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
-                       ServedModels(), history, now, args.author_vendor, args.skip, args.prefer)
+                       ServedModels(), history, now, args.author_vendor, args.skip, args.prefer, leases=leases)
+    walk["lease_availability"] = "known" if leases is not None else "unknown"
     chosen = walk.pop("chosen")
     refused = walk.pop("refused")
     rungs = walk.pop("rungs")
@@ -2118,6 +2144,33 @@ def reservation_capacity(row: dict, pools: dict, policy: dict) -> tuple[str, int
                      if isinstance(facts.get(field), int) and not isinstance(facts[field], bool)), 1)
     multiplier = (policy.get("per_account") or {}).get(key, policy.get("default", 2))
     return key, max(0, eligible) * multiplier
+
+
+def pick_leases() -> dict | None:
+    code, snapshot = _reservation_request("GET", "", timeout=3.0)
+    rows = snapshot.get("live")
+    if (code == EXIT_OK and isinstance(rows, list) and all(
+            isinstance(row, dict) and isinstance(row.get("capacity_key"), str)
+            and isinstance(row.get("expires_at"), str) for row in rows)):
+        return snapshot
+    append_ledger({"event": "route_pick_leases_unknown", "reason": snapshot.get("message") or "invalid snapshot"})
+    return None
+
+
+def lease_unavailable(table: dict, row: dict, pools: dict, leases: dict | None) -> str | None:
+    if leases is None:
+        return None  # Unknown is advisory; the atomic reserve remains the launch gate.
+    policy = (table.get("policy") or {}).get("concurrency") or {}
+    key, capacity = reservation_capacity(row, pools, policy)
+    stamp = _now_iso()
+    live = sum(1 for held in leases["live"] if held.get("capacity_key") == key
+               and held.get("expires_at", "") > stamp)
+    if live < capacity:
+        return None
+    reason = f"lease capacity reserved: {key} ({live}/{capacity}); all candidate capacity is reserved"
+    append_ledger({"event": "route_pick_lease_skip", "seat": row["seat"], "capacity_key": key,
+                   "live": live, "capacity": capacity, "reason": reason})
+    return reason
 
 
 def _reservation_request(method: str, path: str, payload: dict | None = None,
@@ -2403,6 +2456,7 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
         document = state["pools"]
     pools = pools_by_id(document)
 
+    leases = pick_leases()
     routable, skipped_entries, paced = class_candidates(
         table,
         args.task_class,
@@ -2411,6 +2465,7 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
         pools=pools,
         seats=seats,
         served=ServedModels(),
+        leases=leases,
     )
     skipped = [f"{entry['seat']} ({entry['reason']})" for entry in skipped_entries]
     if not routable:
@@ -2450,6 +2505,7 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
         "class": args.task_class,
         "state_age_s": None if age is None else round(age, 1),
         "audit": auditor,
+        "lease_availability": "known" if leases is not None else "unknown",
         "reserve": reserve_state(table, pools, args.task_class),
         "seat": chosen["seat"],
         "model": chosen["model"],

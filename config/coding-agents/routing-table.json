@@ -697,6 +697,10 @@
       "family": "sol",
       "note": "newest non-retired gpt-*-sol the LB serves"
     },
+    "sol-latest-low": {"vendor": "openai", "family": "sol"},
+    "sol-latest-medium": {"vendor": "openai", "family": "sol"},
+    "sol-latest-high": {"vendor": "openai", "family": "sol"},
+    "sol-latest-xhigh": {"vendor": "openai", "family": "sol"},
     "terra-latest": {
       "vendor": "openai",
       "family": "terra",

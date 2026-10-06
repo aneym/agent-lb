@@ -29,6 +29,12 @@ SOL_MODEL = "gpt-6.1-sol"
 SOL_ID = re.compile(r"gpt-\d+(?:\.\d+)*-sol")
 MANAGED_AGENTS = (
     (
+        Path(".agent-rails/workflows/codex-lab-home.py"),
+        Path(".agent-lb/managed/coding-agents/codex-seat-home"),
+        "agent-lb:codex-seat-home:v1\n",
+        Path("codex-seat-home.py"),
+    ),
+    (
         Path(".claude/agents/computer-use.md"),
         Path(".agent-lb/managed/coding-agents/computer-use"),
         "agent-lb:computer-use:v1\n",
@@ -197,6 +203,7 @@ POLICY_FILES = (
     "install-policy.py",
     "verify-routing",
     "routing-table.json",
+    "codex-seat-home.py",
 )
 LEGACY_HEADINGS = (
     "Coding-agent routing",
