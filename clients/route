@@ -1858,14 +1858,20 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     chosen = next(iter(opened or soft), None)
     if chosen is not None and not opened:
         chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
-    default = chosen
+    # The default is what the table alone would pick: never a rung opened only by a waiver.
+    default = next((row for row in opened + soft if not row.get("waived")), None)
+    refused = None
     if prefer is not None:
         chosen = next((row for row in opened + soft if prefer in (row["rung"], row["seat"])), None)
+        if chosen is not None and chosen["same_vendor"] and default is not None and not default["same_vendor"]:
+            # Cross-vendor review is a kept floor: same-maker review only when no other maker is open.
+            refused = f"same maker {author} while {default['rung']} can review"
+            chosen = None
         if chosen is not None:
             chosen = {**chosen, "reason": f"preferred by caller over {default['rung'] if default else 'none'}"
                       + (f"; {chosen['reason']}" if chosen["status"] == "soft" else "")
                       + (f"; waived {chosen['waived']}" if chosen.get("waived") else "")}
-    return {"chosen": chosen, "default": default["rung"] if default else None, "rungs": rows, "routable": opened + soft, "fallbacks": [row for row in opened + soft
+    return {"chosen": chosen, "default": default["rung"] if default else None, "refused": refused, "rungs": rows, "routable": opened + soft, "fallbacks": [row for row in opened + soft
             if chosen is None or row["rung"] != chosen["rung"]], "skipped": skipped,
             "intended": intended, "pace": pace}
 
@@ -1887,6 +1893,7 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
                        ServedModels(), history, now, args.author_vendor, args.skip, args.prefer)
     chosen = walk.pop("chosen")
+    refused = walk.pop("refused")
     rungs = walk.pop("rungs")
     walk.pop("routable")
     if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in rungs):
@@ -1895,7 +1902,7 @@ def command_ladder_pick(args: argparse.Namespace, table: dict) -> int:
     if chosen is None:
         message = f"nothing routable for class {args.task_class!r}"
         if args.prefer:
-            why = next(row.get("reason") for row in rungs if args.prefer in (row["rung"], row["seat"]))
+            why = refused or next(row.get("reason") for row in rungs if args.prefer in (row["rung"], row["seat"]))
             message = f"preferred {args.prefer!r} cannot run: {why}"
         print(f"route: {message}", file=sys.stderr)
         if args.json:
@@ -2026,11 +2033,16 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     chosen = routable[0]
     reasons = ["first chain entry with the seat up and its pool not exhausted"]
     if args.prefer:
+        if not any(isinstance(entry, dict) and entry.get("seat") == args.prefer for entry in chain):
+            setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a seat on the {args.task_class} chain",
+                        args.json)
         preferred = next((entry for entry in routable if entry["seat"] == args.prefer), None)
         if preferred is None:
-            why = next((entry["reason"] for entry in skipped_entries if entry["seat"] == args.prefer),
-                       "not a seat on this chain")
-            print(f"route: preferred {args.prefer!r} cannot run: {why}", file=sys.stderr)
+            why = next((entry["reason"] for entry in skipped_entries if entry["seat"] == args.prefer), "unroutable")
+            message = f"preferred {args.prefer!r} cannot run: {why}"
+            print(f"route: {message}", file=sys.stderr)
+            if args.json:
+                print(json.dumps({"error": "unroutable", "message": message}))
             return EXIT_UNROUTABLE
         reasons = [f"preferred by caller over {chosen['seat']}"]
         chosen = preferred

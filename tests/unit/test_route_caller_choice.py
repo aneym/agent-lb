@@ -69,3 +69,18 @@ def test_override_needs_a_reason_and_a_runnable_rung(tmp_path: Path) -> None:
     empty = route(env, CANONICAL_TABLE, "pick", "explore", "--prefer", "swe2-medium", "--reason", "x", "--json")
     assert empty.returncode == 2 and "pool devin exhausted" in json.loads(empty.stdout)["message"]
     assert ledger(env) == []
+
+
+def test_a_preference_keeps_the_review_floor_and_logs_the_real_default(tmp_path: Path) -> None:
+    env = setup(tmp_path, codex_low=False)
+    # Same-maker review only when no other maker can review: Sol is open, so Opus on Claude's work is refused.
+    same = route(env, CANONICAL_TABLE, "pick", "verify", "--author-vendor", "anthropic",
+                 "--prefer", "opus-same-vendor", "--reason", "escalation", "--json")
+    assert same.returncode == 2
+    assert "same maker anthropic while sol-xhigh can review" in json.loads(same.stdout)["message"]
+    # The logged default is the table's pick, not the rung the waiver opened.
+    probe = pick(env, CANONICAL_TABLE, "mechanical", "--prefer", "composer", "--reason", "probe")
+    assert (probe["rung"], probe["default"]) == ("composer", "swe2-medium")
+    # The chain path (classes without a ladder) keeps the same error contract.
+    unknown = route(env, CANONICAL_TABLE, "pick", "plan", "--prefer", "nope", "--reason", "x", "--json")
+    assert unknown.returncode == 3 and json.loads(unknown.stdout)["error"] == "unknown_rung"

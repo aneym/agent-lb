@@ -298,6 +298,10 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
         seat_token = keys.get('agentType')
         seat = seat_token[1] if seat_token and seat_token[0] == 'string' else None
         model = keys.get('model')
+        if model in (('word', 'undefined'), ('word', 'null')):
+            # `model: undefined` leaves the definition's model in effect, as if no model were given.
+            keys.pop('model')
+            model = None
         if model and model[0] == 'string':
             if is_blocked(model[1], table):
                 reasons.append(f'agent() pins {model[1]!r}, which is no longer served: use a current model alias (models.md, Workflows)')
