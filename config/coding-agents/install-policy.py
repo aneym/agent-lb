@@ -397,7 +397,9 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
             hooks.pop("SubagentStop", None)
         # The managed guard file goes away on uninstall; so does its registration.
         cleaned = [
-            {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_seat_guard_hook(hook.get("command")) and not is_workflow_seat_guard_hook(hook.get("command"))]}
+            {**group, "hooks": [hook for hook in group.get("hooks", [])
+                               if not is_seat_guard_hook(hook.get("command"))
+                               and not is_workflow_seat_guard_hook(hook.get("command"))]}
             for group in cleaned
         ]
         cleaned = [group for group in cleaned if group["hooks"]]

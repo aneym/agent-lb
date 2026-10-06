@@ -44,7 +44,7 @@
 #   ROUTE_DEVIN_MODELS_CMD  Devin model list command (default "devin models list"), cached a day
 #   ROUTE_FIXTURE_DIR  TEST ONLY — serve HTTP reads from files in this directory instead of the
 #                      network. A request to /api/pools reads api_pools.json; a missing file is a
-#                      404. Reservation writes and reads always use the real network.
+#                      404. Pick snapshots use fixtures; reservation commands use the network.
 #                      Never set this outside tests.
 #
 # Exit codes:
@@ -66,8 +66,8 @@ import math
 import os
 import re
 import secrets
-import signal
 import shlex
+import signal
 import socket
 import statistics
 import subprocess
@@ -374,7 +374,8 @@ def command_seat(args: argparse.Namespace) -> int:
         if not isinstance(model_alias, str):
             setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
     served = ServedModels().get() if family_alias(table, model_alias) in table.get("aliases", {}) else []
-    model, reason = rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served, name)
+    model, reason = (rung_model(table, entry, ServedModels()) if rung
+                     else resolve_alias(table, model_alias, served, name))
     if model is None:
         setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)
     if rules["commit"]:
@@ -1721,8 +1722,9 @@ def class_candidates(
                 skip(seat, alias, f"no auditor declared for author vendor {vendor}")
                 continue
             audit_alias = audit_entry["model"]
-            audit_model, audit_why = resolve_alias(table, audit_alias, served.get() if family_alias(table, audit_alias) in aliases else [],
-                                                   str(audit_entry.get("seat") or ""))
+            audit_models = served.get() if family_alias(table, audit_alias) in aliases else []
+            audit_model, audit_why = resolve_alias(
+                table, audit_alias, audit_models, str(audit_entry.get("seat") or ""))
             if audit_model is None:
                 # Work nobody can audit is not accepted work; route to a seat that can be.
                 skip(seat, alias, f"its auditor {audit_entry['model']} is unavailable: {audit_why}")
@@ -1869,8 +1871,8 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
     """(model, why). While `route reserve` defers discovery, a rung whose vendor list is not cached yet comes back
     as its alias with a `pending: ` why; the reserve resolves it once it holds capacity."""
     alias = entry["model"]
-    model, why = resolve_alias(table, alias, served.get() if family_alias(table, alias) in table.get("aliases", {}) else [],
-                               entry.get("seat") or "")
+    models = served.get() if family_alias(table, alias) in table.get("aliases", {}) else []
+    model, why = resolve_alias(table, alias, models, entry.get("seat") or "")
     if model is None and why.startswith("pending: "):
         return alias, why
     if model and family_alias(table, alias) not in table.get("aliases", {}):
@@ -2044,8 +2046,10 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
             chosen = {**chosen, "reason": f"preferred by caller over {default['rung'] if default else 'none'}"
                       + (f"; {chosen['reason']}" if chosen["status"] == "soft" else "")
                       + (f"; waived {chosen['waived']}" if chosen.get("waived") else "")}
-    return {"chosen": chosen, "default": default["rung"] if default else None, "refused": refused, "rungs": rows, "routable": opened + soft, "fallbacks": [row for row in opened + soft
-            if chosen is None or row["rung"] != chosen["rung"]], "skipped": skipped,
+    return {"chosen": chosen, "default": default["rung"] if default else None, "refused": refused,
+            "rungs": rows, "routable": opened + soft,
+            "fallbacks": [row for row in opened + soft if chosen is None or row["rung"] != chosen["rung"]],
+            "skipped": skipped,
             "intended": intended, "pace": pace}
 
 
@@ -2147,13 +2151,13 @@ def reservation_capacity(row: dict, pools: dict, policy: dict) -> tuple[str, int
 
 
 def pick_leases() -> dict | None:
-    code, snapshot = _reservation_request("GET", "", timeout=3.0)
+    code, snapshot = _reservation_request("GET", "", timeout=3.0, fixture=True)
     rows = snapshot.get("live")
     if (code == EXIT_OK and isinstance(rows, list) and all(
             isinstance(row, dict) and isinstance(row.get("capacity_key"), str)
             and isinstance(row.get("expires_at"), str) for row in rows)):
         return snapshot
-    append_ledger({"event": "route_pick_leases_unknown", "reason": snapshot.get("message") or "invalid snapshot"})
+    print("route: reservation availability unknown; reserve remains the admission gate", file=sys.stderr)
     return None
 
 
@@ -2174,8 +2178,8 @@ def lease_unavailable(table: dict, row: dict, pools: dict, leases: dict | None) 
 
 
 def _reservation_request(method: str, path: str, payload: dict | None = None,
-                         timeout: float = READ_TIMEOUT_SECONDS) -> tuple[int, dict]:
-    response = _request(method, "/api/pools/reservations" + path, payload=payload, timeout=timeout, fixture=False)
+                         timeout: float = READ_TIMEOUT_SECONDS, *, fixture: bool = False) -> tuple[int, dict]:
+    response = _request(method, "/api/pools/reservations" + path, payload=payload, timeout=timeout, fixture=fixture)
     if response.ok and isinstance(response.body, dict):
         return EXIT_OK, response.body
     if response.status in (404, 410) and path:

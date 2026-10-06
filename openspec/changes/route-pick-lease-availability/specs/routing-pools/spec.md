@@ -13,4 +13,9 @@ A route pick SHALL consult live provider reservations, skip seats whose capacity
 
 #### Scenario: Reservation service is unavailable
 - **WHEN** a pick cannot read live reservations
-- **THEN** it reports availability as unknown and leaves atomic admission to reserve
+- **THEN** it reports availability as unknown on stderr without adding a ledger row and leaves atomic admission to reserve
+
+#### Scenario: Fixture-mode pick
+- **WHEN** a pick uses ROUTE_FIXTURE_DIR
+- **THEN** it reads the reservation snapshot from that directory without contacting the live reservation service
+- **AND** a missing snapshot remains advisory and does not add a ledger row

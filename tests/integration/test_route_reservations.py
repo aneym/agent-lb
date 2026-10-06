@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.integration.route_http_fixtures import pick_http_env
 from tests.unit.test_route_ladder import SCRIPT, setup, table_copy
 
 REPO = Path(__file__).resolve().parents[2]
@@ -99,6 +100,9 @@ def scenario_env(tmp_path: Path, url: str, name: str, **pool_updates: dict) -> d
 
 
 def route(env: dict[str, str], *args: str, host: str = "host-a") -> tuple[int, dict]:
+    if args[0] == "pick" and env.get("ROUTE_FIXTURE_DIR"):
+        with pick_http_env(env) as network_env:
+            return route(network_env, *args, host=host)
     result = subprocess.run([sys.executable, str(SCRIPT), *args, "--json"], capture_output=True, text=True,
                             timeout=60, env={**env, "ROUTE_HOST": host}, check=False)
     try:
