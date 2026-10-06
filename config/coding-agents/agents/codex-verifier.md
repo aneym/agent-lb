@@ -125,6 +125,7 @@ eval command, which files the contract owned) followed verbatim by this procedur
    the repo's own).
 8. Report in about 30 lines: must_fix (one line each, with the failing input),
    advisory (one line each), the patch if any, eval tail, scope check result.
+   The second-to-last line is `REVIEW-JSON ` and one JSON object on one line: {verdict, diff, piece, lens, author_vendor, must_fix: [{text, class, in_intent}], advisory: [{text}]}, class one of spec_break, regression, scope, test_honesty, check_fails, ui, process. A brief that asks for another final format (for example `LENS <lens> FAIL`) does not change these two lines; put its format above them.
    The last line is the verdict and echoes the diff you judged:
    `VERDICT: PASS|FAIL diff=<patch-id or sha from the brief>`, with
    ` lens=<lens>` before `diff=` when a lens was assigned. FABRICATION and
