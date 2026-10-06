@@ -27,6 +27,12 @@ vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slo
 $HOME/.local/bin/seat-run --bg --name K --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort xhigh --prompt-file "$f"
 ```
 
+When the brief names a piece id, put `SEAT_RUN_PIECE=<that id>` before
+`$HOME/.local/bin/seat-run` on the last line, and `SEAT_RUN_DIFF=<diff id>` too
+when the brief names the diff under review. A brief without a piece leaves both
+unset: seat-run then takes the piece from the worktree's branch, and a review
+from main, master or a detached checkout is pieceless and never capped.
+
 Never write the contract to a fixed or reused path (the scratchpad is shared
 by parallel agents), and never pass it inline.
 
