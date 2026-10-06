@@ -61,7 +61,6 @@ import contextlib
 import fnmatch
 import hashlib
 import io
-import itertools
 import json
 import math
 import os
@@ -1248,15 +1247,78 @@ def fetch_cursor_models() -> list[str]:
         _DEFERRED_DISCOVERY.add("cursor")
         return []
     command = shlex.split(os.environ.get("ROUTE_CURSOR_MODELS_CMD") or "cursor-agent --list-models")
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
-    except (OSError, subprocess.SubprocessError):
-        result = None
-    output = result.stdout if result is not None and result.returncode == 0 else ""
+    output = run_listing(command, timeout=10)
     ids = [line.split(" - ", 1)[0].strip() for line in output.splitlines() if " - " in line]
     ids = [value for value in ids if re.fullmatch(r"[\w.\-]+", value)]
     cache_model_list(cache, ids)
     return ids
+
+
+# A stop of `route reserve` ends a model listing in at most this long; the release then has the rest of
+# STOP_BUDGET_SECONDS, which stays inside seat's 10 s stop grace (seat SIGKILLs route's group after it).
+LISTING_TERM_GRACE_SECONDS = 1.0
+LISTING_DRAIN_SECONDS = 3.0
+STOP_BUDGET_SECONDS = 8.0
+_UNDRAINED: list[str] = []
+
+
+def run_listing(command: list[str], timeout: float) -> str:
+    """A model listing's stdout, or "" when it fails or runs past `timeout`. The listing runs in its own process
+    group, which is ended as a group (end_group) on a timeout or when a stop interrupts it, so a descendant the
+    listing leaves behind is ended too and no other process can be signalled."""
+    try:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+    except (OSError, ValueError):
+        return ""
+    try:
+        stdout, _stderr = process.communicate(timeout=timeout)
+    except BaseException as interrupted:
+        if not end_group(process, LISTING_DRAIN_SECONDS):
+            _UNDRAINED.append(f"model listing group {process.pid} outlived SIGKILL for {LISTING_DRAIN_SECONDS:.0f}s")
+        if process.stdout is not None:
+            process.stdout.close()
+        if isinstance(interrupted, subprocess.TimeoutExpired):
+            return ""
+        raise
+    return stdout if process.returncode == 0 else ""
+
+
+def _signal_group(pgid: int, signum: int) -> bool:
+    """killpg; False once the group is gone (ESRCH)."""
+    try:
+        os.killpg(pgid, signum)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
+def end_group(process: subprocess.Popen, within: float) -> bool:
+    """End the process group `process` leads: SIGTERM the group, wait on the leader for a short grace, then SIGKILL
+    the group until killpg(pgid, 0) answers ESRCH. Only killpg is used, never a pid read from a process table, so a
+    pid reused by an unrelated process cannot be signalled: the group id stays allocated while any member is left,
+    and the loop stops at the first ESRCH. True once the group is gone within `within` seconds; False when a member
+    (a zombie no one reaps, or one in uninterruptible I/O) is still there at the deadline."""
+    pgid = process.pid
+    deadline = time.monotonic() + within
+    _signal_group(pgid, signal.SIGTERM)
+    try:
+        process.wait(timeout=max(0.0, min(LISTING_TERM_GRACE_SECONDS, deadline - time.monotonic())))
+    except subprocess.TimeoutExpired:
+        pass
+    while True:
+        _signal_group(pgid, signal.SIGKILL)
+        try:
+            process.wait(timeout=0.05)
+        except subprocess.TimeoutExpired:
+            pass
+        if process.returncode is not None and not _signal_group(pgid, 0):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
 
 
 _DEVIN_MODELS: list[str] | None = None
@@ -1286,11 +1348,7 @@ def fetch_devin_models() -> list[str]:
         _DEFERRED_DISCOVERY.add("devin")
         return []
     command = shlex.split(os.environ.get("ROUTE_DEVIN_MODELS_CMD") or "devin models list")
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
-    except (OSError, subprocess.SubprocessError):
-        result = None
-    output = result.stdout if result is not None and result.returncode == 0 else ""
+    output = run_listing(command, timeout=10)
     # Model rows are indented `<id>  <display name>  [...]`; family headers and aliases are not.
     ids = [line.split()[0] for line in output.splitlines() if line.startswith("  ") and line.split()]
     ids = [value for value in ids if re.fullmatch(r"[a-z0-9][\w.\-]*", value)]
@@ -2062,9 +2120,9 @@ def reservation_capacity(row: dict, pools: dict, policy: dict) -> tuple[str, int
     return key, max(0, eligible) * multiplier
 
 
-def _reservation_request(method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
-    response = _request(method, "/api/pools/reservations" + path, payload=payload,
-                        timeout=READ_TIMEOUT_SECONDS, fixture=False)
+def _reservation_request(method: str, path: str, payload: dict | None = None,
+                         timeout: float = READ_TIMEOUT_SECONDS) -> tuple[int, dict]:
+    response = _request(method, "/api/pools/reservations" + path, payload=payload, timeout=timeout, fixture=False)
     if response.ok and isinstance(response.body, dict):
         return EXIT_OK, response.body
     if response.status in (404, 410) and path:
@@ -2079,6 +2137,7 @@ class ReserveStopped(Exception):
     def __init__(self, signum: int) -> None:
         super().__init__(signum)
         self.signum = signum
+        self.at = time.monotonic()
 
 
 def _stop_reserve(signum: int, _frame: Any) -> None:
@@ -2087,84 +2146,32 @@ def _stop_reserve(signum: int, _frame: Any) -> None:
     raise ReserveStopped(signum)
 
 
-def live_in_group(pgid: int) -> list[int] | None:
-    """Pids in the process group that are not zombies (a zombie runs nothing and holds no capacity), or None when
-    the process table cannot be read."""
-    proc = Path("/proc")
-    if (proc / "self" / "stat").exists():
-        pids = []
-        for entry in proc.iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                stat = (entry / "stat").read_text()
-            except OSError:
-                continue
-            fields = stat[stat.rfind(")") + 2:].split()
-            if len(fields) > 2 and fields[0] not in ("Z", "X") and fields[2] == str(pgid):
-                pids.append(int(entry.name))
-        return pids
-    try:
-        listing = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, timeout=10,
-                                 check=False)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if listing.returncode != 0:
-        return None
-    rows = [line.split() for line in listing.stdout.splitlines()]
-    return [int(row[0]) for row in rows if len(row) >= 3 and row[1] == str(pgid) and not row[2].startswith("Z")]
-
-
-def drain_own_group(deadline_s: float = 30.0) -> bool:
-    """Once stopped, end every other process left in route's group (a model listing's descendant that ignores
-    SIGTERM) before the hold goes back. Route leads its group when seat runs it; in a group route does not lead
-    (a shell's job), the only processes route started are the listings subprocess.run has already killed and reaped.
-    False when the group cannot be read or a process outlives SIGKILL past the deadline: the hold then stays to its
-    TTL rather than being released over a live process."""
-    me = os.getpid()
-    if os.getpgrp() != me:
-        return True
-    deadline = time.monotonic() + deadline_s
-    while True:
-        members = live_in_group(me)
-        if members is None:
-            return False
-        others = [pid for pid in members if pid != me]
-        if not others:
-            return True
-        if time.monotonic() > deadline:
-            return False
-        for pid in others:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        time.sleep(0.05)
-
-
-def release_job_hold(job: str, within: float = 8.0) -> str | None:
+def release_job_hold(job: str, until: float) -> str | None:
     """Release whatever this job holds. Looked up by job, since a stop can land after agent-lb took the hold and
-    before route read its id. A failed lookup or release is retried for up to `within` seconds (inside seat's stop
-    grace), and the listing is read again to confirm. Returns None once the job holds nothing, else why a hold may
-    still be live."""
+    before route read its id. A failed lookup or release is retried, and the listing read again to confirm, until
+    the monotonic deadline `until`; every request's timeout is cut to the time left, so the answer comes before seat's
+    stop grace ends. Returns None once the job holds nothing, else why a hold may still be live (agent-lb's lease TTL
+    then ends it)."""
     why = "not attempted"
-    deadline = time.monotonic() + within
-    for attempt in itertools.count():
-        if attempt:
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.5)
-        code, listing = _reservation_request("GET", "")
+    while True:
+        left = until - time.monotonic()
+        if left < 0.2:
+            return why
+        code, listing = _reservation_request("GET", "", timeout=min(READ_TIMEOUT_SECONDS, left))
         if code != EXIT_OK:
             why = f"listing holds failed: {listing.get('message') or listing.get('status')}"
-            continue
-        held = [row for row in listing.get("live") or [] if row.get("job") == job]
-        if not held:
-            return None
-        for row in held:
-            _code, body = _reservation_request("POST", f"/{row['reservation_id']}/release", {"outcome": "cancelled"})
-            why = f"releasing {row['reservation_id']} failed: {body.get('message') or body.get('status')}"
-    return why
+        else:
+            held = [row for row in listing.get("live") or [] if row.get("job") == job]
+            if not held:
+                return None
+            for row in held:
+                left = until - time.monotonic()
+                if left < 0.2:
+                    return why
+                _code, body = _reservation_request("POST", f"/{row['reservation_id']}/release",
+                                                   {"outcome": "cancelled"}, timeout=min(READ_TIMEOUT_SECONDS, left))
+                why = f"releasing {row['reservation_id']} failed: {body.get('message') or body.get('status')}"
+        time.sleep(max(0.0, min(0.5, until - time.monotonic() - 0.2)))
 
 
 def command_reserve(args: argparse.Namespace) -> int:
@@ -2185,10 +2192,14 @@ def command_reserve(args: argparse.Namespace) -> int:
     except ReserveStopped as stop:
         reason = f"cancelled by signal {signal.Signals(stop.signum).name}"
         status = "cancelled"
-        if not drain_own_group():
-            status, reason = "error", f"{reason}; a process of the run is still alive, so the hold stays to its TTL"
-        elif (left := release_job_hold(args.job)) is not None:
-            status, reason = "error", f"{reason}; the hold may still be live: {left}"
+        if _UNDRAINED:
+            # A listing descendant outlived SIGKILL (a zombie no one reaps, or uninterruptible I/O). Its group was
+            # signalled as a group only; the hold goes back anyway and agent-lb's lease TTL is the backstop.
+            reason = f"{reason}; {'; '.join(_UNDRAINED)}, released anyway"
+            print(f"route: {'; '.join(_UNDRAINED)}; releasing the hold anyway", file=sys.stderr)
+        left = release_job_hold(args.job, until=stop.at + STOP_BUDGET_SECONDS)
+        if left is not None:
+            status, reason = "error", f"{reason}; the hold may still be live until its TTL: {left}"
         append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
                        "status": status, "reason": reason})
         print(json.dumps({"status": status, "reason": reason}))
@@ -2269,7 +2280,7 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
                                "capacity_key": key, "capacity": capacity})
         code, result = _reservation_request("POST", "", {"job": args.job, "class": args.task_class,
             "host": os.environ.get("ROUTE_HOST") or socket.gethostname(),
-            "ttl_s": args.ttl if args.ttl is not None else policy.get("ttl_s", 1200),
+            "ttl_s": args.ttl if args.ttl is not None else policy.get("ttl_s", 120),
             "pinned": bool(args.prefer), "candidates": candidates})
         if code == EXIT_OK and result.get("status") == "wait":
             code = 75
@@ -2277,7 +2288,7 @@ def reserve_walk(args: argparse.Namespace, table: dict) -> tuple[int, dict]:
             return code, result
         row = next((row for row in walk["rungs"] if row["rung"] == result.get("rung")), chosen)
         result.update(alias=row.get("alias"), effort=row.get("effort"), audit=row.get("audit"),
-                      reason=row.get("reason"), heartbeat_s=policy.get("heartbeat_s", 300))
+                      reason=row.get("reason"), heartbeat_s=policy.get("heartbeat_s", 30))
         audit = row.get("audit")
         if not row.get("model_pending") and not (isinstance(audit, dict) and audit.get("model_pending")):
             return code, result
