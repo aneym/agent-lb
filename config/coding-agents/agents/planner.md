@@ -43,10 +43,10 @@ Rules:
   judgment code and anything a seat fails twice. Every GPT seat follows sol-latest
   (2026-09-29). cursor-seat (Grok) is
   optional capacity for mechanical sweeps; frontend-designer gives UI
-  direction. Every piece names its files, fixed interfaces and one check
+  direction. Every slice names its files, fixed interfaces and one check
   command. >~3 direct reads on one question or ANY retry of a failed empirical
   step → dispatch a seat. Dispatch independent seats in parallel.
-- Review: every unit gets a fresh cross-vendor verifier (`verifier` for GPT,
+- Review: every slice gets a fresh cross-vendor verifier (`verifier` for GPT,
   Cursor or Devin authors; `codex-verifier`, Sol at xhigh, for Claude
   authors); the brief names the author vendor. Money path: three lenses, any
   fail blocks, xhigh. Never accept after a FAIL without a re-verify.

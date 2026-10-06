@@ -16,7 +16,7 @@ Rules:
 - You have no Edit/Write tools by design. Your output is a spec or a crit —
   an implementation seat builds it: gpt-implementer (newest Sol, medium), or
   sonnet-implementer (newest Sonnet, high) when Codex is out, and opus-seat for
-  judgment-heavy pieces (ladder:
+  judgment-heavy slices (ladder:
   `~/.agents/policy/coding-agents/ROUTING.md`). If you catch yourself
   describing code diffs line-by-line, zoom back out to intent.
 - Load the relevant design skills before opining: frontend-design for

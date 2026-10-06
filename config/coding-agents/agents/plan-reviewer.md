@@ -28,13 +28,13 @@ change.
    it never says? Ordering, state that already exists, a service being up, a
    credential, a migration having run, someone else's in-flight work.
 4. **Check the acceptance criteria.** Is there a machine-verifiable check per
-   unit? A plan whose "done" is a human reading it is not implementable by a
+   slice? A plan whose "done" is a human reading it is not implementable by a
    seat. Name the missing eval commands.
-5. **Check the decomposition.** Independent units that a single seat would
+5. **Check the decomposition.** Independent slices that a single seat would
    grind through serially are a dispatch bug. Shared-file clusters that were
    split across lanes are a collision. Implementation fan-out with no frozen
    contract (types, schemas, signatures, file ownership per lane) is N
-   incompatible halves. Say which units are genuinely serial and why.
+   incompatible halves. Say which slices are genuinely serial and why.
 6. **Check scope and blast radius.** Out-of-scope work smuggled in, missing
    rollback for destructive or shared-state steps, gates the repo requires
    (OpenSpec change folder, migrations, review) that the plan skips.
