@@ -193,7 +193,10 @@ db_ready() {
   for pgready in /opt/homebrew/bin/pg_isready /opt/homebrew/opt/postgresql@17/bin/pg_isready ""; do
     [[ -z "$pgready" || -x "$pgready" ]] && break
   done
-  [[ -n "$pgready" ]] || return 0
+  if [[ -z "$pgready" ]]; then
+    log "dependency readiness unknown, not restarting"
+    return 1
+  fi
   "$pgready" -q -h "${host:-127.0.0.1}" -p "$port" -t 3 >/dev/null 2>&1
 }
 

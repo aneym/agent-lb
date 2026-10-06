@@ -1204,9 +1204,8 @@ def _mark_usage_refresh_auth_cooldown(account_id: str, status_code: int) -> None
         _usage_refresh_rate_limit_strikes[account_id] = strikes
         delay = min(
             _USAGE_REFRESH_RATE_LIMIT_MAX_SECONDS,
-            _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS * (2 ** min(strikes - 1, 10)),
+            _USAGE_REFRESH_RATE_LIMIT_BASE_SECONDS * (2 ** min(strikes - 1, 10)) * random.uniform(0.8, 1.2),
         )
-        delay *= random.uniform(0.8, 1.2)
         _usage_refresh_auth_cooldowns[account_id] = time.monotonic() + delay
         return
     if status_code not in {401, 403}:

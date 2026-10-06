@@ -3375,3 +3375,15 @@ async def test_usage_refresh_records_openai_banked_reset_count(monkeypatch) -> N
         assert reset_credit_cache.get_count("acc_listed") == 2
     finally:
         reset_credit_cache.reset()
+
+
+@pytest.mark.parametrize("strikes", [1, 2, 3, 4, 5, 6, 10, 20])
+def test_usage_refresh_rate_limit_delay_never_exceeds_cap(monkeypatch: pytest.MonkeyPatch, strikes: int) -> None:
+    """Regression for exponential backoff math at maximum jitter across strike boundaries."""
+    account_id = "acc_rate_limit_cap"
+    monkeypatch.setattr(usage_updater_module.random, "uniform", lambda low, high: high)
+    monkeypatch.setattr(usage_updater_module.time, "monotonic", lambda: 1000.0)
+    for _ in range(strikes):
+        usage_updater_module._mark_usage_refresh_auth_cooldown(account_id, 429)
+        delay = usage_updater_module._usage_refresh_auth_cooldowns[account_id] - 1000.0
+        assert 0 < delay <= 900.0
