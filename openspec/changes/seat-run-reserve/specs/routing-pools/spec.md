@@ -27,3 +27,18 @@
 - **GIVEN** SIGTERM or Ctrl-C arrives during the reserve, the run or the release
 - **WHEN** the run ends
 - **THEN** the lease is released (`cancelled` when the signal came before the release began) and the run exits 128 plus the signal
+
+#### Scenario: No model listing before the hold
+- **GIVEN** a cold Cursor model cache
+- **WHEN** `seat run --class` reserves, or waits for capacity
+- **THEN** no vendor model listing runs before the reservation is live, and a run that waits lists nothing
+
+#### Scenario: The reserved model is the model that runs
+- **GIVEN** `seat run --vendor cursor --class verify --author-vendor xai --model grok-latest`, where Cursor's only verify rung runs Sonnet
+- **WHEN** it reserves
+- **THEN** route reserves nothing for Grok (`route reserve --model` picks only a rung that runs the caller's model), the run exits 2 and the vendor CLI is not started; a reservation whose model differs from the caller's is released `failed` and refused
+
+#### Scenario: A stop waits for the whole process group
+- **GIVEN** a vendor CLI whose descendant ignores SIGTERM
+- **WHEN** the run is stopped
+- **THEN** the run ends and releases only after the descendant is gone (SIGKILL after 10 s, or at once on a second stop signal)

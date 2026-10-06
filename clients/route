@@ -20,7 +20,7 @@
 #   route workflow-args                          JSON for Workflow scripts: per class, the agent() options
 #                                                (agentType, model, effort) and brief line of the live pick
 #
-#   route reserve <class> --job ID              lease provider capacity; exit 75 means wait and retry
+#   route reserve <class> --job ID [--prefer SEAT [--model M]]  lease provider capacity; exit 75 means wait
 #   route heartbeat <id> [--ttl S]              renew a live reservation
 #   route release <id> --outcome ok|failed|cancelled  end a reservation
 #   route reservations [--json]                 list live and recent reservations
@@ -1178,6 +1178,25 @@ def resolve_claude_family(spec: dict[str, Any], retired: tuple[str, ...]) -> tup
 
 
 _CURSOR_MODELS: list[str] | None = None
+# `route reserve` may not start a vendor CLI before it holds capacity (A4d): while this is set, a vendor model list
+# with no fresh cache is not fetched; the vendor is recorded here and its rungs resolve once the hold is taken.
+_DEFER_DISCOVERY = False
+_DEFERRED_DISCOVERY: set[str] = set()
+
+
+def model_list_pending(vendor: str) -> str:
+    return f"pending: the {vendor} model list is listed once capacity is held"
+
+
+def allow_discovery() -> None:
+    """End deferral and forget lists memoized while it was on, so the next lookup fetches them."""
+    global _DEFER_DISCOVERY, _CURSOR_MODELS, _DEVIN_MODELS
+    _DEFER_DISCOVERY = False
+    if "cursor" in _DEFERRED_DISCOVERY:
+        _CURSOR_MODELS = None
+    if "devin" in _DEFERRED_DISCOVERY:
+        _DEVIN_MODELS = None
+    _DEFERRED_DISCOVERY.clear()
 
 
 def cursor_models() -> list[str]:
@@ -1223,6 +1242,9 @@ def fetch_cursor_models() -> list[str]:
         pass
     if model_list_failed_recently(cache):
         return []
+    if _DEFER_DISCOVERY:
+        _DEFERRED_DISCOVERY.add("cursor")
+        return []
     command = shlex.split(os.environ.get("ROUTE_CURSOR_MODELS_CMD") or "cursor-agent --list-models")
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
@@ -1258,6 +1280,9 @@ def fetch_devin_models() -> list[str]:
         pass
     if model_list_failed_recently(cache):
         return []
+    if _DEFER_DISCOVERY:
+        _DEFERRED_DISCOVERY.add("devin")
+        return []
     command = shlex.split(os.environ.get("ROUTE_DEVIN_MODELS_CMD") or "devin models list")
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
@@ -1281,7 +1306,8 @@ def resolve_alias(table: dict[str, Any], name: str, served: list[str],
     model, reason = resolve_one(table, name, served, seat)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     fallback = (aliases.get(name) or {}).get("fallback") if isinstance(aliases.get(name), dict) else None
-    if model or not isinstance(fallback, str) or fallback == name or reason.startswith(f"{name} is readmitted for"):
+    if (model or not isinstance(fallback, str) or fallback == name or reason.startswith(f"{name} is readmitted for")
+            or reason.startswith("pending: ")):
         return model, reason
     model, why = resolve_one(table, fallback, served, seat)
     return model, f"{reason}; fallback {fallback}: {why}"
@@ -1331,6 +1357,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         pattern = re.compile(rf"^(?:cursor-)?{re.escape(family)}-({version}){suffix}$")
         served = cursor_models()
         if not served:
+            if "cursor" in _DEFERRED_DISCOVERY:
+                return None, model_list_pending("cursor")
             return None, "Cursor model list unavailable (cursor-agent --list-models)"
     elif spec.get("vendor") == "devin":
         # Devin families: `<family>-<major>-<variant>` (swe-2-high).
@@ -1338,6 +1366,8 @@ def resolve_one(table: dict[str, Any], name: str, served: list[str],
         pattern = re.compile(rf"^{re.escape(family)}-(\d+)-{re.escape(variant)}$")
         served = devin_models()
         if not served:
+            if "devin" in _DEFERRED_DISCOVERY:
+                return None, model_list_pending("devin")
             return None, "Devin model list unavailable (devin models list)"
     else:
         pattern = re.compile(rf"^gpt-(\d+(?:\.\d+)*)-{re.escape(family)}$")
@@ -1755,12 +1785,18 @@ def rung_pool(table: dict, entry: dict, pools: dict) -> str | None:
 
 
 def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | None, str]:
+    """(model, why). While `route reserve` defers discovery, a rung whose vendor list is not cached yet comes back
+    as its alias with a `pending: ` why; the reserve resolves it once it holds capacity."""
     alias = entry["model"]
     model, why = resolve_alias(table, alias, served.get() if alias in table.get("aliases", {}) else [],
                                entry.get("seat") or "")
+    if model is None and why.startswith("pending: "):
+        return alias, why
     if model and alias not in table.get("aliases", {}):
-        listed = cursor_models() if entry["seat"] == "cursor-seat" else (
-            devin_models() if entry["seat"] == "devin-seat" else [])
+        vendor = {"cursor-seat": "cursor", "devin-seat": "devin"}.get(entry["seat"])
+        listed = cursor_models() if vendor == "cursor" else (devin_models() if vendor == "devin" else [])
+        if not listed and vendor in _DEFERRED_DISCOVERY:
+            return model, model_list_pending(vendor)
         if listed and model not in listed:
             return None, f"{model} is not listed for {entry['seat']}"
     return model, why
@@ -1768,10 +1804,13 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
 
 def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: ServedModels,
                 history: list[dict], now: datetime, author: str | None = None,
-                skip_ids: list[str] | None = None, prefer: str | None = None) -> dict:
+                skip_ids: list[str] | None = None, prefer: str | None = None, model: str | None = None) -> dict:
     """Walk the ladder; the first open rung is the default. A caller's `prefer` (rung id or
     seat) waives the table's policy holds on that rung (gate, when, reserve, stand-in), never
-    a physical or floor one (unresolvable, pool exhausted, seat down, same maker, no reviewer)."""
+    a physical or floor one (unresolvable, pool exhausted, seat down, same maker, no reviewer).
+    A caller's `model` picks, among the preferred rungs, the one that runs it (by alias or
+    resolved id; a rung whose model is pending discovery stays a candidate)."""
+    wanted = model
     author = "cognition" if author == "devin" else author
     entries = apply_overrides(ladder_entries(table, class_name, author) or [],
                               table.get("overrides"), class_name)
@@ -1822,6 +1861,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
         if reason is None and pool_exhausted(pools.get(pool, {})):
             reason = f"pool {pool} exhausted"
         model, why = rung_model(table, entry, served) if reason is None else (None, "")
+        pending = model is not None and why.startswith("pending: ")
         if reason is None and model is None:
             reason = f"unresolvable: {why}"
         if reason is None and not seat_is_up(seats, entry["seat"]):
@@ -1859,6 +1899,8 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                "vendor": entry["maker"], "stand_in_only": bool(entry.get("stand_in_only")),
                "pool": pool, "same_vendor": class_name == "verify" and entry["maker"] == author,
                "audit": audit, "read_only": bool(entry.get("read_only"))}
+        if pending:
+            row["model_pending"] = True
         if waived:
             row["waived"] = waived
         if reason:
@@ -1889,7 +1931,13 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
         table, class_name, pools, seats, served, history, now, author, skip_ids)["chosen"]
     refused = None
     if prefer is not None:
-        chosen = next((row for row in opened + soft if prefer in (row["rung"], row["seat"])), None)
+        preferred = [row for row in opened + soft if prefer in (row["rung"], row["seat"])]
+        if wanted is not None and preferred:
+            preferred = ([row for row in preferred if wanted in (row["model"], row["alias"])]
+                         or [row for row in preferred if row.get("model_pending")])
+            if not preferred:
+                refused = f"no open {prefer} rung on the {class_name} ladder runs {wanted}"
+        chosen = next(iter(preferred), None)
         if chosen is not None and chosen["same_vendor"] and default is not None and not default["same_vendor"]:
             # Cross-vendor review is a kept floor: same-maker review only when no other maker is open.
             refused = f"same maker {author} while {default['rung']} can review"
@@ -2031,19 +2079,26 @@ def command_reserve(args: argparse.Namespace) -> int:
     elif isinstance(state.get("pools"), dict):
         document = state["pools"]
     pools = pools_by_id(document)
-    walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
-                       ServedModels(), history, now, args.author_vendor, args.skip, args.prefer)
-    if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in walk["rungs"]):
-        setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder",
-                    args.json)
-    chosen = walk["chosen"]
-    if chosen is None:
-        reason = walk["refused"] or (next(row.get("reason") for row in walk["rungs"]
-                  if args.prefer in (row["rung"], row["seat"])) if args.prefer else
-                  f"nothing routable for class {args.task_class!r}")
-        code, result = EXIT_UNROUTABLE, {"status": "refused", "reason": reason}
-    else:
-        policy = (table.get("policy") or {}).get("concurrency") or {}
+    policy = (table.get("policy") or {}).get("concurrency") or {}
+    # No vendor CLI starts before capacity is held (A4d): a cold vendor model list is fetched only once the hold is
+    # taken, and a rung that then fails to resolve, or resolves to another model than the caller's, is released.
+    global _DEFER_DISCOVERY
+    _DEFER_DISCOVERY = True
+    skip = list(args.skip)
+    released: str | None = None
+    while True:
+        walk = ladder_walk(table, args.task_class, pools, None if stale else state.get("seats"),
+                           ServedModels(), history, now, args.author_vendor, skip, args.prefer, args.model)
+        if args.prefer and not any(args.prefer in (row["rung"], row["seat"]) for row in walk["rungs"]):
+            setup_error("unknown_rung",
+                        f"--prefer {args.prefer!r} is not a rung or seat on the {args.task_class} ladder", args.json)
+        chosen = walk["chosen"]
+        if chosen is None:
+            reason = walk["refused"] or released or (next(row.get("reason") for row in walk["rungs"]
+                      if args.prefer in (row["rung"], row["seat"])) if args.prefer else
+                      f"nothing routable for class {args.task_class!r}")
+            code, result = EXIT_UNROUTABLE, {"status": "refused", "reason": reason}
+            break
         rows = [chosen] if args.prefer else walk["routable"]
         candidates = []
         for row in rows:
@@ -2056,10 +2111,25 @@ def command_reserve(args: argparse.Namespace) -> int:
             "pinned": bool(args.prefer), "candidates": candidates})
         if code == EXIT_OK and result.get("status") == "wait":
             code = 75
-        elif code == EXIT_OK:
-            row = next((row for row in walk["rungs"] if row["rung"] == result.get("rung")), chosen)
-            result.update(effort=row.get("effort"), audit=row.get("audit"), reason=row.get("reason"),
-                          heartbeat_s=policy.get("heartbeat_s", 300))
+        if code != EXIT_OK or result.get("status") != "reserved":
+            break
+        row = next((row for row in walk["rungs"] if row["rung"] == result.get("rung")), chosen)
+        result.update(alias=row.get("alias"), effort=row.get("effort"), audit=row.get("audit"),
+                      reason=row.get("reason"), heartbeat_s=policy.get("heartbeat_s", 300))
+        if not row.get("model_pending"):
+            break
+        allow_discovery()
+        model, why = rung_model(table, {"model": row["alias"], "seat": row["seat"]}, ServedModels())
+        _DEFER_DISCOVERY = True
+        if model and args.model in (None, model, row["alias"]):
+            result["model"] = model
+            break
+        _reservation_request("POST", f"/{result['reservation_id']}/release", {"outcome": "failed"})
+        released = (f"{row['rung']} runs {model}, not {args.model}" if model
+                    else f"{row['rung']} unresolvable once held: {why}")
+        append_ledger({"event": "route_reserve_released", "class": args.task_class, "job": args.job,
+                       "rung": row["rung"], "reservation_id": result["reservation_id"], "reason": released})
+        skip.append(row["rung"])
     record_caller_choice(args, result)
     append_ledger({"event": "route_reserve", "class": args.task_class, "job": args.job,
                    **{key: result.get(key) for key in ("status", "rung", "seat", "reservation_id", "reason")}})
@@ -3235,6 +3305,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     reservation.add_argument("--author-vendor", default=None)
     reservation.add_argument("--skip", action="append", default=[])
     reservation.add_argument("--prefer", default=None)
+    reservation.add_argument("--model", default=None,
+                             help="with --prefer: reserve the preferred rung that runs this model id or alias")
     reservation.add_argument("--reason", default=None)
     reservation.add_argument("--ttl", type=int, default=None)
     reservation.add_argument("--json", action="store_true")

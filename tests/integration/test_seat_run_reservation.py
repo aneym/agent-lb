@@ -11,7 +11,12 @@ Runs a real agent-lb server (fresh data dir), the real clients/route as ROUTE_BI
 stand-in is the vendor CLI (a fake `cursor-agent`, as in test_seat_cli.py). Pools come from route's fixture dir.
 
 Fix round (review of 726658ca, 2026-10-06): the last tests swap in a scripted route to put a signal or a thread-start
-failure at exact points of the reserve and release, which a real route cannot time."""
+failure at exact points of the reserve and release, which a real route cannot time.
+
+Fix round 2 (review of 21d53dbf, 2026-10-06, Opus): with a cold model cache no vendor model listing runs before the hold
+(route lists only once it holds capacity); a stop waits for SIGTERM-resistant descendants; a stop before the first
+attempt, or during a model listing, ends with the cancellation envelope and the signal's exit code; the run uses the
+reserved model or refuses (a verify for xAI work never runs Grok); liveness is checked portably."""
 
 from __future__ import annotations
 
@@ -41,15 +46,28 @@ from pathlib import Path
 if sys.argv[1:] == ["models"]:
     with open(os.environ["FAKE_INVOCATIONS"], "a") as log:
         log.write("models\\n")
+    if os.environ.get("FAKE_MODELS_SLEEP"):
+        # A slow listing that, when it finishes, does not offer the run's model.
+        time.sleep(float(os.environ["FAKE_MODELS_SLEEP"]))
+        print("composer-2.5 - Composer 2.5")
+        raise SystemExit(0)
     print("Available models")
     raise SystemExit(0)
 prompt = sys.stdin.read()
 with open(os.environ["FAKE_INVOCATIONS"], "a") as log:
     log.write(prompt.strip() + "\\n")
 (Path(os.environ["FAKE_GATE_DIR"]) / (prompt.strip() + ".pid")).write_text(str(os.getpid()))
+(Path(os.environ["FAKE_GATE_DIR"]) / (prompt.strip() + ".argv")).write_text(json.dumps(sys.argv[1:]))
+if prompt.startswith("orphan"):
+    # A descendant that ignores SIGTERM and holds none of the leader's pipes, so the leader's exit closes them.
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, "
+                              "signal.SIG_IGN); time.sleep(120)"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    (Path(os.environ["FAKE_GATE_DIR"]) / (prompt.strip() + ".child")).write_text(str(child.pid))
 gate = Path(os.environ["FAKE_GATE_DIR"]) / prompt.strip()
 deadline = time.monotonic() + 120
-while prompt.startswith("hold") and not gate.exists() and time.monotonic() < deadline:
+while prompt.startswith(("hold", "orphan")) and not gate.exists() and time.monotonic() < deadline:
     time.sleep(0.1)
 if prompt.startswith("fail"):
     print(json.dumps({"type": "result", "is_error": True, "result": "tests failed"}))
@@ -105,14 +123,18 @@ def env(tmp_path: Path, server: str) -> Iterator[dict[str, str]]:  # noqa: F811
                 holder.communicate()
 
 
-def seat_argv(env: dict[str, str], prompt: str, *extra: str) -> list[str]:
-    return [sys.executable, str(SEAT), "run", "--vendor", "cursor", "--model", "grok-latest", *extra,
+# The Cursor model on the mechanical ladder (rung grok-low); route reserves the rung that runs it.
+MODEL = "grok-latest-low"
+
+
+def seat_argv(env: dict[str, str], prompt: str, *extra: str, model: str = MODEL) -> list[str]:
+    return [sys.executable, str(SEAT), "run", "--vendor", "cursor", "--model", model, *extra,
             "--cwd", str(Path(env["FAKE_GATE_DIR"]).parent), "--", prompt]
 
 
-def run_seat(env: dict[str, str], prompt: str, *extra: str) -> tuple[int, dict]:
-    result = subprocess.run(seat_argv(env, prompt, *extra), capture_output=True, text=True, timeout=120, env=env,
-                            check=False)
+def run_seat(env: dict[str, str], prompt: str, *extra: str, model: str = MODEL) -> tuple[int, dict]:
+    result = subprocess.run(seat_argv(env, prompt, *extra, model=model), capture_output=True, text=True, timeout=120,
+                            env=env, check=False)
     try:
         return result.returncode, json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -227,13 +249,21 @@ def test_failure_and_sigterm_release_and_agent_lb_down_launches_nothing(env: dic
     assert invocations(env) == before
 
 
-def vendor_alive(env: dict[str, str], prompt: str) -> bool:
-    pid = int((Path(env["FAKE_GATE_DIR"]) / f"{prompt}.pid").read_text())
+def vendor_alive(env: dict[str, str], prompt: str, suffix: str = "pid") -> bool:
+    pid = int((Path(env["FAKE_GATE_DIR"]) / f"{prompt}.{suffix}").read_text())
+    return pid_alive(pid)
+
+
+def pid_alive(pid: int) -> bool:
+    """os.kill(pid, 0) on every platform; a zombie (reported by ps on macOS and Linux alike) counts as dead."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    return Path(f"/proc/{pid}/stat").exists() and Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
+    except PermissionError:
+        return True
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return not state.stdout.strip().startswith("Z")
 
 
 def cursor_pool(env: dict[str, str], **fields: object) -> None:
@@ -278,16 +308,113 @@ def test_a_lost_lease_stops_the_vendor_cli(env: dict[str, str]) -> None:
     assert not vendor_alive(env, "hold4")
 
 
-def test_verify_carries_the_author_vendor(env: dict[str, str]) -> None:
-    rc, reviewed = run_seat(env, "verify1", "--class", "verify", "--author-vendor", "openai")
+@pytest.mark.parametrize("stops", [1, 2])
+def test_a_stop_waits_for_descendants_that_ignore_sigterm(env: dict[str, str], stops: int) -> None:
+    prompt = f"orphan{stops}"
+    holder = start_seat(env, prompt)
+    child_file = Path(env["FAKE_GATE_DIR"]) / f"{prompt}.child"
+    deadline = time.monotonic() + 30
+    while not child_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    child = int(child_file.read_text())
+    [lease] = mine(reservations(env)["live"])
+    try:
+        # The leader dies on SIGTERM and its pipes close; the child ignores SIGTERM. The run must not end, and its
+        # capacity must not be released, until SIGKILL has taken the child too: after the grace, or at once on a
+        # second stop signal.
+        started = time.monotonic()
+        holder.send_signal(signal.SIGTERM)
+        if stops == 2:
+            time.sleep(1)
+            holder.send_signal(signal.SIGTERM)
+        out, err = holder.communicate(timeout=60)
+        assert holder.returncode == 128 + signal.SIGTERM, out + err
+        assert not pid_alive(child), "a SIGTERM-resistant descendant outlived the stopped run"
+        if stops == 2:
+            assert time.monotonic() - started < 8, "a second stop signal did not escalate to SIGKILL"
+        [ended] = [row for row in reservations(env)["recent"] if row["reservation_id"] == lease["reservation_id"]]
+        assert ended["outcome"] == "cancelled", ended
+    finally:
+        if pid_alive(child):
+            os.kill(child, signal.SIGKILL)
+
+
+def cold_cursor_cache(env: dict[str, str]) -> None:
+    cache = Path(env["ROUTE_MODELS_CACHE"]).with_name("route-cursor-models.json")
+    cache.unlink(missing_ok=True)
+    cache.with_suffix(".failed.json").unlink(missing_ok=True)
+
+
+def launched_model(env: dict[str, str], prompt: str) -> str:
+    argv = json.loads((Path(env["FAKE_GATE_DIR"]) / f"{prompt}.argv").read_text())
+    return argv[argv.index("--model") + 1]
+
+
+def test_verify_carries_the_author_vendor_and_runs_only_the_reserved_model(env: dict[str, str]) -> None:
+    sonnet = "claude-sonnet-5-5-high"
+    rc, reviewed = run_seat(env, "verify1", "--class", "verify", "--author-vendor", "openai", model=sonnet)
     assert rc == 0 and reviewed["ok"], reviewed
     [ended] = [row for row in reservations(env)["recent"] if row["job"] == f"seat/host-a/{reviewed['run_id']}"]
     assert (ended["seat"], ended["outcome"]) == ("cursor-seat", "ok"), ended
+    assert launched_model(env, "verify1") == ended["model"] == reviewed["model"] == sonnet
+
+    # Grok reviewing xAI's own work: Cursor's only verify rung runs Sonnet, so route reserves nothing for Grok and the
+    # run is refused without starting the vendor CLI. With a cold cache route can tell only once it holds the rung, so
+    # it releases the hold before it refuses.
+    for cache in ("cold", "warm"):
+        if cache == "cold":
+            cold_cursor_cache(env)
+        before = invocations(env)
+        rc, crossed = run_seat(env, f"verify3{cache}", "--class", "verify", "--author-vendor", "xai",
+                               model="grok-latest")
+        assert rc == 2 and crossed["ok"] is False and crossed["error"].startswith("capacity: "), (cache, crossed)
+        assert "grok-latest" in crossed["error"], (cache, crossed)
+        assert invocations(env) == before and mine(reservations(env)["live"]) == [], cache
 
     missing = subprocess.run(seat_argv(env, "verify2", "--class", "verify"), capture_output=True, text=True,
                              timeout=60, env=env, check=False)
     assert missing.returncode == 2 and "--author-vendor" in missing.stderr, missing.stderr
     assert "verify2" not in invocations(env)
+
+
+# Stands in for `cursor-agent --list-models` (route's discovery): logs how many of this host's seat reservations are
+# live when it runs, then lists the fixture models.
+DISCOVERY = """#!/usr/bin/env python3
+import json, os, urllib.request
+with urllib.request.urlopen(os.environ["AGENT_LB_URL"] + "/api/pools/reservations", timeout=10) as response:
+    live = [row for row in json.load(response)["live"] if row["job"].startswith("seat/host-a/")]
+with open(os.environ["DISCOVERY_LOG"], "a") as log:
+    log.write(f"live={len(live)}\\n")
+print("grok-4.7-medium - Grok 4.7 Medium")
+print("grok-4.7-low - Grok 4.7 Low")
+print("composer-2.5 - Composer 2.5")
+print("claude-sonnet-5-5-high - Sonnet 5.5 High")
+"""
+
+
+def test_a_cold_model_cache_is_listed_only_under_the_hold(env: dict[str, str], tmp_path: Path) -> None:
+    log = tmp_path / "discovery.log"
+    env = {**env, "DISCOVERY_LOG": str(log),
+           "ROUTE_CURSOR_MODELS_CMD": f"{sys.executable} {_script(tmp_path / 'discovery', DISCOVERY)}"}
+    def listings() -> list[str]:
+        return log.read_text().split() if log.exists() else []
+
+    cold_cursor_cache(env)
+    holder = start_seat(env, "hold5")
+    # Route listed Cursor's models for the holder only once its reservation was live.
+    assert listings() and all(line != "live=0" for line in listings()), listings()
+    assert launched_model(env, "hold5") == "grok-4.7-low"
+
+    # A run that waits for capacity lists nothing at all, cold cache or not.
+    cold_cursor_cache(env)
+    before = listings()
+    rc, waited = run_seat(env, "second5", "--class", "mechanical")
+    assert rc == 4 and waited["error"].startswith("capacity: "), waited
+    assert listings() == before and "second5" not in invocations(env)
+
+    open_gate(env, "hold5")
+    out, err = holder.communicate(timeout=90)
+    assert holder.returncode == 0, out + err
 
 
 # A scripted route: it logs each call and, where told, signals seat at an exact point of the reserve or release.
@@ -296,13 +423,17 @@ echo "$*" >> "$ROUTE_CALLS"
 case "$1" in
   reserve)
     [ -n "$SIGNAL_ON_RESERVE" ] && kill -"$SIGNAL_ON_RESERVE" "$PPID"
-    echo '{"status": "reserved", "reservation_id": "rsv-000000000009", "heartbeat_s": 300}' ;;
+    echo '{"status": "reserved", "reservation_id": "rsv-000000000009", "rung": "grok-low", "model": "grok-4.7-low",'\
+      '"alias": "grok-latest-low", "heartbeat_s": 300}' ;;
   release)
     [ -n "$SIGNAL_ON_RELEASE" ] && kill -"$SIGNAL_ON_RELEASE" "$PPID" && sleep 1
+    if [ -n "$FAIL_FIRST_RELEASE" ] && [ ! -e "$ROUTE_CALLS.failed" ]; then
+      : > "$ROUTE_CALLS.failed"; echo '{"status": "error"}'; exit 1
+    fi
     echo "released $4" >> "$ROUTE_CALLS"
     echo '{"status": "released"}' ;;
   heartbeat) echo '{"status": "live"}' ;;
-  *) echo grok-9-medium-fast ;;
+  resolve) case "$2" in grok-latest-low) echo grok-4.7-low ;; *) echo "$2" ;; esac ;;
 esac
 """
 
@@ -354,6 +485,33 @@ def test_a_signal_during_the_reserve_releases_and_launches_nothing(scripted: dic
     assert invocations(env) == []
 
 
+# Runs seat with a SIGTERM to itself as it builds the first vendor command: after the account loop's stop check and
+# before the attempt's own.
+STOP_BEFORE_FIRST_ATTEMPT = """import os, signal, sys
+path = sys.argv[1]
+sys.argv = sys.argv[1:]
+seat = {"__name__": "seat_under_test", "__file__": path}
+exec(compile(open(path).read(), path, "exec"), seat)
+build = seat["build_command"]
+def build_then_stop(*args):
+    os.kill(os.getpid(), signal.SIGTERM)
+    return build(*args)
+seat["build_command"] = build_then_stop
+raise SystemExit(seat["main"]())
+"""
+
+
+def test_a_stop_before_the_first_attempt_returns_the_cancellation_envelope(scripted: dict[str, str]) -> None:
+    launcher = Path(scripted["FAKE_GATE_DIR"]).parent / "stop_first.py"
+    launcher.write_text(STOP_BEFORE_FIRST_ATTEMPT)
+    argv = [sys.executable, str(launcher), *seat_argv(scripted, "first1", "--class", "mechanical")[1:]]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=scripted, check=False)
+    assert result.returncode == 128 + signal.SIGTERM, result.stdout + result.stderr
+    assert json.loads(result.stdout)["error"] == "cancelled by signal SIGTERM", result.stdout
+    assert "released cancelled" in route_calls(scripted), route_calls(scripted)
+    assert "first1" not in invocations(scripted)
+
+
 def test_a_thread_start_failure_still_releases(scripted: dict[str, str]) -> None:
     launcher = Path(scripted["FAKE_GATE_DIR"]).parent / "no_threads.py"
     launcher.write_text(NO_THREADS)
@@ -362,3 +520,43 @@ def test_a_thread_start_failure_still_releases(scripted: dict[str, str]) -> None
     assert result.returncode != 0 and "can't start new thread" in result.stderr, result.stderr
     assert "released failed" in route_calls(scripted), route_calls(scripted)
     assert invocations(scripted) == []
+
+
+def test_a_model_other_than_the_reserved_one_is_refused(scripted: dict[str, str]) -> None:
+    rc, refused = run_seat(scripted, "other1", "--class", "mechanical", model="composer-latest")
+    assert rc == 2 and refused["ok"] is False, refused
+    assert "grok-4.7-low" in refused["error"] and "composer-latest" in refused["error"], refused
+    assert "released failed" in route_calls(scripted) and invocations(scripted) == []
+
+
+def test_a_signal_during_a_model_listing_stops_it_and_lists_no_other_account(scripted: dict[str, str]) -> None:
+    accounts = Path(scripted["SEAT_HOME"]) / "accounts.json"
+    accounts.write_text(json.dumps({"accounts": [{"id": "fixture", "vendor": "cursor", "auth": "login"},
+                                                 {"id": "fixture-2", "vendor": "cursor", "auth": "login"}]}))
+    env = {**scripted, "FAKE_MODELS_SLEEP": "15"}
+    started = time.monotonic()
+    process = subprocess.Popen(seat_argv(env, "listing1", "--class", "mechanical"), stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, env=env)
+    try:
+        deadline = time.monotonic() + 30
+        while "models" not in invocations(env) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        process.send_signal(signal.SIGTERM)
+        out, err = process.communicate(timeout=90)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    # The listing's group is stopped at once, no second account is listed, and a half-done listing never turns the
+    # stop into a "not a Cursor model" refusal.
+    assert process.returncode == 128 + signal.SIGTERM, out + err
+    assert time.monotonic() - started < 15, "the model listing ran to the end after the stop"
+    assert invocations(env) == ["models"], invocations(env)
+    assert "released cancelled" in route_calls(env), route_calls(env)
+
+
+def test_a_failed_first_release_is_retried(scripted: dict[str, str]) -> None:
+    env = {**scripted, "FAIL_FIRST_RELEASE": "1"}
+    rc, done = run_seat(env, "quick2", "--class", "mechanical")
+    assert rc == 0 and done["ok"], done
+    calls = route_calls(env)
+    assert [line.split()[0] for line in calls].count("release") == 2 and "released ok" in calls, calls

@@ -791,12 +791,13 @@ def release_usage(model: str | None, path: str | None) -> dict[str, Any]:
 # --- run -------------------------------------------------------------------------
 
 
-def resolve_model(vendor: str, model: str) -> str:
+def resolve_model(vendor: str, model: str, control: RunControl | None = None) -> str:
     """Family aliases go through `route resolve`: an alias never reaches a retired model, a retired id named
-    outright resolves as an explicit request and is logged, and a blocked id is refused."""
+    outright resolves as an explicit request and is logged, and a blocked id is refused. Route may list the
+    vendor's models to resolve an alias, so under a RunControl it runs stoppable, in its own process group."""
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     try:
-        completed = subprocess.run([route, "resolve", model], capture_output=True, text=True, timeout=90, check=False)
+        completed = run_stoppable([route, "resolve", model], control, input=None, timeout=90)
     except (OSError, subprocess.TimeoutExpired) as error:
         fail(f"route resolve {model} failed: {error}")
     if completed.returncode != 0:
@@ -810,21 +811,21 @@ def resolve_model(vendor: str, model: str) -> str:
 _CURSOR_MODELS: dict[str, tuple[str, ...]] = {}
 
 
-def cursor_models(account: dict[str, Any]) -> tuple[str, ...]:
-    """Discover served ids once per account; unavailable lists do not block dispatch."""
+def cursor_models(account: dict[str, Any], control: RunControl | None = None) -> tuple[str, ...]:
+    """Discover served ids once per account; unavailable lists do not block dispatch. Under a RunControl the
+    listing is a vendor CLI like the run itself: a stop ends its process group."""
     account_id = account["id"]
     if account_id in _CURSOR_MODELS:
         return _CURSOR_MODELS[account_id]
     _CURSOR_MODELS[account_id] = ()
     try:
-        result = subprocess.run(
+        result = run_stoppable(
             [cli_bin("cursor"), "models"],
-            capture_output=True,
-            text=True,
+            control,
+            input=None,
             env=account_env(account),
             stdin=subprocess.DEVNULL,
             timeout=PROBE_TIMEOUT_SECONDS,
-            check=False,
         )
     except (OSError, RuntimeError, subprocess.SubprocessError):
         return ()
@@ -836,8 +837,17 @@ def cursor_models(account: dict[str, Any]) -> tuple[str, ...]:
     return _CURSOR_MODELS[account_id]
 
 
-def check_cursor_model(model: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    lists = [(account, cursor_models(account)) for account in candidates]
+def check_cursor_model(model: str, candidates: list[dict[str, Any]],
+                       control: RunControl | None = None) -> list[dict[str, Any]]:
+    """The accounts that serve `model`. A stop during the listings returns the candidates unchecked and lists no
+    further account; the caller then ends the run on the stop, never on a half-listed refusal."""
+    lists = []
+    for account in candidates:
+        if control and control.stop_reason():
+            return candidates
+        lists.append((account, cursor_models(account, control)))
+    if control and control.stop_reason():
+        return candidates
     listed = tuple(dict.fromkeys(value for _, models in lists for value in models))
     family = re.match(r"^(claude-(?:opus|sonnet)|[a-z]+)-", model)
     prefix = family.group(1) + "-" if family else model.split("-", 1)[0] + "-"
@@ -1326,12 +1336,14 @@ def command_release(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str | None) -> tuple[int, dict[str, Any]]:
-    """A4d: hold a `route reserve` lease for this run's seat. Returns EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a
-    wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or agent-lb cannot answer (fail closed)."""
+def reserve_capacity(task_class: str, vendor: str, job: str, author_vendor: str | None,
+                     model: str) -> tuple[int, dict[str, Any]]:
+    """A4d: hold a `route reserve` lease for this run's seat, on the rung that runs the caller's model. Returns
+    EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or
+    agent-lb cannot answer (fail closed). Route lists no vendor models before the hold is taken."""
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
-    argv = [route, "reserve", task_class, "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--reason", "seat run",
-            "--json"]
+    argv = [route, "reserve", task_class, "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--model", model,
+            "--reason", "seat run", "--json"]
     if author_vendor:
         argv[3:3] = ["--author-vendor", author_vendor]
     try:
@@ -1389,7 +1401,9 @@ class RunControl:
 def run_stoppable(command: list[str], control: RunControl | None, *, input: str | None, timeout: float,
                   **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """subprocess.run, except that under a RunControl the command runs in its own process group, which is sent
-    SIGTERM once the run must stop and SIGKILL on a second signal or after STOP_GRACE_SECONDS."""
+    SIGTERM once the run must stop and SIGKILL on a second signal or after STOP_GRACE_SECONDS. It returns only once
+    the whole group is gone: a descendant that outlives the leader is stopped the same way, so capacity is never
+    released while a process of the run still works."""
     if control is None:
         return subprocess.run(command, input=input, capture_output=True, text=True, timeout=timeout, check=False,
                               **kwargs)
@@ -1397,9 +1411,7 @@ def run_stoppable(command: list[str], control: RunControl | None, *, input: str 
         kwargs["stdin"] = subprocess.PIPE
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                start_new_session=True, **kwargs)
-    deadline = time.monotonic() + timeout
-    termed_at: float | None = None
-    killed = timed_out = False
+    stop = GroupStop(process.pid, control, time.monotonic() + timeout)
     pending = input
     while True:
         try:
@@ -1407,27 +1419,68 @@ def run_stoppable(command: list[str], control: RunControl | None, *, input: str 
             break
         except subprocess.TimeoutExpired:
             pending = None
-        clock = time.monotonic()
-        if not killed and clock >= deadline:
-            timed_out = killed = signal_group(process, signal.SIGKILL)
-        elif termed_at is None and control.stop_reason():
-            signal_group(process, signal.SIGTERM)
-            termed_at = clock
-        elif termed_at is not None and not killed and (len(control.signals) > 1
-                                                      or clock - termed_at >= STOP_GRACE_SECONDS):
-            killed = signal_group(process, signal.SIGKILL)
-    if timed_out:
+        stop.step(leader_done=False)
+    stop.drain()
+    if stop.timed_out:
         raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def signal_group(process: subprocess.Popen[str], signum: int) -> bool:
-    # The leader is unreaped until communicate() returns, so its pid is still this group's id.
+def group_alive(pgid: int) -> bool:
+    """Whether any process is left in the group, portably (no /proc on macOS)."""
     try:
-        os.killpg(process.pid, signum)
-    except (ProcessLookupError, PermissionError):
-        pass
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
     return True
+
+
+class GroupStop:
+    """Escalation for one vendor process group: SIGTERM when the run must stop (or, once the leader has exited,
+    when anything is left in its group), SIGKILL on a second stop signal or STOP_GRACE_SECONDS later, SIGKILL at
+    once past the run's timeout."""
+
+    def __init__(self, pgid: int, control: RunControl, deadline: float) -> None:
+        self.pgid = pgid
+        self.control = control
+        self.deadline = deadline
+        self.termed_at: float | None = None
+        self.killed_at: float | None = None
+        self.timed_out = False
+
+    def send(self, signum: int) -> None:
+        try:
+            os.killpg(self.pgid, signum)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def step(self, *, leader_done: bool) -> None:
+        clock = time.monotonic()
+        if self.killed_at is not None:
+            return
+        if clock >= self.deadline:
+            self.timed_out = not leader_done
+            self.send(signal.SIGKILL)
+            self.killed_at = clock
+        elif self.termed_at is None and (leader_done or self.control.stop_reason()):
+            self.send(signal.SIGTERM)
+            self.termed_at = clock
+        elif self.termed_at is not None and (len(self.control.signals) > 1
+                                             or clock - self.termed_at >= STOP_GRACE_SECONDS):
+            self.send(signal.SIGKILL)
+            self.killed_at = clock
+
+    def drain(self) -> None:
+        """The leader is reaped; wait until no process is left in its group."""
+        while group_alive(self.pgid):
+            self.step(leader_done=True)
+            if self.killed_at is not None and time.monotonic() - self.killed_at > STOP_GRACE_SECONDS:
+                print(f"seat: process group {self.pgid} survived SIGKILL for {STOP_GRACE_SECONDS:.0f}s",
+                      file=sys.stderr)
+                return
+            time.sleep(STOP_POLL_SECONDS)
 
 
 class CapacityLease:
@@ -1489,18 +1542,16 @@ class CapacityLease:
                 signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def command_run(args: argparse.Namespace) -> int:
-    if args.prompt_file:
-        prompt_path = Path(args.prompt_file).expanduser()
-        prompt = prompt_path.read_text(encoding="utf-8")
-    else:
-        prompt = " ".join(args.prompt).strip()
-    if not prompt:
-        fail("empty prompt: pass --prompt-file or a prompt after --")
-    cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
-    model = resolve_model(args.vendor, args.model)
-    registry = load_registry() + lease_accounts(args.vendor)
-    state = load_state()
+def run_envelope(args: argparse.Namespace, model: str | None, run_id: str, error: str, **extra: Any) -> None:
+    """The envelope of a run that ended before any attempt."""
+    print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model, "run_id": run_id,
+                      "vendor_session_id": None, "wall_s": 0, "tokens_in": None, "tokens_out": None,
+                      "attempts": [], "error": error, **extra, "result": None}, indent=2))
+
+
+def ready_candidates(args: argparse.Namespace, registry: list[dict[str, Any]], state: dict[str, Any], model: str,
+                     run_id: str) -> tuple[list[dict[str, Any]] | None, int]:
+    """The accounts this run may try for `model`, or None and the exit code once it has said why there are none."""
     if args.account:
         candidates = [a for a in registry if a["id"] == args.account and a.get("vendor") == args.vendor]
         if not candidates:
@@ -1510,50 +1561,68 @@ def command_run(args: argparse.Namespace) -> int:
     if args.vendor == "cursor" and args.account:
         ready = order_accounts(registry, state, args.vendor, model)
         candidates = [account for account in candidates if account in ready]
-    if not candidates:
-        misses = [
-            record for account_id, record in state["accounts"].items()
-            if any(a["id"] == account_id and a.get("vendor") == args.vendor for a in registry)
-            and (until := parse_ts((record.get("model_unavailable") or {}).get(model))) and until > now()
-            and (not args.account or account_id == args.account)
-        ]
-        if misses:
-            error = (misses[-1].get("model_unavailable_text") or {}).get(model) or f"Cannot use this model: {model}"
-            print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model,
-                              "run_id": f"seat-{uuid.uuid4()}", "vendor_session_id": None,
-                              "wall_s": 0, "tokens_in": None, "tokens_out": None,
-                              "attempts": [], "error": error, "result": None}, indent=2))
-            return EXIT_NO_ACCOUNT
-        fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
+    if candidates:
+        return candidates, EXIT_OK
+    misses = [
+        record for account_id, record in state["accounts"].items()
+        if any(a["id"] == account_id and a.get("vendor") == args.vendor for a in registry)
+        and (until := parse_ts((record.get("model_unavailable") or {}).get(model))) and until > now()
+        and (not args.account or account_id == args.account)
+    ]
+    if misses:
+        error = (misses[-1].get("model_unavailable_text") or {}).get(model) or f"Cannot use this model: {model}"
+        run_envelope(args, model, run_id, error)
+        return None, EXIT_NO_ACCOUNT
+    fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
+    return None, EXIT_NO_ACCOUNT
 
+
+def command_run(args: argparse.Namespace) -> int:
+    if args.prompt_file:
+        prompt_path = Path(args.prompt_file).expanduser()
+        prompt = prompt_path.read_text(encoding="utf-8")
+    else:
+        prompt = " ".join(args.prompt).strip()
+    if not prompt:
+        fail("empty prompt: pass --prompt-file or a prompt after --")
+    cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
+    registry = load_registry() + lease_accounts(args.vendor)
+    state = load_state()
     run_id = f"seat-{uuid.uuid4()}"
     if not args.task_class or args.account:
+        model = resolve_model(args.vendor, args.model)
+        candidates, code = ready_candidates(args, registry, state, model, run_id)
+        if candidates is None:
+            return code
         if args.vendor == "cursor":
             candidates = check_cursor_model(model, candidates)
         why = "no --class" if not args.task_class else "--account pins one account; a lease is its own admission"
         return run_on_accounts(args, prompt, cwd, model, candidates, run_id, None, why, None)
-    # Reserve before anything starts the vendor CLI, `cursor-agent models` included. The recording handlers go in
-    # first so a signal during the reserve is acted on inside the try/finally below, never by dying with a lease.
+    # Nothing that could start a vendor CLI runs before the reservation is held: not `route resolve` (which may list
+    # the vendor's models), not `cursor-agent models`. Only a check that some account is ready at all comes first.
+    if not order_accounts(registry, state, args.vendor):
+        fail(f"no {args.vendor} account is ready (see `seat accounts`)", EXIT_NO_ACCOUNT)
+    # The recording handlers go in first so a signal during the reserve is acted on inside the try/finally below,
+    # never by dying with a lease.
     control = RunControl()
     control.install()
     host = os.environ.get("ROUTE_HOST") or socket.gethostname()
-    code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}", args.author_vendor)
+    code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}", args.author_vendor,
+                                         args.model)
     if code != EXIT_OK:
         control.restore()
-        print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model, "run_id": run_id,
-                          "vendor_session_id": None, "wall_s": 0, "tokens_in": None, "tokens_out": None,
-                          "attempts": [], "error": f"capacity: {reservation.get('reason') or 'no capacity'}",
-                          "wait": reservation.get("wait"), "result": None}, indent=2))
+        run_envelope(args, args.model, run_id, f"capacity: {reservation.get('reason') or 'no capacity'}",
+                     wait=reservation.get("wait"))
         return 128 + control.signals[0] if control.signals else code
     code = EXIT_FAILED
     lease: CapacityLease | None = None
     try:
         lease = CapacityLease(reservation, control)
         lease.start()
-        if args.vendor == "cursor" and not control.stop_reason():
-            candidates = check_cursor_model(model, candidates)
-        code = run_on_accounts(args, prompt, cwd, model, candidates, run_id, reservation["reservation_id"], None,
-                               control)
+        code = run_reserved(args, prompt, cwd, registry, state, run_id, reservation, control)
+    except SystemExit as stop:
+        # A refusal raised under the hold (fail()) still releases below and still yields to a signal's exit code.
+        code = stop.code if isinstance(stop.code, int) else EXIT_FAILED
     finally:
         outcome = "cancelled" if control.signals else "ok" if code == EXIT_OK and not control.lost else "failed"
         if lease is None:
@@ -1561,6 +1630,35 @@ def command_run(args: argparse.Namespace) -> int:
         lease.release(outcome)
         control.restore()
     return 128 + control.signals[0] if control.signals else code
+
+
+def run_reserved(args: argparse.Namespace, prompt: str, cwd: Path, registry: list[dict[str, Any]],
+                 state: dict[str, Any], run_id: str, reservation: dict[str, Any], control: RunControl) -> int:
+    """The part of a reserved run that happens under the hold. The model that runs is the reserved one: the caller's
+    --model must name it (as its id or rung alias, or as an alias route resolves to it), or the run is refused."""
+    reserved = reservation.get("model")
+    if not isinstance(reserved, str) or not reserved:
+        run_envelope(args, args.model, run_id, "capacity: the reservation names no model")
+        return EXIT_FAILED
+    if args.model not in (reserved, reservation.get("alias")):
+        caller = resolve_model(args.vendor, args.model, control)
+        if (stopped := control.stop_reason()):
+            run_envelope(args, args.model, run_id, stopped)
+            return EXIT_FAILED
+        if caller != reserved:
+            run_envelope(args, caller, run_id,
+                         f"model: {args.model} is {caller}, but the {reservation.get('rung')} reservation holds "
+                         f"{reserved}; seat runs only the reserved model")
+            return EXIT_NO_ACCOUNT
+    if args.vendor == "devin" and not DEVIN_FREE_MODEL.match(reserved):
+        fail(f"{reserved} is billed per token on Devin; the devin seat runs only SWE-2 (swe-2-high|medium|max)")
+    candidates, code = ready_candidates(args, registry, state, reserved, run_id)
+    if candidates is None:
+        return code
+    if args.vendor == "cursor":
+        candidates = check_cursor_model(reserved, candidates, control)
+    return run_on_accounts(args, prompt, cwd, reserved, candidates, run_id, reservation["reservation_id"], None,
+                           control)
 
 
 def run_on_accounts(
@@ -1604,9 +1702,10 @@ def run_on_accounts(
         prompt_file = Path(scratch) / "prompt.md"
         prompt_file.write_text(prompt, encoding="utf-8")
         limited_plans: set[str] = set()
+        kind: str | None = None
         for account in candidates:
             if control and (stopped := control.stop_reason()):
-                outcome = {"ok": False, "error": stopped}
+                outcome, kind = {"ok": False, "error": stopped}, "stopped"
                 break
             if args.vendor == "cursor" and account.get("plan") in limited_plans:
                 continue
@@ -1622,7 +1721,7 @@ def run_on_accounts(
             command = build_command(args.vendor, model, args.mode, prompt_file, export_file)
             for retry in range(2):
                 if control and (stopped := control.stop_reason()):
-                    outcome = {"ok": False, "error": stopped}
+                    outcome, kind = {"ok": False, "error": stopped}, "stopped"
                     break
                 started = time.monotonic()
                 try:
