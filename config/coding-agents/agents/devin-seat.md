@@ -31,6 +31,8 @@ Run exactly one command, from the directory the brief assigns:
   Devin's safety model judges safe, so say "do not modify files" in the contract);
   the default `write` runs Devin with `--permission-mode dangerous`.
 - `--account <id>` only when the brief pins one; it disables failover.
+- Exit 4 is a capacity wait (`seat run` holds a reservation per `--class`): return the envelope
+  as is and do not retry; the caller decides when to try again.
 
 Forward the brief verbatim: goal, owned files, frozen interfaces, acceptance
 checks, constraints, return destination. Include the standing constraints: do

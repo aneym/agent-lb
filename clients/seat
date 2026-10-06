@@ -16,6 +16,8 @@
 #   seat release LEASE [--log FILE] [--outcome OUTCOME] [--json]
 #   seat run --vendor V --model M [--account A] [--class C] [--cwd D] [--mode ask|write]
 #            [--timeout S] (--prompt-file F | -- <prompt>)
+#            With --class (and no --account) the run first holds a `route reserve` lease, renews it while the
+#            vendor CLI runs and releases it on exit; no capacity exits 4 and launches nothing (A4d).
 #
 # Account auth (never printed, never written anywhere but the key file):
 #   cursor  auth=login    the CLI's own login (`cursor-agent login`, macOS keychain). One per Mac:
@@ -48,9 +50,12 @@ import random
 import re
 import runpy
 import shlex
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -65,6 +70,8 @@ SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat"}
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_NO_ACCOUNT = 2
+EXIT_CAPACITY_WAIT = 4
+ROUTE_EXIT_WAIT = 75
 
 PROBE_TIMEOUT_SECONDS = 20.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 3600.0
@@ -1315,6 +1322,74 @@ def command_release(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def reserve_capacity(task_class: str, vendor: str, job: str) -> tuple[int, dict[str, Any]]:
+    """A4d: hold a `route reserve` lease for this run's seat. Returns EXIT_OK and the lease, EXIT_CAPACITY_WAIT on a
+    wait, EXIT_NO_ACCOUNT on a refusal, and EXIT_FAILED when route or agent-lb cannot answer (fail closed)."""
+    route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
+    argv = [route, "reserve", task_class, "--job", job, "--prefer", SEAT_FOR_VENDOR[vendor], "--reason", "seat run",
+            "--json"]
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=90, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return EXIT_FAILED, {"status": "error", "reason": f"route reserve failed: {error}"}
+    try:
+        body = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    status = body.get("status")
+    if completed.returncode == EXIT_OK and status == "reserved" and body.get("reservation_id"):
+        return EXIT_OK, body
+    if completed.returncode == ROUTE_EXIT_WAIT and status == "wait":
+        return EXIT_CAPACITY_WAIT, body
+    if completed.returncode == EXIT_NO_ACCOUNT and status == "refused":
+        return EXIT_NO_ACCOUNT, body
+    reason = (body.get("reason") or body.get("message") or completed.stderr.strip()
+              or f"route reserve exited {completed.returncode}")
+    return EXIT_FAILED, {**body, "reason": reason}
+
+
+class CapacityLease:
+    """Renews a reservation every heartbeat_s while the vendor CLI runs, and releases it once."""
+
+    def __init__(self, reservation: dict[str, Any]) -> None:
+        self.reservation_id = reservation["reservation_id"]
+        self.interval = max(1, int(reservation.get("heartbeat_s") or 300))
+        self.route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self._beat, name="seat-reservation-heartbeat", daemon=True)
+
+    def _beat(self) -> None:
+        while not self.stopped.wait(self.interval):
+            try:
+                completed = subprocess.run([self.route, "heartbeat", self.reservation_id, "--json"],
+                                           capture_output=True, text=True, timeout=30, check=False)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                print(f"seat: route heartbeat {self.reservation_id} failed: {error}", file=sys.stderr)
+                continue
+            if completed.returncode == EXIT_NO_ACCOUNT:
+                print(f"seat: reservation {self.reservation_id} is gone; the run continues unrenewed", file=sys.stderr)
+                return
+            if completed.returncode != EXIT_OK:
+                print(f"seat: route heartbeat {self.reservation_id} exited {completed.returncode}", file=sys.stderr)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def release(self, outcome: str) -> None:
+        self.stopped.set()
+        try:
+            completed = subprocess.run([self.route, "release", self.reservation_id, "--outcome", outcome, "--json"],
+                                       capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"seat: route release {self.reservation_id} failed: {error}; it expires at its TTL",
+                  file=sys.stderr)
+            return
+        if completed.returncode != EXIT_OK:
+            print(f"seat: route release {self.reservation_id} exited {completed.returncode}; it expires at its TTL",
+                  file=sys.stderr)
+
+
 def command_run(args: argparse.Namespace) -> int:
     if args.prompt_file:
         prompt_path = Path(args.prompt_file).expanduser()
@@ -1355,6 +1430,49 @@ def command_run(args: argparse.Namespace) -> int:
         candidates = check_cursor_model(model, candidates)
 
     run_id = f"seat-{uuid.uuid4()}"
+    if not args.task_class or args.account:
+        why = "no --class" if not args.task_class else "--account pins one account; a lease is its own admission"
+        return run_on_accounts(args, prompt, cwd, model, candidates, run_id, None, why)
+    host = os.environ.get("ROUTE_HOST") or socket.gethostname()
+    code, reservation = reserve_capacity(args.task_class, args.vendor, f"seat/{host}/{run_id}")
+    if code != EXIT_OK:
+        print(json.dumps({"ok": False, "vendor": args.vendor, "account": None, "model": model, "run_id": run_id,
+                          "vendor_session_id": None, "wall_s": 0, "tokens_in": None, "tokens_out": None,
+                          "attempts": [], "error": f"capacity: {reservation.get('reason') or 'no capacity'}",
+                          "wait": reservation.get("wait"), "result": None}, indent=2))
+        return code
+    lease = CapacityLease(reservation)
+    signalled: list[int] = []
+
+    def cancel(signum: int, _frame: Any) -> None:
+        if not signalled:
+            signalled.append(signum)
+            raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, cancel)
+    code = EXIT_FAILED
+    lease.start()
+    try:
+        code = run_on_accounts(args, prompt, cwd, model, candidates, run_id, reservation["reservation_id"], None)
+        return code
+    except KeyboardInterrupt:
+        signalled.append(signal.SIGINT)
+        raise
+    finally:
+        lease.release("cancelled" if signalled else "ok" if code == EXIT_OK else "failed")
+        signal.signal(signal.SIGTERM, previous)
+
+
+def run_on_accounts(
+    args: argparse.Namespace,
+    prompt: str,
+    cwd: Path,
+    model: str,
+    candidates: list[dict[str, Any]],
+    run_id: str,
+    reservation_id: str | None,
+    why: str | None,
+) -> int:
     seat = SEAT_FOR_VENDOR[args.vendor]
     prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     base = {
@@ -1367,8 +1485,11 @@ def command_run(args: argparse.Namespace) -> int:
         "source": "seat",
         "prompt_sha256": prompt_sha,
         "cwd": str(cwd),
+        "reservation": reservation_id,
     }
-    append_ledger([{**base, "ts": iso(now()), "event": "dispatch", "accounts": [a["id"] for a in candidates]}])
+    unreserved = {} if reservation_id else {"why": why}
+    append_ledger([{**base, **unreserved, "ts": iso(now()), "event": "dispatch",
+                    "accounts": [a["id"] for a in candidates]}])
 
     attempts: list[dict[str, Any]] = []
     changes: dict[str, dict[str, Any]] = {}

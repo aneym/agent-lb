@@ -34,8 +34,14 @@ print(json.dumps({"type": "result", "is_error": False, "result": "done", "sessio
                   "usage": {"inputTokens": 120, "outputTokens": 7, "cacheReadTokens": 0}}))
 """
 
+# `seat run --class` holds a reservation first (A4d); this stand-in grants it. The real route and server are in
+# test_seat_run_reservation.py.
 FAKE_ROUTE = """#!/bin/sh
-echo grok-9-medium-fast
+case "$1" in
+  reserve) echo '{"status": "reserved", "reservation_id": "rsv-000000000001", "heartbeat_s": 300}' ;;
+  heartbeat|release) echo '{"status": "released"}' ;;
+  *) echo grok-9-medium-fast ;;
+esac
 """
 
 
