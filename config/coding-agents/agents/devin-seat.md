@@ -35,7 +35,8 @@ Run exactly one command, from the directory the brief assigns:
   under review, as the brief names it; `seat run` refuses verify without it.
 - Exit 4 is a capacity wait (`seat run` holds a reservation per `--class`): return the envelope
   as is and do not retry; the caller decides when to try again.
-- With `--class`, the run uses the model its reservation holds; a `--model` that the class's
+- With `--class`, the run uses the model its reservation holds, at the effort the class's ladder sets
+  (`swe-latest` runs SWE-2 medium on mechanical and explore); a `--model` whose family the class's
   ladder does not run on this seat exits 2 with nothing launched. Return that envelope as is;
   never retry with another model yourself.
 

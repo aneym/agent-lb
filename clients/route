@@ -1802,6 +1802,18 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
     return model, why
 
 
+EFFORT_SUFFIX = re.compile(r"-(?:low|medium|high|xhigh|max)$")
+
+
+def same_model(wanted: str, *names: str | None) -> bool:
+    """Whether a caller's model names one of `names` (a rung's alias or resolved id): exactly, or as the same family
+    alias or model id at another effort. The ladder sets the effort per class, so `grok-latest` runs the mechanical
+    rung's grok-latest-low and `swe-latest` its swe-latest-medium; another family (Grok for a Sonnet rung) never
+    matches (2026-10-06, a4d-4)."""
+    base = EFFORT_SUFFIX.sub("", wanted)
+    return any(name and (wanted == name or base == EFFORT_SUFFIX.sub("", name)) for name in names)
+
+
 def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: ServedModels,
                 history: list[dict], now: datetime, author: str | None = None,
                 skip_ids: list[str] | None = None, prefer: str | None = None, model: str | None = None) -> dict:
@@ -1809,7 +1821,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     seat) waives the table's policy holds on that rung (gate, when, reserve, stand-in), never
     a physical or floor one (unresolvable, pool exhausted, seat down, same maker, no reviewer).
     A caller's `model` picks, among the preferred rungs, the one that runs it (by alias or
-    resolved id; a rung whose model is pending discovery stays a candidate)."""
+    resolved id, at any effort: see same_model; a rung whose model is pending discovery stays a candidate)."""
     wanted = model
     author = "cognition" if author == "devin" else author
     entries = apply_overrides(ladder_entries(table, class_name, author) or [],
@@ -1933,10 +1945,12 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     if prefer is not None:
         preferred = [row for row in opened + soft if prefer in (row["rung"], row["seat"])]
         if wanted is not None and preferred:
-            preferred = ([row for row in preferred if wanted in (row["model"], row["alias"])]
+            runs = sorted({row["alias"] for row in preferred})
+            preferred = ([row for row in preferred if same_model(wanted, row["model"], row["alias"])]
                          or [row for row in preferred if row.get("model_pending")])
             if not preferred:
-                refused = f"no open {prefer} rung on the {class_name} ladder runs {wanted}"
+                refused = (f"no open {prefer} rung on the {class_name} ladder runs {wanted}; "
+                           f"it runs {', '.join(runs)}")
         chosen = next(iter(preferred), None)
         if chosen is not None and chosen["same_vendor"] and default is not None and not default["same_vendor"]:
             # Cross-vendor review is a kept floor: same-maker review only when no other maker is open.
@@ -2121,7 +2135,7 @@ def command_reserve(args: argparse.Namespace) -> int:
         allow_discovery()
         model, why = rung_model(table, {"model": row["alias"], "seat": row["seat"]}, ServedModels())
         _DEFER_DISCOVERY = True
-        if model and args.model in (None, model, row["alias"]):
+        if model and (args.model is None or same_model(args.model, model, row["alias"])):
             result["model"] = model
             break
         _reservation_request("POST", f"/{result['reservation_id']}/release", {"outcome": "failed"})

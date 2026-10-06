@@ -560,3 +560,23 @@ def test_a_failed_first_release_is_retried(scripted: dict[str, str]) -> None:
     assert rc == 0 and done["ok"], done
     calls = route_calls(env)
     assert [line.split()[0] for line in calls].count("release") == 2 and "released ok" in calls, calls
+
+
+# a4d-4 (review of 594c1d9d, 2026-10-06, Opus): route refused the forwarders' own default models, so every
+# cursor-seat and devin-seat run with --class exited 2. A family alias names its rung at any effort (the ladder sets the
+# effort); another family is still refused.
+def test_a_forwarder_default_alias_runs_its_rung_at_the_ladder_effort(env: dict[str, str]) -> None:
+    rc, ran = run_seat(env, "default1", "--class", "mechanical", model="grok-latest")
+    assert rc == 0 and ran["ok"], ran
+    assert launched_model(env, "default1") == ran["model"] == "grok-4.7-low"
+
+    for task_class in ("mechanical", "explore"):
+        rc, held = route(env, "reserve", task_class, "--job", f"swe-{task_class}", "--prefer", "devin-seat",
+                         "--model", "swe-latest", "--reason", "devin-seat default")
+        assert rc == 0 and (held["rung"], held["model"]) == ("swe2-medium", "swe-2-medium"), (task_class, held)
+        assert route(env, "release", held["reservation_id"], "--outcome", "ok")[0] == 0
+
+    # Cursor's only explore rung runs Composer: Grok there is another family, refused with what the rung runs.
+    rc, refused = route(env, "reserve", "explore", "--job", "grok-explore", "--prefer", "cursor-seat",
+                        "--model", "grok-latest-low", "--reason", "scouting")
+    assert rc == 2 and refused["status"] == "refused" and "composer-latest" in refused["reason"], refused

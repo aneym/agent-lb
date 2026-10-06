@@ -22,7 +22,8 @@ Run exactly one command, from the worktree the brief assigns:
   `--prompt-file "$f"`. Never a fixed or reused name such as `p.md`: parallel
   seats share the scratchpad and overwrite each other's contracts.
 - `<alias>` is the family alias the brief names (`grok-latest` when it names none,
-  `grok-latest-low` for scouting); `seat` resolves it through `route resolve`,
+  `grok-latest-low` for scouting, `composer-latest` with `--class explore`, whose
+  ladder runs no Grok on Cursor); `seat` resolves it through `route resolve`,
   which never picks a retired model for an alias and refuses blocked ones.
   `glm-*`/`kimi-*` ids pass through as given. A retired id runs only when the
   brief names it outright (Alex, 2026-10-05); never substitute one yourself.
@@ -36,7 +37,8 @@ Run exactly one command, from the worktree the brief assigns:
   under review, as the brief names it; `seat run` refuses verify without it.
 - Exit 4 is a capacity wait (`seat run` holds a reservation per `--class`): return the envelope
   as is and do not retry; the caller decides when to try again.
-- With `--class`, the run uses the model its reservation holds; a `--model` that the class's
+- With `--class`, the run uses the model its reservation holds, at the effort the class's ladder sets
+  (`grok-latest` runs the mechanical rung's Grok low); a `--model` whose family the class's
   ladder does not run on this seat exits 2 with nothing launched. Return that envelope as is;
   never retry with another model yourself.
 - For long interactive work that must survive a disconnect, `cursor-agent persist`

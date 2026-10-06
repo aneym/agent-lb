@@ -1632,20 +1632,31 @@ def command_run(args: argparse.Namespace) -> int:
     return 128 + control.signals[0] if control.signals else code
 
 
+EFFORT_SUFFIX = re.compile(r"-(?:low|medium|high|xhigh|max)$")
+
+
+def same_model(wanted: str, *names: str | None) -> bool:
+    """route's same_model: the same name, or the same family alias or model id at another effort, which the class's
+    ladder sets (grok-latest runs the mechanical rung's grok-4.7-low)."""
+    base = EFFORT_SUFFIX.sub("", wanted)
+    return any(name and (wanted == name or base == EFFORT_SUFFIX.sub("", name)) for name in names)
+
+
 def run_reserved(args: argparse.Namespace, prompt: str, cwd: Path, registry: list[dict[str, Any]],
                  state: dict[str, Any], run_id: str, reservation: dict[str, Any], control: RunControl) -> int:
     """The part of a reserved run that happens under the hold. The model that runs is the reserved one: the caller's
-    --model must name it (as its id or rung alias, or as an alias route resolves to it), or the run is refused."""
+    --model must name it (as its id or rung alias, or as an alias route resolves to it, at any effort), or the run is
+    refused."""
     reserved = reservation.get("model")
     if not isinstance(reserved, str) or not reserved:
         run_envelope(args, args.model, run_id, "capacity: the reservation names no model")
         return EXIT_FAILED
-    if args.model not in (reserved, reservation.get("alias")):
+    if not same_model(args.model, reserved, reservation.get("alias")):
         caller = resolve_model(args.vendor, args.model, control)
         if (stopped := control.stop_reason()):
             run_envelope(args, args.model, run_id, stopped)
             return EXIT_FAILED
-        if caller != reserved:
+        if not same_model(caller, reserved):
             run_envelope(args, caller, run_id,
                          f"model: {args.model} is {caller}, but the {reservation.get('rung')} reservation holds "
                          f"{reserved}; seat runs only the reserved model")
