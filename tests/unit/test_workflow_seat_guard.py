@@ -194,6 +194,9 @@ def test_a_seat_defined_off_the_ladder_needs_a_request_and_the_request_is_logged
     assert "defined on 'claude-fable-5-1', and nothing asked for it" in silent['permissionDecisionReason']
     undefined = invoke("agent(p, {agentType: 'legacy-fable', model: undefined})", env=env)
     assert undefined['permissionDecision'] == 'deny'
+    from_args = invoke('agent(p, args.opts)', args={'opts': {'agentType': 'legacy-fable'}}, env=env)
+    assert from_args['permissionDecision'] == 'deny'
+    assert "defined on 'claude-fable-5-1', and nothing asked" in from_args['permissionDecisionReason']
     assert not ledger.exists()
     asked = invoke("agent(p, {agentType: 'legacy-fable', model: 'claude-fable-5-1'});"
                    "agent(q, {agentType: 'opus-seat', model: 'astra-latest-high'})", env=env)

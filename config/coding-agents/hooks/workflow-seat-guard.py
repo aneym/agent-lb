@@ -227,6 +227,13 @@ def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
         seat_like = any(key in value for key in ('agentType', 'seat', 'implementer'))
         seat = next((value[key] for key in ('agentType', 'seat', 'implementer')
                      if isinstance(value.get(key), str)), None)
+        agent_type = value.get('agentType') if isinstance(value.get('agentType'), str) else None
+        if agent_type and value.get('model') is None:
+            # No model: the seat definition's pin runs, a silent default when it is off the ladder.
+            pinned = definition_model(agent_type)
+            if pinned and (is_blocked(pinned, table) or is_retired(pinned, table, agent_type)):
+                return (f'Workflow args run {agent_type!r} at {path}, defined on {pinned!r}, and nothing asked '
+                        'for it: name the model in the options to request it (models.md, Workflows)')
         for key, item in value.items():
             if seat_like and key == 'model' and isinstance(item, str) and (
                     is_retired(item, table, seat) or is_blocked(item, table)):

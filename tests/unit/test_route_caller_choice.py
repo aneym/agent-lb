@@ -84,3 +84,21 @@ def test_a_preference_keeps_the_review_floor_and_logs_the_real_default(tmp_path:
     # The chain path (classes without a ladder) keeps the same error contract.
     unknown = route(env, CANONICAL_TABLE, "pick", "plan", "--prefer", "nope", "--reason", "x", "--json")
     assert unknown.returncode == 3 and json.loads(unknown.stdout)["error"] == "unknown_rung"
+
+
+def test_the_logged_default_is_the_tables_pick_on_both_paths(tmp_path: Path) -> None:
+    env = setup(tmp_path, codex_low=False)
+    closed = {"status": "exhausted", "eligibleAccounts": 0}
+    pools(env, openai_codex=closed, devin=closed)
+    # Opening Composer must not hide that the table would have run the Sonnet stand-in.
+    assert pick(env, CANONICAL_TABLE, "explore")["rung"] == "sonnet-explore-standin"
+    probe = pick(env, CANONICAL_TABLE, "explore", "--prefer", "composer", "--reason", "probe")
+    assert (probe["rung"], probe["default"]) == ("composer", "sonnet-explore-standin")
+    # Classes without a ladder log the seat and effort being overridden.
+    plan = pick(env, CANONICAL_TABLE, "plan", "--effort", "xhigh", "--reason", "escalate")
+    assert (plan["seat"], plan["default"], plan["effort"], plan["effort_default"]) == (
+        "planner", "planner", "xhigh", "high")
+    # An unknown seat is a setup error even when nothing on the chain can run.
+    pools(env, anthropic_general=closed)
+    unknown = route(env, CANONICAL_TABLE, "pick", "plan", "--prefer", "nope", "--reason", "x", "--json")
+    assert unknown.returncode == 3 and json.loads(unknown.stdout)["error"] == "unknown_rung"

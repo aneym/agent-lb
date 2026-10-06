@@ -1858,8 +1858,10 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
     chosen = next(iter(opened or soft), None)
     if chosen is not None and not opened:
         chosen = {**chosen, "reason": chosen["reason"] + "; no other rung open"}
-    # The default is what the table alone would pick: never a rung opened only by a waiver.
-    default = next((row for row in opened + soft if not row.get("waived")), None)
+    # The default is what the table alone would pick: a walk with no preference, since a
+    # waived rung also changes later rungs' conditions (a stand-in opens only when all else is shut).
+    default = chosen if prefer is None else ladder_walk(
+        table, class_name, pools, seats, served, history, now, author, skip_ids)["chosen"]
     refused = None
     if prefer is not None:
         chosen = next((row for row in opened + soft if prefer in (row["rung"], row["seat"])), None)
@@ -2003,6 +2005,9 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     if not isinstance(chain, list) or not chain:
         fail(f"class {args.task_class!r} has no chain")
 
+    if args.prefer and not any(isinstance(entry, dict) and entry.get("seat") == args.prefer for entry in chain):
+        setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a seat on the {args.task_class} chain", args.json)
+
     state = read_state()
     age = state_age_seconds(state)
     stale = bool(state) and (age is None or age > STATE_MAX_AGE_SECONDS)
@@ -2033,9 +2038,6 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
     chosen = routable[0]
     reasons = ["first chain entry with the seat up and its pool not exhausted"]
     if args.prefer:
-        if not any(isinstance(entry, dict) and entry.get("seat") == args.prefer for entry in chain):
-            setup_error("unknown_rung", f"--prefer {args.prefer!r} is not a seat on the {args.task_class} chain",
-                        args.json)
         preferred = next((entry for entry in routable if entry["seat"] == args.prefer), None)
         if preferred is None:
             why = next((entry["reason"] for entry in skipped_entries if entry["seat"] == args.prefer), "unroutable")
@@ -2076,8 +2078,11 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
             for entry in routable if entry is not chosen
         ],
     }
-    if args.prefer:
+    if args.prefer or args.effort:
         result["default"] = routable[0]["seat"]
+        result["effort"] = next((entry.get("effort") for entry in chain if isinstance(entry, dict)
+                                 and entry.get("seat") == chosen["seat"] and entry.get("model") == chosen["alias"]),
+                                None)
     record_caller_choice(args, result)
     _print_pick(result, as_json=args.json)
     return EXIT_OK
