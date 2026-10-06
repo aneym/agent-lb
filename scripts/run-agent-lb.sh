@@ -19,21 +19,37 @@ wait_for_postgres() {
     postgresql*://*) ;;
     *) return 0 ;;
   esac
-  local hostport host port
-  hostport="${url#*://}"; hostport="${hostport%%[/?#]*}"; hostport="${hostport##*@}"
-  if [[ "$hostport" == \[* ]]; then
-    host="${hostport#\[}"; host="${host%%\]*}"
-    port="${hostport#*\]}"; port="${port#:}"
-  else
-    host="${hostport%%:*}"; port="${hostport##*:}"
+  local endpoint host port
+  if ! endpoint=$(python3 - 2>/dev/null <<'PYURL'
+import os
+import re
+from urllib.parse import urlsplit
+
+url = os.environ.get("AGENT_LB_DATABASE_URL", "")
+try:
+    scheme, rest = url.split("://", 1)
+    # Raw delimiters in SQLAlchemy userinfo must not truncate the authority.
+    endpoint = urlsplit(scheme + "://" + rest.rsplit("@", 1)[-1])
+    host = endpoint.hostname or "127.0.0.1"
+    port = endpoint.port or 5432
+    if not re.fullmatch(r"[A-Za-z0-9_.:%-]+", host):
+        raise ValueError("invalid host")
+    print(host, port)
+except (ValueError, TypeError):
+    raise SystemExit(1)
+PYURL
+  ); then
+    echo "db: unparseable url" >&2
+    return 0
   fi
-  [[ "$port" == "$hostport" || -z "$port" ]] && port=5432
-  [[ -z "$host" ]] && host=127.0.0.1
-  [[ "$port" =~ ^[0-9]+$ ]] || port=5432
+  read -r host port <<<"$endpoint"
   local pgready=""
   for c in /opt/homebrew/bin/pg_isready /opt/homebrew/opt/postgresql@17/bin/pg_isready; do
     [[ -x "$c" ]] && { pgready="$c"; break; }
   done
+  [[ -n "$pgready" ]] || pgready=$(command -v pg_isready || true)
+  local timeout_bin=""
+  timeout_bin=$(command -v timeout || command -v gtimeout || true)
   local deadline=$(( $(date +%s) + ${AGENT_LB_DB_WAIT_SECONDS:-900} ))
   local delay=1 waited=0 start rc remaining probe_timeout sleep_seconds
   start=$(date +%s)
@@ -43,7 +59,23 @@ wait_for_postgres() {
     probe_timeout=2
     (( remaining < probe_timeout )) && probe_timeout=$remaining
     if [[ -n "$pgready" ]]; then
-      "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 && rc=0 || rc=$?
+      if [[ -n "$timeout_bin" ]]; then
+        "$timeout_bin" "$remaining" "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 && rc=0 || rc=$?
+      else
+        # macOS without coreutils: terminate even a DNS-stalled probe.
+        "$pgready" -q -h "$host" -p "$port" -t "$probe_timeout" >/dev/null 2>&1 &
+        local probe_pid=$! timer_pid
+        (
+          sleep "$remaining" &
+          sleeper=$!
+          trap 'kill "$sleeper" 2>/dev/null || true' TERM
+          wait "$sleeper" && kill -KILL "$probe_pid" 2>/dev/null
+        ) &
+        timer_pid=$!
+        wait "$probe_pid" 2>/dev/null && rc=0 || rc=$?
+        kill "$timer_pid" 2>/dev/null || true
+        wait "$timer_pid" 2>/dev/null || true
+      fi
     else
       python3 - "$host" "$port" "$probe_timeout" >/dev/null 2>&1 <<'PYPROBE' && rc=0 || rc=2
 import signal

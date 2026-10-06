@@ -182,13 +182,41 @@ process_age_seconds() {
 # Postgres is not accepting connections, log it and wait instead of restarting.
 db_ready() {
   local url="${AGENT_LB_DATABASE_URL:-}"
-  if [[ -z "$url" && -f "$PLIST_FILE" ]]; then
-    url=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:AGENT_LB_DATABASE_URL' "$PLIST_FILE" 2>/dev/null) || url=""
+  if [[ -z "${AGENT_LB_DATABASE_URL+x}" ]]; then
+    if ! url=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:AGENT_LB_DATABASE_URL' "$PLIST_FILE" 2>/dev/null); then
+      log "dependency readiness unknown, not restarting"
+      return 1
+    fi
   fi
-  case "$url" in postgresql*://*) ;; *) return 0 ;; esac
-  local hp="${url#*://}"; hp="${hp#*@}"; hp="${hp%%/*}"
-  local host="${hp%%:*}" port="${hp##*:}"
-  [[ "$port" == "$hp" || -z "$port" ]] && port=5432
+  case "$url" in
+    postgresql*://*) ;;
+    ""|sqlite*://*) return 0 ;;
+    *) log "dependency readiness unknown, not restarting"; return 1 ;;
+  esac
+  local endpoint host port
+  if ! endpoint=$(DB_PROBE_URL="$url" python3 - 2>/dev/null <<'PYURL'
+import os
+import re
+from urllib.parse import urlsplit
+
+url = os.environ["DB_PROBE_URL"]
+try:
+    scheme, rest = url.split("://", 1)
+    # Raw delimiters in SQLAlchemy userinfo must not truncate the authority.
+    endpoint = urlsplit(scheme + "://" + rest.rsplit("@", 1)[-1])
+    host = endpoint.hostname or "127.0.0.1"
+    port = endpoint.port or 5432
+    if not re.fullmatch(r"[A-Za-z0-9_.:%-]+", host):
+        raise ValueError("invalid host")
+    print(host, port)
+except (ValueError, TypeError):
+    raise SystemExit(1)
+PYURL
+  ); then
+    log "dependency readiness unknown, not restarting"
+    return 1
+  fi
+  read -r host port <<<"$endpoint"
   local pgready
   for pgready in /opt/homebrew/bin/pg_isready /opt/homebrew/opt/postgresql@17/bin/pg_isready ""; do
     [[ -z "$pgready" || -x "$pgready" ]] && break
