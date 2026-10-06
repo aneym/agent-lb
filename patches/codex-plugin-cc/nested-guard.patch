@@ -1,0 +1,21 @@
+diff --git a/plugins/codex/scripts/codex-companion.mjs b/plugins/codex/scripts/codex-companion.mjs
+--- a/plugins/codex/scripts/codex-companion.mjs
++++ b/plugins/codex/scripts/codex-companion.mjs
+@@ -1023,6 +1023,17 @@
+ 
+ async function main() {
+   const [subcommand, ...argv] = process.argv.slice(2);
++  const parsedDepth = Number.parseInt(process.env.CODEX_COMPANION_DEPTH ?? "0", 10);
++  const depth = Number.isNaN(parsedDepth) ? 0 : parsedDepth;
++  if (subcommand === "task" && depth >= 1 && process.env.CODEX_COMPANION_ALLOW_NESTED !== "1") {
++    process.stderr.write(`codex-companion: nested task refused (CODEX_COMPANION_DEPTH=${depth}): you are already running inside a companion task; review the diff yourself and end with the VERDICT line. Set CODEX_COMPANION_ALLOW_NESTED=1 only for a deliberate nested run.\n`);
++    process.exitCode = 3;
++    return;
++  }
++  // A detached worker is part of its parent's task, not another nested task.
++  if (subcommand !== "task-worker") {
++    process.env.CODEX_COMPANION_DEPTH = String(depth + 1);
++  }
+   if (!subcommand || subcommand === "help" || subcommand === "--help") {
+     printUsage();
+     return;
