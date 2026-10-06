@@ -764,6 +764,9 @@
     "gpt-5-*",
     "gpt-5"
   ],
+  "retired_note": "2026-10-05, Alex: \"we shouldnt just block model usage, we shoudl allow them if we request or we want t escalate things.\" `retired` means off the default ladder: no alias, pick or fallback reaches it, and a seat definition that pins it with nothing asking is denied. A dispatch, brief, `opts.model` or `route resolve <id>` that names one is an explicit request: it runs and the routing ledger records it. Only `blocked` is refused outright.",
+  "blocked": ["claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5"],
+  "blocked_note": "2026-10-05: models no longer served upstream (absent from the LB's /api/models and /api/models/anthropic lists that day); denied even on explicit request. Move an id here only when the upstream drops it.",
   "readmitted": {
     "fable-orchestrator": {"alias": "fable-latest", "patterns": ["claude-fable-*", "fable"]},
     "astra-consult": {"alias": "astra-latest", "patterns": ["gpt-*-astra", "gpt-*-astra-*", "astra"]}

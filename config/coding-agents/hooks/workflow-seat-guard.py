@@ -170,6 +170,11 @@ def is_retired(value: str, table: dict) -> bool:
     return any(fnmatch.fnmatchcase(value, pattern) for pattern in table['retired'])
 
 
+def is_blocked(value: str, table: dict) -> bool:
+    """Gone upstream: denied even on explicit request (Alex, 2026-10-05)."""
+    return any(fnmatch.fnmatchcase(value, pattern) for pattern in table.get('blocked') or ())
+
+
 def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
     """Seat options a script reads from Workflow args (`route workflow-args`) never reach the static scan.
 
@@ -191,7 +196,11 @@ def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
     return None
 
 
-def inspect(script: str, table: dict) -> tuple[str | None, bool]:
+def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str | None, bool]:
+    """(first deny reason, warning). A literal retired model id is an explicit request
+    (Alex, 2026-10-05): it is allowed and appended to `explicit`; a blocked id, or a
+    harness alias that silently resolves to a retired model, is denied."""
+    explicit = [] if explicit is None else explicit
     interpolations: list[str] = []
     items = tokens(script, interpolations)
     pairs = brackets(items)
@@ -239,10 +248,15 @@ def inspect(script: str, table: dict) -> tuple[str | None, bool]:
         if 'agentType' not in keys:
             reasons.append('agent() without agentType: pass agentType (models.md, Workflows)')
         model = keys.get('model')
-        if model and model[0] == 'string' and is_retired(model[1], table):
-            reasons.append(f'agent() pins retired model {model[1]!r}: use a current model alias (models.md, Workflows)')
+        if model and model[0] == 'string':
+            if is_blocked(model[1], table):
+                reasons.append(f'agent() pins {model[1]!r}, which is no longer served: use a current model alias (models.md, Workflows)')
+            elif model[1] in ('sonnet', 'haiku') and is_retired(model[1], table):
+                reasons.append(f'agent() pins {model[1]!r}, which resolves to a retired model: use a current model alias (models.md, Workflows)')
+            elif is_retired(model[1], table):
+                explicit.append(model[1])
     for body in interpolations:
-        reason, body_warning = inspect(body, table)
+        reason, body_warning = inspect(body, table, explicit)
         if reason:
             reasons.append(reason)
         warning = warning or body_warning
@@ -263,10 +277,14 @@ def main() -> None:
         table = json.loads(table_path.read_text())
         reason = retired_in_args(tool_input.get('args'), table)
         warning = False
+        explicit: list = []
         if not reason:
-            reason, warning = inspect(script, table)
+            reason, warning = inspect(script, table, explicit)
         if reason:
             output.update(permissionDecision='deny', permissionDecisionReason=reason)
+        elif explicit:
+            output['additionalContext'] = ('workflow-seat-guard: agent() explicitly requests a model off the default ladder ('
+                                           + ', '.join(sorted(set(explicit))) + '); allowed on request (models.md).')
         elif warning:
             output['additionalContext'] = 'workflow-seat-guard: dynamic agent() options could not be checked; pass agentType and avoid retired model pins (models.md, Workflows).'
     except Exception:

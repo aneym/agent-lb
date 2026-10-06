@@ -675,15 +675,18 @@ with tempfile.TemporaryDirectory() as scratch:
         except (json.JSONDecodeError, KeyError):
             return "error"
 
-    check(decision({"subagent_type": "opus-seat", "model": "fable"}) == "deny", "seat guard denies model=fable")
-    check(decision({"subagent_type": "legacy-fable"}) == "deny", "seat guard denies a Fable-defined subagent type")
+    # Alex, 2026-10-05: a model off the ladder runs when asked for; a silent default or a blocked model does not.
+    check(decision({"subagent_type": "opus-seat", "model": "fable"}) is None,
+          "seat guard admits model=fable when the dispatch names it (logged)")
+    check(decision({"subagent_type": "opus-seat", "model": "claude-planner"}) == "deny",
+          "seat guard denies a blocked model even when named")
+    check(decision({"subagent_type": "legacy-fable"}) == "deny",
+          "seat guard denies a Fable-defined subagent type with nothing asking for Fable")
     check(decision({"subagent_type": "gpt-implementer"}) is None, "seat guard admits a cheap seat")
     check(decision({"subagent_type": "fable-orchestrator", "model": "fable"}) is None,
           "seat guard admits Fable on the readmitted fable-orchestrator seat")
     check(decision({"subagent_type": "astra-consult", "model": "gpt-6-astra"}) is None,
           "seat guard admits Astra on the readmitted astra-consult seat")
-    check(decision({"subagent_type": "sol-consult", "model": "gpt-6-astra"}) == "deny",
-          "seat guard denies Astra on any other seat")
 
 if not SOURCE_ONLY:
     # The installed router returns a live, non-retired seat for every class.

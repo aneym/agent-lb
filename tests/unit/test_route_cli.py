@@ -790,20 +790,33 @@ def test_resolve_skips_retired_models_and_picks_the_newest(tmp_path: Path) -> No
 
     sol = run("resolve", "sol-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     terra = run("resolve", "terra-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
-    retired = run("resolve", "gpt-6-astra", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    extra["ROUTE_LEDGER"] = str(tmp_path / "dispatch.jsonl")
+    named = run("resolve", "gpt-6-astra", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
+    blocked = run("resolve", "gpt-5.4-mini", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
 
     assert (sol.returncode, sol.stdout.strip()) == (0, "gpt-6-sol")
     assert terra.returncode == 2 and "no non-retired terra" in terra.stderr
-    assert retired.returncode == 2 and "retired" in retired.stderr
+    # A retired id named outright is an explicit request (2026-10-05): it resolves and is logged.
+    assert (named.returncode, named.stdout.strip()) == (0, "gpt-6-astra")
+    logged = [json.loads(line) for line in (tmp_path / "dispatch.jsonl").read_text().splitlines()]
+    assert [(r["event"], r["model"], r["source"]) for r in logged] == [("explicit_model", "gpt-6-astra", "route resolve")]
+    assert blocked.returncode == 2 and "no longer served" in blocked.stderr
 
     # Readmitted aliases (2026-10-05) reach their retired family; the bare ids stay retired.
     write_fixture(fixtures, "api_models_anthropic.json", {"models": ["claude-fable-5", "claude-fable-5-1", "claude-opus-5-5"]})
     astra = run("resolve", "astra-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     fable = run("resolve", "fable-latest", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
-    bare_fable = run("resolve", "claude-fable-5-1", home=tmp_path, table=CANONICAL_TABLE, fixtures=fixtures, extra=extra)
     assert (astra.returncode, astra.stdout.strip()) == (0, "gpt-6-astra")
     assert (fable.returncode, fable.stdout.strip()) == (0, "claude-fable-5-1")
-    assert bare_fable.returncode == 2 and "retired" in bare_fable.stderr
+    # A routed seat other than the one `readmitted` names never reaches the alias.
+    table = json.loads(CANONICAL_TABLE.read_text(encoding="utf-8"))
+    table["classes"]["explore"]["chain"].insert(0, {"seat": "gpt-explorer", "vendor": "openai", "model": "astra-latest"})
+    table["ladder"] = "baseline"
+    rung = tmp_path / "astra-rung.json"
+    rung.write_text(json.dumps(table), encoding="utf-8")
+    picked = run("pick", "explore", "--json", home=tmp_path, table=rung, fixtures=fixtures, extra=extra)
+    assert picked.returncode == 0, picked.stderr
+    assert (json.loads(picked.stdout)["seat"], json.loads(picked.stdout)["alias"]) == ("gpt-explorer", "sol-latest")
 
 
 def _pace_gated_table(tmp_path: Path) -> Path:

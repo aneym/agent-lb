@@ -2,13 +2,17 @@
 """Agent PreToolUse routing telemetry and the retired-model rule.
 
 Capacity is advisory: pool state is surfaced as status so the caller can
-choose deliberately. One model rule is enforced: since the owner's 2026-09-22
-lineup nothing runs on a retired model (Fable, the claude-planner alias, the
-gpt-5.6 generation and older; the routing table's `retired` list). A dispatch
-is denied when it pins one, names a subagent type whose definition pins one,
-or carries a brief that tells a forwarder to use one (`--model <id>`,
-`model: <id>`). The table's `readmitted` map exempts named seats from named
-patterns (2026-10-05: fable-orchestrator on Fable, astra-consult on Astra).
+choose deliberately. Model rule (Alex, 2026-10-05: "we shouldnt just block model
+usage, we shoudl allow them if we request or we want t escalate things"):
+- a model on the table's `blocked` list (no longer served upstream) is always
+  denied, wherever it appears;
+- a model on the `retired` list is off the default ladder. A dispatch that
+  names one itself (`model`) or whose brief tells the seat to use one
+  (`--model <id>`, `model: <id>`) is an explicit request: it runs and the
+  ledger records it with the dispatch's description as the reason. A subagent
+  type whose definition pins one, with nothing asking for it, is a silent
+  default and is denied. The `readmitted` map exempts named seats from named
+  patterns (2026-10-05: fable-orchestrator on Fable, astra-consult on Astra).
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ SNAPSHOT_MAX_FUTURE_SECONDS = 60
 CLASS_TAG = re.compile(r"^\s*\[class:([a-z0-9_-]+)\]", re.IGNORECASE)
 AGENT_MODEL = re.compile(r"^model:\s*(\S+)\s*$", re.MULTILINE)
 DEFAULT_RETIRED = ("claude-fable-*", "fable", "claude-planner", "gpt-*-astra", "gpt-*-astra-*", "gpt-5.6*", "gpt-5.5*")
+DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
 # A model id in a pin context: `--model X`, `model: X`, `model=X`, "model `X`".
 MODEL_PIN = re.compile(r"(?:--model[ =]+|\bmodel\s*[:=]\s*|\bmodel\s+)[`'\"]?([A-Za-z0-9][\w.\-\[\]*]*)", re.IGNORECASE)
 
@@ -71,10 +76,10 @@ def emit_deny(reason: str) -> None:
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
                     "permissionDecisionReason": (
-                        "seat-guard: " + reason + ". No seat or subagent runs on Fable or a retired model "
-                        "(owner lineup 2026-09-22), except fable-orchestrator on Fable and astra-consult on "
-                        "Astra (2026-10-05). Name a family alias instead: `opus`/`sonnet` for Claude "
-                        "seats, `route resolve sol-latest` for Codex; "
+                        "seat-guard: " + reason + ". A model off the default ladder runs only when a dispatch "
+                        "or its brief names it (Alex, 2026-10-05); a blocked model is no longer served. "
+                        "Name a family alias for default work: `opus`/`sonnet` for Claude seats, "
+                        "`route resolve sol-latest` for Codex; "
                         "`route pick <class>` picks the seat. Canon: ~/.agents/policy/coding-agents/ROUTING.md."
                     ),
                 }
@@ -93,9 +98,25 @@ def retired_patterns(table: Path, subagent: str = "") -> tuple:
     if not (isinstance(configured, list) and configured and all(isinstance(item, str) for item in configured)):
         return DEFAULT_RETIRED
     readmitted = loaded.get("readmitted") if isinstance(loaded.get("readmitted"), dict) else {}
+    # A readmitted alias (astra-latest-high reaches Astra through the bridge) is as retired as its family.
+    names = [entry["alias"] + "*" for entry in readmitted.values()
+             if isinstance(entry, dict) and isinstance(entry.get("alias"), str) and entry["alias"]]
     entry = readmitted.get(subagent) if subagent else None
-    exempt = entry.get("patterns") if isinstance(entry, dict) and isinstance(entry.get("patterns"), list) else []
-    return tuple(item for item in configured if item not in exempt)
+    exempt = list(entry.get("patterns") or []) if isinstance(entry, dict) else []
+    if isinstance(entry, dict) and isinstance(entry.get("alias"), str) and entry["alias"]:
+        exempt.append(entry["alias"] + "*")
+    return tuple(item for item in (*configured, *names) if item not in exempt)
+
+
+def blocked_patterns(table: Path) -> tuple:
+    """Models no longer served upstream: denied even when a dispatch asks for them."""
+    try:
+        configured = json.loads(table.read_text()).get("blocked")
+    except Exception:
+        return DEFAULT_BLOCKED
+    if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
+        return tuple(configured)
+    return DEFAULT_BLOCKED
 
 
 def forbidden_model(model: str, patterns: tuple = DEFAULT_RETIRED) -> bool:
@@ -260,14 +281,26 @@ def main() -> None:
     agents_dir = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
     pinned = definition_model(subagent, agents_dir)
     retired = retired_patterns(table, subagent)
+    blocked = blocked_patterns(table)
     brief_pins = retired_pins(prompt, retired)
+    blocked_pins = retired_pins(prompt, blocked)
     deny_reason = None
-    if forbidden_model(model, retired):
-        deny_reason = f"this dispatch pins the retired model {model!r} on a subagent"
-    elif not model and pinned and forbidden_model(pinned, retired):
-        deny_reason = f"subagent type {subagent!r} is defined on the retired model {pinned!r}"
-    elif brief_pins:
-        deny_reason = "the brief tells the seat to use the retired model " + ", ".join(repr(pin) for pin in brief_pins)
+    if forbidden_model(model, blocked):
+        deny_reason = f"this dispatch pins {model!r}, which is no longer served"
+    elif blocked_pins:
+        deny_reason = "the brief tells the seat to use " + ", ".join(repr(pin) for pin in blocked_pins) + ", no longer served"
+    elif not model and pinned and forbidden_model(pinned, blocked):
+        deny_reason = f"subagent type {subagent!r} is defined on {pinned!r}, which is no longer served"
+    elif not model and pinned and forbidden_model(pinned, retired) and pinned not in [p.lower() for p in brief_pins]:
+        deny_reason = (f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
+                       "for it; name the model on the dispatch or in the brief to request it")
+    explicit = [{"model": model, "source": "dispatch"}] if model and forbidden_model(model, retired) else []
+    explicit += [{"model": pin, "source": "brief"} for pin in brief_pins]
+    if explicit and not deny_reason:
+        record["explicit_models"] = explicit
+        record["why"] = str(tool_input.get("description") or tool_input.get("name") or "") or None
+        advisories.append("explicit request for a model off the default ladder ("
+                          + ", ".join(item["model"] for item in explicit) + "), recorded in the routing ledger")
     if deny_reason:
         record["denied"] = deny_reason
         append(record, ledger)

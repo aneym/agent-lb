@@ -39,11 +39,10 @@ def invoke(script=None, *, script_path=None, table=None, raw=None, env=None, arg
     ("agent('x')", 'agent() without agentType: pass agentType (models.md, Workflows)'),
     ('await agent(p)', 'agent() without agentType: pass agentType (models.md, Workflows)'),
     ("agent('x',)", 'agent() without agentType: pass agentType (models.md, Workflows)'),
-    ("agent(p, {agentType:'opus-seat', model:'claude-sonnet-5'})", 'retired model'),
+    ("agent(p, {agentType:'opus-seat', model:'gpt-5.4-mini'})", 'no longer served'),
     ("const s = `r: ${await agent('x', {label:'y'})}`;", 'without agentType'),
-    ("const s = `${await agent('x', {agentType:'opus-seat', model:'claude-sonnet-5'})}`;", 'retired model'),
+    ("const s = `${await agent('x', {agentType:'opus-seat', model:'claude-planner'})}`;", 'no longer served'),
     ("const s = `outer ${`nested ${await agent('x', {label:'y'})}`}`;", 'without agentType'),
-    ("agent(p, {'agentType': 'opus-seat', 'model': 'gpt-5.6-sol'})", 'retired model'),
     ("agent(foo(a, b), {label: nested({agentType:'x'})})", 'without agentType'),
     ("agent(p, {agentType: seat}); agent(q, {label: 'y'})", 'without agentType'),
     ("/* agent(p, opts) */ agent(p, {label: ') , }'})", 'without agentType'),
@@ -114,6 +113,18 @@ def test_retired_args_are_denied_even_when_script_cannot_be_parsed():
     )
     assert output['permissionDecision'] == 'deny'
     assert 'Workflow args pin retired model' in output['permissionDecisionReason']
+
+
+@pytest.mark.parametrize('script', [
+    "agent(p, {agentType:'opus-seat', model:'claude-sonnet-5'})",
+    "const s = `${await agent('x', {agentType:'opus-seat', model:'claude-fable-5-1'})}`;",
+    "agent(p, {'agentType': 'opus-seat', 'model': 'gpt-5.6-sol'})",
+])
+def test_a_literal_retired_model_is_an_explicit_request_and_runs(script):
+    # Alex, 2026-10-05: allow a model off the ladder when it is asked for; only blocked ids are refused.
+    output = invoke(script)
+    assert 'permissionDecision' not in output
+    assert 'explicitly requests a model off the default ladder' in output['additionalContext']
 
 
 @pytest.mark.parametrize('alias', ['sonnet', 'haiku'])

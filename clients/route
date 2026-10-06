@@ -349,7 +349,7 @@ def command_seat(args: argparse.Namespace) -> int:
         if not isinstance(model_alias, str):
             setup_error("unknown_rules", f"seat {name} has no model in seats map", args.json)
     served = ServedModels().get() if model_alias in table.get("aliases", {}) else []
-    model, reason = rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served)
+    model, reason = rung_model(table, entry, ServedModels()) if rung else resolve_alias(table, model_alias, served, name)
     if model is None:
         setup_error("unresolved_model", f"alias {model_alias}: {reason}", args.json)
     if rules["commit"]:
@@ -1028,6 +1028,17 @@ def retired_patterns(table: dict[str, Any]) -> tuple[str, ...]:
     return DEFAULT_RETIRED
 
 
+DEFAULT_BLOCKED = ("claude-planner", "gpt-5.4*", "gpt-5-*", "gpt-5")
+
+
+def blocked_patterns(table: dict[str, Any]) -> tuple[str, ...]:
+    """Models no longer served upstream: refused even when named explicitly (2026-10-05)."""
+    configured = table.get("blocked")
+    if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
+        return tuple(configured)
+    return DEFAULT_BLOCKED
+
+
 def readmitted_patterns(table: dict[str, Any], alias: str) -> tuple[str, ...]:
     """Retired patterns the table's `readmitted` map lets this alias resolve to (2026-10-05)."""
     readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
@@ -1236,12 +1247,20 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
-def resolve_alias(table: dict[str, Any], name: str, served: list[str]) -> tuple[str | None, str]:
-    """(model, reason). A name that is not an alias is returned unchanged unless retired."""
+def resolve_alias(table: dict[str, Any], name: str, served: list[str],
+                  seat: str | None = None) -> tuple[str | None, str]:
+    """(model, reason). A name that is not an alias is returned unchanged unless retired.
+
+    A routed seat (`seat` given) reaches a readmitted alias only when it is the seat the
+    `readmitted` map names; a direct `route resolve`/`route models` call has no seat."""
     retired = retired_patterns(table)
     aliases = table.get("aliases") if isinstance(table.get("aliases"), dict) else {}
     spec = aliases.get(name)
     if isinstance(spec, dict):
+        readmitted = table.get("readmitted") if isinstance(table.get("readmitted"), dict) else {}
+        owners = [key for key, entry in readmitted.items() if isinstance(entry, dict) and entry.get("alias") == name]
+        if owners and seat is not None and seat not in owners:
+            return None, f"{name} is readmitted for {', '.join(owners)} only"
         exempt = readmitted_patterns(table, name)
         retired = tuple(pattern for pattern in retired if pattern not in exempt)
     if not isinstance(spec, dict):
@@ -1291,6 +1310,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def record_explicit_model(model: str, source: str) -> None:
+    """Log an explicitly requested off-ladder model to the routing ledger; never fail the caller."""
+    try:
+        path = ledger_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"ts": _now_iso(), "event": "explicit_model", "model": model,
+                                     "source": source, "cwd": os.getcwd()}, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
 def command_resolve(args: argparse.Namespace) -> int:
     table = load_table()
     served, source = served_models()
@@ -1298,6 +1329,14 @@ def command_resolve(args: argparse.Namespace) -> int:
     unknown = []
     for name in args.aliases:
         model, reason = resolve_alias(table, name, served)
+        if not model and reason == f"{name} is retired":
+            # A retired id named outright is an explicit request (Alex, 2026-10-05): it resolves and
+            # the ledger records it; only a blocked id, gone upstream, stays refused.
+            if is_retired(name, blocked_patterns(table)):
+                reason = f"{name} is no longer served (blocked)"
+            else:
+                model = name
+                record_explicit_model(name, "route resolve")
         if model:
             print(model)
             return EXIT_OK
@@ -1484,7 +1523,7 @@ def class_candidates(
         alias = entry.get("model")
         if not isinstance(seat, str) or not isinstance(alias, str):
             continue
-        model, why = resolve_alias(table, alias, served.get() if alias in aliases else [])
+        model, why = resolve_alias(table, alias, served.get() if alias in aliases else [], seat)
         if model is None:
             skip(seat, alias, why)
             continue
@@ -1529,7 +1568,8 @@ def class_candidates(
                 skip(seat, alias, f"no auditor declared for author vendor {vendor}")
                 continue
             audit_alias = audit_entry["model"]
-            audit_model, audit_why = resolve_alias(table, audit_alias, served.get() if audit_alias in aliases else [])
+            audit_model, audit_why = resolve_alias(table, audit_alias, served.get() if audit_alias in aliases else [],
+                                                   str(audit_entry.get("seat") or ""))
             if audit_model is None:
                 # Work nobody can audit is not accepted work; route to a seat that can be.
                 skip(seat, alias, f"its auditor {audit_entry['model']} is unavailable: {audit_why}")
@@ -1670,7 +1710,8 @@ def rung_pool(table: dict, entry: dict, pools: dict) -> str | None:
 
 def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | None, str]:
     alias = entry["model"]
-    model, why = resolve_alias(table, alias, served.get() if alias in table.get("aliases", {}) else [])
+    model, why = resolve_alias(table, alias, served.get() if alias in table.get("aliases", {}) else [],
+                               entry.get("seat") or "")
     if model and alias not in table.get("aliases", {}):
         listed = cursor_models() if entry["seat"] == "cursor-seat" else (
             devin_models() if entry["seat"] == "devin-seat" else [])

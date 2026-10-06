@@ -781,7 +781,8 @@ def release_usage(model: str | None, path: str | None) -> dict[str, Any]:
 
 
 def resolve_model(vendor: str, model: str) -> str:
-    """Family aliases go through `route resolve`, which also refuses retired models."""
+    """Family aliases go through `route resolve`: an alias never reaches a retired model, a retired id named
+    outright resolves as an explicit request and is logged, and a blocked id is refused."""
     route = os.environ.get("ROUTE_BIN") or str(Path.home() / ".agent-lb" / "bin" / "route")
     try:
         completed = subprocess.run([route, "resolve", model], capture_output=True, text=True, timeout=90, check=False)

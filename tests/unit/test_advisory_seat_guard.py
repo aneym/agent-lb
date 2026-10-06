@@ -86,54 +86,68 @@ def test_capacity_states_are_advisory_and_remain_telemetry(
     assert record and record["capacity_advisory"] == expected
 
 
-def test_fable_model_pinned_on_a_subagent_is_denied_and_logged(tmp_path: Path) -> None:
+def test_a_retired_model_named_on_the_dispatch_runs_and_is_logged(tmp_path: Path) -> None:
+    # Alex, 2026-10-05: "we shouldnt just block model usage, we shoudl allow them if we request".
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="claude-fable-5-1")
+    assert "permissionDecision" not in output
+    assert "explicit request for a model off the default ladder (claude-fable-5-1)" in output["additionalContext"]
+    assert record and record["explicit_models"] == [{"model": "claude-fable-5-1", "source": "dispatch"}]
+    assert "denied" not in record
+
+
+def test_a_blocked_model_is_denied_even_when_named(tmp_path: Path) -> None:
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="claude-planner")
     assert output["permissionDecision"] == "deny"
-    assert "No seat or subagent runs on Fable or a retired model" in output["permissionDecisionReason"]
-    assert record and record["denied"] == "this dispatch pins the retired model 'claude-fable-5-1' on a subagent"
+    assert record and record["denied"] == "this dispatch pins 'claude-planner', which is no longer served"
 
 
 @pytest.mark.parametrize(
-    ("subagent", "model", "denied"),
+    ("subagent", "model", "explicit"),
     [
         pytest.param("fable-orchestrator", "claude-fable-5-1", False, id="fable-on-its-readmitted-seat"),
         pytest.param("astra-consult", "gpt-6-astra", False, id="astra-on-its-readmitted-seat"),
         pytest.param("astra-consult", "claude-fable-5-1", True, id="fable-on-the-astra-seat"),
         pytest.param("sol-consult", "gpt-6-astra", True, id="astra-on-another-seat"),
+        pytest.param("sol-consult", "astra-latest-high", True, id="astra-alias-on-another-seat"),
     ],
 )
-def test_readmitted_seats_may_use_only_their_own_retired_family(
-    tmp_path: Path, subagent: str, model: str, denied: bool
+def test_readmitted_seats_use_their_own_family_without_asking(
+    tmp_path: Path, subagent: str, model: str, explicit: bool
 ) -> None:
+    # Elsewhere the same model runs only as a logged explicit request.
     payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": subagent, "model": model, "prompt": "x"}})
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
-    assert (output.get("permissionDecision") == "deny") is denied
-    assert record and ("denied" in record) is denied
+    assert "permissionDecision" not in output
+    assert record and ("explicit_models" in record) is explicit
 
 
-def test_subagent_type_defined_on_fable_is_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("pinned", ["claude-fable-5-1", "astra-latest-high", "claude-planner"])
+def test_a_definition_that_pins_an_off_ladder_model_with_nothing_asking_is_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned: str
+) -> None:
     agents = tmp_path / "agents"
     agents.mkdir()
-    (agents / "sonnet-implementer.md").write_text("---\nname: sonnet-implementer\nmodel: claude-planner\n---\nbody\n")
+    (agents / "sonnet-implementer.md").write_text(f"---\nname: sonnet-implementer\nmodel: {pinned}\n---\nbody\n")
     monkeypatch.setenv("SEAT_GUARD_AGENTS_DIR", str(agents))
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="")
     assert output["permissionDecision"] == "deny"
-    assert record and "defined on the retired model 'claude-planner'" in record["denied"]
+    assert record and "defined on " in record["denied"] and pinned in record["denied"]
 
 
-def test_brief_that_pins_a_retired_codex_model_is_denied(tmp_path: Path) -> None:
-    payload = json.dumps(
-        {
-            "tool_name": "Agent",
-            "tool_input": {
-                "subagent_type": "cursor-seat",
-                "prompt": "Run cursor-agent --model gpt-5.6-sol on the diff and report.",
-            },
-        }
-    )
-    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
+def test_a_brief_that_names_a_retired_model_runs_and_a_blocked_one_is_denied(tmp_path: Path) -> None:
+    def brief(model: str) -> str:
+        return json.dumps({"tool_name": "Agent", "tool_input": {
+            "subagent_type": "cursor-seat", "description": "escalate after two failures",
+            "prompt": f"Run cursor-agent --model {model} on the diff and report."}})
+
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=brief("gpt-5.6-sol"))
+    assert "permissionDecision" not in output
+    assert record and record["explicit_models"] == [{"model": "gpt-5.6-sol", "source": "brief"}]
+    assert record["why"] == "escalate after two failures"
+    output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=brief("gpt-5.4-mini"),
+                            ledger_path=tmp_path / "blocked.jsonl")
     assert output["permissionDecision"] == "deny"
-    assert record and record["denied"] == "the brief tells the seat to use the retired model 'gpt-5.6-sol'"
+    assert record and record["denied"] == "the brief tells the seat to use 'gpt-5.4-mini', no longer served"
 
 
 def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) -> None:
@@ -148,7 +162,7 @@ def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) ->
     )
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
     assert "permissionDecision" not in output
-    assert record and "denied" not in record
+    assert record and "denied" not in record and "explicit_models" not in record
 
 
 @pytest.mark.parametrize(
@@ -163,17 +177,19 @@ def test_brief_that_only_mentions_a_retired_model_is_admitted(tmp_path: Path) ->
     ],
 )
 def test_brief_that_asks_to_remove_a_retired_pin_is_admitted(tmp_path: Path, brief: str) -> None:
+    # A pin the brief removes or forbids is not a request, so nothing is logged as one.
     payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": "cursor-seat", "prompt": brief}})
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
     assert "permissionDecision" not in output
-    assert record and "denied" not in record
+    assert record and "denied" not in record and "explicit_models" not in record
 
 
-def test_negated_removal_followed_by_a_use_instruction_is_still_denied(tmp_path: Path) -> None:
+def test_negated_removal_followed_by_a_use_instruction_is_still_a_request(tmp_path: Path) -> None:
     brief = "Do not remove it; use `--model gpt-5.6-sol` for this run."
     payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": "cursor-seat", "prompt": brief}})
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), raw_input=payload)
-    assert output["permissionDecision"] == "deny"
+    assert "permissionDecision" not in output
+    assert record and record["explicit_models"] == [{"model": "gpt-5.6-sol", "source": "brief"}]
 
 
 def test_opus_dispatch_is_admitted(tmp_path: Path) -> None:

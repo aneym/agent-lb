@@ -23,9 +23,10 @@ Run exactly one command, from the worktree the brief assigns:
   seats share the scratchpad and overwrite each other's contracts.
 - `<alias>` is the family alias the brief names (`grok-latest` when it names none,
   `grok-latest-low` for scouting); `seat` resolves it through `route resolve`,
-  which refuses retired models. `glm-*`/`kimi-*` ids pass through as given.
-  Never a retired model (Fable, Astra, gpt-5.6 and older): if the brief names
-  one, stop and report that instead of substituting. Never a `claude-fable-*` model: Cursor has no ZDR agreement,
+  which never picks a retired model for an alias and refuses blocked ones.
+  `glm-*`/`kimi-*` ids pass through as given. A retired id runs only when the
+  brief names it outright (Alex, 2026-10-05); never substitute one yourself.
+  Never a `claude-fable-*` model: Cursor has no ZDR agreement,
   so Fable never runs there. If the brief names a Fable model, stop and report
   that instead of substituting one.
 - `--mode ask` for read-only exploration; the default `write` lets the agent edit
