@@ -91,6 +91,7 @@ SANDBOX_FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
 SANDBOX_MIN_PORT = 2470
 SANDBOX_KEYS = ("root", "label", "plist", "runtime", "state_dir", "front_port", "primary_port", "standby_port")
 SANDBOX_CONFIG: Path | None = None
+SANDBOX_ROOT: Path | None = None  # set by --sandbox; processes outside it are never signalled
 
 
 class SandboxRefused(Exception):
@@ -146,6 +147,7 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
         "SYNC_LOG": root / "logs" / "sync.log",
         "LOCK_FILE": root / "lb-restart.lock",
         "PREFERRED_FILE": state_dir / "front-preferred-port",
+        "PREFERRED_TMP": state_dir / "front-preferred-port.tmp",
         "FRONT_STATE": state_dir / "front.json",
         "STANDBY_PIDFILE": state_dir / "lb-standby.pid",
         "STANDBY_LOG": root / "logs" / "agent-lb-standby.log",
@@ -158,6 +160,7 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
             raise SandboxRefused(f"{name} {path} resolves outside the sandbox root")
         derived[name] = resolved
     return {
+        "SANDBOX_ROOT": root,
         "RUNTIME": paths["runtime"],
         "STATE_DIR": state_dir,
         **derived,
@@ -322,8 +325,23 @@ def wait_until(pred, timeout: float, interval: float = 0.25) -> bool:
 def set_preferred(port: int) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PREFERRED_FILE.with_suffix(".tmp")
-    tmp.write_text(f"{port}\n")
+    if SANDBOX_ROOT is None:
+        tmp.write_text(f"{port}\n")
+    else:
+        # A link planted after the guard ran must not carry the write out of the sandbox.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(f"{port}\n")
     os.replace(tmp, PREFERRED_FILE)
+
+
+def owned_by_sandbox(pid: int) -> bool:
+    """Without --sandbox, always True. With it, True only for a process whose command line names the root."""
+    if SANDBOX_ROOT is None:
+        return True
+    cmd = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+    root = str(SANDBOX_ROOT)
+    return any(token == root or token.startswith(root + os.sep) for token in cmd.split())
 
 
 def front_understands_preference() -> bool:
@@ -533,6 +551,8 @@ def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None) 
         STANDBY_PIDFILE.unlink(missing_ok=True)
         return
     say(f"found a standby still on :{STANDBY_PORT} (pid {pid}) from an earlier run")
+    if not owned_by_sandbox(pid):
+        raise SystemExit(f"pid {pid} on :{STANDBY_PORT} is not this sandbox's standby; refusing to signal it")
     if not healthy(PRIMARY_PORT):
         raise SystemExit("primary unhealthy and a standby is serving; fix by hand before restarting")
     hold_for_oauth(STANDBY_PORT)
@@ -557,7 +577,7 @@ REAP_MARGIN_S = 90  # app drain (shutdown_drain_timeout_seconds 30) plus slack
 
 def is_standby(pid: int) -> bool:
     out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
-    return "agent-lb" in out and f"--port {STANDBY_PORT}" in out
+    return "agent-lb" in out and f"--port {STANDBY_PORT}" in out and owned_by_sandbox(pid)
 
 
 def spawn_reaper(pid: int, drain_seconds: int) -> None:

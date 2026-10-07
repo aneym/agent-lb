@@ -119,7 +119,10 @@ def test_sandbox_root_must_be_below_sandboxes(tmp_path: Path) -> None:
         lb.sandbox_bindings(config, home=tmp_path)
 
 
-@pytest.mark.parametrize("planted", ["lb-restart.lock", "logs/sync.log", "state/front-preferred-port", "backups"])
+@pytest.mark.parametrize(
+    "planted",
+    ["lb-restart.lock", "logs/sync.log", "state/front-preferred-port", "state/front-preferred-port.tmp", "backups"],
+)
 def test_sandbox_guard_refuses_symlinks_out_of_the_root(tmp_path: Path, planted: str) -> None:
     lb = _load()
     root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
@@ -145,3 +148,20 @@ def test_sandbox_flag_refuses_live_deploy_flags(tmp_path: Path, flags: list[str]
     )
     assert proc.returncode == 2
     assert "--sandbox cannot be combined with" in proc.stderr
+
+
+def test_sandbox_mode_signals_only_processes_of_its_root(tmp_path: Path) -> None:
+    lb = _load()
+    root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
+    root.mkdir(parents=True)
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(tmp_path / "elsewhere")])
+    mine = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(root / "runtime")])
+    try:
+        assert lb.owned_by_sandbox(other.pid) is True  # no --sandbox: lb-restart behaves as before
+        lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
+        assert lb.owned_by_sandbox(other.pid) is False
+        assert lb.owned_by_sandbox(mine.pid) is True
+    finally:
+        for proc in (other, mine):
+            proc.kill()
+            proc.wait(10)

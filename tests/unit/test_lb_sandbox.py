@@ -379,9 +379,26 @@ def test_scan_reports_an_unreadable_directory_as_incomplete(tmp_path: Path) -> N
     finally:
         locked.chmod(0o755)
     assert (result["found"], result["complete"], result["unreadable"]) == (False, False, 1)
-    # Nothing was created in it after the marker, so a newer-than scan may pass over it.
-    assert (stale["complete"], stale["unreadable"]) == (True, 0)
+    # Files inside can change without touching the directory's mtime, so newer-than never excuses it.
+    assert (stale["complete"], stale["unreadable"]) == (False, 1)
     assert lb.scan_paths([top], [])["complete"] is False  # no secret loaded is never a clean scan
+
+
+def test_secret_loading_refuses_a_missing_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lb = _load()
+    no_token = tmp_path / "no-token.plist"
+    no_token.write_bytes(plistlib.dumps({"EnvironmentVariables": {}}))
+    with_token = tmp_path / "live.plist"
+    with_token.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    root = tmp_path / "r1"
+    (root / "data").mkdir(parents=True)  # a sandbox root whose store was never written
+    monkeypatch.setattr(lb, "LIVE_PLIST", no_token)
+    with pytest.raises(lb.Refused):
+        lb.load_secrets(None)
+    monkeypatch.setattr(lb, "LIVE_PLIST", with_token)
+    with pytest.raises(lb.Refused):
+        lb.load_secrets(root)
+    assert len(lb.load_secrets(None)) == 1
 
 
 def test_log_export_copies_only_scanned_regular_files(tmp_path: Path) -> None:
@@ -398,3 +415,34 @@ def test_log_export_copies_only_scanned_regular_files(tmp_path: Path) -> None:
     copied = lb.export_logs(logs, dest, scanned["_files"])
     assert (scanned["found"], scanned["complete"], copied) == (False, True, 1)
     assert sorted(p.name for p in dest.rglob("*")) == ["edge.jsonl"]
+
+
+def test_sandbox_env_is_a_valid_app_config_with_the_dashboard_locked(tmp_path: Path) -> None:
+    """The app's own Settings must accept the sandbox env (a rejected env only shows as a start timeout)."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    env = lb.sandbox_env(root, SERVE_PORTS, "r1", "http")
+    probe = (
+        "from app.core.config.settings import Settings; s = Settings(); "
+        "print(s.dashboard_auth_mode.value, s.firewall_trust_proxy_headers, ','.join(s.firewall_trusted_proxy_cidrs))"
+    )
+    repo = Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env={**env, "PATH": os.environ["PATH"], "PYTHONPATH": str(repo)},
+        cwd=repo,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.split() == ["trusted_header", "True", "192.0.2.1/32"]
+
+
+@pytest.mark.parametrize("shift", [0, 1, 2])
+def test_scan_finds_a_short_secret_inside_base64(tmp_path: Path, shift: int) -> None:
+    lb = _load()
+    short = "k5Zq!x"  # base64 fragments this short were once dropped as too likely to match by chance
+    (tmp_path / "blob").write_bytes(base64.b64encode(b"x" * shift + short.encode() + b"tail"))
+    assert lb.scan_paths([tmp_path], [short])["found"] is True

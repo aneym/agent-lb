@@ -243,6 +243,17 @@ def codex_turn(port: int, model: str) -> dict:
     }
 
 
+def within_budget(edge: str, turn: dict) -> bool:
+    """Spend bound: a Codex turn must report its usage and stay under 50 output tokens (reasoning included).
+
+    Anthropic turns are bounded by max_tokens in the request itself.
+    """
+    if edge != "openai":
+        return True
+    tokens = turn.get("output_tokens")
+    return isinstance(tokens, int) and not isinstance(tokens, bool) and tokens < 50
+
+
 def edge_lines(path: Path, skip: int) -> list[dict]:
     try:
         lines = path.read_text().splitlines()[skip:]
@@ -261,6 +272,24 @@ def count_lines(path: Path) -> int:
     try:
         return len(path.read_text().splitlines())
     except OSError:
+        return 0
+
+
+def dashboard_export_status(port: int, forged_user: str | None = None) -> int:
+    """Status of an unauthenticated local POST to the account export API; the body is never read.
+
+    forged_user sends the trusted-proxy identity header a reverse proxy would set.
+    """
+    headers = {"content-type": "application/json"}
+    if forged_user:
+        headers["Remote-User"] = forged_user
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+        conn.request("POST", "/api/accounts/lbsbx-probe/export/auth", body=b"{}", headers=headers)
+        status = conn.getresponse().status
+        conn.close()
+        return status
+    except (OSError, http.client.HTTPException):
         return 0
 
 
@@ -321,14 +350,20 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     listen = sh("/usr/sbin/lsof", "-nP", "-a", "-p", ",".join(map(str, pids)), "-iTCP", "-sTCP:LISTEN") if pids else ""
     addresses = [line.split()[8] for line in listen.splitlines()[1:] if len(line.split()) >= 9]
     (out / "sandbox-listeners.txt").write_text(listen)
+    # The dashboard must be locked: the account export API answers 401 to a local caller. Only the status is kept.
+    export_status = dashboard_export_status(front)
+    forged_status = dashboard_export_status(front, forged_user="admin")
     c.step(
         "status-accounts-and-listeners",
         rc == 0
         and counts.get("anthropic", 0) >= 2
         and counts.get("openai", 0) >= 2
         and bool(addresses)
-        and all(a.startswith("127.0.0.1:") for a in addresses),
-        f"healthy {status.get('healthy')}; usable per vendor {counts}; run pids {pids} listen on {addresses}",
+        and all(a.startswith("127.0.0.1:") for a in addresses)
+        and export_status == 401
+        and forged_status == 401,
+        f"healthy {status.get('healthy')}; usable per vendor {counts}; run pids {pids} listen on {addresses}; "
+        f"account export API answered {export_status}, with a forged Remote-User {forged_status} (want 401, 401)",
         [str(status_out), str(out / "sandbox-listeners.txt")],
     )
 
@@ -343,8 +378,7 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         and x["status"] == 200
         and bool(x["text"])
         and x["complete"]
-        and isinstance(x.get("output_tokens"), int)
-        and x["output_tokens"] < 50,
+        and within_budget("openai", x),
         f"Anthropic {anthropic_model}: {a['status']} {a['text']!r}; Codex {codex_model}: {x['status']} {x['text']!r} "
         f"output_tokens {x.get('output_tokens')}",
         [str(out / "turns-baseline.json")],
@@ -377,8 +411,10 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
             and bool(h1)
             and bool(served)
             and bool(acct.get("in_cooldown"))
-            and rc_clr == 0,
-            f"turn {result['status']} {result['text']!r}; edge 429 on hash {h1}, then 200 on "
+            and rc_clr == 0
+            and within_budget(edge, result),
+            f"turn {result['status']} {result['text']!r} output_tokens {result.get('output_tokens')}; "
+            f"edge 429 on hash {h1}, then 200 on "
             f"{served[0]['auth_hash12'] if served else None}; account {acct.get('id')} status {acct.get('status')} "
             f"in_cooldown {acct.get('in_cooldown')} until {acct.get('cooldown_until')}",
             [str(arm_out), str(out / f"turn-429-{edge}.json"), str(st_out), str(clr_out), str(edge_log)],
