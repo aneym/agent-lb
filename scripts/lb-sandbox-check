@@ -278,11 +278,13 @@ def count_lines(path: Path) -> int:
 def dashboard_export_status(port: int, forged_user: str | None = None) -> int:
     """Status of an unauthenticated local POST to the account export API; the body is never read.
 
-    forged_user sends the trusted-proxy identity header a reverse proxy would set.
+    forged_user sends the identity header a trusted reverse proxy would set, plus an X-Forwarded-For
+    claiming the sandbox's trusted proxy address.
     """
     headers = {"content-type": "application/json"}
     if forged_user:
         headers["Remote-User"] = forged_user
+        headers["X-Forwarded-For"] = "192.0.2.1"
     try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
         conn.request("POST", "/api/accounts/lbsbx-probe/export/auth", body=b"{}", headers=headers)
@@ -363,7 +365,8 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         and export_status == 401
         and forged_status == 401,
         f"healthy {status.get('healthy')}; usable per vendor {counts}; run pids {pids} listen on {addresses}; "
-        f"account export API answered {export_status}, with a forged Remote-User {forged_status} (want 401, 401)",
+        f"account export API answered {export_status}, with forged Remote-User and X-Forwarded-For "
+        f"{forged_status} (want 401, 401)",
         [str(status_out), str(out / "sandbox-listeners.txt")],
     )
 

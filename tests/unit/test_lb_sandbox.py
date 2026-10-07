@@ -424,7 +424,9 @@ def test_sandbox_env_is_a_valid_app_config_with_the_dashboard_locked(tmp_path: P
     env = lb.sandbox_env(root, SERVE_PORTS, "r1", "http")
     probe = (
         "from app.core.config.settings import Settings; s = Settings(); "
-        "print(s.dashboard_auth_mode.value, s.firewall_trust_proxy_headers, ','.join(s.firewall_trusted_proxy_cidrs))"
+        "print(s.dashboard_auth_mode.value, s.firewall_trust_proxy_headers, ','.join(s.firewall_trusted_proxy_cidrs)); "
+        "from uvicorn.middleware.proxy_headers import _TrustedHosts; import os; "
+        "print('127.0.0.1' in _TrustedHosts(os.environ['FORWARDED_ALLOW_IPS']))"
     )
     repo = Path(__file__).resolve().parents[2]
     proc = subprocess.run(
@@ -437,7 +439,8 @@ def test_sandbox_env_is_a_valid_app_config_with_the_dashboard_locked(tmp_path: P
         check=False,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
-    assert proc.stdout.split() == ["trusted_header", "True", "192.0.2.1/32"]
+    # The last field: uvicorn does not take X-Forwarded-For from a loopback peer (no forged proxy address).
+    assert proc.stdout.split() == ["trusted_header", "True", "192.0.2.1/32", "False"]
 
 
 @pytest.mark.parametrize("shift", [0, 1, 2])
@@ -446,3 +449,16 @@ def test_scan_finds_a_short_secret_inside_base64(tmp_path: Path, shift: int) -> 
     short = "k5Zq!x"  # base64 fragments this short were once dropped as too likely to match by chance
     (tmp_path / "blob").write_bytes(base64.b64encode(b"x" * shift + short.encode() + b"tail"))
     assert lb.scan_paths([tmp_path], [short])["found"] is True
+
+
+def test_scan_reports_a_named_path_it_cannot_stat(tmp_path: Path) -> None:
+    lb = _load()
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    (locked / "inner" / "leak.log").write_text(FAKE_TOKEN)
+    locked.chmod(0)
+    try:
+        result = lb.scan_paths([locked / "inner"], [FAKE_TOKEN])
+    finally:
+        locked.chmod(0o755)
+    assert (result["complete"], result["unreadable"], result["files_scanned"]) == (False, 1, 0)

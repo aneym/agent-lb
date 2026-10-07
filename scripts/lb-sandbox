@@ -49,6 +49,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -447,11 +448,18 @@ def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path],
         top = os.path.realpath(top)
         if is_excluded(top):
             continue
-        if os.path.isfile(top):
-            if newer_than is None or os.stat(top).st_mtime > newer_than:
+        try:
+            info = os.stat(top)
+        except FileNotFoundError:
+            continue
+        except OSError:  # isfile/isdir would hide a permission error as "not there"
+            unreadable.append(top)
+            continue
+        if stat.S_ISREG(info.st_mode):
+            if newer_than is None or info.st_mtime > newer_than:
                 yield Path(top)
             continue
-        stack = [top] if os.path.isdir(top) else []
+        stack = [top] if stat.S_ISDIR(info.st_mode) else []
         while stack:
             directory = stack.pop()
             try:
@@ -573,6 +581,9 @@ def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) 
         "AGENT_LB_DASHBOARD_AUTH_MODE": "trusted_header",
         "AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS": "true",
         "AGENT_LB_FIREWALL_TRUSTED_PROXY_CIDRS": "192.0.2.1/32",
+        # uvicorn trusts loopback X-Forwarded-For by default, which would let a local caller claim to be
+        # 192.0.2.1; with no forwarded-allow hosts the socket peer is always the client address.
+        "FORWARDED_ALLOW_IPS": "",
         "AGENT_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS": "127.0.0.1/32",
         "AGENT_LB_CONVERSATION_ARCHIVE_DIR": str(root / "data" / "conversation-archive"),
         "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": str(DRAIN_S),
