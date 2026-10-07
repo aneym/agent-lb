@@ -74,7 +74,7 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> No
     assert models.read_bytes() == generated
     implementer = (home / ".claude/agents/gpt-implementer.md").read_text()
     assert "model: sol-latest-medium" in implementer
-    assert 'a brief saying "commit and push" is authorization' in implementer
+    assert "`AUTHORITY: <grant-id>`" in implementer and "factory-grant verify" in implementer
     assert "Do not commit, push" not in implementer
     backups = list((home / ".claude/ledgers").glob("models-md-handkept-*.md"))
     assert len(backups) == 1
