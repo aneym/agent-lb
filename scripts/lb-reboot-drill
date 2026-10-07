@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""Sandbox-only launchd/Postgres recovery drill; run on Studio, never the live LB."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import http.client
+import json
+import os
+import plistlib
+import re
+import select
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+def guard(labels: list[str], ports: list[int]) -> None:
+    if not labels or any(
+        not label.startswith("com.agent-lb.drill.")
+        or not label.removeprefix("com.agent-lb.drill.").replace("-", "").isalnum()
+        for label in labels
+    ):
+        raise ValueError("refusing non-drill launchd label")
+    if not ports or any(port < 2470 or port > 65535 for port in ports) or len(set(ports)) != len(ports):
+        raise ValueError("refusing unsafe or duplicate port (including live 2455)")
+
+
+def command(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    # Output may contain app-generated credentials: never relay it to the terminal.
+    return subprocess.run(args, check=check, capture_output=True, timeout=60)
+
+
+def free_port(exclude: set[int]) -> int:
+    for port in range(2470, 65000):
+        if port in exclude:
+            continue
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                pass
+    raise RuntimeError("no sandbox port available")
+
+
+def request(port: int, path: str, method: str = "GET", body: dict | None = None) -> dict:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    try:
+        conn.request(
+            method,
+            path,
+            body=json.dumps(body) if body is not None else None,
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        data = response.read()
+        if response.status != 200:
+            raise RuntimeError(f"sandbox HTTP status {response.status}")
+        return json.loads(data)
+    finally:
+        conn.close()
+
+
+def wait_ready(port: int, deadline: float) -> None:
+    while time.monotonic() < deadline:
+        try:
+            if request(port, "/health/ready").get("status") == "ok":
+                return
+        except (OSError, RuntimeError, http.client.HTTPException):
+            pass
+        time.sleep(0.5)
+    raise RuntimeError("sandbox readiness deadline exceeded")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--repo", type=Path)
+    parser.add_argument("--guard-only", action="store_true")
+    parser.add_argument("--label", action="append", default=[])
+    parser.add_argument("--port", type=int, action="append", default=[])
+    args = parser.parse_args()
+    if args.guard_only:
+        try:
+            guard(args.label, args.port)
+        except ValueError as exc:
+            parser.error(str(exc))
+        print("sandbox guard accepted")
+        return 0
+    if sys.platform != "darwin" or shutil.which("launchctl") != "/bin/launchctl":
+        parser.error("run on Studio with native /bin/launchctl")
+    if args.timeout <= 30:
+        parser.error("timeout must exceed the 30 second database outage")
+    repo = args.repo or next(
+        (
+            p
+            for p in (Path("/Volumes/StudioExt/repos/agent-lb"), Path.home() / "agent-lb")
+            if (p / "app/main.py").is_file()
+        ),
+        None,
+    )
+    if repo is None:
+        parser.error("cannot find Studio checkout")
+    python = Path.home() / ".agent-lb/runtime/agent-lb/.venv/bin/python"
+    pg_bin = next((p for p in Path("/opt/homebrew/opt").glob("postgresql*/bin") if (p / "initdb").is_file()), None)
+    if not python.is_file() or pg_bin is None:
+        parser.error("sandbox requires checkout Python and Homebrew Postgres")
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = (args.out or Path.home() / f".agent-rails/lanes/claude-lb/reboot-drill-{stamp}.json").expanduser()
+    label = f"com.agent-lb.drill.{stamp}-{os.getpid()}"
+    port = free_port(set())
+    pg_port = free_port({port})
+    guard([label], [port, pg_port])
+    domain = f"gui/{os.getuid()}"
+    target = f"{domain}/{label}"
+    evidence = {
+        "sandbox": True,
+        "label": label,
+        "port": port,
+        "postgres_port": pg_port,
+        "steps": {},
+        "hot_reload": {},
+        "out": str(out),
+    }
+    root = None
+    runtime = None
+
+    failed = False
+
+    stopping = []
+
+    def interrupted(signum, frame):
+        # Only the first signal interrupts the run. Every later one, including one during teardown, is a no-op,
+        # so teardown never depends on the order in which handlers are switched off.
+        if stopping:
+            return
+        stopping.append(signum)
+        raise RuntimeError(f"interrupted by signal {signum}")
+
+    # A dropped ssh session sends SIGHUP; without a handler Python dies before teardown runs.
+    stop_signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    for sig in stop_signals:
+        signal.signal(sig, interrupted)
+    try:
+        # launchd cannot reliably read /Volumes. Only the throwaway PG cluster
+        # lives there; the isolated app copy is on the internal volume.
+        root = Path(tempfile.mkdtemp(prefix="agent-lb-drill-", dir="/Volumes/StudioExt/tmp"))
+        runtime = Path(tempfile.mkdtemp(prefix="agent-lb-drill-", dir=Path.home()))
+        app_root = runtime / "repo"
+        app_root.mkdir()
+        shutil.copytree(repo / "app", app_root / "app", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        (app_root / "config/coding-agents").mkdir(parents=True)
+        for fixture in ("additional_quota_registry.json", "openrouter_wire_profile.json"):
+            shutil.copyfile(repo / "config" / fixture, app_root / "config" / fixture)
+        table = app_root / "config/coding-agents/routing-table.json"
+        table.write_text(json.dumps({"classes": {}, "aliases": {}, "retired": []}))
+        decider = runtime / "decider.json"
+        decider.write_text("{}")
+        (runtime / "home").mkdir()
+        (root / "socket").mkdir()
+        command(
+            str(pg_bin / "initdb"),
+            "-D",
+            str(root / "pg"),
+            "-A",
+            "trust",
+            "-U",
+            "drill",
+            "--no-locale",
+            "--encoding=UTF8",
+        )
+
+        def pg_start():
+            command(
+                str(pg_bin / "pg_ctl"),
+                "-D",
+                str(root / "pg"),
+                "-l",
+                str(root / "pg.log"),
+                "-o",
+                f"-p {pg_port} -h 127.0.0.1 -k {root / 'socket'}",
+                "-w",
+                "start",
+            )
+
+        def pg_stop():
+            command(str(pg_bin / "pg_ctl"), "-D", str(root / "pg"), "-m", "fast", "-w", "stop")
+
+        pg_start()
+        env = {
+            "HOME": str(runtime / "home"),
+            "PATH": "/usr/bin:/bin",
+            "AGENT_LB_DATA_DIR": str(runtime / "data"),
+            "AGENT_LB_DATABASE_URL": f"postgresql+asyncpg://drill@127.0.0.1:{pg_port}/postgres",
+            "AGENT_LB_ENCRYPTION_KEY_FILE": str(runtime / "data/encryption.key"),
+            "AGENT_LB_UPSTREAM_BASE_URL": "http://127.0.0.1:1/dummy",
+            "AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL": "http://127.0.0.1:1/dummy",
+            "AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN": "sandbox-dummy-not-a-credential",
+            "AGENT_LB_DASHBOARD_AUTH_MODE": "disabled",
+            "ROUTE_TABLE": str(table),
+            "OF_DECIDER_JSON": str(decider),
+        }
+        for setting in (
+            "METRICS",
+            "USAGE_REFRESH",
+            "MODEL_REGISTRY",
+            "ACCOUNT_PULSE",
+            "RESET_CREDIT_AUTO_REDEEM",
+            "RESET_CREDIT_EXPIRY_REDEEM",
+            "ACCOUNTS_CACHE_WARMER",
+            "STICKY_SESSION_CLEANUP",
+            "QUOTA_PLANNER_SCHEDULER",
+            "HTTP_RESPONSES_SESSION_BRIDGE",
+            "AUTH_GUARDIAN",
+        ):
+            env[f"AGENT_LB_{setting}_ENABLED"] = "false"
+        plist = runtime / "sandbox.plist"
+        plist.write_bytes(
+            plistlib.dumps(
+                {
+                    "Label": label,
+                    "ProgramArguments": [
+                        str(python),
+                        "-m",
+                        "uvicorn",
+                        "app.main:app",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        str(port),
+                        "--timeout-keep-alive",
+                        "300",
+                    ],
+                    "WorkingDirectory": str(app_root),
+                    "EnvironmentVariables": env,
+                    "RunAtLoad": True,
+                    "KeepAlive": True,
+                    "ThrottleInterval": 2,
+                    "StandardOutPath": str(runtime / "app.log"),
+                    "StandardErrorPath": str(runtime / "app.log"),
+                }
+            )
+        )
+
+        def bootstrap():
+            guard([label], [port, pg_port])
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                if command("/bin/launchctl", "bootstrap", domain, str(plist), check=False).returncode == 0:
+                    return
+                time.sleep(0.5)
+            raise RuntimeError("sandbox bootstrap failed")
+
+        def bootout():
+            guard([label], [port, pg_port])
+            command("/bin/launchctl", "bootout", target, check=False)
+            deadline = time.monotonic() + 20
+            while command("/bin/launchctl", "print", target, check=False).returncode == 0:
+                if time.monotonic() > deadline:
+                    raise RuntimeError("sandbox bootout failed")
+                time.sleep(0.5)
+
+        bootstrap()
+        wait_ready(port, time.monotonic() + args.timeout)
+        evidence["steps"]["setup"] = {"ok": True}
+        bootout()
+        pg_stop()
+        start = time.monotonic()
+        bootstrap()
+        time.sleep(30)
+        pg_start()
+        wait_ready(port, start + args.timeout)
+        evidence["steps"]["drill_a"] = {
+            "ok": True,
+            "recovery_seconds": round(time.monotonic() - start, 3),
+            "database_down_seconds": 30,
+        }
+        for change in ("config_change", "routing_table_change", "code_restart"):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            try:
+                conn.request("GET", "/health/ready")
+                response = conn.getresponse()
+                response.read()
+                original = conn.sock
+                if response.status != 200 or original is None:
+                    raise RuntimeError("could not hold sandbox keep-alive connection")
+                applied = False
+                if change == "config_change":
+                    request(port, "/api/settings", "PUT", {"stickyThreadsEnabled": False})
+                    applied = request(port, "/api/settings")["stickyThreadsEnabled"] is False
+                elif change == "routing_table_change":
+                    before = request(port, "/api/routing-policy/versions")["activeVersion"]
+                    table.write_text(json.dumps({"classes": {}, "aliases": {"drill": "dummy"}, "retired": []}))
+                    applied = request(port, "/api/routing-policy/versions")["activeVersion"] != before
+                else:
+                    bootout()
+                    bootstrap()
+                    wait_ready(port, time.monotonic() + args.timeout)
+                    applied = True
+                readable = select.select([original], [], [], 0.5)[0]
+                dropped = bool(readable and original.recv(1, socket.MSG_PEEK) == b"")
+                if not dropped:
+                    conn.request("GET", "/health/ready")
+                    response = conn.getresponse()
+                    response.read()
+                    dropped = conn.sock is not original or response.status != 200
+                evidence["hot_reload"][change] = {
+                    "ok": applied,
+                    "connection_preserved": not dropped,
+                    "connection_kind": "idle HTTP keep-alive",
+                    "method": "launchd bootout/bootstrap"
+                    if change == "code_restart"
+                    else "settings API"
+                    if change == "config_change"
+                    else "file observation API",
+                }
+                if not applied:
+                    failed = True
+            except (OSError, RuntimeError, http.client.HTTPException, KeyError) as exc:
+                evidence["hot_reload"][change] = {
+                    "ok": False,
+                    "connection_preserved": False,
+                    "error_type": type(exc).__name__,
+                }
+                failed = True
+            finally:
+                conn.close()
+    except Exception as exc:
+        failed = True
+        evidence["steps"]["failure"] = {"ok": False, "error_type": type(exc).__name__}
+        if runtime is not None and (runtime / "app.log").exists():
+            log = (runtime / "app.log").read_text(errors="replace")
+            evidence["steps"]["failure"]["exception_classes"] = sorted(
+                set(re.findall(r"^([A-Za-z0-9_.]+(?:Error|Exception)):", log, re.MULTILINE))
+            )
+            evidence["steps"]["failure"]["frames"] = re.findall(
+                r'File "[^\n"]*/(app/[^\n"]+)", line ([0-9]+), in ([A-Za-z0-9_]+)', log
+            )[-12:]
+            evidence["steps"]["failure"]["missing_modules"] = re.findall(
+                r"ModuleNotFoundError: No module named '([A-Za-z0-9_.]+)'", log
+            )
+
+    finally:
+        # Teardown must finish even if another signal arrives while it runs. A first signal landing on this
+        # line is caught here; from the append on, interrupted() returns without raising.
+        try:
+            stopping.append(None)
+        except RuntimeError:
+            pass
+        for sig in stop_signals:
+            signal.signal(sig, signal.SIG_IGN)
+        guard([label], [port, pg_port])
+        command("/bin/launchctl", "bootout", target, check=False)
+        time.sleep(1)
+        teardown_ok = command("/bin/launchctl", "print", target, check=False).returncode != 0
+        if root is not None and (root / "pg").exists():
+            command(str(pg_bin / "pg_ctl"), "-D", str(root / "pg"), "-m", "immediate", "-w", "stop", check=False)
+            status = command(str(pg_bin / "pg_ctl"), "-D", str(root / "pg"), "status", check=False)
+            teardown_ok = teardown_ok and status.returncode == 3
+            if status.returncode == 3:
+                shutil.rmtree(root)
+        elif root is not None:
+            shutil.rmtree(root, ignore_errors=True)  # setup failed before initdb: nothing runs there
+        if runtime is not None and teardown_ok:
+            shutil.rmtree(runtime)
+        loaded = command("/bin/launchctl", "list", check=False).stdout
+        no_drill_labels = b"com.agent-lb.drill." not in loaded
+        evidence["steps"]["teardown"] = {
+            "ok": teardown_ok and no_drill_labels,
+            "no_drill_labels_loaded": no_drill_labels,
+        }
+        evidence["ok"] = not failed and teardown_ok and no_drill_labels
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(evidence, indent=2) + "\n")
+        print(json.dumps(evidence, indent=2))
+    return 0 if evidence["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
