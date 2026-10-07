@@ -41,7 +41,7 @@ PRICE_KEY = "claude-sonnet-4-5"
 UNPRICED_MODEL = "claude-unpriced-sandbox-0"
 # Names a wildcard alias once priced (claude-sonnet-4*, claude-opus-5*) and a blank model are
 # unpriced too: each must be refused under a cost cap before upstream (fix round, 2026-10-07).
-REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", ""]
+REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", "gpt-5.99", "gpt-5.1-unpriced", "files-create", "files-finalize", ""]
 INPUT_TOKENS = 1_000
 CACHE_READ_TOKENS = 4_000
 OUTPUT_TOKENS = 500
@@ -73,7 +73,7 @@ def guard_port(port: int) -> None:
 
 def listener_pids(port: int) -> list[int]:
     proc = subprocess.run(
-        ["/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+        [shutil.which("lsof") or "/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
         capture_output=True,
         text=True,
         timeout=20,
@@ -84,7 +84,7 @@ def listener_pids(port: int) -> list[int]:
 
 def listener_addresses(pid: int) -> list[str]:
     proc = subprocess.run(
-        ["/usr/sbin/lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"],
+        [shutil.which("lsof") or "/usr/sbin/lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"],
         capture_output=True,
         text=True,
         timeout=20,
@@ -141,6 +141,17 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
             model = json.loads(raw or b"{}").get("model", "")
         except ValueError:
             model = ""
+        if self.path == "/backend-api/files" or self.path == "/backend-api/files/sandbox-file/uploaded":
+            server: FakeAnthropic = self.server  # type: ignore[assignment]
+            with server.lock:
+                server.calls.append(self.path)
+            body = json.dumps({"file_id": "sandbox-file", "status": "success"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self.path.rstrip("/").endswith("/v1/messages"):
             self.send_response(404)
             self.send_header("Content-Length", "0")
@@ -283,7 +294,7 @@ def sandbox_env(app_root: Path, data: Path, upstream_port: int) -> dict[str, str
         "AGENT_LB_DATA_DIR": str(data),
         "AGENT_LB_DATABASE_URL": f"sqlite+aiosqlite:///{data / 'store.db'}",
         "AGENT_LB_ENCRYPTION_KEY_FILE": str(data / "encryption.key"),
-        "AGENT_LB_UPSTREAM_BASE_URL": "http://127.0.0.1:1/unused",
+        "AGENT_LB_UPSTREAM_BASE_URL": f"http://127.0.0.1:{upstream_port}/backend-api",
         "AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL": f"http://127.0.0.1:{upstream_port}",
         "AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN": PLACEHOLDER,
         "AGENT_LB_DASHBOARD_AUTH_MODE": "disabled",
@@ -331,6 +342,13 @@ async def main():
         session.add(Account(
             id="sandbox-anthropic", provider="anthropic", chatgpt_account_id="sandbox-anthropic",
             email="sandbox@example.invalid", plan_type="max",
+            access_token_encrypted=enc.encrypt("{PLACEHOLDER}"),
+            refresh_token_encrypted=enc.encrypt("{PLACEHOLDER}"), id_token_encrypted=None,
+            last_refresh=utcnow() + timedelta(days=1), status=AccountStatus.ACTIVE, deactivation_reason=None,
+        ))
+        session.add(Account(
+            id="sandbox-openai", provider="openai", chatgpt_account_id="sandbox-openai",
+            email="sandbox@example.invalid", plan_type="plus",
             access_token_encrypted=enc.encrypt("{PLACEHOLDER}"),
             refresh_token_encrypted=enc.encrypt("{PLACEHOLDER}"), id_token_encrypted=None,
             last_refresh=utcnow() + timedelta(days=1), status=AccountStatus.ACTIVE, deactivation_reason=None,
@@ -557,6 +575,24 @@ def main() -> int:
             [str(out / "unpriced-refused.json")],
         )
 
+        file_results = []
+        calls_before = len(fake.calls)
+        for path, payload in (
+            ("/backend-api/files", {"file_name": "sandbox.txt", "file_size": 1, "use_case": "mcp"}),
+            ("/backend-api/files/sandbox-file/uploaded", {}),
+        ):
+            status, body = http_call(app_port, "POST", path, payload, {"Authorization": f"Bearer {capped_key}"})
+            file_results.append({"path": path, "status": status, "body": body.decode(errors="replace")[:600]})
+        file_calls = len(fake.calls) - calls_before
+        (out / "file-routes.json").write_text(json.dumps(file_results, indent=2))
+        check.step(
+            "file-routes-exempt-only-on-file-routes",
+            all(r["status"] == 200 for r in file_results) and file_calls == 2,
+            f"Exhausted cost-capped key: file registration/finalize statuses {[r['status'] for r in file_results]}, "
+            f"upstream calls {file_calls}; sentinel model names were refused above on /v1/messages",
+            [str(out / "file-routes.json"), str(out / "unpriced-refused.json")],
+        )
+
         _, uncapped_key = create_key("sandbox-uncapped", [])
         cases = [(uncapped_key, PRICED_MODEL)] * (expected_trip + 2) + [
             (uncapped_key, UNPRICED_MODEL),
@@ -636,6 +672,8 @@ def main() -> int:
         and server_proc is not None
         and server_proc.returncode is not None
         and (removed or args.keep_sandbox)
+        and bool(live_before)
+        and bool(live_after)
         and live_before == live_after,
         f"sandbox listeners after stop {leftovers}; app exit {server_proc.returncode if server_proc else None}; "
         f"sandbox dir removed {removed}; live :2455 listener pids before {live_before} after {live_after}",

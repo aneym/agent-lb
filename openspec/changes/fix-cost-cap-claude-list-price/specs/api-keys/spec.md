@@ -45,3 +45,16 @@ When a `cost_usd` limit applies to a request and the requested model has no list
 
 - **WHEN** a key with no `cost_usd` limit requests a model absent from every price table
 - **THEN** the request is served as before
+
+#### Scenario: Unlisted OpenAI model under a cap
+
+- **WHEN** a capped caller requests `gpt-5.99` or `gpt-5.1-unpriced`
+- **THEN** admission refuses it with `model_unpriced_under_cost_cap` before upstream
+- **AND** only exact OpenAI price entries or explicitly named aliases qualify, not wildcard or prefix matches
+
+#### Scenario: File operations do not consume model spend
+
+- **WHEN** a cost-capped key registers or finalizes a file on the file routes
+- **THEN** cost limits do not reject the operation, even when exhausted, while non-cost limits still apply
+- **AND** `files-create` and `files-finalize` as model names on model routes remain unpriced and refused
+- **AND** model requests with zero estimated tokens reserve at least one microdollar

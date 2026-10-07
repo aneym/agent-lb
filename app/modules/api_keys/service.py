@@ -20,6 +20,12 @@ from app.core.anthropic.pricing import get_pricing_for_model as get_anthropic_pr
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
 from app.core.usage.pricing import (
+    DEFAULT_MODEL_ALIASES as OPENAI_MODEL_ALIASES,
+)
+from app.core.usage.pricing import (
+    DEFAULT_PRICING_MODELS as OPENAI_PRICING_MODELS,
+)
+from app.core.usage.pricing import (
     UsageTokens,
     calculate_cost_from_usage,
     get_pricing_for_model,
@@ -738,6 +744,7 @@ class ApiKeysService:
         request_model: str | None,
         request_service_tier: str | None = None,
         request_usage_budget: ApiKeyRequestUsageBudget | None = None,
+        request_is_file_operation: bool = False,
     ) -> ApiKeyUsageReservationData:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
             try:
@@ -746,6 +753,7 @@ class ApiKeysService:
                     request_model=request_model,
                     request_service_tier=request_service_tier,
                     request_usage_budget=request_usage_budget,
+                    request_is_file_operation=request_is_file_operation,
                 )
             except OperationalError as exc:
                 await self._repository.rollback()
@@ -762,6 +770,7 @@ class ApiKeysService:
         request_model: str | None,
         request_service_tier: str | None,
         request_usage_budget: ApiKeyRequestUsageBudget | None,
+        request_is_file_operation: bool = False,
     ) -> ApiKeyUsageReservationData:
         now = utcnow()
         async with sqlite_writer_section(self._repository.session):
@@ -777,6 +786,13 @@ class ApiKeysService:
             normalized_usage_budget = _normalize_request_usage_budget(request_usage_budget)
             try:
                 for limit in refreshed.limits:
+                    # Only trusted file routes set this flag; a model string alone never exempts spend.
+                    if (
+                        request_is_file_operation
+                        and request_model in {"files-create", "files-finalize"}
+                        and limit.limit_type == LimitType.COST_USD
+                    ):
+                        continue
                     if not _limit_applies_for_request(limit, request_model=request_model):
                         continue
                     if (
@@ -1504,7 +1520,7 @@ def _reserve_cost_budget_microdollars(
 def _unknown_model_reserve_cost_budget_microdollars(*, input_tokens: int, output_tokens: int) -> int:
     token_budget = max(0, input_tokens) + max(0, output_tokens)
     if token_budget <= 0:
-        return 0
+        return 1  # A model request always reserves a positive spend floor.
     return ceil(
         _API_KEY_USAGE_RESERVATION_UNKNOWN_MODEL_MICRODOLLARS
         * token_budget
@@ -1687,8 +1703,15 @@ def _limit_identity_from_row(limit: ApiKeyLimit) -> tuple[str, str, str | None]:
 
 
 def _model_has_list_price(model: str) -> bool:
-    """Cost-cap guard: a blank name, or a Claude name the table does not list, has no list price."""
-    return get_pricing_for_model(model) is not None or get_anthropic_list_pricing(model) is not None
+    """Admission never treats an OpenAI wildcard or prefix as a published model."""
+    normalized = model.lower()
+    prices = {name.lower() for name in OPENAI_PRICING_MODELS}
+    explicit_aliases = {name.lower(): target.lower() for name, target in OPENAI_MODEL_ALIASES.items()}
+    return (
+        normalized in prices
+        or explicit_aliases.get(normalized) in prices
+        or get_anthropic_list_pricing(model) is not None
+    )
 
 
 def _calculate_cost_microdollars(

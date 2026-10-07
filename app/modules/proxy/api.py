@@ -1697,6 +1697,7 @@ async def backend_files_create(
         api_key,
         request_model=_FILES_CREATE_LIMIT_MODEL,
         request_service_tier=None,
+        request_is_file_operation=True,
     )
     try:
         result = await context.service.create_file(
@@ -1741,6 +1742,7 @@ async def backend_files_finalize(
         api_key,
         request_model=_FILES_FINALIZE_LIMIT_MODEL,
         request_service_tier=None,
+        request_is_file_operation=True,
     )
     try:
         result = await context.service.finalize_file(
@@ -3792,6 +3794,7 @@ async def _enforce_request_limits(
     request_model: str | None,
     request_service_tier: str | None,
     request_usage_budget: ApiKeyRequestUsageBudget | None = None,
+    request_is_file_operation: bool = False,
 ) -> ApiKeyUsageReservationData | None:
     if api_key is None:
         return None
@@ -3806,6 +3809,7 @@ async def _enforce_request_limits(
                 request_model=request_model,
                 request_service_tier=request_service_tier,
                 request_usage_budget=request_usage_budget,
+                **({"request_is_file_operation": True} if request_is_file_operation else {}),
             )
         except ApiKeyRateLimitExceededError as exc:
             message = f"{exc}. Usage resets at {exc.reset_at.isoformat()}Z."
