@@ -184,7 +184,15 @@ MANAGED_AGENTS = (
         "agent-lb:workflow-seat-guard:v1\n",
         Path("hooks/workflow-seat-guard.py"),
     ),
+    (
+        Path(".claude/hooks/bash-dispatch.py"),
+        Path(".agent-lb/managed/coding-agents/bash-dispatch"),
+        "agent-lb:bash-dispatch:v1\n",
+        Path("hooks/bash-dispatch.py"),
+    ),
 )
+# The Bash PreToolUse hooks the dispatcher runs, in their settings.json order (see hooks/bash-dispatch.py).
+BASH_HOOKS = Path(".agent-lb/managed/coding-agents/bash-hooks.json")
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
 # removes the definition, its ownership marker and the policy mirror copy; the
@@ -307,6 +315,56 @@ CLOSEOUT_HOOK = {
     "timeout": 5,
     "statusMessage": "Dispatch closeout",
 }
+
+
+BASH_DISPATCH_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/bash-dispatch.py"',
+    "timeout": 60,
+}
+
+
+def is_bash_dispatch_hook(command: Any) -> bool:
+    return isinstance(command, str) and "hooks/bash-dispatch.py" in command
+
+
+def fold_bash_hooks(settings: dict[str, Any], listed: list[dict[str, Any]], uninstall: bool
+                    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Move every Bash PreToolUse hook into the dispatcher's list and register the dispatcher alone (2026-10-07: 15
+    hook processes per Bash call loaded the Studio). Uninstall puts the listed hooks back in a Bash group, in order.
+    A hook added to settings later (another installer) joins the list on the next install, after the ones listed."""
+    updated = json.loads(json.dumps(settings))
+    groups = updated.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    keep: list[dict[str, Any]] = []
+    moved = [dict(hook) for hook in listed if isinstance(hook, dict) and isinstance(hook.get("command"), str)]
+    for group in groups:
+        if group.get("matcher") != "Bash":
+            keep.append(group)
+            continue
+        rest = []
+        for hook in group.get("hooks", []):
+            command = hook.get("command")
+            if is_bash_dispatch_hook(command):
+                continue
+            if uninstall or hook.get("type", "command") != "command" or not isinstance(command, str):
+                rest.append(hook)
+            elif all(entry["command"] != command for entry in moved):
+                moved.append(dict(hook))
+        if rest:
+            keep.append({**group, "hooks": rest})
+    if uninstall:
+        if moved:
+            keep.append({"matcher": "Bash", "hooks": moved})
+        moved = []
+    elif moved:
+        keep.append({"matcher": "Bash", "hooks": [dict(BASH_DISPATCH_HOOK)]})
+    if keep:
+        updated["hooks"]["PreToolUse"] = keep
+    else:
+        updated["hooks"].pop("PreToolUse", None)
+        if not updated["hooks"]:
+            updated.pop("hooks", None)
+    return updated, moved
 
 
 def is_closeout_hook(command: Any) -> bool:
@@ -514,7 +572,15 @@ def main() -> int:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else resolve_sonnet(source, args.home)
     desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model)
-    desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
+    bash_hooks_path = args.home / BASH_HOOKS
+    bash_hooks_text = read_text(bash_hooks_path)
+    try:
+        listed = json.loads(bash_hooks_text) if bash_hooks_text else []
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"error: invalid JSON in {bash_hooks_path}: {exc}") from exc
+    if not isinstance(listed, list):
+        raise SystemExit(f"error: expected a JSON list in {bash_hooks_path}")
+    desired_settings, desired_listed = fold_bash_hooks(desired_settings, listed, args.uninstall)
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
     }
@@ -542,8 +608,14 @@ def main() -> int:
         if desired_models != models_text:
             changes[models_path] = desired_models
     # Compare parsed settings so a formatting-only difference never rewrites the file.
+    desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
     if desired_settings != settings:
         changes[settings_path] = desired_settings_text
+    if args.uninstall:
+        if bash_hooks_path.exists():
+            changes[bash_hooks_path] = None
+    elif desired_listed != listed:
+        changes[bash_hooks_path] = json.dumps(desired_listed, indent=2, ensure_ascii=False) + "\n"
     if not args.uninstall:
         codex_config = args.home / ".codex" / "config.toml"
         if codex_config.is_file():
