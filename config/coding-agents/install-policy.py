@@ -317,47 +317,81 @@ CLOSEOUT_HOOK = {
 }
 
 
-BASH_DISPATCH_HOOK = {
-    "type": "command",
-    "command": '/usr/bin/python3 "$HOME/.claude/hooks/bash-dispatch.py"',
-    "timeout": 60,
-}
+BASH_DISPATCH_COMMAND = '/usr/bin/python3 "$HOME/.claude/hooks/bash-dispatch.py"'
+# Only plain command hooks fold: `args`, `if`, `async` and the rest change how or when Claude Code runs a hook, and
+# the dispatcher runs each listed hook as `/bin/sh -c <command>` on every Bash call.
+BASH_FOLDABLE = ("type", "command", "timeout", "statusMessage")
+CLAUDE_COMMAND_TIMEOUT = 600  # Claude Code's default for a command hook
+
+
+def bash_dispatch_hook(listed: list[dict[str, Any]]) -> dict[str, Any]:
+    """The dispatcher registration; its timeout outlasts the slowest listed hook so a finished block is never lost."""
+    longest = max(float(hook.get("timeout") or CLAUDE_COMMAND_TIMEOUT) for hook in listed)
+    return {"type": "command", "command": BASH_DISPATCH_COMMAND, "timeout": int(-(-longest // 1)) + 15}
 
 
 def is_bash_dispatch_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/bash-dispatch.py" in command
 
 
-def fold_bash_hooks(settings: dict[str, Any], listed: list[dict[str, Any]], uninstall: bool
+def foldable_bash_hook(hook: Any) -> bool:
+    timeout = hook.get("timeout") if isinstance(hook, dict) else None
+    return (isinstance(hook, dict) and set(hook) <= set(BASH_FOLDABLE) and hook.get("type", "command") == "command"
+            and isinstance(hook.get("command"), str) and hook["command"].strip() != ""
+            and not is_bash_dispatch_hook(hook["command"])
+            and (timeout is None or (isinstance(timeout, (int, float)) and not isinstance(timeout, bool) and timeout > 0))
+            and (hook.get("statusMessage") is None or isinstance(hook["statusMessage"], str)))
+
+
+def fold_bash_hooks(settings: dict[str, Any], listed: list[dict[str, Any]] | None, uninstall: bool
                     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Move every Bash PreToolUse hook into the dispatcher's list and register the dispatcher alone (2026-10-07: 15
-    hook processes per Bash call loaded the Studio). Uninstall puts the listed hooks back in a Bash group, in order.
-    A hook added to settings later (another installer) joins the list on the next install, after the ones listed."""
+    """Move every plain Bash PreToolUse command hook into the dispatcher's list and register the dispatcher in the
+    first one's place (2026-10-07: 15 hook processes per Bash call loaded the Studio). Uninstall puts the listed hooks
+    back in the dispatcher's place, in list order. A hook registered later (another installer) joins the list on the
+    next install, after the ones listed; one whose command is already listed replaces that entry in place, so its
+    newer timeout wins. `listed` is None when the list file is missing. Raises ValueError rather than drop the
+    dispatcher while its list is missing or invalid: the dispatcher refuses every Bash call then, and folding would
+    leave no guard at all."""
     updated = json.loads(json.dumps(settings))
     groups = updated.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    keep: list[dict[str, Any]] = []
-    moved = [dict(hook) for hook in listed if isinstance(hook, dict) and isinstance(hook.get("command"), str)]
-    for group in groups:
+    registered = any(group.get("matcher") == "Bash" and is_bash_dispatch_hook(hook.get("command"))
+                     for group in groups for hook in group.get("hooks", []) if isinstance(hook, dict))
+    if listed is None or not listed:
+        if registered:
+            raise ValueError("the Bash dispatcher is registered but its hook list is missing or empty; restore "
+                             f"~/{BASH_HOOKS} (or its backup) before installing or uninstalling")
+        listed = []
+    if not all(foldable_bash_hook(hook) for hook in listed):
+        raise ValueError(f"~/{BASH_HOOKS} holds an entry that is not a plain command hook; fix it by hand")
+    moved = [dict(hook) for hook in listed]
+    slot: tuple[int, int] | None = None
+    for index, group in enumerate(groups):
         if group.get("matcher") != "Bash":
-            keep.append(group)
             continue
         rest = []
         for hook in group.get("hooks", []):
-            command = hook.get("command")
+            command = hook.get("command") if isinstance(hook, dict) else None
             if is_bash_dispatch_hook(command):
-                continue
-            if uninstall or hook.get("type", "command") != "command" or not isinstance(command, str):
+                slot = slot or (index, len(rest))
+            elif uninstall or not foldable_bash_hook(hook):
                 rest.append(hook)
-            elif all(entry["command"] != command for entry in moved):
-                moved.append(dict(hook))
-        if rest:
-            keep.append({**group, "hooks": rest})
+            else:
+                slot = slot or (index, len(rest))
+                same = next((i for i, entry in enumerate(moved) if entry["command"] == command), None)
+                if same is None:
+                    moved.append(dict(hook))
+                else:
+                    moved[same] = dict(hook)
+        group["hooks"] = rest
+    placed = moved if uninstall else [bash_dispatch_hook(moved)] if moved else []
+    if placed:
+        if slot is None:
+            groups.append({"matcher": "Bash", "hooks": placed})
+        else:
+            groups[slot[0]]["hooks"][slot[1]:slot[1]] = placed
     if uninstall:
-        if moved:
-            keep.append({"matcher": "Bash", "hooks": moved})
         moved = []
-    elif moved:
-        keep.append({"matcher": "Bash", "hooks": [dict(BASH_DISPATCH_HOOK)]})
+    keep = [group for group in groups if group.get("matcher") != "Bash" or group.get("hooks")]
     if keep:
         updated["hooks"]["PreToolUse"] = keep
     else:
@@ -575,12 +609,15 @@ def main() -> int:
     bash_hooks_path = args.home / BASH_HOOKS
     bash_hooks_text = read_text(bash_hooks_path)
     try:
-        listed = json.loads(bash_hooks_text) if bash_hooks_text else []
+        listed = json.loads(bash_hooks_text) if bash_hooks_text else None
     except json.JSONDecodeError as exc:
         raise SystemExit(f"error: invalid JSON in {bash_hooks_path}: {exc}") from exc
-    if not isinstance(listed, list):
+    if listed is not None and not isinstance(listed, list):
         raise SystemExit(f"error: expected a JSON list in {bash_hooks_path}")
-    desired_settings, desired_listed = fold_bash_hooks(desired_settings, listed, args.uninstall)
+    try:
+        desired_settings, desired_listed = fold_bash_hooks(desired_settings, listed, args.uninstall)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
     }
@@ -614,7 +651,7 @@ def main() -> int:
     if args.uninstall:
         if bash_hooks_path.exists():
             changes[bash_hooks_path] = None
-    elif desired_listed != listed:
+    elif desired_listed != (listed or []):
         changes[bash_hooks_path] = json.dumps(desired_listed, indent=2, ensure_ascii=False) + "\n"
     if not args.uninstall:
         codex_config = args.home / ".codex" / "config.toml"
