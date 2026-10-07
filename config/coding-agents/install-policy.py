@@ -1048,6 +1048,10 @@ def main() -> int:
         print("managed routing configuration already converged")
         return 0
 
+    # The parity fixture can take a minute; settings edited meanwhile (another installer, a hand edit) would be
+    # overwritten with a stale view. Refuse instead; the next run starts from the new file.
+    if read_text(settings_path) != settings_text:
+        raise SystemExit(f"error: {settings_path} changed while this install ran; nothing written, run it again")
     checkpoint_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     checkpoint = args.home / ".agent-lb" / "config-checkpoints" / "coding-agents" / checkpoint_name
     checkpoint.mkdir(parents=True, exist_ok=False)
@@ -1103,5 +1107,29 @@ def main() -> int:
     return 0
 
 
+def locked_main() -> int:
+    """One install at a time per home: the coding-agents sync and a hand run must not interleave their writes."""
+    import fcntl
+    import time
+
+    home = parse_args().home.expanduser().resolve()
+    # Outside the home, so a --print run writes nothing there.
+    digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]
+    # A fixed directory, not TMPDIR: launchd jobs and shells see different TMPDIRs.
+    lock_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
+    lock_path = lock_dir / f"agent-lb-install-policy-{os.getuid()}-{digest}.lock"
+    with open(lock_path, "a") as handle:
+        deadline = time.monotonic() + 600
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    raise SystemExit(f"error: another install-policy run holds {lock_path}")
+                time.sleep(1)
+        return main()
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(locked_main())

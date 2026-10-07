@@ -40,6 +40,18 @@ PATH_REF = re.compile(r'(?:\$HOME|~)/([^\s"\'$`\\;&|<>(){}]+)')
 CONFIG_COPIES = (".agent-lb/managed/coding-agents/routing-table.json", ".claude/agents", ".claude/load-governor.json")
 TEST_PANE = "hp:t1"
 RTK_STATE = "home/Library/Application Support/rtk/"
+FAKE_NPX = r"""#!/bin/sh
+echo "$*" >> "$NPX_CALL_LOG"
+if [ "$2" = "--find-config-path" ]; then
+  d=$(pwd)
+  while :; do
+    for f in "$d"/.prettierrc* "$d"/prettier.config*; do [ -e "$f" ] && exit 0; done
+    [ "$d" = / ] && exit 2
+    d=$(dirname "$d")
+  done
+fi
+exit 0
+"""
 HEAVY_DIR = os.path.join(os.path.expanduser("~"), "factory")  # under box-offload's roots, so it rewrites
 NEVER_RUN = {"AskUserQuestion"}  # its hook registers a real ask with unblock
 
@@ -228,6 +240,11 @@ class Sandbox(object):
             os.makedirs(os.path.join(self.template, rel), exist_ok=True)
         with open(os.path.join(self.template, "factory", "machines.json"), "w") as handle:
             handle.write("[]\n")
+        # Never the network: every run gets a fake npx that logs its argv and answers --find-config-path the way
+        # prettier does (found only when a prettier config sits in the file's directory or a parent).
+        with open(os.path.join(self.template, "bin", "npx"), "w") as handle:
+            handle.write(FAKE_NPX)
+        os.chmod(os.path.join(self.template, "bin", "npx"), 0o755)
         self.count = 0
         self.lock = threading.Lock()
 
@@ -257,6 +274,7 @@ class Sandbox(object):
             "ROUTE_LEDGER": os.path.join(run, "ledger", "dispatch.jsonl"),
             "DISPATCH_LEDGER": os.path.join(run, "ledger", "dispatch.jsonl"),
             "SKILLSTATS_HOME": os.path.join(run, "skill"),
+            "NPX_CALL_LOG": os.path.join(run, "npx-calls.log"),
             "CLAUDE_PROJECT_DIR": os.path.join(run, "project"),
             "LOAD_GOVERNOR_FAKE_LOAD": "1.0",
             "LOAD_GOVERNOR_FAKE_MEM": "10",
@@ -270,7 +288,7 @@ class Sandbox(object):
 
 def files_of(run):
     found = set()
-    skip = {os.path.join(run, "trace.jsonl")}
+    skip = {os.path.join(run, "trace.jsonl"), os.path.join(run, "npx-calls.log")}
     for dirpath, dirnames, filenames in os.walk(run):
         dirnames[:] = [d for d in dirnames if d not in ("__pycache__",)]
         rel_dir = os.path.relpath(dirpath, run)
@@ -397,10 +415,6 @@ def setup_case(case, run):
         open(os.path.join(pretty, "a.ts"), "w").close()
         with open(os.path.join(pretty, ".prettierrc"), "w") as handle:
             handle.write("{}\n")
-        npx = os.path.join(run, "bin", "npx")  # never the network: a fake npx that records its argv
-        with open(npx, "w") as handle:
-            handle.write('#!/bin/sh\necho "$@" >> "%s/npx-calls.log"\nexit 0\n' % run)
-        os.chmod(npx, 0o755)
     if "stash" in setup:
         repo = os.path.join(work, "repo")
         os.makedirs(repo)
@@ -463,6 +477,14 @@ def run_path(sandbox, case, hooks, extra, trace):
     return run, results, files_of(run)
 
 
+def npx_calls(run):
+    try:
+        with open(os.path.join(run, "npx-calls.log")) as handle:
+            return [line.rstrip("\n").replace(run, "<run>") for line in handle]
+    except OSError:
+        return []
+
+
 def same(value, run):
     return json.loads(json.dumps(value).replace(run, "<run>"))
 
@@ -509,6 +531,10 @@ def run_case(sandbox, registry, case):
     extra_new = set(new_by_command) - {old["command"] for old in old_results}
     if extra_new:
         outcome["mismatches"].append({"what": "guards only on the new path", "commands": sorted(extra_new)})
+    old_npx, new_npx = npx_calls(run), npx_calls(run2)
+    outcome["npx_calls"] = {"old": old_npx, "new": new_npx}
+    if new_npx != old_npx and (new_npx or any("--find-config-path" not in call for call in old_npx)):
+        outcome["mismatches"].append({"what": "npx calls", "old": old_npx, "new": new_npx})
     # (3) side effects in the sandbox. A rewriter the dispatcher skipped (a guard denied, or a later guard rewrote
     # the input) leaves no state of its own: rtk's warning timestamp is not a guard effect.
     if any(str(mode).startswith("skipped (") for _c, _k, mode, _r in modes):

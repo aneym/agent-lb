@@ -213,3 +213,22 @@ def test_missing_registry_fails_closed_for_pre_tool_use_only(tmp_path: Path) -> 
     (home / ".claude/hooks/dispatch").mkdir()
     (home / ".claude/hooks/dispatch/registry.json").write_text(json.dumps({"entries": {"PreToolUse": {}}}))
     assert run_hook(f"{DISPATCH} PreToolUse 'Bash'", payload, env).returncode == 2
+
+
+def test_settings_edited_during_the_parity_run_are_not_overwritten(tmp_path: Path) -> None:
+    home, _ = make_home(tmp_path)
+    install, _env = installer(tmp_path, home)
+    install()
+    settings_path = home / ".claude/settings.json"
+    # The parity fixture runs this guard; it edits the real settings the way a concurrent installer would.
+    (home / ".claude/hooks/idle-agents.py").write_text(
+        "import json, sys\nsys.stdin.read()\n"
+        f"p = {str(settings_path)!r}\n"
+        "s = json.load(open(p))\ns['concurrentEdit'] = True\njson.dump(s, open(p, 'w'))\n")
+    result = install("--hook-dispatcher", "on", check=False)
+    assert result.returncode != 0
+    assert "changed while this install ran" in result.stderr
+    after = json.loads(settings_path.read_text())
+    assert after["concurrentEdit"] is True
+    assert "hook-dispatch.py" not in json.dumps(after)
+    assert not (home / ".claude/hooks/dispatch/registry.json").exists()
