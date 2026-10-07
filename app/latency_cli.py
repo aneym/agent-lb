@@ -23,6 +23,7 @@ def add_parser(subparsers) -> None:
         default="provider,account,hour",
         help="Comma-separated tables: provider, account, hour.",
     )
+    latency.add_argument("--session", help="List request latencies for a client session ID.")
     latency.add_argument("--json", action="store_true")
     latency.add_argument("--db", help="Database URL (default: AGENT_LB_DATABASE_URL or settings).")
 
@@ -145,12 +146,20 @@ def build_report(rows: list[dict], *, since: datetime, until: datetime, dimensio
     }
 
 
-def _load_rows(url: str, since: datetime, until: datetime) -> list[dict]:
+def _load_rows(url: str, since: datetime, until: datetime, *, session: str | None = None) -> list[dict]:
     sql = """
         SELECT provider, account_id, requested_at, latency_ms, latency_first_token_ms, error_code
         FROM request_logs
         WHERE deleted_at IS NULL AND requested_at >= ? AND requested_at < ?
     """
+    if session is not None:
+        sql = """
+            SELECT requested_at, latency_first_token_ms, latency_ms, model
+            FROM request_logs
+            WHERE deleted_at IS NULL AND requested_at >= ? AND requested_at < ?
+              AND coalesce(client_session_id, session_id) = ?
+            ORDER BY requested_at ASC
+        """
     since_naive = since.astimezone(UTC).replace(tzinfo=None)
     until_naive = until.astimezone(UTC).replace(tzinfo=None)
     normalized = _normalize_url(url)
@@ -163,10 +172,10 @@ def _load_rows(url: str, since: datetime, until: datetime) -> list[dict]:
             raise SystemExit(f"database connection failed: {type(exc).__name__}") from exc
         connection.row_factory = sqlite3.Row
         try:
-            cursor = connection.execute(
-                sql,
-                (since_naive.strftime("%Y-%m-%d %H:%M:%S"), until_naive.strftime("%Y-%m-%d %H:%M:%S")),
-            )
+            params = (since_naive.strftime("%Y-%m-%d %H:%M:%S"), until_naive.strftime("%Y-%m-%d %H:%M:%S"))
+            if session is not None:
+                params += (session,)
+            cursor = connection.execute(sql, params)
             return [dict(row) for row in cursor.fetchall()]
         finally:
             connection.close()
@@ -186,7 +195,10 @@ def _load_rows(url: str, since: datetime, until: datetime) -> list[dict]:
             row_factory=dict_row,
         ) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(postgres_sql, (since_naive, until_naive))
+                params = (since_naive, until_naive)
+                if session is not None:
+                    params += (session,)
+                cursor.execute(postgres_sql, params)
                 return list(cursor.fetchall())
     except Exception as exc:
         raise SystemExit(f"database connection failed: {type(exc).__name__}") from exc
@@ -228,7 +240,22 @@ def run(args) -> None:
         raise SystemExit("--by must be a subset of provider,account,hour")
     until = datetime.now(UTC)
     since = parse_since(args.since, until=until)
-    rows = _load_rows(database_url(args), since, until)
+    session = getattr(args, "session", None)
+    rows = _load_rows(database_url(args), since, until, session=session)
+    if session is not None:
+        for row in rows:
+            row["requested_at"] = _as_utc(row["requested_at"]).isoformat().replace("+00:00", "Z")
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        else:
+            print("requested_at\tlatency_first_token_ms\tlatency_ms\tmodel")
+            for row in rows:
+                print(
+                    "\t".join(
+                        _cell(row[key]) for key in ("requested_at", "latency_first_token_ms", "latency_ms", "model")
+                    )
+                )
+        return
     report = build_report(rows, since=since, until=until, dimensions=dimensions)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
