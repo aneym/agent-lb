@@ -632,8 +632,9 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool
         try:
             result = subprocess.run(
                 [sys.executable, str(source / "hooks" / "hook-dispatch-parity.py"), "--home", str(home),
-                 "--registry", str(staged), "--dispatcher", str(source / DISPATCH_SCRIPT), "--out", str(report)],
-                capture_output=True, text=True, timeout=1800, check=False,
+                 "--registry", str(staged), "--dispatcher", str(source / DISPATCH_SCRIPT), "--out", str(report),
+                 "--workdir", str(Path(tempfile.gettempdir()) / "hook-dispatch-parity")],
+                capture_output=True, text=True, timeout=600, check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return False, f"parity fixture did not run: {exc.__class__.__name__}"

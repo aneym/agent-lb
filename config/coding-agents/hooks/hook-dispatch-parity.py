@@ -30,7 +30,9 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DEFAULT_TIMEOUT = 600.0
@@ -227,10 +229,12 @@ class Sandbox(object):
         with open(os.path.join(self.template, "factory", "machines.json"), "w") as handle:
             handle.write("[]\n")
         self.count = 0
+        self.lock = threading.Lock()
 
     def fresh(self):
-        self.count += 1
-        path = os.path.join(self.root, "run-%04d" % self.count)
+        with self.lock:
+            self.count += 1
+            path = os.path.join(self.root, "run-%04d" % self.count)
         shutil.copytree(self.template, path, symlinks=True)
         return path
 
@@ -651,6 +655,7 @@ def main():
     parser.add_argument("--workdir", help="sandbox parent (default: a new temp dir, removed afterwards)")
     parser.add_argument("--keep", action="store_true", help="keep the sandbox")
     parser.add_argument("--only", help="regex: run only cases whose name matches")
+    parser.add_argument("--jobs", type=int, default=4, help="cases run at once (each in its own sandbox runs)")
     parser.add_argument("--require-process-count", action="store_true")
     parser.add_argument("--require-expectations", action="store_true",
                         help="also require each deny/allow case to get its expected decision (the live guard set)")
@@ -660,6 +665,14 @@ def main():
     dispatcher = args.dispatcher or os.path.join(home, ".claude", "hooks", "hook-dispatch.py")
     with open(registry_path) as handle:
         registry = json.load(handle)
+    if args.workdir:
+        os.makedirs(args.workdir, exist_ok=True)
+        # A run killed by a timeout cannot clean up; its sandbox is removed by the next run after an hour.
+        for name in os.listdir(args.workdir):
+            stale = os.path.join(args.workdir, name)
+            if name.startswith("hook-parity-") and os.path.isdir(stale) and not os.path.islink(stale) \
+                    and time.time() - os.path.getmtime(stale) > 3600:
+                shutil.rmtree(stale, ignore_errors=True)
     root = tempfile.mkdtemp(prefix="hook-parity-", dir=args.workdir)
     started = time.time()
     report = {"schema": 1, "registry": registry_path, "dispatcher": dispatcher, "home": home,
@@ -672,7 +685,8 @@ def main():
         cases = [case for case in builtin_cases() if case.get("tool") not in NEVER_RUN]
         if args.only:
             cases = [case for case in cases if re.search(args.only, case["name"])]
-        report["cases"] = [run_case(sandbox, registry, case) for case in cases]
+        with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+            report["cases"] = list(pool.map(lambda case: run_case(sandbox, registry, case), cases))
         report["crash_timeout"] = [] if args.only else crash_cases(root, dispatcher, home)
         report["process_count"] = [] if args.only else process_count(sandbox, registry)
         guards = sorted({hook["command"] for groups in registry["per_hook"].values() for group in groups
