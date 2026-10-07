@@ -21,6 +21,7 @@ import datetime as dt
 import http.client
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -444,6 +445,8 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     except OSError:
         pass
     (out / "lb-restart.log").write_text(log_text)
+    cutover = re.search(r"primary pid \d+ had (\d+) in flight", log_text)
+    active_at_cutover = int(cutover.group(1)) if cutover else None
     marks = {name: needle in log_text for name, needle in RESTART_MARKS.items()}
     front_log = ""
     try:
@@ -457,13 +460,17 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     c.step(
         "restart-with-stream",
         seen >= 1
+        and active_at_cutover is not None
+        and active_at_cutover >= 1
+        and not thread.is_alive()
         and rc_rs == 0
         and restart.get("lb_restart_exit") == 0
         and all(marks.values())
         and switched
         and holder.get("status") == 200
         and bool(holder.get("complete")),
-        f"in_flight_primary {seen} (status call: {flight.get('in_flight_primary')}) before restart; lb-restart exit "
+        f"active at cutover {active_at_cutover}; in_flight_primary {seen} "
+        f"(status call: {flight.get('in_flight_primary')}) before restart; lb-restart exit "
         f"{restart.get('lb_restart_exit')} in {restart.get('seconds')} s; log marks {marks}; front switched to "
         f":{start['standby_port']} and back to :{primary}: {switched}; stream {holder.get('status')} complete "
         f"{holder.get('complete')} {holder.get('text', '')[:40]!r}",
@@ -546,7 +553,12 @@ def stop_and_verify(c: Check, run_id: str) -> None:
     labels = sh("/bin/launchctl", "list")
     c.step(
         "stop-clean",
-        rc == 0 and stop.get("clean") is True and not leftover and f"sbx-{run_id}" not in labels,
+        rc == 0 and stop.get("clean") is True and not leftover and f"sbx-{run_id}" not in labels
+        and stop.get("logs", {}).get("scan_found") is False
+        and stop.get("logs", {}).get("scan_complete") is True
+        and stop.get("logs", {}).get("copied") is True
+        and not stop.get("logs", {}).get("secret_load_error")
+        and not stop.get("logs", {}).get("copy_error"),
         f"stop exit {rc} clean {stop.get('clean')}: labels {stop.get('labels_loaded')}, listeners "
         f"{stop.get('listeners')}, processes {stop.get('processes')}, root exists {stop.get('root_exists')}; "
         f"logs {stop.get('logs')}; independent ps leftovers {leftover}",

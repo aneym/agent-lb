@@ -93,6 +93,7 @@ def test_sandbox_rebinds_every_path_under_the_root(tmp_path: Path) -> None:
         {"standby_port": 2459},
         {"standby_port": 1455},
         {"front_port": 2469},
+        {"front_port": 2600},
         {"standby_port": 2471},
         {"primary_port": "2471"},
         {"root": "relative/root"},
@@ -110,7 +111,8 @@ def test_sandbox_guard_refuses(tmp_path: Path, overrides: dict) -> None:
 
 def test_sandbox_root_must_be_below_sandboxes(tmp_path: Path) -> None:
     lb = _load()
-    for root in (tmp_path / ".agent-lb" / "sandboxes", tmp_path / ".agent-lb" / "runtime"):
+    for root in (tmp_path / ".agent-lb" / "sandboxes", tmp_path / ".agent-lb" / "runtime",
+                 tmp_path / ".agent-lb" / "sandboxes" / "r1" / "nested"):
         with pytest.raises(lb.SandboxRefused):
             lb.sandbox_bindings(_config(tmp_path, root=str(root)), home=tmp_path)
     config = _config(tmp_path)

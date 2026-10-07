@@ -61,6 +61,7 @@ def _load() -> ModuleType:
         ("ports", [2459]),
         ("ports", [1455]),
         ("ports", [2469]),
+        ("ports", [2600]),
         ("ports", [70000]),
         ("ports", [True]),
         ("ports", [2480, 2480]),
@@ -462,3 +463,62 @@ def test_scan_reports_a_named_path_it_cannot_stat(tmp_path: Path) -> None:
     finally:
         locked.chmod(0o755)
     assert (result["complete"], result["unreadable"], result["files_scanned"]) == (False, 1, 0)
+
+
+@pytest.mark.parametrize("redirect", ["gate", "edge_anthropic", "edge_openai", "front", "standby"])
+def test_serve_validates_all_metadata_ports_before_credentials(tmp_path, monkeypatch, redirect):
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    root.mkdir(parents=True)
+    ports = dict(SERVE_PORTS, **{redirect: 2455})
+    (root / "sandbox.json").write_text(json.dumps({"ports": ports}))
+    monkeypatch.setattr(lb, "SANDBOXES", root.parent)
+    monkeypatch.setenv("LB_SANDBOX_ROOT", str(root))
+    with pytest.raises(lb.Refused):
+        lb.serve_exec_args(root, ["--port", "2481"])
+
+
+@pytest.mark.parametrize("relative", ["data", "data/store.db", "data/encryption.key"])
+def test_serve_refuses_redirected_data_before_credentials(tmp_path, monkeypatch, relative):
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    (root / "data").mkdir(parents=True)
+    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
+    outside = tmp_path / "live"
+    outside.mkdir()
+    path = root / relative
+    if path.is_dir():
+        path.rmdir()
+    path.symlink_to(outside)
+    monkeypatch.setattr(lb, "SANDBOXES", root.parent)
+    monkeypatch.setenv("LB_SANDBOX_ROOT", str(root))
+    with pytest.raises(lb.Refused):
+        lb.serve_exec_args(root, ["--port", "2481"])
+
+
+@pytest.mark.parametrize("link", ["file", "directory", "parent", "hardlink"])
+def test_log_export_never_truncates_redirected_destination(tmp_path, link):
+    lb = _load()
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "primary.log").write_text("safe log")
+    live = tmp_path / "live"
+    live.mkdir()
+    target = live / "primary.log"
+    target.write_text("live sentinel")
+    dest = tmp_path / "export"
+    dest.mkdir()
+    if link == "file":
+        (dest / "primary.log").symlink_to(target)
+    elif link == "hardlink":
+        os.link(target, dest / "primary.log")
+    elif link == "directory":
+        dest.rmdir()
+        dest.symlink_to(live)
+    else:
+        parent = tmp_path / "parent-link"
+        parent.symlink_to(live)
+        dest = parent / "export"
+    with pytest.raises(OSError):
+        lb.export_logs(logs, dest, [str(logs / "primary.log")])
+    assert target.read_text() == "live sentinel"

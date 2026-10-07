@@ -118,8 +118,8 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
     if not root.is_absolute():
         raise SandboxRefused("sandbox root must be absolute")
     root = root.resolve()
-    if root == sandboxes or sandboxes not in root.parents:
-        raise SandboxRefused(f"sandbox root {root} is not under {sandboxes}")
+    if root.parent != sandboxes:
+        raise SandboxRefused(f"sandbox root {root} is not directly under {sandboxes}")
     label = str(config["label"])
     suffix = label.removeprefix(SANDBOX_LABEL_PREFIX)
     if not label.startswith(SANDBOX_LABEL_PREFIX) or not suffix or not suffix.replace("-", "").isalnum():
@@ -129,7 +129,7 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
         value = config[key]
         if isinstance(value, bool) or not isinstance(value, int):
             raise SandboxRefused(f"{key} must be an integer")
-        if value < SANDBOX_MIN_PORT or value > 65535 or value in SANDBOX_FORBIDDEN_PORTS:
+        if value < SANDBOX_MIN_PORT or value > 2599 or value in SANDBOX_FORBIDDEN_PORTS:
             raise SandboxRefused(f"{key} {value} is a live or unsafe port")
         ports.append(value)
     if len(set(ports)) != len(ports):

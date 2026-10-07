@@ -131,8 +131,8 @@ def check_label(label: str) -> str:
 
 def check_ports(ports: list[int]) -> list[int]:
     for port in ports:
-        if isinstance(port, bool) or not isinstance(port, int) or port < MIN_PORT or port > 65535:
-            raise Refused(f"port {port!r} is outside {MIN_PORT}-65535")
+        if isinstance(port, bool) or not isinstance(port, int) or port < MIN_PORT or port > 2599:
+            raise Refused(f"port {port!r} is outside {MIN_PORT}-2599")
         if port in FORBIDDEN_PORTS:
             raise Refused(f"port {port} belongs to the live agent-lb")
     if len(set(ports)) != len(ports):
@@ -539,17 +539,62 @@ def scan_paths(
 
 def export_logs(logs: Path, dest: Path, scanned_files: list[str]) -> int:
     """Copy only the regular files the scan read, never through a symlink. Returns the count."""
+    # Walk destination directories by descriptor: no links, including link swaps.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def directory(path: Path) -> int:
+        absolute = path.absolute()
+        fd = os.open(absolute.anchor, flags)
+        try:
+            for part in absolute.parts[1:]:
+                if part in (".", ".."):
+                    raise OSError("unsafe export directory")
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                child = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
     copied = 0
-    base = os.path.realpath(logs)
-    for name in scanned_files:
-        rel = os.path.relpath(name, base)
-        if rel.startswith(".."):
-            continue
-        target = dest / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with os.fdopen(os.open(name, os.O_RDONLY | os.O_NOFOLLOW), "rb") as src, open(target, "wb") as out:
-            shutil.copyfileobj(src, out)
-        copied += 1
+    base = logs.resolve()
+    dest_fd = directory(dest)
+    try:
+        for name in scanned_files:
+            source = Path(name)
+            try:
+                rel = source.relative_to(base)
+            except ValueError:
+                continue
+            if not rel.parts or any(part in (".", "..") for part in rel.parts):
+                raise OSError("unsafe export filename")
+            parent_fd = os.dup(dest_fd)
+            try:
+                for part in rel.parts[:-1]:
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=parent_fd)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, flags, dir_fd=parent_fd)
+                    os.close(parent_fd)
+                    parent_fd = child
+                # Existing files may be hard links to live files: never truncate.
+                target_fd = os.open(rel.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                    0o600, dir_fd=parent_fd)
+                with os.fdopen(target_fd, "wb") as out, os.fdopen(
+                    os.open(name, os.O_RDONLY | os.O_NOFOLLOW), "rb"
+                ) as src:
+                    shutil.copyfileobj(src, out)
+                copied += 1
+            finally:
+                os.close(parent_fd)
+    finally:
+        os.close(dest_fd)
     return copied
 
 
@@ -869,6 +914,16 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
         raise Refused(f"_serve takes only --host and --port, not {' '.join(extra)}")
     if opts.host != "127.0.0.1":
         raise Refused("the sandbox binds 127.0.0.1 only")
+    expected_ports = {"front", "primary", "standby", "gate", "edge_anthropic", "edge_openai"}
+    if not isinstance(meta.get("ports"), dict) or set(meta["ports"]) != expected_ports:
+        raise Refused("sandbox metadata must contain exactly the six listener ports")
+    check_ports(list(meta["ports"].values()))
+    # Refuse redirected stores before reading any credential or starting SQLite.
+    for relative in ("data", "data/store.db", "data/encryption.key", "data/federation-push.json",
+                     "data/conversation-archive"):
+        path = root / relative
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            raise Refused(f"sandbox data path {relative} is redirected outside the root")
     allowed = {meta["ports"]["primary"], meta["ports"]["standby"]}
     check_ports([opts.port])
     if opts.port not in allowed:
@@ -1452,7 +1507,6 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
         if logs_to is not None:
             if scanned["found"] is False and scanned["complete"] and not load_error:
                 try:  # the copy is best effort; teardown below always runs
-                    logs_to.mkdir(parents=True, exist_ok=True)
                     logs["files_copied"] = export_logs(root / "logs", logs_to, scanned["_files"])
                     logs["copied"] = True
                     logs["to"] = str(logs_to)
@@ -1498,7 +1552,10 @@ def cmd_stop(args) -> int:
         signal.signal(sig, signal.SIG_IGN)
     result = teardown(run_id, Path(args.logs_to) if args.logs_to else None)
     result["run_id"] = run_id
-    return emit(result, EXIT_OK if result["clean"] else EXIT_ASSERT)
+    safe_logs = result.get("logs", {})
+    safe = (safe_logs.get("scan_found") is False and safe_logs.get("scan_complete") is True
+            and not safe_logs.get("secret_load_error") and not safe_logs.get("copy_error"))
+    return emit(result, EXIT_OK if result["clean"] and safe else EXIT_ASSERT)
 
 
 def cmd_gc(args) -> int:
