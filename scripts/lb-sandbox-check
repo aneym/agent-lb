@@ -121,14 +121,61 @@ def resolve_model(alias: str, fallback: str) -> str:
     return fallback
 
 
-def post(port: int, path: str, body: dict, headers: dict, timeout: float = 120) -> tuple[int, bytes]:
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+MAX_TURN_BYTES = 256 << 10  # a tiny turn's whole response is a few KiB
+MAX_TURN_TEXT = 200  # about 50 output tokens of visible text
+TURN_DEADLINE = 120.0
+
+
+class TurnBudgetExceeded(Exception):
+    pass
+
+
+def post(port: int, path: str, body: dict, headers: dict, text_of=None) -> tuple[int, bytes]:
+    """POST and read the body incrementally under a byte budget and an overall deadline.
+
+    text_of(raw) returns the visible output so far; past MAX_TURN_TEXT the connection is closed,
+    which cancels the upstream turn. Any breach raises TurnBudgetExceeded.
+    """
+    deadline = time.monotonic() + TURN_DEADLINE
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     try:
         conn.request("POST", path, body=json.dumps(body), headers={"content-type": "application/json", **headers})
         resp = conn.getresponse()
-        return resp.status, resp.read()
+        raw = b""
+        while True:
+            if time.monotonic() > deadline:
+                raise TurnBudgetExceeded("deadline")
+            chunk = resp.read1(16384)
+            if not chunk:
+                return resp.status, raw
+            raw += chunk
+            if len(raw) > MAX_TURN_BYTES:
+                raise TurnBudgetExceeded("bytes")
+            if text_of is not None and len(text_of(raw)) > MAX_TURN_TEXT:
+                raise TurnBudgetExceeded("output text")
     finally:
         conn.close()
+
+
+def sse_events(raw: bytes):
+    for line in raw.decode(errors="replace").splitlines():
+        if line.startswith("data:"):
+            try:
+                event = json.loads(line[5:])
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                yield event
+
+
+def anthropic_text(raw: bytes) -> str:
+    return "".join(
+        e.get("delta", {}).get("text", "") for e in sse_events(raw) if e.get("type") == "content_block_delta"
+    )
+
+
+def codex_text(raw: bytes) -> str:
+    return "".join(e.get("delta", "") for e in sse_events(raw) if e.get("type") == "response.output_text.delta")
 
 
 def anthropic_turn(port: int, model: str, stream: bool = False) -> dict:
@@ -143,19 +190,16 @@ def anthropic_turn(port: int, model: str, stream: bool = False) -> dict:
         body["stream"] = True
     started = time.monotonic()
     try:
-        status, raw = post(port, "/v1/messages", body, {"anthropic-version": "2023-06-01"})
+        status, raw = post(
+            port, "/v1/messages", body, {"anthropic-version": "2023-06-01"}, anthropic_text if stream else None
+        )
+    except TurnBudgetExceeded as exc:
+        return {"status": 0, "error": f"budget: {exc}", "text": "", "complete": False}
     except (OSError, http.client.HTTPException) as exc:
-        return {"status": 0, "error": exc.__class__.__name__, "text": ""}
+        return {"status": 0, "error": exc.__class__.__name__, "text": "", "complete": False}
     text = ""
     if stream:
-        for line in raw.decode(errors="replace").splitlines():
-            if line.startswith("data:"):
-                try:
-                    event = json.loads(line[5:])
-                except ValueError:
-                    continue
-                if event.get("type") == "content_block_delta":
-                    text += event.get("delta", {}).get("text", "")
+        text = anthropic_text(raw)
         complete = b"message_stop" in raw
     else:
         try:
@@ -179,20 +223,24 @@ def codex_turn(port: int, model: str) -> dict:
     }
     started = time.monotonic()
     try:
-        status, raw = post(port, "/backend-api/codex/responses", body, {})
+        status, raw = post(port, "/backend-api/codex/responses", body, {}, codex_text)
+    except TurnBudgetExceeded as exc:
+        return {"status": 0, "error": f"budget: {exc}", "text": "", "complete": False, "output_tokens": None}
     except (OSError, http.client.HTTPException) as exc:
-        return {"status": 0, "error": exc.__class__.__name__, "text": ""}
-    text = ""
-    for line in raw.decode(errors="replace").splitlines():
-        if line.startswith("data:"):
-            try:
-                event = json.loads(line[5:])
-            except ValueError:
-                continue
-            if event.get("type") == "response.output_text.delta":
-                text += event.get("delta", "")
+        return {"status": 0, "error": exc.__class__.__name__, "text": "", "complete": False, "output_tokens": None}
+    text = codex_text(raw)
+    usage = {}
+    for event in sse_events(raw):
+        if event.get("type") == "response.completed":
+            usage = (event.get("response") or {}).get("usage") or {}
     complete = b"response.completed" in raw
-    return {"status": status, "text": text[:200], "complete": complete, "seconds": round(time.monotonic() - started, 2)}
+    return {
+        "status": status,
+        "text": text[:200],
+        "complete": complete,
+        "output_tokens": usage.get("output_tokens"),
+        "seconds": round(time.monotonic() - started, 2),
+    }
 
 
 def edge_lines(path: Path, skip: int) -> list[dict]:
@@ -290,8 +338,15 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     (out / "turns-baseline.json").write_text(json.dumps({"anthropic": a, "codex": x}, indent=1))
     c.step(
         "baseline-turns",
-        a["status"] == 200 and bool(a["text"]) and x["status"] == 200 and bool(x["text"]) and x["complete"],
-        f"Anthropic {anthropic_model}: {a['status']} {a['text']!r}; Codex {codex_model}: {x['status']} {x['text']!r}",
+        a["status"] == 200
+        and bool(a["text"])
+        and x["status"] == 200
+        and bool(x["text"])
+        and x["complete"]
+        and isinstance(x.get("output_tokens"), int)
+        and x["output_tokens"] < 50,
+        f"Anthropic {anthropic_model}: {a['status']} {a['text']!r}; Codex {codex_model}: {x['status']} {x['text']!r} "
+        f"output_tokens {x.get('output_tokens')}",
         [str(out / "turns-baseline.json")],
     )
 
@@ -417,11 +472,15 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         and rc_s2 == 0
         and scan_out_dir.get("found") is False
         and scan_new.get("found") is False
+        and scan_out_dir.get("complete") is True
+        and scan_new.get("complete") is True
         and scan_out_dir.get("secrets_loaded", 0) > 1,
         f"--out: found {scan_out_dir.get('found')} in {scan_out_dir.get('files_scanned')} files; newer than marker "
         f"under ~/.agent-rails, ~/Library/LaunchAgents, $TMPDIR, ~/.agent-lb (excluding the sandbox root): found "
-        f"{scan_new.get('found')} in {scan_new.get('files_scanned')} files; secrets held by lb-sandbox "
-        f"{scan_out_dir.get('secrets_loaded')}; hits {scan_out_dir.get('hits', []) + scan_new.get('hits', [])}",
+        f"{scan_new.get('found')} in {scan_new.get('files_scanned')} files; unreadable "
+        f"{scan_out_dir.get('unreadable')}+{scan_new.get('unreadable')} {scan_new.get('unreadable_paths', [])[:5]}; "
+        f"secrets held by lb-sandbox {scan_out_dir.get('secrets_loaded')}; "
+        f"hits {scan_out_dir.get('hits', []) + scan_new.get('hits', [])}",
         [str(s1_out), str(s2_out)],
     )
 

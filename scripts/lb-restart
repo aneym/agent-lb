@@ -141,17 +141,26 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
             raise SandboxRefused(f"{key} {resolved} is outside the sandbox root")
         paths[key] = resolved
     state_dir = paths["state_dir"]
-    return {
-        "RUNTIME": paths["runtime"],
+    derived = {
         "BACKUPS": root / "backups",
         "SYNC_LOG": root / "logs" / "sync.log",
-        "STATE_DIR": state_dir,
         "LOCK_FILE": root / "lb-restart.lock",
         "PREFERRED_FILE": state_dir / "front-preferred-port",
         "FRONT_STATE": state_dir / "front.json",
         "STANDBY_PIDFILE": state_dir / "lb-standby.pid",
         "STANDBY_LOG": root / "logs" / "agent-lb-standby.log",
         "WATCHDOG_PAUSE": root / "watchdog.pause",
+    }
+    for name, path in derived.items():
+        # A symlink planted at any of these must not lead a sandbox restart into live state.
+        resolved = path.resolve()
+        if not _inside(resolved, root):
+            raise SandboxRefused(f"{name} {path} resolves outside the sandbox root")
+        derived[name] = resolved
+    return {
+        "RUNTIME": paths["runtime"],
+        "STATE_DIR": state_dir,
+        **derived,
         "LABEL": label,
         "FRONT_LABEL": None,
         "PLIST": paths["plist"],

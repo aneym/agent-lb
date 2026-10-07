@@ -119,6 +119,20 @@ def test_sandbox_root_must_be_below_sandboxes(tmp_path: Path) -> None:
         lb.sandbox_bindings(config, home=tmp_path)
 
 
+@pytest.mark.parametrize("planted", ["lb-restart.lock", "logs/sync.log", "state/front-preferred-port", "backups"])
+def test_sandbox_guard_refuses_symlinks_out_of_the_root(tmp_path: Path, planted: str) -> None:
+    lb = _load()
+    root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
+    live = tmp_path / ".agent-lb" / "runtime" / "live-target"
+    live.parent.mkdir(parents=True)
+    live.write_text("live state")
+    link = root / planted
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(live)
+    with pytest.raises(lb.SandboxRefused):
+        lb.sandbox_bindings(_config(tmp_path), home=tmp_path)
+
+
 @pytest.mark.parametrize("flags", [["--reload-plist"], ["--backup", "/tmp/x"], ["--from", "/tmp", "--files", "a"]])
 def test_sandbox_flag_refuses_live_deploy_flags(tmp_path: Path, flags: list[str]) -> None:
     # The config does not exist, so a broken flag check still stops at the config guard, never at the live LB.

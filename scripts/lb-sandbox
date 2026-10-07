@@ -115,6 +115,9 @@ class Unhealthy(Exception):
 def check_run_id(run_id: str) -> str:
     if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
         raise Refused(f"run id {run_id!r} must match {RUN_ID_RE.pattern}")
+    if run_id.endswith("-aux"):
+        # Run R's aux label is sbx-R-aux; a run named R-aux would own that label too.
+        raise Refused(f"run id {run_id!r} must not end in -aux")
     return run_id
 
 
@@ -334,8 +337,11 @@ def _fernet(root: Path):
     return Fernet((root / "data" / "encryption.key").read_bytes())
 
 
-def read_accounts(root: Path, *, with_tokens: bool = False) -> list[dict]:
-    """Mirrored accounts from the sandbox store. Tokens stay in this process; callers get auth_hash12."""
+def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False) -> list[dict]:
+    """Mirrored accounts from the sandbox store. Tokens stay in this process; callers get auth_hash12.
+
+    strict (scan and stop): any store or decryption error raises, so a scan never runs with secrets missing.
+    """
     db = root / "data" / "store.db"
     if not db.is_file():
         return []
@@ -345,7 +351,15 @@ def read_accounts(root: Path, *, with_tokens: bool = False) -> list[dict]:
             "SELECT id, provider, status, access_expires_at, access_token_encrypted, id_token_encrypted,"
             " reset_at, blocked_at FROM accounts"
         ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return []  # the store exists but the app has not migrated it: no token was ever written
+        if strict:
+            raise
+        return []
     except sqlite3.Error:
+        if strict:
+            raise
         return []
     finally:
         con.close()
@@ -356,8 +370,10 @@ def read_accounts(root: Path, *, with_tokens: bool = False) -> list[dict]:
     def decrypt(blob) -> str:
         try:
             return fernet.decrypt(bytes(blob)).decode() if fernet and blob else ""
-        except Exception:  # a row this key cannot open is reported without a hash, never raised
-            return ""
+        except Exception:
+            if strict:
+                raise
+            return ""  # status reports a row this key cannot open without a hash
 
     for account_id, provider, status, expires_at, access_enc, id_enc, reset_at, blocked_at in rows:
         token = decrypt(access_enc)
@@ -393,7 +409,7 @@ def load_secrets(root: Path | None) -> list[str]:
     if token:
         secrets.append(token)
     if root is not None and root.is_dir():
-        for account in read_accounts(root, with_tokens=True):
+        for account in read_accounts(root, with_tokens=True, strict=True):
             secrets.extend(s for s in account.pop("_secrets") if s)
     return secrets
 
@@ -407,12 +423,18 @@ def secret_patterns(secret: str) -> list[bytes]:
             encoded = encode(b"\0" * shift + raw).rstrip(b"=")
             # Keep only characters made entirely of secret bits.
             whole = ((shift + len(raw)) * 8) // 6
-            patterns.add(encoded[skip:whole])
-    return sorted(p for p in patterns if len(p) >= 16)
+            if len(encoded[skip:whole]) >= 8:  # shorter base64 fragments would match by chance
+                patterns.add(encoded[skip:whole])
+    return sorted(p for p in patterns if p)
 
 
-def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path]):
-    """Regular files under paths (symlinks never followed), modified after newer_than, outside exclude."""
+def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path], unreadable: list[str]):
+    """Regular files under paths (symlinks never followed), modified after newer_than, outside exclude.
+
+    A directory or file that exists but cannot be read is appended to unreadable; one that vanished
+    while the walk ran is not (it holds nothing any more). With newer_than, an unreadable directory
+    whose own mtime predates it is not counted: nothing was created or renamed in it since.
+    """
     excluded = {os.path.realpath(e) for e in exclude}
 
     def is_excluded(path: str) -> bool:
@@ -428,9 +450,18 @@ def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path])
             continue
         stack = [top] if os.path.isdir(top) else []
         while stack:
+            directory = stack.pop()
             try:
-                entries = os.scandir(stack.pop())
+                entries = os.scandir(directory)
+            except FileNotFoundError:
+                continue
             except OSError:
+                try:
+                    stale = newer_than is not None and os.stat(directory).st_mtime <= newer_than
+                except OSError:
+                    stale = False
+                if not stale:
+                    unreadable.append(directory)
                 continue
             with entries:
                 for entry in entries:
@@ -444,14 +475,17 @@ def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path])
                             newer_than is None or entry.stat(follow_symlinks=False).st_mtime > newer_than
                         ):
                             yield Path(entry.path)
-                    except OSError:
+                    except FileNotFoundError:
                         continue
+                    except OSError:
+                        unreadable.append(entry.path)
 
 
 def scan_file(path: Path, patterns: list[bytes], chunk: int = 4 << 20) -> bool:
     overlap = max(len(p) for p in patterns) - 1
     tail = b""
-    with path.open("rb") as fh:
+    # O_NOFOLLOW: a file swapped for a symlink after the walk is refused, never followed.
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as fh:
         while True:
             block = fh.read(chunk)
             if not block:
@@ -465,27 +499,52 @@ def scan_file(path: Path, patterns: list[bytes], chunk: int = 4 << 20) -> bool:
 def scan_paths(
     paths: list[Path], secrets: list[str], newer_than: float | None = None, exclude: list[Path] | None = None
 ) -> dict:
+    """complete is False when no secret was loaded or anything that exists could not be read."""
     patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
-    hits, scanned, unreadable, total = [], 0, 0, 0
+    hits: list[str] = []
+    unreadable: list[str] = []
+    files: list[str] = []
+    total = 0
     if patterns:
-        for path in iter_files(paths, newer_than, exclude or []):
+        for path in iter_files(paths, newer_than, exclude or [], unreadable):
             try:
                 found = scan_file(path, patterns)
                 total += path.stat().st_size
-            except OSError:
-                unreadable += 1
+            except FileNotFoundError:
                 continue
-            scanned += 1
+            except OSError:
+                unreadable.append(str(path))
+                continue
+            files.append(str(path))
             if found:
                 hits.append(str(path))
     return {
         "found": bool(hits),
-        "files_scanned": scanned,
+        "complete": bool(patterns) and not unreadable,
+        "files_scanned": len(files),
         "bytes_scanned": total,
-        "unreadable": unreadable,
+        "unreadable": len(unreadable),
+        "unreadable_paths": unreadable[:20],
         "hits": hits,
         "secrets_loaded": len(secrets),
+        "_files": files,
     }
+
+
+def export_logs(logs: Path, dest: Path, scanned_files: list[str]) -> int:
+    """Copy only the regular files the scan read, never through a symlink. Returns the count."""
+    copied = 0
+    base = os.path.realpath(logs)
+    for name in scanned_files:
+        rel = os.path.relpath(name, base)
+        if rel.startswith(".."):
+            continue
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with os.fdopen(os.open(name, os.O_RDONLY | os.O_NOFOLLOW), "rb") as src, open(target, "wb") as out:
+            shutil.copyfileobj(src, out)
+        copied += 1
+    return copied
 
 
 # ---------------------------------------------------------------- start
@@ -510,7 +569,10 @@ def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) 
         "AGENT_LB_UPSTREAM_BASE_URL": f"http://127.0.0.1:{ports['edge_openai']}",
         "AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL": f"http://127.0.0.1:{ports['edge_anthropic']}",
         "AGENT_LB_UPSTREAM_STREAM_TRANSPORT": transport,
-        "AGENT_LB_DASHBOARD_AUTH_MODE": "disabled",
+        # Dashboard APIs (account export among them) answer 401 to everyone: trusted_header mode with proxy
+        # headers untrusted and no password. "disabled" would hand decrypted tokens to any local caller.
+        "AGENT_LB_DASHBOARD_AUTH_MODE": "trusted_header",
+        "AGENT_LB_FIREWALL_TRUST_PROXY_HEADERS": "false",
         "AGENT_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS": "127.0.0.1/32",
         "AGENT_LB_CONVERSATION_ARCHIVE_DIR": str(root / "data" / "conversation-archive"),
         "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": str(DRAIN_S),
@@ -600,6 +662,12 @@ def bootstrap(plist: Path, label: str, deadline_s: float = 20) -> None:
             return
         time.sleep(0.5)
     raise Unhealthy(f"launchctl bootstrap {label} failed")
+
+
+def label_names_root(label: str, root: Path) -> bool:
+    """True when the loaded job's program or arguments name this sandbox root."""
+    out = run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).stdout
+    return any(names_root(line.strip(), root) for line in out.splitlines())
 
 
 def bootout(label: str, deadline_s: float = 30) -> bool:
@@ -788,12 +856,13 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
         raise Refused(f"port {opts.port} is not this sandbox's primary or standby port")
     if os.environ.get("LB_SANDBOX_ROOT") != str(root):
         raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
-    if os.environ.get("AGENT_LB_DATA_DIR") != str(root / "data"):
-        raise Refused("AGENT_LB_DATA_DIR is not the sandbox data dir")
+    # The app sees only the environment rebuilt from sandbox.json: nothing inherited (a live database URL,
+    # peer URL or key file in the caller's env) can reach it.
+    env = sandbox_env(root, meta["ports"], root.name, meta.get("transport", "http"))
+    env.update({k: os.environ[k] for k in ("USER", "LOGNAME", "TMPDIR", "LANG") if k in os.environ})
     token = live_federation_token()
     if not token:
         raise Unhealthy("live plist has no federation token")
-    env = dict(os.environ)
     env[TOKEN_ENV] = token
     python = str(root / "runtime" / ".venv" / "bin" / "python")
     args = [python, "-m", "app.cli", "--host", "127.0.0.1", "--port", str(opts.port)]
@@ -900,6 +969,94 @@ class FaultState:
         return self.n
 
 
+def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters: dict, log):
+    """The edge proxy for one vendor: forwards to base, applies the armed fault, logs one entry per request.
+
+    log(entry) receives the JSON line for <root>/logs/edge.jsonl (auth as a 12-char hash, never a value).
+    """
+    import asyncio
+
+    import aiohttp
+    from aiohttp import web
+
+    async def handle(request: web.Request) -> web.StreamResponse:
+        started = time.monotonic()
+        body = await request.read()
+        auth = auth_hash12(request.headers)
+        counters["edge_requests"][edge] += 1
+        fault.refresh()
+        record = {"ts": now_iso(), "edge": edge, "method": request.method, "path": request.path}
+        record["auth_hash12"] = auth
+        if fault.take_429(auth):
+            counters["faults_applied"][edge] += 1
+            status, headers, payload = rate_limit_response(edge)
+            log({**record, "status": status, "bytes": len(payload), "fault": "account_429"})
+            return web.Response(status=status, body=payload, headers=headers)
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
+        applied, status, sent, error, downstream_closed = None, 0, 0, None, False
+        response: web.StreamResponse | None = None
+
+        def drop_downstream() -> None:
+            # close() flushes what is already queued, then closes without the terminating chunk,
+            # so the sandbox sees an incomplete chunked body (abort() would discard queued bytes).
+            if request.transport is not None:
+                request.transport.close()
+
+        try:
+            async with session.request(
+                request.method,
+                f"{base}{request.path_qs}",
+                headers=headers,
+                data=body or None,
+                allow_redirects=False,
+            ) as upstream:
+                status = upstream.status
+                out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in HOP_BY_HOP}
+                response = web.StreamResponse(status=status, headers=out_headers)
+                await response.prepare(request)
+                streamed = "text/event-stream" in upstream.headers.get("content-type", "")
+                cut_at = fault.take_cut() if streamed and status == 200 else None
+                if cut_at is not None:
+                    applied = f"cut_after_bytes:{cut_at}"
+                    counters["faults_applied"][edge] += 1
+                try:
+                    async for chunk in upstream.content.iter_any():
+                        if cut_at is not None and sent + len(chunk) >= cut_at:
+                            part = chunk[: max(0, cut_at - sent)]
+                            if part:
+                                await response.write(part)
+                                sent += len(part)
+                            drop_downstream()  # a TCP close mid-body
+                            break
+                        await response.write(chunk)
+                        sent += len(chunk)
+                    else:
+                        await response.write_eof()
+                except ConnectionResetError:
+                    # The sandbox stops reading once it has the terminal event; not an upstream error.
+                    downstream_closed = True
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            error = exc.__class__.__name__
+            if response is not None and response.prepared:
+                # Upstream broke after headers: never finish the HTTP framing, so the
+                # truncation reaches the sandbox as a truncation, not a clean end.
+                drop_downstream()
+        ms = int((time.monotonic() - started) * 1000)
+        entry = {**record, "status": status, "bytes": sent, "fault": applied, "ms": ms}
+        if applied:
+            entry["cut"] = True
+        if downstream_closed:
+            entry["downstream_closed"] = True
+        if error:
+            entry["error"] = error
+        log(entry)
+        if response is None:
+            return web.json_response({"error": {"type": "lb_sandbox_edge", "message": error}}, status=502)
+        return response
+
+    return handle
+
+
 def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three listeners and a child
     import asyncio
     import ssl
@@ -994,78 +1151,11 @@ def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three lis
             return web.Response(status=status, body=body, headers={"content-type": content_type})
 
         def edge_handler(edge: str):
-            base = EDGES[edge]
-            fault = faults[edge]
-
-            async def handle(request: web.Request) -> web.StreamResponse:
-                started = time.monotonic()
-                body = await request.read()
-                auth = auth_hash12(request.headers)
-                counters["edge_requests"][edge] += 1
-                fault.refresh()
-                record = {"ts": now_iso(), "edge": edge, "method": request.method, "path": request.path}
-                record["auth_hash12"] = auth
-                if fault.take_429(auth):
-                    counters["faults_applied"][edge] += 1
-                    status, headers, payload = rate_limit_response(edge)
-                    append(edge_log, {**record, "status": status, "bytes": len(payload), "fault": "account_429"})
-                    save_state()
-                    return web.Response(status=status, body=payload, headers=headers)
-                headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
-                applied, status, sent, error, downstream_closed = None, 0, 0, None, False
-                response: web.StreamResponse | None = None
-                try:
-                    async with session.request(
-                        request.method,
-                        f"{base}{request.path_qs}",
-                        headers=headers,
-                        data=body or None,
-                        allow_redirects=False,
-                    ) as upstream:
-                        status = upstream.status
-                        out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in HOP_BY_HOP}
-                        response = web.StreamResponse(status=status, headers=out_headers)
-                        await response.prepare(request)
-                        streamed = "text/event-stream" in upstream.headers.get("content-type", "")
-                        cut_at = fault.take_cut() if streamed and status == 200 else None
-                        if cut_at is not None:
-                            applied = f"cut_after_bytes:{cut_at}"
-                            counters["faults_applied"][edge] += 1
-                        try:
-                            async for chunk in upstream.content.iter_any():
-                                if cut_at is not None and sent + len(chunk) >= cut_at:
-                                    part = chunk[: max(0, cut_at - sent)]
-                                    if part:
-                                        await response.write(part)
-                                        sent += len(part)
-                                    # A TCP close mid-body: the sandbox sees an incomplete upstream stream.
-                                    if request.transport is not None:
-                                        request.transport.abort()
-                                    break
-                                await response.write(chunk)
-                                sent += len(chunk)
-                            else:
-                                await response.write_eof()
-                        except ConnectionResetError:
-                            # The sandbox stops reading once it has the terminal event; not an upstream error.
-                            downstream_closed = True
-                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                    error = exc.__class__.__name__
-                ms = int((time.monotonic() - started) * 1000)
-                entry = {**record, "status": status, "bytes": sent, "fault": applied, "ms": ms}
-                if applied:
-                    entry["cut"] = True
-                if downstream_closed:
-                    entry["downstream_closed"] = True
-                if error:
-                    entry["error"] = error
+            def log(entry: dict) -> None:
                 append(edge_log, entry)
                 save_state()
-                if response is None:
-                    return web.json_response({"error": {"type": "lb_sandbox_edge", "message": error}}, status=502)
-                return response
 
-            return handle
+            return make_edge_handler(edge, EDGES[edge], faults[edge], session, counters, log)
 
         runners = []
         gate_app = web.Application(client_max_size=1 << 20)
@@ -1274,8 +1364,9 @@ def cmd_scan(args) -> int:
         newer_than=newer,
         exclude=[Path(p) for p in args.exclude],
     )
+    result.pop("_files", None)
     result["run_id"] = args.run_id
-    return emit(result, EXIT_ASSERT if result["found"] else EXIT_OK)
+    return emit(result, EXIT_OK if result["complete"] and not result["found"] else EXIT_ASSERT)
 
 
 # ---------------------------------------------------------------- stop and gc
@@ -1312,7 +1403,14 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
         load_error = exc.__class__.__name__
     else:
         load_error = None
-    booted = {name: bootout(name) for name in (label, aux_label)}
+    booted = {}
+    for name in (label, aux_label):
+        if not label_loaded(name):
+            booted[name] = "not loaded"
+        elif label_names_root(name, root):
+            booted[name] = bootout(name)
+        else:
+            booted[name] = "refused: the loaded job does not run this sandbox root"
     pidfile = root / "state" / "lb-standby.pid"
     rows = processes()
     lineage = own_lineage(rows)
@@ -1328,17 +1426,25 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
             stop_pid(pid, bound=5)
     logs = {"copied": False}
     if (root / "logs").is_dir():
-        scanned = scan_paths([root / "logs"], secrets) if secrets else {"found": None, "files_scanned": 0}
+        scanned = scan_paths([root / "logs"], secrets)
         logs["scan_found"] = scanned["found"]
+        logs["scan_complete"] = scanned["complete"]
         logs["files_scanned"] = scanned["files_scanned"]
         if logs_to is not None:
-            if scanned["found"] is False:
-                logs_to.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(root / "logs", logs_to, dirs_exist_ok=True)
-                logs["copied"] = True
-                logs["to"] = str(logs_to)
+            if scanned["found"] is False and scanned["complete"] and not load_error:
+                try:  # the copy is best effort; teardown below always runs
+                    logs_to.mkdir(parents=True, exist_ok=True)
+                    logs["files_copied"] = export_logs(root / "logs", logs_to, scanned["_files"])
+                    logs["copied"] = True
+                    logs["to"] = str(logs_to)
+                except OSError as exc:
+                    logs["copy_error"] = exc.__class__.__name__
             else:
-                logs["refused"] = "token found in sandbox logs" if scanned["found"] else "no secrets to scan with"
+                logs["refused"] = (
+                    "token found in sandbox logs"
+                    if scanned["found"]
+                    else "secrets could not all be loaded or a log could not be read"
+                )
     if load_error:
         logs["secret_load_error"] = load_error
     if root.exists():

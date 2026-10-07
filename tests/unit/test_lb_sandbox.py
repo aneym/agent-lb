@@ -25,6 +25,14 @@ pytestmark = pytest.mark.unit
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "lb-sandbox"
 FAKE_TOKEN = "lbsbx-unit-fixture-not-a-credential-0123456789abcdefghijklmnopqrstuvwxyz"
+SERVE_PORTS = {
+    "gate": 2476,
+    "edge_anthropic": 2477,
+    "edge_openai": 2478,
+    "front": 2480,
+    "primary": 2481,
+    "standby": 2482,
+}
 
 
 def _load() -> ModuleType:
@@ -44,6 +52,7 @@ def _load() -> ModuleType:
         ("run_id", "has_underscore"),
         ("run_id", "a" * 81),
         ("run_id", "../escape"),
+        ("run_id", "r1-aux"),  # would own run r1's aux label
         ("label", "com.aneyman.agent-lb"),
         ("label", "com.agent-lb.drill."),
         ("label", "com.agent-lb.drill.x/y"),
@@ -169,7 +178,7 @@ def test_serve_puts_the_token_only_in_the_exec_env(tmp_path: Path, monkeypatch: 
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
     (root / "data").mkdir(parents=True)
-    (root / "sandbox.json").write_text(json.dumps({"ports": {"primary": 2481, "standby": 2482}}))
+    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
     live_plist = tmp_path / "live.plist"
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
@@ -211,9 +220,181 @@ def test_serve_refuses_other_hosts_and_ports(tmp_path: Path, monkeypatch: pytest
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
     root.mkdir(parents=True)
-    (root / "sandbox.json").write_text(json.dumps({"ports": {"primary": 2481, "standby": 2482}}))
+    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
     monkeypatch.setenv("AGENT_LB_DATA_DIR", str(root.resolve() / "data"))
     with pytest.raises(lb.Refused):
         lb.serve_exec_args(root, argv)
+
+
+class _EdgeRig:
+    """A real upstream SSE server and the real edge handler on 127.0.0.1, in a background event loop.
+
+    Integration over HTTP on purpose: the truncation contract is about bytes on a socket, which only a
+    real transport under backpressure can show. Only the vendor URL is replaced by the local upstream.
+    """
+
+    def __init__(self, lb: ModuleType, fault_file: Path, body: bytes, break_after: int | None) -> None:
+        import asyncio
+        import threading
+
+        self.lb, self.fault_file, self.body, self.break_after = lb, fault_file, body, break_after
+        self.entries: list[dict] = []
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+        self.thread.start()
+        self.edge_port = asyncio.run_coroutine_threadsafe(self._start(), self.loop).result(30)
+
+    async def _start(self) -> int:
+        import aiohttp
+        from aiohttp import web
+
+        async def upstream(request: web.Request) -> web.StreamResponse:
+            response = web.StreamResponse(status=200, headers={"content-type": "text/event-stream"})
+            await response.prepare(request)
+            for start in range(0, len(self.body), 65536):
+                if self.break_after is not None and start >= self.break_after:
+                    request.transport.abort()  # the vendor connection dies mid-body
+                    return response
+                await response.write(self.body[start : start + 65536])
+            await response.write_eof()
+            return response
+
+        self.runners = []
+        up = web.Application()
+        up.router.add_route("*", "/{tail:.*}", upstream)
+        up_port = await self._serve(up)
+        self.session = aiohttp.ClientSession(auto_decompress=False)
+        counters = {"edge_requests": {"anthropic": 0}, "faults_applied": {"anthropic": 0}}
+        handler = self.lb.make_edge_handler(
+            "anthropic",
+            f"http://127.0.0.1:{up_port}",
+            self.lb.FaultState(self.fault_file),
+            self.session,
+            counters,
+            self.entries.append,
+        )
+        edge = web.Application()
+        edge.router.add_route("*", "/{tail:.*}", handler)
+        return await self._serve(edge)
+
+    async def _serve(self, app) -> int:
+        from aiohttp import web
+
+        runner = web.AppRunner(app, access_log=None, handle_signals=False)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        self.runners.append(runner)
+        return site._server.sockets[0].getsockname()[1]
+
+    def fetch(self, wait_before_reading: float) -> tuple[bytes, bool]:
+        """POST through the edge; returns the body bytes received and whether the body ended cleanly."""
+        import http.client
+        import time
+
+        conn = http.client.HTTPConnection("127.0.0.1", self.edge_port, timeout=30)
+        conn.request("POST", "/v1/messages", body=b"{}", headers={"content-type": "application/json"})
+        resp = conn.getresponse()
+        time.sleep(wait_before_reading)  # let the edge queue bytes the client has not read: backpressure
+        received = b""
+        try:
+            while chunk := resp.read1(8192):
+                received += chunk
+                time.sleep(0.0005)
+            clean = True
+        except (http.client.IncompleteRead, ConnectionError):
+            clean = False
+        conn.close()
+        return received, clean
+
+    def close(self) -> None:
+        import asyncio
+
+        async def stop() -> None:
+            await self.session.close()
+            for runner in self.runners:
+                await runner.cleanup()
+
+        asyncio.run_coroutine_threadsafe(stop(), self.loop).result(30)
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(10)
+
+
+SSE_BODY = b"".join(b'data: {"n": %d, "pad": "%s"}\n\n' % (i, b"x" * 200) for i in range(20000))
+
+
+def test_edge_cut_delivers_exactly_n_bytes_under_backpressure_then_truncates(tmp_path: Path) -> None:
+    """The cut_after_bytes contract: exactly N body bytes reach a slow reader, then the body ends unframed.
+
+    With aiohttp 3.14 the transport queue was measured empty at the cut, so this does not tell
+    close() from abort(); it guards the byte count and the truncation, which nothing else covers.
+    """
+    lb = _load()
+    cut_at = 3_000_001
+    fault_file = tmp_path / "fault-anthropic.json"
+    fault_file.write_text(json.dumps({"nonce": "n1", "armed": True, "fault": "cut_after_bytes", "n": cut_at}))
+    rig = _EdgeRig(lb, fault_file, SSE_BODY, break_after=None)
+    try:
+        received, clean = rig.fetch(wait_before_reading=1.0)
+    finally:
+        rig.close()
+    assert (len(received), clean) == (cut_at, False)
+    assert received == SSE_BODY[:cut_at]
+    assert [(e["fault"], e["bytes"]) for e in rig.entries] == [(f"cut_after_bytes:{cut_at}", cut_at)]
+
+
+def test_edge_passes_an_upstream_break_through_as_a_truncation(tmp_path: Path) -> None:
+    lb = _load()
+    rig = _EdgeRig(lb, tmp_path / "no-fault.json", SSE_BODY, break_after=262144)
+    try:
+        received, clean = rig.fetch(wait_before_reading=0.2)
+    finally:
+        rig.close()
+    assert clean is False, "an upstream break must not reach the client as a clean end of body"
+    assert 0 < len(received) < len(SSE_BODY)
+    assert rig.entries[0].get("error")
+    # Control: with no break the same rig ends cleanly (the assertion above is about the break, not the rig).
+    rig = _EdgeRig(lb, tmp_path / "no-fault.json", SSE_BODY, break_after=None)
+    try:
+        whole, whole_clean = rig.fetch(wait_before_reading=0.0)
+    finally:
+        rig.close()
+    assert (len(whole), whole_clean) == (len(SSE_BODY), True)
+
+
+def test_scan_reports_an_unreadable_directory_as_incomplete(tmp_path: Path) -> None:
+    lb = _load()
+    top = tmp_path / "logs"
+    locked = top / "locked"
+    locked.mkdir(parents=True)
+    (top / "clean.log").write_text("clean\n")
+    (locked / "hidden.log").write_text(FAKE_TOKEN)
+    locked.chmod(0)
+    try:
+        result = lb.scan_paths([top], [FAKE_TOKEN])
+        stale = lb.scan_paths([top], [FAKE_TOKEN], newer_than=locked.stat().st_mtime + 1)
+    finally:
+        locked.chmod(0o755)
+    assert (result["found"], result["complete"], result["unreadable"]) == (False, False, 1)
+    # Nothing was created in it after the marker, so a newer-than scan may pass over it.
+    assert (stale["complete"], stale["unreadable"]) == (True, 0)
+    assert lb.scan_paths([top], [])["complete"] is False  # no secret loaded is never a clean scan
+
+
+def test_log_export_copies_only_scanned_regular_files(tmp_path: Path) -> None:
+    lb = _load()
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "edge.jsonl").write_text('{"ok": 1}\n')
+    outside = tmp_path / "outside-secret"
+    outside.write_text(FAKE_TOKEN)
+    (logs / "link.log").symlink_to(outside)
+    (logs / "dir-link").symlink_to(tmp_path, target_is_directory=True)
+    scanned = lb.scan_paths([logs], [FAKE_TOKEN])
+    dest = tmp_path / "export"
+    copied = lb.export_logs(logs, dest, scanned["_files"])
+    assert (scanned["found"], scanned["complete"], copied) == (False, True, 1)
+    assert sorted(p.name for p in dest.rglob("*")) == ["edge.jsonl"]

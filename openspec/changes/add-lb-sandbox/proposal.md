@@ -10,6 +10,9 @@ Drills and factory checks need an agent-lb with working accounts that is not the
 - Add `lb-restart --sandbox <config.json>`: the same blue/green restart against a sandbox; every path, label and port constant is rebound and a guard refuses live labels, live ports and paths outside `~/.agent-lb/sandboxes/`. Without the flag lb-restart behaves as before.
 - Add `scripts/lb-sandbox-check`, the live check: it drives the installed `lb-sandbox` end to end and proves the live service kept its pids and preferred port.
 
+- Hardening from review: the sandbox dashboard runs `trusted_header` with proxy headers untrusted, so its account-export API answers 401 to every caller (`disabled` would serve decrypted tokens to any local process); `_serve` builds its env from scratch rather than inheriting; run ids ending in `-aux` are refused (they would own another run's aux label); `scan` fails on any unreadable path or a secret it could not load, and teardown exports only the regular files it scanned; the edge closes the downstream without HTTP end framing when upstream breaks or a cut fires; the check's turns read incrementally under a byte, text and time budget and require Codex `output_tokens` under 50.
+- `scan` takes `--newer-than <file>` and `--exclude <path>` beyond the spec's positional paths, so the check can sweep shared trees for files written during the run without rescanning the sandbox's own store.
+
 ## Impact
 
 - Capability: `lb-sandbox` (new).
