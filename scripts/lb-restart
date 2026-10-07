@@ -11,6 +11,7 @@ supported way to restart it or deploy files into the runtime:
     lb-restart --reason "why" --reload-plist                   # also re-read the launchd plist
     lb-restart --reason "why" --check                          # boot + health-gate the code on disk, touch nothing
     lb-restart --reason "why" --force                          # do not wait for sign-ins in progress
+    lb-restart --reason "why" --sandbox <config.json>          # the same restart on an lb-sandbox instance
 
 What it does, in order:
 
@@ -81,6 +82,98 @@ FRONT_PORT = 2455
 PRIMARY_PORT = 2457
 STANDBY_PORT = 2459
 UID = os.getuid()
+
+# --sandbox <config.json> rebinds every constant above to an lb-sandbox instance
+# (scripts/lb-sandbox), so drills and checks run this exact code without the live
+# label, ports or state. The guard refuses before anything is touched.
+SANDBOX_LABEL_PREFIX = "com.agent-lb.drill."
+SANDBOX_FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
+SANDBOX_MIN_PORT = 2470
+SANDBOX_KEYS = ("root", "label", "plist", "runtime", "state_dir", "front_port", "primary_port", "standby_port")
+SANDBOX_CONFIG: Path | None = None
+
+
+class SandboxRefused(Exception):
+    pass
+
+
+def _real_home() -> Path:
+    import pwd
+
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    return path == parent or parent in path.parents
+
+
+def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object]:
+    """Validate an lb-sandbox config and return the module constants it rebinds. Raises SandboxRefused."""
+    missing = [key for key in SANDBOX_KEYS if key not in config]
+    if missing:
+        raise SandboxRefused(f"sandbox config lacks {', '.join(missing)}")
+    sandboxes = ((home or _real_home()) / ".agent-lb" / "sandboxes").resolve()
+    root = Path(str(config["root"])).expanduser()
+    if not root.is_absolute():
+        raise SandboxRefused("sandbox root must be absolute")
+    root = root.resolve()
+    if root == sandboxes or sandboxes not in root.parents:
+        raise SandboxRefused(f"sandbox root {root} is not under {sandboxes}")
+    label = str(config["label"])
+    suffix = label.removeprefix(SANDBOX_LABEL_PREFIX)
+    if not label.startswith(SANDBOX_LABEL_PREFIX) or not suffix or not suffix.replace("-", "").isalnum():
+        raise SandboxRefused(f"label {label!r} is not a {SANDBOX_LABEL_PREFIX}* drill label")
+    ports = []
+    for key in ("front_port", "primary_port", "standby_port"):
+        value = config[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise SandboxRefused(f"{key} must be an integer")
+        if value < SANDBOX_MIN_PORT or value > 65535 or value in SANDBOX_FORBIDDEN_PORTS:
+            raise SandboxRefused(f"{key} {value} is a live or unsafe port")
+        ports.append(value)
+    if len(set(ports)) != len(ports):
+        raise SandboxRefused("sandbox ports repeat")
+    paths = {}
+    for key in ("plist", "runtime", "state_dir"):
+        path = Path(str(config[key])).expanduser()
+        resolved = (path if path.is_absolute() else root / path).resolve()
+        if not _inside(resolved, root):
+            raise SandboxRefused(f"{key} {resolved} is outside the sandbox root")
+        paths[key] = resolved
+    state_dir = paths["state_dir"]
+    return {
+        "RUNTIME": paths["runtime"],
+        "BACKUPS": root / "backups",
+        "SYNC_LOG": root / "logs" / "sync.log",
+        "STATE_DIR": state_dir,
+        "LOCK_FILE": root / "lb-restart.lock",
+        "PREFERRED_FILE": state_dir / "front-preferred-port",
+        "FRONT_STATE": state_dir / "front.json",
+        "STANDBY_PIDFILE": state_dir / "lb-standby.pid",
+        "STANDBY_LOG": root / "logs" / "agent-lb-standby.log",
+        "WATCHDOG_PAUSE": root / "watchdog.pause",
+        "LABEL": label,
+        "FRONT_LABEL": None,
+        "PLIST": paths["plist"],
+        "FRONT_PORT": ports[0],
+        "PRIMARY_PORT": ports[1],
+        "STANDBY_PORT": ports[2],
+    }
+
+
+def apply_sandbox(config_path: Path) -> None:
+    """Rebind the module constants to the sandbox in config_path. Raises SandboxRefused, touching nothing."""
+    global SANDBOX_CONFIG
+    try:
+        config = json.loads(Path(config_path).read_text())
+    except (OSError, ValueError) as exc:
+        raise SandboxRefused(f"cannot read sandbox config {config_path}: {exc.__class__.__name__}") from exc
+    if not isinstance(config, dict):
+        raise SandboxRefused("sandbox config is not a JSON object")
+    bindings = sandbox_bindings(config)
+    globals().update(bindings)
+    SANDBOX_CONFIG = Path(config_path).resolve()
+
 
 T0 = time.monotonic()
 
@@ -380,7 +473,13 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
     log.write(f"\n==== {now_iso()} standby start ====\n")
     log.flush()
     proc = subprocess.Popen(
-        args, cwd=RUNTIME, env=env, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True
+        args,
+        cwd=RUNTIME,
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
     )
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     STANDBY_PIDFILE.write_text(f"{proc.pid}\n")
@@ -453,8 +552,11 @@ def is_standby(pid: int) -> bool:
 
 
 def spawn_reaper(pid: int, drain_seconds: int) -> None:
+    argv = [sys.executable, str(Path(__file__).resolve()), "--reap", str(pid), str(drain_seconds + REAP_MARGIN_S)]
+    if SANDBOX_CONFIG is not None:
+        argv += ["--sandbox", str(SANDBOX_CONFIG)]
     subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "--reap", str(pid), str(drain_seconds + REAP_MARGIN_S)],
+        argv,
         start_new_session=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -533,6 +635,11 @@ def exit_timeout() -> int:
 
 def main() -> int:
     if sys.argv[1:2] == ["--reap"]:
+        if sys.argv[4:5] == ["--sandbox"]:
+            try:
+                apply_sandbox(Path(sys.argv[5]))
+            except (SandboxRefused, IndexError):
+                return 2
         return reap(int(sys.argv[2]), float(sys.argv[3]))
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--reason", required=True, help="Why; goes into sync.log.")
@@ -551,7 +658,31 @@ def main() -> int:
     p.add_argument(
         "--boot-timeout", type=float, default=90, help="Seconds for an instance to pass health (default 90)."
     )
+    p.add_argument(
+        "--sandbox",
+        type=Path,
+        metavar="CONFIG",
+        help="Restart the lb-sandbox instance described by CONFIG (JSON) instead of the live service.",
+    )
     args = p.parse_args()
+    if args.sandbox is not None:
+        combined = [
+            flag
+            for flag, value in (
+                ("--from", args.src),
+                ("--files", args.files),
+                ("--backup", args.backup),
+                ("--reload-plist", args.reload_plist),
+            )
+            if value
+        ]
+        if combined:
+            p.error(f"--sandbox cannot be combined with {', '.join(combined)}")
+        try:
+            apply_sandbox(args.sandbox)
+        except SandboxRefused as exc:
+            p.error(f"--sandbox refused: {exc}")
+        say(f"sandbox {LABEL}: front :{FRONT_PORT} is an lb-sandbox child, not a launchd job; no front hot-swap")
     if args.files and not args.src:
         p.error("--files needs --from")
     if not RUNTIME.is_dir() or not PLIST.is_file():
@@ -595,7 +726,10 @@ def run(args) -> int:
 
     if not front_understands_preference():
         say("the running front does not support blue/green (old build or not running); refusing")
-        say(f"install the front from scripts/agent-lb-front.mjs and kickstart {FRONT_LABEL} in a quiet moment first")
+        if FRONT_LABEL:
+            say(
+                f"install the front from scripts/agent-lb-front.mjs and kickstart {FRONT_LABEL} in a quiet moment first"
+            )
         return 3
 
     stop_leftover_standby(drain, hold_for_oauth)

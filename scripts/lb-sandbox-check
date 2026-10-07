@@ -1,0 +1,518 @@
+#!/usr/bin/env python3
+"""lb-sandbox-check: the live check for scripts/lb-sandbox (Studio only).
+
+    lb-sandbox-check --out DIR [--lb-sandbox ~/.agent-lb/bin/lb-sandbox]
+
+Runs the installed lb-sandbox end to end: start a sandbox that mirrors the live
+pool, send one tiny Anthropic and one tiny Codex turn straight to its front,
+inject an account 429 on each edge, restart it blue/green with a stream in
+flight, scan for leaked tokens, stop it, and prove the live agent-lb kept the
+same pids and preferred port. This script never reads a credential: every
+token stays inside lb-sandbox. Every lb-sandbox stdout and stderr is saved in
+DIR; the verdict is DIR/result.json (schema 1, build/CONTRACT.md).
+
+Spend: five real turns, each under 50 output tokens; no paid credits.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import http.client
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+HOME = Path.home()
+LIVE_LABEL = "com.aneyman.agent-lb"
+LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
+LIVE_FRONT_STATE = HOME / ".agent-lb" / "state" / "front.json"
+GATE_ALLOWED = {("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")}
+RESTART_MARKS = {
+    "standby_boot": "standby healthy on",
+    "front_switch": "front -> :",
+    "drain": "old primary exited",
+    "restore": "new primary healthy",
+    "standby_stopped": "stopped listening",
+}
+
+
+def utc() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class Check:
+    def __init__(self, out: Path, lb_sandbox: Path) -> None:
+        self.out = out
+        self.lb_sandbox = lb_sandbox
+        self.n = 0
+        self.steps: list[dict] = []
+        self.unverified = [
+            "Other hosts: Studio only; boxes use their own follower agent-lb.",
+            "OAuth refresh in the sandbox: mirrored accounts carry access tokens only; refresh is refused in code.",
+            "Websocket upstream: the sandbox forces http so the edge can see and cut streams.",
+            "The live restart: only the sandbox restarts; the live service is read, never restarted.",
+        ]
+
+    def step(self, name: str, ok: bool, detail: str, evidence: list[str]) -> bool:
+        self.steps.append({"name": name, "result": "pass" if ok else "fail", "detail": detail, "evidence": evidence})
+        print(f"[{utc()}] {'PASS' if ok else 'FAIL'} {name}: {detail}", flush=True)
+        return ok
+
+    def sb(self, name: str, *args: str, timeout: float = 600) -> tuple[int, dict, Path]:
+        """Run the installed lb-sandbox; stdout and stderr go to files in --out."""
+        self.n += 1
+        stem = self.out / f"{self.n:02d}-{name}"
+        argv = [str(self.lb_sandbox), *args, "--json"]
+        with open(f"{stem}.out", "w") as so, open(f"{stem}.err", "w") as se:
+            try:
+                rc = subprocess.run(argv, stdout=so, stderr=se, timeout=timeout, check=False).returncode
+            except subprocess.TimeoutExpired:
+                rc = 124
+        try:
+            data = json.loads(Path(f"{stem}.out").read_text() or "{}")
+        except ValueError:
+            data = {}
+        return rc, data, Path(f"{stem}.out")
+
+
+def sh(*argv: str) -> str:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False).stdout
+
+
+def launchd_pid(label: str) -> int | None:
+    for line in sh("/bin/launchctl", "print", f"gui/{os.getuid()}/{label}").splitlines():
+        line = line.strip()
+        if line.startswith("pid = "):
+            return int(line.split("=", 1)[1])
+    return None
+
+
+def listener_pids(port: int) -> list[int]:
+    return sorted({int(p) for p in sh("/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t").split()})
+
+
+def live_identity() -> dict:
+    try:
+        preferred = json.loads(LIVE_FRONT_STATE.read_text()).get("preferred")
+    except (OSError, ValueError):
+        preferred = None
+    return {
+        "primary_pid": launchd_pid(LIVE_LABEL),
+        "front_pid": launchd_pid(LIVE_FRONT_LABEL),
+        "listeners_2455": listener_pids(2455),
+        "listeners_2457": listener_pids(2457),
+        "preferred_port": preferred,
+    }
+
+
+def resolve_model(alias: str, fallback: str) -> str:
+    route = shutil.which("route")
+    if route:
+        value = sh(route, "resolve", alias).strip().splitlines()
+        if value and value[0].strip():
+            return value[0].strip()
+    return fallback
+
+
+def post(port: int, path: str, body: dict, headers: dict, timeout: float = 120) -> tuple[int, bytes]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request("POST", path, body=json.dumps(body), headers={"content-type": "application/json", **headers})
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+    finally:
+        conn.close()
+
+
+def anthropic_turn(port: int, model: str, stream: bool = False) -> dict:
+    body = {
+        "model": model,
+        "max_tokens": 48 if stream else 16,
+        "messages": [
+            {"role": "user", "content": "Count from 1 to 15, comma separated." if stream else "Reply with exactly: OK"}
+        ],
+    }
+    if stream:
+        body["stream"] = True
+    started = time.monotonic()
+    try:
+        status, raw = post(port, "/v1/messages", body, {"anthropic-version": "2023-06-01"})
+    except (OSError, http.client.HTTPException) as exc:
+        return {"status": 0, "error": exc.__class__.__name__, "text": ""}
+    text = ""
+    if stream:
+        for line in raw.decode(errors="replace").splitlines():
+            if line.startswith("data:"):
+                try:
+                    event = json.loads(line[5:])
+                except ValueError:
+                    continue
+                if event.get("type") == "content_block_delta":
+                    text += event.get("delta", {}).get("text", "")
+        complete = b"message_stop" in raw
+    else:
+        try:
+            text = "".join(c.get("text", "") for c in json.loads(raw).get("content", []))
+        except (ValueError, AttributeError):
+            text = ""
+        complete = bool(text)
+    return {"status": status, "text": text[:200], "complete": complete, "seconds": round(time.monotonic() - started, 2)}
+
+
+def codex_turn(port: int, model: str) -> dict:
+    body = {
+        "model": model,
+        "instructions": "You are a terse test responder.",
+        "input": [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Reply with exactly: OK"}]}
+        ],
+        "stream": True,
+        "store": False,
+        "reasoning": {"effort": "low"},
+    }
+    started = time.monotonic()
+    try:
+        status, raw = post(port, "/backend-api/codex/responses", body, {})
+    except (OSError, http.client.HTTPException) as exc:
+        return {"status": 0, "error": exc.__class__.__name__, "text": ""}
+    text = ""
+    for line in raw.decode(errors="replace").splitlines():
+        if line.startswith("data:"):
+            try:
+                event = json.loads(line[5:])
+            except ValueError:
+                continue
+            if event.get("type") == "response.output_text.delta":
+                text += event.get("delta", "")
+    complete = b"response.completed" in raw
+    return {"status": status, "text": text[:200], "complete": complete, "seconds": round(time.monotonic() - started, 2)}
+
+
+def edge_lines(path: Path, skip: int) -> list[dict]:
+    try:
+        lines = path.read_text().splitlines()[skip:]
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            pass
+    return out
+
+
+def count_lines(path: Path) -> int:
+    try:
+        return len(path.read_text().splitlines())
+    except OSError:
+        return 0
+
+
+def in_flight(port: int) -> int:
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+        conn.request("GET", "/internal/drain/status")
+        data = json.loads(conn.getresponse().read())
+        conn.close()
+        return int(data["checks"]["in_flight"])
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
+        return -1
+
+
+def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in order
+    out = c.out
+    run_id = f"lbsbx-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dt%H%M%Sz')}-{os.getpid()}"
+    c.run_id = run_id
+    anthropic_model = resolve_model("sonnet-latest", "claude-sonnet-5-5")
+    codex_model = resolve_model("sol-latest", "gpt-6.1-sol")
+
+    # 1. live identity and marker
+    marker = out / "marker"
+    marker.write_text(f"{run_id} {utc()}\n")
+    time.sleep(1.1)  # mtime resolution: anything written after this is newer than the marker
+    before = live_identity()
+    (out / "live-before.json").write_text(json.dumps(before, indent=1))
+    c.step(
+        "live-identity-before",
+        bool(before["primary_pid"] and before["front_pid"] and before["listeners_2455"]),
+        f"live primary pid {before['primary_pid']}, front pid {before['front_pid']}, "
+        f"2455 {before['listeners_2455']}, 2457 {before['listeners_2457']}, preferred {before['preferred_port']}",
+        [str(out / "live-before.json"), str(marker)],
+    )
+
+    # 2. start
+    rc, start, start_out = c.sb("start", "start", "--from-live", "--run-id", run_id, timeout=300)
+    c.started = rc == 0 or (HOME / ".agent-lb" / "sandboxes" / run_id).exists()
+    if not c.step(
+        "start",
+        rc == 0 and bool(start.get("front_port")),
+        f"lb-sandbox start exit {rc}; front {start.get('front_port')}, primary {start.get('primary_port')}, "
+        f"standby {start.get('standby_port')}, gate {start.get('gate_port')}, edges {start.get('edge_ports')}; "
+        f"usable accounts {start.get('accounts_per_vendor')}; ready in {start.get('ready_s')} s"
+        + (f"; error {start.get('error')}" if rc else ""),
+        [str(start_out), str(start_out.with_suffix(".err"))],
+    ):
+        c.infra = f"sandbox never got healthy: {start.get('error')}"
+        return
+    front, primary = start["front_port"], start["primary_port"]
+    root = Path(start["root"])
+
+    # 3. status: accounts and listeners
+    rc, status, status_out = c.sb("status", "status", "--run-id", run_id)
+    counts = status.get("accounts_per_vendor", {})
+    ports = status.get("ports", {})
+    pids = sorted({p for port in ports.values() for p in listener_pids(port)})
+    listen = sh("/usr/sbin/lsof", "-nP", "-a", "-p", ",".join(map(str, pids)), "-iTCP", "-sTCP:LISTEN") if pids else ""
+    addresses = [line.split()[8] for line in listen.splitlines()[1:] if len(line.split()) >= 9]
+    (out / "sandbox-listeners.txt").write_text(listen)
+    c.step(
+        "status-accounts-and-listeners",
+        rc == 0
+        and counts.get("anthropic", 0) >= 2
+        and counts.get("openai", 0) >= 2
+        and bool(addresses)
+        and all(a.startswith("127.0.0.1:") for a in addresses),
+        f"healthy {status.get('healthy')}; usable per vendor {counts}; run pids {pids} listen on {addresses}",
+        [str(status_out), str(out / "sandbox-listeners.txt")],
+    )
+
+    # 4. one tiny turn per vendor, no client credential
+    a = anthropic_turn(front, anthropic_model)
+    x = codex_turn(front, codex_model)
+    (out / "turns-baseline.json").write_text(json.dumps({"anthropic": a, "codex": x}, indent=1))
+    c.step(
+        "baseline-turns",
+        a["status"] == 200 and bool(a["text"]) and x["status"] == 200 and bool(x["text"]) and x["complete"],
+        f"Anthropic {anthropic_model}: {a['status']} {a['text']!r}; Codex {codex_model}: {x['status']} {x['text']!r}",
+        [str(out / "turns-baseline.json")],
+    )
+
+    # 5. injected account 429 per edge
+    edge_log = root / "logs" / "edge.jsonl"
+    for edge, turn in (
+        ("anthropic", lambda: anthropic_turn(front, anthropic_model)),
+        ("openai", lambda: codex_turn(front, codex_model)),
+    ):
+        skip = count_lines(edge_log)
+        rc_arm, _, arm_out = c.sb(f"fault-{edge}", "fault", "--run-id", run_id, "--edge", edge, "--arm", "account_429")
+        result = turn()
+        time.sleep(1.5)  # the edge logs a streamed request when it ends
+        lines = [ln for ln in edge_lines(edge_log, skip) if ln.get("edge") == edge]
+        failed = [ln for ln in lines if ln.get("status") == 429 and ln.get("fault") == "account_429"]
+        h1 = failed[0]["auth_hash12"] if failed else None
+        served = [ln for ln in lines if ln.get("status") == 200 and ln.get("auth_hash12") not in (None, "", h1)]
+        rc_st, st, st_out = c.sb(f"status-after-429-{edge}", "status", "--run-id", run_id)
+        cooled = [acc for acc in st.get("accounts", []) if acc.get("auth_hash12") == h1]
+        acct = cooled[0] if cooled else {}
+        rc_clr, _, clr_out = c.sb(f"fault-clear-{edge}", "fault", "--run-id", run_id, "--edge", edge, "--clear")
+        (out / f"turn-429-{edge}.json").write_text(json.dumps({"turn": result, "edge_lines": lines}, indent=1))
+        c.step(
+            f"account-429-{edge}",
+            rc_arm == 0
+            and result["status"] == 200
+            and bool(result["text"])
+            and bool(h1)
+            and bool(served)
+            and bool(acct.get("in_cooldown"))
+            and rc_clr == 0,
+            f"turn {result['status']} {result['text']!r}; edge 429 on hash {h1}, then 200 on "
+            f"{served[0]['auth_hash12'] if served else None}; account {acct.get('id')} status {acct.get('status')} "
+            f"in_cooldown {acct.get('in_cooldown')} until {acct.get('cooldown_until')}",
+            [str(arm_out), str(out / f"turn-429-{edge}.json"), str(st_out), str(clr_out), str(edge_log)],
+        )
+
+    # 6. blue/green restart with a stream in flight
+    holder: dict = {}
+    thread = threading.Thread(target=lambda: holder.update(anthropic_turn(front, anthropic_model, stream=True)))
+    thread.start()
+    seen, deadline = -1, time.monotonic() + 30
+    while time.monotonic() < deadline and thread.is_alive():
+        seen = in_flight(primary)
+        if seen >= 1:
+            break
+        time.sleep(0.05)
+    rc_flight, flight, flight_out = c.sb("status-in-flight", "status", "--run-id", run_id)
+    rc_rs, restart, restart_out = c.sb(
+        "restart", "restart", "--run-id", run_id, "--reason", f"lb-sandbox-check {run_id}"
+    )
+    thread.join(timeout=150)
+    log_text = ""
+    try:
+        log_text = Path(restart.get("log", "")).read_text()
+    except OSError:
+        pass
+    (out / "lb-restart.log").write_text(log_text)
+    marks = {name: needle in log_text for name, needle in RESTART_MARKS.items()}
+    front_log = ""
+    try:
+        front_log = (root / "logs" / "front.log").read_text()
+    except OSError:
+        pass
+    to_standby = front_log.rfind(f"preferred upstream now :{start['standby_port']}")
+    switched = to_standby >= 0 and front_log.find(f"preferred upstream now :{primary}", to_standby) > to_standby
+    (out / "front.log").write_text(front_log)
+    (out / "turn-restart.json").write_text(json.dumps({"stream": holder, "in_flight_seen": seen}, indent=1))
+    c.step(
+        "restart-with-stream",
+        seen >= 1
+        and rc_rs == 0
+        and restart.get("lb_restart_exit") == 0
+        and all(marks.values())
+        and switched
+        and holder.get("status") == 200
+        and bool(holder.get("complete")),
+        f"in_flight_primary {seen} (status call: {flight.get('in_flight_primary')}) before restart; lb-restart exit "
+        f"{restart.get('lb_restart_exit')} in {restart.get('seconds')} s; log marks {marks}; front switched to "
+        f":{start['standby_port']} and back to :{primary}: {switched}; stream {holder.get('status')} complete "
+        f"{holder.get('complete')} {holder.get('text', '')[:40]!r}",
+        [
+            str(flight_out),
+            str(restart_out),
+            str(out / "lb-restart.log"),
+            str(out / "front.log"),
+            str(out / "turn-restart.json"),
+        ],
+    )
+
+    # gate: only the two read-only GETs were forwarded to live
+    rc_g, gate_status, gate_out = c.sb("status-gate", "status", "--run-id", run_id)
+    gate = gate_status.get("gate", {})
+    forwarded = [(f.get("method"), f.get("path")) for f in gate.get("forwarded", [])]
+    c.step(
+        "gate-read-only",
+        bool(forwarded) and all(f in GATE_ALLOWED for f in forwarded),
+        f"forwarded {gate.get('forwarded')}; refused {gate.get('refused')} {gate.get('refused_by')}",
+        [str(gate_out)],
+    )
+
+    # 7. scan for leaked tokens
+    rc_s1, scan_out_dir, s1_out = c.sb("scan-out", "scan", "--run-id", run_id, str(out))
+    tmpdir = os.environ.get("TMPDIR") or "/tmp"
+    rc_s2, scan_new, s2_out = c.sb(
+        "scan-newer",
+        "scan",
+        "--run-id",
+        run_id,
+        "--newer-than",
+        str(marker),
+        "--exclude",
+        str(root),
+        str(HOME / ".agent-rails"),
+        str(HOME / "Library" / "LaunchAgents"),
+        tmpdir,
+        str(HOME / ".agent-lb"),
+        timeout=1500,
+    )
+    c.step(
+        "scan",
+        rc_s1 == 0
+        and rc_s2 == 0
+        and scan_out_dir.get("found") is False
+        and scan_new.get("found") is False
+        and scan_out_dir.get("secrets_loaded", 0) > 1,
+        f"--out: found {scan_out_dir.get('found')} in {scan_out_dir.get('files_scanned')} files; newer than marker "
+        f"under ~/.agent-rails, ~/Library/LaunchAgents, $TMPDIR, ~/.agent-lb (excluding the sandbox root): found "
+        f"{scan_new.get('found')} in {scan_new.get('files_scanned')} files; secrets held by lb-sandbox "
+        f"{scan_out_dir.get('secrets_loaded')}; hits {scan_out_dir.get('hits', []) + scan_new.get('hits', [])}",
+        [str(s1_out), str(s2_out)],
+    )
+
+    # 8. stop
+    stop_and_verify(c, run_id)
+
+    # 9. live identity after
+    after = live_identity()
+    (out / "live-after.json").write_text(json.dumps(after, indent=1))
+    c.step(
+        "live-untouched",
+        after == before,
+        f"before {before}; after {after}",
+        [str(out / "live-before.json"), str(out / "live-after.json")],
+    )
+
+
+def stop_and_verify(c: Check, run_id: str) -> None:
+    rc, stop, stop_out = c.sb("stop", "stop", "--run-id", run_id, "--logs-to", str(c.out / "logs"))
+    c.stopped = True
+    rows = sh("/bin/ps", "-axww", "-o", "pid=,command=").splitlines()
+    mine = {str(os.getpid())}
+    leftover = [r.strip()[:160] for r in rows if run_id in r and r.split(None, 1)[0] not in mine]
+    labels = sh("/bin/launchctl", "list")
+    c.step(
+        "stop-clean",
+        rc == 0 and stop.get("clean") is True and not leftover and f"sbx-{run_id}" not in labels,
+        f"stop exit {rc} clean {stop.get('clean')}: labels {stop.get('labels_loaded')}, listeners "
+        f"{stop.get('listeners')}, processes {stop.get('processes')}, root exists {stop.get('root_exists')}; "
+        f"logs {stop.get('logs')}; independent ps leftovers {leftover}",
+        [str(stop_out), str(c.out / "logs")],
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--lb-sandbox", type=Path, default=HOME / ".agent-lb" / "bin" / "lb-sandbox")
+    args = parser.parse_args()
+    out = args.out.expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    c = Check(out, args.lb_sandbox)
+    c.run_id, c.started, c.stopped, c.infra = None, False, False, None
+    started_at = utc()
+    try:
+        if not args.lb_sandbox.is_file():
+            c.infra = f"installed lb-sandbox missing at {args.lb_sandbox}"
+        elif sys.platform != "darwin" or shutil.which("launchctl") != "/bin/launchctl":
+            c.infra = "needs Studio with /bin/launchctl"
+        else:
+            run_check(c, args)
+    except Exception as exc:  # the verdict must still be written
+        c.step("check-crashed", False, f"{exc.__class__.__name__}: {exc}", [])
+    finally:
+        if c.started and not c.stopped and c.run_id:
+            stop_and_verify(c, c.run_id)
+    steps = c.steps
+    if c.infra:
+        verdict = "infra_error"
+    elif steps and all(s["result"] == "pass" and s["evidence"] for s in steps):
+        verdict = "pass"
+    else:
+        verdict = "fail"
+    failed = [s["name"] for s in steps if s["result"] != "pass"]
+    result = {
+        "schema": 1,
+        "lane": "sys-lb-sandbox",
+        "component_ids": ["claude-lb"],
+        "run_id": c.run_id,
+        "host": socket.gethostname(),
+        "started_at": started_at,
+        "ended_at": utc(),
+        "result": verdict,
+        "summary": (
+            c.infra
+            or (
+                "lb-sandbox mirrored the live pool, served both vendors, failed over an injected 429 on each edge, "
+                "restarted blue/green with a stream in flight, leaked no token and tore down clean; live agent-lb "
+                "untouched."
+                if verdict == "pass"
+                else f"failed steps: {', '.join(failed)}"
+            )
+        ),
+        "steps": steps,
+        "unverified": c.unverified,
+        "lb_sandbox": str(args.lb_sandbox),
+    }
+    (out / "result.json").write_text(json.dumps(result, indent=1) + "\n")
+    print(json.dumps({k: result[k] for k in ("result", "run_id", "summary")}, indent=1))
+    return {"pass": 0, "fail": 1}.get(verdict, 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

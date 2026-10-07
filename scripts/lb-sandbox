@@ -1,0 +1,1489 @@
+#!/usr/bin/env python3
+"""lb-sandbox: a throwaway agent-lb instance on Studio that mirrors the live account pool.
+
+Drills and checks need an agent-lb with working accounts that is not the live
+service. Everything that touches a credential runs inside this agent-lb code:
+reading the live federation token, mirroring accounts, forwarding upstream
+Authorization headers, injecting account faults and scanning for leaks. A caller
+gets ports, account ids, 12-character hashes and counts, never a token.
+
+    lb-sandbox start --run-id R --from-live [--port P] [--min-accounts N] [--transport http] [--json]
+    lb-sandbox status --run-id R [--json]
+    lb-sandbox client-env --run-id R --vendor claude|codex [--json]
+    lb-sandbox fault --run-id R --edge anthropic|openai (--arm account_429|cut_after_bytes:N | --clear) [--json]
+    lb-sandbox restart --run-id R --reason TEXT [--json]
+    lb-sandbox scan --run-id R [--newer-than FILE] [--exclude PATH ...] PATH... [--json]
+    lb-sandbox stop --run-id R [--logs-to DIR] [--json]
+    lb-sandbox gc [--older-than 3600] [--json]
+
+Layout: root ~/.agent-lb/sandboxes/R/ holds a copy of the installed runtime
+(app, config, scripts; the venv is a symlink), its own SQLite store and key,
+logs and state. Two launchd jobs run it:
+- com.agent-lb.drill.sbx-R: `lb-sandbox _serve <root>`, which reads the live
+  federation token from the live plist into its own environment and execs the
+  app. The token is never in the sandbox plist, a file, argv or a log.
+- com.agent-lb.drill.sbx-R-aux: `lb-sandbox _aux <root>`: the peer gate (forwards
+  only GET /api/federation/mirror and /status to the live LB, answers 403 to
+  everything else), two edge proxies to the real providers that log only a hash
+  of the Authorization value and inject armed faults, and the front as a child.
+
+Every listener binds 127.0.0.1; ports come from 2470-2599 and are never 1455,
+2455, 2457 or 2459. The sandbox can read the live pool and never write to it.
+
+Exit codes: 0 ok, 1 assertion false (scan found something, stop not clean),
+2 refused (guard), 3 unhealthy (boot, mirror or restart failed).
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import datetime as dt
+import hashlib
+import json
+import os
+import plistlib
+import pwd
+import re
+import shutil
+import signal
+import socket
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
+
+REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+LB_HOME = REAL_HOME / ".agent-lb"
+SANDBOXES = LB_HOME / "sandboxes"
+LIVE_RUNTIME = LB_HOME / "runtime" / "agent-lb"
+LIVE_VENV = LIVE_RUNTIME / ".venv"
+LIVE_PLIST = REAL_HOME / "Library" / "LaunchAgents" / "com.aneyman.agent-lb.plist"
+LIVE_LABEL = "com.aneyman.agent-lb"
+LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
+LIVE_FRONT_STATE = LB_HOME / "state" / "front.json"
+LIVE_FRONT_PORT = 2455
+LIVE_PRIMARY_PORT = 2457
+LIVE_PEER_URL = "http://127.0.0.1:2455"
+MANAGED_ROUTING = LB_HOME / "managed" / "coding-agents"
+
+LABEL_PREFIX = "com.agent-lb.drill."
+FORBIDDEN_PORTS = frozenset({1455, 2455, 2457, 2459})
+MIN_PORT = 2470
+PICK_RANGE = range(2470, 2600)
+RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+TOKEN_ENV = "AGENT_LB_FEDERATION_TOKEN"
+EDGES = {"anthropic": "https://api.anthropic.com", "openai": "https://chatgpt.com/backend-api"}
+GATE_ALLOWED = frozenset({("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")})
+VENDOR_OF_PROVIDER = {"anthropic": "anthropic", "openai": "openai"}
+USABLE_EXPIRY_S = 1800
+DRAIN_S = 120
+
+EXIT_OK, EXIT_ASSERT, EXIT_REFUSED, EXIT_UNHEALTHY = 0, 1, 2, 3
+
+# Schedulers that would spend, refresh or write; the sandbox runs only the federation mirror.
+DISABLED_SCHEDULERS = (
+    "METRICS",
+    "USAGE_REFRESH",
+    "MODEL_REGISTRY",
+    "ACCOUNT_PULSE",
+    "RESET_CREDIT_AUTO_REDEEM",
+    "RESET_CREDIT_EXPIRY_REDEEM",
+    "ACCOUNTS_CACHE_WARMER",
+    "STICKY_SESSION_CLEANUP",
+    "QUOTA_PLANNER_SCHEDULER",
+    "HTTP_RESPONSES_SESSION_BRIDGE",
+    "AUTH_GUARDIAN",
+)
+
+
+class Refused(Exception):
+    """A guard said no; nothing was touched."""
+
+
+class Unhealthy(Exception):
+    """Boot, mirror or restart failed."""
+
+
+# ---------------------------------------------------------------- guards
+
+
+def check_run_id(run_id: str) -> str:
+    if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
+        raise Refused(f"run id {run_id!r} must match {RUN_ID_RE.pattern}")
+    return run_id
+
+
+def check_label(label: str) -> str:
+    suffix = label.removeprefix(LABEL_PREFIX)
+    if not label.startswith(LABEL_PREFIX) or not suffix or not suffix.replace("-", "").isalnum():
+        raise Refused(f"label {label!r} is not a {LABEL_PREFIX}* drill label")
+    return label
+
+
+def check_ports(ports: list[int]) -> list[int]:
+    for port in ports:
+        if isinstance(port, bool) or not isinstance(port, int) or port < MIN_PORT or port > 65535:
+            raise Refused(f"port {port!r} is outside {MIN_PORT}-65535")
+        if port in FORBIDDEN_PORTS:
+            raise Refused(f"port {port} belongs to the live agent-lb")
+    if len(set(ports)) != len(ports):
+        raise Refused("sandbox ports repeat")
+    return ports
+
+
+def check_root(root: Path, sandboxes: Path | None = None) -> Path:
+    base = (sandboxes or SANDBOXES).resolve()
+    resolved = Path(root).resolve()
+    if resolved.parent != base:
+        raise Refused(f"sandbox root {resolved} is not directly under {base}")
+    check_run_id(resolved.name)
+    return resolved
+
+
+def check_launchctl() -> None:
+    found = shutil.which("launchctl")
+    if found != "/bin/launchctl":
+        # A launchctl shim on PATH once drove the live agent-lb from a test (scripts/lb-restart).
+        raise Refused(f"launchctl resolves to {found}, not /bin/launchctl")
+
+
+def labels_for(run_id: str) -> tuple[str, str]:
+    check_run_id(run_id)
+    label = check_label(f"{LABEL_PREFIX}sbx-{run_id}")
+    return label, check_label(f"{label}-aux")
+
+
+def root_for(run_id: str) -> Path:
+    return SANDBOXES / check_run_id(run_id)
+
+
+# ---------------------------------------------------------------- small helpers
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def write_json(path: Path, data: object, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
+    tmp.chmod(mode)
+    os.replace(tmp, path)
+
+
+def read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def http(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, b""
+    except Exception:
+        return 0, b""
+
+
+def port_free(port: int) -> bool:
+    with socket.socket() as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def ports_in_use_by_sandboxes() -> set[int]:
+    used: set[int] = set()
+    if SANDBOXES.is_dir():
+        for meta in SANDBOXES.glob("*/sandbox.json"):
+            used.update(int(p) for p in read_json(meta).get("ports", {}).values() if isinstance(p, int))
+    return used
+
+
+def pick_ports(count: int, taken: set[int]) -> list[int]:
+    picked: list[int] = []
+    for port in PICK_RANGE:
+        if port in FORBIDDEN_PORTS or port in taken or port in picked:
+            continue
+        if port_free(port):
+            picked.append(port)
+            if len(picked) == count:
+                return picked
+    raise Unhealthy("no free sandbox ports in 2470-2599")
+
+
+def run(argv: list[str], timeout: float = 30) -> subprocess.CompletedProcess:
+    # Output of these tools carries no credentials (launchctl, lsof, ps); still never relayed raw.
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def launchd_pid(label: str) -> int | None:
+    out = run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).stdout
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("pid = "):
+            try:
+                return int(line.split("=", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def label_loaded(label: str) -> bool:
+    return run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).returncode == 0
+
+
+def listener_pids(port: int) -> list[int]:
+    out = run(["/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"]).stdout.split()
+    return sorted({int(pid) for pid in out if pid.isdigit()})
+
+
+def listener_addresses(pids: list[int]) -> list[dict]:
+    """Every TCP listener of the given pids with its bound address."""
+    if not pids:
+        return []
+    out = run(["/usr/sbin/lsof", "-nP", "-a", "-p", ",".join(map(str, pids)), "-iTCP", "-sTCP:LISTEN"]).stdout
+    found = []
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 9:
+            found.append({"pid": int(parts[1]), "address": parts[8]})
+    return found
+
+
+def processes() -> list[tuple[int, int, str]]:
+    out = run(["/bin/ps", "-axww", "-o", "pid=,ppid=,command="]).stdout
+    rows = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    return rows
+
+
+def names_root(cmd: str, root: Path) -> bool:
+    """True when a command line names this sandbox root itself or a path inside it (never a sibling run)."""
+    text = str(root)
+    return any(token == text or token.startswith(text + "/") for token in cmd.split())
+
+
+def names_run(cmd: str, run_id: str) -> bool:
+    return re.search(rf"(?<![a-z0-9-]){re.escape(run_id)}(?![a-z0-9-])", cmd) is not None
+
+
+def own_lineage(rows: list[tuple[int, int, str]]) -> set[int]:
+    parents = {pid: ppid for pid, ppid, _ in rows}
+    lineage, pid = set(), os.getpid()
+    while pid and pid not in lineage:
+        lineage.add(pid)
+        pid = parents.get(pid, 0)
+    return lineage
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def emit(data: dict, code: int) -> int:
+    print(json.dumps(data, indent=1, sort_keys=True), flush=True)
+    return code
+
+
+def load_meta(run_id: str) -> tuple[Path, dict]:
+    root = root_for(run_id)
+    meta = read_json(root / "sandbox.json")
+    if not meta:
+        raise Unhealthy(f"no sandbox {run_id} (missing {root / 'sandbox.json'})")
+    return root, meta
+
+
+# ---------------------------------------------------------------- secrets (agent-lb custody only)
+
+
+def live_federation_token(plist: Path | None = None) -> str | None:
+    """The live federation token, read into this process only. Never printed, written or passed in argv."""
+    with (plist or LIVE_PLIST).open("rb") as fh:
+        env = plistlib.load(fh).get("EnvironmentVariables", {})
+    value = env.get(TOKEN_ENV)
+    return str(value) if value else None
+
+
+def _fernet(root: Path):
+    from cryptography.fernet import Fernet
+
+    return Fernet((root / "data" / "encryption.key").read_bytes())
+
+
+def read_accounts(root: Path, *, with_tokens: bool = False) -> list[dict]:
+    """Mirrored accounts from the sandbox store. Tokens stay in this process; callers get auth_hash12."""
+    db = root / "data" / "store.db"
+    if not db.is_file():
+        return []
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+    try:
+        rows = con.execute(
+            "SELECT id, provider, status, access_expires_at, access_token_encrypted, id_token_encrypted,"
+            " reset_at, blocked_at FROM accounts"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+    fernet = _fernet(root) if rows else None
+    now = time.time()
+    accounts = []
+
+    def decrypt(blob) -> str:
+        try:
+            return fernet.decrypt(bytes(blob)).decode() if fernet and blob else ""
+        except Exception:  # a row this key cannot open is reported without a hash, never raised
+            return ""
+
+    for account_id, provider, status, expires_at, access_enc, id_enc, reset_at, blocked_at in rows:
+        token = decrypt(access_enc)
+        expires_in = None
+        if expires_at:
+            try:
+                stamp = dt.datetime.fromisoformat(str(expires_at)).replace(tzinfo=dt.timezone.utc)
+                expires_in = int(stamp.timestamp() - now)
+            except ValueError:
+                expires_in = None
+        cooling = status in ("rate_limited", "quota_exceeded") or bool(
+            blocked_at and reset_at and float(reset_at) > now
+        )
+        entry = {
+            "id": account_id,
+            "vendor": VENDOR_OF_PROVIDER.get(str(provider), str(provider)),
+            "status": status,
+            "expires_in_s": expires_in,
+            "auth_hash12": hashlib.sha256(f"Bearer {token}".encode()).hexdigest()[:12] if token else None,
+            "in_cooldown": cooling,
+            "cooldown_until": int(reset_at) if cooling and reset_at else None,
+            "usable": status == "active" and expires_in is not None and expires_in > USABLE_EXPIRY_S,
+        }
+        if with_tokens:
+            entry["_secrets"] = [secret for secret in (token, decrypt(id_enc)) if secret]
+        accounts.append(entry)
+    return sorted(accounts, key=lambda a: (a["vendor"], a["id"]))
+
+
+def load_secrets(root: Path | None) -> list[str]:
+    secrets = []
+    token = live_federation_token()
+    if token:
+        secrets.append(token)
+    if root is not None and root.is_dir():
+        for account in read_accounts(root, with_tokens=True):
+            secrets.extend(s for s in account.pop("_secrets") if s)
+    return secrets
+
+
+def secret_patterns(secret: str) -> list[bytes]:
+    """The secret raw and as it appears inside standard or URL-safe base64 at any byte alignment."""
+    raw = secret.encode()
+    patterns = {raw}
+    for encode in (base64.b64encode, base64.urlsafe_b64encode):
+        for shift, skip in ((0, 0), (1, 2), (2, 3)):
+            encoded = encode(b"\0" * shift + raw).rstrip(b"=")
+            # Keep only characters made entirely of secret bits.
+            whole = ((shift + len(raw)) * 8) // 6
+            patterns.add(encoded[skip:whole])
+    return sorted(p for p in patterns if len(p) >= 16)
+
+
+def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path]):
+    """Regular files under paths (symlinks never followed), modified after newer_than, outside exclude."""
+    excluded = {os.path.realpath(e) for e in exclude}
+
+    def is_excluded(path: str) -> bool:
+        return any(path == e or path.startswith(e + os.sep) for e in excluded)
+
+    for top in paths:
+        top = os.path.realpath(top)
+        if is_excluded(top):
+            continue
+        if os.path.isfile(top):
+            if newer_than is None or os.stat(top).st_mtime > newer_than:
+                yield Path(top)
+            continue
+        stack = [top] if os.path.isdir(top) else []
+        while stack:
+            try:
+                entries = os.scandir(stack.pop())
+            except OSError:
+                continue
+            with entries:
+                for entry in entries:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if not is_excluded(entry.path):
+                                stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False) and (
+                            newer_than is None or entry.stat(follow_symlinks=False).st_mtime > newer_than
+                        ):
+                            yield Path(entry.path)
+                    except OSError:
+                        continue
+
+
+def scan_file(path: Path, patterns: list[bytes], chunk: int = 4 << 20) -> bool:
+    overlap = max(len(p) for p in patterns) - 1
+    tail = b""
+    with path.open("rb") as fh:
+        while True:
+            block = fh.read(chunk)
+            if not block:
+                return False
+            buf = tail + block
+            if any(p in buf for p in patterns):
+                return True
+            tail = buf[-overlap:] if overlap > 0 else b""
+
+
+def scan_paths(
+    paths: list[Path], secrets: list[str], newer_than: float | None = None, exclude: list[Path] | None = None
+) -> dict:
+    patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
+    hits, scanned, unreadable, total = [], 0, 0, 0
+    if patterns:
+        for path in iter_files(paths, newer_than, exclude or []):
+            try:
+                found = scan_file(path, patterns)
+                total += path.stat().st_size
+            except OSError:
+                unreadable += 1
+                continue
+            scanned += 1
+            if found:
+                hits.append(str(path))
+    return {
+        "found": bool(hits),
+        "files_scanned": scanned,
+        "bytes_scanned": total,
+        "unreadable": unreadable,
+        "hits": hits,
+        "secrets_loaded": len(secrets),
+    }
+
+
+# ---------------------------------------------------------------- start
+
+
+def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) -> dict[str, str]:
+    """The sandbox primary's environment. No secrets: _serve adds the federation token at exec time."""
+    env = {
+        "HOME": str(root / "home"),
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "PYTHONPATH": str(root / "runtime"),
+        "LB_SANDBOX_ROOT": str(root),
+        "AGENT_LB_DATA_DIR": str(root / "data"),
+        "AGENT_LB_DATABASE_URL": f"sqlite+aiosqlite:///{root / 'data' / 'store.db'}",
+        "AGENT_LB_DATABASE_SQLITE_PRE_MIGRATE_BACKUP_ENABLED": "false",
+        "AGENT_LB_ENCRYPTION_KEY_FILE": str(root / "data" / "encryption.key"),
+        "AGENT_LB_LOCAL_INSTANCE_ID": f"sbx-{run_id}",
+        "AGENT_LB_FEDERATION_PEER_URL": f"http://127.0.0.1:{ports['gate']}",
+        "AGENT_LB_FEDERATION_MIRROR_INTERVAL_SECONDS": "5",
+        "AGENT_LB_FEDERATION_FORWARD_REQUEST_LOGS": "false",
+        "AGENT_LB_FEDERATION_PUSH_PATH": str(root / "data" / "federation-push.json"),
+        "AGENT_LB_UPSTREAM_BASE_URL": f"http://127.0.0.1:{ports['edge_openai']}",
+        "AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL": f"http://127.0.0.1:{ports['edge_anthropic']}",
+        "AGENT_LB_UPSTREAM_STREAM_TRANSPORT": transport,
+        "AGENT_LB_DASHBOARD_AUTH_MODE": "disabled",
+        "AGENT_LB_PROXY_UNAUTHENTICATED_CLIENT_CIDRS": "127.0.0.1/32",
+        "AGENT_LB_CONVERSATION_ARCHIVE_DIR": str(root / "data" / "conversation-archive"),
+        "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN": str(DRAIN_S),
+    }
+    for name in DISABLED_SCHEDULERS:
+        env[f"AGENT_LB_{name}_ENABLED"] = "false"
+    return env
+
+
+def write_plists(root: Path, run_id: str, ports: dict[str, int], transport: str) -> tuple[Path, Path]:
+    label, aux_label = labels_for(run_id)
+    python = str(root / "runtime" / ".venv" / "bin" / "python")
+    script = str(root / "bin" / "lb-sandbox")
+    primary = {
+        "Label": label,
+        "ProgramArguments": [
+            python,
+            script,
+            "_serve",
+            str(root),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(ports["primary"]),
+        ],
+        "WorkingDirectory": str(root / "runtime"),
+        "EnvironmentVariables": sandbox_env(root, ports, run_id, transport),
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 2,
+        "ExitTimeOut": DRAIN_S + 30,
+        "StandardOutPath": str(root / "logs" / "primary.log"),
+        "StandardErrorPath": str(root / "logs" / "primary.log"),
+    }
+    aux = {
+        "Label": aux_label,
+        "ProgramArguments": [python, script, "_aux", str(root)],
+        "WorkingDirectory": str(root),
+        "EnvironmentVariables": {
+            "HOME": str(root / "home"),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "LB_SANDBOX_ROOT": str(root),
+        },
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "ExitTimeOut": 20,
+        "StandardOutPath": str(root / "logs" / "aux.log"),
+        "StandardErrorPath": str(root / "logs" / "aux.log"),
+    }
+    paths = (root / "launchd" / f"{label}.plist", root / "launchd" / f"{aux_label}.plist")
+    for path, body in zip(paths, (primary, aux), strict=True):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(plistlib.dumps(body))
+        path.chmod(0o600)
+    return paths
+
+
+def find_node() -> str:
+    for candidate in (
+        run(["volta", "which", "node"]).stdout.strip() if shutil.which("volta") else "",
+        shutil.which("node") or "",
+        "/opt/homebrew/bin/node",
+    ):
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return str(Path(candidate).resolve())
+    raise Unhealthy("node not found for the sandbox front")
+
+
+def live_identity() -> dict:
+    preferred = read_json(LIVE_FRONT_STATE).get("preferred")
+    return {
+        "primary_pid": launchd_pid(LIVE_LABEL),
+        "front_pid": launchd_pid(LIVE_FRONT_LABEL),
+        "front_port": LIVE_FRONT_PORT,
+        "front_listener_pids": listener_pids(LIVE_FRONT_PORT),
+        "primary_listener_pids": listener_pids(LIVE_PRIMARY_PORT),
+        "preferred_port": preferred,
+    }
+
+
+def bootstrap(plist: Path, label: str, deadline_s: float = 20) -> None:
+    check_label(label)
+    domain = f"gui/{os.getuid()}"
+    deadline = time.monotonic() + deadline_s
+    while time.monotonic() < deadline:
+        if run(["/bin/launchctl", "bootstrap", domain, str(plist)]).returncode == 0 or label_loaded(label):
+            return
+        time.sleep(0.5)
+    raise Unhealthy(f"launchctl bootstrap {label} failed")
+
+
+def bootout(label: str, deadline_s: float = 30) -> bool:
+    check_label(label)
+    target = f"gui/{os.getuid()}/{label}"
+    run(["/bin/launchctl", "bootout", target], timeout=deadline_s + 10)
+    deadline = time.monotonic() + deadline_s
+    while label_loaded(label):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.5)
+    return True
+
+
+def usable_counts(accounts: list[dict]) -> dict[str, int]:
+    counts = {"anthropic": 0, "openai": 0}
+    for account in accounts:
+        if account["usable"] and account["vendor"] in counts:
+            counts[account["vendor"]] += 1
+    return counts
+
+
+def log_failure_classes(root: Path) -> dict:
+    """Exception class names and app frames from the primary log; never message text."""
+    log = root / "logs" / "primary.log"
+    if not log.is_file():
+        return {}
+    text = log.read_text(errors="replace")[-200_000:]
+    return {
+        "exception_classes": sorted(set(re.findall(r"^([A-Za-z0-9_.]+(?:Error|Exception)):", text, re.MULTILINE))),
+        "frames": re.findall(r'File "[^\n"]*/(app/[^\n"]+)", line ([0-9]+), in ([A-Za-z0-9_]+)', text)[-8:],
+    }
+
+
+def cmd_start(args) -> int:
+    run_id = check_run_id(args.run_id)
+    if not args.from_live:
+        raise Refused("start needs --from-live (the only supported account source)")
+    if args.transport != "http":
+        raise Refused("only --transport http is supported (the edge must see and cut streams)")
+    check_launchctl()
+    root = root_for(run_id)
+    if root.exists():
+        raise Refused(f"sandbox root {root} already exists")
+    label, aux_label = labels_for(run_id)
+    if label_loaded(label) or label_loaded(aux_label):
+        raise Refused(f"label {label} is already loaded")
+    if not LIVE_PLIST.is_file() or not (LIVE_RUNTIME / "app").is_dir() or not (LIVE_VENV / "bin" / "python").exists():
+        raise Unhealthy("live runtime, venv or plist missing")
+    taken = ports_in_use_by_sandboxes()
+    if args.port is not None:
+        check_ports([args.port])
+        if args.port in taken or not port_free(args.port):
+            raise Refused(f"--port {args.port} is in use")
+        taken.add(args.port)
+    picked = pick_ports(6 if args.port is None else 5, taken)
+    front = args.port if args.port is not None else picked.pop(0)
+    names = ("primary", "standby", "gate", "edge_anthropic", "edge_openai")
+    ports = {"front": front, **dict(zip(names, picked, strict=True))}
+    check_ports(list(ports.values()))
+    started = time.monotonic()
+    out: dict = {"run_id": run_id, "root": str(root), "label": label, "aux_label": aux_label}
+
+    stopping: list[int] = []
+
+    def interrupted(signum, frame):
+        if not stopping:
+            stopping.append(signum)
+            raise Unhealthy(f"interrupted by signal {signum}")
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, interrupted)
+    try:
+        SANDBOXES.mkdir(parents=True, exist_ok=True)
+        root.mkdir(mode=0o700)
+        for sub in ("data", "home", "logs", "state", "bin", "clients"):
+            (root / sub).mkdir(mode=0o700)
+        meta = {
+            "run_id": run_id,
+            "label": label,
+            "aux_label": aux_label,
+            "ports": ports,
+            "caller_pid": os.getppid(),
+            "created_at": now_iso(),
+            "created_epoch": time.time(),
+            "transport": args.transport,
+            "node": find_node(),
+        }
+        write_json(root / "sandbox.json", meta)
+        runtime = root / "runtime"
+        runtime.mkdir()
+        for part in ("app", "config", "scripts"):
+            if (LIVE_RUNTIME / part).is_dir():
+                shutil.copytree(
+                    LIVE_RUNTIME / part, runtime / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+                )
+        (runtime / ".venv").symlink_to(LIVE_VENV)
+        shutil.copy2(Path(__file__).resolve(), root / "bin" / "lb-sandbox")
+        managed = root / "home" / ".agent-lb" / "managed" / "coding-agents"
+        for name in ("routing-table.json", "decider.json"):
+            if (MANAGED_ROUTING / name).is_file():
+                managed.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(MANAGED_ROUTING / name, managed / name)
+        primary_plist, aux_plist = write_plists(root, run_id, ports, args.transport)
+        write_json(
+            root / "lb-restart.json",
+            {
+                "root": str(root),
+                "label": label,
+                "plist": str(primary_plist),
+                "runtime": str(runtime),
+                "state_dir": str(root / "state"),
+                "front_port": ports["front"],
+                "primary_port": ports["primary"],
+                "standby_port": ports["standby"],
+            },
+        )
+        (root / "state" / "front-preferred-port").write_text(f"{ports['primary']}\n")
+        out["live"] = live_identity()
+
+        bootstrap(aux_plist, aux_label)
+        deadline = time.monotonic() + 30
+        while not read_json(root / "state" / "aux.json").get("ready"):
+            if time.monotonic() > deadline:
+                raise Unhealthy("aux (gate, edges, front) did not become ready in 30 s")
+            time.sleep(0.25)
+        bootstrap(primary_plist, label)
+        deadline = time.monotonic() + 90
+        while not (
+            http(ports["primary"], "/health/ready")[0] == 200 and http(ports["front"], "/health/ready")[0] == 200
+        ):
+            if time.monotonic() > deadline:
+                raise Unhealthy("sandbox primary or front not healthy in 90 s")
+            time.sleep(0.5)
+        out["boot_s"] = round(time.monotonic() - started, 1)
+        deadline = time.monotonic() + 120
+        while True:
+            counts = usable_counts(read_accounts(root))
+            if all(n >= args.min_accounts for n in counts.values()):
+                break
+            if time.monotonic() > deadline:
+                raise Unhealthy(f"mirror gave {counts} usable accounts, need {args.min_accounts} per vendor in 120 s")
+            time.sleep(1)
+        out.update(
+            {
+                "front_port": ports["front"],
+                "primary_port": ports["primary"],
+                "standby_port": ports["standby"],
+                "gate_port": ports["gate"],
+                "edge_ports": {"anthropic": ports["edge_anthropic"], "openai": ports["edge_openai"]},
+                "accounts_per_vendor": counts,
+                "ready_s": round(time.monotonic() - started, 1),
+            }
+        )
+        return emit(out, EXIT_OK)
+    except Exception as exc:  # any failure tears the sandbox down before exit 3
+        out["error"] = f"{exc.__class__.__name__}: {exc}"
+        if root.exists():
+            out["failure"] = log_failure_classes(root)
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(sig, signal.SIG_IGN)
+            out["teardown"] = teardown(run_id, Path(args.logs_to) if args.logs_to else None)
+        return emit(out, EXIT_UNHEALTHY)
+
+
+# ---------------------------------------------------------------- _serve and _aux (run by launchd)
+
+
+def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[str, str]]:
+    """Validate a _serve invocation and build (executable, argv, env) for the app. Reads the token; writes nothing."""
+    root = check_root(root)
+    meta = read_json(root / "sandbox.json")
+    if not meta:
+        raise Refused(f"{root} has no sandbox.json")
+    parser = argparse.ArgumentParser(prog="lb-sandbox _serve")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, required=True)
+    opts, extra = parser.parse_known_args(argv)
+    if extra:
+        raise Refused(f"_serve takes only --host and --port, not {' '.join(extra)}")
+    if opts.host != "127.0.0.1":
+        raise Refused("the sandbox binds 127.0.0.1 only")
+    allowed = {meta["ports"]["primary"], meta["ports"]["standby"]}
+    check_ports([opts.port])
+    if opts.port not in allowed:
+        raise Refused(f"port {opts.port} is not this sandbox's primary or standby port")
+    if os.environ.get("LB_SANDBOX_ROOT") != str(root):
+        raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
+    if os.environ.get("AGENT_LB_DATA_DIR") != str(root / "data"):
+        raise Refused("AGENT_LB_DATA_DIR is not the sandbox data dir")
+    token = live_federation_token()
+    if not token:
+        raise Unhealthy("live plist has no federation token")
+    env = dict(os.environ)
+    env[TOKEN_ENV] = token
+    python = str(root / "runtime" / ".venv" / "bin" / "python")
+    args = [python, "-m", "app.cli", "--host", "127.0.0.1", "--port", str(opts.port)]
+    return python, args, env
+
+
+def cmd_serve(root: str, argv: list[str]) -> int:
+    root_path = check_root(Path(root))
+    python, args, env = serve_exec_args(root_path, argv)
+    os.chdir(root_path / "runtime")
+    os.execve(python, args, env)
+    return EXIT_UNHEALTHY  # not reached
+
+
+def rate_limit_response(edge: str) -> tuple[int, dict[str, str], bytes]:
+    reset = int(time.time()) + 600
+    if edge == "anthropic":
+        body = {"type": "error", "error": {"type": "rate_limit_error", "message": "lb-sandbox injected account_429"}}
+        headers = {
+            "retry-after": "600",
+            "anthropic-ratelimit-unified-status": "rejected",
+            "anthropic-ratelimit-unified-reset": str(reset),
+            "request-id": f"req_lbsandbox_{uuid.uuid4().hex[:16]}",
+        }
+    else:
+        body = {
+            "error": {
+                "type": "rate_limit_exceeded",
+                "code": "rate_limit_exceeded",
+                "message": "lb-sandbox injected account_429",
+                "resets_in_seconds": 600,
+                "resets_at": reset,
+            }
+        }
+        headers = {"retry-after": "600"}
+    headers["content-type"] = "application/json"
+    return 429, headers, json.dumps(body).encode()
+
+
+HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-length",
+    }
+)
+
+
+def auth_hash12(headers) -> str:
+    value = headers.get("Authorization") or headers.get("x-api-key") or ""
+    return hashlib.sha256(value.encode()).hexdigest()[:12] if value else ""
+
+
+class FaultState:
+    """One edge's armed fault, re-read from <root>/state/fault-<edge>.json on every request."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.mtime = None
+        self.nonce = None
+        self.fault: str | None = None
+        self.n: int | None = None
+        self.failed: set[str] = set()
+        self.consumed = False
+
+    def refresh(self) -> None:
+        try:
+            mtime = self.path.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        if mtime == self.mtime:
+            return
+        self.mtime = mtime
+        data = read_json(self.path) if mtime is not None else {}
+        if data.get("nonce") != self.nonce:
+            self.nonce = data.get("nonce")
+            self.fault = data.get("fault") if data.get("armed") else None
+            self.n = data.get("n")
+            self.failed = set()
+            self.consumed = False
+
+    def take_429(self, auth_hash: str) -> bool:
+        """account_429: the first request after arming fails its hash; that hash keeps failing until cleared."""
+        if self.fault != "account_429":
+            return False
+        if not self.failed:
+            self.failed.add(auth_hash)
+            return True
+        return auth_hash in self.failed
+
+    def take_cut(self) -> int | None:
+        if self.fault != "cut_after_bytes" or self.consumed or not isinstance(self.n, int):
+            return None
+        self.consumed = True
+        return self.n
+
+
+def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three listeners and a child
+    import asyncio
+    import ssl
+
+    import aiohttp
+    from aiohttp import web
+
+    root = check_root(Path(root_arg))
+    if os.environ.get("LB_SANDBOX_ROOT") != str(root):
+        raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
+    meta = read_json(root / "sandbox.json")
+    ports = meta["ports"]
+    check_ports(list(ports.values()))
+    state_file = root / "state" / "aux.json"
+    edge_log = root / "logs" / "edge.jsonl"
+    gate_log = root / "logs" / "gate.jsonl"
+    counters = {
+        "gate_forwarded": {},
+        "gate_refused": 0,
+        "gate_refused_by": {},
+        "edge_requests": {"anthropic": 0, "openai": 0},
+        "faults_applied": {"anthropic": 0, "openai": 0},
+    }
+    faults = {edge: FaultState(root / "state" / f"fault-{edge}.json") for edge in EDGES}
+    front_proc: dict[str, subprocess.Popen | None] = {"proc": None}
+    ready = {"value": False}
+
+    def append(path: Path, record: dict) -> None:
+        with path.open("a") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+
+    def save_state() -> None:
+        proc = front_proc["proc"]
+        write_json(
+            state_file,
+            {
+                "pid": os.getpid(),
+                "front_pid": proc.pid if proc else None,
+                "front_alive": bool(proc and proc.poll() is None),
+                "ready": ready["value"],
+                "updated_at": now_iso(),
+                "gate": {
+                    "forwarded": [
+                        {"method": k.split(" ", 1)[0], "path": k.split(" ", 1)[1], "count": v}
+                        for k, v in sorted(counters["gate_forwarded"].items())
+                    ],
+                    "refused": counters["gate_refused"],
+                    "refused_by": counters["gate_refused_by"],
+                },
+                "edge": {
+                    "requests": counters["edge_requests"],
+                    "faults_applied": counters["faults_applied"],
+                    "log": str(edge_log),
+                },
+            },
+        )
+
+    try:
+        import certifi
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_context = ssl.create_default_context()
+
+    async def main() -> None:
+        connector = aiohttp.TCPConnector(ssl=ssl_context, limit=0)
+        session = aiohttp.ClientSession(
+            connector=connector,
+            auto_decompress=False,
+            trust_env=False,
+            skip_auto_headers=("User-Agent", "Accept-Encoding"),
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=900),
+        )
+
+        async def gate(request: web.Request) -> web.StreamResponse:
+            key = (request.method, request.path)
+            name = f"{request.method} {request.path}"
+            if key not in GATE_ALLOWED or request.query_string:
+                counters["gate_refused"] += 1
+                counters["gate_refused_by"][name] = counters["gate_refused_by"].get(name, 0) + 1
+                append(gate_log, {"ts": now_iso(), "method": request.method, "path": request.path, "status": 403})
+                save_state()
+                return web.json_response({"detail": "lb-sandbox peer gate: read-only mirror only"}, status=403)
+            headers = {k: v for k, v in request.headers.items() if k.lower() in ("authorization", "accept")}
+            async with session.get(f"{LIVE_PEER_URL}{request.path}", headers=headers) as upstream:
+                body = await upstream.read()
+                status = upstream.status
+                content_type = upstream.headers.get("content-type", "application/json")
+            counters["gate_forwarded"][name] = counters["gate_forwarded"].get(name, 0) + 1
+            append(gate_log, {"ts": now_iso(), "method": request.method, "path": request.path, "status": status})
+            save_state()
+            return web.Response(status=status, body=body, headers={"content-type": content_type})
+
+        def edge_handler(edge: str):
+            base = EDGES[edge]
+            fault = faults[edge]
+
+            async def handle(request: web.Request) -> web.StreamResponse:
+                started = time.monotonic()
+                body = await request.read()
+                auth = auth_hash12(request.headers)
+                counters["edge_requests"][edge] += 1
+                fault.refresh()
+                record = {"ts": now_iso(), "edge": edge, "method": request.method, "path": request.path}
+                record["auth_hash12"] = auth
+                if fault.take_429(auth):
+                    counters["faults_applied"][edge] += 1
+                    status, headers, payload = rate_limit_response(edge)
+                    append(edge_log, {**record, "status": status, "bytes": len(payload), "fault": "account_429"})
+                    save_state()
+                    return web.Response(status=status, body=payload, headers=headers)
+                headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
+                applied, status, sent, error, downstream_closed = None, 0, 0, None, False
+                response: web.StreamResponse | None = None
+                try:
+                    async with session.request(
+                        request.method,
+                        f"{base}{request.path_qs}",
+                        headers=headers,
+                        data=body or None,
+                        allow_redirects=False,
+                    ) as upstream:
+                        status = upstream.status
+                        out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in HOP_BY_HOP}
+                        response = web.StreamResponse(status=status, headers=out_headers)
+                        await response.prepare(request)
+                        streamed = "text/event-stream" in upstream.headers.get("content-type", "")
+                        cut_at = fault.take_cut() if streamed and status == 200 else None
+                        if cut_at is not None:
+                            applied = f"cut_after_bytes:{cut_at}"
+                            counters["faults_applied"][edge] += 1
+                        try:
+                            async for chunk in upstream.content.iter_any():
+                                if cut_at is not None and sent + len(chunk) >= cut_at:
+                                    part = chunk[: max(0, cut_at - sent)]
+                                    if part:
+                                        await response.write(part)
+                                        sent += len(part)
+                                    # A TCP close mid-body: the sandbox sees an incomplete upstream stream.
+                                    if request.transport is not None:
+                                        request.transport.abort()
+                                    break
+                                await response.write(chunk)
+                                sent += len(chunk)
+                            else:
+                                await response.write_eof()
+                        except ConnectionResetError:
+                            # The sandbox stops reading once it has the terminal event; not an upstream error.
+                            downstream_closed = True
+                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    error = exc.__class__.__name__
+                ms = int((time.monotonic() - started) * 1000)
+                entry = {**record, "status": status, "bytes": sent, "fault": applied, "ms": ms}
+                if applied:
+                    entry["cut"] = True
+                if downstream_closed:
+                    entry["downstream_closed"] = True
+                if error:
+                    entry["error"] = error
+                append(edge_log, entry)
+                save_state()
+                if response is None:
+                    return web.json_response({"error": {"type": "lb_sandbox_edge", "message": error}}, status=502)
+                return response
+
+            return handle
+
+        runners = []
+        gate_app = web.Application(client_max_size=1 << 20)
+        gate_app.router.add_route("*", "/{tail:.*}", gate)
+        apps = [(gate_app, ports["gate"])]
+        for edge in EDGES:
+            app = web.Application(client_max_size=256 << 20)
+            app.router.add_route("*", "/{tail:.*}", edge_handler(edge))
+            apps.append((app, ports[f"edge_{edge}"]))
+        for app, port in apps:
+            runner = web.AppRunner(app, auto_decompress=False, access_log=None, handle_signals=False)
+            await runner.setup()
+            await web.TCPSite(runner, "127.0.0.1", port).start()
+            runners.append(runner)
+
+        front_env = {
+            "HOME": str(root / "home"),
+            "PATH": "/usr/bin:/bin",
+            "AGENT_LB_FRONT_HOST": "127.0.0.1",
+            "AGENT_LB_FRONT_LISTEN_PORT": str(ports["front"]),
+            "AGENT_LB_FRONT_UPSTREAM_PORTS": f"{ports['primary']},{ports['standby']}",
+            "AGENT_LB_FRONT_PREFERRED_FILE": str(root / "state" / "front-preferred-port"),
+            "AGENT_LB_FRONT_STATE_FILE": str(root / "state" / "front.json"),
+            "LB_SANDBOX_ROOT": str(root),
+        }
+        front_log = (root / "logs" / "front.log").open("a")
+        front_proc["proc"] = subprocess.Popen(
+            # The trailing root is ignored by the front; it puts the run's root in the command line for stop.
+            [meta["node"], str(root / "runtime" / "scripts" / "agent-lb-front.mjs"), str(root)],
+            env=front_env,
+            stdout=front_log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            cwd=str(root),
+        )
+        deadline = time.monotonic() + 15
+        while not listener_pids(ports["front"]):
+            if time.monotonic() > deadline or front_proc["proc"].poll() is not None:
+                raise Unhealthy("sandbox front did not listen")
+            await asyncio.sleep(0.2)
+        ready["value"] = True
+        save_state()
+
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            loop.add_signal_handler(sig, stop.set)
+        while not stop.is_set():
+            if front_proc["proc"].poll() is not None:
+                break
+            save_state()
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+        ready["value"] = False
+        for runner in runners:
+            await runner.cleanup()
+        await session.close()
+
+    try:
+        asyncio.run(main())
+    finally:
+        proc = front_proc["proc"]
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        save_state()
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------- status, client-env, fault, restart, scan
+
+
+def cmd_status(args) -> int:
+    root, meta = load_meta(args.run_id)
+    ports = meta["ports"]
+    code, body = http(ports["primary"], "/internal/drain/status", timeout=2)
+    in_flight = None
+    if code == 200:
+        try:
+            in_flight = int(json.loads(body)["checks"]["in_flight"])
+        except (ValueError, KeyError, TypeError):
+            in_flight = None
+    aux = read_json(root / "state" / "aux.json")
+    accounts = read_accounts(root)
+    for account in accounts:
+        account.pop("usable", None)
+    healthy = (
+        http(ports["primary"], "/health/ready")[0] == 200
+        and http(ports["front"], "/health/ready")[0] == 200
+        and bool(aux.get("ready"))
+    )
+    out = {
+        "run_id": meta["run_id"],
+        "healthy": healthy,
+        "in_flight_primary": in_flight,
+        "preferred_port": read_json(root / "state" / "front.json").get("preferred"),
+        "primary_pid": launchd_pid(meta["label"]),
+        "accounts": accounts,
+        "accounts_per_vendor": usable_counts(read_accounts(root)),
+        "gate": aux.get("gate", {"forwarded": [], "refused": 0}),
+        "edge": {k: v for k, v in aux.get("edge", {}).items() if k != "log"},
+        "edge_log": str(root / "logs" / "edge.jsonl"),
+        "ports": ports,
+    }
+    return emit(out, EXIT_OK if healthy else EXIT_UNHEALTHY)
+
+
+CODEX_PLACEHOLDER = "lb-sandbox-placeholder-not-a-credential"
+
+
+def cmd_client_env(args) -> int:
+    root, meta = load_meta(args.run_id)
+    front = meta["ports"]["front"]
+    if args.vendor == "claude":
+        (root / "clients" / "claude").mkdir(parents=True, exist_ok=True)
+        env = {
+            "CLAUDE_LB_LOCAL_URL": f"http://127.0.0.1:{front}",
+            "CLAUDE_LB_BASE_URL": f"http://127.0.0.1:{front}",
+            "CLAUDE_LB_LAUNCHD_LABEL": meta["label"],
+        }
+    else:
+        home = root / "clients" / "codex"
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.toml").write_text(
+            "\n".join(
+                [
+                    'model_provider = "agent-lb"',
+                    "",
+                    "[model_providers.agent-lb]",
+                    'name = "OpenAI"',
+                    f'base_url = "http://127.0.0.1:{front}/backend-api/codex"',
+                    'wire_api = "responses"',
+                    "supports_websockets = false",
+                    "requires_openai_auth = true",
+                    "",
+                ]
+            )
+        )
+        write_json(home / "auth.json", {"OPENAI_API_KEY": CODEX_PLACEHOLDER, "auth_mode": "apikey"})
+        env = {"CODEX_SOURCE_HOME": str(home)}
+    return emit({"run_id": meta["run_id"], "vendor": args.vendor, "env": env}, EXIT_OK)
+
+
+def parse_fault(spec: str) -> tuple[str, int | None]:
+    if spec == "account_429":
+        return "account_429", None
+    match = re.fullmatch(r"cut_after_bytes:([0-9]{1,9})", spec)
+    if match:
+        return "cut_after_bytes", int(match.group(1))
+    raise Refused(f"unknown fault {spec!r}; use account_429 or cut_after_bytes:N")
+
+
+def cmd_fault(args) -> int:
+    root, _ = load_meta(args.run_id)
+    path = root / "state" / f"fault-{args.edge}.json"
+    if args.clear:
+        write_json(path, {"armed": False, "nonce": uuid.uuid4().hex, "at": now_iso()})
+        return emit({"armed": False, "edge": args.edge, "fault": None}, EXIT_OK)
+    fault, n = parse_fault(args.arm)
+    write_json(path, {"armed": True, "fault": fault, "n": n, "nonce": uuid.uuid4().hex, "at": now_iso()})
+    return emit({"armed": True, "edge": args.edge, "fault": args.arm}, EXIT_OK)
+
+
+def cmd_restart(args) -> int:
+    check_launchctl()
+    root, _ = load_meta(args.run_id)
+    lb_restart = Path(__file__).resolve().parent / "lb-restart"
+    if not lb_restart.is_file():
+        raise Unhealthy(f"{lb_restart} missing")
+    log_path = root / "logs" / "lb-restart.log"
+    argv = [
+        sys.executable,
+        str(lb_restart),
+        "--sandbox",
+        str(root / "lb-restart.json"),
+        "--force",
+        "--reason",
+        args.reason,
+    ]
+    started = time.monotonic()
+    with log_path.open("a") as log:
+        log.write(f"==== {now_iso()} lb-sandbox restart: {' '.join(argv[1:])}\n")
+        log.flush()
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(root))
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            log.write(line)
+            log.flush()
+            sys.stderr.write(line)
+        code = proc.wait()
+    out = {"lb_restart_exit": code, "log": str(log_path), "seconds": round(time.monotonic() - started, 1)}
+    return emit(out, EXIT_OK if code == 0 else EXIT_UNHEALTHY)
+
+
+def cmd_scan(args) -> int:
+    root = root_for(args.run_id)
+    newer = Path(args.newer_than).stat().st_mtime if args.newer_than else None
+    result = scan_paths(
+        [Path(p) for p in args.paths],
+        load_secrets(root if root.is_dir() else None),
+        newer_than=newer,
+        exclude=[Path(p) for p in args.exclude],
+    )
+    result["run_id"] = args.run_id
+    return emit(result, EXIT_ASSERT if result["found"] else EXIT_OK)
+
+
+# ---------------------------------------------------------------- stop and gc
+
+
+def stop_pid(pid: int, bound: float = 15) -> None:
+    for sig, wait in ((signal.SIGTERM, bound), (signal.SIGKILL, 5)):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + wait
+        while pid_alive(pid) and time.monotonic() < deadline:
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
+            time.sleep(0.2)
+        if not pid_alive(pid):
+            return
+
+
+def teardown(run_id: str, logs_to: Path | None) -> dict:
+    """Stop everything the sandbox started, keep scanned logs if asked, delete the root, then verify."""
+    root = root_for(run_id)
+    meta = read_json(root / "sandbox.json")
+    label, aux_label = labels_for(run_id)
+    ports = [int(p) for p in meta.get("ports", {}).values()]
+    secrets: list[str] = []
+    try:
+        secrets = load_secrets(root if root.is_dir() else None)
+    except Exception as exc:  # a broken store must not block teardown
+        secrets = []
+        load_error = exc.__class__.__name__
+    else:
+        load_error = None
+    booted = {name: bootout(name) for name in (label, aux_label)}
+    pidfile = root / "state" / "lb-standby.pid"
+    rows = processes()
+    lineage = own_lineage(rows)
+    if pidfile.is_file():
+        try:
+            pid = int(pidfile.read_text().strip())
+        except ValueError:
+            pid = 0
+        if pid and any(p == pid and names_root(cmd, root) for p, _, cmd in rows):
+            stop_pid(pid)
+    for pid, _, cmd in processes():
+        if names_root(cmd, root) and pid not in lineage:
+            stop_pid(pid, bound=5)
+    logs = {"copied": False}
+    if (root / "logs").is_dir():
+        scanned = scan_paths([root / "logs"], secrets) if secrets else {"found": None, "files_scanned": 0}
+        logs["scan_found"] = scanned["found"]
+        logs["files_scanned"] = scanned["files_scanned"]
+        if logs_to is not None:
+            if scanned["found"] is False:
+                logs_to.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(root / "logs", logs_to, dirs_exist_ok=True)
+                logs["copied"] = True
+                logs["to"] = str(logs_to)
+            else:
+                logs["refused"] = "token found in sandbox logs" if scanned["found"] else "no secrets to scan with"
+    if load_error:
+        logs["secret_load_error"] = load_error
+    if root.exists():
+        check_root(root)
+        shutil.rmtree(root)
+    time.sleep(0.5)
+    rows = processes()
+    lineage = own_lineage(rows)
+    leftover = [
+        {"pid": pid, "command": cmd[:200]}
+        for pid, _, cmd in rows
+        if (names_run(cmd, run_id) or names_root(cmd, root)) and pid not in lineage
+    ]
+    result = {
+        "labels_loaded": [name for name in (label, aux_label) if label_loaded(name)],
+        "listeners": [{"port": port, "pids": pids} for port in ports if (pids := listener_pids(port))],
+        "processes": leftover,
+        "root_exists": root.exists(),
+        "bootout": booted,
+        "logs": logs,
+    }
+    result["clean"] = not (
+        result["labels_loaded"] or result["listeners"] or result["processes"] or result["root_exists"]
+    )
+    return result
+
+
+def cmd_stop(args) -> int:
+    check_launchctl()
+    run_id = check_run_id(args.run_id)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, signal.SIG_IGN)
+    result = teardown(run_id, Path(args.logs_to) if args.logs_to else None)
+    result["run_id"] = run_id
+    return emit(result, EXIT_OK if result["clean"] else EXIT_ASSERT)
+
+
+def cmd_gc(args) -> int:
+    check_launchctl()
+    stopped, kept = [], []
+    now = time.time()
+    if SANDBOXES.is_dir():
+        for meta_path in sorted(SANDBOXES.glob("*/sandbox.json")):
+            meta = read_json(meta_path)
+            run_id = meta_path.parent.name
+            age = now - float(meta.get("created_epoch") or meta_path.stat().st_mtime)
+            if age > args.older_than and not pid_alive(meta.get("caller_pid")):
+                result = teardown(run_id, None)
+                stopped.append(run_id) if result["clean"] else kept.append({"run_id": run_id, "teardown": result})
+    return emit({"stopped": stopped, "not_clean": kept}, EXIT_OK if not kept else EXIT_ASSERT)
+
+
+# ---------------------------------------------------------------- main
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="lb-sandbox", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, help_text: str) -> argparse.ArgumentParser:
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--json", action="store_true", help="print one JSON object (always on)")
+        return p
+
+    p = command("start", "create, boot and mirror a sandbox")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--from-live", action="store_true")
+    p.add_argument("--port", type=int)
+    p.add_argument("--min-accounts", type=int, default=2)
+    p.add_argument("--transport", default="http")
+    p.add_argument("--logs-to", help="on failure, copy scanned logs here before teardown")
+    p = command("status", "health, accounts, gate and edge counters")
+    p.add_argument("--run-id", required=True)
+    p = command("client-env", "env for a client pointed only at the sandbox")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--vendor", choices=("claude", "codex"), required=True)
+    p = command("fault", "arm or clear one edge fault")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--edge", choices=tuple(EDGES), required=True)
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--arm")
+    group.add_argument("--clear", action="store_true")
+    p = command("restart", "blue/green restart of the sandbox through lb-restart --sandbox")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--reason", required=True)
+    p = command("scan", "search files for the live federation token and mirrored tokens")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--newer-than", help="only files modified after this file")
+    p.add_argument("--exclude", action="append", default=[], help="skip this path (repeatable)")
+    p.add_argument("paths", nargs="+")
+    p = command("stop", "tear the sandbox down and verify")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--logs-to")
+    p = command("gc", "stop abandoned sandboxes")
+    p.add_argument("--older-than", type=float, default=3600)
+    return parser
+
+
+COMMANDS = {
+    "start": cmd_start,
+    "status": cmd_status,
+    "client-env": cmd_client_env,
+    "fault": cmd_fault,
+    "restart": cmd_restart,
+    "scan": cmd_scan,
+    "stop": cmd_stop,
+    "gc": cmd_gc,
+}
+
+
+def in_live_venv() -> bool:
+    try:
+        return Path(sys.prefix).resolve() == LIVE_VENV.resolve()
+    except OSError:
+        return False
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["_serve"] and len(argv) >= 2:
+        try:
+            return cmd_serve(argv[1], argv[2:])
+        except Refused as exc:
+            print(f"lb-sandbox _serve refused: {exc}", file=sys.stderr)
+            return EXIT_REFUSED
+    if argv[:1] == ["_aux"] and len(argv) == 2:
+        try:
+            return cmd_aux(argv[1])
+        except Refused as exc:
+            print(f"lb-sandbox _aux refused: {exc}", file=sys.stderr)
+            return EXIT_REFUSED
+    args = build_parser().parse_args(argv)
+    if not in_live_venv() and not os.environ.get("LB_SANDBOX_NO_REEXEC"):
+        python = LIVE_VENV / "bin" / "python"
+        if python.exists():
+            # status, scan and stop decrypt the sandbox store; the agent-lb venv has the crypto they need.
+            os.execv(str(python), [str(python), str(Path(__file__).resolve()), *argv])
+    try:
+        return COMMANDS[args.command](args)
+    except Refused as exc:
+        return emit({"refused": str(exc)}, EXIT_REFUSED)
+    except Unhealthy as exc:
+        return emit({"error": str(exc)}, EXIT_UNHEALTHY)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
