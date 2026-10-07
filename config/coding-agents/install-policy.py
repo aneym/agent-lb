@@ -184,6 +184,18 @@ MANAGED_AGENTS = (
         "agent-lb:workflow-seat-guard:v1\n",
         Path("hooks/workflow-seat-guard.py"),
     ),
+    (
+        Path(".claude/hooks/hook-dispatch.py"),
+        Path(".agent-lb/managed/coding-agents/hook-dispatch"),
+        "agent-lb:hook-dispatch:v1\n",
+        Path("hooks/hook-dispatch.py"),
+    ),
+    (
+        Path(".claude/hooks/hook-dispatch-parity.py"),
+        Path(".agent-lb/managed/coding-agents/hook-dispatch-parity"),
+        "agent-lb:hook-dispatch-parity:v1\n",
+        Path("hooks/hook-dispatch-parity.py"),
+    ),
 )
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
@@ -216,6 +228,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--print", action="store_true", dest="preview")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument(
+        "--hook-dispatcher", choices=("on", "off"),
+        help="on: fold the PreToolUse, PostToolUse, UserPromptSubmit and Stop hooks into hooks/hook-dispatch.py "
+        "after the parity fixture passes against this home's guards; off: restore the per-hook config verbatim. "
+        "Absent: keep the current state (a folded config stays folded, over the guards it was checked on).",
+    )
     return parser.parse_args()
 
 
@@ -319,6 +337,310 @@ def is_seat_guard_hook(command: Any) -> bool:
 
 def is_workflow_seat_guard_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/workflow-seat-guard.py" in command
+
+
+# ---------------------------------------------------------------------------------------------------- hook dispatcher
+# studio-load-fix U1 (2026-10-07): every Bash call ran 15 PreToolUse hooks and 1 PostToolUse hook, each its own
+# process tree. `--hook-dispatcher on` folds the hook groups of these events into one settings entry per matcher,
+# `python3 "$HOME/.claude/hooks/hook-dispatch.py" <Event> '<matcher>'`, which runs that matcher's hooks from
+# hooks/dispatch/registry.json. The registry keeps the per-hook config verbatim, so `--hook-dispatcher off`
+# restores it exactly. Absent the flag the state is sticky: a folded config is refolded over only the groups the
+# parity fixture passed on; a group added or changed since stays a per-hook entry until the next `on`.
+DISPATCH_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
+DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
+DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
+DISPATCH_PARITY = Path(".claude/hooks/dispatch/parity-last.json")
+# Python guards reviewed for in-process runs (hook-dispatch.py still refuses any whose source has a hazard). The
+# seat guards (money path), load-governor and herdr-lane-autoclose (fork), alex-said and every node or shell hook
+# run as their own process, as before.
+DISPATCH_INPROC = (
+    "rm-dynamic-deny", "desktop-guard", "stash-guard", "herdr-shell-host-guard.py", "rm-cd-rewrite.py",
+    "no-direct-merge.py", "box-offload-hook", "lane-bulletin-hook", "repeat-read-warn.py", "aside-regular-tabs.py",
+    "workflow-relay-guard.py", "routing-pulse.py", "herdr-tab-autoname.py", "idle-agents.py",
+)
+# Matchers whose hooks the parity fixture cannot run safely (AskUserQuestion files a real ask) stay per-hook.
+DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
+DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}
+SIMPLE_MATCHER = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
+DEFAULT_HOOK_TIMEOUT = 600
+
+
+def is_dispatch_hook(hook: Any) -> bool:
+    return isinstance(hook, dict) and isinstance(hook.get("command"), str) and DISPATCH_SCRIPT in hook["command"]
+
+
+def matcher_key(group: dict[str, Any]) -> str | None:
+    """'*' for a match-all group, the matcher for a plain `A|B` one, None for a regex Claude Code matches itself."""
+    matcher = group.get("matcher")
+    if matcher in (None, "", "*"):
+        return "*"
+    if isinstance(matcher, str) and SIMPLE_MATCHER.fullmatch(matcher):
+        return matcher
+    return None
+
+
+def keys_overlap(first: str, second: str) -> bool:
+    return first == "*" or second == "*" or bool(set(first.split("|")) & set(second.split("|")))
+
+
+def foldable_groups(groups: list[Any], event: str) -> list[bool]:
+    """Which groups of one event may fold: plain matcher, plain command hooks, no command shared by overlapping keys."""
+    ok = []
+    for group in groups:
+        key = matcher_key(group) if isinstance(group, dict) else None
+        hooks = group.get("hooks") if isinstance(group, dict) else None
+        good = (
+            key is not None and key not in DISPATCH_SKIP_MATCHERS and isinstance(hooks, list) and bool(hooks)
+            and set(group) <= {"matcher", "hooks"}
+            and all(
+                isinstance(hook, dict) and hook.get("type") == "command" and set(hook) <= DISPATCH_HOOK_KEYS
+                and isinstance(hook.get("command"), str) and hook["command"].strip() and not is_dispatch_hook(hook)
+                and (hook.get("timeout") is None or (isinstance(hook["timeout"], (int, float))
+                                                     and not isinstance(hook["timeout"], bool) and hook["timeout"] > 0))
+                and (hook.get("statusMessage") is None or isinstance(hook["statusMessage"], str))
+                for hook in hooks
+            )
+        )
+        ok.append(good)
+    # Claude Code runs a command once per tool call even when two matched groups list it; across two dispatcher
+    # entries it would run twice, so a command under two overlapping keys keeps both groups per-hook.
+    keys_of: dict[str, set[str]] = {}
+    for group, good in zip(groups, ok):
+        if good:
+            for hook in group["hooks"]:
+                keys_of.setdefault(hook["command"], set()).add(matcher_key(group))
+    shared = {
+        command for command, keys in keys_of.items()
+        if any(a != b and keys_overlap(a, b) for a in keys for b in keys)
+    }
+    return [good and not any(hook["command"] in shared for hook in group["hooks"]) for group, good in zip(groups, ok)]
+
+
+def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]]) -> dict[str, Any]:
+    timeout = sum(hook.get("timeout") or DEFAULT_HOOK_TIMEOUT for hook in hooks) + 5
+    entry: dict[str, Any] = {
+        "type": "command",
+        "command": f'python3 "$HOME/.claude/{DISPATCH_SCRIPT}" {event} \'{key}\'',
+        "timeout": int(timeout) if float(timeout).is_integer() else timeout,
+    }
+    messages = list(dict.fromkeys(hook["statusMessage"] for hook in hooks if hook.get("statusMessage")))
+    if messages:
+        entry["statusMessage"] = ", ".join(messages)
+    group: dict[str, Any] = {"hooks": [entry]}
+    if matcher_field is not None or key != "*":
+        group = {"matcher": key if key != "*" else matcher_field, "hooks": [entry]}
+    return group
+
+
+def fold_hooks(
+    hooks: dict[str, Any], only: dict[str, list[Any]] | None = None, worth: Any = None
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Fold per-hook groups into dispatcher entries. `only` limits folding to these groups (sticky refold);
+    `worth(hooks)` says whether one matcher's hooks gain from the dispatcher (a lone external hook does not).
+
+    Returns (folded hooks, registry) or (hooks, None) when nothing folds."""
+    folded = json.loads(json.dumps(hooks))
+    per_hook: dict[str, list[Any]] = {}
+    entries: dict[str, dict[str, list[Any]]] = {}
+    dispatch: dict[str, list[Any]] = {}
+    for event in DISPATCH_EVENTS:
+        groups = hooks.get(event)
+        if not isinstance(groups, list) or not groups:
+            continue
+        eligible = foldable_groups(groups, event)
+        if only is not None:
+            allowed = only.get(event, [])
+            eligible = [good and group in allowed for group, good in zip(groups, eligible)]
+        if worth is not None:
+            by_key: dict[str, list[Any]] = {}
+            for group, good in zip(groups, eligible):
+                if good:
+                    by_key.setdefault(matcher_key(group), []).extend(group["hooks"])
+            unworthy = {key for key, key_hooks in by_key.items() if not worth(key_hooks)}
+            eligible = [good and matcher_key(group) not in unworthy for group, good in zip(groups, eligible)]
+        if not any(eligible):
+            continue
+        out: list[Any] = []
+        placed: dict[str, dict[str, Any]] = {}
+        event_entries: dict[str, list[Any]] = {}
+        for group, good in zip(groups, eligible):
+            if not good:
+                out.append(json.loads(json.dumps(group)))
+                continue
+            key = matcher_key(group)
+            event_entries.setdefault(key, [])
+            for hook in group["hooks"]:
+                if all(hook["command"] != seen["command"] for seen in event_entries[key]):
+                    event_entries[key].append(json.loads(json.dumps(hook)))
+            if key not in placed:
+                placed[key] = {"matcher_field": group.get("matcher"), "index": len(out)}
+                out.append(None)
+        for key, spot in placed.items():
+            out[spot["index"]] = dispatch_group(event, key, spot["matcher_field"], event_entries[key])
+        per_hook[event] = json.loads(json.dumps(groups))
+        entries[event] = event_entries
+        dispatch[event] = out
+        folded[event] = out
+    if not entries:
+        return folded, None
+    registry = {
+        "schema": 1,
+        "about": "hook-dispatch.py registry, written by agent-lb install-policy.py --hook-dispatcher on; "
+        "per_hook is the config it replaced (restore: install-policy.py --hook-dispatcher off)",
+        "per_hook": per_hook,
+        "dispatch": dispatch,
+        "entries": entries,
+        "inproc": list(DISPATCH_INPROC),
+    }
+    return folded, registry
+
+
+def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict[str, Any]:
+    """The per-hook config behind a folded one: verbatim when nothing else changed it since the fold."""
+    unfolded = json.loads(json.dumps(hooks))
+    for event in DISPATCH_EVENTS:
+        groups = hooks.get(event)
+        if not isinstance(groups, list) or not any(
+            isinstance(group, dict) and any(is_dispatch_hook(hook) for hook in group.get("hooks") or [])
+            for group in groups
+        ):
+            continue
+        if registry is None:
+            raise ValueError(f"{event} hooks run through hook-dispatch.py but its registry is unreadable")
+        if registry.get("dispatch", {}).get(event) == groups:
+            unfolded[event] = json.loads(json.dumps(registry["per_hook"][event]))
+            continue
+        # Something edited the folded list since the fold. Keep the original order: each folded group returns at its
+        # old place while its dispatcher entry is still there; a group left per-hook stays while it is still there;
+        # groups added since follow, in their order.
+        per_hook = registry.get("per_hook", {}).get(event, [])
+        left = registry.get("dispatch", {}).get(event, [])
+        plain = [group for group in groups
+                 if not (isinstance(group, dict) and any(is_dispatch_hook(hook) for hook in group.get("hooks") or []))]
+        keys = set()
+        for group in groups:
+            if group in plain:
+                continue
+            if len(group["hooks"]) != 1:
+                raise ValueError(f"a {event} group mixes the dispatcher with other hooks; fix it by hand")
+            match = re.search(r"hook-dispatch\.py\"?\s+(\w+)\s+'([^']*)'", group["hooks"][0]["command"])
+            if not match or match.group(1) != event or match.group(2) not in registry.get("entries", {}).get(event, {}):
+                raise ValueError(f"{event} dispatcher entry {group['hooks'][0]['command']!r} is not in the registry")
+            keys.add(match.group(2))
+        out: list[Any] = []
+        for group in per_hook:
+            if group in left:
+                if group in plain:
+                    plain.remove(group)
+                    out.append(group)
+            elif matcher_key(group) in keys:
+                out.append(group)
+        out.extend(plain)
+        unfolded[event] = out
+    return unfolded
+
+
+def read_registry(home: Path) -> dict[str, Any] | None:
+    for path in (home / DISPATCH_REGISTRY, (home / DISPATCH_REGISTRY).with_name("registry.json.bak")):
+        try:
+            registry = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(registry, dict) and isinstance(registry.get("per_hook"), dict) and isinstance(
+            registry.get("entries"), dict
+        ):
+            return registry
+    return None
+
+
+def is_folded(settings: dict[str, Any]) -> bool:
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    return any(
+        is_dispatch_hook(hook)
+        for event in DISPATCH_EVENTS for group in hooks.get(event) or [] if isinstance(group, dict)
+        for hook in group.get("hooks") or []
+    )
+
+
+def dispatch_worth(source: Path, home: Path) -> Any:
+    """A matcher gains from the dispatcher when it has two or more hooks, or one the dispatcher runs without a
+    process of its own (in-process, prefiltered or exec'd); a lone hook that would spawn anyway stays per-hook."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("hook_dispatch", source / DISPATCH_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"error: cannot load {source / DISPATCH_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def worth(hooks: list[dict[str, Any]]) -> bool:
+        if len({hook["command"] for hook in hooks}) > 1:
+            return True
+        saved = dict(os.environ)
+        # Plan as a hook would run: this home, a UTF-8 locale (Claude Code sessions have one).
+        os.environ.pop("LC_ALL", None)
+        os.environ.pop("LC_CTYPE", None)
+        os.environ.update(HOME=str(home), LANG="en_US.UTF-8")
+        try:
+            plan = module.plan_hook(hooks[0], dict.fromkeys(DISPATCH_INPROC))
+        except Exception:
+            return False
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        return plan.kind != "external"
+
+    return worth
+
+
+SCRIPT_WORD = re.compile(r'\s*(?:(?:/usr/bin/)?python3\s+)?("[^"]+"|[^\s"\'|;&<>]+)')
+
+
+def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, Any]:
+    """Pin the dispatcher and each in-process guard to the bytes the parity fixture checks."""
+    pins: dict[str, str] = {}
+    for event_entries in registry["entries"].values():
+        for hooks in event_entries.values():
+            for hook in hooks:
+                match = SCRIPT_WORD.match(hook["command"])
+                if not match:
+                    continue
+                word = match.group(1).strip('"')
+                if word.startswith("$HOME/"):
+                    word = str(home) + word[len("$HOME"):]
+                elif word.startswith("~/"):
+                    word = str(home) + word[1:]
+                path = Path(os.path.realpath(word))
+                if path.name in DISPATCH_INPROC and path.is_file():
+                    pins[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    pinned = dict(registry)
+    pinned["inproc_sha"] = dict(sorted(pins.items()))
+    pinned["dispatcher_sha256"] = hashlib.sha256((source / DISPATCH_SCRIPT).read_bytes()).hexdigest()
+    return pinned
+
+
+def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool, str]:
+    """Run the parity fixture on this registry against home's own guards; the report lands beside the registry.
+
+    Parity is the gate. The process count is measured and reported, not required: a group left per-hook (added since
+    the last `on`) costs its own process and must not undo the fold of the rest."""
+    report = home / DISPATCH_PARITY
+    report.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="hook-dispatch-stage-") as stage:
+        staged = Path(stage) / "registry.json"
+        staged.write_text(json.dumps(registry, indent=2) + "\n")
+        try:
+            result = subprocess.run(
+                [sys.executable, str(source / "hooks" / "hook-dispatch-parity.py"), "--home", str(home),
+                 "--registry", str(staged), "--dispatcher", str(source / DISPATCH_SCRIPT), "--out", str(report)],
+                capture_output=True, text=True, timeout=1800, check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"parity fixture did not run: {exc.__class__.__name__}"
+    summary = (result.stdout.strip().splitlines() or [""])[-1]
+    if result.returncode != 0:
+        return False, f"{summary or result.stderr.strip()[-400:]} (exit {result.returncode}; report {report})"
+    return True, f"{summary} (report {report})"
 
 
 def resolve_sonnet(source: Path, home: Path) -> str:
@@ -499,6 +821,19 @@ def main() -> int:
         raise SystemExit(f"error: invalid JSON in {settings_path}: {exc}") from exc
     if not isinstance(settings, dict):
         raise SystemExit(f"error: expected a JSON object in {settings_path}")
+    # Every policy change below applies to the per-hook view; the dispatcher fold, if any, is redone after it.
+    disk_settings = settings
+    registry_path = args.home / DISPATCH_REGISTRY
+    folded_now = is_folded(settings)
+    old_registry = read_registry(args.home) if folded_now else None
+    if folded_now:
+        try:
+            settings = {**settings, "hooks": unfold_hooks(settings["hooks"], old_registry)}
+        except ValueError as exc:
+            raise SystemExit(
+                f"error: {exc}. The dispatcher refuses PreToolUse calls until this is fixed: restore {registry_path} "
+                "from the newest checkpoint under ~/.agent-lb/config-checkpoints/coding-agents/"
+            ) from exc
 
     try:
         desired_docs = {
@@ -514,6 +849,43 @@ def main() -> int:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else resolve_sonnet(source, args.home)
     desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model)
+    mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
+    new_registry: dict[str, Any] | None = None
+    if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
+        only = None
+        if mode == "sticky" and old_registry is not None:
+            # Refold only what the fixture passed on; added or edited groups stay per-hook until the next `on`.
+            only = {
+                event: [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]
+                for event, groups in old_registry["per_hook"].items()
+            }
+        folded_hooks, candidate = fold_hooks(desired_settings["hooks"], only, dispatch_worth(source, args.home))
+        if candidate is not None:
+            candidate = pin_inproc(candidate, args.home, source)
+            if mode == "sticky" and old_registry is not None:
+                candidate["parity"] = old_registry.get("parity")
+            unchanged = mode == "sticky" and old_registry is not None and all(
+                candidate.get(field) == old_registry.get(field) for field in ("inproc_sha", "dispatcher_sha256")
+            )
+            if args.preview:
+                print(f"would fold hooks into the dispatcher ({'refold' if unchanged else 'after the parity fixture'})")
+                new_registry = candidate
+            elif unchanged:
+                new_registry = candidate
+            else:
+                ok, summary = run_parity(source, args.home, candidate)
+                if ok:
+                    candidate["parity"] = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                           "summary": summary}
+                    new_registry = candidate
+                    print(f"hook dispatcher parity passed: {summary}")
+                elif mode == "on":
+                    raise SystemExit(f"error: hook dispatcher not installed; parity fixture failed: {summary}")
+                else:
+                    print(f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
+                          f"({summary}); restoring the per-hook config")
+            if new_registry is not None:
+                desired_settings = {**desired_settings, "hooks": folded_hooks}
     desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
@@ -542,8 +914,18 @@ def main() -> int:
         if desired_models != models_text:
             changes[models_path] = desired_models
     # Compare parsed settings so a formatting-only difference never rewrites the file.
-    if desired_settings != settings:
+    if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
+    backup_path = registry_path.with_name("registry.json.bak")
+    if new_registry is not None:
+        registry_text = json.dumps(new_registry, indent=2, ensure_ascii=False) + "\n"
+        for path in (backup_path, registry_path):
+            if read_text(path) != registry_text:
+                changes[path] = registry_text
+    else:
+        for path in (registry_path, backup_path):
+            if path.exists():
+                changes[path] = None
     if not args.uninstall:
         codex_config = args.home / ".codex" / "config.toml"
         if codex_config.is_file():
@@ -696,7 +1078,17 @@ def main() -> int:
         shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
         print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
     print(f"checkpoint {checkpoint}")
-    for path, content in changes.items():
+    # Order: the dispatcher and its registry land before settings point at them; removals come after settings
+    # stop pointing at them. A crash between steps leaves a working config either way.
+    dispatch_files = {args.home / DISPATCH_REGISTRY, backup_path, args.home / ".claude" / DISPATCH_SCRIPT}
+
+    def write_order(item: tuple[Path, str | None]) -> int:
+        path, content = item
+        if content is None:
+            return 2
+        return 0 if path in dispatch_files else 1
+
+    for path, content in sorted(changes.items(), key=write_order):
         if content is None:
             path.unlink()
             print(f"removed {path}")
