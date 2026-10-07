@@ -10,9 +10,9 @@ gets ports, account ids, 12-character hashes and counts, never a token.
     lb-sandbox start --run-id R --from-live [--port P] [--min-accounts N] [--transport http] [--json]
     lb-sandbox status --run-id R [--json]
     lb-sandbox client-env --run-id R --vendor claude|codex [--json]
-    lb-sandbox fault --run-id R --edge anthropic|openai (--arm account_429|cut_after_bytes:N | --clear) [--json]
+    lb-sandbox fault --run-id R --edge anthropic|openai (--arm account_429|cut_after_bytes:N|hold_stream:S | --clear)
     lb-sandbox restart --run-id R --reason TEXT [--json]
-    lb-sandbox scan --run-id R [--newer-than FILE] [--exclude PATH ...] PATH... [--json]
+    lb-sandbox scan --run-id R [--newer-than FILE] [--exclude PATH ...] [--processes] [PATH...] [--json]
     lb-sandbox stop --run-id R [--logs-to DIR] [--json]
     lb-sandbox gc [--older-than 3600] [--json]
 
@@ -20,8 +20,10 @@ Layout: root ~/.agent-lb/sandboxes/R/ holds a copy of the installed runtime
 (app, config, scripts; the venv is a symlink), its own SQLite store and key,
 logs and state. Two launchd jobs run it:
 - com.agent-lb.drill.sbx-R: `lb-sandbox _serve <root>`, which reads the live
-  federation token from the live plist into its own environment and execs the
-  app. The token is never in the sandbox plist, a file, argv or a log.
+  federation token from the live plist, writes it into a pipe and execs
+  `lb-sandbox _boot`, which reads it from the inherited pipe fd, loads the app
+  settings with it and starts the app in the same process. The token is never
+  in an exec environment (`ps eww`), the sandbox plist, a file, argv or a log.
 - com.agent-lb.drill.sbx-R-aux: `lb-sandbox _aux <root>`: the peer gate (forwards
   only GET /api/federation/mirror and /status to the live LB, answers 403 to
   everything else), two edge proxies to the real providers that log only a hash
@@ -29,6 +31,11 @@ logs and state. Two launchd jobs run it:
 
 Every listener binds 127.0.0.1; ports come from 2470-2599 and are never 1455,
 2455, 2457 or 2459. The sandbox can read the live pool and never write to it.
+
+Custody parity with the live service (same UID): the root is mode 0700 under
+~/.agent-lb/sandboxes (0700), the key file is created 0600 with O_EXCL and
+unlinked at stop, and no token, store or key reaches --out or --logs-to: the
+scans look for the raw tokens, the key and every stored ciphertext.
 
 Exit codes: 0 ok, 1 assertion false (scan found something, stop not clean),
 2 refused (guard), 3 unhealthy (boot, mirror or restart failed).
@@ -83,6 +90,16 @@ GATE_ALLOWED = frozenset({("GET", "/api/federation/mirror"), ("GET", "/api/feder
 VENDOR_OF_PROVIDER = {"anthropic": "anthropic", "openai": "openai"}
 USABLE_EXPIRY_S = 1800
 DRAIN_S = 120
+HOLD_MAX_S = 120
+# The files that legitimately hold the sandbox's custody material (ciphertexts and their key).
+CUSTODY_FILES = (
+    "data/store.db",
+    "data/store.db-wal",
+    "data/store.db-shm",
+    "data/store.db-journal",
+    "data/encryption.key",
+)
+ENV_MARKER = "LB_SANDBOX_ROOT="  # in every sandbox process's exec env: proves ps showed the env at all
 
 EXIT_OK, EXIT_ASSERT, EXIT_REFUSED, EXIT_UNHEALTHY = 0, 1, 2, 3
 
@@ -352,7 +369,7 @@ def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False
     try:
         rows = con.execute(
             "SELECT id, provider, status, access_expires_at, access_token_encrypted, id_token_encrypted,"
-            " reset_at, blocked_at FROM accounts"
+            " reset_at, blocked_at, refresh_token_encrypted FROM accounts"
         ).fetchall()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc):
@@ -378,7 +395,7 @@ def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False
                 raise
             return ""  # status reports a row this key cannot open without a hash
 
-    for account_id, provider, status, expires_at, access_enc, id_enc, reset_at, blocked_at in rows:
+    for account_id, provider, status, expires_at, access_enc, id_enc, reset_at, blocked_at, refresh_enc in rows:
         token = decrypt(access_enc)
         expires_in = None
         if expires_at:
@@ -401,12 +418,36 @@ def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False
             "usable": status == "active" and expires_in is not None and expires_in > USABLE_EXPIRY_S,
         }
         if with_tokens:
-            entry["_secrets"] = [secret for secret in (token, decrypt(id_enc)) if secret]
+            entry["_secrets"] = [secret for secret in (token, decrypt(id_enc), decrypt(refresh_enc)) if secret]
+            # The stored ciphertexts too: a copy of the store (or a page of it) in an output dir is a leak.
+            entry["_ciphertexts"] = [
+                bytes(blob).decode("ascii", "replace") for blob in (access_enc, id_enc, refresh_enc) if blob
+            ]
         accounts.append(entry)
     return sorted(accounts, key=lambda a: (a["vendor"], a["id"]))
 
 
+def read_key(root: Path) -> str | None:
+    """The sandbox store key, read without following a link (None when the store was never keyed)."""
+    try:
+        fd = os.open(root / "data" / "encryption.key", os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read().strip().decode("ascii", "replace") or None
+
+
+def create_key(path: Path) -> None:
+    """A fresh store key, 0600, created exclusively: never reuses or follows a file someone placed there."""
+    from cryptography.fernet import Fernet
+
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(Fernet.generate_key())
+
+
 def load_secrets(root: Path | None) -> list[str]:
+    """What no scanned file may hold: the live token, mirrored tokens, the store key and stored ciphertexts."""
     secrets = []
     token = live_federation_token()
     if not token:
@@ -415,7 +456,16 @@ def load_secrets(root: Path | None) -> list[str]:
     if root is not None and root.is_dir():
         for account in read_accounts(root, with_tokens=True, strict=True):
             secrets.extend(s for s in account.pop("_secrets") if s)
+            secrets.extend(s for s in account.pop("_ciphertexts") if s)
+        key = read_key(root)
+        if key:
+            secrets.append(key)
     return secrets
+
+
+def custody_paths(root: Path) -> list[Path]:
+    """The exact files allowed to hold custody material; a copy anywhere else (a hard link included) is a hit."""
+    return [root / rel for rel in CUSTODY_FILES]
 
 
 def secret_patterns(secret: str) -> list[bytes]:
@@ -433,13 +483,22 @@ def secret_patterns(secret: str) -> list[bytes]:
     return sorted(p for p in patterns if p)
 
 
-def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path], unreadable: list[str]):
+def iter_files(
+    paths: list[Path],
+    newer_than: float | None,
+    exclude: list[Path],
+    unreadable: list[str],
+    skip_exact: list[Path] | None = None,
+):
     """Regular files under paths (symlinks never followed), modified after newer_than, outside exclude.
+
+    skip_exact names single files to pass over, by exact path only: a hard link elsewhere is still read.
 
     A directory or file that exists but cannot be read is appended to unreadable; one that vanished
     while the walk ran is not (it holds nothing any more).
     """
     excluded = {os.path.realpath(e) for e in exclude}
+    skipped = {os.path.join(os.path.realpath(p.parent), p.name) for p in (skip_exact or [])}
 
     def is_excluded(path: str) -> bool:
         return any(path == e or path.startswith(e + os.sep) for e in excluded)
@@ -477,6 +536,8 @@ def iter_files(paths: list[Path], newer_than: float | None, exclude: list[Path],
                         if entry.is_dir(follow_symlinks=False):
                             if not is_excluded(entry.path):
                                 stack.append(entry.path)
+                        elif entry.path in skipped:
+                            continue
                         elif entry.is_file(follow_symlinks=False) and (
                             newer_than is None or entry.stat(follow_symlinks=False).st_mtime > newer_than
                         ):
@@ -503,7 +564,11 @@ def scan_file(path: Path, patterns: list[bytes], chunk: int = 4 << 20) -> bool:
 
 
 def scan_paths(
-    paths: list[Path], secrets: list[str], newer_than: float | None = None, exclude: list[Path] | None = None
+    paths: list[Path],
+    secrets: list[str],
+    newer_than: float | None = None,
+    exclude: list[Path] | None = None,
+    skip_exact: list[Path] | None = None,
 ) -> dict:
     """complete is False when no secret was loaded or anything that exists could not be read."""
     patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
@@ -512,7 +577,7 @@ def scan_paths(
     files: list[str] = []
     total = 0
     if patterns:
-        for path in iter_files(paths, newer_than, exclude or [], unreadable):
+        for path in iter_files(paths, newer_than, exclude or [], unreadable, skip_exact):
             try:
                 found = scan_file(path, patterns)
                 total += path.stat().st_size
@@ -534,6 +599,45 @@ def scan_paths(
         "hits": hits,
         "secrets_loaded": len(secrets),
         "_files": files,
+    }
+
+
+def scan_processes(root: Path, run_id: str, secrets: list[str]) -> dict:
+    """Search the exec environment and argv (`ps -E`, as `ps eww` shows them) of every process of this run.
+
+    Returns pids and counts only. visible_pids lists the processes whose environment ps actually showed
+    (each sandbox process carries LB_SANDBOX_ROOT), so a scan that saw no environment cannot read clean.
+    """
+    patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
+    rows = processes()
+    lineage = own_lineage(rows)
+    pids = sorted(
+        pid for pid, _, cmd in rows if (names_root(cmd, root) or names_run(cmd, run_id)) and pid not in lineage
+    )
+    hits, visible, unreadable, scanned = [], [], [], []
+    for pid in pids:
+        proc = subprocess.run(
+            ["/bin/ps", "-E", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, timeout=30, check=False
+        )
+        text = proc.stdout
+        if not text.strip():
+            if pid_alive(pid):
+                unreadable.append(pid)
+            continue
+        scanned.append(pid)
+        if ENV_MARKER.encode() + str(root).encode() in text:
+            visible.append(pid)
+        if any(p in text for p in patterns):
+            hits.append(pid)
+    return {
+        "found": bool(hits),
+        "complete": bool(patterns) and not unreadable and bool(scanned),
+        "processes_scanned": len(scanned),
+        "pids": scanned,
+        "visible_pids": visible,
+        "unreadable_pids": unreadable,
+        "hits": hits,
+        "secrets_loaded": len(secrets),
     }
 
 
@@ -583,13 +687,17 @@ def export_logs(logs: Path, dest: Path, scanned_files: list[str]) -> int:
                     child = os.open(part, flags, dir_fd=parent_fd)
                     os.close(parent_fd)
                     parent_fd = child
-                # Existing files may be hard links to live files: never truncate.
-                target_fd = os.open(rel.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                                    0o600, dir_fd=parent_fd)
-                with os.fdopen(target_fd, "wb") as out, os.fdopen(
-                    os.open(name, os.O_RDONLY | os.O_NOFOLLOW), "rb"
-                ) as src:
-                    shutil.copyfileobj(src, out)
+                with os.fdopen(os.open(name, os.O_RDONLY | os.O_NOFOLLOW), "rb") as src:
+                    info = os.fstat(src.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        # A hard link in logs/ may be the store or its key: never copy it out.
+                        raise OSError(f"log {rel} is not a single-link regular file")
+                    # Existing files may be hard links to live files: never truncate.
+                    target_fd = os.open(
+                        rel.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd
+                    )
+                    with os.fdopen(target_fd, "wb") as out:
+                        shutil.copyfileobj(src, out)
                 copied += 1
             finally:
                 os.close(parent_fd)
@@ -798,15 +906,20 @@ def cmd_start(args) -> int:
         signal.signal(sig, interrupted)
     created = False
     try:
-        SANDBOXES.mkdir(parents=True, exist_ok=True)
+        SANDBOXES.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if SANDBOXES.is_symlink() or not SANDBOXES.is_dir():
+            raise Refused(f"{SANDBOXES} is not a real directory")
+        os.chmod(SANDBOXES, 0o700)  # agent-lb's own directory; no other user may list sandbox roots
         try:
             root.mkdir(mode=0o700)
         except FileExistsError:
             # A concurrent start with the same run id won the race; its root is not ours to tear down.
             raise Refused(f"sandbox root {root} already exists") from None
         created = True
+        os.chmod(root, 0o700)  # mkdir's mode is masked by umask; set it exactly
         for sub in ("data", "home", "logs", "state", "bin", "clients"):
             (root / sub).mkdir(mode=0o700)
+        create_key(root / "data" / "encryption.key")
         meta = {
             "run_id": run_id,
             "label": label,
@@ -900,8 +1013,11 @@ def cmd_start(args) -> int:
 # ---------------------------------------------------------------- _serve and _aux (run by launchd)
 
 
-def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[str, str]]:
-    """Validate a _serve invocation and build (executable, argv, env) for the app. Reads the token; writes nothing."""
+def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[str, str], str]:
+    """Validate a _serve invocation; build (executable, argv, env) for the boot and return the token apart.
+
+    The env and argv never carry the token: _serve hands it over through a pipe (cmd_serve). Writes nothing.
+    """
     root = check_root(root)
     meta = read_json(root / "sandbox.json")
     if not meta:
@@ -919,8 +1035,13 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
         raise Refused("sandbox metadata must contain exactly the six listener ports")
     check_ports(list(meta["ports"].values()))
     # Refuse redirected stores before reading any credential or starting SQLite.
-    for relative in ("data", "data/store.db", "data/encryption.key", "data/federation-push.json",
-                     "data/conversation-archive"):
+    for relative in (
+        "data",
+        "data/store.db",
+        "data/encryption.key",
+        "data/federation-push.json",
+        "data/conversation-archive",
+    ):
         path = root / relative
         if path.is_symlink() or not path.resolve().is_relative_to(root):
             raise Refused(f"sandbox data path {relative} is redirected outside the root")
@@ -937,18 +1058,103 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
     token = live_federation_token()
     if not token:
         raise Unhealthy("live plist has no federation token")
-    env[TOKEN_ENV] = token
     python = str(root / "runtime" / ".venv" / "bin" / "python")
-    args = [python, "-m", "app.cli", "--host", "127.0.0.1", "--port", str(opts.port)]
-    return python, args, env
+    # --port last and literal: lb-restart recognises its standby by "--port <standby>" in the command line.
+    args = [
+        python,
+        str(root / "bin" / "lb-sandbox"),
+        "_boot",
+        str(root),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(opts.port),
+    ]
+    return python, args, env, token
+
+
+def token_pipe(token: str) -> int:
+    """A pipe holding the token and closed for writing; returns the inheritable read end."""
+    read_fd, write_fd = os.pipe()
+    try:
+        data = token.encode()
+        while data:  # a token is far under the pipe buffer, so this never blocks
+            data = data[os.write(write_fd, data) :]
+    finally:
+        os.close(write_fd)
+    os.set_inheritable(read_fd, True)
+    return read_fd
 
 
 def cmd_serve(root: str, argv: list[str]) -> int:
     root_path = check_root(Path(root))
-    python, args, env = serve_exec_args(root_path, argv)
+    python, args, env, token = serve_exec_args(root_path, argv)
+    read_fd = token_pipe(token)
+    del token
     os.chdir(root_path / "runtime")
-    os.execve(python, args, env)
+    os.execve(python, [*args[:4], "--token-fd", str(read_fd), *args[4:]], env)
     return EXIT_UNHEALTHY  # not reached
+
+
+def read_token_fd(fd: int) -> str:
+    """Read the token from the inherited pipe and close it. Refuses anything but a pipe."""
+    try:
+        if not stat.S_ISFIFO(os.fstat(fd).st_mode):
+            raise Refused(f"--token-fd {fd} is not a pipe")
+        chunks = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    token = b"".join(chunks).decode().strip()
+    if not token:
+        raise Unhealthy("the token pipe was empty")
+    return token
+
+
+def boot_app(root: Path, argv: list[str]) -> None:
+    """_boot: take the token from the pipe, load the app settings with it, drop it from the env, run the app.
+
+    The token is set in os.environ only after exec, so `ps eww` (the exec-time environment) never shows it,
+    and it is removed again once the settings hold it, so no child the app spawns inherits it. Same process,
+    no second exec.
+    """
+    # _serve confined the root and its data paths before it read the token; _boot runs only the copy of
+    # lb-sandbox inside that root, so the sandboxes directory is the one this file sits in.
+    here = Path(__file__).resolve()
+    if here != (Path(root) / "bin" / "lb-sandbox").resolve():
+        raise Refused("_boot runs only the lb-sandbox copy inside its own root")
+    root = check_root(root, sandboxes=here.parent.parent.parent)
+    parser = argparse.ArgumentParser(prog="lb-sandbox _boot")
+    parser.add_argument("--token-fd", type=int, required=True)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, required=True)
+    opts = parser.parse_args(argv)
+    if TOKEN_ENV in os.environ:
+        raise Refused("the federation token is in the exec environment; refusing to start")
+    if os.environ.get("LB_SANDBOX_ROOT") != str(root):
+        raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
+    meta = read_json(root / "sandbox.json")
+    if opts.host != "127.0.0.1" or opts.port not in {meta.get("ports", {}).get(k) for k in ("primary", "standby")}:
+        raise Refused("_boot serves only this sandbox's primary or standby port on 127.0.0.1")
+    check_ports([opts.port])
+    token = read_token_fd(opts.token_fd)
+    if str(root / "runtime") not in sys.path:
+        sys.path.insert(0, str(root / "runtime"))
+    os.environ["PORT"] = str(opts.port)  # what app.cli sets before its settings load; their defaults read it
+    os.environ[TOKEN_ENV] = token
+    try:
+        from app.core.config.settings import get_settings
+
+        loaded = get_settings().federation_token == token  # cached for the life of the process
+    finally:
+        os.environ.pop(TOKEN_ENV, None)
+        del token
+    if not loaded:
+        raise Unhealthy("the app settings did not take the federation token")
+    from app.cli import main as run_app
+
+    run_app(["--host", opts.host, "--port", str(opts.port)])
 
 
 def rate_limit_response(edge: str) -> tuple[int, dict[str, str], bytes]:
@@ -1042,6 +1248,101 @@ class FaultState:
         self.consumed = True
         return self.n
 
+    def take_hold(self) -> tuple[int, object] | None:
+        """hold_stream:S: the next streamed request gets a held stream; returns (bound, the arming nonce)."""
+        if self.fault != "hold_stream" or self.consumed or not isinstance(self.n, int):
+            return None
+        self.consumed = True
+        return min(self.n, HOLD_MAX_S), self.nonce
+
+    def released(self, nonce: object) -> bool:
+        """True once the fault that armed a hold was cleared or replaced (a new nonce)."""
+        self.refresh()
+        return self.nonce != nonce
+
+
+def sse(event: str, data: dict) -> bytes:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
+
+
+async def serve_held_stream(request, fault: FaultState, bound: int, nonce, model: str) -> tuple[object, dict]:
+    """A provider-shaped Anthropic stream served by the edge itself (no upstream call, no spend).
+
+    It sends the opening events and a first delta, then holds the response open until the fault that armed
+    it is cleared (the check's "cutover done" signal) or the bound passes, then finishes the message.
+    Returns the response and the log fields: released_by "clear" or "timeout", held_s.
+    """
+    import asyncio
+
+    from aiohttp import web
+
+    response = web.StreamResponse(
+        status=200,
+        headers={
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+            "request-id": f"req_lbsandbox_{uuid.uuid4().hex[:16]}",
+        },
+    )
+    await response.prepare(request)
+    message = {
+        "id": f"msg_lbsandbox_{uuid.uuid4().hex[:16]}",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+    sent = 0
+    for chunk in (
+        sse("message_start", {"type": "message_start", "message": message}),
+        sse(
+            "content_block_start",
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        ),
+        sse(
+            "content_block_delta",
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "1, 2, 3"}},
+        ),
+    ):
+        await response.write(chunk)
+        sent += len(chunk)
+    started = time.monotonic()
+    released_by, last_ping = "timeout", started
+    while time.monotonic() - started < bound:
+        if fault.released(nonce):
+            released_by = "clear"
+            break
+        if time.monotonic() - last_ping >= 2:
+            ping = sse("ping", {"type": "ping"})
+            await response.write(ping)
+            sent += len(ping)
+            last_ping = time.monotonic()
+        await asyncio.sleep(0.1)
+    held = round(time.monotonic() - started, 1)
+    for chunk in (
+        sse(
+            "content_block_delta",
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": ", 4, 5"}},
+        ),
+        sse("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        sse(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": {"output_tokens": 5},
+            },
+        ),
+        sse("message_stop", {"type": "message_stop"}),
+    ):
+        await response.write(chunk)
+        sent += len(chunk)
+    await response.write_eof()
+    return response, {"status": 200, "bytes": sent, "released_by": released_by, "held_s": held}
+
 
 def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters: dict, log):
     """The edge proxy for one vendor: forwards to base, applies the armed fault, logs one entry per request.
@@ -1066,6 +1367,32 @@ def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters
             status, headers, payload = rate_limit_response(edge)
             log({**record, "status": status, "bytes": len(payload), "fault": "account_429"})
             return web.Response(status=status, body=payload, headers=headers)
+        armed_hold = fault.fault == "hold_stream" and not fault.consumed  # parse the body only when armed
+        if armed_hold and edge == "anthropic" and request.method == "POST" and request.path == "/v1/messages":
+            try:
+                parsed = json.loads(body or b"{}")
+            except ValueError:
+                parsed = {}
+            hold = fault.take_hold() if isinstance(parsed, dict) and parsed.get("stream") is True else None
+            if hold is not None:
+                counters["faults_applied"][edge] += 1
+                try:
+                    response, fields = await serve_held_stream(
+                        request, fault, hold[0], hold[1], str(parsed.get("model", ""))
+                    )
+                except (ConnectionResetError, asyncio.CancelledError):
+                    log(
+                        {
+                            **record,
+                            "status": 200,
+                            "fault": "hold_stream",
+                            "downstream_closed": True,
+                            "ms": int((time.monotonic() - started) * 1000),
+                        }
+                    )
+                    raise
+                log({**record, **fields, "fault": "hold_stream", "ms": int((time.monotonic() - started) * 1000)})
+                return response
         headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
         applied, status, sent, error, downstream_closed = None, 0, 0, None, False
         response: web.StreamResponse | None = None
@@ -1332,6 +1659,8 @@ def cmd_status(args) -> int:
         "in_flight_primary": in_flight,
         "preferred_port": read_json(root / "state" / "front.json").get("preferred"),
         "primary_pid": launchd_pid(meta["label"]),
+        "aux_pid": aux.get("pid"),
+        "front_pid": aux.get("front_pid"),
         "accounts": accounts,
         "accounts_per_vendor": usable_counts(read_accounts(root)),
         "gate": aux.get("gate", {"forwarded": [], "refused": 0}),
@@ -1384,7 +1713,10 @@ def parse_fault(spec: str) -> tuple[str, int | None]:
     match = re.fullmatch(r"cut_after_bytes:([0-9]{1,9})", spec)
     if match:
         return "cut_after_bytes", int(match.group(1))
-    raise Refused(f"unknown fault {spec!r}; use account_429 or cut_after_bytes:N")
+    match = re.fullmatch(r"hold_stream:([0-9]{1,3})", spec)
+    if match and 1 <= int(match.group(1)) <= HOLD_MAX_S:
+        return "hold_stream", int(match.group(1))
+    raise Refused(f"unknown fault {spec!r}; use account_429, cut_after_bytes:N or hold_stream:S (S 1-{HOLD_MAX_S})")
 
 
 def cmd_fault(args) -> int:
@@ -1394,6 +1726,8 @@ def cmd_fault(args) -> int:
         write_json(path, {"armed": False, "nonce": uuid.uuid4().hex, "at": now_iso()})
         return emit({"armed": False, "edge": args.edge, "fault": None}, EXIT_OK)
     fault, n = parse_fault(args.arm)
+    if fault == "hold_stream" and args.edge != "anthropic":
+        raise Refused("hold_stream is served by the anthropic edge only")
     write_json(path, {"armed": True, "fault": fault, "n": n, "nonce": uuid.uuid4().hex, "at": now_iso()})
     return emit({"armed": True, "edge": args.edge, "fault": args.arm}, EXIT_OK)
 
@@ -1431,14 +1765,28 @@ def cmd_restart(args) -> int:
 
 def cmd_scan(args) -> int:
     root = root_for(args.run_id)
+    if not args.paths and not args.processes:
+        raise Refused("scan needs paths, --processes or both")
+    secrets = load_secrets(root if root.is_dir() else None)
     newer = Path(args.newer_than).stat().st_mtime if args.newer_than else None
-    result = scan_paths(
-        [Path(p) for p in args.paths],
-        load_secrets(root if root.is_dir() else None),
-        newer_than=newer,
-        exclude=[Path(p) for p in args.exclude],
+    result = (
+        scan_paths(
+            [Path(p) for p in args.paths],
+            secrets,
+            newer_than=newer,
+            exclude=[Path(p) for p in args.exclude],
+            skip_exact=custody_paths(root),  # the store and its key, at their own paths only
+        )
+        if args.paths
+        else {"found": False, "complete": True, "files_scanned": 0, "hits": []}
     )
     result.pop("_files", None)
+    if args.processes:
+        procs = scan_processes(root, args.run_id, secrets)
+        result["processes"] = procs
+        result["found"] = result["found"] or procs["found"]
+        result["complete"] = result["complete"] and procs["complete"]
+    result["secrets_loaded"] = len(secrets)
     result["run_id"] = args.run_id
     return emit(result, EXIT_OK if result["complete"] and not result["found"] else EXIT_ASSERT)
 
@@ -1499,29 +1847,43 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
         if names_root(cmd, root) and pid not in lineage:
             stop_pid(pid, bound=5)
     logs = {"copied": False}
-    if (root / "logs").is_dir():
-        scanned = scan_paths([root / "logs"], secrets)
+    if root.is_dir():
+        # The whole root, not just logs/: a token in state/, home/ or a copied store is a leak too.
+        scanned = scan_paths([root], secrets, skip_exact=custody_paths(root))
         logs["scan_found"] = scanned["found"]
         logs["scan_complete"] = scanned["complete"]
         logs["files_scanned"] = scanned["files_scanned"]
-        if logs_to is not None:
+        logs["scan_scope"] = "root"
+        logs["hits"] = [os.path.relpath(hit, root.resolve()) for hit in scanned["hits"]]
+        if logs_to is not None and (root / "logs").is_dir():
             if scanned["found"] is False and scanned["complete"] and not load_error:
+                log_files = [f for f in scanned["_files"] if Path(f).is_relative_to((root / "logs").resolve())]
                 try:  # the copy is best effort; teardown below always runs
-                    logs["files_copied"] = export_logs(root / "logs", logs_to, scanned["_files"])
+                    logs["files_copied"] = export_logs(root / "logs", logs_to, log_files)
                     logs["copied"] = True
                     logs["to"] = str(logs_to)
                 except OSError as exc:
                     logs["copy_error"] = exc.__class__.__name__
             else:
                 logs["refused"] = (
-                    "token found in sandbox logs"
+                    "token, key or ciphertext found in the sandbox root"
                     if scanned["found"]
-                    else "secrets could not all be loaded or a log could not be read"
+                    else "secrets could not all be loaded or a file could not be read"
                 )
     if load_error:
         logs["secret_load_error"] = load_error
+    custody = {"key_unlinked": None}
     if root.exists():
         check_root(root)
+        key = root / "data" / "encryption.key"
+        try:
+            key.unlink()
+            custody["key_unlinked"] = True
+        except FileNotFoundError:
+            custody["key_unlinked"] = "absent"
+        except OSError as exc:
+            custody["key_unlinked"] = False
+            custody["key_error"] = exc.__class__.__name__
         shutil.rmtree(root)
     time.sleep(0.5)
     rows = processes()
@@ -1538,6 +1900,7 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
         "root_exists": root.exists(),
         "bootout": booted,
         "logs": logs,
+        "custody": custody,
     }
     result["clean"] = not (
         result["labels_loaded"] or result["listeners"] or result["processes"] or result["root_exists"]
@@ -1553,8 +1916,13 @@ def cmd_stop(args) -> int:
     result = teardown(run_id, Path(args.logs_to) if args.logs_to else None)
     result["run_id"] = run_id
     safe_logs = result.get("logs", {})
-    safe = (safe_logs.get("scan_found") is False and safe_logs.get("scan_complete") is True
-            and not safe_logs.get("secret_load_error") and not safe_logs.get("copy_error"))
+    safe = (
+        safe_logs.get("scan_found") is False
+        and safe_logs.get("scan_complete") is True
+        and not safe_logs.get("secret_load_error")
+        and not safe_logs.get("copy_error")
+        and result.get("custody", {}).get("key_unlinked") is not False
+    )
     return emit(result, EXIT_OK if result["clean"] and safe else EXIT_ASSERT)
 
 
@@ -1612,7 +1980,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run-id", required=True)
     p.add_argument("--newer-than", help="only files modified after this file")
     p.add_argument("--exclude", action="append", default=[], help="skip this path (repeatable)")
-    p.add_argument("paths", nargs="+")
+    p.add_argument("--processes", action="store_true", help="also scan the exec env of every process of the run")
+    p.add_argument("paths", nargs="*")
     p = command("stop", "tear the sandbox down and verify")
     p.add_argument("--run-id", required=True)
     p.add_argument("--logs-to")
@@ -1646,6 +2015,13 @@ def main(argv: list[str]) -> int:
             return cmd_serve(argv[1], argv[2:])
         except Refused as exc:
             print(f"lb-sandbox _serve refused: {exc}", file=sys.stderr)
+            return EXIT_REFUSED
+    if argv[:1] == ["_boot"] and len(argv) >= 2:
+        try:
+            boot_app(Path(argv[1]), argv[2:])
+            return EXIT_OK
+        except Refused as exc:
+            print(f"lb-sandbox _boot refused: {exc}", file=sys.stderr)
             return EXIT_REFUSED
     if argv[:1] == ["_aux"] and len(argv) == 2:
         try:

@@ -5,13 +5,19 @@
 
 Runs the installed lb-sandbox end to end: start a sandbox that mirrors the live
 pool, send one tiny Anthropic and one tiny Codex turn straight to its front,
-inject an account 429 on each edge, restart it blue/green with a stream in
-flight, scan for leaked tokens, stop it, and prove the live agent-lb kept the
+inject an account 429 on each edge, restart it blue/green while the edge holds
+a stream open across the cutover, scan files and every sandbox process's exec
+environment for leaked tokens, stop it, and prove the live agent-lb kept the
 same pids and preferred port. This script never reads a credential: every
 token stays inside lb-sandbox. Every lb-sandbox stdout and stderr is saved in
 DIR; the verdict is DIR/result.json (schema 1, build/CONTRACT.md).
 
-Spend: five real turns, each under 50 output tokens; no paid credits.
+It authorizes agent-lb restarts, so any doubt is a fail: zero streams in flight
+at cutover, a hold released by its timeout, an incomplete scan or a hit in a
+teardown scan each fail the run.
+
+Spend: four real turns, each under 50 output tokens (the held stream is served
+by the sandbox edge, no provider call); no paid credits.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -35,6 +42,8 @@ LIVE_LABEL = "com.aneyman.agent-lb"
 LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
 LIVE_FRONT_STATE = HOME / ".agent-lb" / "state" / "front.json"
 GATE_ALLOWED = {("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")}
+HOLD_S = 30  # the edge holds the restart stream at most this long; the check releases it right after cutover
+CUTOVER_RE = re.compile(r"front -> :(\d+); primary pid (\d+) had (-?\d+|None) in flight")
 RESTART_MARKS = {
     "standby_boot": "standby healthy on",
     "front_switch": "front -> :",
@@ -53,6 +62,7 @@ class Check:
         self.out = out
         self.lb_sandbox = lb_sandbox
         self.n = 0
+        self.lock = threading.Lock()
         self.steps: list[dict] = []
         self.unverified = [
             "Other hosts: Studio only; boxes use their own follower agent-lb.",
@@ -67,9 +77,10 @@ class Check:
         return ok
 
     def sb(self, name: str, *args: str, timeout: float = 600) -> tuple[int, dict, Path]:
-        """Run the installed lb-sandbox; stdout and stderr go to files in --out."""
-        self.n += 1
-        stem = self.out / f"{self.n:02d}-{name}"
+        """Run the installed lb-sandbox; stdout and stderr go to files in --out. Safe to call from two threads."""
+        with self.lock:
+            self.n += 1
+            stem = self.out / f"{self.n:02d}-{name}"
         argv = [str(self.lb_sandbox), *args, "--json"]
         with open(f"{stem}.out", "w") as so, open(f"{stem}.err", "w") as se:
             try:
@@ -307,6 +318,129 @@ def in_flight(port: int) -> int:
         return -1
 
 
+# ---------------------------------------------------------------- verdicts
+# Each returns the reasons a step does not count; empty means pass. Any missing or unexpected value is a
+# reason: this check authorizes agent-lb restarts, so doubt never passes.
+
+
+def parse_cutover(log_text: str) -> dict | None:
+    """The cutover line lb-restart prints when it moves the front to the standby."""
+    match = CUTOVER_RE.search(log_text)
+    if not match:
+        return None
+    flight = match.group(3)
+    return {
+        "standby_port": int(match.group(1)),
+        "old_pid": int(match.group(2)),
+        "in_flight": int(flight) if flight.lstrip("-").isdigit() else None,
+    }
+
+
+def restart_problems(
+    cutover: dict | None,
+    hold: dict | None,
+    released_after_cutover: bool,
+    rc: int | None,
+    restart: dict,
+    marks: dict,
+    switched: bool,
+    stream: dict,
+    stream_done: bool,
+) -> list[str]:
+    problems = []
+    if not cutover:
+        problems.append("no cutover line in the lb-restart log")
+    elif not isinstance(cutover.get("in_flight"), int) or cutover["in_flight"] < 1:
+        problems.append(f"{cutover.get('in_flight')} in flight on the primary at cutover (need >= 1)")
+    if not hold:
+        problems.append("the edge served no held stream")
+    elif hold.get("released_by") != "clear":
+        problems.append(f"the held stream ended by {hold.get('released_by')}, not by the check's release")
+    if not released_after_cutover:
+        problems.append("the check did not release the hold after the cutover")
+    if rc != 0 or restart.get("lb_restart_exit") != 0:
+        problems.append(f"lb-sandbox restart exit {rc}, lb-restart exit {restart.get('lb_restart_exit')}")
+    missing = sorted(name for name, seen in marks.items() if not seen)
+    if not marks or missing:
+        problems.append(f"lb-restart log lacks {missing or 'every mark'}")
+    if not switched:
+        problems.append("the front did not switch to the standby and back")
+    if not stream_done:
+        problems.append("the held stream was still open after the restart")
+    if stream.get("status") != 200 or stream.get("complete") is not True:
+        problems.append(f"stream status {stream.get('status')} complete {stream.get('complete')}")
+    return problems
+
+
+def scan_problems(name: str, rc: int | None, scan: dict, min_secrets: int = 2) -> list[str]:
+    """A file or process scan counts only when it ran, loaded the secrets, read everything and found nothing."""
+    problems = []
+    if rc != 0:
+        problems.append(f"{name}: exit {rc}")
+    if scan.get("found") is not False:
+        problems.append(f"{name}: found {scan.get('found')} hits {scan.get('hits')}")
+    if scan.get("complete") is not True:
+        problems.append(f"{name}: incomplete ({scan.get('unreadable')} unreadable)")
+    if not isinstance(scan.get("secrets_loaded"), int) or scan["secrets_loaded"] < min_secrets:
+        problems.append(f"{name}: {scan.get('secrets_loaded')} secrets loaded (need >= {min_secrets})")
+    return problems
+
+
+def process_scan_problems(rc: int | None, scan: dict, must_see: dict[str, int | None]) -> list[str]:
+    """Every named sandbox process must have had its exec environment read (visible) and hold no secret."""
+    procs = scan.get("processes") or {}
+    problems = scan_problems("process scan", rc, scan)
+    if procs.get("found") is not False or procs.get("complete") is not True:
+        problems.append(f"process scan: found {procs.get('found')} complete {procs.get('complete')}")
+    visible = set(procs.get("visible_pids") or [])
+    for role, pid in must_see.items():
+        if not isinstance(pid, int) or pid not in visible:
+            problems.append(f"process scan did not read the environment of the {role} (pid {pid})")
+    return problems
+
+
+def stop_problems(rc: int | None, stop: dict, leftover: list[str], labels: str, run_id: str) -> list[str]:
+    logs = stop.get("logs") or {}
+    custody = stop.get("custody") or {}
+    problems = []
+    if rc != 0 or stop.get("clean") is not True:
+        problems.append(f"stop exit {rc} clean {stop.get('clean')}")
+    if leftover:
+        problems.append(f"processes naming the run remain: {leftover}")
+    if f"sbx-{run_id}" in labels:
+        problems.append("a run label is still loaded")
+    if logs.get("scan_scope") != "root":
+        problems.append(f"teardown scanned {logs.get('scan_scope')}, not the whole sandbox root")
+    if logs.get("scan_found") is not False or logs.get("scan_complete") is not True:
+        problems.append(f"teardown scan found {logs.get('scan_found')} complete {logs.get('scan_complete')}")
+    if logs.get("secret_load_error") or logs.get("copy_error") or logs.get("copied") is not True:
+        problems.append(f"log export: {logs}")
+    if custody.get("key_unlinked") is not True:
+        problems.append(f"store key unlinked: {custody.get('key_unlinked')}")
+    return problems
+
+
+def custody_problems(sandboxes: Path, root: Path) -> list[str]:
+    """Custody parity with live: 0700 directories, a 0600 single-link key. stat only; nothing is read."""
+    problems = []
+    for path, want in ((sandboxes, 0o700), (root, 0o700)):
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            problems.append(f"{path}: {exc.__class__.__name__}")
+            continue
+        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != want:
+            problems.append(f"{path} mode {oct(stat.S_IMODE(info.st_mode))} (want {oct(want)}, a real directory)")
+    key = root / "data" / "encryption.key"
+    try:
+        info = key.lstat()
+    except OSError as exc:
+        return [*problems, f"key: {exc.__class__.__name__}"]
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+        problems.append(f"key mode {oct(stat.S_IMODE(info.st_mode))} links {info.st_nlink} (want 0o600, 1)")
+    return problems
+
+
 def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in order
     out = c.out
     run_id = f"lbsbx-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dt%H%M%Sz')}-{os.getpid()}"
@@ -371,6 +505,28 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         [str(status_out), str(out / "sandbox-listeners.txt")],
     )
 
+    # 3b. custody parity: modes and the key file (stat only)
+    problems = custody_problems(root.parent, root)
+    c.step(
+        "custody-parity",
+        not problems,
+        f"sandboxes dir and root 0700, store key 0600 with one link: {problems or 'yes'}",
+        [str(status_out)],
+    )
+
+    # 3c. no token in the exec environment of any sandbox process (ps eww), matched inside lb-sandbox
+    rc_p, procs, procs_out = c.sb("scan-processes", "scan", "--run-id", run_id, "--processes")
+    must_see = {"primary": status.get("primary_pid"), "aux": status.get("aux_pid"), "front": status.get("front_pid")}
+    problems = process_scan_problems(rc_p, procs, must_see)
+    p = procs.get("processes") or {}
+    c.step(
+        "process-env-scan",
+        not problems,
+        f"ps eww of {p.get('processes_scanned')} run processes {p.get('pids')}: environments read "
+        f"{p.get('visible_pids')}, hits {p.get('hits')}; must read {must_see}: {problems or 'ok'}",
+        [str(procs_out)],
+    )
+
     # 4. one tiny turn per vendor, no client credential
     a = anthropic_turn(front, anthropic_model)
     x = codex_turn(front, codex_model)
@@ -424,30 +580,64 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
             [str(arm_out), str(out / f"turn-429-{edge}.json"), str(st_out), str(clr_out), str(edge_log)],
         )
 
-    # 6. blue/green restart with a stream in flight
+    # 6. blue/green restart while the edge holds a stream open across the cutover
+    rc_hold, _, hold_out = c.sb(
+        "fault-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--arm", f"hold_stream:{HOLD_S}"
+    )
+    skip = count_lines(edge_log)
+    restart_log = root / "logs" / "lb-restart.log"
+    log_start = restart_log.stat().st_size if restart_log.exists() else 0
     holder: dict = {}
-    thread = threading.Thread(target=lambda: holder.update(anthropic_turn(front, anthropic_model, stream=True)))
-    thread.start()
-    seen, deadline = -1, time.monotonic() + 30
-    while time.monotonic() < deadline and thread.is_alive():
+    stream_thread = threading.Thread(
+        target=lambda: holder.update(anthropic_turn(front, anthropic_model, stream=True)), daemon=True
+    )
+    stream_thread.start()
+    seen, deadline = -1, time.monotonic() + 20
+    while time.monotonic() < deadline and stream_thread.is_alive():
         seen = in_flight(primary)
         if seen >= 1:
             break
         time.sleep(0.05)
     rc_flight, flight, flight_out = c.sb("status-in-flight", "status", "--run-id", run_id)
-    rc_rs, restart, restart_out = c.sb(
-        "restart", "restart", "--run-id", run_id, "--reason", f"lb-sandbox-check {run_id}"
-    )
-    thread.join(timeout=150)
+    restarted: dict = {}
+
+    def do_restart() -> None:
+        rc, data, path = c.sb("restart", "restart", "--run-id", run_id, "--reason", f"lb-sandbox-check {run_id}")
+        restarted.update({"rc": rc, "data": data, "out": path})
+
+    restart_thread = threading.Thread(target=do_restart, daemon=True)
+    restart_thread.start()
+    cutover, deadline = None, time.monotonic() + HOLD_S
+    while cutover is None and time.monotonic() < deadline and restart_thread.is_alive():
+        try:
+            with restart_log.open("rb") as fh:
+                fh.seek(log_start)
+                cutover = parse_cutover(fh.read().decode(errors="replace"))
+        except OSError:
+            pass
+        if cutover is None:
+            time.sleep(0.1)
+    # While the old primary drains the held stream and the standby serves: every sandbox process, read again.
+    procs_mid, rc_pm, pm_out = {}, None, None
+    if cutover is not None:
+        rc_pm, procs_mid, pm_out = c.sb("scan-processes-at-cutover", "scan", "--run-id", run_id, "--processes")
+    # The cutover is done: release the held stream (always, so a failed run never leaves it hanging).
+    rc_rel, _, rel_out = c.sb("release-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--clear")
+    released_after_cutover = cutover is not None and rc_rel == 0
+    restart_thread.join(timeout=300)
+    stream_thread.join(timeout=60)
+    restart = restarted.get("data", {})
+    restart_out = restarted.get("out", out / "restart-missing")
     log_text = ""
     try:
-        log_text = Path(restart.get("log", "")).read_text()
+        with restart_log.open("rb") as fh:
+            fh.seek(log_start)
+            log_text = fh.read().decode(errors="replace")
     except OSError:
         pass
     (out / "lb-restart.log").write_text(log_text)
-    cutover = re.search(r"primary pid \d+ had (\d+) in flight", log_text)
-    active_at_cutover = int(cutover.group(1)) if cutover else None
     marks = {name: needle in log_text for name, needle in RESTART_MARKS.items()}
+    standby = re.search(r"standby healthy on :\d+ in [0-9.]+s \(pid (\d+)\)", log_text)
     front_log = ""
     try:
         front_log = (root / "logs" / "front.log").read_text()
@@ -456,31 +646,55 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     to_standby = front_log.rfind(f"preferred upstream now :{start['standby_port']}")
     switched = to_standby >= 0 and front_log.find(f"preferred upstream now :{primary}", to_standby) > to_standby
     (out / "front.log").write_text(front_log)
-    (out / "turn-restart.json").write_text(json.dumps({"stream": holder, "in_flight_seen": seen}, indent=1))
+    holds = [ln for ln in edge_lines(edge_log, skip) if ln.get("fault") == "hold_stream"]
+    hold = holds[0] if len(holds) == 1 else None
+    (out / "turn-restart.json").write_text(
+        json.dumps({"stream": holder, "in_flight_seen": seen, "cutover": cutover, "hold": holds}, indent=1)
+    )
+    problems = restart_problems(
+        cutover,
+        hold,
+        released_after_cutover and rc_hold == 0,
+        restarted.get("rc"),
+        restart,
+        marks,
+        switched,
+        holder,
+        not stream_thread.is_alive(),
+    )
     c.step(
         "restart-with-stream",
-        seen >= 1
-        and active_at_cutover is not None
-        and active_at_cutover >= 1
-        and not thread.is_alive()
-        and rc_rs == 0
-        and restart.get("lb_restart_exit") == 0
-        and all(marks.values())
-        and switched
-        and holder.get("status") == 200
-        and bool(holder.get("complete")),
-        f"active at cutover {active_at_cutover}; in_flight_primary {seen} "
-        f"(status call: {flight.get('in_flight_primary')}) before restart; lb-restart exit "
-        f"{restart.get('lb_restart_exit')} in {restart.get('seconds')} s; log marks {marks}; front switched to "
-        f":{start['standby_port']} and back to :{primary}: {switched}; stream {holder.get('status')} complete "
-        f"{holder.get('complete')} {holder.get('text', '')[:40]!r}",
+        not problems,
+        f"cutover {cutover}; in_flight_primary {seen} (status call: {flight.get('in_flight_primary')}) before "
+        f"restart; held stream {hold}; lb-restart exit {restart.get('lb_restart_exit')} in "
+        f"{restart.get('seconds')} s; log marks {marks}; front switched to :{start['standby_port']} and back to "
+        f":{primary}: {switched}; stream {holder.get('status')} complete {holder.get('complete')} "
+        f"{holder.get('text', '')[:40]!r}; problems {problems or 'none'}",
         [
+            str(hold_out),
             str(flight_out),
             str(restart_out),
+            str(rel_out),
             str(out / "lb-restart.log"),
             str(out / "front.log"),
             str(out / "turn-restart.json"),
+            str(edge_log),
         ],
+    )
+    must_see = {
+        "draining old primary": cutover.get("old_pid") if cutover else None,
+        "standby": int(standby.group(1)) if standby else None,
+        "aux": status.get("aux_pid"),
+        "front": status.get("front_pid"),
+    }
+    problems = process_scan_problems(rc_pm, procs_mid, must_see) if cutover else ["no cutover, no scan"]
+    p = procs_mid.get("processes") or {}
+    c.step(
+        "process-env-scan-at-cutover",
+        not problems,
+        f"ps eww of {p.get('processes_scanned')} run processes {p.get('pids')} during the drain: environments "
+        f"read {p.get('visible_pids')}, hits {p.get('hits')}; must read {must_see}: {problems or 'ok'}",
+        [str(pm_out)] if pm_out else [],
     )
 
     # gate: only the two read-only GETs were forwarded to live
@@ -494,7 +708,8 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         [str(gate_out)],
     )
 
-    # 7. scan for leaked tokens
+    # 7. scan for leaked tokens: the sandbox root itself (before teardown), --out, and shared trees
+    rc_s0, scan_root, s0_out = c.sb("scan-root", "scan", "--run-id", run_id, str(root))
     rc_s1, scan_out_dir, s1_out = c.sb("scan-out", "scan", "--run-id", run_id, str(out))
     tmpdir = os.environ.get("TMPDIR") or "/tmp"
     rc_s2, scan_new, s2_out = c.sb(
@@ -505,29 +720,31 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         "--newer-than",
         str(marker),
         "--exclude",
-        str(root),
+        str(root),  # scanned whole just above
         str(HOME / ".agent-rails"),
         str(HOME / "Library" / "LaunchAgents"),
         tmpdir,
         str(HOME / ".agent-lb"),
         timeout=1500,
     )
+    problems = (
+        scan_problems("sandbox root", rc_s0, scan_root)
+        + scan_problems("--out", rc_s1, scan_out_dir)
+        + scan_problems("shared trees", rc_s2, scan_new)
+    )
+    if not scan_root.get("files_scanned"):
+        problems.append("the sandbox root scan read no file")
     c.step(
         "scan",
-        rc_s1 == 0
-        and rc_s2 == 0
-        and scan_out_dir.get("found") is False
-        and scan_new.get("found") is False
-        and scan_out_dir.get("complete") is True
-        and scan_new.get("complete") is True
-        and scan_out_dir.get("secrets_loaded", 0) > 1,
-        f"--out: found {scan_out_dir.get('found')} in {scan_out_dir.get('files_scanned')} files; newer than marker "
-        f"under ~/.agent-rails, ~/Library/LaunchAgents, $TMPDIR, ~/.agent-lb (excluding the sandbox root): found "
-        f"{scan_new.get('found')} in {scan_new.get('files_scanned')} files; unreadable "
-        f"{scan_out_dir.get('unreadable')}+{scan_new.get('unreadable')} {scan_new.get('unreadable_paths', [])[:5]}; "
-        f"secrets held by lb-sandbox {scan_out_dir.get('secrets_loaded')}; "
-        f"hits {scan_out_dir.get('hits', []) + scan_new.get('hits', [])}",
-        [str(s1_out), str(s2_out)],
+        not problems,
+        f"sandbox root (store and key at their own paths excepted): found {scan_root.get('found')} in "
+        f"{scan_root.get('files_scanned')} files; --out: found {scan_out_dir.get('found')} in "
+        f"{scan_out_dir.get('files_scanned')} files; newer than marker under ~/.agent-rails, ~/Library/LaunchAgents, "
+        f"$TMPDIR, ~/.agent-lb: found {scan_new.get('found')} in {scan_new.get('files_scanned')} files; unreadable "
+        f"{scan_root.get('unreadable')}+{scan_out_dir.get('unreadable')}+{scan_new.get('unreadable')} "
+        f"{scan_new.get('unreadable_paths', [])[:5]}; secrets (tokens, key, ciphertexts) held by lb-sandbox "
+        f"{scan_out_dir.get('secrets_loaded')}; problems {problems or 'none'}",
+        [str(s0_out), str(s1_out), str(s2_out)],
     )
 
     # 8. stop
@@ -551,17 +768,14 @@ def stop_and_verify(c: Check, run_id: str) -> None:
     mine = {str(os.getpid())}
     leftover = [r.strip()[:160] for r in rows if run_id in r and r.split(None, 1)[0] not in mine]
     labels = sh("/bin/launchctl", "list")
+    problems = stop_problems(rc, stop, leftover, labels, run_id)
     c.step(
         "stop-clean",
-        rc == 0 and stop.get("clean") is True and not leftover and f"sbx-{run_id}" not in labels
-        and stop.get("logs", {}).get("scan_found") is False
-        and stop.get("logs", {}).get("scan_complete") is True
-        and stop.get("logs", {}).get("copied") is True
-        and not stop.get("logs", {}).get("secret_load_error")
-        and not stop.get("logs", {}).get("copy_error"),
+        not problems,
         f"stop exit {rc} clean {stop.get('clean')}: labels {stop.get('labels_loaded')}, listeners "
         f"{stop.get('listeners')}, processes {stop.get('processes')}, root exists {stop.get('root_exists')}; "
-        f"logs {stop.get('logs')}; independent ps leftovers {leftover}",
+        f"logs {stop.get('logs')}; custody {stop.get('custody')}; independent ps leftovers {leftover}; "
+        f"problems {problems or 'none'}",
         [str(stop_out), str(c.out / "logs")],
     )
 
@@ -609,8 +823,8 @@ def main() -> int:
             c.infra
             or (
                 "lb-sandbox mirrored the live pool, served both vendors, failed over an injected 429 on each edge, "
-                "restarted blue/green with a stream in flight, leaked no token and tore down clean; live agent-lb "
-                "untouched."
+                "restarted blue/green with a held stream in flight across the cutover, kept every token out of "
+                "files and process environments, and tore down clean; live agent-lb untouched."
                 if verdict == "pass"
                 else f"failed steps: {', '.join(failed)}"
             )

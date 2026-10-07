@@ -174,7 +174,7 @@ def test_scan_skips_excluded_symlinked_and_older_files(tmp_path: Path) -> None:
     assert sorted(unfiltered["hits"]) == sorted(str(p.resolve()) for p in (old, excluded / "copy"))
 
 
-def test_serve_puts_the_token_only_in_the_exec_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_serve_keeps_the_token_out_of_the_exec_env_and_argv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     lb = _load()
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
@@ -191,20 +191,149 @@ def test_serve_puts_the_token_only_in_the_exec_env(tmp_path: Path, monkeypatch: 
     assert reads_fake_plist, "the test must never read the live plist"
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
 
-    python, argv, env = lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])
+    result = lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])
+    python, argv, env = result[0], result[1], result[2]
 
     # Booleans only: a failing comparison must never print a token value.
-    token_in_env = env.get("AGENT_LB_FEDERATION_TOKEN") == FAKE_TOKEN
-    assert token_in_env, "the exec env does not carry the (fake) federation token"
-    assert "AGENT_LB_FEDERATION_TOKEN" not in os.environ
+    token_in_env = any(FAKE_TOKEN in f"{k}={v}" for k, v in env.items()) or "AGENT_LB_FEDERATION_TOKEN" in env
+    assert not token_in_env, "the token reached the exec environment (ps eww shows it)"
     token_in_argv = any(FAKE_TOKEN in arg for arg in [python, *argv])
     assert not token_in_argv, "the token reached argv"
-    assert argv[argv.index("--port") + 1] == "2482"
+    handed_over = len(result) == 4 and result[3] == FAKE_TOKEN
+    assert handed_over, "serve_exec_args must hand the token back for the pipe"
+    assert argv[-2:] == ["--port", "2482"]  # lb-restart finds its standby by "--port <standby>"
     assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
     written = [
         p for p in tmp_path.rglob("*") if p.is_file() and p != live_plist and FAKE_TOKEN.encode() in p.read_bytes()
     ]
     assert written == []
+
+
+FAKE_APP = {
+    "app/__init__.py": "",
+    "app/core/__init__.py": "",
+    "app/core/config/__init__.py": "",
+    "app/core/config/settings.py": (
+        "import os\n"
+        "class _S:\n"
+        "    def __init__(self):\n"
+        "        self.federation_token = os.environ.get('AGENT_LB_FEDERATION_TOKEN')\n"
+        "_cached = None\n"
+        "def get_settings():\n"
+        "    global _cached\n"
+        "    if _cached is None:\n"
+        "        _cached = _S()\n"
+        "    return _cached\n"
+    ),
+    # Stands in for app.cli: reports what it holds (booleans and a digest, never the value), then waits.
+    "app/cli.py": (
+        "import hashlib, json, os, sys, time\n"
+        "from pathlib import Path\n"
+        "def main(argv=None):\n"
+        "    root = Path(os.environ['LB_SANDBOX_ROOT'])\n"
+        "    try:\n"
+        "        from app.core.config.settings import get_settings\n"
+        "        held = get_settings().federation_token\n"
+        "    except Exception:\n"
+        "        held = None\n"
+        "    report = {'pid': os.getpid(), 'argv': list(argv if argv is not None else sys.argv[1:]),\n"
+        "              'token_in_environ': 'AGENT_LB_FEDERATION_TOKEN' in os.environ,\n"
+        "              'settings_sha': hashlib.sha256((held or '').encode()).hexdigest()}\n"
+        "    (root / 'boot-report.json').write_text(json.dumps(report))\n"
+        "    deadline = time.time() + 30\n"
+        "    while time.time() < deadline and not (root / 'stop').exists():\n"
+        "        time.sleep(0.05)\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    ),
+}
+
+
+def _fake_sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A sandbox root with the real lb-sandbox copy and a stand-in app; returns (sandboxes, root, live plist)."""
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    for sub in ("data", "bin", "runtime", "logs", "state", "home"):
+        (root / sub).mkdir(parents=True)
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS, "transport": "http"}))
+    (root / "bin" / "lb-sandbox").write_bytes(SCRIPT.read_bytes())
+    for rel, text in FAKE_APP.items():
+        (root / "runtime" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / "runtime" / rel).write_text(text)
+    (root / "runtime" / ".venv").symlink_to(Path(sys.prefix), target_is_directory=True)
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    return sandboxes, root.resolve(), live_plist
+
+
+def _ps_env(pid: int) -> bytes:
+    return subprocess.run(["/bin/ps", "-E", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True).stdout
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
+def test_serve_hands_the_token_over_a_pipe_never_through_ps_eww(tmp_path: Path) -> None:
+    """Integration: the real _serve execs the real _boot, which starts a stand-in app in the same process.
+
+    `ps eww` (here `ps -E`) of that process must show its environment (the control) and never the token;
+    the app's settings must hold it while os.environ, which children inherit, must not.
+    """
+    import hashlib
+    import time
+
+    sandboxes, root, live_plist = _fake_sandbox(tmp_path)
+    driver = (
+        "import importlib.machinery, importlib.util, sys\n"
+        "from pathlib import Path\n"
+        f"loader = importlib.machinery.SourceFileLoader('lbs', {str(SCRIPT)!r})\n"
+        "spec = importlib.util.spec_from_loader('lbs', loader)\n"
+        "m = importlib.util.module_from_spec(spec)\n"
+        "loader.exec_module(m)\n"
+        f"m.SANDBOXES = Path({str(sandboxes)!r})\n"
+        f"m.LIVE_PLIST = Path({str(live_plist)!r})\n"
+        f"sys.exit(m.cmd_serve({str(root)!r}, ['--host', '127.0.0.1', '--port', '2481']))\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_LB_FEDERATION_TOKEN"}
+    env["LB_SANDBOX_ROOT"] = str(root)
+    proc = subprocess.Popen([sys.executable, "-c", driver], env=env, stderr=subprocess.PIPE)
+    report_path = root / "boot-report.json"
+    try:
+        deadline = time.monotonic() + 30
+        while not report_path.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert report_path.exists(), f"the app never started: exit {proc.poll()}"
+        report = json.loads(report_path.read_text())
+        shown = _ps_env(report["pid"])
+        assert f"LB_SANDBOX_ROOT={root}".encode() in shown, "control: ps must show this process's environment"
+        leaked = FAKE_TOKEN.encode() in shown
+        assert not leaked, "ps eww of the app process shows the federation token"
+        procs = _load().scan_processes(root, "r1", [FAKE_TOKEN])
+    finally:
+        (root / "stop").touch()
+        proc.wait(30)
+    assert report["pid"] == proc.pid, "the app must run in the exec'd process itself, no second exec"
+    assert report["settings_sha"] == hashlib.sha256(FAKE_TOKEN.encode()).hexdigest()
+    assert report["token_in_environ"] is False, "children of the app would inherit the token"
+    assert report["argv"][-2:] == ["--port", "2481"]
+    assert (procs["found"], proc.pid in procs["visible_pids"], proc.pid in procs["pids"]) == (False, True, True)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
+def test_process_scan_finds_a_token_in_an_exec_environment(tmp_path: Path) -> None:
+    """The control for the scan above: a run process started with the token in its env is a hit."""
+    import time
+
+    lb = _load()
+    root = (tmp_path / "sandboxes" / "r1").resolve()
+    root.mkdir(parents=True)
+    env = {"PATH": "/usr/bin:/bin", "LB_SANDBOX_ROOT": str(root), "AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)", str(root)], env=env)
+    try:
+        time.sleep(0.5)
+        result = lb.scan_processes(root, "r1", [FAKE_TOKEN])
+    finally:
+        proc.kill()
+        proc.wait()
+    assert (result["found"], result["hits"], result["complete"]) == (True, [proc.pid], True)
 
 
 @pytest.mark.parametrize(
@@ -522,3 +651,173 @@ def test_log_export_never_truncates_redirected_destination(tmp_path, link):
     with pytest.raises(OSError):
         lb.export_logs(logs, dest, [str(logs / "primary.log")])
     assert target.read_text() == "live sentinel"
+
+
+MIRRORED_TOKEN = "lbsbx-unit-mirrored-access-not-a-credential-abcdefghijklmnopqrstuvwxyz0123"
+
+
+def _keyed_store(lb: ModuleType, root: Path) -> None:
+    """A sandbox store as the app writes it: one account, its access token encrypted with the root's key."""
+    import sqlite3
+
+    from cryptography.fernet import Fernet
+
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    key = Fernet.generate_key()
+    (root / "data" / "encryption.key").write_bytes(key)
+    (root / "data" / "encryption.key").chmod(0o600)
+    fernet = Fernet(key)
+    con = sqlite3.connect(root / "data" / "store.db")
+    con.execute(
+        "CREATE TABLE accounts (id TEXT, provider TEXT, status TEXT, access_expires_at TEXT,"
+        " access_token_encrypted BLOB, id_token_encrypted BLOB, reset_at REAL, blocked_at TEXT,"
+        " refresh_token_encrypted BLOB)"
+    )
+    con.execute(
+        "INSERT INTO accounts VALUES ('a1', 'anthropic', 'active', '2099-01-01T00:00:00', ?, NULL, NULL, NULL, ?)",
+        (fernet.encrypt(MIRRORED_TOKEN.encode()), fernet.encrypt(b"")),
+    )
+    con.commit()
+    con.close()
+
+
+def test_store_key_is_created_private_and_exclusive(tmp_path: Path) -> None:
+    lb = _load()
+    key = tmp_path / "encryption.key"
+    lb.create_key(key)
+    assert (oct(key.stat().st_mode & 0o777), key.stat().st_nlink, len(key.read_bytes())) == ("0o600", 1, 44)
+    with pytest.raises(FileExistsError):
+        lb.create_key(key)  # never reuses a key someone placed there
+    planted = tmp_path / "planted.key"
+    (tmp_path / "link.key").symlink_to(planted)
+    with pytest.raises(OSError):
+        lb.create_key(tmp_path / "link.key")
+    assert not planted.exists()
+
+
+@pytest.mark.parametrize("copied", ["data/store.db", "data/encryption.key"])
+def test_a_copy_of_the_store_or_its_key_outside_custody_is_a_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, copied: str
+) -> None:
+    """The store holds ciphertexts and the key opens them: either one in an output dir is a credential leak."""
+    import shutil as sh
+
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    _keyed_store(lb, root)
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    secrets = lb.load_secrets(root)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "result.json").write_text("{}")
+    sh.copy2(root / copied, out / Path(copied).name)
+    exported = lb.scan_paths([out], secrets)
+    assert (exported["found"], exported["hits"]) == (True, [str((out / Path(copied).name).resolve())])
+    # In place, at their own paths, they are custody, not a leak; a hard link elsewhere in the root is a leak.
+    in_place = lb.scan_paths([root], secrets, skip_exact=lb.custody_paths(root))
+    assert (in_place["found"], in_place["complete"]) == (False, True)
+    (root / "logs").mkdir()
+    os.link(root / copied, root / "logs" / "primary.log")
+    linked = lb.scan_paths([root], secrets, skip_exact=lb.custody_paths(root))
+    assert linked["hits"] == [str((root / "logs" / "primary.log").resolve())]
+    with pytest.raises(OSError):
+        lb.export_logs(root / "logs", tmp_path / "export", [str((root / "logs" / "primary.log").resolve())])
+
+
+def _teardown_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) -> Path:
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "lbsbx-unit-teardown"
+    _keyed_store(lb, root)
+    for sub in ("logs", "state", "home"):
+        (root / sub).mkdir()
+    (root / "logs" / "primary.log").write_text("INFO started\n")
+    # Ports nothing listens on; labels that are never loaded: teardown has no live job to stop.
+    (root / "sandbox.json").write_text(json.dumps({"run_id": root.name, "ports": {"front": 2597, "primary": 2598}}))
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes.resolve())
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    return root
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
+@pytest.mark.parametrize("planted", [None, "state/front.json", "home/.cache/blob", "logs/edge.jsonl"])
+def test_teardown_scans_the_whole_root_and_refuses_export_on_a_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, planted: str | None
+) -> None:
+    """Integration over real files, ps, lsof and launchctl (for labels that were never loaded)."""
+    lb = _load()
+    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    if planted:
+        (root / planted).parent.mkdir(parents=True, exist_ok=True)
+        (root / planted).write_text(f"x {MIRRORED_TOKEN} y")
+    export = tmp_path / "export"
+    result = lb.teardown(root.name, export)
+    logs = result["logs"]
+    if planted:
+        assert (logs.get("scan_found"), logs.get("copied")) == (True, False), "a planted token must be found"
+        assert logs.get("hits") == [planted]
+        assert not export.exists()
+    assert result["root_exists"] is False
+    assert (logs.get("scan_scope"), logs.get("scan_complete")) == ("root", True)
+    assert result.get("custody", {}).get("key_unlinked") is True
+    if not planted:
+        assert (logs["scan_found"], logs["copied"], logs["files_copied"]) == (False, True, 1)
+        assert sorted(p.name for p in export.iterdir()) == ["primary.log"]
+
+
+def _held_fetch(port: int) -> tuple[object, object]:
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+    body = json.dumps({"model": "claude-unit", "stream": True, "messages": []})
+    conn.request("POST", "/v1/messages", body=body, headers={"content-type": "application/json"})
+    return conn, conn.getresponse()
+
+
+@pytest.mark.parametrize("release", ["clear", "timeout"])
+def test_edge_holds_a_stream_open_until_released(tmp_path: Path, release: str) -> None:
+    """Integration over HTTP: the restart check's stream stays in flight until the check releases it.
+
+    A hold that ends by its bound is reported as "timeout", which the check counts as a failed restart proof.
+    """
+    import time
+
+    lb = _load()
+    fault_file = tmp_path / "fault-anthropic.json"
+    bound = 30 if release == "clear" else 1
+    fault_file.write_text(json.dumps({"nonce": "n1", "armed": True, "fault": "hold_stream", "n": bound}))
+    rig = _EdgeRig(lb, fault_file, b"upstream must not be called", break_after=None)
+    try:
+        conn, resp = _held_fetch(rig.edge_port)
+        opening = b""
+        while b"1, 2, 3" not in opening and (chunk := resp.read1(4096)):
+            opening += chunk
+        assert b"1, 2, 3" in opening, "the edge did not serve the held stream"
+        if release == "clear":
+            time.sleep(1.0)
+            still_open = not rig.entries  # the edge logs a request when it ends
+            fault_file.write_text(json.dumps({"nonce": "n2", "armed": False}))  # what `fault --clear` writes
+        rest = resp.read()
+        conn.close()
+        time.sleep(0.2)
+    finally:
+        rig.close()
+    if release == "clear":
+        assert still_open, "the stream ended before the release"
+    events = opening + rest
+    assert b"message_start" in events and b"message_stop" in events and b"4, 5" in events
+    assert b"upstream must not be called" not in events
+    [entry] = rig.entries
+    assert (entry["fault"], entry["status"], entry["released_by"]) == ("hold_stream", 200, release)
+    assert entry["held_s"] >= (1.0 if release == "clear" else 0.9)
+
+
+def test_hold_stream_fault_is_bounded() -> None:
+    lb = _load()
+    assert lb.parse_fault("hold_stream:30") == ("hold_stream", 30)
+    for spec in ("hold_stream:0", f"hold_stream:{lb.HOLD_MAX_S + 1}", "hold_stream:", "hold_stream:-1"):
+        with pytest.raises(lb.Refused):
+            lb.parse_fault(spec)

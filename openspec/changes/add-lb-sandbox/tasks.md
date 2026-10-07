@@ -14,3 +14,12 @@
 - [x] `tests/unit/test_lb_sandbox.py` and `tests/unit/test_lb_restart_sandbox.py` (guards, rebinding, scan finds a planted token raw and base64, `_serve` writes nothing).
 - [x] Ruff on the three scripts.
 - [x] `scripts/lb-sandbox-check --out <dir>` on Studio against the installed copy.
+
+## 4. Fix round (review FAIL on c957bb05e)
+
+- [x] Token handed to `_boot` over a pipe fd; never in an exec environment; `scan --processes` checks `ps eww` of every run process.
+- [x] Custody parity: 0700 directories, 0600 `O_EXCL` key unlinked at stop, key and ciphertexts scanned for, export refuses hard links.
+- [x] `hold_stream:S` edge fault; the check releases it after the cutover and fails on zero in flight or a timeout release.
+- [x] Teardown scans the whole root; `stop` and the check fail on a hit or an incomplete scan.
+- [x] Each review finding has a test that fails on c957bb05e.
+- [ ] Deferred: agent-lb store read guard / service identity (live and sandbox).

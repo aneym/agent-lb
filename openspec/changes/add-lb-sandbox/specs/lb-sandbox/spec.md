@@ -2,15 +2,27 @@
 
 ### Requirement: Sandbox credentials stay inside agent-lb processes
 
-`lb-sandbox` MUST read the live federation token only inside its own processes (`_serve` at exec time, `scan`, `stop`). The token MUST NOT appear in the sandbox plist, any file, any argv or any log. Command output MUST carry ports, account ids, 12-character Authorization hashes and counts, never a token.
+`lb-sandbox` MUST read the live federation token only inside its own processes (`_serve`, `scan`, `stop`). `_serve` MUST hand the token to `lb-sandbox _boot` through an inherited pipe fd, never through an exec environment: `_boot` reads it after exec, loads the app settings with it, removes it from `os.environ` and runs the app in the same process. The token MUST NOT appear in any exec environment (`ps eww`), the sandbox plist, any file, any argv or any log. Command output MUST carry ports, account ids, 12-character Authorization hashes, pids and counts, never a token.
 
 #### Scenario: Primary boot
 - **WHEN** launchd starts `lb-sandbox _serve <root>`
-- **THEN** the token is added to the exec environment only, and the sandbox root holds no file containing it
+- **THEN** `ps eww` of the app process shows its sandbox environment and no token, the app settings hold the token, and the sandbox root holds no file containing it
+
+#### Scenario: Process scan
+- **WHEN** a caller runs `lb-sandbox scan --run-id R --processes`
+- **THEN** the exec environment of every process naming the run is searched inside lb-sandbox, and the output lists the pids whose environment `ps` showed and the pids with a hit, never a value
 
 #### Scenario: Status
 - **WHEN** a caller runs `lb-sandbox status --run-id R`
 - **THEN** each account is reported by id, vendor, status, expiry and `auth_hash12`, never by token
+
+### Requirement: Sandbox custody does not widen exposure beyond the live service
+
+The sandbox runs at the live service's UID; an OS identity boundary for both is a separate change. Within that, the sandboxes directory and every root MUST be mode 0700, the store key MUST be created 0600 with `O_EXCL` and `O_NOFOLLOW` and unlinked at stop, and no token, store or key MUST reach `--out` or `--logs-to`. Every scan MUST look for the live token, every mirrored token, the store key and every stored ciphertext; only the store and key files at their own paths in `<root>/data` are exempt, so a copy or hard link anywhere else is a hit. Log export MUST refuse a file with more than one link.
+
+#### Scenario: Store copied into an output directory
+- **WHEN** a copy of `store.db` or `encryption.key` sits in a scanned directory
+- **THEN** the scan reports it as a hit
 
 ### Requirement: The sandbox can read the live pool and never write to it
 
@@ -38,16 +50,32 @@ The sandbox MUST reach the live service only through its peer gate, which forwar
 
 ### Requirement: Faults are injected at the sandbox edge only
 
-`lb-sandbox fault` MUST arm one fault per edge: `account_429` fails the first request after arming with a provider-shaped 429 and keeps failing that Authorization hash until cleared; `cut_after_bytes:N` closes the next streamed 200 response after N body bytes. The cooldown it causes MUST land in the sandbox store only.
+`lb-sandbox fault` MUST arm one fault per edge: `account_429` fails the first request after arming with a provider-shaped 429 and keeps failing that Authorization hash until cleared; `cut_after_bytes:N` closes the next streamed 200 response after N body bytes; `hold_stream:S` (anthropic edge, S 1-120) answers the next streamed `POST /v1/messages` itself, with no provider call, sends the opening events, holds the response open until the fault is cleared or S seconds pass, then finishes the message and logs `released_by` (`clear` or `timeout`). The cooldown a fault causes MUST land in the sandbox store only.
 
 #### Scenario: Account failover
 - **WHEN** `account_429` is armed on the anthropic edge and a client sends one request
 - **THEN** the edge log shows a 429 on hash H1 and a 200 on a different hash, and `status` shows the H1 account in cooldown
 
+#### Scenario: Restart under a held stream
+- **WHEN** `hold_stream:30` is armed, a client opens a stream, `lb-sandbox restart` reaches its cutover and the check then clears the fault
+- **THEN** the lb-restart log shows at least one request in flight on the old primary at cutover, the edge logs `released_by: clear`, and the stream completes with `message_stop`
+
 ### Requirement: Stop tears down to nothing and proves it
 
-`lb-sandbox stop` MUST boot out both labels, stop a leftover standby by its pidfile, stop every process whose command line names the sandbox root, copy the logs to `--logs-to` only after a clean token scan, delete the root and report `clean` only when no label is loaded, no listener holds a run port, no process names the run and the root is gone.
+`lb-sandbox stop` MUST boot out both labels, stop a leftover standby by its pidfile, stop every process whose command line names the sandbox root, scan the whole root (store and key at their own paths excepted) before deleting it, copy the logs to `--logs-to` only after that scan is complete and clean, unlink the store key, delete the root and report `clean` only when no label is loaded, no listener holds a run port, no process names the run and the root is gone. It MUST exit 1 when the scan found anything, could not read everything or could not load every secret, even when cleanup succeeded.
 
 #### Scenario: Clean stop
 - **WHEN** a started sandbox is stopped
-- **THEN** `clean` is true and `labels_loaded`, `listeners` and `processes` are empty
+- **THEN** `clean` is true, `labels_loaded`, `listeners` and `processes` are empty, `logs.scan_scope` is `root` and `custody.key_unlinked` is true
+
+#### Scenario: Token outside the logs
+- **WHEN** a mirrored token sits in `<root>/state/` at stop
+- **THEN** the teardown scan reports it, no log is exported and stop exits 1
+
+### Requirement: The live check fails on any doubt
+
+`scripts/lb-sandbox-check` authorizes agent-lb restarts. It MUST fail when the primary had zero (or an unknown number of) requests in flight at cutover, when the held stream ended by its timeout, when any file or process scan found a secret or was incomplete, when the sandbox root was not scanned before teardown, when teardown's scan found anything, or when the store key was not unlinked.
+
+#### Scenario: Stream finished before cutover
+- **WHEN** the lb-restart log shows `had 0 in flight` at cutover
+- **THEN** the restart step fails and the run result is `fail`

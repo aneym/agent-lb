@@ -111,10 +111,15 @@ def test_sandbox_guard_refuses(tmp_path: Path, overrides: dict) -> None:
 
 def test_sandbox_root_must_be_below_sandboxes(tmp_path: Path) -> None:
     lb = _load()
-    for root in (tmp_path / ".agent-lb" / "sandboxes", tmp_path / ".agent-lb" / "runtime",
-                 tmp_path / ".agent-lb" / "sandboxes" / "r1" / "nested"):
-        with pytest.raises(lb.SandboxRefused):
-            lb.sandbox_bindings(_config(tmp_path, root=str(root)), home=tmp_path)
+    for root in (
+        tmp_path / ".agent-lb" / "sandboxes",
+        tmp_path / ".agent-lb" / "runtime",
+        tmp_path / ".agent-lb" / "sandboxes" / "r1" / "nested",
+    ):
+        # Paths relative to the root, so only the root rule can refuse (not a path outside it).
+        inside = {"plist": "launchd/x.plist", "runtime": "runtime", "state_dir": "state"}
+        with pytest.raises(lb.SandboxRefused, match="not directly under|not under"):
+            lb.sandbox_bindings(_config(tmp_path, root=str(root), **inside), home=tmp_path)
     config = _config(tmp_path)
     del config["standby_port"]
     with pytest.raises(lb.SandboxRefused):
