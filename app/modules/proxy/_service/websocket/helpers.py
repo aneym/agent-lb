@@ -1479,6 +1479,22 @@ def _is_websocket_response_create(payload: dict[str, JsonValue]) -> bool:
     return isinstance(payload_type, str) and payload_type == "response.create"
 
 
+def _websocket_response_create_text_from_bytes(data: bytes) -> str | None:
+    """The UTF-8 text of a binary frame that carries a response.create, else None.
+
+    Such a frame must take the text path so it is prepared, reserved and refused like any other
+    response.create; forwarded as raw bytes it would reach upstream with no limit check.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    payload = _parse_websocket_payload(text)
+    if payload is None or not _is_websocket_response_create(payload):
+        return None
+    return text
+
+
 def _app_error_to_websocket_event(exc: AppError) -> dict[str, JsonValue]:
     return _wrapped_websocket_error_event(
         exc.status_code,

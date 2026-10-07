@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.anthropic.models import AnthropicUsage
 from app.core.anthropic.pricing import calculate_anthropic_cost_from_usage
+from app.core.anthropic.pricing import get_list_pricing_for_known_model as get_anthropic_list_pricing
 from app.core.anthropic.pricing import get_pricing_for_model as get_anthropic_pricing_for_model
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
@@ -780,7 +781,7 @@ class ApiKeysService:
                         continue
                     if (
                         limit.limit_type == LimitType.COST_USD
-                        and request_model
+                        and request_model is not None
                         and not _model_has_list_price(request_model)
                     ):
                         raise ApiKeyUnpricedModelError(
@@ -1686,7 +1687,8 @@ def _limit_identity_from_row(limit: ApiKeyLimit) -> tuple[str, str, str | None]:
 
 
 def _model_has_list_price(model: str) -> bool:
-    return get_pricing_for_model(model) is not None or get_anthropic_pricing_for_model(model) is not None
+    """Cost-cap guard: a blank name, or a Claude name the table does not list, has no list price."""
+    return get_pricing_for_model(model) is not None or get_anthropic_list_pricing(model) is not None
 
 
 def _calculate_cost_microdollars(

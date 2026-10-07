@@ -39,6 +39,9 @@ LIVE_PORTS = {1455, 2455, 2457, 2459}
 PRICED_MODEL = "claude-sonnet-4-5-20250929"
 PRICE_KEY = "claude-sonnet-4-5"
 UNPRICED_MODEL = "claude-unpriced-sandbox-0"
+# Names a wildcard alias once priced (claude-sonnet-4*, claude-opus-5*) and a blank model are
+# unpriced too: each must be refused under a cost cap before upstream (fix round, 2026-10-07).
+REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", ""]
 INPUT_TOKENS = 1_000
 CACHE_READ_TOKENS = 4_000
 OUTPUT_TOKENS = 500
@@ -522,26 +525,35 @@ def main() -> int:
         )
 
         _, unpriced_key = create_key("sandbox-cost-capped-unpriced", cap)
-        calls_before = len(fake.calls)
-        status, body = send_message(app_port, unpriced_key, UNPRICED_MODEL)
-        text = body.decode(errors="replace")
-        try:
-            error = json.loads(body).get("error", {})
-        except ValueError:
-            error = {}
-        unpriced_calls = len(fake.calls) - calls_before
-        (out / "unpriced-refused.json").write_text(
-            json.dumps({"status": status, "body": text[:600], "upstream_calls": unpriced_calls}, indent=2)
-        )
+        refusals = []
+        for model in REFUSED_UNDER_CAP:
+            calls_before = len(fake.calls)
+            status, body = send_message(app_port, unpriced_key, model)
+            text = body.decode(errors="replace")
+            try:
+                error = json.loads(body).get("error", {})
+            except ValueError:
+                error = {}
+            upstream_calls = len(fake.calls) - calls_before
+            refusals.append(
+                {
+                    "model": model,
+                    "status": status,
+                    "body": text[:600],
+                    "upstream_calls": upstream_calls,
+                    "ok": status == 403
+                    and error.get("type") == "permission_error"
+                    and error.get("code") == "model_unpriced_under_cost_cap"
+                    and repr(model) in error.get("message", "")
+                    and "cost_usd daily cap" in error.get("message", "")
+                    and upstream_calls == 0,
+                }
+            )
+        (out / "unpriced-refused.json").write_text(json.dumps(refusals, indent=2))
         check.step(
             "unpriced-refused",
-            status == 403
-            and error.get("type") == "permission_error"
-            and error.get("code") == "model_unpriced_under_cost_cap"
-            and UNPRICED_MODEL in error.get("message", "")
-            and "cost_usd daily cap" in error.get("message", "")
-            and unpriced_calls == 0,
-            f"HTTP {status}; message: {error.get('message', text[:200])}; upstream calls {unpriced_calls}",
+            all(r["ok"] for r in refusals),
+            "; ".join(f"{r['model']!r}: HTTP {r['status']}, upstream calls {r['upstream_calls']}" for r in refusals),
             [str(out / "unpriced-refused.json")],
         )
 

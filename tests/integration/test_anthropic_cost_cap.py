@@ -33,6 +33,9 @@ pytestmark = pytest.mark.integration
 
 PRICED_MODEL = "claude-sonnet-4-5-20250929"
 UNPRICED_MODEL = "claude-unpriced-test-0"
+# Names a wildcard alias would once price (claude-sonnet-4*, claude-opus-5*) and a blank model:
+# each is refused under a cost cap, not sent upstream (fix round, 2026-10-07).
+REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", ""]
 INPUT_TOKENS = 1_000
 CACHE_READ_TOKENS = 4_000
 CACHE_WRITE_5M_TOKENS = 1_500
@@ -199,13 +202,14 @@ async def test_cost_cap_trips_on_claude_list_price_refuses_unpriced_and_leaves_u
         [{"limitType": "cost_usd", "limitWindow": "daily", "maxValue": CAP_MICRODOLLARS}],
     )
     upstream_before = len(upstream_models)
-    status, body = await _send(async_client, unpriced_key, UNPRICED_MODEL)
-    assert status == 403
-    error = json.loads(body)["error"]
-    assert error["type"] == "permission_error"
-    assert error["code"] == "model_unpriced_under_cost_cap"
-    assert UNPRICED_MODEL in error["message"]
-    assert "cost_usd daily cap" in error["message"]
+    for model in REFUSED_UNDER_CAP:
+        status, body = await _send(async_client, unpriced_key, model)
+        assert status == 403, (model, body)
+        error = json.loads(body)["error"]
+        assert error["type"] == "permission_error"
+        assert error["code"] == "model_unpriced_under_cost_cap"
+        assert repr(model) in error["message"]
+        assert "cost_usd daily cap" in error["message"]
     assert len(upstream_models) == upstream_before
 
     _, token_only_key = await _create_key(

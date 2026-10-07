@@ -389,6 +389,7 @@ from app.modules.proxy._service.websocket.helpers import (
     _websocket_precreated_retry_error_code,
     _websocket_receive_timeout_for_pending_requests,
     _websocket_request_can_rotate_account,
+    _websocket_response_create_text_from_bytes,
     _websocket_response_id,
     _wrapped_websocket_error_event,
 )
@@ -632,6 +633,10 @@ class _WebSocketMixin:
 
                     text_data = message.get("text")
                     bytes_data = message.get("bytes")
+                    if text_data is None and bytes_data is not None:
+                        response_create_text = _websocket_response_create_text_from_bytes(bytes_data)
+                        if response_create_text is not None:
+                            text_data, bytes_data = response_create_text, None
 
                     if text_data is not None:
                         payload = _parse_websocket_payload(text_data)

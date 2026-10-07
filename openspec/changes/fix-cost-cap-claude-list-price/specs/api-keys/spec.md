@@ -25,6 +25,22 @@ When a `cost_usd` limit applies to a request and the requested model has no list
 - **THEN** the system answers 403 naming the model and the cap
 - **AND** no upstream request is sent and no usage is metered
 
+#### Scenario: Unlisted Claude version under a cap
+
+- **WHEN** a key with a `cost_usd` cap requests a Claude name that only a wildcard alias would price, such as `claude-sonnet-4-99` or `claude-opus-5-99`
+- **THEN** the model counts as unpriced and the request is refused with 403 `model_unpriced_under_cost_cap`
+- **AND** a listed model with only a dated snapshot, `-latest` or a bracketed context tag after its name (such as `claude-haiku-4-5-20251001` or `claude-opus-5-5[1m]`) stays priced
+
+#### Scenario: Blank model under a cap
+
+- **WHEN** a key with a `cost_usd` cap sends a request whose model is the empty string
+- **THEN** the request is refused with 403 `model_unpriced_under_cost_cap` before any upstream call
+
+#### Scenario: Binary websocket response.create under a cap
+
+- **WHEN** a websocket client with a capped key sends a `response.create` as a binary frame after the upstream session is open
+- **THEN** the frame is prepared, reserved and refused exactly like a text `response.create`, and an unpriced model never reaches upstream
+
 #### Scenario: Unpriced model without a cost cap
 
 - **WHEN** a key with no `cost_usd` limit requests a model absent from every price table

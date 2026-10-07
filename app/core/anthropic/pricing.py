@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Literal, Mapping
@@ -64,6 +65,15 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_creation_1h_input_per_1m=20.0,
         cache_read_input_per_1m=1.0,
         output_per_1m=50.0,
+    ),
+    # Sonnet 5.5 shipped 2026-09-28 at Sonnet 5's price (DECISIONS.md); its own entry lets the
+    # cap guard's strict lookup accept it instead of reading -5 as an unknown version.
+    "claude-sonnet-5-5": AnthropicModelPrice(
+        input_per_1m=2.0,
+        cache_creation_5m_input_per_1m=2.50,
+        cache_creation_1h_input_per_1m=4.0,
+        cache_read_input_per_1m=0.20,
+        output_per_1m=10.0,
     ),
     "claude-sonnet-5": AnthropicModelPrice(
         input_per_1m=2.0,
@@ -189,6 +199,7 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "claude-fable-5-1*": "claude-fable-5-1",
     "claude-fable-5*": "claude-fable-5",
     "claude-mythos-5*": "claude-mythos-5",
+    "claude-sonnet-5-5*": "claude-sonnet-5-5",
     "claude-sonnet-5*": "claude-sonnet-5",
     "claude-opus-4-8*": "claude-opus-4-8",
     "claude-opus-4-7*": "claude-opus-4-7",
@@ -240,6 +251,34 @@ def get_pricing_for_model(
     for key, value in pricing.items():
         if key.lower() == alias.lower():
             return key, value
+    return None
+
+
+# What may follow a priced model's name and still be that model: a dated snapshot, -latest,
+# and a bracketed context tag such as [1m]. Anything else (claude-sonnet-4-99) is another model.
+_SNAPSHOT_SUFFIX = re.compile(r"(?:-\d{8}|-latest)?(?:\[[0-9a-z]+\])?")
+
+
+def get_list_pricing_for_known_model(
+    model: str,
+    pricing: Mapping[str, AnthropicModelPrice] | None = None,
+    aliases: Mapping[str, str] | None = None,
+) -> tuple[str, AnthropicModelPrice] | None:
+    """Price ``model`` only when it is a model the table names, for the cost-cap guard.
+
+    ``get_pricing_for_model`` lets a wildcard alias price any name with a known prefix, so an
+    unreleased ``claude-opus-5-99`` reads as Opus 5. Here the text after the matched name must
+    be a snapshot suffix (``_SNAPSHOT_SUFFIX``); otherwise the model has no list price.
+    """
+    if not model:
+        return None
+    pricing = pricing or DEFAULT_PRICING_MODELS
+    aliases = aliases or DEFAULT_MODEL_ALIASES
+    normalized = model.lower()
+    bases = [key.lower() for key in pricing] + [pattern.lower().rstrip("*") for pattern in aliases]
+    for base in sorted(bases, key=len, reverse=True):
+        if normalized.startswith(base) and _SNAPSHOT_SUFFIX.fullmatch(normalized[len(base) :]):
+            return get_pricing_for_model(normalized, pricing, aliases)
     return None
 
 
