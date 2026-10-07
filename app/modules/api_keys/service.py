@@ -1706,7 +1706,9 @@ def _model_has_list_price(model: str) -> bool:
     """Admission never treats an OpenAI wildcard or prefix as a published model."""
     normalized = model.lower()
     prices = {name.lower() for name in OPENAI_PRICING_MODELS}
-    explicit_aliases = {name.lower(): target.lower() for name, target in OPENAI_MODEL_ALIASES.items()}
+    explicit_aliases = {
+        name.lower(): target.lower() for name, target in OPENAI_MODEL_ALIASES.items() if "*" not in name
+    }
     return (
         normalized in prices
         or explicit_aliases.get(normalized) in prices

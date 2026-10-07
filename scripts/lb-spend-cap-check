@@ -41,7 +41,7 @@ PRICE_KEY = "claude-sonnet-4-5"
 UNPRICED_MODEL = "claude-unpriced-sandbox-0"
 # Names a wildcard alias once priced (claude-sonnet-4*, claude-opus-5*) and a blank model are
 # unpriced too: each must be refused under a cost cap before upstream (fix round, 2026-10-07).
-REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", "gpt-5.99", "gpt-5.1-unpriced", "files-create", "files-finalize", ""]
+REFUSED_UNDER_CAP = [UNPRICED_MODEL, "claude-sonnet-4-99", "claude-opus-5-99", "gpt-5.99", "gpt-5.1-unpriced", "gpt-5*", "gpt-5.5*", "files-create", "files-finalize", ""]
 INPUT_TOKENS = 1_000
 CACHE_READ_TOKENS = 4_000
 OUTPUT_TOKENS = 500

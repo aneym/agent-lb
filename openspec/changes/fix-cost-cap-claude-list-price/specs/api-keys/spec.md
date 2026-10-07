@@ -48,7 +48,7 @@ When a `cost_usd` limit applies to a request and the requested model has no list
 
 #### Scenario: Unlisted OpenAI model under a cap
 
-- **WHEN** a capped caller requests `gpt-5.99` or `gpt-5.1-unpriced`
+- **WHEN** a capped caller requests `gpt-5.99`, `gpt-5.1-unpriced`, or literal wildcard names `gpt-5*` and `gpt-5.5*`
 - **THEN** admission refuses it with `model_unpriced_under_cost_cap` before upstream
 - **AND** only exact OpenAI price entries or explicitly named aliases qualify, not wildcard or prefix matches
 
