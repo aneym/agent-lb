@@ -1,0 +1,636 @@
+#!/usr/bin/env python3
+"""Sandbox-port check that API key cost_usd caps bite on Claude traffic (bops S16 spend floor).
+
+Boots agent-lb from a git ref on a private 127.0.0.1 port with its own SQLite store, behind a
+fake Anthropic upstream on another private port. No live service, account, credential or model
+spend is touched: the sandbox account carries a placeholder token and the upstream is local.
+
+Scenario:
+  1. A key with a cost_usd cap sends Claude requests whose list price comes from the price
+     table and the fake upstream's token counts; it must trip at request ceil(cap / cost) + 1.
+  2. A capped key on a model with no list price is refused (403) before any upstream call.
+  3. An uncapped key and keyless calls pass unchanged, bytes identical to the upstream.
+
+Writes <out>/result.json (factory harden result schema 1); exit 0 pass, 1 fail, 2 infra_error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import gzip
+import http.client
+import http.server
+import json
+import math
+import os
+import shutil
+import signal
+import socket
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+
+LIVE_PORTS = {1455, 2455, 2457, 2459}
+PRICED_MODEL = "claude-sonnet-4-5-20250929"
+PRICE_KEY = "claude-sonnet-4-5"
+UNPRICED_MODEL = "claude-unpriced-sandbox-0"
+INPUT_TOKENS = 1_000
+CACHE_READ_TOKENS = 4_000
+OUTPUT_TOKENS = 500
+CAP_MICRODOLLARS = 30_000
+PLACEHOLDER = "sandbox-placeholder-not-a-credential"
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def free_port(exclude: set[int]) -> int:
+    for port in range(2470, 2600):
+        if port in exclude or port in LIVE_PORTS:
+            continue
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError("no sandbox port free in 2470-2599")
+
+
+def guard_port(port: int) -> None:
+    if port < 2470 or port in LIVE_PORTS:
+        raise RuntimeError(f"refusing port {port}: live or below the sandbox range")
+
+
+def listener_pids(port: int) -> list[int]:
+    proc = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    return sorted({int(line) for line in proc.stdout.split() if line.strip().isdigit()})
+
+
+def listener_addresses(pid: int) -> list[str]:
+    proc = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    return [line[1:] for line in proc.stdout.splitlines() if line.startswith("n")]
+
+
+def sse_body(model: str) -> bytes:
+    start = {
+        "type": "message_start",
+        "message": {
+            "id": "msg_sandbox",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [],
+            "usage": {
+                "input_tokens": INPUT_TOKENS,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": CACHE_READ_TOKENS,
+            },
+        },
+    }
+    delta = {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": OUTPUT_TOKENS}}
+    return (
+        f"event: message_start\ndata: {json.dumps(start)}\n\n"
+        f"event: message_delta\ndata: {json.dumps(delta)}\n\n"
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+    ).encode()
+
+
+class FakeAnthropic(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, port: int) -> None:
+        super().__init__(("127.0.0.1", port), _FakeHandler)
+        self.calls: list[str] = []
+        self.lock = threading.Lock()
+
+
+class _FakeHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+        return  # never log request lines or headers
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib name
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length)
+        if (self.headers.get("Content-Encoding") or "").lower() == "gzip":
+            raw = gzip.decompress(raw)
+        try:
+            model = json.loads(raw or b"{}").get("model", "")
+        except ValueError:
+            model = ""
+        if not self.path.rstrip("/").endswith("/v1/messages"):
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        server: FakeAnthropic = self.server  # type: ignore[assignment]
+        with server.lock:
+            server.calls.append(model)
+        body = sse_body(model)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def http_call(port: int, method: str, path: str, body: dict | None = None, headers: dict | None = None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+    try:
+        hdrs = {"Content-Type": "application/json"}
+        hdrs.update(headers or {})
+        conn.request(method, path, body=json.dumps(body) if body is not None else None, headers=hdrs)
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+    finally:
+        conn.close()
+
+
+def send_message(port: int, key: str | None, model: str):
+    headers = {"anthropic-version": "2023-06-01", "user-agent": "lb-spend-cap-check"}
+    if key is not None:
+        headers["Authorization"] = f"Bearer {key}"
+    payload = {"model": model, "max_tokens": 16, "stream": True, "messages": [{"role": "user", "content": "hi"}]}
+    return http_call(port, "POST", "/v1/messages", payload, headers)
+
+
+class InfraError(RuntimeError):
+    pass
+
+
+class Check:
+    def __init__(self, out: Path) -> None:
+        self.out = out
+        self.steps: list[dict] = []
+        self.unverified: list[str] = []
+        self.started_at = now_iso()
+
+    def step(self, name: str, ok: bool, detail: str, evidence: list[str]) -> bool:
+        self.steps.append({"name": name, "result": "pass" if ok else "fail", "detail": detail, "evidence": evidence})
+        return ok
+
+    def write(self, infra_error: str | None = None) -> int:
+        if infra_error is not None:
+            result = "infra_error"
+        elif self.steps and all(s["result"] == "pass" and s["evidence"] for s in self.steps):
+            result = "pass"
+        else:
+            result = "fail"
+        failed = [s["name"] for s in self.steps if s["result"] != "pass"]
+        if infra_error is not None:
+            summary = f"Sandbox could not run: {infra_error}"
+        elif result == "pass":
+            summary = (
+                "On a sandbox agent-lb the capped Claude caller tripped at the price-table request number, "
+                "the unpriced model was refused before upstream, and uncapped traffic passed unchanged."
+            )
+        else:
+            summary = f"Failed steps: {', '.join(failed) or 'no steps ran'}."
+        doc = {
+            "schema": 1,
+            "lane": "lb-spend-cap",
+            "component_ids": ["claude-lb"],
+            "run_id": os.environ.get("HARDEN_RUN_ID") or self.out.name,
+            "host": socket.gethostname(),
+            "started_at": self.started_at,
+            "ended_at": now_iso(),
+            "result": result,
+            "summary": summary,
+            "steps": self.steps,
+            "unverified": self.unverified,
+        }
+        (self.out / "result.json").write_text(json.dumps(doc, indent=2) + "\n")
+        print(json.dumps(doc, indent=2))
+        return {"pass": 0, "fail": 1}.get(result, 2)
+
+
+def export_app(repo: Path, ref: str, dest: Path) -> str:
+    subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin"], check=False, timeout=120, capture_output=True)
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref], check=True, timeout=30, capture_output=True, text=True
+    ).stdout.strip()
+    dest.mkdir(parents=True)
+    archive = subprocess.Popen(["git", "-C", str(repo), "archive", sha], stdout=subprocess.PIPE)
+    subprocess.run(["tar", "-x", "-C", str(dest)], stdin=archive.stdout, check=True, timeout=300)
+    if archive.wait(timeout=300) != 0:
+        raise RuntimeError("git archive failed")
+    return sha
+
+
+def copy_tree(src: Path, dest: Path) -> str:
+    """Copy a working tree's tracked and unignored files, so ignored files such as .env never come along."""
+    listed = subprocess.run(
+        ["git", "-C", str(src), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        check=True,
+        timeout=120,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    dest.mkdir(parents=True)
+    for raw in listed:
+        if not raw:
+            continue
+        rel = Path(raw.decode())
+        source = src / rel
+        if not source.is_file():
+            continue
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    head = subprocess.run(
+        ["git", "-C", str(src), "rev-parse", "HEAD"], check=True, timeout=30, capture_output=True, text=True
+    ).stdout.strip()
+    return f"{head}+working-tree"
+
+
+def scrub_dotenv(app_root: Path) -> None:
+    # Settings read <app root>/.env and .env.local; the sandbox copy must carry neither.
+    for name in (".env", ".env.local"):
+        target = app_root / name
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        if target.exists():
+            raise InfraError(f"could not remove {target}")
+
+
+def sandbox_env(app_root: Path, data: Path, upstream_port: int) -> dict[str, str]:
+    env = {
+        "HOME": str(data / "home"),
+        "PATH": "/usr/bin:/bin",
+        "PYTHONPATH": str(app_root),
+        "AGENT_LB_DATA_DIR": str(data),
+        "AGENT_LB_DATABASE_URL": f"sqlite+aiosqlite:///{data / 'store.db'}",
+        "AGENT_LB_ENCRYPTION_KEY_FILE": str(data / "encryption.key"),
+        "AGENT_LB_UPSTREAM_BASE_URL": "http://127.0.0.1:1/unused",
+        "AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL": f"http://127.0.0.1:{upstream_port}",
+        "AGENT_LB_DASHBOARD_BOOTSTRAP_TOKEN": PLACEHOLDER,
+        "AGENT_LB_DASHBOARD_AUTH_MODE": "disabled",
+        "AGENT_LB_UPSTREAM_REQUEST_GZIP_ENABLED": "false",
+        "AGENT_LB_FEDERATION_FORWARD_REQUEST_LOGS": "false",
+        "AGENT_LB_FEDERATION_PEER_URL": "",
+        "AGENT_LB_FEDERATION_TOKEN": "",
+        "AGENT_LB_FEDERATION_MIRROR_TOKEN": "",
+        "AGENT_LB_FEDERATION_TRANSFER_OUTBOUND_TOKEN": "",
+        "AGENT_LB_FEDERATION_PUSH_PATH": str(data / "federation-push.json"),
+        "AGENT_LB_FEDERATION_PUSH_SOURCES_PATH": str(data / "federation-push-sources.json"),
+        "AGENT_LB_LOCAL_INSTANCE_ID": "lb-spend-cap-sandbox",
+        "AGENT_LB_SEAT_STATE": str(data / "seat-state.json"),
+        "ROUTE_TABLE": str(data / "routing-table.json"),
+        "OF_DECIDER_JSON": str(data / "decider.json"),
+    }
+    for setting in (
+        "METRICS",
+        "USAGE_REFRESH",
+        "MODEL_REGISTRY",
+        "ACCOUNT_PULSE",
+        "RESET_CREDIT_AUTO_REDEEM",
+        "RESET_CREDIT_EXPIRY_REDEEM",
+        "ACCOUNTS_CACHE_WARMER",
+        "STICKY_SESSION_CLEANUP",
+        "QUOTA_PLANNER_SCHEDULER",
+        "HTTP_RESPONSES_SESSION_BRIDGE",
+        "AUTH_GUARDIAN",
+    ):
+        env[f"AGENT_LB_{setting}_ENABLED"] = "false"
+    return env
+
+
+SEED_ACCOUNT = f"""
+import asyncio
+from datetime import timedelta
+from app.core.crypto import TokenEncryptor
+from app.core.utils.time import utcnow
+from app.db.models import Account, AccountStatus
+from app.db.session import SessionLocal
+
+async def main():
+    enc = TokenEncryptor()
+    async with SessionLocal() as session:
+        session.add(Account(
+            id="sandbox-anthropic", provider="anthropic", chatgpt_account_id="sandbox-anthropic",
+            email="sandbox@example.invalid", plan_type="max",
+            access_token_encrypted=enc.encrypt("{PLACEHOLDER}"),
+            refresh_token_encrypted=enc.encrypt("{PLACEHOLDER}"), id_token_encrypted=None,
+            last_refresh=utcnow() + timedelta(days=1), status=AccountStatus.ACTIVE, deactivation_reason=None,
+        ))
+        await session.commit()
+
+asyncio.run(main())
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", type=Path, default=Path(os.environ.get("HARDEN_OUT_DIR", "")) or None)
+    parser.add_argument("--repo", type=Path, default=Path("/Volumes/StudioExt/repos/agent-lb"))
+    parser.add_argument("--ref", default="origin/main")
+    parser.add_argument("--app-root", type=Path, help="use this source tree instead of exporting --ref")
+    parser.add_argument("--python", type=Path, default=Path.home() / ".agent-lb/runtime/agent-lb/.venv/bin/python")
+    parser.add_argument("--keep-sandbox", action="store_true")
+    args = parser.parse_args()
+    if args.out is None or str(args.out) in ("", "."):
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        args.out = Path.home() / f".agent-lb/sandboxes/lb-spend-cap-{stamp}-{uuid.uuid4().hex[:6]}"
+    out: Path = args.out.expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    check = Check(out)
+    check.unverified.append(
+        "Live agent-lb deploy is not exercised: this check boots the landed ref on a private sandbox port only."
+    )
+    check.unverified.append(
+        "Receipts carry no separate actual-cost field; request-log cost_usd was already list price, so no field "
+        "was added (spec fixed interface: add one only if none exists)."
+    )
+
+    sandbox = out / "sandbox"
+    if sandbox.exists():
+        return check.write(infra_error=f"sandbox dir already exists: {sandbox}")
+    live_before = listener_pids(2455)
+    server_proc: subprocess.Popen | None = None
+    fake: FakeAnthropic | None = None
+    app_port = upstream_port = 0
+    infra: str | None = None
+    created_sandbox = False
+    try:
+        sandbox.mkdir()
+        created_sandbox = True
+        app_root = sandbox / "app"
+        if args.app_root:
+            sha = copy_tree(args.app_root.expanduser().resolve(), app_root)
+        else:
+            sha = export_app(args.repo, args.ref, app_root)
+        scrub_dotenv(app_root)
+        data = sandbox / "data"
+        (data / "home").mkdir(parents=True)
+        (data / "routing-table.json").write_text(json.dumps({"classes": {}, "aliases": {}, "retired": []}))
+        (data / "decider.json").write_text("{}")
+        upstream_port = free_port(set())
+        app_port = free_port({upstream_port})
+        guard_port(upstream_port)
+        guard_port(app_port)
+
+        fake = FakeAnthropic(upstream_port)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+
+        env = sandbox_env(app_root, data, upstream_port)
+        probe = subprocess.run(
+            [str(args.python), "-c", "import app; print(app.__file__)"],
+            cwd=app_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        imported_from = probe.stdout.strip()
+        if not imported_from.startswith(str(app_root)):
+            raise InfraError(f"app imports from {imported_from or probe.stderr[-300:]}, not {app_root}")
+
+        log = open(out / "sandbox-app.log", "wb")
+        server_proc = subprocess.Popen(
+            [
+                str(args.python),
+                "-m",
+                "uvicorn",
+                "app.main:app",
+                "--app-dir",
+                str(app_root),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(app_port),
+            ],
+            cwd=app_root,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + 120
+        ready = False
+        while time.monotonic() < deadline and server_proc.poll() is None:
+            try:
+                status, _ = http_call(app_port, "GET", "/health/ready")
+                if status == 200:
+                    ready = True
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        if not ready:
+            raise InfraError("sandbox agent-lb did not become ready in 120 s (see sandbox-app.log)")
+        addresses = listener_addresses(server_proc.pid)
+        boot_ok = bool(addresses) and all(a.startswith("127.0.0.1:") for a in addresses)
+        check.step(
+            "sandbox-boot",
+            boot_ok,
+            f"agent-lb {sha} imported from {imported_from} on 127.0.0.1:{app_port} (pid {server_proc.pid}); "
+            f"fake Anthropic upstream on 127.0.0.1:{upstream_port}; listeners {addresses}; "
+            f"live :2455 listener pids {live_before}",
+            [str(out / "sandbox-app.log"), f"ref {sha}", f"port {app_port}"],
+        )
+
+        seed = subprocess.run(
+            [str(args.python), "-c", SEED_ACCOUNT], cwd=app_root, env=env, capture_output=True, text=True, timeout=60
+        )
+        if seed.returncode != 0:
+            raise InfraError(f"account seed failed: {seed.stderr[-400:]}")
+
+        sys.path.insert(0, str(app_root))
+        from app.core.anthropic.pricing import DEFAULT_PRICING_MODELS  # noqa: E402 - sandbox ref's own table
+
+        price = DEFAULT_PRICING_MODELS[PRICE_KEY]
+        usd = (
+            INPUT_TOKENS * price.input_per_1m
+            + CACHE_READ_TOKENS * price.cache_read_input_per_1m
+            + OUTPUT_TOKENS * price.output_per_1m
+        ) / 1_000_000
+        per_request = round(usd * 1_000_000)
+        expected_trip = math.ceil(CAP_MICRODOLLARS / per_request) + 1
+
+        def create_key(name: str, limits: list[dict]) -> tuple[str, str]:
+            status, body = http_call(app_port, "POST", "/api/api-keys/", {"name": name, "limits": limits})
+            if status != 200:
+                raise RuntimeError(f"create key {name}: HTTP {status}")
+            doc = json.loads(body)
+            return doc["id"], doc["key"]
+
+        cap = [{"limitType": "cost_usd", "limitWindow": "daily", "maxValue": CAP_MICRODOLLARS}]
+        capped_id, capped_key = create_key("sandbox-cost-capped", cap)
+        statuses: list[int] = []
+        refusal = ""
+        calls_before = len(fake.calls)
+        for _ in range(expected_trip + 2):
+            status, body = send_message(app_port, capped_key, PRICED_MODEL)
+            statuses.append(status)
+            if status != 200:
+                refusal = body.decode(errors="replace")[:400]
+                break
+        served = len(fake.calls) - calls_before
+        _, keys_body = http_call(app_port, "GET", "/api/api-keys/")
+        key_doc = next(k for k in json.loads(keys_body) if k["id"] == capped_id)
+        current = next(lim["currentValue"] for lim in key_doc["limits"] if lim["limitType"] == "cost_usd")
+        (out / "capped-claude.json").write_text(
+            json.dumps(
+                {
+                    "model": PRICED_MODEL,
+                    "price_table_entry": PRICE_KEY,
+                    "tokens": {"input": INPUT_TOKENS, "cache_read": CACHE_READ_TOKENS, "output": OUTPUT_TOKENS},
+                    "per_request_microdollars": per_request,
+                    "cap_microdollars": CAP_MICRODOLLARS,
+                    "expected_trip_request": expected_trip,
+                    "statuses": statuses,
+                    "upstream_calls": served,
+                    "limit_current_value": current,
+                    "refusal": refusal,
+                },
+                indent=2,
+            )
+        )
+        trip_ok = (
+            statuses == [200] * (expected_trip - 1) + [429]
+            and served == expected_trip - 1
+            and current == per_request * (expected_trip - 1)
+            and "cost_usd daily limit exceeded" in refusal
+        )
+        check.step(
+            "capped-claude-trips",
+            trip_ok,
+            f"{PRICED_MODEL} at {per_request} microdollars per request (price table {PRICE_KEY}: "
+            f"{INPUT_TOKENS} in, {CACHE_READ_TOKENS} cache read, {OUTPUT_TOKENS} out) under a "
+            f"{CAP_MICRODOLLARS} microdollar daily cap: expected trip at request {expected_trip}; "
+            f"statuses {statuses}; upstream calls {served}; limit current {current}",
+            [str(out / "capped-claude.json")],
+        )
+
+        _, unpriced_key = create_key("sandbox-cost-capped-unpriced", cap)
+        calls_before = len(fake.calls)
+        status, body = send_message(app_port, unpriced_key, UNPRICED_MODEL)
+        text = body.decode(errors="replace")
+        try:
+            error = json.loads(body).get("error", {})
+        except ValueError:
+            error = {}
+        unpriced_calls = len(fake.calls) - calls_before
+        (out / "unpriced-refused.json").write_text(
+            json.dumps({"status": status, "body": text[:600], "upstream_calls": unpriced_calls}, indent=2)
+        )
+        check.step(
+            "unpriced-refused",
+            status == 403
+            and error.get("type") == "permission_error"
+            and error.get("code") == "model_unpriced_under_cost_cap"
+            and UNPRICED_MODEL in error.get("message", "")
+            and "cost_usd daily cap" in error.get("message", "")
+            and unpriced_calls == 0,
+            f"HTTP {status}; message: {error.get('message', text[:200])}; upstream calls {unpriced_calls}",
+            [str(out / "unpriced-refused.json")],
+        )
+
+        _, uncapped_key = create_key("sandbox-uncapped", [])
+        cases = [(uncapped_key, PRICED_MODEL)] * (expected_trip + 2) + [
+            (uncapped_key, UNPRICED_MODEL),
+            (None, PRICED_MODEL),
+            (None, UNPRICED_MODEL),
+        ]
+        results = []
+        calls_before = len(fake.calls)
+        for key, model in cases:
+            status, body = send_message(app_port, key, model)
+            same = body == sse_body(model)
+            results.append({"key": "uncapped" if key else "keyless", "model": model, "status": status, "same": same})
+        uncapped_calls = len(fake.calls) - calls_before
+        (out / "uncapped-unchanged.json").write_text(
+            json.dumps({"requests": results, "upstream_calls": uncapped_calls}, indent=2)
+        )
+        check.step(
+            "uncapped-unchanged",
+            all(r["status"] == 200 and r["same"] for r in results) and uncapped_calls == len(cases),
+            f"{len(cases)} uncapped and keyless requests (priced and unpriced models): "
+            f"{sum(r['status'] == 200 for r in results)} HTTP 200, "
+            f"{sum(r['same'] for r in results)} byte-identical to upstream; upstream calls {uncapped_calls}",
+            [str(out / "uncapped-unchanged.json")],
+        )
+
+        db = sqlite3.connect(f"file:{data / 'store.db'}?mode=ro", uri=True)
+        try:
+            rows = db.execute(
+                "SELECT r.cost_usd FROM request_logs r JOIN api_keys k ON k.id = r.api_key_id "
+                "WHERE k.id = ? AND r.status = 'success'",
+                (capped_id,),
+            ).fetchall()
+        finally:
+            db.close()
+        receipt_costs = [round(float(r[0]) * 1_000_000) for r in rows if r[0] is not None]
+        (out / "receipts.json").write_text(
+            json.dumps({"api_key_id": capped_id, "cost_usd": [r[0] for r in rows], "microdollars": receipt_costs})
+        )
+        check.step(
+            "receipt-agrees-with-cap",
+            len(receipt_costs) == expected_trip - 1 and all(c == per_request for c in receipt_costs),
+            f"request-log cost_usd for the capped key's served requests, in microdollars: {receipt_costs} "
+            f"(list price {per_request} each, same figure the cap metered)",
+            [str(out / "receipts.json"), f"api_key {capped_id}"],
+        )
+    except InfraError as exc:
+        infra = str(exc)
+    except Exception as exc:  # noqa: BLE001 - every failure must land in result.json
+        infra = f"{type(exc).__name__}: {exc}"
+    finally:
+        if server_proc is not None and server_proc.poll() is None:
+            os.killpg(server_proc.pid, signal.SIGTERM)
+            try:
+                server_proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                os.killpg(server_proc.pid, signal.SIGKILL)
+                server_proc.wait(timeout=10)
+        if fake is not None:
+            fake.shutdown()
+            fake.server_close()
+        removed = False
+        if created_sandbox and not args.keep_sandbox:
+            target = sandbox.resolve()
+            if target.parent == out and target.name == "sandbox":
+                shutil.rmtree(target, ignore_errors=True)
+                removed = not target.exists()
+            else:
+                infra = infra or f"refused to delete unexpected path {target}"
+
+    if infra is not None:
+        return check.write(infra_error=f"{infra} (sandbox removed: {removed})")
+    leftovers = {port: listener_pids(port) for port in (app_port, upstream_port)}
+    live_after = listener_pids(2455)
+    check.step(
+        "cleanup-and-live-untouched",
+        all(not pids for pids in leftovers.values())
+        and server_proc is not None
+        and server_proc.returncode is not None
+        and (removed or args.keep_sandbox)
+        and live_before == live_after,
+        f"sandbox listeners after stop {leftovers}; app exit {server_proc.returncode if server_proc else None}; "
+        f"sandbox dir removed {removed}; live :2455 listener pids before {live_before} after {live_after}",
+        [str(out / "result.json"), f"ports {app_port},{upstream_port}"],
+    )
+    return check.write()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

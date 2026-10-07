@@ -53,7 +53,13 @@ from app.core.errors import (
     openai_error,
     response_failed_event,
 )
-from app.core.exceptions import ProxyAuthError, ProxyRateLimitError, TeamMemberOverCapError, TeamMemberSuspendedError
+from app.core.exceptions import (
+    ProxyAuthError,
+    ProxyModelNotAllowed,
+    ProxyRateLimitError,
+    TeamMemberOverCapError,
+    TeamMemberSuspendedError,
+)
 from app.core.identity import RequestIdentity
 from app.core.metrics.prometheus import PROMETHEUS_AVAILABLE, bridge_public_contract_error_total
 from app.core.middleware.api_firewall import _parse_trusted_proxy_networks, resolve_connection_client_ip
@@ -114,6 +120,7 @@ from app.modules.api_keys.service import (
     ApiKeyRequestUsageBudget,
     ApiKeySelfLimitData,
     ApiKeysService,
+    ApiKeyUnpricedModelError,
     ApiKeyUsageReservationData,
 )
 from app.modules.firewall.repository import FirewallRepository
@@ -863,6 +870,8 @@ async def v1_messages(
         )
     except ProxyRateLimitError as exc:
         return _anthropic_error_response(429, "rate_limit_error", str(exc))
+    except ProxyModelNotAllowed as exc:
+        return _anthropic_error_response(403, "permission_error", str(exc), code=exc.code)
     except ProxyAuthError as exc:
         return _anthropic_error_response(401, "authentication_error", str(exc))
 
@@ -3801,6 +3810,8 @@ async def _enforce_request_limits(
         except ApiKeyRateLimitExceededError as exc:
             message = f"{exc}. Usage resets at {exc.reset_at.isoformat()}Z."
             raise ProxyRateLimitError(message) from exc
+        except ApiKeyUnpricedModelError as exc:
+            raise ProxyModelNotAllowed(str(exc), code="model_unpriced_under_cost_cap") from exc
         except ApiKeyInvalidError as exc:
             raise ProxyAuthError(str(exc)) from exc
 
@@ -3868,11 +3879,14 @@ def _anthropic_error_response(
     *,
     retry_at: int | None = None,
     details: Any | None = None,
+    code: str | None = None,
 ) -> JSONResponse:
     error: dict[str, Any] = {
         "type": error_type,
         "message": message,
     }
+    if code is not None:
+        error["code"] = code
     # Upstream's structured `details` is what clients classify on. Claude Code
     # reads `thread_not_found` out of it to replay a stateful thread; without
     # it the client sees a bare 404 and reports the selected model as missing.

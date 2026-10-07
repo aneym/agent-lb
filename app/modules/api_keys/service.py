@@ -13,6 +13,9 @@ from typing import Protocol
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.anthropic.models import AnthropicUsage
+from app.core.anthropic.pricing import calculate_anthropic_cost_from_usage
+from app.core.anthropic.pricing import get_pricing_for_model as get_anthropic_pricing_for_model
 from app.core.auth.api_key_cache import get_api_key_cache
 from app.core.cache.invalidation import NAMESPACE_API_KEY, get_cache_invalidation_poller
 from app.core.usage.pricing import (
@@ -219,6 +222,22 @@ class ApiKeyRateLimitExceededError(ValueError):
     def __init__(self, *, message: str, reset_at: datetime) -> None:
         super().__init__(message)
         self.reset_at = reset_at
+
+
+class ApiKeyUnpricedModelError(ValueError):
+    """A cost_usd cap applies to the request but the model has no list price.
+
+    Billing such a request at $0 would let it run past the cap, so it is refused.
+    """
+
+    def __init__(self, *, model: str, limit_window: str, max_microdollars: int) -> None:
+        self.model = model
+        self.limit_window = limit_window
+        self.max_microdollars = max_microdollars
+        super().__init__(
+            f"Model {model!r} has no list price, so API key cost_usd {limit_window} cap "
+            f"(max {max_microdollars / 1_000_000:.6f} USD) cannot meter it; request refused"
+        )
 
 
 def _ensure_optional_int_token_budget(field_name: str, value: int | None) -> None:
@@ -759,6 +778,16 @@ class ApiKeysService:
                 for limit in refreshed.limits:
                     if not _limit_applies_for_request(limit, request_model=request_model):
                         continue
+                    if (
+                        limit.limit_type == LimitType.COST_USD
+                        and request_model
+                        and not _model_has_list_price(request_model)
+                    ):
+                        raise ApiKeyUnpricedModelError(
+                            model=request_model,
+                            limit_window=limit.limit_window.value,
+                            max_microdollars=limit.max_value,
+                        )
                     if limit.current_value >= limit.max_value:
                         raise _rate_limit_exceeded_error(limit)
                     reserve_delta = _reserve_delta_for_limit(
@@ -811,6 +840,10 @@ class ApiKeysService:
         output_tokens: int,
         cached_input_tokens: int = 0,
         service_tier: str | None = None,
+        cache_creation_input_tokens: int | None = None,
+        cache_read_input_tokens: int | None = None,
+        cache_creation_tier: str | None = None,
+        cache_creation_1h_input_tokens: int | None = None,
     ) -> None:
         for attempt in range(_SQLITE_BUSY_RETRY_ATTEMPTS):
             try:
@@ -822,6 +855,10 @@ class ApiKeysService:
                     cached_input_tokens=cached_input_tokens,
                     service_tier=service_tier,
                     status="finalized",
+                    cache_creation_input_tokens=cache_creation_input_tokens,
+                    cache_read_input_tokens=cache_read_input_tokens,
+                    cache_creation_tier=cache_creation_tier,
+                    cache_creation_1h_input_tokens=cache_creation_1h_input_tokens,
                 )
                 return
             except OperationalError as exc:
@@ -872,6 +909,10 @@ class ApiKeysService:
         cached_input_tokens: int | None,
         service_tier: str | None,
         status: str,
+        cache_creation_input_tokens: int | None = None,
+        cache_read_input_tokens: int | None = None,
+        cache_creation_tier: str | None = None,
+        cache_creation_1h_input_tokens: int | None = None,
     ) -> None:
         async with sqlite_writer_section(self._repository.session):
             reservation = await self._repository.get_usage_reservation(reservation_id)
@@ -896,16 +937,32 @@ class ApiKeysService:
                 effective_output_tokens,
                 effective_cached_input_tokens,
                 service_tier,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_creation_tier=cache_creation_tier,
+                cache_creation_1h_input_tokens=cache_creation_1h_input_tokens,
             )
+            # Usage we cannot price keeps its reservation: a cost cap is never billed at $0.
+            consumed_tokens = (
+                effective_input_tokens
+                + effective_output_tokens
+                + effective_cached_input_tokens
+                + (cache_creation_input_tokens or 0)
+                + (cache_read_input_tokens or 0)
+            )
+            unpriced_usage = cost_microdollars is None and consumed_tokens > 0
 
             try:
                 for item in reservation.items:
-                    actual_delta = _compute_increment_for_limit_type(
-                        item.limit_type,
-                        input_tokens=effective_input_tokens,
-                        output_tokens=effective_output_tokens,
-                        cost_microdollars=cost_microdollars,
-                    )
+                    if item.limit_type == LimitType.COST_USD and unpriced_usage:
+                        actual_delta = item.reserved_delta
+                    else:
+                        actual_delta = _compute_increment_for_limit_type(
+                            item.limit_type,
+                            input_tokens=effective_input_tokens,
+                            output_tokens=effective_output_tokens,
+                            cost_microdollars=cost_microdollars or 0,
+                        )
                     delta = actual_delta - item.reserved_delta
                     if delta != 0:
                         await self._repository.adjust_reserved_usage(
@@ -1023,7 +1080,7 @@ class ApiKeysService:
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_microdollars=cost_microdollars,
+            cost_microdollars=cost_microdollars or 0,
         )
 
     async def get_key_trends(self, key_id: str) -> ApiKeyTrendsData | None:
@@ -1438,7 +1495,7 @@ def _reserve_cost_budget_microdollars(
     )
     return (
         cost_microdollars
-        if cost_microdollars > 0
+        if cost_microdollars is not None and cost_microdollars > 0
         else _unknown_model_reserve_cost_budget_microdollars(input_tokens=input_tokens, output_tokens=output_tokens)
     )
 
@@ -1628,26 +1685,72 @@ def _limit_identity_from_row(limit: ApiKeyLimit) -> tuple[str, str, str | None]:
     return (limit.limit_type.value, limit.limit_window.value, limit.model_filter)
 
 
+def _model_has_list_price(model: str) -> bool:
+    return get_pricing_for_model(model) is not None or get_anthropic_pricing_for_model(model) is not None
+
+
 def _calculate_cost_microdollars(
     model: str,
     input_tokens: int,
     output_tokens: int,
     cached_input_tokens: int,
     service_tier: str | None = None,
-) -> int:
+    *,
+    cache_creation_input_tokens: int | None = None,
+    cache_read_input_tokens: int | None = None,
+    cache_creation_tier: str | None = None,
+    cache_creation_1h_input_tokens: int | None = None,
+) -> int | None:
+    """List-price cost in microdollars for cap accounting; None when the model has no list price.
+
+    Cap accounting always reads list price, including for subscription accounts whose
+    actual spend per request is $0. OpenAI models use the OpenAI table (unchanged);
+    Claude models use the Anthropic table, where ``input_tokens`` excludes cache tokens.
+    When the caller gives no cache split, ``cached_input_tokens`` counts as cache reads.
+    Cache writes are metered at the 1-hour rate for ``cache_creation_1h_input_tokens`` (Anthropic's
+    per-TTL breakdown) and at the 5-minute rate for the rest; without a breakdown the request's
+    ``cache_creation_tier`` applies to all writes.
+    """
+    if not model:
+        return None
     resolved = get_pricing_for_model(model)
-    if resolved is None:
-        return 0
-    _, price = resolved
-    usage = UsageTokens(
-        input_tokens=float(input_tokens),
-        output_tokens=float(output_tokens),
-        cached_input_tokens=float(cached_input_tokens),
+    if resolved is not None:
+        _, price = resolved
+        usage = UsageTokens(
+            input_tokens=float(input_tokens),
+            output_tokens=float(output_tokens),
+            cached_input_tokens=float(cached_input_tokens),
+        )
+        cost_usd = calculate_cost_from_usage(usage, price, service_tier=service_tier)
+        if cost_usd is None:
+            return 0
+        return int(cost_usd * 1_000_000)
+    anthropic_resolved = get_anthropic_pricing_for_model(model)
+    if anthropic_resolved is None:
+        return None
+    _, anthropic_price = anthropic_resolved
+    if cache_creation_input_tokens is None and cache_read_input_tokens is None:
+        cache_read_input_tokens = cached_input_tokens
+    writes = max(0, int(cache_creation_input_tokens or 0))
+    if cache_creation_1h_input_tokens is not None:
+        one_hour_writes = min(writes, max(0, int(cache_creation_1h_input_tokens)))
+    else:
+        one_hour_writes = writes if cache_creation_tier == "1h" else 0
+    anthropic_cost_usd = calculate_anthropic_cost_from_usage(
+        AnthropicUsage(
+            input_tokens=max(0, int(input_tokens)),
+            output_tokens=max(0, int(output_tokens)),
+            cache_creation_input_tokens=writes - one_hour_writes,
+            cache_read_input_tokens=max(0, int(cache_read_input_tokens or 0)),
+        ),
+        anthropic_price,
+        cache_creation_tier="5m",
     )
-    cost_usd = calculate_cost_from_usage(usage, price, service_tier=service_tier)
-    if cost_usd is None:
+    if anthropic_cost_usd is None:
         return 0
-    return int(cost_usd * 1_000_000)
+    anthropic_cost_usd += one_hour_writes * anthropic_price.cache_creation_1h_input_per_1m / 1_000_000
+    # Round, not truncate: 0.0117 USD is 11699.999... in float and must meter as 11700.
+    return round(anthropic_cost_usd * 1_000_000)
 
 
 def _is_sqlite_database_locked(exc: OperationalError) -> bool:

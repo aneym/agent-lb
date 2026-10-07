@@ -27,6 +27,7 @@ from app.core.anthropic.models import (
     AnthropicErrorEvent,
     AnthropicMessageRequest,
     AnthropicUsage,
+    cache_creation_1h_tokens,
     merge_usage_values,
 )
 from app.core.anthropic.parsing import parse_sse_event
@@ -988,6 +989,7 @@ class AnthropicProxyService:
                                         api_key_reservation,
                                         model=payload.model,
                                         usage=usage,
+                                        cache_creation_tier=cache_creation_tier,
                                     )
                                     return
 
@@ -1015,6 +1017,7 @@ class AnthropicProxyService:
                                     api_key_reservation,
                                     model=payload.model,
                                     usage=usage,
+                                    cache_creation_tier=cache_creation_tier,
                                 )
                                 return
                         stall = stall_catcher.stall
@@ -1050,6 +1053,7 @@ class AnthropicProxyService:
                                 useragent_group=useragent_group,
                                 usage=usage,
                                 latency_first_token_ms=latency_first_token_ms,
+                                cache_creation_tier=cache_creation_tier,
                             )
                         )
                         if not streamed_bytes:
@@ -2065,6 +2069,7 @@ class AnthropicProxyService:
         *,
         model: str,
         usage: AnthropicUsage | None,
+        cache_creation_tier: str | None = None,
     ) -> None:
         if reservation is None:
             return
@@ -2080,6 +2085,10 @@ class AnthropicProxyService:
                 input_tokens=usage.input_tokens or 0,
                 output_tokens=usage.output_tokens or 0,
                 cached_input_tokens=cached_tokens,
+                cache_creation_input_tokens=usage.cache_creation_input_tokens or 0,
+                cache_read_input_tokens=usage.cache_read_input_tokens or 0,
+                cache_creation_tier=cache_creation_tier,
+                cache_creation_1h_input_tokens=cache_creation_1h_tokens(usage),
             )
 
     async def _record_stall(
@@ -2098,8 +2107,11 @@ class AnthropicProxyService:
         useragent_group: str | None,
         usage: AnthropicUsage | None,
         latency_first_token_ms: int | None,
+        cache_creation_tier: str | None = None,
     ) -> None:
-        await self._finalize_api_key_reservation(reservation, model=model, usage=usage)
+        await self._finalize_api_key_reservation(
+            reservation, model=model, usage=usage, cache_creation_tier=cache_creation_tier
+        )
         await self._load_balancer.record_error(account)
         await self._persist_request_log(
             account=account,

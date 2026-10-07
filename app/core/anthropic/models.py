@@ -213,12 +213,32 @@ AnthropicEvent: TypeAlias = Annotated[
 ]
 
 
+def cache_creation_1h_tokens(usage: AnthropicUsage | None) -> int | None:
+    """1-hour cache write tokens from Anthropic's ``usage.cache_creation`` breakdown, None when absent."""
+    if usage is None:
+        return None
+    breakdown = (usage.model_extra or {}).get("cache_creation")
+    if not isinstance(breakdown, dict):
+        return None
+    value = breakdown.get("ephemeral_1h_input_tokens")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return max(0, value)
+
+
 def merge_usage_values(left: AnthropicUsage | None, right: AnthropicUsage | None) -> AnthropicUsage | None:
     if left is None:
         return right
     if right is None:
         return left
+    extra: dict[str, object] = {}
+    breakdown = (right.model_extra or {}).get("cache_creation")
+    if not isinstance(breakdown, dict):
+        breakdown = (left.model_extra or {}).get("cache_creation")
+    if isinstance(breakdown, dict):
+        extra["cache_creation"] = breakdown
     return AnthropicUsage(
+        **extra,
         input_tokens=right.input_tokens if right.input_tokens is not None else left.input_tokens,
         output_tokens=right.output_tokens if right.output_tokens is not None else left.output_tokens,
         cache_creation_input_tokens=(

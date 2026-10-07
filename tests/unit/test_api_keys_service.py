@@ -2021,3 +2021,68 @@ def test_build_api_key_trends_keeps_aligned_windows_at_168_buckets() -> None:
     assert trends.cost[-1].t == newest_bucket
     assert sum(point.v for point in trends.tokens) == pytest.approx(12.0)
     assert sum(point.v for point in trends.cost) == pytest.approx(0.3)
+
+
+async def _cost_capped_key(service: ApiKeysService, name: str, *, max_value: int = 10_000_000) -> str:
+    created = await service.create_key(
+        ApiKeyCreateData(
+            name=name,
+            allowed_models=None,
+            expires_at=None,
+            limits=[LimitRuleInput(limit_type="cost_usd", limit_window="daily", max_value=max_value)],
+        )
+    )
+    return created.id
+
+
+@pytest.mark.parametrize(
+    ("model", "settle_kwargs", "expected_microdollars"),
+    [
+        # Opus 5.5 list price: $4 in, $20 out, $5 5m write, $8 1h write, $0.20 read per 1M tokens.
+        (
+            "claude-opus-5-5[1m]",
+            {"cache_creation_input_tokens": 2_000, "cache_read_input_tokens": 3_000, "cache_creation_tier": "5m"},
+            4_000 + 2_000 + 10_000 + 600,
+        ),
+        (
+            "claude-opus-5-5[1m]",
+            {"cache_creation_input_tokens": 2_000, "cache_read_input_tokens": 3_000, "cache_creation_tier": "1h"},
+            4_000 + 2_000 + 16_000 + 600,
+        ),
+        # A caller that gives no cache split has its cached tokens metered as cache reads.
+        ("claude-opus-5-5", {"cached_input_tokens": 3_000}, 4_000 + 2_000 + 600),
+        ("claude-haiku-4-5-20251001", {}, 1_000 + 500),
+        # Anthropic's per-TTL breakdown: 500 of the 2,000 writes are 1-hour writes ($8), the rest 5-minute ($5).
+        (
+            "claude-opus-5-5",
+            {
+                "cache_creation_input_tokens": 2_000,
+                "cache_read_input_tokens": 3_000,
+                "cache_creation_1h_input_tokens": 500,
+            },
+            4_000 + 2_000 + 7_500 + 4_000 + 600,
+        ),
+        # Opus 4.6 has its own $5/$25 entry; it must not fall through claude-opus-4* to Opus 4's $15/$75.
+        ("claude-opus-4-6[1m]", {}, 5_000 + 2_500),
+    ],
+)
+async def test_cost_cap_settles_claude_usage_at_list_price(
+    model: str, settle_kwargs: dict[str, Any], expected_microdollars: int
+) -> None:
+    """Money math: cap accounting for Claude reads the Anthropic list price, never $0 (bops S16)."""
+    repo = _FakeApiKeysRepository()
+    service = ApiKeysService(repo)
+    key_id = await _cost_capped_key(service, "claude-list-price")
+    reservation = await service.enforce_limits_for_request(
+        key_id,
+        request_model=model,
+        request_usage_budget=ApiKeyRequestUsageBudget(input_tokens=0, output_tokens=0),
+    )
+
+    await service.finalize_usage_reservation(
+        reservation.reservation_id, model=model, input_tokens=1_000, output_tokens=100, **settle_kwargs
+    )
+
+    limits = await repo.get_limits_by_key(key_id)
+    cost_limit = next(limit for limit in limits if limit.limit_type == LimitType.COST_USD)
+    assert cost_limit.current_value == expected_microdollars

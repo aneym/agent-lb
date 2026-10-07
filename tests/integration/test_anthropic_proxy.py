@@ -2710,7 +2710,7 @@ async def test_planner_messages_resolve_to_opus(
         captured["model"] = json_body["model"]
         return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
 
-    async def fake_finalize_api_key_reservation(self, reservation, *, model, usage):
+    async def fake_finalize_api_key_reservation(self, reservation, *, model, usage, cache_creation_tier=None):
         del self, reservation, usage
         captured["settled_model"] = model
 
@@ -2845,7 +2845,7 @@ async def test_planner_api_key_reservation_and_settlement_use_effective_model(
         captured["upstream_model"] = json_body["model"]
         return _FakeResponseContext(_FakeResponse(200, ANTHROPIC_SSE_BYTES))
 
-    async def fake_finalize_api_key_reservation(self, reservation, *, model, usage):
+    async def fake_finalize_api_key_reservation(self, reservation, *, model, usage, cache_creation_tier=None):
         del self, usage
         captured["settled_model"] = model
         captured["settled_reservation_model"] = reservation.model

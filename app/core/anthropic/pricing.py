@@ -72,6 +72,36 @@ DEFAULT_PRICING_MODELS: dict[str, AnthropicModelPrice] = {
         cache_read_input_per_1m=0.20,
         output_per_1m=10.0,
     ),
+    # Opus 4.6-4.8 and Sonnet 4.6 (official price page, 2026-10-07); without their own entries
+    # claude-opus-4-6* fell through claude-opus-4* to Opus 4's $15/$75.
+    "claude-opus-4-8": AnthropicModelPrice(
+        input_per_1m=5.0,
+        cache_creation_5m_input_per_1m=6.25,
+        cache_creation_1h_input_per_1m=10.0,
+        cache_read_input_per_1m=0.50,
+        output_per_1m=25.0,
+    ),
+    "claude-opus-4-7": AnthropicModelPrice(
+        input_per_1m=5.0,
+        cache_creation_5m_input_per_1m=6.25,
+        cache_creation_1h_input_per_1m=10.0,
+        cache_read_input_per_1m=0.50,
+        output_per_1m=25.0,
+    ),
+    "claude-opus-4-6": AnthropicModelPrice(
+        input_per_1m=5.0,
+        cache_creation_5m_input_per_1m=6.25,
+        cache_creation_1h_input_per_1m=10.0,
+        cache_read_input_per_1m=0.50,
+        output_per_1m=25.0,
+    ),
+    "claude-sonnet-4-6": AnthropicModelPrice(
+        input_per_1m=3.0,
+        cache_creation_5m_input_per_1m=3.75,
+        cache_creation_1h_input_per_1m=6.0,
+        cache_read_input_per_1m=0.30,
+        output_per_1m=15.0,
+    ),
     "claude-opus-4-5": AnthropicModelPrice(
         input_per_1m=5.0,
         cache_creation_5m_input_per_1m=6.25,
@@ -160,6 +190,10 @@ DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "claude-fable-5*": "claude-fable-5",
     "claude-mythos-5*": "claude-mythos-5",
     "claude-sonnet-5*": "claude-sonnet-5",
+    "claude-opus-4-8*": "claude-opus-4-8",
+    "claude-opus-4-7*": "claude-opus-4-7",
+    "claude-opus-4-6*": "claude-opus-4-6",
+    "claude-sonnet-4-6*": "claude-sonnet-4-6",
     "claude-opus-4-5*": "claude-opus-4-5",
     "claude-sonnet-4-5*": "claude-sonnet-4-5",
     "claude-haiku-4-5*": "claude-haiku-4-5",

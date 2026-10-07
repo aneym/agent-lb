@@ -9,7 +9,7 @@ from typing import Any, Protocol, cast
 
 import anyio
 
-from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
+from app.core.exceptions import ProxyAuthError, ProxyModelNotAllowed, ProxyRateLimitError
 from app.core.openai.models import CompactResponsePayload
 from app.core.utils.request_id import get_request_id
 from app.modules.api_keys.service import (
@@ -18,6 +18,7 @@ from app.modules.api_keys.service import (
     ApiKeyRateLimitExceededError,
     ApiKeyRequestUsageBudget,
     ApiKeysService,
+    ApiKeyUnpricedModelError,
     ApiKeyUsageReservationData,
 )
 from app.modules.proxy._service.support import (
@@ -111,6 +112,8 @@ class _ApiKeyUsageMixin:
                 except ApiKeyRateLimitExceededError as exc:
                     message = f"{exc}. Usage resets at {exc.reset_at.isoformat()}Z."
                     raise ProxyRateLimitError(message) from exc
+                except ApiKeyUnpricedModelError as exc:
+                    raise ProxyModelNotAllowed(str(exc), code="model_unpriced_under_cost_cap") from exc
                 except ApiKeyInvalidError as exc:
                     raise ProxyAuthError(str(exc)) from exc
 
