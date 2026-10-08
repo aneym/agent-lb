@@ -16,8 +16,16 @@ dispatcher execs into carries its own timeout as a timer (build lead decision (a
 hit that timeout and was cancelled with nothing shown, the dispatcher's is killed by SIGALRM at it: no rewrite, and
 a failed-hook notice.
 
-Floor replay: each live floor guard is made to time out, crash, go missing and print a malformed answer (a stub in
-the sandbox, never the real file); the dispatcher must refuse every one, and a non-floor control must fail open.
+Floor replay: each live floor guard is made to time out, crash, go missing, print a malformed answer and exit 0
+without its allow receipt (a stub in the sandbox, never the real file); the dispatcher must refuse every one, and a
+non-floor control must fail open.
+
+Floor guards (S44, 2026-10-08) are modelled on their own: a floor guard's command must be a direct exec of its own
+script (`[python3|bash] <script> [args]`), and its own result is that exec with HOOK_FLOOR_RECEIPT=1 set; it allowed
+only when it exited 0 with its receipt line `floor-ok <script name>` last on stdout (taken off before its answer is
+read). A live floor guard that exits 0 without its receipt is a mismatch (a stale guard the dispatcher would refuse on
+every call). --overlay REL=PATH runs PATH in place of HOME/REL (install-policy passes the hooks it is about to
+install, so the fold is checked against the guards it will run).
 
 Processes per Bash call are observed as whole trees (see observe): a kqueue watch on each hook's shell from before it
 runs; at every fork the tree is stopped, every child of every known process (unreaped ones too) is listed and
@@ -253,34 +261,95 @@ def effect(event, results):
 # open as before. The expected effect of the dispatcher path is the per-hook effect with this rule applied.
 FLOOR_NAMES = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny", "stash-guard",
                "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard", "wide-scan-guard.sh",
-               "agent-lb-bootout-guard.sh")
+               "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
 FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
 NOTICE_PREFIX = "Failed with non-blocking status code: "
-# Whatever trails the wrapper (`;`, whitespace, `&`) is read too, as hook-dispatch.py WRAPPER_TAIL does (2026-10-08).
-WRAPPER = re.compile(r"\s+(?:2>\s*/dev/null)?\s*(?:\|\|\s*(?:true|\{\s*printf\s+%s\s+'[^']*'\s*;\s*\}))?[\s;&]*$")
+RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
+# Exact floor commands of earlier folds (sha256) -> the direct exec that replaced them (S44; kept in step with
+# hook-dispatch.py LEGACY_FLOOR_COMMANDS, written out here so the model does not read the dispatcher's code).
+LEGACY_FLOOR = {
+    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c":
+        '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
+    "85663684c44150f611a408af4d442c891ce1b66ba43f3e47610b7262c9b26525":
+        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
+    "487abcd9095bc74d791c3371413cf424ba2a562e10e1f4a4e2f559d63f71de89":
+        '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"',
+}
+DIRECT = re.compile(r'^\s*(?:(/usr/bin/python3|python3|/bin/bash|bash)\s+)?("(?:\$HOME|)/[^"$`\\]*"|(?:\$HOME|~)?/'
+                    r'[^\s"\'$`\\;&|<>(){}*?\[\]]+)((?:\s+[A-Za-z0-9_./=:+-]+)*)\s*$')
+
+
+def legacy(command):
+    return LEGACY_FLOOR.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
 
 
 def floor_of(command):
+    command = legacy(command) or command
     for name in FLOOR_NAMES:
         if re.search(r"(?:^|[/\s\"'])%s(?=$|[\s\"';|&)])" % re.escape(name), command):
             return name
     return "dangerous-command" if FLOOR_INLINE in command else None
 
 
-def bare_command(command):
-    """A guard command without its `2>/dev/null`, `|| true` or `|| { printf ...; }` wrapper (the guard's own result)."""
-    match = WRAPPER.search(command)
-    return command[:match.start()] if match and match.group(0).strip() else command
+def direct_argv(command, name, home):
+    """argv of the direct exec a floor command must be (S44), with HOME expanded; None when it is anything else."""
+    match = DIRECT.match(legacy(command) or command)
+    if not match:
+        return None
+    script = match.group(2).strip('"')
+    if script.startswith("$HOME/"):
+        script = home + script[len("$HOME"):]
+    elif script.startswith("~/"):
+        script = home + script[1:]
+    if os.path.basename(script) != name:
+        return None
+    return ([match.group(1)] if match.group(1) else []) + [script] + match.group(3).split()
+
+
+def run_direct(argv, name, payload, env, cwd, timeout):
+    """A floor guard's own result: its direct exec with the receipt asked for; the receipt is taken off `out`."""
+    started = time.monotonic()
+    env = dict(env, **{RECEIPT_ENV: "1"})
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                                cwd=cwd, start_new_session=True)
+    except OSError as exc:
+        return {"command": " ".join(argv), "code": 127 if isinstance(exc, FileNotFoundError) else 126, "out": "",
+                "err": str(exc), "timed_out": False, "receipt": False, "seconds": 0.0}
+    try:
+        out, err = proc.communicate(payload, timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        out, err = proc.communicate()
+        timed_out = True
+    code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
+    text, receipt = out.decode("utf-8", "replace"), False
+    want = "floor-ok %s" % name
+    body = text[:-1] if text.endswith("\n") else text
+    cut = body.rfind("\n") + 1
+    if body[cut:] == want:
+        text, receipt = body[:cut], True
+    return {"command": " ".join(argv), "code": code, "out": text, "err": err.decode("utf-8", "replace"),
+            "timed_out": timed_out, "receipt": receipt, "seconds": round(time.monotonic() - started, 3)}
 
 
 def floor_failed(raw):
-    """Whether a floor guard's own (unwrapped) result is a failure rather than an answer."""
+    """Whether a floor guard's own result is a failure rather than an answer: not a direct exec, a timeout, any exit
+    but 0 and 2, or an exit 0 without its receipt; then an answer that is not a hook answer."""
+    if raw.get("opaque"):
+        return True
     if raw["timed_out"]:
         return True
     if raw["code"] == 2:
         return False
     if raw["code"] != 0:
+        return True
+    if not raw.get("receipt"):
         return True
     text = raw["out"].strip()
     if not text:
@@ -349,7 +418,7 @@ class Sandbox(object):
         for command in commands:
             for rel in PATH_REF.findall(command):
                 rel = rel.rstrip("/")
-                source = os.path.join(real_home, rel)
+                source = OVERLAY.get(rel) or os.path.join(real_home, rel)
                 target = os.path.join(home, rel)
                 if os.path.isfile(source) and not os.path.lexists(target):
                     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -406,7 +475,8 @@ class Sandbox(object):
 
     def env(self, run, extra=None):
         env = {key: value for key, value in os.environ.items()
-               if not key.startswith(("HERDR_", "FACTORY_", "HOOK_DISPATCH_", "CLAUDE_ENV_FILE", "TMUX"))}
+               if not key.startswith(("HERDR_", "FACTORY_", "HOOK_DISPATCH_", "HOOK_FLOOR_", "CLAUDE_ENV_FILE",
+                                      "TMUX"))}
         env.update({
             "HOME": os.path.join(run, "home"),
             "TMPDIR": os.path.join(run, "tmp") + "/",
@@ -627,11 +697,12 @@ def run_path(sandbox, case, hooks, extra, trace):
         result = run_shell(hook["command"], payload, env, cwd, hook_timeout(hook))
         result["trace"] = []
         if not trace and case.get("event") == "PreToolUse" and floor_of(hook["command"]):
-            # A floor guard's own result, before its wrapper: what the floor rule reads.
+            # A floor guard's own result, as the dispatcher must run it (S44): the direct exec of its script with the
+            # receipt asked for, or nothing at all when its command is not one (the call is refused).
             result["floor"] = floor_of(hook["command"])
-            bare = bare_command(hook["command"])
-            if bare != hook["command"]:
-                result["raw"] = run_shell(bare, payload, env, cwd, hook_timeout(hook))
+            argv = direct_argv(hook["command"], result["floor"], env["HOME"])
+            result["raw"] = run_direct(argv, result["floor"], payload, env, cwd, hook_timeout(hook)) if argv else dict(
+                result, opaque=True, receipt=False)
         if trace and os.path.exists(trace_path):
             with open(trace_path) as handle:
                 result["trace"] = [json.loads(line) for line in handle if line.strip()]
@@ -692,7 +763,10 @@ def run_case(sandbox, registry, case):
     new_view = same(effect(event, new_results), run2)
     # (2) what Claude Code does with the answers
     if not same_effect(old_view, new_view):
-        outcome["mismatches"].append({"what": "effect", "old": old_view, "new": new_view})
+        outcome["mismatches"].append({"what": "effect", "old": old_view, "new": new_view, "floor_raw": [
+            {key: (result.get("raw") or {}).get(key) for key in ("command", "code", "receipt", "timed_out", "opaque",
+                                                                  "err")}
+            for result in old_results if result.get("floor")]})
     # (1) each guard: the dispatcher's own record of it, or its direct run when it was left per-hook
     new_by_command, modes = {}, []
     for result in new_results:
@@ -716,6 +790,12 @@ def run_case(sandbox, registry, case):
         if mode.startswith("skipped ("):
             continue  # a rewriter skipped because a deny or a later rewrite decides; the effect check covers it
         raw = old.get("raw") or old
+        if old.get("floor") and mode != "per-hook" and not case.get("replay") and not raw.get("opaque") \
+                and not raw["timed_out"] and raw["code"] == 0 and not raw.get("receipt"):
+            # A live floor guard that allows without its receipt: the dispatcher refuses every call it guards (a
+            # guard older than the dispatcher that asks for it). Never folded over.
+            outcome["mismatches"].append({"what": "floor guard exited 0 without its allow receipt",
+                                          "command": old["command"]})
         if mode == "per-hook":
             raw = old  # left per-hook: no floor rule, the same command on both paths
         elif old.get("floor") and floor_failed(raw):
@@ -1143,14 +1223,17 @@ def synthetic_registry():
 # Each live floor guard is made to fail four ways in a sandbox (its script, or the `bash` an inline guard runs, is
 # replaced by a stub; never the real file) and run on both paths: the dispatcher must refuse every one. One
 # non-floor guard is failed the same ways as a control: it must fail open on both paths, as before.
-FLOOR_MODES = ("timeout", "crash", "missing", "malformed")
+FLOOR_MODES = ("timeout", "crash", "missing", "malformed", "no-receipt")
+OVERLAY = {}  # HOME-relative path -> the file run in its place (--overlay; install-policy's hooks about to land)
 PY_STUBS = {"timeout": "import time\ntime.sleep(30)\n",
             "crash": "raise RuntimeError('synthetic floor crash')\n",
+            "no-receipt": "import sys\nsys.stdin.read()\n",
             "malformed": "import sys\nsys.stdin.read()\nprint('not a hook answer {')\n"}
 SH_STUBS = {"timeout": "#!/bin/bash\nexec sleep 30\n",
             "crash": "#!/bin/bash\necho 'synthetic floor crash' >&2\nexit 1\n",
             "missing": "#!/bin/bash\necho \"bash: $0: No such file or directory\" >&2\nexit 127\n",
-            "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n"}
+            "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n",
+            "no-receipt": "#!/bin/bash\ncat >/dev/null\nexit 0\n"}
 # The Bash input reaches every pinned floor guard's prefilter (dangerous-command, railway, link-cli; launchctl for the
 # bootout guard, a floor guard since 2026-10-08), so each one runs; a guard its prefilter skips never runs, and so
 # cannot fail. Never executed.
@@ -1173,16 +1256,18 @@ def replay_leaves(registry):
     return leaves + ([control] if control else [])
 
 
-SHAPE_SCRIPT = re.compile(r'^\s*(?:(/usr/bin/python3|python3)\s+)?("\$HOME/[^"]+"|\$HOME/\S+|~/\S+)')
+SHAPE_SCRIPT = re.compile(r'^\s*(?:(/usr/bin/python3|python3|/bin/bash|bash)\s+)?("\$HOME/[^"]+"|\$HOME/\S+|~/\S+)')
 
 
 def replay_case(root, dispatcher, real_home, inproc, index, name, key, hook, mode):
     command = hook["command"]
-    match = SHAPE_SCRIPT.match(command)
+    match = SHAPE_SCRIPT.match(legacy(command) or command)
     extra, remove = {}, []
     if match:
         rel = match.group(2).strip('"').replace("$HOME/", "", 1).replace("~/", "", 1)
-        python = bool(match.group(1)) or (interpreter_line(os.path.join(real_home, rel)) or "").find("python") >= 0
+        python = "python" in (match.group(1) or "") or (
+            not match.group(1) and (interpreter_line(OVERLAY.get(rel) or os.path.join(real_home, rel)) or "").find(
+                "python") >= 0)
         if mode == "missing":
             remove.append(os.path.join("home", rel))
         else:
@@ -1196,7 +1281,7 @@ def replay_case(root, dispatcher, real_home, inproc, index, name, key, hook, mod
                       remove)
     tool = key.split("|")[0] if key != "*" else "Bash"
     case = dict(event="PreToolUse", tool=tool, input=REPLAY_INPUT.get(tool, {"command": "ls"}), expect=None,
-                name="floor-%s-%s" % (name or "control", mode))
+                name="floor-%s-%s" % (name or "control", mode), replay=True)
     outcome = run_case(sandbox, registry, case)
     shutil.rmtree(sandbox.root, ignore_errors=True)
     want = "deny" if name else outcome["decision"]
@@ -1302,6 +1387,8 @@ def main():
     parser.add_argument("--out")
     parser.add_argument("--workdir", help="sandbox parent (default: a new temp dir, removed afterwards)")
     parser.add_argument("--keep", action="store_true", help="keep the sandbox")
+    parser.add_argument("--overlay", action="append", default=[], metavar="REL=PATH",
+                        help="run PATH in place of HOME/REL (repeatable)")
     parser.add_argument("--only", help="regex: run only cases whose name matches")
     parser.add_argument("--jobs", type=int, default=4, help="cases run at once (each in its own sandbox runs)")
     parser.add_argument("--require-process-count", action="store_true")
@@ -1313,6 +1400,11 @@ def main():
                         help="also require each deny/allow case to get its expected decision (the live guard set)")
     args = parser.parse_args()
     home = os.path.abspath(args.home)
+    for item in args.overlay:
+        rel, _sep, path = item.partition("=")
+        if not rel or not path or not os.path.isfile(path):
+            parser.error("--overlay %r: want REL=PATH of an existing file" % item)
+        OVERLAY[rel.strip("/")] = os.path.abspath(path)
     lock = None if args.lock_held else install_lock(home)
     registry_path = args.registry or os.path.join(home, ".claude", "hooks", "dispatch", "registry.json")
     dispatcher = args.dispatcher or os.path.join(home, ".claude", "hooks", "hook-dispatch.py")

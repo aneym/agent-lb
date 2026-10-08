@@ -41,10 +41,21 @@ without any JSON answer the dispatcher exits with the failed guard's code and th
 Failing closed (2026-10-07 post-merge review of 4e1cea13; p13D: any dispatcher error denies, never skips): on
 PreToolUse, where the guards can deny, a broken registry or entry list, a registry of another fold, a temp file that
 cannot be written, guard answers that cannot be merged and any uncaught error refuse the call with exit 2 and a
-reason, never a silent exit 0 or 1. A floor guard (FLOOR_SCRIPTS, FLOOR_COMMANDS) that times out, crashes, is missing
-or prints something that is not a hook answer refuses the call too, even where its per-hook wrapper failed open;
-its exit 2 under a `|| true` or `|| { printf ...; }` wrapper still blocks. Every other guard fails open as before,
-and each failure is logged to dispatch/failures.jsonl. The other events' guards are notices and side effects (every
+reason, never a silent exit 0 or 1. Every other guard fails open as before, and each failure is logged to
+dispatch/failures.jsonl.
+
+Floor guards (S44, build lead decision 2026-10-08, after five review rounds each patched one wrapper shape): a floor
+guard (FLOOR_SCRIPTS) runs only as a direct exec of its own script with argv: `[python3|bash] <script> [args]`, the
+script's file name being the guard's. It never runs through a shell, so no wrapper (`|| true`, `2>/dev/null`, a
+printf fallback), operator, comment or nested `bash -c` can change its exit status. A floor command that does not
+read as exactly that is refused on PreToolUse without running (install-policy.py refuses to install it), except the
+exact bytes earlier folds wrote (LEGACY_FLOOR_COMMANDS), which run as the direct exec that replaced them so a session
+on an older registry keeps its guards. The dispatcher sets HOOK_FLOOR_RECEIPT=1 for the guard, and the guard allows
+only by ending its stdout with the receipt line `floor-ok <script name>` and exiting 0; the receipt is taken off
+before its answer is read. Exit 2 is its deny. Any other exit, an exit 0 without the receipt, a timeout, a crash, a
+missing script or an answer that is not a hook answer refuses the call. A pinned prefilter (exact reviewed or
+install-derived bytes, below) may still skip a floor guard on input the guard provably ignores; that is the one way
+a floor guard allows without running. The other events' guards are notices and side effects (every
 one is `|| true` today), so there the dispatcher's own faults give a non-blocking notice (exit 1), as a failed guard
 did per-hook; a refused UserPromptSubmit would erase every prompt of the session.
 
@@ -90,14 +101,28 @@ REV_SHA = re.compile(r"[0-9a-f]{64}")
 # before, and the failure is logged to dispatch/failures.jsonl. Matched by script name anywhere in the command, or by
 # the exact inline command. agent-lb-bootout-guard.sh keeps raw restarts off the live agent-lb (2026-10-08 review:
 # per-hook its timeout was merged away, so a raw kickstart of the service was allowed).
+# dangerous-command-guard.sh (S44) replaces the inline `bash -c 'CMD=$(cat | jq ...)'` leaf.
 FLOOR_SCRIPTS = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny",
                  "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
-                 "wide-scan-guard.sh", "agent-lb-bootout-guard.sh")
+                 "wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
-FLOOR_COMMANDS = {  # sha256 of the exact inline command -> its name
-    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": "dangerous-command",
+FLOOR_TEXT = "BLOCKED: Dangerous command"  # an inline copy of the dangerous-command leaf, in any version of its text
+INLINE_FLOOR = "dangerous-command"  # its floor name: never a script, so never a direct exec
+# The exact floor commands earlier folds wrote (sha256 of the bytes) -> the direct exec that replaces each. A session
+# started on an older registry keeps them; install-policy.py rewrites them in settings.json, so no new fold has them.
+LEGACY_FLOOR_COMMANDS = {
+    # the inline dangerous-command leaf (bash -c 'CMD=$(cat | jq -r ".tool_input.command // empty"); ...')
+    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c":
+        '"$HOME/.claude/hooks/dangerous-command-guard.sh"',
+    # install-policy SEAT_GUARD_HOOK and WORKFLOW_SEAT_GUARD_HOOK before S44:
+    # `... 2>/dev/null || { printf %s '<advisory>'; }`
+    "85663684c44150f611a408af4d442c891ce1b66ba43f3e47610b7262c9b26525":
+        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
+    "487abcd9095bc74d791c3371413cf424ba2a562e10e1f4a4e2f559d63f71de89":
+        '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"',
 }
-FLOOR_TEXT = "BLOCKED: Dangerous command"  # the inline leaf's own refusal, in any later version of its text
+RECEIPT_ENV = "HOOK_FLOOR_RECEIPT"
+RECEIPT = "floor-ok %s"
 NOTICE_PREFIX = "Failed with non-blocking status code: "  # what Claude Code puts before a failed hook's stderr
 # Environment that changes what a pinned shell guard does before or while it runs (a startup file, shell options,
 # exported functions that replace jq, grep or echo, injected libraries). With any of it set the prefilter's proof
@@ -124,78 +149,20 @@ SHAPE = re.compile(
     r"^\s*(?:(?P<interp>/usr/bin/python3|python3)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)"
     r"(?P<devnull>\s+2>\s*/dev/null)?"
     r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$" % (_PATH_WORD, _ARG_WORD))
-# The same wrappers at the end of any command (2026-10-08 review M2): a floor guard whose command SHAPE does not read
-# (`python3 -u "<guard>" 2>/dev/null || true`) still runs bare, so its own failure is seen before the wrapper hides it.
-# Whatever trails the wrapper (`;`, whitespace, `&`) and `||` without spaces are read too (2026-10-08 review: with
-# `... || true;` the wrapper stayed, so a missing seat guard exited 0 with nothing and the call was allowed).
-WRAPPER_TAIL = re.compile(
-    r"(?P<devnull>\s+2>\s*/dev/null)?"
-    r"(?:\s*\|\|\s*(?:(?P<true>true)|\{\s*printf\s+%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?[\s;&]*$")
-# A shell comment after the wrapper (`... || true # advisory`) is dropped before the wrapper is read (2026-10-08 review:
-# the comment kept the wrapper on, so a missing seat guard exited 0 with nothing and the call was allowed). What is left
-# of a floor guard's command must then be one simple command whose exit status is the guard's own: any other control
-# operator (`;`, `&`, `|`, `||`, `&&`, a newline, a leading `!`) can hide its failure, so on PreToolUse such a guard is
-# refused without running it (fail closed), never run with an exit status the dispatcher cannot read.
-
-
-def _unquoted(text):
-    """(index, char, at word start) for each character of text outside quotes and not backslash-escaped."""
-    i, n, quote = 0, len(text), None
-    while i < n:
-        c = text[i]
-        if quote == "'":
-            if c == "'":
-                quote = None
-        elif quote == '"':
-            if c == "\\":
-                i += 1
-            elif c == '"':
-                quote = None
-        elif c == "\\":
-            i += 1
-        elif c in "'\"":
-            quote = c
-        else:
-            word_start = i == 0 or text[i - 1] in " \t\n;&|()"
-            yield i, c, word_start
-            if c == "#" and word_start:  # a comment: nothing in it is syntax, quotes included
-                end = text.find("\n", i)
-                i = (len(text) if end < 0 else end) - 1
-        i += 1
-
-
-def strip_comments(text):
-    """text without its shell comments (an unquoted `#` at the start of a word, up to the end of its line)."""
-    kept, last = [], 0
-    for i, c, word_start in _unquoted(text):
-        if c == "#" and word_start:
-            end = text.find("\n", i)
-            kept.append(text[last:i])
-            last = len(text) if end < 0 else end
-    kept.append(text[last:])
-    return "".join(kept)
-
-
-def control_operator(text):
-    """The first control operator of text that can change its exit status, or None (`&` of a redirection aside)."""
-    text = re.sub(r"[\s;]+$", "", text)
-    for i, c, word_start in _unquoted(text):
-        if c in ";|\n":
-            return "||" if text.startswith("||", i) else c
-        if c == "&" and not (i and text[i - 1] in "<>") and not text.startswith("&>", i):
-            return "&&" if text.startswith("&&", i) else c
-        if c == "!" and word_start and (i + 1 == len(text) or text[i + 1] in " \t"):
-            return c
-    return None
+# A floor guard's command (S44): an optional interpreter, the script, plain arguments; nothing else.
+FLOOR_EXEC = re.compile(
+    r"^\s*(?:(?P<interp>/usr/bin/python3|python3|/bin/bash|bash)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)\s*$"
+    % (_PATH_WORD, _ARG_WORD))
 
 
 class Result(object):
-    __slots__ = ("code", "out", "err", "timed_out", "mode", "spawned", "floor_failure")
+    __slots__ = ("code", "out", "err", "timed_out", "mode", "spawned", "floor_failure", "receipt")
 
     def __init__(self, code=0, out=b"", err=b"", timed_out=False, mode="", spawned=0):
         self.code, self.out, self.err, self.timed_out = code, out, err, timed_out
         self.mode, self.spawned = mode, spawned
-        self.floor_failure = None  # why a floor guard failed (timeout, crash, missing, malformed), or None
+        self.floor_failure = None  # why a floor guard failed (timeout, crash, missing, no receipt, malformed), or None
+        self.receipt = False  # a floor guard ended its stdout with its receipt line (taken off `out`)
 
     def empty(self):
         """Nothing Claude Code acts on: exit 0 and no stdout (stderr of an exit-0 hook is ignored)."""
@@ -599,7 +566,10 @@ SCRIPT_PREFILTERS = {
     # source it installs into the registry's `script_sha`, so no hash is kept here. A registry without one runs the
     # guard every time. test_the_pinned_wide_scan_guard_... proves the prefilter a superset of the source guard.
     "wide-scan-guard.sh": ((), pf_wide_scan_parse),
+    # cb71baf: the hand-installed copy; since agent-lb adopted it (S44, 2026-10-08) its pin is derived at install too.
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
+    # S44 (2026-10-08): the inline dangerous-command leaf as a script, with the leaf's own match; pin derived.
+    "dangerous-command-guard.sh": ((), pf_dangerous),
     # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
     # 31b899775, after its review fixes; 64cf185: factory a6f53ea1e, destination parsed by shlex; 77520a3: factory
     # 03b60384a, shell flag clusters, redirections, keywords and live heredoc bodies; 67708a8: factory 61b9e24f5,
@@ -617,13 +587,14 @@ SCRIPT_PREFILTERS = {
 }
 # Tools a pinned guard needs (each a tuple of alternatives: a name on PATH or an absolute path). Without one the guard
 # fails closed on every input, so its prefilter proves nothing and it always runs.
-SCRIPT_NEEDS = {"wide-scan-guard.sh": (("jq",), ("python3",)),
-                "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"),),
-                "railway-vars-guard.sh": (("python3",),)}
+SCRIPT_NEEDS = {"wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),  # cat: review M2 (hook-dispatcher-5)
+                "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("grep",)),
+                "railway-vars-guard.sh": (("cat",), ("python3",)),
+                "link-cli-guard.sh": (("jq",), ("grep",)),
+                "dangerous-command-guard.sh": (("jq",), ("grep",))}
 # Inline commands: sha256 of the exact command string -> prefilter.
+# The inline dangerous-command leaf is no longer one: LEGACY_FLOOR_COMMANDS runs its script (S44).
 COMMAND_PREFILTERS = {
-    # bash -c 'CMD=$(cat | jq -r ".tool_input.command // empty"); ... rm\s+-rf\s+/|DROP\s+(DATABASE|TABLE) ...'
-    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": pf_dangerous,
     # bash -c 'FILE=$(cat | jq -r ".tool_input.file_path // empty"); ... npx prettier --find-config-path ...'
     "55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": pf_prettier,
 }
@@ -634,7 +605,7 @@ COMMAND_PREFILTERS = {
 
 class Plan(object):
     __slots__ = ("hook", "command", "timeout", "kind", "script", "argv", "interp", "devnull", "fallback_true",
-                 "fallback_text", "source", "reason", "prefilter", "floor", "bare", "opaque")
+                 "fallback_text", "source", "reason", "prefilter", "floor", "exec_argv", "opaque")
 
     def __init__(self, hook):
         self.hook = hook
@@ -645,20 +616,36 @@ class Plan(object):
         self.devnull, self.fallback_true, self.fallback_text, self.source = False, False, None, None
         self.reason, self.prefilter = "", None
         self.floor = floor_name(self.command)  # the floor guard this hook runs, or None
-        self.bare = None  # a floor guard's own command without its shell wrapper (run bare, wrapper applied here)
-        self.opaque = None  # why a floor guard's exit status cannot be read from its command (refused on PreToolUse)
+        self.exec_argv = None  # a floor guard's direct exec (S44): [interpreter,] script, args; never a shell
+        self.opaque = None  # why a floor guard's command is not a direct exec of its script (refused on PreToolUse)
+
+
+def legacy_floor(command):
+    """The direct command that replaces an exact floor command of an earlier fold, or None."""
+    return LEGACY_FLOOR_COMMANDS.get(hashlib.sha256(command.encode("utf-8")).hexdigest()) if command else None
 
 
 def floor_name(command):
+    """The floor guard a command runs (its script name, or INLINE_FLOOR for an inline copy of that leaf), or None.
+    A floor script named anywhere in the command counts, quoted or nested: such a command must be a direct exec."""
     if not command:
         return None
-    named = FLOOR_COMMANDS.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
-    if named:
-        return named
-    match = FLOOR_WORD.search(command)
+    match = FLOOR_WORD.search(legacy_floor(command) or command)
     if match:
         return match.group(1)
-    return "dangerous-command" if FLOOR_TEXT in command else None
+    return INLINE_FLOOR if FLOOR_TEXT in command else None
+
+
+def floor_exec(command, name):
+    """argv of the direct exec a floor command reads as (S44), or None: `[python3|bash] <script> [plain args]` whose
+    script is the floor guard `name` itself. Exact legacy bytes read as the command that replaced them."""
+    match = FLOOR_EXEC.match(legacy_floor(command) or command)
+    if not match:
+        return None
+    script = expand_word(match.group("script"))
+    if os.path.basename(script) != name:
+        return None
+    return ([match.group("interp")] if match.group("interp") else []) + [script] + match.group("args").split()
 
 
 def sibling_sources(script_dir, source, depth=0, seen=None):
@@ -702,6 +689,14 @@ def plan_hook(hook, inproc_names, script_pins=None):
     if hook.get("type", "command") != "command" or not command:
         plan.reason = "not a command hook"
         return plan
+    if plan.floor:
+        plan.exec_argv = floor_exec(command, plan.floor)
+        if plan.exec_argv is None:
+            plan.reason = "floor guard"
+            plan.opaque = ("is not registered as a direct exec of its own script (`[python3|bash] <script> [args]`; "
+                           "a floor guard never runs through a shell, S44)")
+            return plan
+        command = legacy_floor(command) or command  # the direct exec an earlier fold's exact bytes stand for
     if command.strip() in REWRITERS:
         plan.kind, plan.reason = "rewriter", "side-effect free rewriter"
         return plan
@@ -716,26 +711,10 @@ def plan_hook(hook, inproc_names, script_pins=None):
     match = SHAPE.match(command)
     if not match:
         plan.reason = "shape"
-        if not plan.floor or plan.floor in FLOOR_COMMANDS.values():
-            return plan
-        stripped = strip_comments(command)
-        tail = WRAPPER_TAIL.search(stripped)
-        if tail and (tail.group("devnull") or tail.group("true") or tail.group("fb") is not None) \
-                and stripped[:tail.start()].strip():
-            plan.devnull = bool(tail.group("devnull"))
-            plan.fallback_true = bool(tail.group("true"))
-            plan.fallback_text = tail.group("fb")
-            plan.bare = stripped[:tail.start()]
-        operator = control_operator(plan.bare or stripped)
-        if operator:
-            plan.opaque = "runs inside shell syntax (%r) that can hide its exit status" % operator
         return plan
-    plan.devnull = bool(match.group("devnull"))
+    plan.devnull = bool(match.group("devnull"))  # a floor guard's direct command has no wrapper
     plan.fallback_true = bool(match.group("true"))
     plan.fallback_text = match.group("fb")
-    if plan.floor and (plan.devnull or plan.fallback_true or plan.fallback_text is not None):
-        # Run the guard bare and apply its wrapper here, so its own failure is seen before the wrapper hides it.
-        plan.bare = command[:match.end("args")]
     if match.group("interp") is None:
         # A pinned shell guard, bare or inside `2>/dev/null || true`: when its prefilter says it cannot act, the
         # wrapped command ends with exit 0 and no output either way. A printf fallback answers whenever the guard
@@ -893,6 +872,8 @@ def run_inproc(plan, payload):
     sys.modules["__main__"] = module
     sys.argv = list(plan.argv)
     sys.path[0:1] = [os.path.dirname(os.path.realpath(plan.script))]
+    if plan.floor:
+        os.environ[RECEIPT_ENV] = "1"  # restored with the rest of the environment below
     code, timed_out, crashed = 0, False, False
     spawned_before = _SPAWNS[0]
 
@@ -1008,26 +989,40 @@ def answer_problem(out):
     return None
 
 
+def take_receipt(result, name):
+    """Take a floor guard's receipt line (`floor-ok <name>`, last on stdout) off its output; note if it was there."""
+    want = (RECEIPT % name).encode("utf-8")
+    body = result.out[:-1] if result.out.endswith(b"\n") else result.out
+    cut = body.rfind(b"\n") + 1
+    if body[cut:] == want:
+        result.out, result.receipt = body[:cut], True
+    return result
+
+
 def floor_failure(result):
-    """How a floor guard failed (before any shell wrapper), or None when it answered: allow, deny or block."""
+    """How a floor guard failed, or None when it answered: an exit 2 block, or an exit 0 that ended with its receipt
+    and printed nothing or a well-formed hook answer before it (S44)."""
     if result.timed_out:
         return "timed out"
     if result.code == 2:
-        return None  # a block
+        return None  # its deny
     if result.code == 127:
         return "is missing (exit 127)"
     if result.code != 0:
         return "crashed (exit %d)" % result.code
+    if not result.receipt:
+        return "exited 0 without its allow receipt"
     return answer_problem(result.out)
 
 
 def finish(plan, raw):
-    """The guard's result as Claude Code would see it; for a floor guard, its failure is read first."""
+    """The guard's result as Claude Code would see it. A floor guard runs as a direct exec with no wrapper: its
+    receipt is taken off and its failure read; the rest of its answer is its own."""
     if plan.floor:
+        take_receipt(raw, plan.floor)
         raw.floor_failure = floor_failure(raw)
-        if raw.code == 2 and not raw.timed_out:
-            return raw  # a floor guard's block stands, whatever its wrapper would make of exit 2
-    if plan.kind == "inproc" or plan.bare:
+        return raw
+    if plan.kind == "inproc":
         return apply_wrapper(plan, raw)
     return raw
 
@@ -1040,8 +1035,12 @@ class External(object):
         import threading
         self.plan, self.started = plan, time.monotonic()
         self.outcome = None
-        argv, executable, env = [SHELL, "-c", plan.bare or plan.command], None, None
-        if plan.kind == "rewriter":
+        self.thread = None
+        argv, executable, env = [SHELL, "-c", plan.command], None, None
+        if plan.exec_argv:
+            # A floor guard (S44): its own script with argv, never a shell; the receipt is asked for.
+            argv, env = list(plan.exec_argv), dict(os.environ, **{RECEIPT_ENV: "1"})
+        elif plan.kind == "rewriter":
             # The rewriter is found on this process's own PATH, as /bin/sh would per-hook, before rewriter_env puts
             # git's directory first (2026-10-08 review: another rtk in that directory would have run instead). The
             # same argv as `/bin/sh -c 'rtk hook claude'` hands it; not on PATH, the shell reports it as before.
@@ -1054,6 +1053,14 @@ class External(object):
         try:
             self.proc = subprocess.Popen(argv, executable=executable, stdin=stdin, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, start_new_session=True, env=env)
+        except OSError as exc:
+            if not plan.exec_argv:
+                raise
+            # A floor guard's script that cannot be started: missing (127) or not executable (126), as a shell says.
+            code = 127 if isinstance(exc, FileNotFoundError) else 126
+            self.outcome = Result(code, b"", ("hook-dispatch: %s: %s\n" % (argv[0], exc.strerror or exc)).encode(
+                "utf-8", "backslashreplace"), False, "external", 0)
+            return
         finally:
             os.close(stdin)
         self.thread = threading.Thread(target=self._drain)
@@ -1081,7 +1088,8 @@ class External(object):
                                            % exc.__class__.__name__).encode(), False, "external", 1)
 
     def result(self):
-        self.thread.join()
+        if self.thread is not None:
+            self.thread.join()
         return self.outcome
 
 

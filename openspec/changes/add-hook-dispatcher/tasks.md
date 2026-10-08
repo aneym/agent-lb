@@ -52,3 +52,13 @@
 - [x] agent-lb-bootout-guard.sh tells a failed matcher (grep missing or erroring) from no match and refuses; jq reads its input directly.
 - [x] railway-vars-guard.sh again refuses `railway variables --kv` and `railway run printenv|env`, custody token or not, with the earlier guard's messages.
 - [x] factory `checks/harden/hook-dispatcher` probes each of these fail-open paths on a copy of the installed dispatcher.
+
+## 9. Fix round (2026-10-08, hook-dispatcher-5: build lead decision S44 and review M1-M4 of b98c2c5d)
+
+- [x] S44 (a): a floor guard runs only as a direct exec of its own script (`[python3|bash] <script> [args]`); any other shape is refused at install with nothing written and denied at run time. The old wrappers and the inline leaf map by exact hash to their direct execs; install-policy rewrites them in settings.
+- [x] S44 (b): the inline dangerous-command leaf is `hooks/dangerous-command-guard.sh`, installed and registered like the other guards (pinned prefilter `pf_dangerous`). link-cli-guard.sh and workflow-relay-guard.py are adopted from their hand-installed copies.
+- [x] S44 (c): a floor guard allows only with its receipt `floor-ok <name>` and exit 0; every floor guard reads its input with checked status and refuses on a read, jq, grep or scanner failure (seat and workflow seat guards included). factory rm-dynamic-deny and stash-guard print the receipt (factory 7ff86e29c).
+- [x] M1: `bash -c 'python3 .../seat-guard.py || true'` is refused at install and denied at run time.
+- [x] M2: wide-scan-guard.sh refuses when `cat` fails or reads nothing; cat is in its needed tools.
+- [x] M3: the dangerous-command guard refuses when jq or grep fails, on the script and on the legacy inline bytes.
+- [x] M4: folded entries naming different revs are refused with nothing written.

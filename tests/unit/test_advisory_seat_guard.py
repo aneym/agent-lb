@@ -201,10 +201,12 @@ def test_opus_dispatch_is_admitted(tmp_path: Path) -> None:
     assert record and "denied" not in record
 
 
-def test_malformed_input_is_never_a_permission_denial(tmp_path: Path) -> None:
+def test_malformed_input_is_a_permission_denial(tmp_path: Path) -> None:
+    """S44 (hook-dispatcher-5, 2026-10-08): the seat guard is a floor guard, so input it cannot read denies the
+    dispatch; it used to allow with an advisory. Telemetry trouble below still never denies."""
     output, record = invoke(tmp_path, snapshot=None, raw_input="not json")
-    assert "permissionDecision" not in output
-    assert "malformed Agent hook input" in output["additionalContext"]
+    assert output["permissionDecision"] == "deny"
+    assert "fails closed" in output["permissionDecisionReason"]
     assert record is None
 
 

@@ -147,20 +147,22 @@ def test_alias_is_checked_against_resolved_retirement(tmp_path, alias):
 
 
 @pytest.mark.parametrize('script', ["agent(p, {label: 'y'}", "agent(p, {label: 'unterminated})", '/* unclosed'])
-def test_parse_errors_fail_open(script):
+def test_parse_errors_fail_closed(script):
+    """S44 (hook-dispatcher-5, 2026-10-08): a floor guard denies when its scanner fails; it used to allow."""
     output = invoke(script)
-    assert 'permissionDecision' not in output
-    assert 'not blocked' in output['additionalContext']
+    assert output['permissionDecision'] == 'deny'
+    assert 'fails closed' in output['permissionDecisionReason']
 
 
-def test_missing_files_and_invalid_hook_json_fail_open(tmp_path):
+def test_missing_files_and_invalid_hook_json_fail_closed(tmp_path):
+    """S44: input, script or routing table the guard cannot read denies the launch; it used to allow."""
     for output in [
         invoke(script_path=tmp_path / 'missing'),
         invoke('agent(p, {label: x})', table=tmp_path / 'missing'),
         invoke(raw='{'),
     ]:
-        assert 'permissionDecision' not in output
-        assert 'not blocked' in output['additionalContext']
+        assert output['permissionDecision'] == 'deny'
+        assert 'fails closed' in output['permissionDecisionReason']
 
 
 def test_settings_install_uninstall_is_idempotent_and_preserves_user_hook():
@@ -176,7 +178,7 @@ def test_settings_install_uninstall_is_idempotent_and_preserves_user_hook():
     registered = [h for h in workflow_groups[0]['hooks'] if h != user_hook]
     assert len(registered) == 1
     assert 'workflow-seat-guard.py' in registered[0]['command']
-    assert '||' in registered[0]['command']
+    assert registered[0]['command'] == '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"'
     removed = module.reconcile_settings(installed, True)
     assert removed['hooks'] == original['hooks']
     assert module.reconcile_settings(removed, True) == removed

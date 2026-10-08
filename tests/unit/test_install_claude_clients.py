@@ -304,8 +304,12 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
         for hook_config in group["hooks"]
     ]
     assert commands[0] == ("Bash", "keep-safety-hook")
-    assert [matcher for matcher, command in commands[1:]] == ["Agent", "Workflow"]
-    assert "hooks/seat-guard.py" in commands[1][1]
+    assert commands[1:] == [
+        ("Agent", '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"'),
+        ("Workflow", '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"'),
+        ("Bash", 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"'),
+        ("Bash", '"$HOME/.claude/hooks/dangerous-command-guard.sh"'),
+    ]
 
 
 def test_policy_installer_preflight_failure_does_not_mutate_any_target(tmp_path: Path) -> None:

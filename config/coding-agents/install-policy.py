@@ -202,6 +202,27 @@ MANAGED_AGENTS = (
         Path("hooks/railway-vars-guard.sh"),
     ),
     (
+        # S44 (2026-10-08): the inline dangerous-command leaf of settings.json as a script; reconcile_settings
+        # registers it in the leaf's place. Pin derived at install (DERIVED_PINS).
+        Path(".claude/hooks/dangerous-command-guard.sh"),
+        Path(".agent-lb/managed/coding-agents/dangerous-command-guard"),
+        "agent-lb:dangerous-command-guard:v1\n",
+        Path("hooks/dangerous-command-guard.sh"),
+    ),
+    (
+        # Adopted 2026-10-08 (S44) from the hand-installed live copies: floor guards that must print their receipt.
+        Path(".claude/hooks/link-cli-guard.sh"),
+        Path(".agent-lb/managed/coding-agents/link-cli-guard"),
+        "agent-lb:link-cli-guard:v1\n",
+        Path("hooks/link-cli-guard.sh"),
+    ),
+    (
+        Path(".claude/hooks/workflow-relay-guard.py"),
+        Path(".agent-lb/managed/coding-agents/workflow-relay-guard"),
+        "agent-lb:workflow-relay-guard:v1\n",
+        Path("hooks/workflow-relay-guard.py"),
+    ),
+    (
         # Copy the guard without registering it as a hook.
         Path(".claude/hooks/plutil-guard.sh"),
         Path(".agent-lb/managed/coding-agents/plutil-guard"),
@@ -225,7 +246,8 @@ MANAGED_AGENTS = (
 # uninstall leaves the file in place and drops only the ownership marker, since removing it would turn the guard's
 # registration into a missing executable that never denies (2026-10-08 review M3).
 ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"), Path(".claude/hooks/railway-vars-guard.sh"),
-                Path(".claude/hooks/agent-lb-bootout-guard.sh"))
+                Path(".claude/hooks/agent-lb-bootout-guard.sh"), Path(".claude/hooks/dangerous-command-guard.sh"),
+                Path(".claude/hooks/link-cli-guard.sh"), Path(".claude/hooks/workflow-relay-guard.py"))
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
 # removes the definition, its ownership marker and the policy mirror copy; the
@@ -330,13 +352,11 @@ def is_owned_hook(command: Any) -> bool:
     return isinstance(command, str) and "ccdex-gpt-only.sh" in command
 
 
+# S44 (2026-10-08): a floor guard is registered as a direct exec of its script, never inside shell syntax; the
+# `2>/dev/null || { printf %s '<advisory>'; }` wrapper it had is rewritten by reconcile_settings (FLOOR_REWRITES).
 SEAT_GUARD_HOOK = {
     "type": "command",
-    "command": (
-        '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || { printf %s '
-        '\'{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":'
-        '"seat-guard advisory: routing telemetry unavailable; dispatch was not blocked. Check agent-lb status."}}\'; }'
-    ),
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"',
     "timeout": 5,
     "statusMessage": "Seat guard",
 }
@@ -367,6 +387,55 @@ def is_seat_guard_hook(command: Any) -> bool:
 
 def is_workflow_seat_guard_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/workflow-seat-guard.py" in command
+
+
+DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
+
+
+def dispatcher_module(source: Path) -> Any:
+    """hook-dispatch.py from this source, loaded once: its floor rules (floor_name, floor_exec, LEGACY_FLOOR_COMMANDS)
+    are the ones install-time checks apply, so the installer and the dispatcher never disagree."""
+    cached = getattr(dispatcher_module, "loaded", {})
+    if source not in cached:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("hook_dispatch_source", source / "hooks" / "hook-dispatch.py")
+        if spec is None or spec.loader is None:
+            raise SystemExit(f"error: cannot load {source / 'hooks' / 'hook-dispatch.py'}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cached[source] = module
+        dispatcher_module.loaded = cached  # type: ignore[attr-defined]
+    return cached[source]
+
+
+def rewrite_floor_commands(hooks: dict[str, Any], source: Path) -> list[str]:
+    """Replace each exact floor command an earlier install wrote (the inline dangerous-command leaf, the wrapped seat
+    guards) with the direct exec the dispatcher runs for it, in place (S44, 2026-10-08). Returns what changed."""
+    module = dispatcher_module(source)
+    changed = []
+    for group in hooks.get("PreToolUse") or []:
+        for hook in (group.get("hooks") or []) if isinstance(group, dict) else []:
+            command = hook.get("command") if isinstance(hook, dict) else None
+            direct = module.legacy_floor(command) if isinstance(command, str) else None
+            if direct:
+                changed.append(f"{command[:60]!r} -> {direct}")
+                hook["command"] = direct
+    return changed
+
+
+def opaque_floor_commands(hooks: dict[str, Any], source: Path) -> list[str]:
+    """PreToolUse floor guard commands that are not a direct exec of their own script: the dispatcher refuses every
+    call they would guard, so an install that would fold them is refused (S44)."""
+    module = dispatcher_module(source)
+    found = []
+    for group in hooks.get("PreToolUse") or []:
+        for hook in (group.get("hooks") or []) if isinstance(group, dict) else []:
+            command = hook.get("command") if isinstance(hook, dict) else None
+            name = module.floor_name(command) if isinstance(command, str) else None
+            if name and module.floor_exec(command, name) is None:
+                found.append(f"{group.get('matcher') or '*'}: {command[:120]!r} (floor guard {name})")
+    return found
 
 
 # ---------------------------------------------------------------------------------------------------- hook dispatcher
@@ -778,16 +847,31 @@ REV_FILE = re.compile(r"registry\.([0-9a-f]{12}|legacy)\.json")
 REV_KEEP_SECONDS = 30 * 86400  # a session keeps the hooks it started with; its registry stays this long
 
 
-def folded_rev(settings: dict[str, Any]) -> str | None:
-    """The registry rev the folded settings entries run, or None (no rev: an entry from before revs)."""
+def folded_revs(settings: dict[str, Any]) -> set[str | None]:
+    """The registry rev of every folded settings entry (None for an entry without one, from before revs)."""
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    revs: set[str | None] = set()
     for event in DISPATCH_EVENTS:
         for group in hooks.get(event) or []:
             for hook in (group.get("hooks") or []) if isinstance(group, dict) else []:
-                match = DISPATCH_REV.search(hook["command"]) if is_dispatch_hook(hook) else None
-                if match:
-                    return match.group(1)
-    return None
+                if is_dispatch_hook(hook):
+                    match = DISPATCH_REV.search(hook["command"])
+                    revs.add(match.group(1) if match else None)
+    return revs
+
+
+def folded_rev(settings: dict[str, Any]) -> str | None:
+    """The registry rev the folded settings entries run, or None (no rev: entries from before revs). Entries of
+    different revs have no one registry to unfold from (2026-10-08 review M4: the first rev won, and unfolding
+    restored its Bash hooks without the wide-scan guard another entry's rev had): refused, nothing written."""
+    revs = folded_revs(settings)
+    if len(revs) > 1:
+        raise SystemExit(
+            "error: the folded settings entries name different dispatcher registry revs (%s); no one registry can "
+            "restore them, so nothing was written. Restore settings.json from the newest checkpoint under "
+            "~/.agent-lb/config-checkpoints/coding-agents/ and run this again."
+            % ", ".join(sorted(rev or "(none)" for rev in revs)))
+    return next(iter(revs), None)
 
 
 def read_registry(home: Path, rev: str | None = None) -> dict[str, Any] | None:
@@ -859,7 +943,8 @@ def dispatch_worth(source: Path, home: Path) -> Any:
 # source's sha256, written into the registry's `script_sha` at install (hook-dispatcher-4, 2026-10-08: the hand-kept
 # pin in hook-dispatch.py went stale four times in one round as other lanes edited the guard, and each time the guard
 # ran on every Bash call). A changed source changes the registry, so the parity fixture runs before the fold keeps it.
-DERIVED_PINS = ("wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "railway-vars-guard.sh")
+DERIVED_PINS = ("wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "railway-vars-guard.sh", "link-cli-guard.sh",
+                "dangerous-command-guard.sh")
 
 
 def script_pins(source: Path) -> dict[str, str]:
@@ -875,9 +960,18 @@ def script_pins(source: Path) -> dict[str, str]:
 SCRIPT_WORD = re.compile(r'\s*(?:(?:/usr/bin/)?python3\s+)?("[^"]+"|[^\s"\'|;&<>]+)')
 
 
+def managed_hooks(home: Path, source: Path) -> dict[Path, Path]:
+    """Each hook file this run installs (home path -> its source). The parity fixture and the in-process pins read
+    these sources, not the copies they replace (S44: a guard and the dispatcher that asks for its receipt land in one
+    run, so the fold is checked against the guards it will run)."""
+    return {home / target: source / template for target, _owner, _marker, template in MANAGED_AGENTS
+            if template.parts[0] == "hooks" and template != Path(DISPATCH_SCRIPT)}
+
+
 def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, Any]:
     """Pin the dispatcher and each in-process guard to the bytes the parity fixture checks."""
     pins: dict[str, str] = {}
+    managed = {os.path.realpath(target): template for target, template in managed_hooks(home, source).items()}
     for event_entries in registry["entries"].values():
         for hooks in event_entries.values():
             for hook in hooks:
@@ -890,6 +984,7 @@ def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, 
                 elif word.startswith("~/"):
                     word = str(home) + word[1:]
                 path = Path(os.path.realpath(word))
+                path = managed.get(str(path), path)
                 if path.name in DISPATCH_INPROC and path.is_file():
                     pins[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     pinned = dict(registry)
@@ -926,6 +1021,8 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool
                 [sys.executable, str(source / "hooks" / "hook-dispatch-parity.py"), "--home", str(home),
                  "--registry", str(staged), "--dispatcher", str(source / DISPATCH_SCRIPT), "--out", str(report),
                  "--workdir", str(Path(tempfile.gettempdir()) / "hook-dispatch-parity"),
+                 *[arg for target, template in managed_hooks(home, source).items()
+                   for arg in ("--overlay", f"{target.relative_to(home)}={template}")],
                  # This run holds the per-home install lock; the process budget is the harden check's to prove.
                  "--lock-held", "--no-process-count"],
                 capture_output=True, text=True, timeout=600, check=False,
@@ -990,9 +1087,13 @@ def reconcile_codex_config(text: str, model: str) -> str:
     return "".join(lines)
 
 
-def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL) -> dict[str, Any]:
+def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL,
+                       source: Path | None = None) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
     hooks = updated.get("hooks", {})
+    if not uninstall and source is not None and isinstance(hooks, dict):
+        for line in rewrite_floor_commands(hooks, source):
+            print(f"hook policy: floor guard registered as a direct exec: {line}")
     groups = hooks.get("PreToolUse", [])
     cleaned: list[dict[str, Any]] = []
     for group in groups:
@@ -1076,6 +1177,14 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
                 "type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"',
                 "timeout": 10,
             }]})
+        # The dangerous-command guard is registered like the railway guard (S44): in the inline leaf's place where it
+        # was (rewrite_floor_commands), else as its own Bash group.
+        if source is not None and not any(
+            "hooks/dangerous-command-guard.sh" in hook.get("command", "")
+            for group in pre_tool_use if group.get("matcher") in ("Bash", "*")
+            for hook in group.get("hooks", [])
+        ):
+            pre_tool_use.append({"matcher": "Bash", "hooks": [dict(DANGEROUS_GUARD_HOOK)]})
         # The closeout hook writes the outcome/tokens side of the dispatch ledger.
         subagent_stop = updated["hooks"].setdefault("SubagentStop", [])
         if not any(is_closeout_hook(hook.get("command")) for group in subagent_stop for hook in group.get("hooks", [])):
@@ -1152,8 +1261,15 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
     sonnet_model = SONNET_MODEL if args.uninstall else resolve_sonnet(source, args.home)
-    desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model)
+    desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model, source)
     mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
+    if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
+        opaque = opaque_floor_commands(desired_settings["hooks"], source)
+        if opaque:
+            raise SystemExit(
+                "error: hook dispatcher not installed, nothing written: a floor guard must be registered as a direct "
+                "exec of its own script (`[python3|bash] <script> [args]`, S44), and the dispatcher refuses every call "
+                "these would guard: " + "; ".join(opaque))
     new_registry: dict[str, Any] | None = None
     keep_fold = False  # a sticky refold whose fixture failed twice keeps the fold already installed
     if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
@@ -1163,11 +1279,15 @@ def main() -> int:
         desired_settings = {**desired_settings, "hooks": kept_hooks}
         only = None
         if mode == "sticky" and old_registry is not None:
-            # Refold only what the fixture passed on; added or edited groups stay per-hook until the next `on`.
-            only = {
-                event: [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]
-                for event, groups in old_registry["per_hook"].items()
-            }
+            # Refold only what the fixture passed on; added or edited groups stay per-hook until the next `on`. A
+            # group whose only edit is an earlier floor command rewritten to its direct exec (S44) counts as passed:
+            # the rewrite is exact, and the fixture runs on the new fold before it is kept.
+            only = {}
+            for event, groups in old_registry["per_hook"].items():
+                folded_groups = json.loads(json.dumps(
+                    [group for group in groups if group not in old_registry.get("dispatch", {}).get(event, [])]))
+                rewrite_floor_commands({"PreToolUse": folded_groups} if event == "PreToolUse" else {}, source)
+                only[event] = folded_groups
         folded_hooks, candidate = fold_hooks(desired_settings["hooks"], only, dispatch_worth(source, args.home))
         if candidate is not None:
             candidate = pin_inproc(candidate, args.home, source)
@@ -1455,10 +1575,14 @@ def main() -> int:
     first_files = {args.home / ".claude" / DISPATCH_SCRIPT, legacy_path} | ({rev_path} if rev_path else set())
     latest_files = {registry_path, backup_path}
 
+    guard_files = set(managed_hooks(args.home, source)) - {args.home / ".claude" / DISPATCH_SCRIPT}
+
     def write_order(item: tuple[Path, str | None]) -> int:
         path, content = item
         if content is None:
             return 3
+        if path in guard_files:
+            return -1  # guards first: with the old dispatcher their receipt is never asked for (S44)
         if path in first_files:
             return 0
         return 2 if path in latest_files else 1

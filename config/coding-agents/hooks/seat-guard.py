@@ -239,20 +239,39 @@ def snapshot_advisory(snapshot_path: Path) -> str | None:
     return None
 
 
+def emit_refusal(why: str) -> None:
+    """A floor guard that cannot read its input or crashes denies (S44, 2026-10-08); it allowed with an advisory."""
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "seat-guard: " + why + ", so this dispatch is refused (the seat guard "
+                    "fails closed). Retry the dispatch; if it repeats, check ~/.claude/hooks/seat-guard.py.",
+                }
+            }
+        )
+    )
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
-    except Exception:
-        emit_advisory("malformed Agent hook input; dispatch was not blocked")
+    except ValueError as error:
+        emit_refusal(f"could not read the Agent hook input (not JSON: {error})")
         return
-    if not isinstance(payload, dict) or payload.get("tool_name") != "Agent":
+    if not isinstance(payload, dict):
+        emit_refusal("could not read the Agent hook input (not a JSON object)")
+        return
+    if payload.get("tool_name") != "Agent":
         emit_advisory("invalid Agent hook input; dispatch was not blocked")
         return
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict) or any(
         field in tool_input and not isinstance(tool_input[field], str) for field in ("subagent_type", "model")
     ):
-        emit_advisory("invalid Agent hook input; dispatch was not blocked")
+        emit_refusal("could not read the Agent hook input (tool_input is not an object of text fields)")
         return
     subagent = (tool_input.get("subagent_type") or "").strip().lower()
     model = (tool_input.get("model") or "").strip().lower()
@@ -334,7 +353,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # A completed check (allow, advisory or deny) ends with the receipt line the dispatcher asks for
+    # (HOOK_FLOOR_RECEIPT); an exit 0 without it is refused there, so a crash never allows (S44, 2026-10-08).
     try:
         main()
-    except Exception:
-        emit_advisory("routing telemetry unavailable; dispatch was not blocked")
+    except Exception as error:
+        emit_refusal(f"failed ({type(error).__name__})")
+    else:
+        if os.environ.get("HOOK_FLOOR_RECEIPT"):
+            print("floor-ok seat-guard.py")

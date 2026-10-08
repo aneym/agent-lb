@@ -125,12 +125,14 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
     folded = hooks_of(home)
     bash = [group for group in folded["PreToolUse"] if group.get("matcher") == "Bash"]
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
-    # 1215: the guards' timeouts plus 5, the railway guard install-policy registers on Bash (7a71805e) included.
+    # 1225: the guards' timeouts plus 5, the railway guard (7a71805e) and the dangerous-command guard (S44) that
+    # install-policy registers on Bash included.
     assert bash == [{"matcher": "Bash", "hooks": [{"type": "command",
                                                    "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}",
-                                                   "timeout": 1215}]}]
-    assert 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"' in [
-        hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
+                                                   "timeout": 1225}]}]
+    bash_entry = [hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
+    assert 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"' in bash_entry
+    assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in bash_entry
     # The settings entries name this fold's own registry file.
     assert json.loads((home / f".claude/hooks/dispatch/registry.{registry['rev']}.json").read_text()) == registry
     # Groups the fold must not touch: a regex matcher, a skipped matcher, other events.
@@ -706,6 +708,10 @@ def test_a_registry_edited_after_its_fold_never_answers(tmp_path: Path) -> None:
 # match a pinned prefilter, so the dispatcher runs each one.
 SEAT_FALLBACK = (" 2>/dev/null || { printf %s '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\","
                  "\"additionalContext\":\"seat-guard advisory: routing telemetry unavailable\"}}'; }")
+LEGACY_SEAT = ('/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || '
+               '{ printf %s \'{"hookSpecificOutput":'
+               '{"hookEventName":"PreToolUse","additionalContext":"seat-guard advisory: routing telemetry unavailable; '
+               'dispatch was not blocked. Check agent-lb status."}}\'; }')
 DANGEROUS = ("bash -c 'CMD=$(cat | jq -r \".tool_input.command // empty\"); [ -z \"$CMD\" ] && exit 0; "
              "echo \"$CMD\" | grep -qiE \"rm\\s+-rf\\s+/|DROP\\s+(DATABASE|TABLE)\" && { echo \"BLOCKED: "
              "Dangerous command requires explicit user approval.\" >&2; exit 2; }; exit 0'")
@@ -724,7 +730,18 @@ FLOOR_LEAVES = {
     "workflow-seat-guard.py": ('/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"' + SEAT_FALLBACK,
                                ".claude/hooks/workflow-seat-guard.py", "py"),
     "plutil-guard.sh": ('"$HOME/.claude/hooks/plutil-guard.sh"', ".claude/hooks/plutil-guard.sh", "sh"),
-    "dangerous-command": (DANGEROUS, None, "sh"),
+    # S44 (2026-10-08): the inline leaf is a script now. Its exact earlier bytes run that script (a session on an older
+    # registry keeps the guard); any other inline copy is refused without running (it can hide its exit status).
+    "dangerous-command-guard.sh": ('"$HOME/.claude/hooks/dangerous-command-guard.sh"',
+                                   ".claude/hooks/dangerous-command-guard.sh", "sh"),
+    "dangerous-command-guard.sh:legacy inline": (DANGEROUS, ".claude/hooks/dangerous-command-guard.sh", "sh"),
+    "dangerous-command:inline copy": (DANGEROUS + " ", None, "sh"),
+    # The seat guard as install-policy registered it before S44: its exact bytes run the guard as a direct exec.
+    "seat-guard.py:legacy wrapper": (LEGACY_SEAT, ".claude/hooks/seat-guard.py", "py"),
+    # hook-dispatcher-5 review M1 (hook-dispatch.py:718): a nested shell around a floor guard passed planning, so with
+    # the guard missing `|| true` inside it allowed the call. A floor guard runs only as a direct exec now.
+    "seat-guard.py:bash -c": ("bash -c 'python3 \"$HOME/.claude/hooks/seat-guard.py\" || true'",
+                              ".claude/hooks/seat-guard.py", "py"),
     # 2026-10-08 review M1: the spec's wide-scan deny case is a floor too; it failed open.
     "wide-scan-guard.sh": ('"$HOME/.claude/hooks/wide-scan-guard.sh"', ".claude/hooks/wide-scan-guard.sh", "sh"),
     # 2026-10-08 review M2: a wrapped floor guard whose command the dispatcher's shape does not read ran with its
@@ -750,10 +767,12 @@ FLOOR_LEAVES = {
 }
 FAIL_STUBS = {
     "py": {"timeout": "import time\ntime.sleep(30)\n", "crash": "raise RuntimeError('synthetic floor crash')\n",
-           "malformed": "import sys\nsys.stdin.read()\nprint('not a hook answer {')\n"},
+           "malformed": "import sys\nsys.stdin.read()\nprint('not a hook answer {')\n",
+           "no-receipt": "import sys\nsys.stdin.read()\n"},
     "sh": {"timeout": "#!/bin/bash\nexec sleep 30\n", "crash": "#!/bin/bash\necho 'synthetic crash' >&2\nexit 1\n",
            "missing": "#!/bin/bash\necho \"bash: $0: No such file or directory\" >&2\nexit 127\n",
-           "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n"},
+           "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n",
+           "no-receipt": "#!/bin/bash\ncat >/dev/null\nexit 0\n"},
 }
 # Reaches every pinned floor guard's prefilter, so each runs (a guard its prefilter skips never runs, so cannot fail).
 REACHES_PREFILTERS = "echo railway link-cli launchctl; rm -" "rf /tmp/never-run"
@@ -781,12 +800,13 @@ def failing_guard_home(tmp_path: Path, command: str, rel: str | None, kind: str,
     return home, env
 
 
-@pytest.mark.parametrize("mode", ["timeout", "crash", "missing", "malformed"])
+@pytest.mark.parametrize("mode", ["timeout", "crash", "missing", "malformed", "no-receipt"])
 @pytest.mark.parametrize("leaf", sorted(FLOOR_LEAVES))
 def test_a_floor_guard_that_fails_refuses_the_call(tmp_path: Path, leaf: str, mode: str) -> None:
     """The simplify lead's ask 1 (2026-10-07): a floor guard that times out, crashes, is missing or prints something
     that is not a hook answer denies, through any wrapper (the seat guards' `|| { printf ...; }` fallback included).
-    4e0dfdaa let a crash, a timeout or plain output through as an allow."""
+    4e0dfdaa let a crash, a timeout or plain output through as an allow. S44 (2026-10-08): an exit 0 without the
+    guard's allow receipt denies too, and a command that is not a direct exec of the guard is refused unrun."""
     command, rel, kind = FLOOR_LEAVES[leaf]
     home, env = failing_guard_home(tmp_path, command, rel, kind, mode)
     call = {"tool_name": "Bash", "tool_input": {"command": REACHES_PREFILTERS}, "hook_event_name": "PreToolUse"}
@@ -819,7 +839,7 @@ def test_a_non_floor_guard_that_fails_still_fails_open_and_is_logged(tmp_path: P
 def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) -> None:
     """p13D :394 (blocking-wrapper fallback): a seat guard that exits 2 under `|| { printf ...; }` was turned into an
     allow with the advisory, per-hook and on 4e0dfdaa; its block now stands."""
-    command, rel, _kind = FLOOR_LEAVES["seat-guard.py"]
+    command, rel, _kind = FLOOR_LEAVES["seat-guard.py:legacy wrapper"]  # the installer's own wrapper, exact bytes
     home, env = failing_guard_home(tmp_path, command, rel, "py", "crash")
     (home / rel).write_text("import sys\nsys.stdin.read()\nsys.stderr.write('seat-guard: blocked model\\n')\n"
                             "sys.exit(2)\n")
@@ -1431,3 +1451,123 @@ def test_the_pinned_railway_guard_is_skipped_only_where_it_cannot_act(tmp_path: 
             skipped.add(json.dumps(tool_input))
     assert not differ, differ
     assert {json.dumps({"command": "ls -la"}), json.dumps({"command": "git status"})} <= skipped, skipped
+
+
+# ---------------------------------------------------------------------------------------------------- S44
+# hook-dispatcher-5 (2026-10-08): the build lead's S44 decision and review M1-M4 of b98c2c5d. Floor guards run only as
+# a direct exec, allow only with their receipt, and read their input with checked status. Each test fails on b98c2c5d.
+
+DANGER = SOURCE / "hooks/dangerous-command-guard.sh"
+DROP_DB = 'psql -c "DR' 'OP DATA' 'BASE app"'  # in parts: the live guard reads Bash input
+
+
+def tools_without(tmp_path: Path, env: dict, missing: str, names=("bash", "sh", "cat", "jq", "grep", "python3",
+                                                                    "env", "printf")) -> dict:
+    """PATH holding every tool the guards and the dispatcher use, but `missing`."""
+    tools = tmp_path / f"no-{missing}"
+    tools.mkdir()
+    for name in names:
+        found = shutil.which(name, path=env["PATH"])
+        if name != missing and found:
+            (tools / name).symlink_to(found)
+    return env | {"PATH": str(tools)}
+
+
+def test_the_wide_scan_guard_refuses_when_cat_fails(tmp_path: Path) -> None:
+    """Review M2 (wide-scan-guard.sh:12): with `cat` missing, INPUT was empty, jq read that as no command and the
+    guard exited 0, so `rg needle /` was allowed on both paths. The read is checked and an empty input refuses."""
+    _home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
+    env = tools_without(tmp_path, env, "cat")
+    call = {"tool_name": "Bash", "tool_input": {"command": "rg needle /"}, "hook_event_name": "PreToolUse",
+            "cwd": str(tmp_path)}
+    assert decision(run_hook(hook["command"], call, env)) == "deny"
+    new = run_owned(DISPATCH_BASH, call, env, 30)
+    assert new is not None and decision(new) == "deny", new
+    assert "wide-scan-guard" in json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("missing", ["jq", "grep"])
+@pytest.mark.parametrize("command", ['"$HOME/.claude/hooks/dangerous-command-guard.sh"', DANGEROUS],
+                         ids=["script", "legacy-inline"])
+def test_the_dangerous_command_guard_refuses_when_its_reader_or_matcher_fails(tmp_path: Path, missing: str,
+                                                                              command: str) -> None:
+    """Review M3 (hook-dispatch.py:707, :1010): with jq or grep failing, the inline leaf's shell turned the failure
+    into exit 0 and a database drop through psql was allowed. The leaf is dangerous-command-guard.sh now (its exact
+    old bytes run that script); a reader or matcher that fails refuses, and the healthy guard still denies the drop
+    and allows `ls`."""
+    hook = {"type": "command", "command": command, "timeout": 20}
+    home, env = dispatcher_home(tmp_path, [hook])
+    shutil.copy(DANGER, home / ".claude/hooks/dangerous-command-guard.sh")
+    (home / ".claude/hooks/dangerous-command-guard.sh").chmod(0o755)
+    call = {"tool_name": "Bash", "tool_input": {"command": DROP_DB}, "hook_event_name": "PreToolUse"}
+    healthy = run_owned(DISPATCH_BASH, call, env, 30)
+    assert healthy is not None and decision(healthy) == "deny", healthy
+    assert "BLOCKED: Dangerous command" in healthy.stdout
+    assert decision(run_owned(DISPATCH_BASH, dict(call, tool_input={"command": "ls"}), env, 30)) == "allow"
+    broken = run_owned(DISPATCH_BASH, call, tools_without(tmp_path, env, missing), 30)
+    assert broken is not None and decision(broken) == "deny", broken
+
+
+def test_a_floor_guard_allows_only_with_its_receipt(tmp_path: Path) -> None:
+    """S44 (c): a floor guard that exits 0 without its last stdout line `floor-ok <name>` is refused, whatever else it
+    printed; with the receipt its own answer passes through without it. Per-hook the guard prints no receipt."""
+    hook = {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-relay-guard.py"'}
+    home, env = dispatcher_home(tmp_path, [hook])
+    guard = home / ".claude/hooks/workflow-relay-guard.py"
+    shutil.copy(SOURCE / "hooks/workflow-relay-guard.py", guard)
+    call = {"tool_name": "Workflow", "tool_input": {"script": "agent('x')"}, "hook_event_name": "PreToolUse"}
+    answer = run_hook(DISPATCH_BASH, call, env)
+    assert answer.returncode == 0 and "floor-ok" not in answer.stdout, answer
+    assert "RELAYED-REQUEST-GUARD" in json.loads(answer.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "floor-ok" not in run_hook(hook["command"], call, env).stdout  # unasked, as per-hook
+    guard.write_text(guard.read_text().replace("print(RECEIPT)", "pass"))  # a guard that forgets its receipt
+    refused = run_hook(DISPATCH_BASH, call, env)
+    assert refused.returncode == 2, refused
+    assert "without its allow receipt" in json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path) -> None:
+    """S44 (a): a floor guard registered inside shell syntax is refused at install, nothing written; the exact
+    wrappers earlier installs wrote are rewritten to the direct exec instead."""
+    home, settings = make_home(tmp_path)
+    install, _env = installer(tmp_path, home)
+    settings["hooks"]["PreToolUse"].append({"matcher": "Agent", "hooks": [
+        {"type": "command", "command": "bash -c 'python3 \"$HOME/.claude/hooks/seat-guard.py\" || true'"}]})
+    (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    before = (home / ".claude/settings.json").read_bytes()
+    refused = install("--hook-dispatcher", "on", check=False)
+    assert refused.returncode != 0 and "direct exec" in refused.stderr, refused.stdout + refused.stderr
+    assert (home / ".claude/settings.json").read_bytes() == before
+    assert not (home / ".claude/hooks/dispatch/registry.json").exists()
+    settings["hooks"]["PreToolUse"][-1]["hooks"] = [{"type": "command", "command": LEGACY_SEAT, "timeout": 5}]
+    settings["hooks"]["PreToolUse"].append({"matcher": "Bash", "hooks": [{"type": "command", "command": DANGEROUS}]})
+    (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    install("--hook-dispatcher", "on")
+    registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    # A lone Agent guard stays per-hook (it gains nothing from the dispatcher); the Bash entry folds.
+    commands = [hook["command"] for hooks in registry["entries"]["PreToolUse"].values() for hook in hooks] + [
+        hook["command"] for group in hooks_of(home)["PreToolUse"] for hook in group["hooks"]]
+    assert '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' in commands
+    assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in commands
+    assert LEGACY_SEAT not in commands and DANGEROUS not in commands
+
+
+def test_install_refuses_entries_of_different_revs_without_writing(tmp_path: Path) -> None:
+    """Review M4 (install-policy.py:781): with the Agent entry on rev R1 and the Bash entry on R2, folded_rev() took
+    R1, and unfolding restored R1's Bash hooks, dropping a guard R2 had. Mixed revs are refused, nothing written."""
+    home, _settings = make_home(tmp_path)
+    install, _env = installer(tmp_path, home)
+    install("--hook-dispatcher", "on")
+    settings = json.loads((home / ".claude/settings.json").read_text())
+    rev = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())["rev"]
+    other = "0" * 12 if rev != "0" * 12 else "1" * 12
+    # The Stop entry names another rev; b98c2c5d read the first entry's (PreToolUse Bash) and refolded over it.
+    stop = settings["hooks"]["Stop"][0]["hooks"][0]
+    assert "hook-dispatch.py" in stop["command"] and rev in stop["command"]
+    stop["command"] = stop["command"].replace(rev, other)
+    (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    before = {path: path.read_bytes() for path in (home / ".claude").rglob("*") if path.is_file()}
+    refused = install(check=False)
+    assert refused.returncode != 0 and "different dispatcher registry revs" in refused.stderr, refused.stderr
+    after = {path: path.read_bytes() for path in (home / ".claude").rglob("*") if path.is_file()}
+    assert after == before

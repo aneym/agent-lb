@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check statically visible Workflow agent options; ambiguous scripts fail open."""
+"""Check statically visible Workflow agent options; ambiguous scripts fail open, unreadable input fails closed."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -332,12 +332,17 @@ def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str
 
 def main() -> None:
     output = {'hookEventName': 'PreToolUse'}
+    # A floor guard reads its input with checked status (S44, 2026-10-08): input, script or routing table it cannot
+    # read, and a scanner that fails, refuse the launch; before, each allowed it with an advisory. A script whose
+    # agent() options are only known at run time is still allowed with a warning (that is not a failure).
     try:
         payload = json.load(sys.stdin)
         tool_input = payload['tool_input']
         script = tool_input.get('script')
         if script is None:
             script = Path(tool_input['scriptPath']).read_text()
+        if not isinstance(script, str):
+            raise TypeError('the script is not text')
         table_path = Path(os.environ.get('ROUTE_TABLE') or Path.home() / '.agent-lb/managed/coding-agents/routing-table.json')
         if not table_path.exists() and 'ROUTE_TABLE' not in os.environ:
             table_path = Path(__file__).resolve().parent.parent / 'routing-table.json'
@@ -355,10 +360,17 @@ def main() -> None:
                                            + ', '.join(sorted(set(explicit))) + '); allowed on request (models.md).')
         elif warning:
             output['additionalContext'] = 'workflow-seat-guard: dynamic agent() options could not be checked; pass agentType and avoid retired model pins (models.md, Workflows).'
-    except Exception:
-        output['additionalContext'] = 'workflow-seat-guard: script or routing table could not be parsed; dispatch was not blocked.'
+    except Exception as error:
+        output.pop('additionalContext', None)
+        output.update(permissionDecision='deny', permissionDecisionReason=(
+            'workflow-seat-guard: the hook input, script or routing table could not be read or parsed (%s), so this '
+            'launch is refused (the guard fails closed). Retry; if it repeats, check the script and '
+            '~/.agent-lb/managed/coding-agents/routing-table.json.' % type(error).__name__))
     print(json.dumps({'hookSpecificOutput': output}))
 
 
 if __name__ == '__main__':
     main()
+    # The receipt the dispatcher asks for (HOOK_FLOOR_RECEIPT): an exit 0 without it is refused there.
+    if os.environ.get('HOOK_FLOOR_RECEIPT'):
+        print('floor-ok workflow-seat-guard.py')

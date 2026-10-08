@@ -7,16 +7,24 @@
 # cannot read (jq missing or failing) is refused, never allowed as an empty command. jq reads the input itself (a
 # missing `cat` before it read as an empty command), and a matcher that fails (grep missing or erroring, exit > 1) is
 # told apart from no match (exit 1) and refuses (2026-10-08 review: a missing grep let a raw kickstart through).
+# S44 (2026-10-08): reads are checked (set -euo pipefail) and jq must read exactly one JSON input (`input` fails on an
+# empty one); an allow ends with the receipt line `floor-ok agent-lb-bootout-guard.sh` when the dispatcher asks for it
+# (HOOK_FLOOR_RECEIPT), and the dispatcher refuses an exit 0 without it.
+set -euo pipefail
+allow() {
+  if [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' agent-lb-bootout-guard.sh; fi
+  exit 0
+}
 JQ=/opt/homebrew/bin/jq
 [ -x "$JQ" ] || JQ=jq
-if ! CMD=$("$JQ" -r '.tool_input.command // empty' 2>/dev/null); then
+if ! CMD=$("$JQ" -n -r 'input | .tool_input.command // empty' 2>/dev/null); then
   echo "BLOCKED: agent-lb-bootout-guard could not read the hook input (jq missing or failed), so the call is refused." >&2
   exit 2
 fi
-[ -z "$CMD" ] && exit 0
-case "$CMD" in *launchctl*) ;; *) exit 0 ;; esac  # the pattern needs `launchctl`; the dispatcher's prefilter is this
-printf '%s\n' "$CMD" | grep -qE 'launchctl[^|;&]*(bootout|kickstart|stop|kill)[^|;&]*com\.aneyman\.agent-lb(-front)?([^a-zA-Z0-9_-]|$)'
-MATCH=$?
+[ -n "$CMD" ] || allow
+case "$CMD" in *launchctl*) ;; *) allow ;; esac  # the pattern needs `launchctl`; the dispatcher's prefilter is this
+MATCH=0
+grep -qE 'launchctl[^|;&]*(bootout|kickstart|stop|kill)[^|;&]*com\.aneyman\.agent-lb(-front)?([^a-zA-Z0-9_-]|$)' <<<"$CMD" || MATCH=$?
 if [ "$MATCH" -gt 1 ]; then
   echo "BLOCKED: agent-lb-bootout-guard could not match the command (grep exit $MATCH: missing or failed), so the call is refused." >&2
   exit 2
@@ -33,4 +41,4 @@ if [ "$MATCH" -eq 0 ]; then
     exit 2
   fi
 fi
-exit 0
+allow
