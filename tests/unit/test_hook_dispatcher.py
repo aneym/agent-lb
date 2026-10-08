@@ -1571,3 +1571,22 @@ def test_install_refuses_entries_of_different_revs_without_writing(tmp_path: Pat
     assert refused.returncode != 0 and "different dispatcher registry revs" in refused.stderr, refused.stderr
     after = {path: path.read_bytes() for path in (home / ".claude").rglob("*") if path.is_file()}
     assert after == before
+
+
+def test_install_folds_a_guard_whose_source_checkout_is_not_executable(tmp_path: Path) -> None:
+    """2026-10-08 (coding-agents-sync of 98d32230): railway-vars-guard.sh is 0644 in git and registered live as a
+    direct exec without `bash`. The parity fixture ran the overlaid source in place, the sandbox exec failed with
+    126, every Bash case differed from per-hook and the sticky install kept the old fold. The fixture runs an overlay
+    with the mode install-policy writes (a .sh guard 0755), so the fold goes ahead."""
+    assert not os.access(RAILWAY, os.X_OK), "the source is executable now; this test no longer reaches the bug"
+    home, settings = make_home(tmp_path)
+    settings["hooks"]["PreToolUse"].append({"matcher": "Bash", "hooks": [
+        {"type": "command", "command": '"$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}]})
+    (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    install, _env = installer(tmp_path, home)
+    folded = install("--hook-dispatcher", "on", check=False)
+    assert folded.returncode == 0, folded.stdout[-2000:] + folded.stderr[-2000:]
+    registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    assert '"$HOME/.claude/hooks/railway-vars-guard.sh"' in [
+        hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
+    assert os.access(home / ".claude/hooks/railway-vars-guard.sh", os.X_OK)

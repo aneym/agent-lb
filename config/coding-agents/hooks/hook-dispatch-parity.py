@@ -422,7 +422,17 @@ class Sandbox(object):
                 target = os.path.join(home, rel)
                 if os.path.isfile(source) and not os.path.lexists(target):
                     os.makedirs(os.path.dirname(target), exist_ok=True)
-                    os.symlink(source, target)
+                    if rel in OVERLAY:
+                        # As install-policy write_atomic will write it: the source's bytes, a .sh file 0755 and any
+                        # other file the installed copy's mode (0644 when new), whatever the source checkout's mode.
+                        # 2026-10-08: a 0644 source made a direct exec of railway-vars-guard.sh fail in the sandbox
+                        # only, and the sticky install kept the old fold.
+                        live = os.path.join(real_home, rel)
+                        shutil.copyfile(source, target)
+                        os.chmod(target, 0o755 if rel.endswith(".sh") else
+                                 os.stat(live).st_mode & 0o777 if os.path.isfile(live) else 0o644)
+                    else:
+                        os.symlink(source, target)
         for rel in CONFIG_COPIES:
             source = os.path.join(real_home, rel)
             target = os.path.join(home, rel)
