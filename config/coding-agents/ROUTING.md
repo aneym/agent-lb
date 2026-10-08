@@ -12,8 +12,8 @@ Every project is a personal project until launch. Alex, 2026-10-07 21:35 ET: "tr
 
 ## Merging, deploy and review (2026-10-08)
 
-Until launch the main machine's checkout is the source of truth and GitHub is a mirror (Alex, 2026-10-08 08:58 ET, full approval; his words are in `WORKSPACE.md`).
-- **Agent Rails merges only through `scripts/studio_merge.py merge <branch>` on the main machine:** a check under 5 s, then the merge and a mirror push. Never `gh pr merge`, never push to GitHub main by hand, and never rebuild the gate in a harness.
+Until launch the main machine's checkout is the source of truth and GitHub is a mirror (Alex, 2026-10-08 08:58 ET, full approval; his words are in `WORKSPACE.md`). Transition (2026-10-08): until the Factory CoS posts the flip bulletin (`~/.agent-rails/studio-cutover/FLIPPED` exists), `python3 scripts/review_pr.py <n>` still queues a PR through GitHub and that is the merge path; from the flip on, `python3 scripts/studio_merge.py merge <branch>` is the only path and GitHub is a mirror.
+- **Agent Rails merges only through `scripts/studio_merge.py merge <branch>` on the main machine:** a check under 5 s, then the merge and a mirror push; never `gh pr merge`, never push to GitHub main by hand, and never rebuild the gate in a harness.
 - **On a `conflict` refusal,** rebase the branch once on main and merge again; a second conflict goes to the lane lead.
 - **Railway deploys from the mirrored main on push,** ungated; a failed deploy is fixed forward.
 - **One fresh reviewer from the other vendor reads each merged range after merge** (2026-10-07); its brief names the author vendor, and must-fix findings become the next slice.
@@ -29,7 +29,7 @@ Until launch the main machine's checkout is the source of truth and GitHub is a 
 
 ## Guards (2026-10-08)
 
-A guard blocks only on a kept floor and names that floor in its message; everything else warns in one line or is deleted. A blocking guard accepts the CoS approval record as Alex's yes. A guard matches the command that will run, never text inside a heredoc, a quoted string or an ssh argument. Until launch no guard blocks on secrets (2026-10-08 09:27 ET).
+A guard blocks only on a kept floor and names that floor in its message; everything else warns in one line or is deleted. A blocking guard accepts the CoS approval record as Alex's yes. A guard matches the command that will run, never text inside a heredoc, a quoted string or an ssh argument. Until launch no guard blocks on secrets (2026-10-08 09:27 ET), and that suspension excludes Alex's own passwords, passkeys and codes.
 
 ## Model ladder and seats (2026-09-30; updated 2026-10-08)
 
@@ -71,7 +71,7 @@ No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, an
 
 ## Waits, watchers and leads (2026-09-29; updated 2026-10-08)
 
-- **Nobody writes a watcher or runs a gh poll loop** (2026-10-08): a lane waits with `factory-wait --until <state> --max 270` under Monitor, or is woken by the merge-events relay's lane-post task; `seat-run --wait` stays for seat results.
+- **Nobody writes a watcher or runs a gh poll loop** (2026-10-08): a lane waits with `factory-wait --repo <repo> --sha <sha> --until <state> --max 270` under Monitor, or is woken by the merge-events relay's lane-post task; `seat-run --wait` stays for seat results.
 - **No tool call blocks past 270 s;** run long work in the background and poll in waits of 270 s or less.
 - **A lead with work out sets a wake timer** before ending its turn (2026-10-05).
 - **Workflow seats:** pass `agentType`, run `route workflow-args` in the launching turn and pass it as `args.route`, and review with `R.review_for[<author vendor>]` (2026-10-05).

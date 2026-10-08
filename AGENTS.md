@@ -31,8 +31,8 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
 5. OpenSpec gates behavior, API, schema, CLI and routing changes: create
    `openspec/changes/<slug>/` first and run `openspec validate --specs`. Put
    context in OpenSpec, not `docs/`; never edit `CHANGELOG.md`.
-6. Secrets (`GITHUB_TOKEN` and account credentials) never go in commits, logs
-   or output.
+6. Alex's own passwords, passkeys and codes are never typed or printed by an
+   agent; the secret floor is off until launch and restored then.
 7. PRs from collaborators follow [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md)
    merge gates, including `python3 scripts/local_ci.py status <sha>`.
 8. Money path: the request paths and payload handling, account credentials and
@@ -46,12 +46,9 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
    the brief names the author vendor. Money-path changes get the same one
    reviewer after push; no three-lens panel before GA. Must-fix findings become
    the next change.
-10. Two kinds of change still take that review before push: credential custody
-    (crypto, OAuth, auth scripts) and spend-cap code. A FAIL there is fixed and
-    re-verified, or the commit records `Verify-override: <reason>`. The privacy,
-    real-outbound and destructive-data floors are unchanged. Commits carry
-    `Seat:` and, when reviewed before push, `Verified-by:` trailers with the
-    diff id; nothing checks them.
+10. Credential custody and spend-cap code get the same review after push as
+    every other change (rule 9). The privacy, real-outbound and destructive-data
+    floors are unchanged. Commits carry a `Seat:` trailer; nothing checks it.
 11. An incident fix ships its fixture test or check in the same commit.
 12. Rules change with evidence: a dated `DECISIONS.md` entry. History stays in
     git.
