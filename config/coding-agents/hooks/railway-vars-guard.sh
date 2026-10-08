@@ -21,10 +21,39 @@ KV_DENIAL = "BLOCKED: railway variables read prints values; value output is refu
 PRINTENV_DENIAL = "BLOCKED: railway run printenv/env prints every secret; value output is refused."
 
 
+OPTION_VALUES = {'--environment', '-e', '--service', '-s', '--project', '-p'}
+
+
 def variable_write(args):
-    return any(arg in {'set', 'delete', 'remove', '--set', '-s', '--delete', '--remove'}
-               or arg.startswith(('--set=', '--delete=', '--remove='))
-               or (arg.startswith('-s') and not arg.startswith('--') and len(arg) > 2) for arg in args)
+    i, positional = 0, None
+    while i < len(args):
+        arg = args[i]
+        if arg in OPTION_VALUES:
+            i += 2
+            continue
+        if arg in {'--set', '--delete', '--remove', '--set-from-stdin'} or arg.startswith(
+                ('--set=', '--delete=', '--remove=')):
+            return True
+        if not arg.startswith('-') and positional is None:
+            positional = arg
+        i += 1
+    return positional in {'set', 'delete', 'remove'}
+
+
+def run_value_output(args):
+    if not args:
+        return False
+    name = args[0].rsplit('/', 1)[-1]
+    if name in {'printenv', 'env'}:
+        return True
+    if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
+        for i, arg in enumerate(args[1:-1], 1):
+            if arg.startswith('-') and 'c' in arg[1:]:
+                try:
+                    return run_value_output(shlex.split(args[i + 1]))
+                except ValueError:
+                    return True
+    return False
 
 
 def production_environment(args):
@@ -267,34 +296,45 @@ def check(command, inherited):
             if name == 'railway':
                 args = words[i + 1:]
                 for j, arg in enumerate(args):
-                    if (j > 0 and args[j - 1] in {'set', '--set', '-s'} and SECRET_NAME.search(arg)
+                    if (j > 0 and args[j - 1] in {'set', '--set'} and SECRET_NAME.search(arg)
                             and '=' not in arg and j + 1 < len(args) and not args[j + 1].startswith('-')):
                         return DENIAL
                     value = arg.split('=', 1)[1] if arg.startswith('--set=') else arg
-                    if arg.startswith('-s') and not arg.startswith('--') and len(arg) > 2:
-                        value = arg[2:].lstrip('=')
                     match = ASSIGNMENT.match(value)
+                    secret_expansion = match and any(
+                        re.search(r'token|secret|key|password', name, re.I)
+                        for name in re.findall(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', match[2]))
                     if match and match[2] and (SECRET_NAME.search(match[1]) or SECRET_VALUE.search(match[2])
-                                              or len(match[2]) >= 24):
+                                              or len(match[2]) >= 24 or secret_expansion):
                         return DENIAL
                     if SECRET_VALUE.search(arg):
                         return DENIAL
-                # Environment/service flags may precede the subcommand.
+                # Help belongs to the CLI only before its subcommand.
                 command_args = list(args)
+                help_requested = False
                 while command_args and command_args[0].startswith('-'):
                     flag = command_args.pop(0)
-                    if flag in {'--environment', '-e', '--service', '-s', '--project', '-p'} and command_args:
+                    if flag in OPTION_VALUES and command_args:
                         command_args.pop(0)
                     elif flag in {'--help', '-h'}:
+                        help_requested = True
                         break
-                if not command_args or command_args[0] in READS or '--help' in args or '-h' in args:
+                if help_requested or not command_args or command_args[0] in READS:
                     break
                 subcommand = command_args[0]
                 if subcommand == 'run':
                     k = 1
                     while k < len(command_args) and command_args[k].startswith('-'):
-                        k += 2 if command_args[k] in {'-s', '--service', '-e', '--environment'} else 1
-                    if k < len(command_args) and command_args[k].rsplit('/', 1)[-1] in {'printenv', 'env'}:
+                        if command_args[k] in {'--help', '-h'}:
+                            help_requested = True
+                            break
+                        if command_args[k] == '--':
+                            k += 1
+                            break
+                        k += 2 if command_args[k] in OPTION_VALUES else 1
+                    if help_requested:
+                        break
+                    if run_value_output(command_args[k:]):
                         return PRINTENV_DENIAL
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])

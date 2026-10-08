@@ -208,8 +208,8 @@ def test_deliberate_obfuscation_residuals(command, tokens):
 # floor; wrappers and short flags would otherwise bypass the new branch.
 @pytest.mark.parametrize('command,expected', [
     ('railway variables --set FOO=bar', 0),
-    ('railway variables -s FOO=bar', 0),
-    ('railway variables -sFOO=bar', 0),
+    ('railway variables -s FOO=bar', 2),
+    ('railway variables -sFOO=bar', 2),
     ('railway variables -sAPI_TOKEN=synthetic', 2),
     ('railway variable set FOO bar --environment test', 0),
     ('railway variables delete FOO -e dev', 0),
@@ -246,3 +246,38 @@ def test_unknown_link_write_is_logged_without_values():
     assert 'unknown linked environment' in result.stderr
     assert 'FOO' not in result.stderr
     assert 'bar' not in result.stderr
+
+
+# CLI argv ownership regressions at the hook boundary, without running Railway.
+@pytest.mark.parametrize('command,expected', [
+    *[(f'{prefix} {args}{suffix}', 2)
+      for prefix, suffix in [('railway', ''), ('eval "railway', '"'),
+                             ('npx @railway/cli', '')]
+      for args in ['variables -s api', 'variables -sapi', 'vars -s api',
+                   'variables --service delete', 'variables --service set',
+                   'variables --service remove']],
+    ('railway variable --service api set FOO bar', 0),
+    ('railway variables --set-from-stdin', 0),
+    ('railway vars --set-from-stdin -e dev', 0),
+    ('railway variables --set-from-stdin -e production', 2),
+    ('RAILWAY_TOKEN=x railway variables --set-from-stdin -e production', 0),
+    ('railway --help run env', 0),
+    ('railway -h run env', 0),
+    ('railway run --help env', 0),
+    ('railway run -s api -h env', 0),
+    ('railway run env -h', 2),
+    ('railway run printenv --help', 2),
+    ('railway run sh -c env -h', 2),
+    ('railway run sh -c printenv --help', 2),
+    ('railway run -- env -h', 2),
+    ('railway variables -s api --help', 2),
+    ('railway up --help', 2),
+    ('railway variables --set NAME="$TOKEN"', 2),
+    ('railway variables --set NAME="${SECRET}"', 2),
+    ('railway variables --set NAME="$KEY"', 2),
+    ('railway variables --set NAME="$PASSWORD"', 2),
+    ('railway variables --set NAME="$PORT"', 0),
+])
+def test_pre_ga_r2_argv_ownership(command, expected):
+    result = invoke(command)
+    assert result.returncode == expected, result.stderr
