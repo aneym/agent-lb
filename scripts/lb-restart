@@ -161,7 +161,16 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
         if not _inside(resolved, root):
             raise SandboxRefused(f"{name} {path} resolves outside the sandbox root")
         derived[name] = resolved
-    for name in ("SYNC_LOG", "LOCK_FILE", "PREFERRED_FILE", "PREFERRED_TMP", "STANDBY_PIDFILE", "STANDBY_LOG"):
+    for name in (
+        "SYNC_LOG",
+        "LOCK_FILE",
+        "PREFERRED_FILE",
+        "PREFERRED_TMP",
+        "FRONT_STATE",
+        "STANDBY_PIDFILE",
+        "STANDBY_LOG",
+        "WATCHDOG_PAUSE",
+    ):
         # A hard link passes the path rule: an in-root lock linked to the live front-preferred-port would be
         # truncated and overwritten by lock acquisition. Only a missing or single-link regular file is ours.
         _single_link_or_missing(name, derived[name])
@@ -190,6 +199,35 @@ def _single_link_or_missing(name: str, path: Path) -> None:
 
 
 SANDBOX_PORT_URL = re.compile(r"^http://127\.0\.0\.1:([0-9]{4})$")
+SANDBOX_LEADING_PORT = re.compile(r"^([0-9]{1,5})\b")
+# The keys lb-sandbox writes into the primary plist. Any other key (Program above all, which launchd runs in
+# place of ProgramArguments[0]) could start something other than the bootstrap.
+SANDBOX_PLIST_KEYS = frozenset(
+    {
+        "Label",
+        "ProgramArguments",
+        "WorkingDirectory",
+        "EnvironmentVariables",
+        "RunAtLoad",
+        "KeepAlive",
+        "ThrottleInterval",
+        "ExitTimeOut",
+        "StandardOutPath",
+        "StandardErrorPath",
+    }
+)
+
+
+def check_sandbox_bootstrap(root: Path) -> None:
+    """The plist's program, <root>/bin/lb-sandbox, must be a real single-link file in a real <root>/bin."""
+    bin_dir = root / "bin"
+    try:
+        dir_info = bin_dir.lstat()
+        info = (bin_dir / "lb-sandbox").lstat()
+    except OSError as exc:
+        raise SandboxRefused(f"sandbox bootstrap {bin_dir / 'lb-sandbox'} is missing") from exc
+    if not stat.S_ISDIR(dir_info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SandboxRefused("sandbox bootstrap is a link, not lb-sandbox's own copy inside the root")
 
 
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
@@ -200,6 +238,9 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
     """
     if not isinstance(data, dict):
         raise SandboxRefused("sandbox plist is not a dictionary")
+    extra = sorted(str(key) for key in set(data) - SANDBOX_PLIST_KEYS)
+    if extra:
+        raise SandboxRefused(f"sandbox plist has keys lb-sandbox never writes: {', '.join(extra)}")
     want = [
         str(root / "runtime" / ".venv" / "bin" / "python"),
         str(root / "bin" / "lb-sandbox"),
@@ -226,6 +267,13 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
     for key, value in fixed.items():
         if env.get(key) != value:
             raise SandboxRefused(f"sandbox plist {key} is not the sandbox's own")
+    workdir = data.get("WorkingDirectory")
+    if workdir is not None and not _inside(Path(str(workdir)).resolve(), root):
+        raise SandboxRefused("sandbox plist working directory is outside the sandbox root")
+    for key in ("StandardOutPath", "StandardErrorPath"):
+        if key in data and not _inside(Path(str(data[key])).resolve(), root):
+            raise SandboxRefused(f"sandbox plist {key} is outside the sandbox root")
+    cwd = Path(str(workdir)) if workdir is not None else root / "runtime"
     for key, value in env.items():
         text = str(value)
         if key == "PATH" or key in fixed:
@@ -237,11 +285,16 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
                 raise SandboxRefused(f"sandbox plist {key} points outside the sandbox's ports")
             continue
         for part in text.split(":"):
-            if part.startswith("/") and not _inside(Path(part).resolve(), root):
-                raise SandboxRefused(f"sandbox plist {key} names a path outside the sandbox root")
-    workdir = data.get("WorkingDirectory")
-    if workdir is not None and not _inside(Path(str(workdir)).resolve(), root):
-        raise SandboxRefused("sandbox plist working directory is outside the sandbox root")
+            # A live port without a scheme (127.0.0.1:2457, 2455) is as live as a URL to it.
+            port = SANDBOX_LEADING_PORT.match(part)
+            if port and int(port.group(1)) in SANDBOX_FORBIDDEN_PORTS:
+                raise SandboxRefused(f"sandbox plist {key} names a live port")
+            if part.startswith("~"):
+                raise SandboxRefused(f"sandbox plist {key} names a home-relative path")
+            # A relative path resolves against the working directory, so ../../.. climbs out of the root.
+            if part.startswith("/") or "/" in part or part in (".", ".."):
+                if not _inside((cwd / part).resolve(), root):
+                    raise SandboxRefused(f"sandbox plist {key} names a path outside the sandbox root")
 
 
 def apply_sandbox(config_path: Path) -> None:
@@ -255,11 +308,15 @@ def apply_sandbox(config_path: Path) -> None:
         raise SandboxRefused("sandbox config is not a JSON object")
     bindings = sandbox_bindings(config)
     try:
-        with Path(bindings["PLIST"]).open("rb") as fh:
+        # O_NOFOLLOW and one link: the guard's lstat may predate a link planted since.
+        with os.fdopen(os.open(bindings["PLIST"], os.O_RDONLY | os.O_NOFOLLOW), "rb") as fh:
+            if os.fstat(fh.fileno()).st_nlink != 1:
+                raise SandboxRefused("sandbox plist has a second hard link")
             plist = plistlib.load(fh)
     except (OSError, ValueError, plistlib.InvalidFileException) as exc:
         raise SandboxRefused(f"cannot read sandbox plist: {exc.__class__.__name__}") from exc
     check_sandbox_plist(plist, bindings["SANDBOX_ROOT"], bindings["LABEL"], bindings["PRIMARY_PORT"])
+    check_sandbox_bootstrap(bindings["SANDBOX_ROOT"])
     globals().update(bindings)
     SANDBOX_CONFIG = Path(config_path).resolve()
 
@@ -333,6 +390,7 @@ def read_plist() -> dict:
     with os.fdopen(sandbox_open(PLIST, os.O_RDONLY), "rb") as fh:
         data = plistlib.load(fh)
     check_sandbox_plist(data, SANDBOX_ROOT, LABEL, PRIMARY_PORT)  # again at use: the file may have changed
+    check_sandbox_bootstrap(SANDBOX_ROOT)
     return data
 
 

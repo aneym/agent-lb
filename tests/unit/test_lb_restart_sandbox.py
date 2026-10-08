@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import os
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -179,7 +180,15 @@ def test_sandbox_mode_signals_only_processes_of_its_root(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize(
-    "planted", ["lb-restart.lock", "logs/sync.log", "state/front-preferred-port", "state/lb-standby.pid"]
+    "planted",
+    [
+        "lb-restart.lock",
+        "logs/sync.log",
+        "state/front-preferred-port",
+        "state/lb-standby.pid",
+        "state/front.json",
+        "watchdog.pause",
+    ],
 )
 def test_sandbox_guard_refuses_hard_links_to_live_state(tmp_path: Path, planted: str) -> None:
     """Finding: an in-root lb-restart.lock hard-linked to the live front-preferred-port passed the path guard."""
@@ -262,6 +271,13 @@ def _plist(root: Path, **overrides) -> dict:
         {"ProgramArguments": ["/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb", "--port", "2471"]},
         {"Label": "com.aneyman.agent-lb"},
         {"WorkingDirectory": "/h/.agent-lb/runtime/agent-lb"},
+        # S2 fix round: a live port without a scheme, a path that climbs out, a key launchd runs instead.
+        {"env": {"AGENT_LB_FEDERATION_PEER_HOST": "127.0.0.1:2457"}},
+        {"env": {"AGENT_LB_PORT": "2455"}},
+        {"env": {"AGENT_LB_FEDERATION_PUSH_PATH": "../../../../state/federation-push.json"}},
+        {"env": {"AGENT_LB_CONVERSATION_ARCHIVE_DIR": "~/.agent-lb/conversation-archive"}},
+        {"Program": "/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb"},
+        {"StandardOutPath": "/h/.agent-lb/agent-lb.log"},
     ],
 )
 def test_sandbox_plist_must_run_serve_against_its_own_store(tmp_path: Path, overrides: dict) -> None:
@@ -271,3 +287,53 @@ def test_sandbox_plist_must_run_serve_against_its_own_store(tmp_path: Path, over
     lb.check_sandbox_plist(_plist(root), root, "com.agent-lb.drill.sbx-r1", 2471)  # control
     with pytest.raises(lb.SandboxRefused):
         lb.check_sandbox_plist(_plist(root, **overrides), root, "com.agent-lb.drill.sbx-r1", 2471)
+
+
+# ---------------------------------------------------------------- S2 fix round (lb-restart only)
+
+
+def _load_sandbox() -> ModuleType:
+    path = SCRIPT.parent / "lb-sandbox"
+    loader = importlib.machinery.SourceFileLoader("lb_sandbox_for_restart_parity", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def test_the_plist_lb_sandbox_writes_passes_the_restart_guard(tmp_path: Path) -> None:
+    """Parity: the stricter guard must still accept the plist lb-sandbox start writes, or every
+    sandbox restart refuses. A new env var in lb-sandbox that names a live port or an outside path fails here."""
+    lb, lbs = _load(), _load_sandbox()
+    root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
+    root.mkdir(parents=True, mode=0o700)
+    ports = {"front": 2470, "primary": 2471, "standby": 2472, "gate": 2473, "edge_anthropic": 2474, "edge_openai": 2475}
+    primary, _aux = lbs.write_plists(root, "r1", ports, "http")
+    data = plistlib.loads(primary.read_bytes())
+    lb.check_sandbox_plist(data, root, "com.agent-lb.drill.sbx-r1", 2471)
+
+
+def test_standby_start_refuses_a_bootstrap_that_is_a_link(tmp_path: Path) -> None:
+    """The plist's program path is right but <root>/bin/lb-sandbox is a link to something else (a live
+    launcher): reading the plist for the standby refuses, so nothing is spawned."""
+    lb = _load()
+    root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
+    (root / "launchd").mkdir(parents=True)
+    (root / "launchd" / "com.agent-lb.drill.sbx-r1.plist").write_bytes(plistlib.dumps(_plist(root)))
+    (root / "bin").mkdir()
+    bootstrap = root / "bin" / "lb-sandbox"
+    bootstrap.write_text("#!/usr/bin/env python3\n")
+    live = tmp_path / ".agent-lb" / "runtime" / "agent-lb" / "agent-lb"
+    live.parent.mkdir(parents=True)
+    live.write_text("#!/bin/sh\n")
+    lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
+    assert lb.read_plist()["Label"] == "com.agent-lb.drill.sbx-r1"  # control: its own copy is accepted
+    bootstrap.unlink()
+    bootstrap.symlink_to(live)
+    with pytest.raises(lb.SandboxRefused):
+        lb.read_plist()
+    bootstrap.unlink()
+    os.link(live, bootstrap)
+    with pytest.raises(lb.SandboxRefused):
+        lb.read_plist()
