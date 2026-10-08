@@ -47,7 +47,7 @@ def test_mechanical_uses_cursor_auditor_when_claude_is_short(tmp_path: Path, cla
                for line in text.stdout.splitlines() if line.startswith("audit"))
 
 
-@pytest.mark.parametrize("down,expected", [("verifier", "gpt-implementer"), ("cursor-seat", "sonnet-implementer")])
+@pytest.mark.parametrize("down,expected", [("verifier", "gpt-implementer"), ("cursor-seat", "gpt-implementer")])
 def test_alternate_checks_cursor_seat_not_claude_seat(tmp_path: Path, down: str, expected: str) -> None:
     env = audit_env(tmp_path)
     state = tmp_path / "state.json"
@@ -57,8 +57,11 @@ def test_alternate_checks_cursor_seat_not_claude_seat(tmp_path: Path, down: str,
     assert result["seat"] == expected
     if down == "verifier":
         assert result["audit"]["seat"] == "cursor-seat"
+        assert result["auditor"] == result["audit"]
+        assert result["audit_gap"] is None
     else:
-        assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["reason"]
+        assert result["auditor"] is None
+        assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["audit_gap"]
 
 
 @pytest.mark.parametrize("unavailable", ["missing-pool", "missing-model", "model-list-unavailable"])
@@ -74,17 +77,19 @@ def test_alternate_requires_pool_and_listed_cursor_model(tmp_path: Path, unavail
     else:
         env["ROUTE_CURSOR_MODELS_CMD"] = "printf ''"
     result = pick(env, "mechanical")
-    assert result["seat"] == "sonnet-implementer"
-    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["reason"]
-    assert "via" not in result["audit"]
+    assert result["seat"] == "gpt-implementer"
+    assert result["auditor"] is None
+    assert result["audit"] is None
+    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["audit_gap"]
 
 
 @pytest.mark.parametrize("cursor", [0, 1])
-def test_unavailable_cursor_keeps_primary_auditor_skip_reason(tmp_path: Path, cursor: int) -> None:
+def test_unavailable_cursor_keeps_primary_auditor_gap_reason(tmp_path: Path, cursor: int) -> None:
     result = pick(audit_env(tmp_path, cursor=cursor), "mechanical")
-    assert result["seat"] == "sonnet-implementer"
-    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["reason"]
-    assert "via" not in result["audit"]
+    assert result["seat"] == "gpt-implementer"
+    assert result["auditor"] is None
+    assert result["audit"] is None
+    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["audit_gap"]
 
 
 @pytest.mark.parametrize("alternate", [None, [], {"anthropic-general": []},
@@ -92,7 +97,7 @@ def test_unavailable_cursor_keeps_primary_auditor_skip_reason(tmp_path: Path, cu
     {"anthropic-general": {"pool": "cursor-other", "model": "claude-sonnet-5-5-high"}},
     {"anthropic-general": {"pool": "cursor-other", "vendor": "cursor", "model": False}},
 ])
-def test_malformed_auditor_via_preserves_existing_routing(tmp_path: Path, alternate: object) -> None:
+def test_malformed_auditor_via_picks_worker_with_an_audit_gap(tmp_path: Path, alternate: object) -> None:
     env = audit_env(tmp_path)
     table = json.loads(Path(env["ROUTE_TABLE"]).read_text())
     table["policy"]["auditor_via"] = alternate
@@ -100,6 +105,7 @@ def test_malformed_auditor_via_preserves_existing_routing(tmp_path: Path, altern
     path.write_text(json.dumps(table))
     env["ROUTE_TABLE"] = str(path)
     result = pick(env, "mechanical")
-    assert result["seat"] == "sonnet-implementer"
-    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["reason"]
-    assert "via" not in result["audit"]
+    assert result["seat"] == "gpt-implementer"
+    assert result["auditor"] is None
+    assert result["audit"] is None
+    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result["audit_gap"]
