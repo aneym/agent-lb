@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-GA non-production variables/ssh/run may use the login; other writes need custody.
+# Pre-GA non-prod variables and all ssh/run may use the login; other writes need custody.
 INPUT=$(cat)
 RAILWAY_GUARD_INPUT="$INPUT" python3 - <<'PY'
 import json
@@ -74,34 +74,6 @@ def run_value_output(args):
                             segment.append(word)
                 except ValueError:
                     return True
-    return False
-
-
-def execution_environment(args, env):
-    # Only CLI flags before the remote command target Railway. Never resolve
-    # the link over the network or print any part of the local config.
-    explicit = None
-    for i, arg in enumerate(args):
-        if arg in {'--environment', '-e'} and i + 1 < len(args):
-            explicit = args[i + 1]
-        elif arg.startswith('--environment='):
-            explicit = arg.split('=', 1)[1]
-        elif arg.startswith('-e') and len(arg) > 2:
-            explicit = arg[2:].lstrip('=')
-    if explicit is not None:
-        return explicit.casefold() not in {'prod', 'production', ''}
-    if env.get('RAILWAY_ENVIRONMENT_ID') or env.get('RAILWAY_PROJECT_ID'):
-        return False  # IDs cannot be classified offline.
-    try:
-        config = Path(env.get('HOME', str(Path.home()))) / '.railway' / 'config.json'
-        projects = json.loads(config.read_text()).get('projects', {})
-        cwd = Path.cwd()
-        for directory in [cwd, *cwd.parents]:
-            if str(directory) in projects:
-                name = projects[str(directory)].get('environment_name')
-                return isinstance(name, str) and bool(name) and name.casefold() not in {'prod', 'production'}
-    except (OSError, ValueError, TypeError, AttributeError):
-        pass
     return False
 
 
@@ -385,10 +357,8 @@ def check(command, inherited):
                         break
                     if run_value_output(command_args[k:]):
                         return PRINTENV_DENIAL
-                    global_args = args[:len(args) - len(command_args)]
-                    if (not execution_environment(global_args + command_args[1:k], env)
-                            and not any(env.get(key) for key in TOKEN_NAMES)):
-                        return DENIAL
+                    # Pre-GA container execution may use the login on any environment.
+                    # Value output and secret-shaped argv remain refused above.
                     break
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])

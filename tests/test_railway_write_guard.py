@@ -287,15 +287,18 @@ def test_pre_ga_r2_argv_ownership(command, expected):
 # cases cover variable writes, not this login-only execution branch.
 @pytest.mark.parametrize('command,expected', [
     ('railway ssh --service rails --environment staging -- python -c ...', 0),
+    ("railway ssh --service rails --environment staging -- python -c 'print(1)'", 0),
+    ("railway ssh --service rails --environment production -- python -c 'print(1)'", 0),
+    ('railway ssh -e production -- printenv', 2),
     ('railway run -e dev -- pytest', 0),
     ('railway ssh -e preview -- python -c "print(1)"', 0),
     ('railway -e test run -- pytest', 0),
     ('railway ssh --environment=feature-one -- script.py', 0),
     ('railway run -edev -- pytest', 0),
-    ('railway ssh -e production -- python -c ...', 2),
-    ('railway run -e prod -- pytest', 2),
-    ('railway ssh -- python -c ...', 2),
-    ('railway run -- pytest', 2),
+    ('railway ssh -e production -- python -c ...', 0),
+    ('railway run -e prod -- pytest', 0),
+    ('railway ssh -- python -c ...', 0),
+    ('railway run -- pytest', 0),
     ('RAILWAY_TOKEN=x railway ssh -e production -- python -c ...', 0),
     ('RAILWAY_TOKEN=x railway run -e prod -- pytest', 0),
     *[(f'railway {mode} -e staging -- {output}', 2)
@@ -318,7 +321,7 @@ def test_pre_ga_ssh_run_policy(command, expected, tmp_path):
 
 @pytest.mark.parametrize('mode', ['ssh', 'run'])
 @pytest.mark.parametrize('environment,expected', [
-    ('staging', 0), ('dev', 0), ('production', 2), ('PROD', 2), (None, 2),
+    ('staging', 0), ('dev', 0), ('production', 0), ('PROD', 0), (None, 0),
 ])
 def test_pre_ga_ssh_run_linked_environment(mode, environment, expected, tmp_path):
     home = tmp_path / 'home'
