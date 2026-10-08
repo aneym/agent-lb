@@ -306,7 +306,7 @@ SCRIPT_PREFILTERS = {
     "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
     "wide-scan-guard.sh": ("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac", pf_wide_scan),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
-    "no-chrome-guard.sh": ("02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82", pf_no_chrome),
+    "no-chrome-guard.sh": ("f8cbd0b265aebc71856916ebc5f212033c3dc967327ac84305b55d58d10e9c46", pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway),
     "route.sh": ("7735c06fbe7264f0d92403e0bd7b18920f9457196493e9bce9b787e53404ed97", pf_jev_alert),
 }
