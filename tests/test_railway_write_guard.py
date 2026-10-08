@@ -14,13 +14,13 @@ import pytest
 HOOK = Path(__file__).resolve().parents[1] / 'config/coding-agents/hooks/railway-vars-guard.sh'
 
 
-def invoke(command, shell=None, **tokens):
+def invoke(command, shell=None, cwd=None, **tokens):
     env = {key: value for key, value in os.environ.items()
            if key not in {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}}
     env.update(tokens)
     return subprocess.run([shell or os.environ.get('RAILWAY_TEST_SHELL', '/bin/bash'), str(HOOK)], input=json.dumps({
         'tool_name': 'Bash', 'tool_input': {'command': command},
-    }), text=True, capture_output=True, env=env)
+    }), text=True, capture_output=True, env=env, cwd=cwd)
 
 
 @pytest.mark.parametrize('command', [
@@ -281,3 +281,58 @@ def test_unknown_link_write_is_logged_without_values():
 def test_pre_ga_r2_argv_ownership(command, expected):
     result = invoke(command)
     assert result.returncode == expected, result.stderr
+
+
+# SSH/run policy is exercised through hook stdin, never the CLI. Existing r2
+# cases cover variable writes, not this login-only execution branch.
+@pytest.mark.parametrize('command,expected', [
+    ('railway ssh --service rails --environment staging -- python -c ...', 0),
+    ('railway run -e dev -- pytest', 0),
+    ('railway ssh -e preview -- python -c "print(1)"', 0),
+    ('railway -e test run -- pytest', 0),
+    ('railway ssh --environment=feature-one -- script.py', 0),
+    ('railway run -edev -- pytest', 0),
+    ('railway ssh -e production -- python -c ...', 2),
+    ('railway run -e prod -- pytest', 2),
+    ('railway ssh -- python -c ...', 2),
+    ('railway run -- pytest', 2),
+    ('RAILWAY_TOKEN=x railway ssh -e production -- python -c ...', 0),
+    ('RAILWAY_TOKEN=x railway run -e prod -- pytest', 0),
+    *[(f'railway {mode} -e staging -- {output}', 2)
+      for mode in ['ssh', 'run']
+      for output in ['printenv', 'env', 'set', 'export -p',
+                     'railway variables', 'railway variables --json',
+                     'echo "$API_TOKEN"', 'printf "%s" "${PASSWORD}"',
+                     'cat /app/.env', 'cat .env.staging',
+                     'sh -c "printenv"', 'sh -c "echo okay; env"']],
+    ('railway ssh -e staging -- echo "$PORT"', 0),
+    ('railway run -e dev -- cat README.md', 0),
+    ('railway ssh -e staging -- echo sk-synthetic', 2),
+    ('railway run -e dev -- pytest API_TOKEN=synthetic', 2),
+])
+def test_pre_ga_ssh_run_policy(command, expected, tmp_path):
+    result = invoke(command, HOME=str(tmp_path))
+    assert result.returncode == expected, result.stderr
+    assert 'synthetic' not in result.stderr
+
+
+@pytest.mark.parametrize('mode', ['ssh', 'run'])
+@pytest.mark.parametrize('environment,expected', [
+    ('staging', 0), ('dev', 0), ('production', 2), ('PROD', 2), (None, 2),
+])
+def test_pre_ga_ssh_run_linked_environment(mode, environment, expected, tmp_path):
+    home = tmp_path / 'home'
+    config = home / '.railway' / 'config.json'
+    config.parent.mkdir(parents=True)
+    project = tmp_path / 'project'
+    child = project / 'child'
+    child.mkdir(parents=True)
+    config.write_text(json.dumps({'projects': {str(project): {
+        'project_path': str(project), 'project': 'synthetic-project',
+        'environment': 'synthetic-environment', 'environment_name': environment,
+    }}}))
+    result = invoke(f'railway {mode} -- python -c ...', cwd=child, HOME=str(home))
+    assert result.returncode == expected, result.stderr
+    # Explicit targeting takes precedence over the linked default.
+    result = invoke(f'railway {mode} -e staging -- python -c ...', cwd=child, HOME=str(home))
+    assert result.returncode == 0, result.stderr

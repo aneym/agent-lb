@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-GA non-production variable writes may use the interactive login; other writes need custody.
+# Pre-GA non-production variables/ssh/run may use the login; other writes need custody.
 INPUT=$(cat)
 RAILWAY_GUARD_INPUT="$INPUT" python3 - <<'PY'
 import json
@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import sys
+from pathlib import Path
 
 DENIAL = ('Railway write refused: use a custody RAILWAY_TOKEN or RAILWAY_API_TOKEN, '
           'not the owner\'s CLI login. Never put secrets in argv; use '
@@ -44,15 +45,63 @@ def run_value_output(args):
     if not args:
         return False
     name = args[0].rsplit('/', 1)[-1]
-    if name in {'printenv', 'env'}:
+    if name in {'printenv', 'env', 'set'} or (name == 'export' and '-p' in args[1:]):
+        return True
+    if name == 'railway' and len(args) > 1 and args[1] in {'variables', 'variable', 'vars'}:
+        return (not variable_write(args[2:]) or 'get' in args[2:]
+                or any(arg in {'--kv', '-k', '--json'} for arg in args[2:]))
+    if name in {'echo', 'printf'} and any(
+            SECRET_NAME.search(variable)
+            for arg in args[1:]
+            for variable in re.findall(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', arg)):
+        return True
+    if name == 'cat' and any(Path(arg).name == '.env' or Path(arg).name.startswith('.env.')
+                             for arg in args[1:]):
         return True
     if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
         for i, arg in enumerate(args[1:-1], 1):
             if arg.startswith('-') and 'c' in arg[1:]:
                 try:
-                    return run_value_output(shlex.split(args[i + 1]))
+                    lexer = shlex.shlex(args[i + 1], posix=True, punctuation_chars=';&|\n')
+                    lexer.whitespace_split = True
+                    segment = []
+                    for word in list(lexer) + [';']:
+                        if word and all(c in ';&|\n' for c in word):
+                            if run_value_output(segment):
+                                return True
+                            segment = []
+                        else:
+                            segment.append(word)
                 except ValueError:
                     return True
+    return False
+
+
+def execution_environment(args, env):
+    # Only CLI flags before the remote command target Railway. Never resolve
+    # the link over the network or print any part of the local config.
+    explicit = None
+    for i, arg in enumerate(args):
+        if arg in {'--environment', '-e'} and i + 1 < len(args):
+            explicit = args[i + 1]
+        elif arg.startswith('--environment='):
+            explicit = arg.split('=', 1)[1]
+        elif arg.startswith('-e') and len(arg) > 2:
+            explicit = arg[2:].lstrip('=')
+    if explicit is not None:
+        return explicit.casefold() not in {'prod', 'production', ''}
+    if env.get('RAILWAY_ENVIRONMENT_ID') or env.get('RAILWAY_PROJECT_ID'):
+        return False  # IDs cannot be classified offline.
+    try:
+        config = Path(env.get('HOME', str(Path.home()))) / '.railway' / 'config.json'
+        projects = json.loads(config.read_text()).get('projects', {})
+        cwd = Path.cwd()
+        for directory in [cwd, *cwd.parents]:
+            if str(directory) in projects:
+                name = projects[str(directory)].get('environment_name')
+                return isinstance(name, str) and bool(name) and name.casefold() not in {'prod', 'production'}
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     return False
 
 
@@ -322,7 +371,7 @@ def check(command, inherited):
                 if help_requested or not command_args or command_args[0] in READS:
                     break
                 subcommand = command_args[0]
-                if subcommand == 'run':
+                if subcommand in {'ssh', 'run'}:
                     k = 1
                     while k < len(command_args) and command_args[k].startswith('-'):
                         if command_args[k] in {'--help', '-h'}:
@@ -336,6 +385,11 @@ def check(command, inherited):
                         break
                     if run_value_output(command_args[k:]):
                         return PRINTENV_DENIAL
+                    global_args = args[:len(args) - len(command_args)]
+                    if (not execution_environment(global_args + command_args[1:k], env)
+                            and not any(env.get(key) for key in TOKEN_NAMES)):
+                        return DENIAL
+                    break
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])
                     # Bare listings, get, --json and --kv all expose values.
