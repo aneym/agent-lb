@@ -14,7 +14,7 @@
 
 #### Scenario: Status
 - **WHEN** a caller runs `lb-sandbox status --run-id R`
-- **THEN** each account is reported by id, vendor, status, expiry and `auth_hash12`, never by token
+- **THEN** each account is reported by id, vendor, status, expiry and `auth_hash12`, never by token, and `request_log_store` names the sandbox's own SQLite store (`<root>/data/store.db`), which holds its request logs
 
 ### Requirement: Sandbox custody does not widen exposure beyond the live service
 
@@ -58,7 +58,7 @@ The sandbox MUST reach the live service only through its peer gate, which forwar
 
 ### Requirement: Faults are injected at the sandbox edge only
 
-`lb-sandbox fault` MUST arm one fault per edge: `account_429` fails the first request after arming with a provider-shaped 429 and keeps failing that Authorization hash until cleared; `cut_after_bytes:N` closes the next streamed 200 response after N body bytes; `hold_stream:S` (anthropic edge, S 1-120) answers the next streamed `POST /v1/messages` itself, with no provider call, sends the opening events, holds the response open until the fault is cleared or S seconds pass, then finishes the message and logs `released_by` (`clear` or `timeout`). The cooldown a fault causes MUST land in the sandbox store only.
+`lb-sandbox fault` MUST arm one fault per edge: `account_429` fails the first request after arming with a provider-shaped 429 and keeps failing that Authorization hash until cleared; `cut_after_bytes:N` closes the next streamed 200 response after N body bytes; a request streams when its body (read through `Content-Encoding: gzip`, which agent-lb uses for large bodies) holds `stream: true` or its path always streams (Codex `/codex/responses`), never judged by the upstream content-type; `hold_stream:S` (anthropic edge, S 1-120) answers the next streamed `POST /v1/messages` itself, with no provider call, sends the opening events, holds the response open until the fault is cleared or S seconds pass, then finishes the message and logs `released_by` (`clear` or `timeout`). The cooldown a fault causes MUST land in the sandbox store only.
 
 #### Scenario: Account failover
 - **WHEN** `account_429` is armed on the anthropic edge and a client sends one request
@@ -143,3 +143,15 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 #### Scenario: Stream finished before cutover
 - **WHEN** the lb-restart log shows `had 0 in flight` at cutover
 - **THEN** the restart step fails and the run result is `fail`
+
+### Requirement: launchd loads only the jobs lb-sandbox made, and lb-restart kickstarts only that job
+
+`start` MUST hand launchd each sandbox job from bytes it made itself, through a private file (`O_EXCL`, 0600) in `<sandboxes>/.launchd` that no confined process can write, unlinked once loaded; it MUST NOT bootstrap a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
+
+#### Scenario: Aux rewrites the primary plist before the primary loads
+- **WHEN** the aux job, started first, rewrites `<root>/launchd/<label>.plist` to another program
+- **THEN** launchd still loads the primary job start made, from a file outside every root
+
+#### Scenario: Hostile job loaded, plist restored
+- **WHEN** the sandbox label was loaded with the expected argv plus `DYLD_INSERT_LIBRARIES` or a stderr path into live state, and the plist on disk was then restored
+- **THEN** `lb-restart --sandbox` exits 2 before any kickstart

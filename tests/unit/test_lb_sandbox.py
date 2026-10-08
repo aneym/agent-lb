@@ -484,11 +484,20 @@ class _EdgeRig:
     real transport under backpressure can show. Only the vendor URL is replaced by the local upstream.
     """
 
-    def __init__(self, lb: ModuleType, fault_file: Path, body: bytes, break_after: int | None) -> None:
+    def __init__(
+        self,
+        lb: ModuleType,
+        fault_file: Path,
+        body: bytes,
+        break_after: int | None,
+        edge: str = "anthropic",
+        content_type: str | None = "text/event-stream",
+    ) -> None:
         import asyncio
         import threading
 
         self.lb, self.fault_file, self.body, self.break_after = lb, fault_file, body, break_after
+        self.edge, self.content_type = edge, content_type
         self.entries: list[dict] = []
         self.loop = asyncio.new_event_loop()
         self.ready = threading.Event()
@@ -501,7 +510,8 @@ class _EdgeRig:
         from aiohttp import web
 
         async def upstream(request: web.Request) -> web.StreamResponse:
-            response = web.StreamResponse(status=200, headers={"content-type": "text/event-stream"})
+            headers = {"content-type": self.content_type} if self.content_type else {}
+            response = web.StreamResponse(status=200, headers=headers)
             await response.prepare(request)
             for start in range(0, len(self.body), 65536):
                 if self.break_after is not None and start >= self.break_after:
@@ -516,9 +526,9 @@ class _EdgeRig:
         up.router.add_route("*", "/{tail:.*}", upstream)
         up_port = await self._serve(up)
         self.session = aiohttp.ClientSession(auto_decompress=False)
-        counters = {"edge_requests": {"anthropic": 0}, "faults_applied": {"anthropic": 0}}
+        counters = {"edge_requests": {self.edge: 0}, "faults_applied": {self.edge: 0}}
         handler = self.lb.make_edge_handler(
-            "anthropic",
+            self.edge,
             f"http://127.0.0.1:{up_port}",
             self.lb.FaultState(self.fault_file.parent, self.fault_file.name),
             self.session,
@@ -532,20 +542,27 @@ class _EdgeRig:
     async def _serve(self, app) -> int:
         from aiohttp import web
 
-        runner = web.AppRunner(app, access_log=None, handle_signals=False)
+        # auto_decompress=False, as cmd_aux serves the edges: the edge gets the request body as agent-lb sent it.
+        runner = web.AppRunner(app, auto_decompress=False, access_log=None, handle_signals=False)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", 0)
         await site.start()
         self.runners.append(runner)
         return site._server.sockets[0].getsockname()[1]
 
-    def fetch(self, wait_before_reading: float) -> tuple[bytes, bool]:
-        """POST through the edge; returns the body bytes received and whether the body ended cleanly."""
+    def fetch(
+        self, wait_before_reading: float, path: str = "/v1/messages", body: bytes = b'{"stream": true}', gzipped=False
+    ) -> tuple[bytes, bool]:
+        """POST through the edge; returns the body bytes received and whether the body ended cleanly.
+
+        gzipped: send the body as agent-lb sends a large one upstream (Content-Encoding: gzip)."""
+        import gzip
         import http.client
         import time
 
         conn = http.client.HTTPConnection("127.0.0.1", self.edge_port, timeout=30)
-        conn.request("POST", "/v1/messages", body=b"{}", headers={"content-type": "application/json"})
+        headers = {"content-type": "application/json", **({"content-encoding": "gzip"} if gzipped else {})}
+        conn.request("POST", path, body=gzip.compress(body) if gzipped else body, headers=headers)
         resp = conn.getresponse()
         time.sleep(wait_before_reading)  # let the edge queue bytes the client has not read: backpressure
         received = b""
@@ -896,20 +913,31 @@ def test_teardown_scans_the_whole_root_and_refuses_export_on_a_hit(
         assert sorted(p.name for p in export.iterdir()) == ["primary.log"]
 
 
-def _held_fetch(port: int) -> tuple[object, object]:
+def _held_fetch(port: int, gzipped: bool = False) -> tuple[object, object]:
+    """A stream:true Messages request; gzipped as agent-lb sends a body of 16 KB and up (a real Claude Code
+    turn's), padded past that size."""
+    import gzip
     import http.client
 
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
-    body = json.dumps({"model": "claude-unit", "stream": True, "messages": []})
-    conn.request("POST", "/v1/messages", body=body, headers={"content-type": "application/json"})
+    request = {"model": "claude-unit", "stream": True, "messages": []}
+    if gzipped:
+        request["system"] = "x" * (32 << 10)
+    body = json.dumps(request).encode()
+    headers = {"content-type": "application/json", **({"content-encoding": "gzip"} if gzipped else {})}
+    conn.request("POST", "/v1/messages", body=gzip.compress(body) if gzipped else body, headers=headers)
     return conn, conn.getresponse()
 
 
+@pytest.mark.parametrize("gzipped", [False, True])
 @pytest.mark.parametrize("release", ["clear", "timeout"])
-def test_edge_holds_a_stream_open_until_released(tmp_path: Path, release: str) -> None:
+def test_edge_holds_a_stream_open_until_released(tmp_path: Path, release: str, gzipped: bool) -> None:
     """Integration over HTTP: the restart check's stream stays in flight until the check releases it.
 
     A hold that ends by its bound is reported as "timeout", which the check counts as a failed restart proof.
+    gzipped (agent-lb-3 finding: the hold applied in 1 of 3 installed runs): agent-lb gzips a body of 16 KB and
+    up on its way upstream, as a real Claude Code turn's is; read as plain JSON its stream flag was missed and
+    the turn went upstream unheld.
     """
     import time
 
@@ -919,7 +947,7 @@ def test_edge_holds_a_stream_open_until_released(tmp_path: Path, release: str) -
     fault_file.write_text(json.dumps({"nonce": "n1", "armed": True, "fault": "hold_stream", "n": bound}))
     rig = _EdgeRig(lb, fault_file, b"upstream must not be called", break_after=None)
     try:
-        conn, resp = _held_fetch(rig.edge_port)
+        conn, resp = _held_fetch(rig.edge_port, gzipped)
         opening = b""
         while b"1, 2, 3" not in opening and (chunk := resp.read1(4096)):
             opening += chunk
@@ -941,6 +969,24 @@ def test_edge_holds_a_stream_open_until_released(tmp_path: Path, release: str) -
     [entry] = rig.entries
     assert (entry["fault"], entry["status"], entry["released_by"]) == ("hold_stream", 200, release)
     assert entry["held_s"] >= (1.0 if release == "clear" else 0.9)
+
+
+def test_edge_cuts_a_codex_stream_whatever_the_upstream_content_type(tmp_path: Path) -> None:
+    """agent-lb-3 finding: the openai edge never applied an armed cut_after_bytes to Codex /codex/responses
+    streams (3 of 3 installed runs: fault null, about 280 KB passed), because it took "streamed" from the upstream
+    content-type. It is the request that streams: Codex's responses path always does, and agent-lb sends its
+    large body gzipped. Integration over HTTP with an upstream that labels its stream application/octet-stream."""
+    lb = _load()
+    fault_file = tmp_path / "fault-openai.json"
+    fault_file.write_text(json.dumps({"nonce": "n1", "armed": True, "fault": "cut_after_bytes", "n": 2048}))
+    rig = _EdgeRig(lb, fault_file, SSE_BODY, break_after=None, edge="openai", content_type=None)
+    request = json.dumps({"model": "gpt-unit", "stream": True, "input": "x" * (32 << 10)}).encode()
+    try:
+        received, clean = rig.fetch(0.0, path="/codex/responses", body=request, gzipped=True)
+    finally:
+        rig.close()
+    assert (len(received), clean) == (2048, False), "the armed cut was not applied to the Codex stream"
+    assert [(e["fault"], e["bytes"]) for e in rig.entries] == [("cut_after_bytes:2048", 2048)]
 
 
 def test_hold_stream_fault_is_bounded() -> None:
@@ -2158,3 +2204,140 @@ def test_teardown_never_removes_live_state_moved_into_the_roots_name_after_the_d
     result = lb.teardown(root.name, None)
     assert (root / "front.json").read_text() == '{"preferred": 2457}', "teardown deleted live state"
     assert (result["root_exists"], result["clean"], result["volume"].get("root_removed")) == (True, False, False)
+
+
+# ------------------------------------------------ lbsb-4 fix round (S2-3 review, parked findings)
+
+
+def test_a_startup_hook_on_pythonpath_never_runs_in_the_re_execd_command(tmp_path: Path) -> None:
+    """S2-3 review (lb-sandbox:3570): main's re-exec into the agent-lb venv dropped -I and passed PYTHONPATH on, so
+    `python -I lb-sandbox stop --run-id R` with PYTHONPATH=<root>/runtime holding a sitecustomize.py ran the hook
+    in the re-exec'd process, before any guard. Integration with the real script and interpreters: the command
+    re-execs into the installed agent-lb venv's python (read only, never the service), and a run id the command
+    refuses keeps it from reading or writing anything. The control runs the same plant without -I and without the
+    re-exec, which fires it."""
+    lb = _load()
+    live_python = lb.LIVE_VENV / "bin" / "python"
+    if not live_python.exists() or lb.in_live_venv():
+        pytest.skip("needs the installed agent-lb venv to re-exec into, and a test interpreter outside it")
+    hook_dir, ran = tmp_path / "runtime", tmp_path / "hook-ran"
+    hook_dir.mkdir()
+    (hook_dir / "sitecustomize.py").write_text(f"open({str(ran)!r}, 'a').write('ran\\n')\n")
+    env = {k: v for k, v in os.environ.items() if k != "LB_SANDBOX_NO_REEXEC"}
+    env["PYTHONPATH"] = str(hook_dir)
+    argv = ["stop", "--run-id", "Not-A-Run-Id"]
+    done = subprocess.run(
+        [sys.executable, "-I", str(SCRIPT), *argv], env=env, capture_output=True, timeout=120, start_new_session=True
+    )
+    assert done.returncode == 2 and b"refused" in done.stdout
+    assert not ran.exists(), "a planted sitecustomize.py ran in the re-exec'd lb-sandbox"
+    control = subprocess.run(
+        [sys.executable, str(SCRIPT), *argv],
+        env={**env, "LB_SANDBOX_NO_REEXEC": "1"},
+        capture_output=True,
+        timeout=120,
+        start_new_session=True,
+    )
+    assert control.returncode == 2 and ran.exists(), "the plant never fires: the assertion above proves nothing"
+
+
+class _StartStopsHere(Exception):
+    """Raised by the faked launchd at the primary's bootstrap: start has handed launchd its job."""
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, Seatbelt and launchd are macOS")
+def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """S2-3 review (lb-sandbox:2234): start bootstrapped the aux before the primary, both from plists under the
+    root. The aux (and the front it starts) can write anywhere in the root, so a compromised one could rewrite the
+    primary's plist to an unconfined payload that start then loaded. launchd now gets each job from bytes start
+    made, through a private file outside every root, removed once loaded.
+
+    Integration through the real `start`: a real volume (hdiutil), the real confined populate, real ports. Only
+    launchd is faked (the OS edge): its bootstrap records the plist it is handed, the aux's runs by writing its
+    ready state and rewriting the primary's plist in the root, and the primary's ends the start (its teardown
+    runs for real)."""
+    import signal as signals
+
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    home = lb_home.parent
+    _install_venv(lb_home)
+    (lb.LIVE_RUNTIME / "app").mkdir(parents=True)
+    (lb.LIVE_RUNTIME / "app" / "__init__.py").write_text("")
+    lb.LIVE_PLIST.parent.mkdir(parents=True)
+    lb.LIVE_PLIST.write_bytes(plistlib.dumps({"EnvironmentVariables": {lb.TOKEN_ENV: FAKE_TOKEN}}))
+    for name, value in {
+        "LIVE_VENV": lb.LIVE_RUNTIME / ".venv",
+        "LIVE_FRONT_STATE": lb_home / "state" / "front.json",
+        "MANAGED_ROUTING": lb_home / "managed" / "coding-agents",
+        "LIVE_LABEL": "com.agent-lb.drill.unit-no-live",
+        "LIVE_FRONT_LABEL": "com.agent-lb.drill.unit-no-live-front",
+    }.items():
+        monkeypatch.setattr(lb, name, value)
+    script = _use_bootstrap(lb, home)
+    run_id = "lbsbx-unit-boot"
+    root = lb.SANDBOXES / run_id
+    label = f"com.agent-lb.drill.sbx-{run_id}"
+    hostile = {"Label": label, "ProgramArguments": ["/bin/sh", "-c", "echo unconfined"], "RunAtLoad": True}
+    handed: list[tuple[str, dict]] = []
+    real_run = subprocess.run
+
+    def launchd(argv, *args, **kwargs):
+        if not argv or argv[0] != "/bin/launchctl":
+            return real_run(argv, *args, **kwargs)
+        if argv[1] != "bootstrap":
+            return subprocess.CompletedProcess(argv, 113, "", "")  # print, bootout: nothing is loaded
+        body = plistlib.loads(Path(argv[3]).read_bytes())
+        handed.append((argv[3], body))
+        if body["Label"] == label:
+            raise _StartStopsHere()
+        # The aux job runs: confined to the root, it may write anything in it.
+        (root / "state" / "aux.json").write_text(json.dumps({"ready": True}))
+        (root / "launchd" / f"{label}.plist").write_bytes(plistlib.dumps(hostile))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(lb.subprocess, "run", launchd)
+    handlers = {sig: signals.getsignal(sig) for sig in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
+    args = lb.build_parser().parse_args(["start", "--run-id", run_id, "--from-live"])
+    try:
+        code = lb.cmd_start(args)
+    finally:
+        for sig, handler in handlers.items():
+            signals.signal(sig, handler)
+        monkeypatch.setattr(lb.subprocess, "run", real_run)
+        if lb.on_own_volume(root):
+            lb.detach_volume(root)
+    out = json.loads(capsys.readouterr().out)
+    assert code == lb.EXIT_UNHEALTHY and "_StartStopsHere" in out["error"]
+    assert [body["Label"] for _, body in handed] == [f"{label}-aux", label]
+    primary_path, primary = handed[1]
+    assert primary["ProgramArguments"][1:4] == ["-I", str(script), "_serve"], "launchd got the rewritten plist"
+    assert primary["ProgramArguments"][4] == str(root) and primary != hostile
+    for path, _ in handed:
+        assert not Path(path).is_relative_to(root), "launchd was handed a plist from inside the root"
+        assert not os.path.lexists(path), "the private copy outlived its bootstrap"
+    assert out["teardown"]["root_exists"] is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
+def test_restart_runs_lb_restart_isolated_from_a_planted_pythonpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Same class as the re-exec finding (S2-3, lb-sandbox:3570): `lb-sandbox restart` started lb-restart (which
+    signals and kickstarts) without -I and with the caller's whole environment, so PYTHONPATH=<root>/runtime ran a
+    planted sitecustomize.py inside it. Integration with the real lb-restart beside this script, which then
+    refuses this sandbox (it is not under the real home) before touching anything."""
+    lb = _load()
+    monkeypatch.setattr(lb, "SANDBOXES", mounted_root.parent)
+    (mounted_root / "sandbox.json").write_text(json.dumps({"run_id": mounted_root.name}))
+    hook_dir, ran = tmp_path / "hook", tmp_path / "hook-ran"
+    hook_dir.mkdir()
+    (hook_dir / "sitecustomize.py").write_text(f"open({str(ran)!r}, 'a').write('ran\\n')\n")
+    monkeypatch.setenv("PYTHONPATH", str(hook_dir))
+    args = lb.build_parser().parse_args(["restart", "--run-id", mounted_root.name, "--reason", "unit"])
+    code = lb.cmd_restart(args)
+    out = json.loads(capsys.readouterr().out)
+    assert code == lb.EXIT_UNHEALTHY and out["lb_restart_exit"] == 2, "lb-restart did not run to its refusal"
+    assert not ran.exists(), "a planted sitecustomize.py ran inside lb-restart"

@@ -2224,12 +2224,12 @@ def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) 
     return env
 
 
-def write_plists(
+def plist_bodies(
     root: Path, run_id: str, ports: dict[str, int], transport: str, script: Path | None = None
-) -> tuple[Path, Path]:
-    """Both jobs run `<venv python> -I <installed lb-sandbox>`: nothing under the root runs before confinement.
-    -I (isolated): no PYTHON* variable (PYTHONPATH names <root>/runtime, where a sitecustomize.py could be
-    planted), no user site and no script or working directory on sys.path."""
+) -> tuple[dict, dict]:
+    """The primary's and the aux's launchd jobs. Both run `<venv python> -I <installed lb-sandbox>`: nothing under
+    the root runs before confinement. -I (isolated): no PYTHON* variable (PYTHONPATH names <root>/runtime, where a
+    sitecustomize.py could be planted), no user site and no script or working directory on sys.path."""
     label, aux_label = labels_for(run_id)
     python = str(interpreter_for(root))
     script = str(script or bootstrap_script())
@@ -2268,8 +2268,16 @@ def write_plists(
     }
     # No StandardOutPath: launchd opens it by name and follows a planted link. _serve and _aux open their own
     # logs from a root descriptor instead (log_to_root).
-    paths = (root / "launchd" / f"{label}.plist", root / "launchd" / f"{aux_label}.plist")
-    for path, body in zip(paths, (primary, aux), strict=True):
+    return primary, aux
+
+
+def write_plists(
+    root: Path, run_id: str, ports: dict[str, int], transport: str, script: Path | None = None
+) -> tuple[Path, Path]:
+    """The two jobs as plist files under the root: what lb-restart --sandbox reads (and checks) for its standby.
+    launchd never loads these files (bootstrap_job): the confined jobs can write anywhere in the root."""
+    paths = plist_paths(root, run_id)
+    for path, body in zip(paths, plist_bodies(root, run_id, ports, transport, script), strict=True):
         write_in_root(root, path.relative_to(root), plistlib.dumps(body))
     return paths
 
@@ -2306,6 +2314,44 @@ def bootstrap(plist: Path, label: str, deadline_s: float = 20) -> None:
             return
         time.sleep(0.5)
     raise Unhealthy(f"launchctl bootstrap {label} failed")
+
+
+def bootstrap_job(root: Path, body: dict) -> None:
+    """Load one sandbox job into launchd from bytes this process made, never from a plist file under the root.
+
+    Every process confined to a root can write anywhere in it, so a plist there is only as trusted as the jobs
+    already running: an aux (or its front) started first could rewrite the primary's plist to an unconfined
+    payload just before its bootstrap. The job goes to launchd through a private file (O_EXCL, 0600) in
+    <sandboxes>/.launchd, which no confined process can write (their profile allows writes in their own root
+    only), and the file is unlinked once launchd holds the job."""
+    label = check_label(str(body.get("Label", "")))
+    sb = sandboxes_fd(Path(root).parent)
+    try:
+        os.mkdir(".launchd", 0o700, dir_fd=sb)
+    except FileExistsError:
+        pass
+    dir_fd = os.open(".launchd", DIR_FLAGS, dir_fd=sb)
+    try:
+        if os.fstat(dir_fd).st_uid != os.getuid():
+            raise Refused("the sandboxes .launchd dir is not this user's own")
+        os.fchmod(dir_fd, 0o700)
+        name = f"{label}.plist"
+        try:
+            os.unlink(name, dir_fd=dir_fd)  # a stale copy from a start that died: the name only
+        except FileNotFoundError:
+            pass
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(plistlib.dumps(body))
+        try:
+            bootstrap(Path(fd_path(dir_fd)) / name, label)
+        finally:
+            try:
+                os.unlink(name, dir_fd=dir_fd)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(dir_fd)
 
 
 def label_names_root(label: str, root: Path) -> bool:
@@ -2475,16 +2521,18 @@ def cmd_start(args) -> int:
         run_confined(
             root, lambda: populate_root(root, run_id, ports, meta, args.transport, source), reads=False, timeout_s=300
         )
-        primary_plist, aux_plist = plist_paths(root, run_id)
+        # The jobs launchd runs are made here, in this unconfined process, from the same inputs populate_root
+        # used; the plist files it wrote under the root are never loaded (bootstrap_job).
+        primary_job, aux_job = plist_bodies(root, run_id, ports, args.transport, Path(source))
         out["live"] = live_identity()
 
-        bootstrap(aux_plist, aux_label)
+        bootstrap_job(root, aux_job)
         deadline = time.monotonic() + 30
         while not read_root_json(root, "state/aux.json").get("ready"):
             if time.monotonic() > deadline:
                 raise Unhealthy("aux (gate, edges, front) did not become ready in 30 s")
             time.sleep(0.25)
-        bootstrap(primary_plist, label)
+        bootstrap_job(root, primary_job)
         deadline = time.monotonic() + 90
         while not (
             http(ports["primary"], "/health/ready")[0] == 200 and http(ports["front"], "/health/ready")[0] == 200
@@ -2810,7 +2858,7 @@ class FaultState:
     def __init__(self, root: Path, rel: str) -> None:
         self.root, self.rel = root, rel
         self.path = root / rel
-        self.mtime = None
+        self.seen = None
         self.nonce = None
         self.fault: str | None = None
         self.n: int | None = None
@@ -2818,14 +2866,17 @@ class FaultState:
         self.consumed = False
 
     def refresh(self) -> None:
+        # `fault` writes a new inode by rename each time, so the inode tells two writes apart even when their
+        # timestamps would not.
         try:
-            mtime = os.stat(self.path, follow_symlinks=False).st_mtime_ns
+            info = os.stat(self.path, follow_symlinks=False)
+            seen = (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
         except OSError:
-            mtime = None
-        if mtime == self.mtime:
+            seen = None
+        if seen == self.seen:
             return
-        self.mtime = mtime
-        data = read_root_json(self.root, self.rel) if mtime is not None else {}
+        self.seen = seen
+        data = read_root_json(self.root, self.rel) if seen is not None else {}
         if data.get("nonce") != self.nonce:
             self.nonce = data.get("nonce")
             self.fault = data.get("fault") if data.get("armed") else None
@@ -2859,6 +2910,42 @@ class FaultState:
         """True once the fault that armed a hold was cleared or replaced (a new nonce)."""
         self.refresh()
         return self.nonce != nonce
+
+
+# The most request body the edge decodes to read its stream flag (agent-lb gzips bodies of 16 KB and up).
+MAX_DECODED_BODY = 64 << 20
+# The upstream paths that always answer with a stream: the Codex backend's responses endpoint.
+STREAMED_PATHS = ("/codex/responses",)
+
+
+def request_json(body: bytes, headers) -> dict:
+    """The request body as a JSON object, decoded from gzip when the sandbox sent it compressed; {} otherwise.
+
+    agent-lb gzips large model-call bodies on their way upstream (app/core/clients/upstream_body.py), so a
+    real Claude Code turn reaches the edge as gzip: reading it as plain JSON missed its stream flag."""
+    encoding = (headers.get("Content-Encoding") or "").strip().lower()
+    if encoding == "gzip" and body[:2] == b"\x1f\x8b":  # a server layer that inflated it already leaves plain JSON
+        import zlib
+
+        try:
+            inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            body = inflater.decompress(body, MAX_DECODED_BODY)
+            if inflater.unconsumed_tail:
+                return {}  # larger than the bound: not read
+        except zlib.error:
+            return {}
+    elif encoding not in ("", "identity", "gzip"):
+        return {}
+    try:
+        parsed = json.loads(body or b"{}")
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def wants_stream(method: str, path: str, parsed: dict) -> bool:
+    """True when the request asks for a streamed answer: stream:true in its body, or a path that always streams."""
+    return method == "POST" and (parsed.get("stream") is True or path.endswith(STREAMED_PATHS))
 
 
 def sse(event: str, data: dict) -> bytes:
@@ -2967,13 +3054,14 @@ def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters
             status, headers, payload = rate_limit_response(edge)
             log({**record, "status": status, "bytes": len(payload), "fault": "account_429"})
             return web.Response(status=status, body=payload, headers=headers)
-        armed_hold = fault.fault == "hold_stream" and not fault.consumed  # parse the body only when armed
+        # The body is decoded only when a stream fault is armed. Whether a request streams is read from the
+        # request (stream:true, or a path that always streams), never from the upstream content-type.
+        armed = fault.fault in ("hold_stream", "cut_after_bytes") and not fault.consumed
+        parsed = request_json(body, request.headers) if armed else {}
+        streamed = armed and wants_stream(request.method, request.path, parsed)
+        armed_hold = fault.fault == "hold_stream" and not fault.consumed
         if armed_hold and edge == "anthropic" and request.method == "POST" and request.path == "/v1/messages":
-            try:
-                parsed = json.loads(body or b"{}")
-            except ValueError:
-                parsed = {}
-            hold = fault.take_hold() if isinstance(parsed, dict) and parsed.get("stream") is True else None
+            hold = fault.take_hold() if parsed.get("stream") is True else None
             if hold is not None:
                 counters["faults_applied"][edge] += 1
                 try:
@@ -3015,7 +3103,6 @@ def make_edge_handler(edge: str, base: str, fault: FaultState, session, counters
                 out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in HOP_BY_HOP}
                 response = web.StreamResponse(status=status, headers=out_headers)
                 await response.prepare(request)
-                streamed = "text/event-stream" in upstream.headers.get("content-type", "")
                 cut_at = fault.take_cut() if streamed and status == 200 else None
                 if cut_at is not None:
                     applied = f"cut_after_bytes:{cut_at}"
@@ -3281,6 +3368,8 @@ def cmd_status(args) -> int:
         "gate": aux.get("gate", {"forwarded": [], "refused": 0}),
         "edge": {k: v for k, v in aux.get("edge", {}).items() if k != "log"},
         "edge_log": str(root / "logs" / "edge.jsonl"),
+        # The sandbox app's own SQLite store, which holds its request logs (AGENT_LB_DATABASE_URL in sandbox_env).
+        "request_log_store": str(root / "data" / "store.db"),
         "ports": ports,
     }
     return emit(out, EXIT_OK if healthy else EXIT_UNHEALTHY)
@@ -3366,22 +3455,18 @@ def cmd_restart(args) -> int:
     if not lb_restart.is_file():
         raise Unhealthy(f"{lb_restart} missing")
     log_path = root / "logs" / "lb-restart.log"
-    argv = [
-        sys.executable,
-        str(lb_restart),
-        "--sandbox",
-        str(root / "lb-restart.json"),
-        "--force",
-        "--reason",
-        args.reason,
-    ]
+    # Isolated, with no PYTHON* or DYLD_* variable passed on: nothing planted on a path in the caller's
+    # environment (PYTHONPATH=<root>/runtime) loads into lb-restart, which can signal and kickstart.
+    argv = isolated_python(
+        sys.executable, lb_restart, ["--sandbox", str(root / "lb-restart.json"), "--force", "--reason", args.reason]
+    )
     started = time.monotonic()
     # Opened by descriptor from the root: a planted link or hard link (to the live plist, say) is refused.
     with confined(lambda: append_in_root(root, "logs/lb-restart.log")) as log:
         log.write(f"==== {now_iso()} lb-sandbox restart: {' '.join(argv[1:])}\n")
         log.flush()
         # lb-restart and the reaper it spawns carry the run's marker, so `scan --processes` can see their env.
-        env = {**os.environ, "LB_SANDBOX_ROOT": str(root)}
+        env = {**isolated_env(dict(os.environ)), "LB_SANDBOX_ROOT": str(root)}
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=str(root), env=env
         )
@@ -3841,6 +3926,17 @@ def in_live_venv() -> bool:
         return False
 
 
+def isolated_env(env: dict[str, str]) -> dict[str, str]:
+    """env without what loads code into a Python child before its first line runs: every PYTHON* variable
+    (PYTHONPATH naming <root>/runtime, where a sitecustomize.py can be planted) and every DYLD_* variable."""
+    return {k: v for k, v in env.items() if not k.startswith(("PYTHON", "DYLD_"))}
+
+
+def isolated_python(python: str, script: Path, argv: list[str]) -> list[str]:
+    """The argv that runs script under python isolated (-I: no PYTHON* variable, user site or script dir)."""
+    return [python, "-I", str(script), *argv]
+
+
 def main(argv: list[str]) -> int:
     if argv[:1] == ["_serve"] and len(argv) >= 2:
         try:
@@ -3871,9 +3967,11 @@ def main(argv: list[str]) -> int:
         python = LIVE_VENV / "bin" / "python"
         reexec = (not in_live_venv() and python.exists()) or (marker is not None and marker != EXEC_ENV_MARKER)
         if reexec:
-            # status, scan and stop decrypt the sandbox store; the agent-lb venv has the crypto they need.
+            # status, scan and stop decrypt the sandbox store; the agent-lb venv has the crypto they need. Always
+            # isolated, whatever this process was started with: `python -I lb-sandbox stop` with PYTHONPATH naming
+            # a root's runtime/ must not run a sitecustomize.py planted there in the re-exec'd process.
             target = str(python) if python.exists() and not in_live_venv() else sys.executable
-            os.execv(target, [target, str(Path(__file__).resolve()), *argv])
+            os.execve(target, isolated_python(target, Path(__file__).resolve(), argv), isolated_env(dict(os.environ)))
     try:
         return COMMANDS[args.command](args)
     except Refused as exc:

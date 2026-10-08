@@ -58,4 +58,13 @@
 - [x] The sandbox plist environment holds only the keys lb-sandbox writes (`HOME`, `PATH`, `PYTHONPATH` pinned to their values, `LB_SANDBOX_ROOT`, `AGENT_LB_*`, `FORWARDED_ALLOW_IPS`, `UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN`); `DYLD_*`, `PYTHONSTARTUP` and any other key are refused.
 - [x] The interpreter is checked for identity, not shape: the venv's `pyvenv.cfg` (single link, private) names its home, and the venv python must lead to `python`, `python3` or `python3.N` in that resolved dir, a native executable (Mach-O magic), owned by this user or root with no group or other write. A private shell script or a native file elsewhere is refused.
 - [x] P1 (confined `_boot`/`_aux` read their own root as `{}` under the real `~/.agent-lb/sandboxes` layout) is fixed by S1-3's pinned sandboxes dir (479849b4); this round adds the confined regressions on a fake home and on a test-owned root in the real sandboxes dir (both fail on 84a63c41).
-- [ ] Deferred: the aux job is bootstrapped before the primary plist is loaded by path, so a compromised aux could rewrite that plist first; covered by the service identity follow-up.
+- [x] (Was deferred; done in section 9.) The aux job was bootstrapped before the primary plist was loaded by path, so a compromised aux could rewrite that plist first.
+
+## 9. lbsb-4 fix round (S2-3 review findings parked in pending-lbsb-4, agent-lb-3 edge findings)
+
+- [x] `start` bootstraps both jobs from bytes it made, through a private file in `<sandboxes>/.launchd` (unlinked once loaded), never from a plist under the root.
+- [x] `lb-restart --sandbox` checks the loaded job whole before a kickstart: program, every argument, environment block (less `XPC_SERVICE_NAME`, `OSLogRateLimit`, `XPC_FLAGS`), working directory and stream paths against the checked plist; no inherited `DYLD_*`; a print with an entry outside its block is refused, and a plist with a control character is refused before use.
+- [x] `main`'s re-exec, `restart`'s lb-restart and the sandbox reaper run `-I` with no `PYTHON*` or `DYLD_*` variable.
+- [x] The edge reads a request's stream flag through `Content-Encoding: gzip` and treats Codex `/codex/responses` as streamed, so `cut_after_bytes` applies to Codex streams and `hold_stream` to a real (gzipped) Claude Code turn; the fault file is told apart by inode, not only mtime.
+- [x] `status` reports `request_log_store`.
+- [x] Each finding has a test that fails on dd8f4c29 for the reason it names.

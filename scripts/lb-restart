@@ -377,6 +377,16 @@ SANDBOX_ENV_PREFIX = "AGENT_LB_"
 SANDBOX_PATH_ENV = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
+def _has_control_characters(value: object) -> bool:
+    if isinstance(value, str):
+        return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+    if isinstance(value, dict):
+        return any(_has_control_characters(k) or _has_control_characters(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_has_control_characters(v) for v in value)
+    return False
+
+
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
     """The sandbox plist must run `lb-sandbox _serve <root>` on its primary port with an env inside the root.
 
@@ -385,6 +395,9 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
     """
     if not isinstance(data, dict):
         raise SandboxRefused("sandbox plist is not a dictionary")
+    if _has_control_characters(data):
+        # launchctl print shows values raw: a line break in one could pass for a line of its own there.
+        raise SandboxRefused("sandbox plist has a control character in a key or value")
     extra = sorted(str(key) for key in set(data) - SANDBOX_PLIST_KEYS)
     if extra:
         raise SandboxRefused(f"sandbox plist has keys lb-sandbox never writes: {', '.join(extra)}")
@@ -1171,10 +1184,15 @@ def is_standby(pid: int) -> bool:
 
 def spawn_reaper(pid: int, drain_seconds: int) -> None:
     argv = [sys.executable, str(Path(__file__).resolve()), "--reap", str(pid), str(drain_seconds + REAP_MARGIN_S)]
+    env = None
     if SANDBOX_CONFIG is not None:
-        argv += ["--sandbox", str(SANDBOX_CONFIG)]
+        # Isolated, like every sandbox interpreter: no PYTHON* or DYLD_* variable from this process's environment
+        # (PYTHONPATH naming <root>/runtime) loads code into the reaper, which can signal the standby.
+        argv = [argv[0], "-I", *argv[1:], "--sandbox", str(SANDBOX_CONFIG)]
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "DYLD_"))}
     subprocess.Popen(
         argv,
+        env=env,
         start_new_session=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -1215,35 +1233,106 @@ def job_loaded(label: str) -> bool:
     return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True).returncode == 0
 
 
-def loaded_job_program(text: str) -> tuple[str | None, list[str]]:
-    """(program, arguments) from `launchctl print` output: the job launchd will exec, not the plist on disk."""
-    program, arguments, inside = None, [], False
-    for line in text.splitlines():
-        if inside:
-            if line.strip() == "}":
-                inside = False
+# The blocks of `launchctl print` that hold environment entries (`KEY => value`), and the keys launchd itself adds
+# to a job's own environment block.
+JOB_ENV_BLOCKS = ("environment", "inherited environment", "default environment")
+LAUNCHD_ENV_KEYS = frozenset({"XPC_SERVICE_NAME", "OSLogRateLimit", "XPC_FLAGS"})
+# Where launchd sends a job's standard streams, as `launchctl print` names them, and the plist keys behind them.
+JOB_STREAMS = {"stdout path": "StandardOutPath", "stderr path": "StandardErrorPath", "stdin path": "StandardInPath"}
+
+
+def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """(scalars, blocks) of one job in `launchctl print` output: `\\tkey = value` lines and `\\tname = {` ... `\\t}`
+    blocks of `\\t\\t` lines.
+
+    Raises SandboxRefused on anything it cannot place: a line at the wrong depth, a key or block seen twice, or an
+    environment entry (`KEY => value`) in any block but the environment ones. A value launchd prints with a line
+    break in it shows up as one of these, so a job cannot hide an entry from the checks below that way."""
+    scalars: dict[str, str] = {}
+    blocks: dict[str, list[str]] = {}
+    lines = text.splitlines()
+    if not lines or not lines[0].endswith(" = {"):
+        raise SandboxRefused("launchctl print of the sandbox job is not one job")
+    current: str | None = None
+    for line in lines[1:]:
+        if current is not None:
+            if line == "\t}":
+                current = None
+            elif line.startswith("\t\t"):
+                blocks[current].append(line[2:])
             else:
-                arguments.append(line.strip())
-        elif line.startswith("\tprogram = "):
-            program = line.split(" = ", 1)[1]
-        elif line == "\targuments = {":
-            inside = True
-    return program, arguments
+                raise SandboxRefused("launchctl print of the sandbox job has a line outside its block")
+            continue
+        if line in ("", "}"):
+            continue
+        if not line.startswith("\t") or line.startswith("\t\t"):
+            raise SandboxRefused("launchctl print of the sandbox job has a line at the wrong depth")
+        key, sep, value = line[1:].partition(" = ")
+        if not sep or key in scalars or key in blocks:
+            raise SandboxRefused(f"launchctl print of the sandbox job repeats or mangles {key!r}")
+        if value == "{":
+            blocks[key], current = [], key
+        else:
+            scalars[key] = value
+    if current is not None:
+        raise SandboxRefused("launchctl print of the sandbox job ends inside a block")
+    for name, entries in blocks.items():
+        if name not in JOB_ENV_BLOCKS and name != "arguments" and any(" => " in entry for entry in entries):
+            raise SandboxRefused(f"launchctl print of the sandbox job has environment entries in {name!r}")
+    return scalars, blocks
+
+
+def job_env_block(entries: list[str]) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for entry in entries:
+        key, sep, value = entry.partition(" => ")
+        if not sep or key in env:
+            raise SandboxRefused("launchctl print of the sandbox job has a malformed environment")
+        env[key] = value
+    return env
+
+
+def check_loaded_job_print(text: str, plist: dict, python: Path, want: list[str]) -> None:
+    """The job launchd holds is the checked plist's job, whole: program, every argument, the effective environment,
+    the working directory and every output destination. A job loaded from a hostile plist (DYLD_INSERT_LIBRARIES,
+    a stderr path into live state, an extra argument) and the plist on disk restored afterwards is refused, since
+    a kickstart runs what launchd loaded. Raises SandboxRefused."""
+    scalars, blocks = parse_job_print(text)
+    if scalars.get("program") != str(python) or blocks.get("arguments") != want:
+        raise SandboxRefused(f"loaded job {LABEL} does not run exactly `lb-sandbox _serve` on the checked interpreter")
+    if "environment" not in blocks:
+        raise SandboxRefused(f"loaded job {LABEL} shows no environment")
+    env = job_env_block(blocks["environment"])
+    if env.get("XPC_SERVICE_NAME", LABEL) != LABEL:
+        raise SandboxRefused(f"loaded job {LABEL} names another service")
+    own = {k: v for k, v in env.items() if k not in LAUNCHD_ENV_KEYS}
+    expected = {str(k): str(v) for k, v in plist.get("EnvironmentVariables", {}).items()}
+    if own != expected:
+        raise SandboxRefused(f"loaded job {LABEL} has an environment other than its checked plist's")
+    for name in ("inherited environment", "default environment"):
+        if any(k.startswith("DYLD_") for k in job_env_block(blocks.get(name, []))):
+            raise SandboxRefused(f"loaded job {LABEL} inherits a DYLD_ variable")
+    workdir = plist.get("WorkingDirectory")
+    if scalars.get("working directory") != (str(workdir) if workdir is not None else None):
+        raise SandboxRefused(f"loaded job {LABEL} runs in another working directory than its checked plist's")
+    for shown, key in JOB_STREAMS.items():
+        if scalars.get(shown) != (str(plist[key]) if key in plist else None):
+            raise SandboxRefused(f"loaded job {LABEL} sends its {shown.split()[0]} elsewhere than its checked plist")
 
 
 def check_loaded_sandbox_job() -> None:
-    """Before a kickstart of the sandbox label: the loaded job runs the checked interpreter on
-    `-I <installed lb-sandbox> _serve <root>`. launchd execs what it loaded at bootstrap, so this is checked, not
-    the plist file. Raises SandboxRefused."""
+    """Before a kickstart of the sandbox label: the loaded job is exactly the checked plist's job, running the
+    checked interpreter on `-I <installed lb-sandbox> _serve <root> --host 127.0.0.1 --port <primary>`. launchd execs
+    what it loaded at bootstrap, so the loaded job is what is checked, against the plist file. Raises
+    SandboxRefused."""
     assert SANDBOX_ROOT is not None
     python = sandbox_python_for(SANDBOX_ROOT)
     check_sandbox_interpreter(python, SANDBOX_ROOT)
     check_sandbox_bootstrap(SANDBOX_ROOT)
+    plist = read_plist()  # checked by check_sandbox_plist on the way
     out = subprocess.run(["launchctl", "print", f"gui/{UID}/{LABEL}"], capture_output=True, text=True).stdout
-    program, arguments = loaded_job_program(out)
-    want = sandbox_program(SANDBOX_ROOT)
-    if program != str(python) or arguments[: len(want)] != want:
-        raise SandboxRefused(f"loaded job {LABEL} does not run `lb-sandbox _serve` on the checked interpreter")
+    want = [*sandbox_program(SANDBOX_ROOT), "--host", "127.0.0.1", "--port", str(PRIMARY_PORT)]
+    check_loaded_job_print(out, plist, python, want)
 
 
 def kickstart_primary(wait: bool) -> None:

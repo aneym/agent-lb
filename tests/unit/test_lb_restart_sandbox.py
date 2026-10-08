@@ -841,13 +841,12 @@ def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
     root = config.parent
     _apply(lb, config, tmp_path)
     python = str(_venv_python(tmp_path))
-    shown = {"program": python, "arguments": [python, "-I", str(_bootstrap(tmp_path)), "_serve", str(root)]}
+    plist = plistlib.loads(Path(json.loads(config.read_text())["plist"]).read_bytes())
+    shown = {"program": python, "arguments": list(plist["ProgramArguments"])}
     kicked: list[list[str]] = []
 
     def job_print(argv, **kwargs):
-        args = "".join(f"\t\t{a}\n" for a in shown["arguments"])
-        head = f"{lb.LABEL} = {{\n\tactive count = 1\n\tprogram = {shown['program']}\n"
-        text = f"{head}\targuments = {{\n{args}\t}}\n}}\n"
+        text = _job_print(lb.LABEL, plist, program=shown["program"], arguments=shown["arguments"])
         return subprocess.CompletedProcess(argv, 0, stdout=text, stderr="")
 
     monkeypatch.setattr(lb.subprocess, "run", job_print)
@@ -900,3 +899,122 @@ def test_front_state_replaced_between_open_and_fstat_is_read_not_refused(
     os.link(state / "front.json", tmp_path / "second-name")
     with pytest.raises(lb.SandboxRefused, match="single-link"):
         lb.read_state(lb.FRONT_STATE)
+
+
+# ---------------------------------------------------------------- lbsb-4 fix round (S2-3 review, parked findings)
+
+
+def _job_print(label: str, plist: dict, program: str | None = None, arguments: list[str] | None = None) -> str:
+    """`launchctl print gui/<uid>/<label>` for a job loaded from plist, in the layout launchd prints on macOS 26
+    (taken from a real print of a throwaway com.agent-lb.drill.* job): program and arguments, working directory,
+    stream paths, the three environment blocks, then launchd's own fields."""
+    argv = arguments if arguments is not None else list(plist["ProgramArguments"])
+    lines = [f"gui/{os.getuid()}/{label} = {{", "\tactive count = 0", "\tpath = /x/job.plist", "\ttype = LaunchAgent"]
+    lines += ["\tstate = not running", "", f"\tprogram = {program or argv[0]}", "\targuments = {"]
+    lines += [f"\t\t{a}" for a in argv] + ["\t}", ""]
+    if "WorkingDirectory" in plist:
+        lines += [f"\tworking directory = {plist['WorkingDirectory']}", ""]
+    for key, shown in (("StandardOutPath", "stdout path"), ("StandardErrorPath", "stderr path")):
+        if key in plist:
+            lines.append(f"\t{shown} = {plist[key]}")
+    lines += ["\tinherited environment = {", "\t\tSSH_AUTH_SOCK => /private/tmp/launchd/Listeners", "\t}", ""]
+    lines += ["\tdefault environment = {", "\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin", "\t}", ""]
+    env = {"OSLogRateLimit": "64", **plist.get("EnvironmentVariables", {}), "XPC_SERVICE_NAME": label}
+    lines += ["\tenvironment = {", *(f"\t\t{k} => {v}" for k, v in env.items()), "\t}", ""]
+    lines += ["\tdomain = gui/501 [100023]", "\truns = 0", "\tresource coalition = {", "\t\tID = 1", "\t}"]
+    lines += ["", "\tproperties = inferred program", "}"]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchd is macOS")
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        {"env": {"DYLD_INSERT_LIBRARIES": "lib/hook.dylib"}},
+        {"StandardErrorPath": "LIVE"},
+        {"StandardOutPath": "LIVE"},
+        {"ProgramArguments": "+--evil"},
+        {"env": {"AGENT_LB_FEDERATION_PEER_URL": "http://127.0.0.1:2599"}},
+        {"WorkingDirectory": "/tmp"},
+    ],
+)
+def test_a_kickstart_never_runs_a_loaded_job_other_than_its_checked_plist(tmp_path: Path, hostile: dict) -> None:
+    """S2-3 review (lb-restart:1242): the loaded-job guard checked only the program and the argv prefix. A job
+    loaded from a hostile plist with the expected argv plus DYLD_INSERT_LIBRARIES, or with a stderr path into
+    live state, and the plist on disk restored afterwards, passed and was kickstarted. The loaded job's whole
+    argv, effective environment, working directory and stream paths must be the checked plist's.
+
+    Integration with the real launchd: each job is bootstrapped for real (never started: no RunAtLoad, no
+    KeepAlive, and the program is a stand-in), the guard reads it with the real `launchctl print`, and the job is
+    booted out in all cases."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    label = f"com.agent-lb.drill.sbx-unit{os.getpid()}"
+    data = json.loads(config.read_text())
+    data["label"] = label
+    config.write_text(json.dumps(data))
+    disk = Path(data["plist"])
+    clean = {**plistlib.loads(disk.read_bytes()), "Label": label}
+    disk.write_bytes(plistlib.dumps(clean))  # what stays on disk: the checked plist
+    _apply(lb, config, tmp_path)
+    live = tmp_path / ".agent-lb" / "state" / "front.json"
+    loaded = json.loads(json.dumps(clean))
+    for key, value in hostile.items():
+        if key == "env":
+            loaded["EnvironmentVariables"].update(value)
+        elif value == "LIVE":
+            loaded[key] = str(live)
+        elif key == "ProgramArguments":
+            loaded[key] = [*loaded[key], value[1:]]
+        else:
+            loaded[key] = value
+    job = tmp_path / "loaded.plist"
+    target = f"gui/{os.getuid()}/{label}"
+
+    def load(body: dict) -> None:
+        job.write_bytes(plistlib.dumps(body))
+        subprocess.run(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(job)], check=True, timeout=30)
+
+    def unload() -> None:
+        subprocess.run(["/bin/launchctl", "bootout", target], capture_output=True, timeout=30, check=False)
+
+    try:
+        load(clean)
+        lb.check_loaded_sandbox_job()  # control: the job loaded from the checked plist passes
+        unload()
+        load(loaded)
+        with pytest.raises(lb.SandboxRefused, match="loaded job"):
+            lb.check_loaded_sandbox_job()
+    finally:
+        unload()
+    assert subprocess.run(["/bin/launchctl", "print", target], capture_output=True, timeout=30).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "forged",
+    [
+        "\n\t}\n\tforged = {\n\t\tDYLD_INSERT_LIBRARIES => /x/hook.dylib",  # hides an entry in a block of its own
+        "\n\tstderr path = /x/live.log",  # a stream path of its own
+        "\n\t\tDYLD_INSERT_LIBRARIES => /x/hook.dylib",  # an entry past the end of the block
+    ],
+)
+def test_a_value_with_a_line_break_cannot_pass_for_launchd_structure(tmp_path: Path, forged: str) -> None:
+    """launchctl print shows values raw, so a loaded value with a line break in it could make an entry read as
+    outside the environment block (unchecked). Such a print is refused, and a plist value with a control
+    character is refused before anything is loaded. Golden-style: the print layout is launchd's (see _job_print)."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    _apply(lb, config, tmp_path)
+    plist = plistlib.loads(Path(json.loads(config.read_text())["plist"]).read_bytes())
+    python = _venv_python(tmp_path)
+    want = list(plist["ProgramArguments"])
+    lb.check_loaded_job_print(_job_print(lb.LABEL, plist), plist, python, want)  # control
+    text = _job_print(lb.LABEL, plist).replace(
+        "\t\tPYTHONPATH => ", "\t\tAGENT_LB_X => x" + forged + "\n\t\tPYTHONPATH => "
+    )
+    with pytest.raises(lb.SandboxRefused):
+        lb.check_loaded_job_print(text, plist, python, want)
+    bad = json.loads(json.dumps(plist))
+    bad["EnvironmentVariables"]["AGENT_LB_X"] = "x" + forged
+    with pytest.raises(lb.SandboxRefused, match="control character"):
+        lb.check_sandbox_plist(bad, config.parent, lb.LABEL, lb.PRIMARY_PORT)
