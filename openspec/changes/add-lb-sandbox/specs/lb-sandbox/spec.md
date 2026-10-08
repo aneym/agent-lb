@@ -142,7 +142,7 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 
 ### Requirement: The live check fails on any doubt
 
-`scripts/lb-sandbox-check` authorizes agent-lb restarts. It MUST fail when the primary had zero (or an unknown number of) requests in flight at cutover, when the held stream ended by its timeout, when any file or process scan found a secret or was incomplete, when the sandbox root was not scanned before teardown, when teardown's scan found anything, or when the store key was not unlinked.
+`scripts/lb-sandbox-check` authorizes agent-lb restarts. It MUST keep the held stream open until its cutover process scan has read every process (the hold is bounded by lb-sandbox's ceiling, and the scan by the time left on it). It MUST fail when the primary had zero (or an unknown number of) requests in flight at cutover, when the held stream ended by its timeout, when any file or process scan found a secret or was incomplete, when the sandbox root was not scanned before teardown, when teardown's scan found anything, or when the store key was not unlinked.
 
 #### Scenario: Stream finished before cutover
 - **WHEN** the lb-restart log shows `had 0 in flight` at cutover
@@ -150,15 +150,19 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 
 ### Requirement: launchd loads only the jobs lb-sandbox made, and lb-restart kickstarts only that job
 
-`start` MUST hand launchd each sandbox job from bytes it made itself, through a private file (`O_EXCL`, 0600, random name) in the run's private directory that no confined process can write; cleanup MUST empty the file through its own descriptor and delete it only through the recorded-identity removal below; it MUST NOT bootstrap a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
+`start` MUST hand launchd each sandbox job by value, as the dictionary it made itself (ServiceManagement `SMJobSubmit` in this user's domain), never as a path: launchd opens a bootstrap path itself and follows links, so any path could be swapped for a link to the live plist between the write and that open. It MUST refuse a label that is already loaded, MUST confirm the job is in `gui/<uid>` (else remove it and fail), and MUST NOT load a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
 
 #### Scenario: Aux rewrites the primary plist before the primary loads
 - **WHEN** the aux job, started first, rewrites `<root>/launchd/<label>.plist` to another program
 - **THEN** launchd still loads the primary job start made, from a file outside every root
 
-#### Scenario: Live file renamed over the job file
-- **WHEN** a single-link live file is renamed over the private job file while launchd reads it, or a live directory sits at a staging name
-- **THEN** the live file or directory keeps its name, inode, bytes and mode; only the file start made loses its bytes
+#### Scenario: Job path swapped for the live plist
+- **WHEN** any path start could hand launchd is replaced by a symlink to the live plist before launchd reads it
+- **THEN** launchd receives only the jobs start made (no path is handed at all) and the live plist is never loaded
+
+#### Scenario: Live directory at the old staging name
+- **WHEN** a live directory sits at `<sandboxes>/.launchd`
+- **THEN** it keeps its name, inode, bytes and mode
 
 #### Scenario: Hostile job loaded, plist restored
 - **WHEN** the sandbox label was loaded with the expected argv plus `DYLD_INSERT_LIBRARIES` or a stderr path into live state, and the plist on disk was then restored
@@ -166,11 +170,15 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 
 ### Requirement: lb-sandbox creates, chmods and deletes only inodes it recorded, inside a private directory
 
-Every path `start` creates MUST live under a private directory it makes with an unpredictable name (`.lbsbx.<run hash>.<32 random hex>`, 0700) inside the pinned sandboxes dir: the record (`ids.jsonl`, `O_EXCL`), the volume image, the job files and the staged mountpoint, which is published to `<sandboxes>/<run-id>` with an exclusive rename (`renameatx_np RENAME_EXCL` on macOS, `renameat2 RENAME_NOREPLACE` elsewhere). Each object's identity (device, inode, birth time) MUST be recorded when it is made, and chmod and stat MUST go through its own descriptor (`O_NOFOLLOW`, `O_DIRECTORY` for directories). Deletion MUST touch only a recorded inode: the name is renamed exclusively into the private directory, opened there, compared with its record, emptied through its descriptor (files), re-checked by name and only then unlinked or rmdir'd; anything that does not match is renamed back and left. The store key MUST be unlinked only on the run's own recorded volume, which no live file can reach by rename. A failed start MUST delete only what that start recorded. macOS has no unlink by descriptor; the remaining check-then-unlink window is accepted only inside the 0700 private directory with the inode re-verified by descriptor just before the unlink.
+Every path `start` creates MUST live under a private directory it makes with an unpredictable name (`.lbsbx.<run hash>.<32 random hex>`, 0700) inside the pinned sandboxes dir: the record (`ids.jsonl`, `O_EXCL`), the volume image and the staged mountpoint (a random stage name, recorded before its mkdir), which is published to `<sandboxes>/<run-id>` with an exclusive rename (`renameatx_np RENAME_EXCL` on macOS, `renameat2 RENAME_NOREPLACE` elsewhere). Each object's identity (device, inode, birth time) MUST be recorded when it is made, and stat MUST go through its own descriptor (`O_NOFOLLOW`, `O_DIRECTORY` for directories). A directory start makes MUST NOT be chmod'ed: it MUST be refused unless it is mode 0700 as its mkdir left it, this user's, empty, on its parent's volume and born no earlier than the clock read just before that mkdir. Only the attached volume's top is chmod'ed, after its descriptor is proven to be that volume. Deletion MUST touch only a recorded inode: the name is renamed exclusively into the private directory, opened there, compared with its record, emptied through its descriptor (files), re-checked by name and only then unlinked or rmdir'd; anything that does not match is renamed back and left. The store key MUST be unlinked only on the run's own recorded volume, which no live file can reach by rename. A failed start MUST delete only what that start recorded. macOS has no unlink by descriptor; the remaining check-then-unlink window is accepted only inside the 0700 private directory with the inode re-verified by descriptor just before the unlink.
 
 #### Scenario: Live directory created at the root name during start
 - **WHEN** a live empty directory takes `<sandboxes>/<run-id>` before the exclusive publish
 - **THEN** start exits non-zero and the live directory keeps its name, inode and mode
+
+#### Scenario: Newer live directory moved onto the staged root
+- **WHEN** an empty live 0755 directory, made after the private directory, is renamed onto the stage name between the mkdir and the open
+- **THEN** start refuses it and it keeps its name, inode and mode; nothing of it is recorded, chmod'ed or removed
 
 #### Scenario: Live key moved into an unmounted root's data dir
 - **WHEN** a live `encryption.key` is renamed into `<root>/data/` and the start then fails
@@ -186,11 +194,27 @@ Every path `start` creates MUST live under a private directory it makes with an 
 
 ### Requirement: Scans find a token in line-wrapped base64
 
-Every file scan and the log export MUST report a secret whose base64 form is wrapped onto lines (MIME 76-column, CRLF, indented continuation), at any byte offset and across read boundaries.
+Every file scan and the log export MUST report a secret whose base64 form is wrapped onto lines (MIME 76-column, CRLF, indented continuation), at any byte offset and across read boundaries. The keyed ciphertext search MUST see the same unwrapped bytes: a store snapshot base64-encoded and wrapped onto indented CRLF lines is a hit, and the export gate copies none of it past the window it keeps across reads.
 
 #### Scenario: MIME-wrapped token in exported logs
 - **WHEN** a log holds the base64 of a token wrapped at 76 columns
 - **THEN** `scan` reports it and the export removes the copy
+
+#### Scenario: Indented, CRLF-wrapped stale snapshot
+- **WHEN** a file holds a store snapshot from before a mirror cycle, base64-encoded at 64 columns with CRLF and two-space indentation
+- **THEN** `scan` with the store key reports it, and `scan_stream` stops before the whole file is written
+
+### Requirement: lb-restart works only in a root that is its own volume
+
+`lb-restart --sandbox <config>` MUST take the config only as `<sandboxes>/<run>/lb-restart.json`, opened by name inside the root it pins (from `/` down, no link) with `O_NOFOLLOW`, and MUST refuse it unless it is a single-link regular file of this user on the root's volume, before reading a byte. The root MUST be a 0700 directory of this user and the top of its own volume (lb-sandbox attaches one at every root): `rename(2)` and `link(2)` never cross volumes, so no live file can be moved or linked into it. A root on the sandboxes dir's volume MUST be refused before any file in it is opened.
+
+#### Scenario: Config swapped for a link to live state
+- **WHEN** a running sandbox's `lb-restart.json` is replaced by a symlink or hard link to live `state/front.json`
+- **THEN** `lb-restart --sandbox` exits 2 without reading the live file
+
+#### Scenario: Live file renamed into the lock of a hand-made root
+- **WHEN** a 0700 directory with a valid config and plist sits under the sandboxes dir on the home volume, and live `state/front.json` was renamed to its `lb-restart.lock`
+- **THEN** the root is refused before the lock is opened, and the file keeps its bytes
 
 ### Requirement: A sandbox can run code from a git ref
 

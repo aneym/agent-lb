@@ -83,3 +83,13 @@
 - [x] P1: scans and the export find the synthetic token in MIME and CRLF-indented wrapped base64 at shifts 0-2 and across read boundaries.
 - [x] `start --from-ref <ref>`: runtime from a clean `git archive` tree of the ref, accounts from live; the check takes `--from-ref`.
 - [ ] Deferred (unchanged): an agent-lb store read guard or service identity, live and sandbox alike.
+
+## 12. sys-lb-sandbox-5 fix round 6 (codex-verifier FAIL on ef7ceb98)
+
+- [x] M1: `lb-restart --sandbox` reads its config only as `<sandboxes>/<run>/lb-restart.json`, by name inside the pinned root with `O_NOFOLLOW`, a single-link file of this user on the root's volume, before a byte is read; the root descriptor it read through is the one the run holds.
+- [x] M2: `start` hands launchd each job by value (`SMJobSubmit`), never a path launchd would open and follow; it refuses an already loaded label and confirms the job is in `gui/<uid>`. No job file exists any more.
+- [x] M3: the staged root has a random name recorded before its mkdir; its birth bound is the clock read right before that mkdir; nothing start makes is chmod'ed (any mode but 0700 is refused); the attached volume's top is chmod'ed only once its descriptor is proven to be that volume.
+- [x] M4: `lb-restart --sandbox` refuses a root that is not its own volume before opening anything in it.
+- [x] P1: the keyed ciphertext search runs on the unwrapped bytes too, and the stream window covers a wrapped keyed fragment; an indented CRLF 64-column stale snapshot regression.
+- [x] P2: the check arms the hold at lb-sandbox's ceiling and releases it only after the cutover process scan, which is bounded by the time left on the hold.
+- [x] Each regression fails on ef7ceb98 for the reason it names.

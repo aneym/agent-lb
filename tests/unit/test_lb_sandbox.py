@@ -1122,6 +1122,12 @@ def test_a_store_snapshot_from_before_a_mirror_cycle_is_still_a_leak(
     assert lb.scan_paths([out], secrets, keys=[key])["found"] is False
 
 
+def _indented_crlf_64(encoded: bytes) -> bytes:
+    """encoded as a YAML-style block: 64-character lines, each indented two spaces and ended with CRLF."""
+    lines = [encoded[i : i + 64] for i in range(0, len(encoded), 64)]
+    return b"snapshot: |\r\n" + b"".join(b"  " + line + b"\r\n" for line in lines)
+
+
 @pytest.mark.parametrize(
     "encode",
     [
@@ -1131,8 +1137,11 @@ def test_a_store_snapshot_from_before_a_mirror_cycle_is_still_a_leak(
         lambda raw: b"\r\n".join(
             base64.urlsafe_b64encode(raw)[i : i + 64] for i in range(0, len(base64.urlsafe_b64encode(raw)), 64)
         ),
+        # Fix round 6 P1: 64 columns, CRLF and two-space indentation (a config or YAML block). The keyed search
+        # got the raw bytes, whose base64 runs the indentation cut short: found False, 11,604 bytes exported.
+        lambda raw: _indented_crlf_64(base64.b64encode(raw)),
     ],
-    ids=["standard", "urlsafe", "mime-wrapped", "urlsafe-crlf-64"],
+    ids=["standard", "urlsafe", "mime-wrapped", "urlsafe-crlf-64", "crlf-64-indented"],
 )
 def test_a_base64_encoded_store_snapshot_from_before_a_mirror_cycle_is_still_a_leak(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encode
@@ -1171,8 +1180,10 @@ def test_a_base64_encoded_store_snapshot_from_before_a_mirror_cycle_is_still_a_l
     assert lb.scan_paths([out], secrets, keys=[key])["hits"] == [str((out / "snapshot.b64").resolve())]
     assert lb.scan_paths([out], secrets)["found"] is False  # current ciphertexts and plaintexts alone miss it
     detector = lb.Detector(secrets, [key])
-    for chunk in (61, 97, 128):  # boundaries at every alignment of the encoded text
-        assert lb.scan_stream(io.BytesIO(encoded).read, detector, chunk=chunk)[0] is True, chunk
+    for chunk in (61, 97, 128, 4096):  # boundaries at every alignment of the encoded text
+        exported: list[bytes] = []
+        assert lb.scan_stream(io.BytesIO(encoded).read, detector, exported.append, chunk=chunk)[0] is True, chunk
+        assert sum(map(len, exported)) < len(encoded), f"the export gate copied the whole snapshot at {chunk}"
     other_root = tmp_path / "other" / "r2"
     _keyed_store(lb, other_root)
     (out / "snapshot.b64").write_bytes(encode((other_root / "data" / "store.db").read_bytes()))
@@ -2339,22 +2350,38 @@ def _start_rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) 
     return lb_home, _use_bootstrap(lb, home)
 
 
-def _fake_launchd(real_run, on_bootstrap, seen: list[list[str]] | None = None):
-    """launchctl as the OS edge: `list` shows no job, print and bootout find nothing, bootstrap calls
-    on_bootstrap(argv, plist path). Every other command runs for real."""
+def _fake_jobs(monkeypatch: pytest.MonkeyPatch, lb: ModuleType, real_run, on_job, before_read=None) -> None:
+    """launchd as the OS edge. A job handed by value (sm_job_submit) calls on_job(body, None). A job handed as a path
+    (`launchctl bootstrap`, as start did up to ef7ceb98) is read the way launchd reads it, following links, after
+    before_read(path) runs (an attacker's swap), then on_job(body, path). `list` shows no job, `print` finds only a
+    job handed over, bootout finds nothing; every other command runs for real."""
+    handed: set[str] = set()
 
     def launchd(argv, *args, **kwargs):
         if not argv or os.path.basename(str(argv[0])) != "launchctl":
             return real_run(argv, *args, **kwargs)
-        if seen is not None:
-            seen.append([str(a) for a in argv])
         if argv[1] == "list":
             return subprocess.CompletedProcess(argv, 0, "PID\tStatus\tLabel\n", "")
+        if argv[1] == "print":
+            return subprocess.CompletedProcess(argv, 0 if str(argv[2]).rsplit("/", 1)[-1] in handed else 113, "", "")
         if argv[1] != "bootstrap":
             return subprocess.CompletedProcess(argv, 113, "", "")
-        return on_bootstrap(argv, Path(argv[3]))
+        path = Path(argv[3])
+        if before_read is not None:
+            before_read(path)
+        body = plistlib.loads(path.read_bytes())
+        on_job(body, path)
+        handed.add(str(body.get("Label")))
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
-    return launchd
+    def submit(body: dict) -> bool:
+        body = plistlib.loads(plistlib.dumps(body))  # what launchd receives: the bytes, not the caller's object
+        on_job(body, None)
+        handed.add(str(body.get("Label")))
+        return True
+
+    monkeypatch.setattr(lb.subprocess, "run", launchd)
+    monkeypatch.setattr(lb, "sm_job_submit", submit, raising=False)
 
 
 def _run_start(lb: ModuleType, argv: list[str], root: Path) -> int | str:
@@ -2416,9 +2443,8 @@ def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote
     handed: list[tuple[str, dict]] = []
     runtime_seen: dict[str, bool] = {}
 
-    def bootstrap(argv, path: Path):
-        body = plistlib.loads(path.read_bytes())
-        handed.append((str(path), body))
+    def on_job(body: dict, path: Path | None):
+        handed.append((path, body))
         if body["Label"] == label:
             raise _StartStopsHere()
         runtime_seen["marker"] = (root / "runtime" / "app" / "marker.py").is_file()
@@ -2426,7 +2452,6 @@ def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote
         # The aux job runs: confined to the root, it may write anything in it.
         (root / "state" / "aux.json").write_text(json.dumps({"ready": True}))
         (root / "launchd" / f"{label}.plist").write_bytes(plistlib.dumps(hostile))
-        return subprocess.CompletedProcess(argv, 0, "", "")
 
     argv = ["start", "--run-id", run_id, "--from-live"]
     sha = None
@@ -2434,17 +2459,16 @@ def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote
         repo = tmp_path / "agent-lb-repo"
         sha = _git_repo(repo)
         argv = ["start", "--run-id", run_id, "--from-ref", "HEAD", "--repo", str(repo)]
-    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(subprocess.run, bootstrap))
+    _fake_jobs(monkeypatch, lb, subprocess.run, on_job)
     code = _run_start(lb, argv, root)
     out = json.loads(capsys.readouterr().out)
     assert code == lb.EXIT_UNHEALTHY and "_StartStopsHere" in out["error"]
     assert [body["Label"] for _, body in handed] == [f"{label}-aux", label]
-    primary_path, primary = handed[1]
+    _, primary = handed[1]
     assert primary["ProgramArguments"][1:4] == ["-I", str(script), "_serve"], "launchd got the rewritten plist"
     assert primary["ProgramArguments"][4] == str(root) and primary != hostile
-    for path, _ in handed:
-        assert not Path(path).is_relative_to(root), "launchd was handed a plist from inside the root"
-        assert not os.path.lexists(path), "the private copy outlived its bootstrap"
+    # By value (fix round 6, M2): no path at all, so none inside the root and none left behind.
+    assert [path for path, _ in handed] == [None, None], "launchd was handed a job as a path"
     assert out["teardown"]["root_exists"] is False and out["teardown"]["private_exists"] is False
     assert out["teardown"]["clean"] is True
     if source == "ref":
@@ -2462,7 +2486,7 @@ def test_start_refuses_a_ref_that_is_not_a_plain_name_before_making_anything(
     """`--from-ref` goes to git as an argument: an option-looking or range ref is refused, nothing is created."""
     lb = _load()
     _start_rig(tmp_path, monkeypatch, lb)
-    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(subprocess.run, lambda argv, path: pytest.fail("ran")))
+    _fake_jobs(monkeypatch, lb, subprocess.run, lambda body, path: pytest.fail("ran"))
     before = sorted(os.listdir(lb.SANDBOXES))
     assert _run_start(lb, ["start", "--run-id", "lbsbx-unit-ref", f"--from-ref={ref}"], lb.SANDBOXES / "x") in (
         "refused",
@@ -2505,73 +2529,79 @@ def _fake_live_file(tmp_path: Path) -> Path:
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, Seatbelt and launchd are macOS")
-@pytest.mark.parametrize("attack", ["renamed-over-the-job-file", "live-dir-at-the-staging-name", "none"])
-def test_launchd_staging_never_deletes_or_chmods_live_state(
+@pytest.mark.parametrize("attack", ["job-path-swapped-for-the-live-plist", "live-dir-at-the-staging-name", "none"])
+def test_launchd_gets_only_the_jobs_start_made_and_no_live_state_is_touched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, attack: str
 ) -> None:
-    """lbsb-5 review M1 (lb-sandbox:2391-2392 at 26d90565): after the job file's identity check, single-link live
-    state/front.json renamed over job.plist was unlinked by the cleanup (its directory was writable again). M3
-    (2355-2357): with <sandboxes>/.launchd renamed aside and a live directory moved into its name before bootstrap,
-    only ownership was checked and the live directory was chmod'ed 0700. The job file now lives in the run's
-    private dir, is renamed aside and checked by descriptor before any unlink, and no shared staging dir is used.
+    """Fix round 6 M2 (lb-sandbox:2646 at ef7ceb98): start handed `launchctl bootstrap` the path of its private job
+    file. launchd opens that path itself and follows links, so the name swapped for a symlink to the live plist
+    after the write made the bootstrap load live bytes. Jobs now go to launchd by value (SMJobSubmit): no path, no
+    file, nothing to swap. job-path-swapped-...: the faked launchd swaps any path it is handed for a link to a
+    stand-in live plist before reading it, as the attacker would.
 
-    Integration through the real `start` (real volume, confined populate); launchd is the faked OS edge.
-    renamed-over-the-job-file: the attacker's rename runs at the cleanup's unlink, aimed at the job file's own name.
-    live-dir-at-...: a live directory sits at the old staging name when start runs. none is the control."""
+    lbsb-5 review M1/M3 (26d90565), kept: a live directory at the old shared staging name (<sandboxes>/.launchd)
+    is never chmod'ed or written into. (The other lbsb-5 attack, live state renamed over the job file before its
+    unlink, has no target left: start makes no job file.)
+
+    Integration through the real `start` (real volume, confined populate); launchd is the faked OS edge."""
     lb = _load()
     _start_rig(tmp_path, monkeypatch, lb)
     run_id = "lbsbx-unit-stage"
     root = lb.SANDBOXES / run_id
     label = f"com.agent-lb.drill.sbx-{run_id}"
     live = _fake_live_file(tmp_path)
+    live_plist = tmp_path / "live-home" / "LaunchAgents" / "live.plist"
+    live_plist.parent.mkdir(parents=True)
+    live_body = {"Label": lb.LIVE_LABEL, "ProgramArguments": ["/bin/sh", "-c", "live"], "RunAtLoad": True}
+    live_plist.write_bytes(plistlib.dumps(live_body))
     staging = lb.SANDBOXES / ".launchd"
     if attack == "live-dir-at-the-staging-name":
         staging.mkdir()
         staging.chmod(0o755)
         os.rename(live, staging / "front.json")
         live = staging / "front.json"
-    handed: list[Path] = []
-    armed: list[bool] = []
+    handed: list[tuple[Path | None, dict]] = []
+    swapped: list[Path] = []
 
-    def bootstrap(argv, path: Path):
-        handed.append(path)
-        if plistlib.loads(path.read_bytes())["Label"] == label:
+    def swap_for_live(path: Path) -> None:
+        if attack == "job-path-swapped-for-the-live-plist":
+            os.rename(path, path.with_name(path.name + ".aside"))
+            path.symlink_to(live_plist)
+            swapped.append(path)
+
+    def on_job(body: dict, path: Path | None):
+        handed.append((path, body))
+        if body["Label"] in (label, lb.LIVE_LABEL):
             raise _StartStopsHere()
         (root / "state" / "aux.json").write_text(json.dumps({"ready": True}))
-        armed.append(attack == "renamed-over-the-job-file")
-        return subprocess.CompletedProcess(argv, 0, "", "")
 
-    real_unlink = os.unlink
-    moved: list[Path] = []
-
-    def unlink_after_rename(path, *, dir_fd=None):
-        if armed and armed[0] and dir_fd is not None and lb.fd_path(dir_fd) == str(handed[0].parent):
-            armed[0] = False
-            os.rename(live, handed[0])  # the attacker aims at the job file's own name, right before the unlink
-            moved.append(handed[0])
-        real_unlink(path, dir_fd=dir_fd)
-
-    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(subprocess.run, bootstrap))
-    monkeypatch.setattr(lb.os, "unlink", unlink_after_rename)
+    _fake_jobs(monkeypatch, lb, subprocess.run, on_job, before_read=swap_for_live)
     code = _run_start(lb, ["start", "--run-id", run_id, "--from-live"], root)
-    monkeypatch.setattr(lb.os, "unlink", real_unlink)
     out = json.loads(capsys.readouterr().out)
     assert code == lb.EXIT_UNHEALTHY and "_StartStopsHere" in out["error"]
-    if attack == "renamed-over-the-job-file":
-        assert moved, "the race point was never reached"
-        live = moved[0]
+    assert [body for _, body in handed if body.get("Label") == lb.LIVE_LABEL] == [], "launchd loaded live bytes"
+    assert [body["Label"] for _, body in handed] == [f"{label}-aux", label]
+    assert [path for path, _ in handed] == [None, None] and not swapped, "launchd was handed a path"
+    assert live_plist.read_bytes() == plistlib.dumps(live_body)
     if attack != "none":
         assert live.is_file() and live.read_text() == '{"preferred": 2457}', "start deleted a live file"
     if attack == "live-dir-at-the-staging-name":
         assert oct(staging.stat().st_mode & 0o777) == "0o755", "start chmod'ed a live directory"
         assert sorted(os.listdir(staging)) == ["front.json"], "start wrote into a live directory"
     if attack == "none":
-        assert out["teardown"]["clean"] is True and not any(os.path.lexists(p) for p in handed)
+        assert out["teardown"]["clean"] is True
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="st_birthtime, Seatbelt and launchd are macOS")
 @pytest.mark.parametrize(
-    "swap", ["live-dir-for-new-root", "live-key-into-root", "live-dir-after-publish", "live-file-into-root"]
+    "swap",
+    [
+        "live-dir-for-new-root",
+        "newer-live-dir-for-new-root",
+        "live-key-into-root",
+        "live-dir-after-publish",
+        "live-file-into-root",
+    ],
 )
 def test_a_failed_start_never_adopts_or_empties_live_state_moved_into_its_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, swap: str
@@ -2585,7 +2615,12 @@ def test_a_failed_start_never_adopts_or_empties_live_state_moved_into_its_root(
 
     Integration through the real `start`; hdiutil is the faked OS edge (its create fails after the attacker's
     moves, as an attach failure does) and the attacker's moves run at the root's mkdir or at that create.
-    live-dir-after-publish and live-file-into-root are the lbsb-4 regressions, kept."""
+    live-dir-after-publish and live-file-into-root are the lbsb-4 regressions, kept.
+
+    newer-live-dir-for-new-root (fix round 6 M3, lb-sandbox:710 at ef7ceb98): the bound was the private dir's birth
+    time, so an empty live 0755 directory made after the private dir and moved onto the stage name passed, was
+    recorded and chmod'ed. The bound is now the clock read right before the stage mkdir, the stage name is random,
+    and nothing start makes is ever chmod'ed: any mode but the 0700 mkdir gave is refused."""
     import time as clock
 
     lb = _load()
@@ -2605,7 +2640,13 @@ def test_a_failed_start_never_adopts_or_empties_live_state_moved_into_its_root(
 
     def mkdir_then_swap(path, mode=0o777, *, dir_fd=None):
         real_mkdir(path, mode, dir_fd=dir_fd)
-        if swap == "live-dir-for-new-root" and dir_fd is not None and path in (run_id, "root") and not placed:
+        name = str(path)
+        if swap == "newer-live-dir-for-new-root" and name.startswith(".lbsbx."):
+            empty_live.rmdir()
+            empty_live.mkdir()  # born after the run's private dir
+            empty_live.chmod(0o755)
+        is_stage = name == run_id or name == "root" or name.startswith("root.")
+        if swap.endswith("live-dir-for-new-root") and dir_fd is not None and is_stage and not placed:
             parent = Path(lb.fd_path(dir_fd))
             os.rename(parent / path, parent / "aside")
             os.rename(empty_live, parent / path)
@@ -2625,11 +2666,11 @@ def test_a_failed_start_never_adopts_or_empties_live_state_moved_into_its_root(
         return subprocess.CompletedProcess(argv, 1, b"", b"")  # the image is never made: attach fails
 
     monkeypatch.setattr(lb.os, "mkdir", mkdir_then_swap)
-    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(hdiutil, lambda argv, path: pytest.fail("bootstrap")))
+    _fake_jobs(monkeypatch, lb, hdiutil, lambda body, path: pytest.fail("a job was handed to launchd"))
     code = _run_start(lb, ["start", "--run-id", run_id, "--from-live"], root)
     monkeypatch.setattr(lb.os, "mkdir", real_mkdir)
     out = capsys.readouterr().out
-    if swap == "live-dir-for-new-root":
+    if swap.endswith("live-dir-for-new-root"):
         assert placed, "the race point was never reached"
         assert placed[0].is_dir(), "the failed start deleted a live directory"
         assert oct(placed[0].stat().st_mode & 0o777) == "0o755", "start chmod'ed live state"

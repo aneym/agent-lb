@@ -47,7 +47,11 @@ LIVE_SYNC_LOG = HOME / ".agent-lb" / "runtime" / "sync.log"
 LIVE_RESTART_LOCK = HOME / ".agent-lb" / "runtime" / "lb-restart.lock"
 SYNC_RESTART_RE = re.compile(r"^\S+ lb-restart (ok|FAILED)\b")
 GATE_ALLOWED = {("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")}
-HOLD_S = 30  # the edge holds the restart stream at most this long; the check releases it right after cutover
+# The edge holds the restart stream at most HOLD_S (lb-sandbox's own ceiling); the check releases it itself once the
+# cutover scan has read every process, so the old primary keeps draining (and stays visible) through that scan,
+# however slow ps is. CUTOVER_WAIT_S bounds the wait for lb-restart's cutover line.
+HOLD_S = 120
+CUTOVER_WAIT_S = 60
 CUTOVER_RE = re.compile(r"front -> :(\d+); primary pid (\d+) had (-?\d+|None) in flight")
 RESTART_MARKS = {
     "standby_boot": "standby healthy on",
@@ -667,6 +671,7 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     rc_hold, _, hold_out = c.sb(
         "fault-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--arm", f"hold_stream:{HOLD_S}"
     )
+    hold_deadline = time.monotonic() + HOLD_S  # the held stream starts after this, so it ends no earlier
     skip = count_lines(edge_log)
     restart_log = root / "logs" / "lb-restart.log"
     log_start = restart_log.stat().st_size if restart_log.exists() else 0
@@ -690,7 +695,7 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
 
     restart_thread = threading.Thread(target=do_restart, daemon=True)
     restart_thread.start()
-    cutover, deadline = None, time.monotonic() + HOLD_S
+    cutover, deadline = None, time.monotonic() + CUTOVER_WAIT_S
     while cutover is None and time.monotonic() < deadline and restart_thread.is_alive():
         try:
             with restart_log.open("rb") as fh:
@@ -700,11 +705,15 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
             pass
         if cutover is None:
             time.sleep(0.1)
-    # While the old primary drains the held stream and the standby serves: every sandbox process, read again.
+    # While the old primary drains the held stream and the standby serves: every sandbox process, read again. The
+    # hold outlasts this scan (HOLD_S): it ends only at the release below, after every environment was read.
     procs_mid, rc_pm, pm_out = {}, None, None
     if cutover is not None:
-        rc_pm, procs_mid, pm_out = c.sb("scan-processes-at-cutover", "scan", "--run-id", run_id, "--processes")
-    # The cutover is done: release the held stream (always, so a failed run never leaves it hanging).
+        scan_bound = max(5.0, hold_deadline - time.monotonic() - 10)  # ends before the hold can
+        rc_pm, procs_mid, pm_out = c.sb(
+            "scan-processes-at-cutover", "scan", "--run-id", run_id, "--processes", timeout=scan_bound
+        )
+    # The cutover scan is done: release the held stream (always, so a failed run never leaves it hanging).
     rc_rel, _, rel_out = c.sb("release-hold", "fault", "--run-id", run_id, "--edge", "anthropic", "--clear")
     released_after_cutover = cutover is not None and rc_rel == 0
     restart_thread.join(timeout=300)

@@ -216,6 +216,7 @@ def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) 
     live.parent.mkdir(parents=True)
     live.write_text("2457\n")
     lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
+    lb._root_on_own_volume = lambda root_info, sandboxes_info: True  # a tmp dir; see _apply
     os.link(live, root / "lb-restart.lock")
     with pytest.raises(lb.SandboxRefused):
         with lb.Lock("unit", 1):
@@ -243,6 +244,7 @@ def test_state_writes_never_follow_a_state_dir_swapped_for_a_link(tmp_path: Path
     for name, text in files.items():
         (live / name).write_text(text)
     lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
+    lb._root_on_own_volume = lambda root_info, sandboxes_info: True  # a tmp dir; see _apply
     (root / "state").rmdir()
     (root / "state").symlink_to(live, target_is_directory=True)
     with pytest.raises(lb.SandboxRefused):
@@ -516,10 +518,15 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
     return path
 
 
-def _apply(lb: ModuleType, config: Path, home: Path) -> None:
-    """apply_sandbox with the test's home in place of the real one (the guard reads it from pwd)."""
+def _apply(lb: ModuleType, config: Path, home: Path, own_volume: bool = True) -> None:
+    """apply_sandbox with the test's home in place of the real one (the guard reads it from pwd).
+
+    own_volume: these roots are plain directories in tmp_path, so the rule that a root is its own volume (an
+    attached image, as lb-sandbox start leaves it) is taken as met; its own tests below pass False and mount one."""
     lb._real_home = lambda: home
     _use_bootstrap(lb, home)
+    if own_volume:
+        lb._root_on_own_volume = lambda root_info, sandboxes_info: True
     lb.apply_sandbox(config)
 
 
@@ -551,8 +558,10 @@ def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_s
         lb.verify_sandbox_ancestry()  # what start_standby runs before it execs anything by path
 
 
-def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path) -> None:
-    """The same swap before the guard: resolving made ~/.agent-lb/runtime look directly under the sandboxes."""
+@pytest.mark.parametrize("via", ["moved", "sandboxes"])
+def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path, via: str) -> None:
+    """The same swap before the guard: resolving made ~/.agent-lb/runtime look directly under the sandboxes.
+    via: the config named where it was moved, or by its own path through the link (which names live runtime)."""
     lb = _load()
     _built_sandbox(tmp_path, "runtime")
     sandboxes = tmp_path / ".agent-lb" / "sandboxes"
@@ -561,8 +570,8 @@ def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path) -> No
     live_lock = tmp_path / ".agent-lb" / "runtime" / "lb-restart.lock"
     live_lock.parent.mkdir(exist_ok=True)
     live_lock.write_text("pid=1 live\n")
-    with pytest.raises(lb.SandboxRefused, match="link"):
-        _apply(lb, tmp_path / ".agent-lb" / "moved" / "runtime" / "lb-restart.json", tmp_path)
+    with pytest.raises(lb.SandboxRefused, match="link" if via == "sandboxes" else "lb-restart.json"):
+        _apply(lb, tmp_path / ".agent-lb" / via / "runtime" / "lb-restart.json", tmp_path)
     assert live_lock.read_text() == "pid=1 live\n"
     assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
 
@@ -1041,3 +1050,120 @@ def test_a_sandbox_restart_never_prints_a_live_launchd_job(tmp_path: Path, monke
     assert asked == [], "launchctl was asked to print a live job"
     assert lb.launchd_pid(lb.LABEL) == 4242  # control: the sandbox's own job is printed
     assert asked == [["launchctl", "print", f"gui/{os.getuid()}/{lb.LABEL}"]]
+
+
+# ---------------------------------------------------------------- lbsb fix round 6 (codex-verifier FAIL on ef7ceb98)
+
+
+def _fake_live_front(tmp_path: Path) -> Path:
+    """A single-link stand-in for live ~/.agent-lb/state/front.json, on the home volume."""
+    live = tmp_path / "live-home" / "state" / "front.json"
+    live.parent.mkdir(parents=True)
+    live.write_text('{"preferred": 2457}')
+    return live
+
+
+@pytest.mark.parametrize("swap", ["symlink", "hardlink"])
+def test_a_config_swapped_for_a_link_to_live_state_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
+) -> None:
+    """M1 (lb-restart:464 at ef7ceb98): with a running sandbox's lb-restart.json replaced by a symlink to live
+    state/front.json, `--sandbox <config>` read the live file (Path.read_text follows links) before any guard
+    refused its contents. The config is now opened only by name inside the pinned root with O_NOFOLLOW (a symlink
+    fails the open), and must be a single-link file of the root's volume before a byte is read (a hard link is
+    refused at fstat). The spies record, by inode, every file io.open opened and every os.read: none may be live."""
+    import io
+
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    live = _fake_live_front(tmp_path)
+    config.unlink()
+    if swap == "symlink":
+        config.symlink_to(live)
+    else:
+        os.link(live, config)
+    live_id = (live.stat().st_dev, live.stat().st_ino)
+    read: list[tuple[int, int]] = []
+    real_read, real_io_open = os.read, io.open
+
+    def os_read(fd, n):
+        info = os.fstat(fd)
+        read.append((info.st_dev, info.st_ino))
+        return real_read(fd, n)
+
+    def io_open(file, *args, **kwargs):
+        fh = real_io_open(file, *args, **kwargs)
+        if hasattr(fh, "fileno"):
+            info = os.fstat(fh.fileno())
+            read.append((info.st_dev, info.st_ino))
+        return fh
+
+    monkeypatch.setattr(os, "read", os_read)
+    monkeypatch.setattr(io, "open", io_open)
+    with pytest.raises(lb.SandboxRefused):
+        _apply(lb, config, tmp_path)
+    monkeypatch.undo()
+    assert live_id not in read, "lb-restart read live state through the sandbox config"
+    assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
+    assert live.read_text() == '{"preferred": 2457}'
+    config.unlink()  # control: the sandbox's own config, a plain file in the root, is read through the same spies
+    config.write_text(json.dumps(_config(tmp_path)))
+    monkeypatch.setattr(os, "read", os_read)
+    monkeypatch.setattr(io, "open", io_open)
+    _apply(lb, config, tmp_path)
+    monkeypatch.undo()
+    assert (config.stat().st_dev, config.stat().st_ino) in read, "the spies never saw the config read"
+
+
+def _attach_volume(image: Path, mountpoint: Path) -> list[str]:
+    """A small APFS sparse image attached at mountpoint (owned by this user); returns its devices for detach."""
+    create = ["/usr/bin/hdiutil", "create", "-quiet", "-size", "64m", "-type", "SPARSE", "-fs", "APFS"]
+    subprocess.run([*create, "-volname", "lbrestart-unit", str(image)], check=True, timeout=180)
+    attach = ["/usr/bin/hdiutil", "attach", "-plist", "-nobrowse", "-noautoopen", "-owners", "on", "-mountpoint"]
+    done = subprocess.run([*attach, str(mountpoint), str(image)], check=True, capture_output=True, timeout=180)
+    entities = plistlib.loads(done.stdout).get("system-entities", [])
+    return sorted({e["dev-entry"] for e in entities if isinstance(e.get("dev-entry"), str)}, key=len)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
+def test_a_root_that_is_not_its_own_volume_is_refused_before_its_lock_is_touched(tmp_path: Path) -> None:
+    """M4 (lb-restart:549 at ef7ceb98): any 0700 directory of this user under the sandboxes dir passed as a root,
+    with no proof lb-sandbox made it. A root built by hand with a valid config and plist, and live state/front.json
+    renamed (one link, so the single-link check passes) to its lb-restart.lock: the guards accepted it and lock
+    acquisition truncated the live inode before any loaded-job check. A root must now be its own volume, as start
+    leaves every root: rename(2) and link(2) never cross volumes, so no live file can reach one.
+
+    The control is the same sandbox on a real attached volume: accepted, its lock taken, and the move of a live
+    file into it fails with EXDEV."""
+    import errno
+
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    live = _fake_live_front(tmp_path)
+    os.rename(live, config.parent / "lb-restart.lock")
+    with pytest.raises(lb.SandboxRefused, match="own volume"):
+        _apply(lb, config, tmp_path, own_volume=False)
+        with lb.Lock("unit", 1):
+            pass
+    assert (config.parent / "lb-restart.lock").read_text() == '{"preferred": 2457}', "the live inode was truncated"
+    assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
+
+    root2 = tmp_path / ".agent-lb" / "sandboxes" / "r2"
+    root2.mkdir()
+    devices = _attach_volume(tmp_path / "r2.sparseimage", root2)
+    try:
+        config2 = _built_sandbox(tmp_path, "r2")
+        _apply(lb, config2, tmp_path, own_volume=False)
+        assert lb.SANDBOX_ROOT == root2
+        with lb.Lock("unit", 1):
+            pass
+        live2 = tmp_path / "live-home" / "state" / "front2.json"
+        live2.write_text('{"preferred": 2457}')
+        with pytest.raises(OSError) as moved:
+            os.rename(live2, root2 / "lb-restart.lock")
+        assert moved.value.errno == errno.EXDEV
+    finally:
+        lb.unpin_sandbox_root()
+        subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", str(root2)], timeout=180, check=False)
+        if devices and os.path.ismount(root2):
+            subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", devices[0]], timeout=180, check=False)

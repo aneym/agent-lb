@@ -22,12 +22,13 @@ image, its passphrase never stored, mounted at the root) and holds a copy of
 the runtime code (app, config, scripts: the installed live runtime's, or with
 --from-ref the files of one agent-lb commit; the venv is a symlink), its own
 SQLite store and key, logs and state. Everything lb-sandbox makes off that
-volume (the image, the launchd job files, the identity record, the mountpoint
-before it is published at R) lives in the run's private dir
+volume (the image, the identity record, the mountpoint before it is published
+at R) lives in the run's private dir
 ~/.agent-lb/sandboxes/.lbsbx.<hash>.<random> (0700, held by descriptor), and a
 delete or chmod touches only an inode recorded there when it was made. Live
 jobs are read only from the bare `launchctl list` table, never `launchctl
-print` (which shows a job's environment). Two launchd jobs run it:
+print` (which shows a job's environment). launchd gets each job by value
+(SMJobSubmit), never as a path it would open. Two launchd jobs run it:
 - com.agent-lb.drill.sbx-R: `<venv python> -I <installed lb-sandbox> _serve <root>` (nothing under the root
   runs before confinement: the script is the installed file and -I ignores PYTHONPATH), which reads the live
   federation token from the live plist, writes it into a pipe and execs
@@ -446,12 +447,13 @@ def fd_path(fd: int) -> str:
 # ---------------------------------------------------------------- the run's private dir
 # Everything lb-sandbox itself creates, chmods or deletes off the run's own volume lives in one private dir per
 # run: made 0700 under an unpredictable name (as mkdtemp does) inside the pinned sandboxes dir and held by
-# descriptor. It holds the run's identity record (ids.jsonl), the encrypted image, the launchd job files, and the
-# root's mountpoint until start publishes it at <sandboxes>/R with an exclusive rename (renameatx_np RENAME_EXCL).
-# Every operation goes through directory descriptors opened with O_NOFOLLOW | O_DIRECTORY; a chmod goes to the
-# descriptor of what was just made, and a delete touches only an inode whose (device, inode, birth time) was
-# recorded when this code made it: the name is first renamed aside inside the private dir, the inode there is
-# checked by descriptor, and anything else goes back under its name. A failed start deletes only what it recorded.
+# descriptor. It holds the run's identity record (ids.jsonl), the encrypted image and the root's mountpoint (under a
+# random stage name) until start publishes it at <sandboxes>/R with an exclusive rename (renameatx_np RENAME_EXCL).
+# Every operation goes through directory descriptors opened with O_NOFOLLOW | O_DIRECTORY; a directory start makes
+# is never chmod'ed (made 0700, any other mode refused), and a delete touches only an inode whose (device, inode,
+# birth time) was recorded when this code made it: the name is first renamed aside inside the private dir, the inode
+# there is checked by descriptor, and anything else goes back under its name. A failed start deletes only what it
+# recorded.
 #
 # Residual, accepted (macOS has no unlink or rmdir by descriptor): between the last check and the unlink of the
 # random aside name, a process of this same user that knows the private dir's random name could rename another
@@ -464,12 +466,17 @@ PRIVATE_PREFIX = ".lbsbx."
 PRIVATE_NAME_RE = re.compile(r"^\.lbsbx\.[0-9a-f]{24}\.[0-9a-f]{32}$")
 RECORD_NAME = "ids.jsonl"
 IMAGE_NAME = "volume.sparseimage"
-ROOT_STAGE = "root"  # the mountpoint's name in the private dir before start publishes it at <sandboxes>/R
+ROOT_STAGE = "root"  # the mountpoint's name prefix in the private dir before start publishes it at <sandboxes>/R
+ROOT_STAGE_RE = re.compile(r"^root(\.[0-9a-f]{32})?$")  # "root" alone: a record written before stage names were random
 RENAME_EXCL = 0x00000004  # <stdio.h>, renameatx_np: fail with EEXIST instead of replacing the destination
 RENAME_NOREPLACE = 0x00000001  # <linux/fs.h>, renameat2: the same, off macOS (unit tests only)
 # A directory this code makes is born no earlier than the clock read just before its mkdir (measured on APFS:
 # never earlier at all); the slack only absorbs float rounding. A directory made before that moment is not ours.
 BIRTH_SLACK_S = 0.01
+# The mode mkdir(name, 0o700) gives under any umask that keeps the owner's bits. A directory this code makes is never
+# chmod'ed afterwards: a directory moved into the name in between (a live 0755 one, say) keeps its own mode and is
+# refused for it, so no chmod ever reaches a directory start did not make.
+MADE_DIR_MODE = 0o700
 
 
 def identity(info: os.stat_result) -> list[int]:
@@ -508,14 +515,19 @@ def private_prefix(run_id: str) -> str:
 
 
 def fresh_dir(fd: int, parent_fd: int, made_after: float, what: str) -> os.stat_result:
-    """fstat of the directory this code just made: this user's, on its parent's volume, empty (two links) and born
-    no earlier than made_after. Anything else (a directory moved into the name between the mkdir and the open) is
-    refused, never chmod'ed, recorded or deleted."""
+    """fstat of the directory this code just made: this user's, mode 0700 as mkdir left it, on its parent's volume,
+    empty (two links) and born no earlier than made_after, the clock read right before the mkdir. Anything else (a
+    directory moved into the name between the mkdir and the open) is refused, never chmod'ed, recorded or deleted.
+
+    Residual, accepted: an empty 0700 directory of this same user, born inside the microseconds between that clock
+    read and the open and renamed onto the random stage name in that window, would pass. Such a directory was made
+    during start's own mkdir; it holds nothing and is not live state."""
     info = os.fstat(fd)
     with os.scandir(fd) as listing:
         empty = next(iter(listing), None) is None
     if not (
         stat.S_ISDIR(info.st_mode)
+        and stat.S_IMODE(info.st_mode) == MADE_DIR_MODE
         and info.st_uid == os.getuid()
         and info.st_dev == os.fstat(parent_fd).st_dev
         and info.st_nlink == 2
@@ -556,6 +568,9 @@ def add_record(ids: dict, what: str, value: object) -> None:
     if what == "job":
         if isinstance(value, dict) and isinstance(value.get("name"), str):
             ids.setdefault("jobs", []).append(value)
+    elif what == "stage":
+        if isinstance(value, str) and ROOT_STAGE_RE.match(value):
+            ids.setdefault("stage", value)
     elif what in ("private", "root", "image", "key", "volume"):
         ids.setdefault(what, value)  # the first record of a kind wins: a later line never re-points it
 
@@ -570,8 +585,7 @@ def make_private(run_id: str) -> Private:
     os.mkdir(name, 0o700, dir_fd=sb)
     fd = os.open(name, DIR_FLAGS, dir_fd=sb)
     try:
-        info = fresh_dir(fd, sb, made_after, "private dir")
-        os.fchmod(fd, 0o700)  # through the descriptor of the directory just checked
+        info = fresh_dir(fd, sb, made_after, "private dir")  # 0700 as made: never chmod'ed
         record_fd = os.open(
             RECORD_NAME, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_APPEND, 0o600, dir_fd=fd
         )
@@ -700,22 +714,32 @@ def remove_private(priv: Private) -> bool:
     return True
 
 
-def make_root(root: Path, priv: Private) -> tuple[int, list[int]]:
-    """Make the run's mountpoint inside its private dir, check it is the directory just made, record it, set it 0700
-    through its descriptor and publish it at <sandboxes>/R with an exclusive rename. Returns (descriptor, identity).
+def root_stage(ids: dict) -> str:
+    """The staged mountpoint's name in the private dir, as recorded ("root" for a record from before random names)."""
+    stage = ids.get("stage")
+    return stage if isinstance(stage, str) and ROOT_STAGE_RE.match(stage) else ROOT_STAGE
 
-    Nothing is ever chmod'ed or recorded through the predictable name R: a directory moved into the stage name
-    between the mkdir and the open was born before the private dir and is refused (fresh_dir), and the publish
-    fails rather than replace anything already at R."""
-    made_after = born(os.fstat(priv.fd))
-    os.mkdir(ROOT_STAGE, 0o700, dir_fd=priv.fd)
-    fd = os.open(ROOT_STAGE, DIR_FLAGS, dir_fd=priv.fd)
+
+def make_root(root: Path, priv: Private) -> tuple[int, list[int]]:
+    """Make the run's mountpoint inside its private dir under a random stage name, check it is the directory just
+    made, record it and publish it at <sandboxes>/R with an exclusive rename. Returns (descriptor, identity).
+
+    Nothing is ever chmod'ed: mkdir makes it 0700, and fresh_dir refuses any other mode. Nothing is recorded through
+    the predictable name R: a directory moved into the stage name between the mkdir and the open was born before the
+    clock read that precedes the mkdir, or has its own mode (a live 0755 directory), and is refused (fresh_dir); the
+    publish fails rather than replace anything already at R."""
+    import secrets as secrets_module
+
+    stage = f"{ROOT_STAGE}.{secrets_module.token_hex(16)}"
+    priv.record("stage", stage)  # before the mkdir: a failed start finds the stage by its recorded name
+    made_after = time.time()
+    os.mkdir(stage, MADE_DIR_MODE, dir_fd=priv.fd)
+    fd = os.open(stage, DIR_FLAGS, dir_fd=priv.fd)
     try:
         ident = identity(fresh_dir(fd, priv.fd, made_after, "sandbox root"))
         priv.record("root", ident)
-        os.fchmod(fd, 0o700)
         try:
-            rename_excl(priv.fd, ROOT_STAGE, priv.sb, Path(root).name)
+            rename_excl(priv.fd, stage, priv.sb, Path(root).name)
         except FileExistsError:
             raise Refused(f"sandbox root {root} already exists") from None
     except BaseException:
@@ -1216,6 +1240,9 @@ def attach_volume(root: Path, run_id: str, priv: Private, root_ident: list[int])
     fd = open_root(root)
     try:
         info = os.fstat(fd)
+        if info.st_dev == os.fstat(priv.sb).st_dev or _statfs_from(fd) != device:
+            # The name no longer leads to the volume just attached (a directory moved onto it): never chmod'ed.
+            raise Refused(f"sandbox root {root} is not the volume just attached; not used")
         priv.record("volume", {"st_dev": info.st_dev, "device": device})
         os.fchmod(fd, 0o700)  # the top of the volume this start just attached
     finally:
@@ -1819,7 +1846,10 @@ class Detector:
 
             raw = base64.urlsafe_b64decode(key.encode() if isinstance(key, str) else key)
             self.decryptors.append(Cipher(algorithms.AES(raw[16:]), modes.ECB()).decryptor())
-        lengths = [wrapped_span(len(p)) for p in self.patterns] + ([B64_FRAGMENT_SPAN] if self.decryptors else [])
+        # A keyed fragment inside base64 can be wrapped onto indented lines too: keep its wrapped span across reads.
+        lengths = [wrapped_span(len(p)) for p in self.patterns]
+        if self.decryptors:
+            lengths.append(wrapped_span(B64_FRAGMENT_SPAN))
         self.overlap = max(lengths, default=1) - 1
 
     def __bool__(self) -> bool:
@@ -1836,20 +1866,31 @@ class Detector:
     def keyed(self, buf: bytes) -> bool:
         return b"gAAAAA" in buf and any(self.opens(m.group(1)) for m in FERNET_FRAGMENT.finditer(buf))
 
-    def wrapped(self, buf: bytes) -> bool:
-        """A secret inside base64 wrapped onto lines (a MIME body, a PEM-style block), raw secret bytes encoded."""
+    @staticmethod
+    def unwrapped(buf: bytes) -> bytes | None:
+        """buf with every line break between two base64 characters taken out (with the spaces or tabs around it), so
+        base64 wrapped onto lines (MIME, PEM, CRLF, indented continuation lines) reads as one line; None when buf
+        has no such break."""
         if b"\n" not in buf:
-            return False
+            return None
         joined = WRAP_BREAK.sub(b"", buf)
-        return len(joined) != len(buf) and any(p in joined for p in self.patterns)
+        return joined if len(joined) != len(buf) else None
 
     def hit(self, buf: bytes) -> bool:
-        if any(p in buf for p in self.patterns) or self.wrapped(buf):
+        if any(p in buf for p in self.patterns):
+            return True
+        joined = self.unwrapped(buf)
+        # A secret inside base64 wrapped onto lines (a MIME body, a PEM-style block), raw secret bytes encoded.
+        if joined is not None and any(p in joined for p in self.patterns):
             return True
         if not self.decryptors:
             return False
-        # Raw, then inside base64: a snapshot encoded for transport is still the snapshot.
-        return self.keyed(buf) or any(self.keyed(decoded) for decoded in base64_decodings(buf))
+        # Raw, then inside base64, as written and unwrapped: a snapshot encoded for transport (wrapped onto indented
+        # CRLF lines included) is still the snapshot, and the key opens its ciphertexts all the same.
+        for view in (buf,) if joined is None else (buf, joined):
+            if self.keyed(view) or any(self.keyed(decoded) for decoded in base64_decodings(view)):
+                return True
+        return False
 
 
 def scan_stream(read, detector: Detector, write=None, chunk: int = 4 << 20) -> tuple[bool, int]:
@@ -2581,7 +2622,7 @@ def write_plists(
     root: Path, run_id: str, ports: dict[str, int], transport: str, script: Path | None = None
 ) -> tuple[Path, Path]:
     """The two jobs as plist files under the root: what lb-restart --sandbox reads (and checks) for its standby.
-    launchd never loads these files (bootstrap_job): the confined jobs can write anywhere in the root."""
+    launchd never loads these files (submit_job): the confined jobs can write anywhere in the root."""
     paths = plist_paths(root, run_id)
     for path, body in zip(paths, plist_bodies(root, run_id, ports, transport, script), strict=True):
         write_in_root(root, path.relative_to(root), plistlib.dumps(body))
@@ -2611,44 +2652,69 @@ def live_identity() -> dict:
     }
 
 
-def bootstrap(plist: Path, label: str, deadline_s: float = 20) -> None:
-    check_label(label)
-    domain = f"gui/{os.getuid()}"
-    deadline = time.monotonic() + deadline_s
-    while time.monotonic() < deadline:
-        if run(["/bin/launchctl", "bootstrap", domain, str(plist)]).returncode == 0 or label_loaded(label):
-            return
-        time.sleep(0.5)
-    raise Unhealthy(f"launchctl bootstrap {label} failed")
+def sm_job_submit(body: dict) -> bool:
+    """Hand launchd one job as a dictionary (ServiceManagement's SMJobSubmit, this user's launchd domain): the job is
+    the bytes this process holds, passed by value. No file, no path, nothing launchd opens by name.
+
+    `launchctl bootstrap` takes a job only as a path, which launchd itself opens (as root, following links: a plist
+    with mode 0 loads, a symlink loads its target), and refuses /dev/fd and /.vol paths (measured on macOS 26). Any
+    path start handed it could be swapped for a link to the live plist between the write and launchd's open; this
+    call has no such window. It is the macOS edge here: unit tests replace this one function."""
+    import ctypes
+
+    cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    sm = ctypes.CDLL("/System/Library/Frameworks/ServiceManagement.framework/ServiceManagement")
+    cf.CFDataCreate.restype = ctypes.c_void_p
+    cf.CFDataCreate.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long]
+    cf.CFPropertyListCreateWithData.restype = ctypes.c_void_p
+    cf.CFPropertyListCreateWithData.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+    sm.SMJobSubmit.restype = ctypes.c_bool
+    sm.SMJobSubmit.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    domain = ctypes.c_void_p.in_dll(sm, "kSMDomainUserLaunchd")
+    data = plistlib.dumps(body, fmt=plistlib.FMT_BINARY)
+    cfdata = cf.CFDataCreate(None, data, len(data))
+    if not cfdata:
+        return False
+    job = cf.CFPropertyListCreateWithData(None, cfdata, 0, None, None)
+    try:
+        return bool(job) and bool(sm.SMJobSubmit(domain, job, None, None))
+    finally:
+        if job:
+            cf.CFRelease(job)
+        cf.CFRelease(cfdata)
 
 
-def bootstrap_job(root: Path, body: dict, priv: Private) -> None:
-    """Load one sandbox job into launchd from bytes this process made, never from a plist file under the root.
+def own_job_loaded(label: str) -> bool:
+    """True when this user's gui domain holds the job: `launchctl print gui/<uid>/<label>` of a sandbox's own label
+    (refuse_foreign_launchctl_print lets no other label through)."""
+    return run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).returncode == 0
+
+
+def submit_job(body: dict, deadline_s: float = 20) -> None:
+    """Load one sandbox job into launchd from the dictionary this process made (sm_job_submit), never from a file.
 
     Every process confined to a root can write anywhere in it, so a plist there is only as trusted as the jobs
-    already running: an aux (or its front) started first could rewrite the primary's plist to an unconfined
-    payload just before its bootstrap. launchd reads a job only from a path (a pipe or /dev/fd is refused), so the
-    job goes through a file in the run's private dir, which no confined process can write (their profile allows
-    writes in their own root only): made O_EXCL, 0600, under a random name, its identity recorded from the
-    descriptor that made it. Once launchd has it, the file is emptied through that descriptor and removed by its
-    recorded identity (remove_recorded); nothing else in any directory is touched."""
-    import secrets as secrets_module
-
+    already running, and any file outside it is reached by a path launchd follows. The job is passed by value, once:
+    a label already loaded is refused (a submit would replace it), and the job must then be in this user's gui
+    domain, where lb-restart kickstarts it; a job that landed anywhere else is removed and start fails."""
     label = check_label(str(body.get("Label", "")))
-    name = f"job.{secrets_module.token_hex(12)}.plist"
-    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=priv.fd)
-    try:
-        ident = identity(os.fstat(fd))
-        priv.record("job", {"name": name, "id": ident})
-        os.write(fd, plistlib.dumps(body))
-        os.fsync(fd)
-        try:
-            bootstrap(Path(fd_path(priv.fd)) / name, label)
-        finally:
-            os.ftruncate(fd, 0)  # through the descriptor: only this inode, whatever its name holds now
-    finally:
-        os.close(fd)
-        remove_recorded(priv.fd, name, ident, "file")
+    if label_loaded(label) or own_job_loaded(label):
+        raise Refused(f"{label} is already loaded; start never replaces a job")
+    if not sm_job_submit(body):
+        raise Unhealthy(f"launchd refused the job {label}")
+    deadline = time.monotonic() + deadline_s
+    while not own_job_loaded(label):
+        if time.monotonic() > deadline:
+            run(["/bin/launchctl", "remove", label])  # the caller's own domain: where a submit outside gui landed
+            raise Unhealthy(f"the job {label} is not in gui/{os.getuid()} (a session without a GUI domain?)")
+        time.sleep(0.25)
 
 
 def label_names_root(label: str, root: Path, run_id: str) -> bool:
@@ -2801,7 +2867,7 @@ def cleanup_unpublished(priv: Private) -> dict:
     dir (the staged mountpoint, if made) and the private dir itself; nothing at R is touched."""
     out: dict = {}
     if "root" in priv.ids:
-        out["stage_removed"] = remove_recorded(priv.fd, ROOT_STAGE, priv.ids["root"], "dir")
+        out["stage_removed"] = remove_recorded(priv.fd, root_stage(priv.ids), priv.ids["root"], "dir")
     out["private_removed"] = remove_private(priv)
     return out
 
@@ -2902,17 +2968,17 @@ def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on
         )
         create_run_key(root, priv)
         # The jobs launchd runs are made here, in this unconfined process, from the same inputs populate_root
-        # used; the plist files it wrote under the root are never loaded (bootstrap_job).
+        # used, and passed to launchd by value; the plist files it wrote under the root are never loaded (submit_job).
         primary_job, aux_job = plist_bodies(root, run_id, ports, args.transport, Path(source))
         out["live"] = live_identity()
 
-        bootstrap_job(root, aux_job, priv)
+        submit_job(aux_job)
         deadline = time.monotonic() + 30
         while not read_root_json(root, "state/aux.json").get("ready"):
             if time.monotonic() > deadline:
                 raise Unhealthy("aux (gate, edges, front) did not become ready in 30 s")
             time.sleep(0.25)
-        bootstrap_job(root, primary_job, priv)
+        submit_job(primary_job)
         deadline = time.monotonic() + 90
         while not (
             http(ports["primary"], "/health/ready")[0] == 200 and http(ports["front"], "/health/ready")[0] == 200
@@ -4130,7 +4196,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
                 volume["root_removed"] = remove_root(root, ids.get("root"), priv)
         if priv is not None:
             if "root" in ids:  # a mountpoint start made but never published stays staged in the private dir
-                remove_recorded(priv.fd, ROOT_STAGE, ids["root"], "dir")
+                remove_recorded(priv.fd, root_stage(ids), ids["root"], "dir")
             for job in ids.get("jobs", []):
                 remove_recorded(priv.fd, str(job["name"]), job.get("id"), "file")
             if not on_own_volume(root):

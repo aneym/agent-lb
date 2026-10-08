@@ -457,17 +457,67 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
                     raise SandboxRefused(f"sandbox plist {key} names a path outside the sandbox root")
 
 
+SANDBOX_CONFIG_NAME = "lb-restart.json"  # lb-sandbox writes it at <sandboxes>/<run>/lb-restart.json
+SANDBOX_CONFIG_MAX = 1 << 16
+
+
+def read_sandbox_config(config_path: Path) -> tuple[dict, int, os.stat_result]:
+    """The config at <sandboxes>/<run>/lb-restart.json, read only through the pinned root: the root is opened from
+    / down with no link (it must be a private directory of this user and its own volume, see open_sandbox_root),
+    then the config by name in it with O_NOFOLLOW, and it must be a single-link regular file of this user on the
+    root's volume before one byte of it is read. A config swapped for a link to live state (state/front.json, say)
+    is refused at the open, never read. Returns (config, root descriptor, root stat); the caller owns the fd."""
+    path = _lexical(Path(config_path).expanduser().absolute())
+    sandboxes = _lexical(_real_home() / ".agent-lb" / "sandboxes")
+    if path.name != SANDBOX_CONFIG_NAME or path.parent.parent != sandboxes or path.parent.name in ("", ".", ".."):
+        raise SandboxRefused(f"sandbox config {path} is not {sandboxes}/<run>/{SANDBOX_CONFIG_NAME}")
+    root_fd, root_info = open_sandbox_root(path.parent)
+    try:
+        try:
+            fd = os.open(SANDBOX_CONFIG_NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
+        except OSError as exc:
+            raise SandboxRefused(f"sandbox config {path} is a link or unreadable ({exc.__class__.__name__})") from exc
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.getuid()
+                or info.st_dev != root_info.st_dev
+            ):
+                raise SandboxRefused(f"sandbox config {path} is not a single-link file of this user in the root")
+            data = os.read(fd, SANDBOX_CONFIG_MAX + 1)
+        finally:
+            os.close(fd)
+        if len(data) > SANDBOX_CONFIG_MAX:
+            raise SandboxRefused(f"sandbox config {path} is larger than any config lb-sandbox writes")
+        try:
+            config = json.loads(data.decode())
+        except ValueError as exc:
+            raise SandboxRefused(f"cannot read sandbox config {path}: {exc.__class__.__name__}") from exc
+        if not isinstance(config, dict):
+            raise SandboxRefused("sandbox config is not a JSON object")
+        if _lexical(Path(str(config.get("root", "")))) != path.parent:
+            raise SandboxRefused(f"sandbox config {path} names another root")
+    except BaseException:
+        os.close(root_fd)
+        raise
+    return config, root_fd, root_info
+
+
 def apply_sandbox(config_path: Path) -> None:
     """Rebind the module constants to the sandbox in config_path. Raises SandboxRefused, touching nothing."""
-    global SANDBOX_CONFIG
+    global SANDBOX_CONFIG, SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
+    unpin_sandbox_root()
+    config, root_fd, root_info = read_sandbox_config(config_path)
     try:
-        config = json.loads(Path(config_path).read_text())
-    except (OSError, ValueError) as exc:
-        raise SandboxRefused(f"cannot read sandbox config {config_path}: {exc.__class__.__name__}") from exc
-    if not isinstance(config, dict):
-        raise SandboxRefused("sandbox config is not a JSON object")
-    bindings = sandbox_bindings(config)
+        bindings = sandbox_bindings(config)
+    except BaseException:
+        os.close(root_fd)
+        raise
     globals().update(bindings)
+    # The root the config was read through is the root this run holds: never reopened by name in between.
+    SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = root_fd, (bindings["SANDBOX_ROOT"], root_info.st_dev, root_info.st_ino)
     try:
         # Pin the root now (O_NOFOLLOW from / down) and read the plist through that descriptor: a link planted
         # since the guard ran, at the plist or at any ancestor, is refused instead of followed.
@@ -483,7 +533,7 @@ def apply_sandbox(config_path: Path) -> None:
         if isinstance(exc, (OSError, ValueError, plistlib.InvalidFileException)):
             raise SandboxRefused(f"cannot read sandbox plist: {exc.__class__.__name__}") from exc
         raise
-    SANDBOX_CONFIG = Path(config_path).resolve()
+    SANDBOX_CONFIG = _lexical(Path(config_path).expanduser().absolute())
 
 
 # ---------------------------------------------------------------- sandbox file access
@@ -531,27 +581,47 @@ def pin_sandbox_root() -> int:
     if SANDBOX_ROOT_FD is not None and SANDBOX_ROOT_PINNED is not None and SANDBOX_ROOT_PINNED[0] == SANDBOX_ROOT:
         return SANDBOX_ROOT_FD
     unpin_sandbox_root()
+    fd, info = open_sandbox_root(SANDBOX_ROOT)
+    SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = fd, (SANDBOX_ROOT, info.st_dev, info.st_ino)
+    return fd
+
+
+def _root_on_own_volume(root_info: os.stat_result, sandboxes_info: os.stat_result) -> bool:
+    """lb-sandbox mounts every root as its own volume (an encrypted image attached at the root)."""
+    return root_info.st_dev != sandboxes_info.st_dev
+
+
+def open_sandbox_root(root: Path) -> tuple[int, os.stat_result]:
+    """(descriptor, stat) of root, opened from / down with no link: a private (0700) directory of this user in a
+    sandboxes dir of this user, and the top of its own volume, as lb-sandbox start leaves every root.
+
+    The volume rule is what makes a same-user directory safe to write in: rename(2) and link(2) never cross
+    volumes, so no live file (state/front.json, the live plist, the live lock) can be moved or hard-linked into a
+    root that is its own volume, and no lock, pidfile or state write here can reach one. A 0700 directory of this
+    user on the home volume (one lb-sandbox did not make, or one whose volume is gone) is refused before
+    anything in it is opened. Raises SandboxRefused."""
     try:
-        parent = _open_dir_nofollow(SANDBOX_ROOT.parent)
+        parent = _open_dir_nofollow(root.parent)
     except OSError as exc:
-        raise SandboxRefused(
-            f"sandboxes dir {SANDBOX_ROOT.parent} or an ancestor is a link or missing ({exc})"
-        ) from exc
+        raise SandboxRefused(f"sandboxes dir {root.parent} or an ancestor is a link or missing ({exc})") from exc
     try:
-        _check_owned_dir(parent, "sandboxes dir", SANDBOX_ROOT.parent, private=False)
+        parent_info = _check_owned_dir(parent, "sandboxes dir", root.parent, private=False)
         try:
-            fd = os.open(SANDBOX_ROOT.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            fd = os.open(root.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
         except OSError as exc:
-            raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} is a link or missing ({exc})") from exc
+            raise SandboxRefused(f"sandbox root {root} is a link or missing ({exc})") from exc
     finally:
         os.close(parent)
     try:
-        info = _check_owned_dir(fd, "sandbox root", SANDBOX_ROOT, private=True)
+        info = _check_owned_dir(fd, "sandbox root", root, private=True)
+        if not _root_on_own_volume(info, parent_info):
+            raise SandboxRefused(
+                f"sandbox root {root} is not its own volume (lb-sandbox mounts one at every root); refusing to use it"
+            )
     except BaseException:
         os.close(fd)
         raise
-    SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = fd, (SANDBOX_ROOT, info.st_dev, info.st_ino)
-    return fd
+    return fd, info
 
 
 def unpin_sandbox_root() -> None:
