@@ -8,6 +8,8 @@ exit 0 unless ref($data->{tool_input}) eq "HASH";
 my $cmd = $data->{tool_input}{command};
 exit 0 if ref($cmd) || !defined($cmd);
 # Split command boundaries while preserving quoted text; never execute input.
+sub segments {
+my ($cmd) = @_;
 my @segments;
 my $segment = "";
 my $quote = "";
@@ -20,13 +22,30 @@ for my $char (split //, $cmd) {
     if ($char =~ /[;&|()<>\n]/) { push @segments, $segment; $segment = ""; next; }
     $segment .= $char;
 }
-exit 0 if $quote || $escape;
+return () if $quote || $escape;
 push @segments, $segment;
-for my $text (@segments) {
+return @segments;
+}
+my @pending = segments($cmd);
+while (@pending) {
+    my $text = shift @pending;
     my @args = shellwords($text);
     while (@args) {
         if ($args[0] =~ /^[A-Za-z_][A-Za-z0-9_]*=/) { shift @args; next; }
-        last unless $args[0] =~ m{(?:^|/)(sudo|env|nice|command|exec|time|nohup)$};
+        if ($args[0] =~ m{(?:^|/)(?:bash|sh)$}) {
+            shift @args;
+            while (@args && $args[0] =~ /^-/) {
+                my $option = shift @args;
+                if ($option =~ /^-[^-]*c/ && @args) {
+                    push @pending, segments(shift @args);
+                    last;
+                }
+                last if $option eq "--";
+            }
+            @args = ();
+            last;
+        }
+        last unless $args[0] =~ m{(?:^|/)(sudo|env|nice|command|exec|time|nohup|timeout|xargs)$};
         my $wrapper = $1;
         shift @args;
         while (@args && $args[0] =~ /^-/) {
@@ -38,8 +57,11 @@ for my $text (@segments) {
                 || ($wrapper eq "env" && $option =~ /^(?:-[uCS]|--(?:unset|chdir|split-string))$/)
                 || ($wrapper eq "nice" && $option =~ /^(?:-n|--adjustment)$/)
                 || ($wrapper eq "time" && $option =~ /^(?:-[fo]|--(?:format|output))$/)
-                || ($wrapper eq "exec" && $option eq "-a"));
+                || ($wrapper eq "exec" && $option eq "-a")
+                || ($wrapper eq "timeout" && $option =~ /^(?:-[ks]|--(?:kill-after|signal))$/)
+                || ($wrapper eq "xargs" && $option =~ /^(?:-[aEILnPs]|--(?:arg-file|eof|replace|max-lines|max-args|max-procs|max-chars))$/));
         }
+        shift @args if $wrapper eq "timeout" && @args; # Mandatory duration operand.
     }
     next unless @args && $args[0] =~ m{(?:^|/)plutil$};
     shift @args;
