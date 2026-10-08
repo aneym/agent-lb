@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-GA non-prod variables and all ssh/run may use the login; other writes need custody.
+# Pre-GA writes and ssh/run may use the login; destructive deletes need custody.
 INPUT=$(cat)
 RAILWAY_GUARD_INPUT="$INPUT" python3 - <<'PY'
 import json
@@ -9,7 +9,7 @@ import shlex
 import sys
 from pathlib import Path
 
-DENIAL = ('Railway write refused: use a custody RAILWAY_TOKEN or RAILWAY_API_TOKEN, '
+DENIAL = ('Railway destructive delete refused: use a custody RAILWAY_TOKEN or RAILWAY_API_TOKEN, '
           'not the owner\'s CLI login. Never put secrets in argv; use '
           '`railway variables --set KEY` with the value from stdin or an env file.')
 TOKEN_NAMES = {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}
@@ -212,15 +212,15 @@ def expand(value, env):
     return '' if '$' in value else value
 
 
-def check(command, inherited):
+def check(command, inherited, value_output=False):
     # Accidental-use guard, not an adversarial shell boundary: deliberately
     # obfuscated rail''way / rail\\way and shell-level unset remain unsupported.
-    if not re.search(r'\brailway\b', command):
+    if not value_output and not re.search(r'\brailway\b', command):
         return ''
     command, nested = heredocs(command)
     command, expansions = substitutions(command)
     for value in nested + expansions:
-        found = check(value, inherited)
+        found = check(value, inherited, value_output)
         if found:
             return found
     try:
@@ -259,6 +259,8 @@ def check(command, inherited):
                 i += 1
                 continue
             name = word.rsplit('/', 1)[-1]
+            if value_output and run_value_output(words[i:]):
+                return PRINTENV_DENIAL
             if name == 'env':
                 i += 1
                 while i < len(words) and words[i].startswith('-'):
@@ -274,18 +276,18 @@ def check(command, inherited):
                     elif option.startswith('-u'):
                         env.pop(option[2:], None)
                     elif option in ('-S', '--split-string') and i < len(words):
-                        found = check(words[i] + ' ' + shlex.join(words[i + 1:]), env)
+                        found = check(words[i] + ' ' + shlex.join(words[i + 1:]), env, value_output)
                         if found:
                             return found
                         i = len(words)
                     elif option.startswith('--split-string='):
-                        found = check(option.split('=', 1)[1] + ' ' + shlex.join(words[i:]), env)
+                        found = check(option.split('=', 1)[1] + ' ' + shlex.join(words[i:]), env, value_output)
                         if found:
                             return found
                         i = len(words)
                 continue
             if name == 'eval':
-                found = check(' '.join(words[i + 1:]), env)
+                found = check(' '.join(words[i + 1:]), env, value_output)
                 if found:
                     return found
                 break
@@ -324,10 +326,10 @@ def check(command, inherited):
                 if i < len(words) and re.fullmatch(r'@railway/cli(?:@.+)?', words[i]):
                     words[i] = 'railway'
                 continue
-            if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
+            if name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'su'}:
                 for j in range(i + 1, len(words) - 1):
                     if words[j].startswith('-') and 'c' in words[j][1:]:
-                        found = check(words[j + 1], env)
+                        found = check(words[j + 1], env, value_output)
                         if found:
                             return found
                 break
@@ -375,10 +377,11 @@ def check(command, inherited):
                         k += 2 if command_args[k] in OPTION_VALUES else 1
                     if help_requested:
                         break
-                    if run_value_output(command_args[k:]):
-                        return PRINTENV_DENIAL
-                    # Pre-GA container execution may use the login on any environment.
-                    # Value output and secret-shaped argv remain refused above.
+                    found = check(shlex.join(command_args[k:]), env, value_output=True)
+                    if found:
+                        return found
+                    break
+                if subcommand in {'up', 'deploy', 'redeploy'}:
                     break
                 if subcommand in {'variables', 'variable', 'vars'}:
                     write = variable_write(command_args[1:])
@@ -388,11 +391,7 @@ def check(command, inherited):
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
                         return KV_DENIAL
-                    if production_environment(args):
-                        if not any(env.get(key) for key in TOKEN_NAMES):
-                            return DENIAL
-                    else:
-                        print('Railway variable write allowed pre-GA: explicit non-production or unknown linked environment; values withheld.', file=sys.stderr)
+                    print('Railway variable write allowed pre-GA: explicit or unknown linked environment; values withheld.', file=sys.stderr)
                     break
                 elif subcommand in {'environment', 'environments', 'service', 'services'}:
                     write = any(arg in {'new', 'create', 'delete', 'remove', 'rename', '--new', '--delete', '--rename'}

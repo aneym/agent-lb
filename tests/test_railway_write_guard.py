@@ -23,16 +23,7 @@ def invoke(command, shell=None, cwd=None, **tokens):
     }), text=True, capture_output=True, env=env, cwd=cwd)
 
 
-@pytest.mark.parametrize('command', [
-    'railway up', 'railway deploy', 'railway redeploy',
-    'railway environment new staging',
-    'railway service delete api', 'env railway up', 'sudo railway up',
-    'npx railway up', 'bunx railway up', 'sh -c "railway up"',
-    'echo okay; railway up', 'echo okay\nrailway up',
-    'echo "$(railway up)"', 'RAILWAY_TOKEN=x echo okay; railway up',
-    'RAILWAY_TOKEN=x env -u RAILWAY_TOKEN railway up',
-    'RAILWAY_TOKEN=x env -i railway up',
-])
+@pytest.mark.parametrize('command', ['railway environment new staging', 'railway service delete api'])
 def test_login_only_writes_are_refused(command):
     result = invoke(command)
     assert result.returncode == 2, result.stderr
@@ -41,6 +32,20 @@ def test_login_only_writes_are_refused(command):
 
 
 @pytest.mark.parametrize('command', [
+    'railway up',
+    'railway deploy',
+    'railway redeploy',
+    'env railway up',
+    'sudo railway up',
+    'npx railway up',
+    'bunx railway up',
+    'sh -c "railway up"',
+    'echo okay; railway up',
+    'echo okay\nrailway up',
+    'echo "$(railway up)"',
+    'RAILWAY_TOKEN=x echo okay; railway up',
+    'RAILWAY_TOKEN=x env -u RAILWAY_TOKEN railway up',
+    'RAILWAY_TOKEN=x env -i railway up',
     'RAILWAY_TOKEN=x railway up', 'RAILWAY_API_TOKEN=x railway deploy',
     'env RAILWAY_TOKEN=x railway redeploy',
     'RAILWAY_TOKEN=x sh -c "railway up"',
@@ -102,32 +107,32 @@ def test_reads_that_print_secret_values_are_refused_even_with_custody(command, d
 # Review F1-F7: subprocess JSON boundary covers missed executable routes and
 # overblocked data without executing the CLI or adding a production seam.
 @pytest.mark.parametrize('command,tokens,expected', [
-    *[(f'{runner} @railway/cli up', {}, 2) for runner in
+    *[(f'{runner} @railway/cli up', {}, 0) for runner in
       ['npx', 'bunx', 'pnpm dlx', 'yarn dlx', 'npm exec', 'npm exec --']],
-    ('eval "railway up"', {}, 2),
-    ('env -S "railway up"', {}, 2),
+    ('eval "railway up"', {}, 0),
+    ('env -S "railway up"', {}, 0),
     ('RAILWAY_TOKEN=x npx @railway/cli variables --set API_TOKEN=synthetic', {}, 2),
     ('RAILWAY_TOKEN=x eval "railway variables --set API_TOKEN=synthetic"', {}, 2),
     ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 2),
-    ('echo "$(railway up --service \'api(staging)\')"', {}, 2),
-    ('echo "`railway up --service \'api(staging)\'`"', {}, 2),
+    ('echo "$(railway up --service \'api(staging)\')"', {}, 0),
+    ('echo "`railway up --service \'api(staging)\'`"', {}, 0),
     ('railway variables < /dev/null --set PORT=8080', {}, 0),
     ('RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic', {}, 2),
-    ('RAILWAY_TOKEN="$MISSING" railway up', {}, 2),
-    ('RAILWAY_TOKEN="" railway up', {}, 2),
+    ('RAILWAY_TOKEN="$MISSING" railway up', {}, 0),
+    ('RAILWAY_TOKEN="" railway up', {}, 0),
     ('RAILWAY_TOKEN="$CUSTODY" railway up', {'CUSTODY': 'synthetic'}, 0),
-    ('env -uRAILWAY_TOKEN railway up', {'RAILWAY_TOKEN': 'synthetic'}, 2),
-    ('env -u RAILWAY_TOKEN railway up', {'RAILWAY_TOKEN': 'synthetic'}, 2),
+    ('env -uRAILWAY_TOKEN railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+    ('env -u RAILWAY_TOKEN railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
     ("nohup echo okay\ncat <<'EOF'\nwe use railway for deployment\nEOF\n", {}, 0),
     ('cat <<"EOF"\n$(railway up)\nEOF\n', {}, 0),
     ('cat <<EOF\nrailway up\nEOF\n', {}, 0),
-    ('cat <<EOF\n$(railway up)\nEOF\n', {}, 2),
+    ('cat <<EOF\n$(railway up)\nEOF\n', {}, 0),
     ("printf '%s\\n' railway", {}, 0),
     ('cat /tmp/railway', {}, 0),
     ('timeout 10 railway status', {}, 0),
-    ('timeout 10 railway up', {}, 2),
+    ('timeout 10 railway up', {}, 0),
     ('timeout 10 railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
-    *[(f'{wrapper} railway up', {}, 2) for wrapper in
+    *[(f'{wrapper} railway up', {}, 0) for wrapper in
       ['nice', 'nice -n 5', 'time', 'exec', 'command', 'xargs']],
     ('npx @railway/cli up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
     ('eval "railway up"', {'RAILWAY_TOKEN': 'synthetic'}, 0),
@@ -145,19 +150,19 @@ def test_review_counterexamples(command, tokens, expected):
     ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null', {}, 2),
     ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null', {}, 2),
     ('railway status 2>/dev/null', {}, 0),
-    ('RAILWAY_TOKEN=$() railway up', {}, 2),
-    ('RAILWAY_TOKEN="$(printf \'\')" railway up', {}, 2),
-    ('RAILWAY_API_TOKEN="$(unknown)" railway up', {}, 2),
+    ('RAILWAY_TOKEN=$() railway up', {}, 0),
+    ('RAILWAY_TOKEN="$(printf \'\')" railway up', {}, 0),
+    ('RAILWAY_API_TOKEN="$(unknown)" railway up', {}, 0),
     ('RAILWAY_TOKEN="$(unknown)" railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
     *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 2)
       for options in ['-n', '-u USER', '-E', '--', '-n -u USER -E --', '--user USER']],
-    ('sudo -n railway up', {}, 2),
+    ('sudo -n railway up', {}, 0),
     ('sudo -n railway status', {}, 0),
-    ('# docs: cat <<EOF\nrailway up\n', {}, 2),
-    ("echo '<<EOF'\nrailway up\n", {}, 2),
-    ('echo "<<EOF"\nrailway up\n', {}, 2),
-    ("cat <<EOF\n'$(railway up)'\nEOF\n", {}, 2),
-    ("cat <<EOF\n'`railway up`'\nEOF\n", {}, 2),
+    ('# docs: cat <<EOF\nrailway up\n', {}, 0),
+    ("echo '<<EOF'\nrailway up\n", {}, 0),
+    ('echo "<<EOF"\nrailway up\n', {}, 0),
+    ("cat <<EOF\n'$(railway up)'\nEOF\n", {}, 0),
+    ("cat <<EOF\n'`railway up`'\nEOF\n", {}, 0),
     ("cat <<EOF\n'$(RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic)'\nEOF\n", {}, 2),
     ("cat <<EOF\n'`RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic`'\nEOF\n", {}, 2),
     ("cat <<'EOF'\n'$(railway up)'\nEOF\n", {}, 0),
@@ -171,15 +176,15 @@ def test_r3_counterexamples(command, tokens, expected):
 # R4 floor regressions: comments must preserve command boundaries, here-strings
 # must not swallow later commands, and sudo bundles must expose executable argv.
 @pytest.mark.parametrize('command,tokens,expected', [
-    ('echo hi # note\nrailway up', {}, 2),
+    ('echo hi # note\nrailway up', {}, 0),
     ("echo hi # owner's note\nrailway status", {}, 0),
-    ("echo hi # owner's note\nrailway up", {}, 2),
+    ("echo hi # owner's note\nrailway up", {}, 0),
     ('echo hi # $(railway up)\nrailway status', {}, 0),
-    ("echo '# literal'\nrailway up", {}, 2),
-    ('cat <<< hello\nrailway up', {}, 2),
+    ("echo '# literal'\nrailway up", {}, 0),
+    ('cat <<< hello\nrailway up', {}, 0),
     ('cat <<< hello\nrailway status', {}, 0),
     ('cat <<< hello\nrailway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
-    *[(f'sudo {options} railway up', {}, 2) for options in
+    *[(f'sudo {options} railway up', {}, 0) for options in
       ['-nu USER', '-Eu USER', '-nuUSER', '-EuUSER', '-nEu USER', '-ng GROUP']],
     *[(f'sudo {options} railway status', {}, 0) for options in
       ['-nu USER', '-Eu USER']],
@@ -195,9 +200,9 @@ def test_r4_counterexamples(command, tokens, expected):
 
 @pytest.mark.xfail(strict=True, reason='Accepted deliberate shell obfuscation residual')
 @pytest.mark.parametrize('command,tokens', [
-    ("rail''way up", {}),
-    ('rail\\way up', {}),
-    ("bash -lc 'unset RAILWAY_TOKEN; railway up'", {'RAILWAY_TOKEN': 'synthetic'}),
+    ("rail''way down", {}),
+    ('rail\\way down', {}),
+    ("bash -lc 'unset RAILWAY_TOKEN; railway down'", {'RAILWAY_TOKEN': 'synthetic'}),
 ])
 def test_deliberate_obfuscation_residuals(command, tokens):
     assert invoke(command, **tokens).returncode == 2
@@ -216,11 +221,11 @@ def test_deliberate_obfuscation_residuals(command, tokens):
     ('env sh -c "railway variables --set FOO=bar"', 0),
     ('eval "railway variables --set FOO=bar"', 0),
     ('env -S "railway variables --set FOO=bar"', 0),
-    ('railway variables --set FOO=bar --environment production', 2),
-    ('railway variables --set FOO=bar -e prod', 2),
-    ('railway variables delete FOO --environment=PRODUCTION', 2),
-    ('railway variables --set FOO=bar -eprod', 2),
-    ('railway -e production variables --set FOO=bar', 2),
+    ('railway variables --set FOO=bar --environment production', 0),
+    ('railway variables --set FOO=bar -e prod', 0),
+    ('railway variables delete FOO --environment=PRODUCTION', 0),
+    ('railway variables --set FOO=bar -eprod', 0),
+    ('railway -e production variables --set FOO=bar', 0),
     ('RAILWAY_TOKEN=x railway variables --set FOO=bar -e prod', 0),
     ('railway variables --set API_TOKEN=synthetic -e dev', 2),
     ('railway variables -s API_TOKEN synthetic', 2),
@@ -231,7 +236,7 @@ def test_deliberate_obfuscation_residuals(command, tokens):
     ('railway variables get FOO', 2),
     ('RAILWAY_TOKEN=x railway variables get FOO', 2),
     ('railway variables --set FOO=bar --json', 2),
-    ('railway up --environment dev', 2),
+    ('railway up --environment dev', 0),
 ])
 def test_pre_ga_variable_policy(command, expected):
     result = invoke(command)
@@ -259,7 +264,7 @@ def test_unknown_link_write_is_logged_without_values():
     ('railway variable --service api set FOO bar', 0),
     ('railway variables --set-from-stdin', 0),
     ('railway vars --set-from-stdin -e dev', 0),
-    ('railway variables --set-from-stdin -e production', 2),
+    ('railway variables --set-from-stdin -e production', 0),
     ('RAILWAY_TOKEN=x railway variables --set-from-stdin -e production', 0),
     ('railway --help run env', 0),
     ('railway -h run env', 0),
@@ -271,7 +276,7 @@ def test_unknown_link_write_is_logged_without_values():
     ('railway run sh -c printenv --help', 2),
     ('railway run -- env -h', 2),
     ('railway variables -s api --help', 2),
-    ('railway up --help', 2),
+    ('railway up --help', 0),
     ('railway variables --set NAME="$TOKEN"', 2),
     ('railway variables --set NAME="${SECRET}"', 2),
     ('railway variables --set NAME="$KEY"', 2),
@@ -343,7 +348,7 @@ def test_pre_ga_ssh_run_linked_environment(mode, environment, expected, tmp_path
 
 @pytest.mark.parametrize('command,expected', [
     ('npx @railway/cli@latest variables', 2),
-    ('npx @railway/cli@1.2.3 up', 2),
+    ('npx @railway/cli@1.2.3 up', 0),
     ('RAILWAY_TOKEN=x npx @railway/cli@1.2.3 up', 0),
     ('railway variables -e dev --set TASK_ID=3', 0),
     ('railway variables -e dev --set DISK_SIZE=10', 0),
@@ -373,3 +378,33 @@ def test_pre_ga_review_advisories(command, expected):
 def test_python_environment_printing_residual():
     result = invoke('railway ssh -e production -- python -c "import os; print(os.environ)"')
     assert result.returncode == 2
+
+
+# Full nested checks protect wrapper output and destructive deletes after stripping
+# ssh/run argv. This table reproduces the bypass through real hook stdin.
+@pytest.mark.parametrize('command,expected', [
+    ('railway run -- npx @railway/cli variables', 2),
+    ('railway run -- bash -c "railway service delete x"', 2),
+    ('railway run -- sudo railway down', 2),
+    ('railway ssh -- sh -c "true && railway delete"', 2),
+    ('railway run -- railway up', 0),
+    ('railway up', 0),
+    ('railway run -- xargs printenv', 2),
+    ('railway run -- eval "railway variables"', 2),
+    ('railway run -- timeout 10 railway delete', 2),
+    ('railway run -- exec railway delete', 2),
+    ('railway run -- su -c "railway delete"', 2),
+    ('railway run -- xargs railway delete', 2),
+    ('railway delete', 2),
+    ('railway down', 2),
+    ('RAILWAY_TOKEN=x railway run -- sudo railway down', 0),
+    ('railway deploy', 0),
+    ('railway redeploy', 0),
+    ('railway run -- railway deploy', 0),
+    ('railway ssh -- railway redeploy', 0),
+])
+def test_ssh_run_full_nested_policy(command, expected):
+    result = invoke(command)
+    assert result.returncode == expected, result.stderr
+    if expected == 2 and any(word in command for word in ['delete', 'down']):
+        assert 'destructive delete' in result.stderr
