@@ -1350,9 +1350,10 @@ def test_tunnel_connect_failure_is_stamped_in_the_proxy_log(capsys) -> None:
     finally:
         server.shutdown()
         server.server_close()
+    launcher._tunnel_logs.join()
     assert reply.startswith(b"HTTP/1.1 502")
     assert re.search(
-        rf"cc-proxy: \d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\dZ connect 127\.0\.0\.1:{closed_port} failed: .+ after \d+\.\ds",
+        rf"cc-proxy: \d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\dZ connect 127\.0\.0\.1:{closed_port} failed after \d+\.\ds",
         capsys.readouterr().err,
     )
 
@@ -1427,3 +1428,100 @@ def test_overlapping_launchers_keep_independent_readiness_after_peer_cleanup(mon
             event.set()
         for worker in workers:
             worker.join(5)
+
+
+@pytest.mark.parametrize('sink_mode', ['normal', 'stalled', 'enospc', 'epipe'])
+def test_connect_logging_preserves_response_privacy_and_bounds(monkeypatch, sink_mode):
+    """Real CONNECT boundary: malformed targets must not leak, and sink failures must not delay 502.
+
+    A flood also proves bounded output. Existing closed-port coverage did not exercise these floors.
+    """
+    import errno
+    import threading
+    import io
+    import sys
+
+    launcher = load_launcher_module()
+    released = threading.Event()
+    output = io.StringIO()
+
+    class Sink:
+        def write(self, line):
+            if sink_mode == 'stalled':
+                released.wait(10)
+            if sink_mode in ('enospc', 'epipe'):
+                raise OSError(errno.ENOSPC if sink_mode == 'enospc' else errno.EPIPE, 'sink failed')
+            return output.write(line)
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(sys, 'stderr', Sink())
+    server = launcher._ThreadingProxyServer(('127.0.0.1', 0), launcher._ProxyHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    secret = os.urandom(12).hex()
+    target = f'127.0.0.1/path?token={secret}:443'
+    started = time.monotonic()
+    try:
+        for _ in range(35):
+            with socket.create_connection(server.server_address, timeout=2) as client:
+                client.sendall(f'CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n'.encode())
+                assert client.recv(1024).startswith(b'HTTP/1.1 502')
+        assert time.monotonic() - started < 5
+    finally:
+        released.set()
+        server.shutdown()
+        server.server_close()
+    launcher._tunnel_logs.join()
+    text = output.getvalue()
+    assert secret not in text
+    assert len(text.splitlines()) <= 20
+    if sink_mode in ('normal', 'stalled'):
+        assert 'connect <invalid target> failed' in text
+
+
+def test_successful_tunnel_transfers_before_stalled_slow_log(monkeypatch):
+    """Real CONNECT/socket echo: a slow connect's diagnostic sink cannot precede the splice."""
+    import threading
+    import sys
+
+    launcher = load_launcher_module()
+    # Exercise slow-connect reporting without sleeping a test for the production threshold.
+    monkeypatch.setattr(launcher, 'SHIM_TUNNEL_SLOW_CONNECT_SECONDS', 0)
+    release = threading.Event()
+    entered = threading.Event()
+
+    class Sink:
+        def write(self, line):
+            entered.set()
+            release.wait(10)
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(sys, 'stderr', Sink())
+    upstream = socket.socket()
+    upstream.bind(('127.0.0.1', 0))
+    upstream.listen()
+
+    def echo():
+        with upstream.accept()[0] as stream:
+            stream.sendall(stream.recv(1024))
+
+    threading.Thread(target=echo, daemon=True).start()
+    server = launcher._ThreadingProxyServer(('127.0.0.1', 0), launcher._ProxyHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with socket.create_connection(server.server_address, timeout=2) as client:
+            target = f'127.0.0.1:{upstream.getsockname()[1]}'
+            client.sendall(f'CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n'.encode())
+            assert client.recv(1024).startswith(b'HTTP/1.1 200')
+            client.sendall(b'tunnel alive')
+            assert client.recv(1024) == b'tunnel alive'
+        assert entered.wait(2)
+    finally:
+        release.set()
+        upstream.close()
+        server.shutdown()
+        server.server_close()
+    launcher._tunnel_logs.join()

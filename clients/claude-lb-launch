@@ -57,6 +57,7 @@ import json
 import math
 import os
 import re
+import queue
 import resource
 import select
 import shutil
@@ -883,16 +884,18 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
     def _tunnel(self, host: str, port: int) -> None:
         connecting = time.monotonic()
         try:
+            if _safe_tunnel_target(host, port) == "<invalid target>":
+                raise OSError("invalid CONNECT target")
             upstream = socket.create_connection((host, port), timeout=20)
         except OSError as error:
             # Stamped so a client-visible stall can be matched to the upstream
             # connect that caused it (2026-10-08: Studio packet loss read as a
             # proxy fault for want of this line).
-            _log_tunnel_connect(host, port, time.monotonic() - connecting, f"failed: {error}")
             try:
                 self.connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except OSError:
                 pass
+            _log_tunnel_connect(host, port, time.monotonic() - connecting, "failed")
             return
         try:
             self.connection.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -902,25 +905,83 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 pass
             return
-        if time.monotonic() - connecting >= SHIM_TUNNEL_SLOW_CONNECT_SECONDS:
-            _log_tunnel_connect(host, port, time.monotonic() - connecting, "slow")
+        connect_elapsed = time.monotonic() - connecting
         started = time.monotonic()
         sent, received = _splice(self.connection, upstream, getattr(self.server, "tunnel_bucket", None))
+        if connect_elapsed >= SHIM_TUNNEL_SLOW_CONNECT_SECONDS:
+            _log_tunnel_connect(host, port, connect_elapsed, "slow")
         if sent + received >= SHIM_TUNNEL_LOG_MIN_BYTES:
             duration = max(time.monotonic() - started, 0.001)
-            # Single write so concurrent tunnel-close lines from other handler
-            # threads cannot interleave mid-line in the shared shim's err.log.
-            sys.stderr.write(
-                f"cc-proxy: tunnel {host}:{port} relayed "
+            _queue_tunnel_log(
+                f"cc-proxy: tunnel {_safe_tunnel_target(host, port)} relayed "
                 f"{received / 1e6:.1f}MB down / {sent / 1e6:.1f}MB up in {duration:.0f}s\n"
             )
-            sys.stderr.flush()
+
+
+_tunnel_logs = queue.Queue(maxsize=32)
+_tunnel_log_lock = threading.Lock()
+_tunnel_log_worker = None
+_tunnel_log_window = 0.0
+_tunnel_log_count = 0
+_tunnel_log_suppressed = 0
+
+
+def _safe_tunnel_target(host: str, port: int) -> str:
+    if (re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host)
+            and isinstance(port, int) and 1 <= port <= 65535):
+        return f"{host}:{port}"
+    return "<invalid target>"
+
+
+def _drain_tunnel_logs() -> None:
+    while True:
+        sink, line = _tunnel_logs.get()
+        try:
+            sink.write(line)
+            sink.flush()
+        except Exception:
+            pass
+        finally:
+            _tunnel_logs.task_done()
+
+
+def _queue_tunnel_log(line: str) -> None:
+    """A stalled/broken sink can only occupy one daemon and a bounded queue, never a tunnel."""
+    global _tunnel_log_worker, _tunnel_log_window, _tunnel_log_count, _tunnel_log_suppressed
+    if not _tunnel_log_lock.acquire(blocking=False):
+        return
+    try:
+        now = time.monotonic()
+        if now - _tunnel_log_window >= 60:
+            if _tunnel_log_suppressed:
+                try:
+                    _tunnel_logs.put_nowait((sys.stderr, f"cc-proxy: suppressed {_tunnel_log_suppressed} tunnel log lines\n"))
+                except queue.Full:
+                    pass
+            _tunnel_log_window, _tunnel_log_count, _tunnel_log_suppressed = now, 0, 0
+        if _tunnel_log_count >= 20:
+            _tunnel_log_suppressed += 1
+            return
+        if _tunnel_log_worker is None:
+            _tunnel_log_worker = threading.Thread(target=_drain_tunnel_logs, daemon=True)
+            _tunnel_log_worker.start()
+        try:
+            _tunnel_logs.put_nowait((sys.stderr, line))
+            _tunnel_log_count += 1
+        except queue.Full:
+            _tunnel_log_suppressed += 1
+    except Exception:
+        pass
+    finally:
+        _tunnel_log_lock.release()
 
 
 def _log_tunnel_connect(host: str, port: int, elapsed: float, outcome: str) -> None:
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    sys.stderr.write(f"cc-proxy: {stamp} connect {host}:{port} {outcome} after {elapsed:.1f}s\n")
-    sys.stderr.flush()
+    try:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _queue_tunnel_log(f"cc-proxy: {stamp} connect {_safe_tunnel_target(host, port)} {outcome} after {elapsed:.1f}s\n")
+    except Exception:
+        pass
 
 
 class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
