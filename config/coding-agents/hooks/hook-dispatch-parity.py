@@ -509,8 +509,10 @@ def builtin_cases():
              name="malformed-rm (rm-dynamic-deny fails closed)", expect=deny),
         dict(event="PreToolUse", tool="Bash", raw='{"tool_name":"Bash","tool_input":{"command":"cua do click"',
              name="malformed-cua (desktop-guard fails closed)", expect=deny),
-        dict(event="PreToolUse", tool="Bash", raw="not json at all", name="malformed-plain (fail open)",
-             expect="allow"),
+        # Since hook-dispatcher-4 (2026-10-08) every floor guard refuses input it cannot read: the wide-scan and
+        # bootout guards (jq fails on it) and the railway guard (since agent-lb 7a71805e). It failed open before.
+        dict(event="PreToolUse", tool="Bash", raw="not json at all", name="malformed-plain (floor guards refuse)",
+             expect=deny),
         dict(event="PreToolUse", tool="Bash", input={"command": 123}, name="non-string-command", expect=None),
         # Agent: the seat guard
         dict(event="PreToolUse", tool="Agent",
