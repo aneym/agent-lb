@@ -84,6 +84,24 @@ def test_secret_shaped_argv_is_refused_even_with_custody(command):
     assert 'synthetic' not in result.stderr
 
 
+
+# hook-dispatcher-4 review (2026-10-08): the custody rewrite (7a71805e) dropped the earlier guard's refusal of
+# reads that print every secret value; `railway variables --kv` was allowed. These print values whatever token is
+# in custody.
+@pytest.mark.parametrize('command,denial', [
+    ('railway variables --kv', 'railway variables --kv prints values'),
+    ('RAILWAY_TOKEN=x railway variables --kv', 'railway variables --kv prints values'),
+    ('RAILWAY_TOKEN=x railway variables -s api -k', 'railway variables --kv prints values'),
+    ('echo "$(railway variables --kv)"', 'railway variables --kv prints values'),
+    ('railway run printenv', 'railway run printenv/env prints every secret'),
+    ('RAILWAY_TOKEN=x railway run -s api -- env', 'railway run printenv/env prints every secret'),
+])
+def test_reads_that_print_secret_values_are_refused_even_with_custody(command, denial):
+    result = invoke(command)
+    assert result.returncode == 2, result.stderr
+    assert denial in result.stderr
+    assert "--json | jq 'keys'" in result.stderr
+
 # Review F1-F7: subprocess JSON boundary covers missed executable routes and
 # overblocked data without executing the CLI or adding a production seam.
 @pytest.mark.parametrize('command,tokens,expected', [

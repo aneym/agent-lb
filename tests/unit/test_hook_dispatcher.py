@@ -737,6 +737,13 @@ FLOOR_LEAVES = {
                                ".claude/hooks/seat-guard.py", "py"),
     "seat-guard.py:||true &": ('/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" ||true & ',
                                ".claude/hooks/seat-guard.py", "py"),
+    # hook-dispatcher-4 review 2 (hook-dispatch.py:133): a trailing comment kept the wrapper on a7606396, so a missing
+    # seat guard exited 0 with nothing and the call was allowed.
+    "seat-guard.py:|| true # comment": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true # advisory',
+                                        ".claude/hooks/seat-guard.py", "py"),
+    # A wrapper the dispatcher cannot strip hides the guard's exit status: the guard is refused without running.
+    "seat-guard.py:|| exit 0": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || exit 0',
+                                ".claude/hooks/seat-guard.py", "py"),
     # hook-dispatcher-4 review (hook-dispatch.py:89): not a floor guard on 62dd1f15, so its timeout was merged away.
     "agent-lb-bootout-guard.sh": ('"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"',
                                   ".claude/hooks/agent-lb-bootout-guard.sh", "sh"),
@@ -1336,6 +1343,31 @@ def test_the_adopted_bootout_guard_refuses_input_it_cannot_read(tmp_path: Path) 
     broken = subprocess.run(["/bin/sh", "-c", hook["command"]], input="{not json " + RAW_RESTART, env=env,
                             capture_output=True, text=True, timeout=60)
     assert broken.returncode == 2 and "could not read the hook input" in broken.stderr, broken
+
+
+def test_the_bootout_guard_refuses_a_raw_restart_when_its_matcher_fails(tmp_path: Path) -> None:
+    """hook-dispatcher-4 review 2 (agent-lb-bootout-guard.sh:15): with grep missing, its failure read as no match and a
+    raw kickstart of the live agent-lb was allowed on both paths. A failed matcher refuses; a call without launchctl
+    still needs no matcher and is allowed."""
+    _home, env, hook = guard_home(tmp_path, "agent-lb-bootout-guard.sh", BOOTOUT)
+    jq = "/opt/homebrew/bin/jq" if Path("/opt/homebrew/bin/jq").exists() else shutil.which("jq", path=env["PATH"])
+    if not jq:
+        pytest.skip("the guard reads its input with jq")
+    tools = tmp_path / "tools"  # every tool the guard and the dispatcher use, but grep
+    tools.mkdir()
+    for name in ("bash", "sh", "python3", "env"):
+        found = shutil.which(name, path=env["PATH"])
+        if found:
+            (tools / name).symlink_to(found)
+    (tools / "jq").symlink_to(jq)
+    env = env | {"PATH": str(tools)}
+    call = {"tool_name": "Bash", "tool_input": {"command": RAW_RESTART}, "hook_event_name": "PreToolUse"}
+    old = run_hook(hook["command"], call, env)
+    assert old.returncode == 2 and "could not match the command" in old.stderr, old
+    new = run_owned(DISPATCH_BASH, call, env, 30)
+    assert new is not None and decision(new) == "deny", new
+    assert "could not match the command" in json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert decision(run_hook(hook["command"], dict(call, tool_input={"command": "ls"}), env)) == "allow"
 
 
 def test_install_derives_the_guard_pins_from_their_source(tmp_path: Path) -> None:

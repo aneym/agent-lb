@@ -45,3 +45,10 @@
 - [x] Guard pins for adopted sources are derived at install (registry `script_sha`), so editing a source never unpins it.
 - [x] The process-watch test takes the fixture's bounded observation retry.
 - [x] factory `checks/harden/hook-dispatcher` passes only with receipts from test-owned Claude Code sessions on both paths.
+
+## 8. Fix round (2026-10-08, hook-dispatcher-4 review of a7606396)
+
+- [x] A shell comment after a floor guard's wrapper is dropped before the wrapper is read; a floor guard whose command keeps any other control operator (`;`, `&`, `|`, `||`, `&&`, a newline, a leading `!`) is refused on PreToolUse without running.
+- [x] agent-lb-bootout-guard.sh tells a failed matcher (grep missing or erroring) from no match and refuses; jq reads its input directly.
+- [x] railway-vars-guard.sh again refuses `railway variables --kv` and `railway run printenv|env`, custody token or not, with the earlier guard's messages.
+- [x] factory `checks/harden/hook-dispatcher` probes each of these fail-open paths on a copy of the installed dispatcher.

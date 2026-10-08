@@ -131,6 +131,62 @@ SHAPE = re.compile(
 WRAPPER_TAIL = re.compile(
     r"(?P<devnull>\s+2>\s*/dev/null)?"
     r"(?:\s*\|\|\s*(?:(?P<true>true)|\{\s*printf\s+%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?[\s;&]*$")
+# A shell comment after the wrapper (`... || true # advisory`) is dropped before the wrapper is read (2026-10-08 review:
+# the comment kept the wrapper on, so a missing seat guard exited 0 with nothing and the call was allowed). What is left
+# of a floor guard's command must then be one simple command whose exit status is the guard's own: any other control
+# operator (`;`, `&`, `|`, `||`, `&&`, a newline, a leading `!`) can hide its failure, so on PreToolUse such a guard is
+# refused without running it (fail closed), never run with an exit status the dispatcher cannot read.
+
+
+def _unquoted(text):
+    """(index, char, at word start) for each character of text outside quotes and not backslash-escaped."""
+    i, n, quote = 0, len(text), None
+    while i < n:
+        c = text[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif quote == '"':
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif c in "'\"":
+            quote = c
+        else:
+            word_start = i == 0 or text[i - 1] in " \t\n;&|()"
+            yield i, c, word_start
+            if c == "#" and word_start:  # a comment: nothing in it is syntax, quotes included
+                end = text.find("\n", i)
+                i = (len(text) if end < 0 else end) - 1
+        i += 1
+
+
+def strip_comments(text):
+    """text without its shell comments (an unquoted `#` at the start of a word, up to the end of its line)."""
+    kept, last = [], 0
+    for i, c, word_start in _unquoted(text):
+        if c == "#" and word_start:
+            end = text.find("\n", i)
+            kept.append(text[last:i])
+            last = len(text) if end < 0 else end
+    kept.append(text[last:])
+    return "".join(kept)
+
+
+def control_operator(text):
+    """The first control operator of text that can change its exit status, or None (`&` of a redirection aside)."""
+    text = re.sub(r"[\s;]+$", "", text)
+    for i, c, word_start in _unquoted(text):
+        if c in ";|\n":
+            return "||" if text.startswith("||", i) else c
+        if c == "&" and not (i and text[i - 1] in "<>") and not text.startswith("&>", i):
+            return "&&" if text.startswith("&&", i) else c
+        if c == "!" and word_start and (i + 1 == len(text) or text[i + 1] in " \t"):
+            return c
+    return None
 
 
 class Result(object):
@@ -577,7 +633,7 @@ COMMAND_PREFILTERS = {
 
 class Plan(object):
     __slots__ = ("hook", "command", "timeout", "kind", "script", "argv", "interp", "devnull", "fallback_true",
-                 "fallback_text", "source", "reason", "prefilter", "floor", "bare")
+                 "fallback_text", "source", "reason", "prefilter", "floor", "bare", "opaque")
 
     def __init__(self, hook):
         self.hook = hook
@@ -589,6 +645,7 @@ class Plan(object):
         self.reason, self.prefilter = "", None
         self.floor = floor_name(self.command)  # the floor guard this hook runs, or None
         self.bare = None  # a floor guard's own command without its shell wrapper (run bare, wrapper applied here)
+        self.opaque = None  # why a floor guard's exit status cannot be read from its command (refused on PreToolUse)
 
 
 def floor_name(command):
@@ -658,13 +715,19 @@ def plan_hook(hook, inproc_names, script_pins=None):
     match = SHAPE.match(command)
     if not match:
         plan.reason = "shape"
-        tail = WRAPPER_TAIL.search(command) if plan.floor else None
+        if not plan.floor or plan.floor in FLOOR_COMMANDS.values():
+            return plan
+        stripped = strip_comments(command)
+        tail = WRAPPER_TAIL.search(stripped)
         if tail and (tail.group("devnull") or tail.group("true") or tail.group("fb") is not None) \
-                and command[:tail.start()].strip():
+                and stripped[:tail.start()].strip():
             plan.devnull = bool(tail.group("devnull"))
             plan.fallback_true = bool(tail.group("true"))
             plan.fallback_text = tail.group("fb")
-            plan.bare = command[:tail.start()]
+            plan.bare = stripped[:tail.start()]
+        operator = control_operator(plan.bare or stripped)
+        if operator:
+            plan.opaque = "runs inside shell syntax (%r) that can hide its exit status" % operator
         return plan
     plan.devnull = bool(match.group("devnull"))
     plan.fallback_true = bool(match.group("true"))
@@ -1474,6 +1537,12 @@ def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
     started = {}
     try:
         for index, plan in enumerate(plans):
+            if plan.opaque and event == "PreToolUse":
+                plan.kind, plan.reason = "opaque", plan.reason + ", " + plan.opaque
+                results[index] = Result(1, b"", ("hook-dispatch: %s\n" % plan.command[:300]).encode(
+                    "utf-8", "backslashreplace"), False, "opaque")
+                results[index].floor_failure = plan.opaque
+                continue
             if plan.kind == "filtered":
                 try:
                     needed = escapes_in_input(payload_obj) or plan.prefilter(payload_obj)

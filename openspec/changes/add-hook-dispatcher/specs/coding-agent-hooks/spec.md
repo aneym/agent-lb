@@ -26,7 +26,7 @@ The hook dispatcher MUST give Claude Code the same decision, block message, upda
 - **AND** Claude Code shows the kill as a failed-hook notice (build lead decision (a), 2026-10-08), where per-hook the cancel showed nothing
 
 #### Scenario: A floor guard fails under its wrapper
-- **WHEN** a PreToolUse floor guard (the seat, relay, rm, stash, secret, link-cli, dangerous-command, wide-scan and agent-lb bootout guards) times out, crashes, is missing or prints something that is not a hook answer, whatever shape its command has and whatever `2>/dev/null`, `|| true` or `|| { printf ...; }` wrapper ends it, with anything (`;`, whitespace, `&`) after the wrapper
+- **WHEN** a PreToolUse floor guard (the seat, relay, rm, stash, secret, link-cli, dangerous-command, wide-scan and agent-lb bootout guards) times out, crashes, is missing or prints something that is not a hook answer, whatever shape its command has and whatever `2>/dev/null`, `|| true` or `|| { printf ...; }` wrapper ends it, with anything (`;`, whitespace, `&`, a shell comment) after the wrapper, or behind any other control operator that can hide its exit status (refused without running)
 - **THEN** the call is refused, where per-hook the wrapper or the timeout let it through
 
 #### Scenario: A floor guard's dependency fails

@@ -16,6 +16,11 @@ READS = {'status', 'logs', 'list', 'whoami', 'version', 'help'}
 SECRET_NAME = re.compile(r'(?:token|secret|password|passwd|api[_-]?key|authorization|bearer|credential)', re.I)
 SECRET_VALUE = re.compile(r'(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)', re.I)
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
+# Reads that print every secret value, refused with or without a custody token (the guard before 7a71805e refused both;
+# 2026-10-08 review: the custody rewrite let `railway variables --kv` through). Names only: --json | jq 'keys'.
+KV_DENIAL = "BLOCKED: railway variables --kv prints values. Use: railway variables ... --json | jq 'keys'."
+PRINTENV_DENIAL = ("BLOCKED: railway run printenv/env prints every secret. Read names with: "
+                   "railway variables ... --json | jq 'keys'.")
 
 
 def substitutions(text, heredoc=False):
@@ -123,11 +128,13 @@ def check(command, inherited):
     # Accidental-use guard, not an adversarial shell boundary: deliberately
     # obfuscated rail''way / rail\\way and shell-level unset remain unsupported.
     if not re.search(r'\brailway\b', command):
-        return False
+        return ''
     command, nested = heredocs(command)
     command, expansions = substitutions(command)
-    if any(check(value, inherited) for value in nested + expansions):
-        return True
+    for value in nested + expansions:
+        found = check(value, inherited)
+        if found:
+            return found
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
@@ -135,7 +142,7 @@ def check(command, inherited):
         lexer.whitespace_split = True
         words = list(lexer)
     except ValueError:
-        return True
+        return DENIAL
     segments, current = [], []
     i = 0
     while i < len(words):
@@ -179,17 +186,20 @@ def check(command, inherited):
                     elif option.startswith('-u'):
                         env.pop(option[2:], None)
                     elif option in ('-S', '--split-string') and i < len(words):
-                        if check(words[i] + ' ' + shlex.join(words[i + 1:]), env):
-                            return True
+                        found = check(words[i] + ' ' + shlex.join(words[i + 1:]), env)
+                        if found:
+                            return found
                         i = len(words)
                     elif option.startswith('--split-string='):
-                        if check(option.split('=', 1)[1] + ' ' + shlex.join(words[i:]), env):
-                            return True
+                        found = check(option.split('=', 1)[1] + ' ' + shlex.join(words[i:]), env)
+                        if found:
+                            return found
                         i = len(words)
                 continue
             if name == 'eval':
-                if check(' '.join(words[i + 1:]), env):
-                    return True
+                found = check(' '.join(words[i + 1:]), env)
+                if found:
+                    return found
                 break
             if name in {'sudo', 'command', 'exec', 'nohup', 'nice', 'time', 'xargs', 'timeout'}:
                 i += 1
@@ -229,24 +239,34 @@ def check(command, inherited):
             if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
                 for j in range(i + 1, len(words) - 1):
                     if words[j].startswith('-') and 'c' in words[j][1:]:
-                        if check(words[j + 1], env):
-                            return True
+                        found = check(words[j + 1], env)
+                        if found:
+                            return found
                 break
             if name == 'railway':
                 args = words[i + 1:]
                 for j, arg in enumerate(args):
                     if (j > 0 and args[j - 1] in {'set', '--set'} and SECRET_NAME.search(arg)
                             and '=' not in arg and j + 1 < len(args) and not args[j + 1].startswith('-')):
-                        return True
+                        return DENIAL
                     value = arg.split('=', 1)[1] if arg.startswith('--set=') else arg
                     match = ASSIGNMENT.match(value)
                     if match and match[2] and (SECRET_NAME.search(match[1]) or SECRET_VALUE.search(match[2])
                                               or len(match[2]) >= 24):
-                        return True
+                        return DENIAL
                     if SECRET_VALUE.search(arg):
-                        return True
+                        return DENIAL
                 if not args or args[0] in READS or '--help' in args or '-h' in args:
                     break
+                if args[0] in {'variables', 'variable', 'vars'} and any(
+                        arg in {'--kv', '-k'} for arg in args[1:]):
+                    return KV_DENIAL
+                if args[0] == 'run':
+                    k = 1
+                    while k < len(args) and args[k].startswith('-'):
+                        k += 2 if args[k] in {'-s', '--service', '-e', '--environment'} else 1
+                    if k < len(args) and args[k].rsplit('/', 1)[-1] in {'printenv', 'env'}:
+                        return PRINTENV_DENIAL
                 if args[0] in {'variables', 'variable', 'vars'}:
                     write = any(arg in {'set', 'delete', 'remove', '--set', '--delete', '--remove'}
                                 or arg.startswith(('--set=', '--delete=', '--remove=')) for arg in args[1:])
@@ -257,11 +277,11 @@ def check(command, inherited):
                 else:
                     write = True
                 if write and not any(env.get(key) for key in TOKEN_NAMES):
-                    return True
+                    return DENIAL
                 break
             # Ordinary arguments naming Railway are data, not executable words.
             break
-    return False
+    return ''
 
 
 try:
@@ -269,8 +289,8 @@ try:
     command = payload.get('tool_input', {}).get('command', '')
     denied = check(command, dict(os.environ))
 except (ValueError, TypeError, AttributeError):
-    denied = True
+    denied = DENIAL
 if denied:
-    print(DENIAL, file=sys.stderr)
+    print(denied, file=sys.stderr)
     sys.exit(2)
 PY
