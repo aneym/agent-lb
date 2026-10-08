@@ -82,3 +82,53 @@ def test_secret_shaped_argv_is_refused_even_with_custody(command):
     result = invoke(command)
     assert result.returncode == 2
     assert 'synthetic' not in result.stderr
+
+
+# Review F1-F7: subprocess JSON boundary covers missed executable routes and
+# overblocked data without executing the CLI or adding a production seam.
+@pytest.mark.parametrize('command,tokens,expected', [
+    *[(f'{runner} @railway/cli up', {}, 2) for runner in
+      ['npx', 'bunx', 'pnpm dlx', 'yarn dlx', 'npm exec', 'npm exec --']],
+    ('eval "railway up"', {}, 2),
+    ('env -S "railway up"', {}, 2),
+    ('RAILWAY_TOKEN=x npx @railway/cli variables --set API_TOKEN=synthetic', {}, 2),
+    ('RAILWAY_TOKEN=x eval "railway variables --set API_TOKEN=synthetic"', {}, 2),
+    ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 2),
+    ('echo "$(railway up --service \'api(staging)\')"', {}, 2),
+    ('echo "`railway up --service \'api(staging)\'`"', {}, 2),
+    ('railway variables < /dev/null --set PORT=8080', {}, 2),
+    ('RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic', {}, 2),
+    ('RAILWAY_TOKEN="$MISSING" railway up', {}, 2),
+    ('RAILWAY_TOKEN="" railway up', {}, 2),
+    ('RAILWAY_TOKEN="$CUSTODY" railway up', {'CUSTODY': 'synthetic'}, 0),
+    ('env -uRAILWAY_TOKEN railway up', {'RAILWAY_TOKEN': 'synthetic'}, 2),
+    ('env -u RAILWAY_TOKEN railway up', {'RAILWAY_TOKEN': 'synthetic'}, 2),
+    ("nohup echo okay\ncat <<'EOF'\nwe use railway for deployment\nEOF\n", {}, 0),
+    ('cat <<"EOF"\n$(railway up)\nEOF\n', {}, 0),
+    ('cat <<EOF\nrailway up\nEOF\n', {}, 0),
+    ('cat <<EOF\n$(railway up)\nEOF\n', {}, 2),
+    ("printf '%s\\n' railway", {}, 0),
+    ('cat /tmp/railway', {}, 0),
+    ('timeout 10 railway status', {}, 0),
+    ('timeout 10 railway up', {}, 2),
+    ('timeout 10 railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+    *[(f'{wrapper} railway up', {}, 2) for wrapper in
+      ['nice', 'nice -n 5', 'time', 'exec', 'command', 'xargs']],
+    ('npx @railway/cli up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+    ('eval "railway up"', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+    ('env -S "railway up"', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+])
+def test_review_counterexamples(command, tokens, expected):
+    result = invoke(command, **tokens)
+    assert result.returncode == expected, result.stderr
+    assert 'synthetic' not in result.stderr
+
+
+@pytest.mark.xfail(strict=True, reason='Accepted deliberate shell obfuscation residual')
+@pytest.mark.parametrize('command,tokens', [
+    ("rail''way up", {}),
+    ('rail\\way up', {}),
+    ("bash -lc 'unset RAILWAY_TOKEN; railway up'", {'RAILWAY_TOKEN': 'synthetic'}),
+])
+def test_deliberate_obfuscation_residuals(command, tokens):
+    assert invoke(command, **tokens).returncode == 2

@@ -18,11 +18,82 @@ SECRET_VALUE = re.compile(r'(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[bapr
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
 
 
+def substitutions(text):
+    """Return executable expansions and mask them for the outer lexer."""
+    result, out = [], []
+    i, quote = 0, None
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if c in "\"'" and (quote is None or quote == c):
+            quote = None if quote else c
+        if quote != "'" and (text.startswith('$(', i) or c == '`'):
+            backtick = c == '`'
+            start = i + (1 if backtick else 2)
+            j, depth, inner_quote = start, 1, None
+            while j < len(text):
+                ch = text[j]
+                if ch == "\\" and inner_quote != "'":
+                    j += 2
+                    continue
+                if ch in "\"'" and (inner_quote is None or inner_quote == ch):
+                    inner_quote = None if inner_quote else ch
+                elif not inner_quote:
+                    if backtick and ch == '`':
+                        break
+                    if not backtick:
+                        if ch == '(':
+                            depth += 1
+                        elif ch == ')':
+                            depth -= 1
+                            if not depth:
+                                break
+                j += 1
+            result.append(text[start:j])
+            out.append('EXPANSION')
+            i = j + 1
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out), result
+
+
+def heredocs(command):
+    lines = command.splitlines(keepends=True)
+    out, nested = [], []
+    pending = []
+    for line in lines:
+        if pending:
+            delimiter, quoted, tabs = pending[0]
+            data = line.lstrip('\t') if tabs else line
+            if data.rstrip('\r\n') == delimiter:
+                pending.pop(0)
+            elif not quoted:
+                nested.extend(substitutions(data)[1])
+            continue
+        out.append(line)
+        for match in re.finditer(r"<<(-?)\s*('([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))", line):
+            pending.append((match[3] or match[4] or match[5], bool(match[3] or match[4]), bool(match[1])))
+    return ''.join(out), nested
+
+
+def expand(value, env):
+    value = re.sub(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)',
+                   lambda m: env.get(m[1] or m[2], ''), value)
+    return '' if '$' in value else value
+
+
 def check(command, inherited):
-    # Recurse through shell wrappers and substitutions without executing anything.
+    # Accidental-use guard, not an adversarial shell boundary: deliberately
+    # obfuscated rail''way / rail\\way and shell-level unset remain unsupported.
     if not re.search(r'\brailway\b', command):
         return False
-    if re.search(r'\bbearer\s+', command, re.I):
+    command, nested = heredocs(command)
+    command, expansions = substitutions(command)
+    if any(check(value, inherited) for value in nested + expansions):
         return True
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
@@ -32,12 +103,20 @@ def check(command, inherited):
     except ValueError:
         return True
     segments, current = [], []
-    for word in words:
-        if word and all(c in ';&|()<>\n' for c in word):
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if re.fullmatch(r'[<>]+|[<>]+&', word):
+            if current and current[-1].isdigit():
+                current.pop()
+            i += 2  # A redirection's target isn't argv; later words still are.
+            continue
+        if word and all(c in ';&|()\n' for c in word):
             segments.append(current)
             current = []
         else:
             current.append(word)
+        i += 1
     segments.append(current)
     for words in segments:
         env = dict(inherited)
@@ -46,7 +125,7 @@ def check(command, inherited):
             word = words[i]
             assignment = ASSIGNMENT.match(word)
             if assignment:
-                env[assignment[1]] = assignment[2]
+                env[assignment[1]] = expand(assignment[2], env)
                 i += 1
                 continue
             name = word.rsplit('/', 1)[-1]
@@ -62,11 +141,41 @@ def check(command, inherited):
                         i += 1
                     elif option.startswith('--unset='):
                         env.pop(option.split('=', 1)[1], None)
+                    elif option.startswith('-u'):
+                        env.pop(option[2:], None)
+                    elif option in ('-S', '--split-string') and i < len(words):
+                        if check(words[i] + ' ' + shlex.join(words[i + 1:]), env):
+                            return True
+                        i = len(words)
+                    elif option.startswith('--split-string='):
+                        if check(option.split('=', 1)[1] + ' ' + shlex.join(words[i:]), env):
+                            return True
+                        i = len(words)
                 continue
-            if name in {'sudo', 'command', 'exec', 'nohup', 'npx', 'bunx'}:
+            if name == 'eval':
+                if check(' '.join(words[i + 1:]), env):
+                    return True
+                break
+            if name in {'sudo', 'command', 'exec', 'nohup', 'nice', 'time', 'xargs', 'timeout'}:
                 i += 1
                 while i < len(words) and words[i].startswith('-'):
+                    option = words[i]
                     i += 1
+                    if option in {'-n', '-u', '-g', '-t', '-k', '-s', '-I', '-P'}:
+                        i += 1
+                if name == 'timeout':
+                    i += 1  # duration
+                continue
+            if name in {'npx', 'bunx', 'pnpm', 'yarn', 'npm'}:
+                i += 1
+                if name in {'pnpm', 'yarn', 'npm'}:
+                    if i >= len(words) or words[i] not in {'dlx', 'exec'}:
+                        break
+                    i += 1
+                while i < len(words) and words[i].startswith('-'):
+                    i += 1
+                if i < len(words) and words[i] == '@railway/cli':
+                    words[i] = 'railway'
                 continue
             if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
                 for j in range(i + 1, len(words) - 1):
@@ -95,29 +204,21 @@ def check(command, inherited):
                 elif args[0] in {'environment', 'environments', 'service', 'services'}:
                     write = any(arg in {'new', 'create', 'delete', 'remove', 'rename', '--new', '--delete', '--rename'}
                                 or arg.startswith(('--new=', '--delete=', '--rename=')) for arg in args[1:])
-                    # Selecting a target also mutates local Railway state.
                     write = write or any(not arg.startswith('-') for arg in args[1:])
                 else:
                     write = True
                 if write and not any(env.get(key) for key in TOKEN_NAMES):
                     return True
                 break
-            # An unknown wrapper containing Railway must not silently bypass the floor.
-            # Match a Railway executable word, never prose or a path that merely names it.
-            if any(value == 'railway' or value.endswith('/railway') for value in words[i + 1:]):
-                return True
+            # Ordinary arguments naming Railway are data, not executable words.
             break
-    # Expansions can execute inside a quoted argument, even on a non-Railway command.
-    for nested in re.findall(r'\$\(([^()]*)\)|`([^`]*)`', command):
-        if check(next(value for value in nested if value), inherited):
-            return True
     return False
 
 
 try:
     payload = json.loads(os.environ['RAILWAY_GUARD_INPUT'])
     command = payload.get('tool_input', {}).get('command', '')
-    denied = check(command, {key: os.environ.get(key, '') for key in TOKEN_NAMES})
+    denied = check(command, dict(os.environ))
 except (ValueError, TypeError, AttributeError):
     denied = True
 if denied:
