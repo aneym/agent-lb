@@ -351,7 +351,7 @@ SCRIPT_PREFILTERS = {
     # d0d4a7243 (all 2026-10-07).
     "no-chrome-guard.sh": (("110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
                             "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
-                            "f8cbd0b265aebc71856916ebc5f212033c3dc967327ac84305b55d58d10e9c46"), pf_no_chrome),
+                            "3464abbaaf2e8c8ed5ce6fa6203dc51745aad9bb17e220580b442026356bbeee"), pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway),
     "route.sh": ("7735c06fbe7264f0d92403e0bd7b18920f9457196493e9bce9b787e53404ed97", pf_jev_alert),
 }
