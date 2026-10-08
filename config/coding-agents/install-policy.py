@@ -181,11 +181,19 @@ MANAGED_AGENTS = (
     ),
     (
         # Adopted 2026-10-08 (hook-dispatcher-3): it had no source, so every hand edit of the live copy unpinned it.
-        # Edit this source only; hook-dispatch.py SCRIPT_PREFILTERS pins its sha256: re-pin on a change.
+        # Edit this source only; its dispatcher pin is derived from it at install (DERIVED_PINS).
         Path(".claude/hooks/wide-scan-guard.sh"),
         Path(".agent-lb/managed/coding-agents/wide-scan-guard"),
         "agent-lb:wide-scan-guard:v1\n",
         Path("hooks/wide-scan-guard.sh"),
+    ),
+    (
+        # Adopted 2026-10-08 (hook-dispatcher-4) from the hand-installed live copy: a floor guard, so it now refuses
+        # input it cannot read (jq missing or failing) instead of allowing it. Pin derived at install (DERIVED_PINS).
+        Path(".claude/hooks/agent-lb-bootout-guard.sh"),
+        Path(".agent-lb/managed/coding-agents/agent-lb-bootout-guard"),
+        "agent-lb:agent-lb-bootout-guard:v1\n",
+        Path("hooks/agent-lb-bootout-guard.sh"),
     ),
     (
         Path(".claude/hooks/railway-vars-guard.sh"),
@@ -216,7 +224,8 @@ MANAGED_AGENTS = (
 # Guards adopted from a live copy another config registers (settings.json names them, not this installer):
 # uninstall leaves the file in place and drops only the ownership marker, since removing it would turn the guard's
 # registration into a missing executable that never denies (2026-10-08 review M3).
-ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"), Path(".claude/hooks/railway-vars-guard.sh"))
+ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"), Path(".claude/hooks/railway-vars-guard.sh"),
+                Path(".claude/hooks/agent-lb-bootout-guard.sh"))
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
 # removes the definition, its ownership marker and the policy mirror copy; the
@@ -835,7 +844,7 @@ def dispatch_worth(source: Path, home: Path) -> Any:
         os.environ.pop("LC_CTYPE", None)
         os.environ.update(HOME=str(home), LANG="en_US.UTF-8")
         try:
-            plan = module.plan_hook(hooks[0], dict.fromkeys(DISPATCH_INPROC))
+            plan = module.plan_hook(hooks[0], dict.fromkeys(DISPATCH_INPROC), script_pins(source))
         except Exception:
             return False
         finally:
@@ -844,6 +853,23 @@ def dispatch_worth(source: Path, home: Path) -> Any:
         return plan.kind != "external"
 
     return worth
+
+
+# Shell guards this installer holds the source of and the dispatcher prefilters: the pin the dispatcher accepts is the
+# source's sha256, written into the registry's `script_sha` at install (hook-dispatcher-4, 2026-10-08: the hand-kept
+# pin in hook-dispatch.py went stale four times in one round as other lanes edited the guard, and each time the guard
+# ran on every Bash call). A changed source changes the registry, so the parity fixture runs before the fold keeps it.
+DERIVED_PINS = ("wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "railway-vars-guard.sh")
+
+
+def script_pins(source: Path) -> dict[str, str]:
+    """basename -> sha256 of the source each DERIVED_PINS guard is installed from."""
+    pins: dict[str, str] = {}
+    for name in DERIVED_PINS:
+        path = source / "hooks" / name
+        if path.is_file():
+            pins[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return pins
 
 
 SCRIPT_WORD = re.compile(r'\s*(?:(?:/usr/bin/)?python3\s+)?("[^"]+"|[^\s"\'|;&<>]+)')
@@ -868,6 +894,7 @@ def pin_inproc(registry: dict[str, Any], home: Path, source: Path) -> dict[str, 
                     pins[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     pinned = dict(registry)
     pinned["inproc_sha"] = dict(sorted(pins.items()))
+    pinned["script_sha"] = script_pins(source)
     pinned["dispatcher_sha256"] = hashlib.sha256((source / DISPATCH_SCRIPT).read_bytes()).hexdigest()
     return pinned
 
@@ -1147,7 +1174,8 @@ def main() -> int:
             if mode == "sticky" and old_registry is not None:
                 candidate["parity"] = old_registry.get("parity")
             unchanged = mode == "sticky" and old_registry is not None and all(
-                candidate.get(field) == old_registry.get(field) for field in ("inproc_sha", "dispatcher_sha256")
+                candidate.get(field) == old_registry.get(field)
+                for field in ("inproc_sha", "dispatcher_sha256", "script_sha")
             )
             if args.preview:
                 print(f"would fold hooks into the dispatcher ({'refold' if unchanged else 'after the parity fixture'})")

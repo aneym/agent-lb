@@ -26,8 +26,16 @@ The hook dispatcher MUST give Claude Code the same decision, block message, upda
 - **AND** Claude Code shows the kill as a failed-hook notice (build lead decision (a), 2026-10-08), where per-hook the cancel showed nothing
 
 #### Scenario: A floor guard fails under its wrapper
-- **WHEN** a PreToolUse floor guard (the seat, relay, rm, stash, secret, link-cli, dangerous-command and wide-scan guards) times out, crashes, is missing or prints something that is not a hook answer, whatever shape its command has and whatever `2>/dev/null`, `|| true` or `|| { printf ...; }` wrapper ends it
+- **WHEN** a PreToolUse floor guard (the seat, relay, rm, stash, secret, link-cli, dangerous-command, wide-scan and agent-lb bootout guards) times out, crashes, is missing or prints something that is not a hook answer, whatever shape its command has and whatever `2>/dev/null`, `|| true` or `|| { printf ...; }` wrapper ends it, with anything (`;`, whitespace, `&`) after the wrapper
 - **THEN** the call is refused, where per-hook the wrapper or the timeout let it through
+
+#### Scenario: A floor guard's dependency fails
+- **WHEN** the wide-scan or bootout guard cannot read its input (jq missing or failing) or the wide-scan scanner fails (python3 missing or crashing)
+- **THEN** the guard refuses the call on both paths, and the dispatcher never skips a guard whose needed tool is missing
+
+#### Scenario: Claude Code reads the same outcome on both paths
+- **WHEN** test-owned Claude Code sessions run one Bash call each on the per-hook and the dispatcher path (an allow, a JSON deny, a guard exiting 1, a guard blocking with exit 2 and a message)
+- **THEN** each session's transcript shows the same outcome on both paths (blocked or ran, the text the model reads, the notices), and the harden check is pass only with those receipts
 
 #### Scenario: The rewriter runs beside another hook
 - **WHEN** the rewriter runs as a child because another hook of the entry also runs

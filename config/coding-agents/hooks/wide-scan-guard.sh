@@ -3,13 +3,19 @@
 # Such scans ran for minutes on 2026-09-25, pushed Studio load past 130 and tripped
 # the OrbStack NFS dialog. Scope to one repo or directory instead.
 # Override for a deliberate scan: append the comment "# wide-scan-ok".
+# A floor guard fails closed (hook-dispatcher-4, 2026-10-08): input it cannot read (jq missing or failing) and a
+# scanner that fails (python3 missing or crashing) refuse the call; before, both fell through to an allow.
+refuse() {
+  echo "BLOCKED: wide-scan-guard $1, so this call is refused (the guard fails closed). Check jq and python3 on PATH." >&2
+  exit 2
+}
 INPUT=$(cat)
-CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
-CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty')
+CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty') || refuse "could not read the hook input (jq exit $?)"
+CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty') || refuse "could not read the hook input (jq exit $?)"
 [ -z "$CMD" ] && exit 0
 # Check each grep separately: another command's -D skip cannot make it safe.
 # Tokenizing keeps quoted paths intact and distinguishes patterns from paths.
-if SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY'
+SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY'
 import os
 import shlex
 import re
@@ -488,9 +494,11 @@ def scan(text, depth=0, cwd=None):
     return False
 
 
-raise SystemExit(0 if scan(os.environ['SCAN_COMMAND']) else 1)
+# 0: a FIFO grep to rewrite; 2: a wide scan (raised above); 3: nothing to do. Anything else is a failure.
+raise SystemExit(0 if scan(os.environ['SCAN_COMMAND']) else 3)
 PY
-then
+SCAN=$?
+if [ "$SCAN" -eq 0 ]; then
   REWRITE=$(HOOK_INPUT="$INPUT" python3 - <<'REWRITE_PY'
 import json, os, re, shlex
 try:
@@ -521,10 +529,12 @@ REWRITE_PY
     echo 'grep -r under ~/.agent-rails hangs on FIFOs; use rg (skips FIFOs) or add -D skip' >&2
     exit 2
   fi
-elif [ "$?" -eq 2 ]; then
+elif [ "$SCAN" -eq 2 ]; then
   case "$CMD" in *"# wide-scan-ok"*) exit 0 ;; esac
   echo "BLOCKED: recursive search over the whole disk, home, a volume root, all repos or ~/.agent-rails. Scope it to one repo, lane or directory; use lane-post read <b-id> for bulletins. Override with '# wide-scan-ok'." >&2
   exit 2
+elif [ "$SCAN" -ne 3 ]; then
+  refuse "scanner failed (python3 exit $SCAN)"
 fi
 [ -n "$REWRITE" ] && printf '%s\n' "$REWRITE"
 exit 0

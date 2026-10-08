@@ -15,7 +15,9 @@ How each hook runs (doubt keeps the old path: its own process through /bin/sh -c
   `|| { printf %s '<json>'; }`) are applied to its result.
 - filtered: a shell guard on the pinned list (exact script or command bytes, sha256) is skipped when its prefilter
   proves it cannot act on this input (the prefilter is a superset of every input the guard blocks or acts on);
-  otherwise the real script runs. A changed script loses its pin and always runs.
+  otherwise the real script runs. A changed script loses its pin and always runs. A guard whose source agent-lb
+  installs (wide-scan-guard.sh) is pinned by install-policy.py from that source's hash (registry `script_sha`), so
+  editing the source never unpins it; a guard missing a tool it needs (jq, python3) always runs and fails closed.
 - rewriter: `rtk hook claude` (side-effect free, never blocks). It is skipped when a guard already denied or a later
   guard rewrote the input (that rewrite wins either way); when it is the only process still needed and every other
   guard answered nothing, this process execs into it, so the usual Bash call costs one process per event. The exec'd
@@ -79,16 +81,18 @@ SHELL = "/bin/sh"  # Claude Code spawns command hooks with shell: true (observed
 HERE = os.path.dirname(os.path.abspath(__file__))
 REWRITERS = {"rtk hook claude"}  # side-effect free, never blocks; may be skipped or exec'd into
 REV = re.compile(r"[0-9a-f]{12}")
+REV_SHA = re.compile(r"[0-9a-f]{64}")
 # Floor guards (p13D and the simplify lead, 2026-10-07): PreToolUse guards that hold a kept floor (destructive
 # commands, secrets, merges, relays, seats), and wide-scan-guard.sh, which the U1 spec names beside kill-guard and the
 # seat guard as a deny case that must hold (2026-10-08 review M1: it failed open). On PreToolUse one that times out,
 # crashes, is missing or answers with something that is not a hook answer refuses the call, whatever the per-hook
 # config made of that failure (a `|| true` or `|| { printf ...; }` wrapper included); any other guard fails open as
 # before, and the failure is logged to dispatch/failures.jsonl. Matched by script name anywhere in the command, or by
-# the exact inline command.
+# the exact inline command. agent-lb-bootout-guard.sh keeps raw restarts off the live agent-lb (2026-10-08 review:
+# per-hook its timeout was merged away, so a raw kickstart of the service was allowed).
 FLOOR_SCRIPTS = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny",
                  "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
-                 "wide-scan-guard.sh")
+                 "wide-scan-guard.sh", "agent-lb-bootout-guard.sh")
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_COMMANDS = {  # sha256 of the exact inline command -> its name
     "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": "dangerous-command",
@@ -122,9 +126,11 @@ SHAPE = re.compile(
     r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$" % (_PATH_WORD, _ARG_WORD))
 # The same wrappers at the end of any command (2026-10-08 review M2): a floor guard whose command SHAPE does not read
 # (`python3 -u "<guard>" 2>/dev/null || true`) still runs bare, so its own failure is seen before the wrapper hides it.
+# Whatever trails the wrapper (`;`, whitespace, `&`) and `||` without spaces are read too (2026-10-08 review: with
+# `... || true;` the wrapper stayed, so a missing seat guard exited 0 with nothing and the call was allowed).
 WRAPPER_TAIL = re.compile(
     r"(?P<devnull>\s+2>\s*/dev/null)?"
-    r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$")
+    r"(?:\s*\|\|\s*(?:(?P<true>true)|\{\s*printf\s+%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?[\s;&]*$")
 
 
 class Result(object):
@@ -276,9 +282,17 @@ def pf_link_cli(payload):
     return command is None or "link-cli" in command
 
 
-def pf_railway(payload):
-    command = _jq_field(payload, "command")
-    return command is None or "railway" in command
+def pf_railway_custody(payload):
+    """railway-vars-guard.sh since agent-lb 7a71805e (custody tokens): its Python reads the input and refuses what it
+    cannot read (a payload, tool_input or command of the wrong type), and otherwise acts only when `railway` is a word
+    of the command. It also covers the older reviewed version (it ran on `railway` anywhere in the command)."""
+    if not isinstance(payload, dict):
+        return True
+    tool_input = payload.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        return True
+    command = tool_input.get("command", "")
+    return not isinstance(command, str) or "railway" in command
 
 
 def pf_no_chrome(payload):
@@ -514,6 +528,7 @@ def pf_prettier(payload):
 
 # Script guards: basename of the resolved script -> (sha256 of the reviewed bytes, or a tuple of them, prefilter).
 SCRIPT_PREFILTERS = {
+    # 8f4a0ee: the hand-installed copy; since agent-lb adopted it (2026-10-08) its pin is derived at install too.
     "agent-lb-bootout-guard.sh": ("8f4a0eea5f7639e7d0f6e8d02a048ffd00db3c37daa9b6f4acb86d612a36d304", pf_bootout),
     "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
     # fab6ad8: before the simplify lane's 2026-10-08 edit; b169f02: that edit adds an early allow for plain
@@ -522,12 +537,11 @@ SCRIPT_PREFILTERS = {
     # 557b21d: agent-lb d402b454 (2026-10-08), search tools parsed per segment with paths resolved from the cwd and
     # any `cd`; 7a518f4: bb83dc35, parse failures refused, `watch`, `pushd`, a path-less search's cwd; 8515084:
     # ad7c78e5, heredocs and here-strings parsed across the whole command (both need `<<`, which always runs it).
-    # pf_wide_scan_parse covers each version. Re-pin on every change (test_the_pinned_wide_scan_guard_...).
-    "wide-scan-guard.sh": (("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac",
-                            "b169f02eb85ed225fcebaef814e1c7ad0fccda755b1a21a7887a3f6c8df4bc44",
-                            "557b21dbfc1291d0fb7454ff8ddaac823c40ef11636a2451f62192e4e9d35985",
-                            "7a518f44edf83c06f5e1565f6e5fe0cb43f5e453ec459837a4b7d1cd02d2aad2",
-                            "8515084976daadf0072d5438dc3194ebddb99ac662188eb6195fcd2e6d5614ff"), pf_wide_scan_parse),
+    # pf_wide_scan_parse covers each version. Since 2026-10-08 (hook-dispatcher-4: hand-kept pins went stale four
+    # times in one round as other lanes edited the guard) the pin is derived: install-policy.py hashes the agent-lb
+    # source it installs into the registry's `script_sha`, so no hash is kept here. A registry without one runs the
+    # guard every time. test_the_pinned_wide_scan_guard_... proves the prefilter a superset of the source guard.
+    "wide-scan-guard.sh": ((), pf_wide_scan_parse),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
     # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
     # 31b899775, after its review fixes; 64cf185: factory a6f53ea1e, destination parsed by shlex; 77520a3: factory
@@ -540,9 +554,15 @@ SCRIPT_PREFILTERS = {
                             "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
                             "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b",
                             "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84"), pf_no_chrome),
-    "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway),
+    # 9fa0e82: the hand-reviewed copy; since agent-lb 7a71805e its source is installed and its pin derived at install.
+    "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "route.sh": ("7735c06fbe7264f0d92403e0bd7b18920f9457196493e9bce9b787e53404ed97", pf_jev_alert),
 }
+# Tools a pinned guard needs (each a tuple of alternatives: a name on PATH or an absolute path). Without one the guard
+# fails closed on every input, so its prefilter proves nothing and it always runs.
+SCRIPT_NEEDS = {"wide-scan-guard.sh": (("jq",), ("python3",)),
+                "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"),),
+                "railway-vars-guard.sh": (("python3",),)}
 # Inline commands: sha256 of the exact command string -> prefilter.
 COMMAND_PREFILTERS = {
     # bash -c 'CMD=$(cat | jq -r ".tool_input.command // empty"); ... rm\s+-rf\s+/|DROP\s+(DATABASE|TABLE) ...'
@@ -616,7 +636,9 @@ def hazardous(text):
     return False
 
 
-def plan_hook(hook, inproc_names):
+def plan_hook(hook, inproc_names, script_pins=None):
+    """How one hook runs. script_pins: the registry's `script_sha` (basename -> sha256 install-policy derived from
+    the source it installed), accepted beside the hashes reviewed here."""
     plan = Plan(hook)
     command = plan.command
     if hook.get("type", "command") != "command" or not command:
@@ -654,15 +676,22 @@ def plan_hook(hook, inproc_names):
         # A pinned shell guard, bare or inside `2>/dev/null || true`: when its prefilter says it cannot act, the
         # wrapped command ends with exit 0 and no output either way. A printf fallback answers whenever the guard
         # fails for a reason no prefilter sees (startup, a missing tool), so that guard always runs.
-        pinned = SCRIPT_PREFILTERS.get(os.path.basename(os.path.realpath(expand_word(match.group("script")))))
+        name = os.path.basename(os.path.realpath(expand_word(match.group("script"))))
+        pinned = SCRIPT_PREFILTERS.get(name)
         if pinned is not None:
             sensitive = env_sensitive()
+            hashes = pinned[0] if isinstance(pinned[0], tuple) else (pinned[0],)
+            derived = (script_pins or {}).get(name) if isinstance(script_pins, dict) else None
+            if isinstance(derived, str) and REV_SHA.fullmatch(derived):
+                hashes = hashes + (derived,)
+            missing = [need[0] for need in SCRIPT_NEEDS.get(name, ()) if not any(which(tool) for tool in need)]
             if match.group("fb") is not None:
                 plan.reason = "pinned script with a fallback answer"
             elif sensitive:
                 plan.reason = "pinned script, but %s is set" % sensitive
-            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) in (
-                    pinned[0] if isinstance(pinned[0], tuple) else (pinned[0],)):
+            elif missing:
+                plan.reason = "pinned script, but %s is not on PATH" % ", ".join(missing)
+            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) in hashes:
                 plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
             else:
                 plan.reason = "script changed since its prefilter was reviewed"
@@ -1426,12 +1455,12 @@ def log_failures(event, key, plans, results):
         pass
 
 
-def run_entry(event, hooks, raw, inproc_names, key=None):
+def run_entry(event, hooks, raw, inproc_names, key=None, script_pins=None):
     record = {"event": event, "pid": os.getpid(), "ppid": os.getppid()}
     plans = []
     for hook in hooks:
         try:
-            plans.append(plan_hook(hook, inproc_names))
+            plans.append(plan_hook(hook, inproc_names, script_pins))
         except Exception as exc:  # planning trouble keeps the old path
             plan = Plan(hook)
             plan.reason = "plan error %s" % exc.__class__.__name__
@@ -1544,7 +1573,8 @@ def main(argv=None):
         # its own process until install-policy reruns the fixture.
         inproc_names = registry.get("inproc_sha") if isinstance(registry.get("inproc_sha"), dict) else \
             dict.fromkeys(name for name in registry.get("inproc") or [] if isinstance(name, str))
-        result = run_entry(event, hooks, raw, inproc_names, key)
+        script_pins = registry.get("script_sha") if isinstance(registry.get("script_sha"), dict) else None
+        result = run_entry(event, hooks, raw, inproc_names, key, script_pins)
     except BaseException as exc:
         # Anything this process did not plan for (no temp file, no process, a bug) refuses: the guards it was
         # running might have.

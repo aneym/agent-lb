@@ -36,3 +36,12 @@
 - [x] The fold checks shared commands against groups left per-hook too, until stable.
 - [x] The child-run rewriter is resolved on the caller's PATH, before git's directory is put first.
 - [x] wide-scan-guard.sh as d402b454 and bb83dc35 left it (sha256 557b21db, 7a518f44) is pinned again, with a prefilter that reads every word as a possible tool, path and `cd` target and runs the guard on anything it could fail to parse; a differential test against the real guard proves it a superset.
+
+## 7. Fix round (2026-10-08, hook-dispatcher-4: review of 62dd1f15/cfac29fd)
+
+- [x] A floor guard's `|| true` or fallback wrapper is stripped whatever trails it (`;`, whitespace, `&`).
+- [x] wide-scan-guard.sh refuses when jq or its scanner fails; the dispatcher runs a pinned guard whose needed tool is missing.
+- [x] agent-lb-bootout-guard.sh is adopted from the live copy, fails closed on unreadable input, and is a floor guard.
+- [x] Guard pins for adopted sources are derived at install (registry `script_sha`), so editing a source never unpins it.
+- [x] The process-watch test takes the fixture's bounded observation retry.
+- [x] factory `checks/harden/hook-dispatcher` passes only with receipts from test-owned Claude Code sessions on both paths.

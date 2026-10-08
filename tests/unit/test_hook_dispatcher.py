@@ -125,9 +125,12 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
     folded = hooks_of(home)
     bash = [group for group in folded["PreToolUse"] if group.get("matcher") == "Bash"]
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    # 1215: the guards' timeouts plus 5, the railway guard install-policy registers on Bash (7a71805e) included.
     assert bash == [{"matcher": "Bash", "hooks": [{"type": "command",
                                                    "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}",
-                                                   "timeout": 1205}]}]
+                                                   "timeout": 1215}]}]
+    assert 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"' in [
+        hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
     # The settings entries name this fold's own registry file.
     assert json.loads((home / f".claude/hooks/dispatch/registry.{registry['rev']}.json").read_text()) == registry
     # Groups the fold must not touch: a regex matcher, a skipped matcher, other events.
@@ -392,7 +395,9 @@ def test_a_refold_never_runs_old_settings_against_a_weaker_registry(tmp_path: Pa
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install, env = installer(tmp_path, home)
     install("--hook-dispatcher", "on")
-    folded = [hook["command"] for group in bash_groups(hooks_of(home)) for hook in group["hooks"]]
+    # install-policy also registers the railway guard on Bash (agent-lb 7a71805e); that group folds on its own.
+    folded = [hook["command"] for group in bash_groups(hooks_of(home)) if group["matcher"] == "Bash|Write"
+              for hook in group["hooks"]]
     assert len(folded) == 1 and "hook-dispatch.py" in folded[0]
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
     assert decision(run_hook(folded[0], call, env)) == "deny"
@@ -582,25 +587,35 @@ def test_the_process_watch_counts_whole_trees(tmp_path: Path) -> None:
     and two Python children is 4 (4e0dfdaa said 2); an rtk wrapper that runs `sleep 0` first is 2; a dispatcher that
     starts two guard processes has 3 hook-layer processes."""
     parity = parity_module()
+
+    def observe(*args: Any) -> dict:
+        """The fixture's own bounded retry (cfac29fd): an observation the watch could not complete on a loaded
+        machine (a short-lived child gone before it was found) is taken again, up to three times."""
+        for _attempt in range(3):
+            seen = parity.observe(*args)
+            if seen["observed"]:
+                break
+        return seen
+
     call = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}).encode()
     env = os.environ | {"TMPDIR": str(tmp_path)}
     tree = ("python3 -c 'import subprocess, sys; [subprocess.run([sys.executable, \"-c\", \"pass\"]) "
             "for _ in range(2)]'; exit 0")
-    seen = parity.observe(tree, b"", env, str(tmp_path), 30)
+    seen = observe(tree, b"", env, str(tmp_path), 30)
     assert seen["observed"] and seen["processes"] == 4 and seen["hook_layer"] == 1, seen
     (tmp_path / "plain").mkdir()
     _home, env = rewriter_home(tmp_path / "plain", QUIET_RTK)
-    plain = parity.observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
+    plain = observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
     assert plain["observed"] and plain["processes"] == 1 and plain["hook_layer"] == 1, plain
     (tmp_path / "w").mkdir()
     wrapper = "#!/bin/sh\nsleep 0\nexec /usr/bin/env python3 -c 'import sys; sys.stdin.read()'\n"
     _home, env = rewriter_home(tmp_path / "w", wrapper)
-    wrapped = parity.observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
+    wrapped = observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
     assert wrapped["observed"] and wrapped["processes"] == 2 and wrapped["hook_layer"] == 1, wrapped
     (tmp_path / "e").mkdir()
     _home, env = dispatcher_home(tmp_path / "e", [{"type": "command", "command": "sleep 0.2"},
                                                   {"type": "command", "command": "sleep 0.3"}])
-    spawned = parity.observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
+    spawned = observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
     assert spawned["observed"] and spawned["hook_layer"] == 3 and spawned["processes"] >= 3, spawned
 
 
@@ -716,6 +731,15 @@ FLOOR_LEAVES = {
     # wrapper, so `|| true` turned its crash or its absence into an allow.
     "seat-guard.py:python3 -u": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true',
                                  ".claude/hooks/seat-guard.py", "py"),
+    # hook-dispatcher-4 review (hook-dispatch.py:639): whatever trails the wrapper (`;`, whitespace, `&`) kept it on
+    # 62dd1f15, so a missing seat guard exited 0 with nothing and the call was allowed.
+    "seat-guard.py:|| true;": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true;',
+                               ".claude/hooks/seat-guard.py", "py"),
+    "seat-guard.py:||true &": ('/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py" ||true & ',
+                               ".claude/hooks/seat-guard.py", "py"),
+    # hook-dispatcher-4 review (hook-dispatch.py:89): not a floor guard on 62dd1f15, so its timeout was merged away.
+    "agent-lb-bootout-guard.sh": ('"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"',
+                                  ".claude/hooks/agent-lb-bootout-guard.sh", "sh"),
 }
 FAIL_STUBS = {
     "py": {"timeout": "import time\ntime.sleep(30)\n", "crash": "raise RuntimeError('synthetic floor crash')\n",
@@ -725,7 +749,7 @@ FAIL_STUBS = {
            "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n"},
 }
 # Reaches every pinned floor guard's prefilter, so each runs (a guard its prefilter skips never runs, so cannot fail).
-REACHES_PREFILTERS = "echo railway link-cli; rm -" "rf /tmp/never-run"
+REACHES_PREFILTERS = "echo railway link-cli launchctl; rm -" "rf /tmp/never-run"
 INPROC = ["rm-dynamic-deny", "stash-guard", "workflow-relay-guard.py"]  # reviewed for in-process runs (install-policy)
 
 
@@ -1141,7 +1165,7 @@ def test_the_rewriter_beside_another_hook_is_the_rtk_on_the_callers_path(tmp_pat
     assert json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"] == "rewritten", result
 
 
-# wide-scan-guard.sh as the source holds it (sha256 85150849 since agent-lb ad7c78e5): it must stay pinned.
+# wide-scan-guard.sh as the source holds it: its pin is install-policy's hash of this file (hook-dispatcher-4).
 WIDE_SCAN = SOURCE / "hooks/wide-scan-guard.sh"
 WIDE_SCAN_COMMANDS = (
     "rg -n foo src", "find . -name '*.py'", "ls -la", "git status", "rg x /tmp/project", "find /tmp -name x",
@@ -1172,11 +1196,18 @@ def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path
     """d402b454 and bb83dc35 rewrote the guard (search paths resolved from the cwd and any `cd`, unparsable input
     refused) without re-pinning it, so it ran on every Bash call: 4 hook-layer processes per call against a budget of
     2. Its prefilter must be a superset: across commands and cwds the dispatcher's decision and rewrite equal the
-    guard's own per-hook ones, and a scoped search is still skipped. A guard edit without a re-pin fails here."""
+    guard's own per-hook ones, and a scoped search is still skipped. Since hook-dispatcher-4 the pin is derived: the
+    registry carries install-policy's hash of the source (script_sha), which must equal the installed file's, so a
+    guard edit never unpins it; a guard edit the prefilter does not cover fails here."""
     hook = {"type": "command", "command": '"$HOME/.claude/hooks/wide-scan-guard.sh"'}
     home, env = dispatcher_home(tmp_path, [hook])
-    shutil.copy(WIDE_SCAN, home / ".claude/hooks/wide-scan-guard.sh")
-    (home / ".claude/hooks/wide-scan-guard.sh").chmod(0o755)
+    installed = home / ".claude/hooks/wide-scan-guard.sh"
+    shutil.copy(WIDE_SCAN, installed)
+    installed.chmod(0o755)
+    pins = policy_module().script_pins(SOURCE)
+    assert pins["wide-scan-guard.sh"] == hashlib.sha256(installed.read_bytes()).hexdigest()
+    registry_path = home / ".claude/hooks/dispatch/registry.json"
+    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()), script_sha=pins)))
     trace = tmp_path / "trace.jsonl"
     cwds = [str(home / "project"), str(home), str(home / ".agent-rails/lanes/a"), "/Volumes/StudioExt/repos/x"]
     differ, skipped = [], set()
@@ -1195,3 +1226,176 @@ def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path
     for command in ("rg -n foo src", "find . -name '*.py'", "ls -la", "rg x /tmp/project", "ls -la # it's fine",
                     "python3 -c 'print(1)'"):
         assert (str(home / "project"), command) in skipped, command
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 5
+# hook-dispatcher-4 (2026-10-08): the review of 62dd1f15/cfac29fd and the build lead's decisions. Each test fails on
+# cfac29fd; the `|| true;` and bootout-timeout paths are also rows of test_a_floor_guard_that_fails_refuses_the_call.
+
+BOOTOUT = SOURCE / "hooks/agent-lb-bootout-guard.sh"
+RAW_RESTART = "launch" "ctl kickstart -k gui/501/com.aneyman.agent-lb"  # in parts: the live guard reads Bash input
+
+
+def guard_home(tmp_path: Path, name: str, source: Path, timeout: float = 20) -> tuple[Path, dict, dict]:
+    """A dispatcher home whose Bash entry is one real guard from the agent-lb source, as the live settings run it."""
+    hook = {"type": "command", "command": f'"$HOME/.claude/hooks/{name}"', "timeout": timeout}
+    home, env = dispatcher_home(tmp_path, [hook])
+    shutil.copy(source, home / ".claude/hooks" / name)
+    (home / ".claude/hooks" / name).chmod(0o755)
+    return home, env, hook
+
+
+def stub_bin(tmp_path: Path, env: dict, name: str, text: str) -> dict:
+    bin_dir = tmp_path / "stub-bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / name).write_text(text)
+    (bin_dir / name).chmod(0o755)
+    return env | {"PATH": f"{bin_dir}:{env['PATH']}"}
+
+
+@pytest.mark.parametrize("jq", [
+    "#!/bin/sh\necho 'jq: error: something broke' >&2\nexit 5\n",  # jq fails
+    "#!/bin/sh\necho 'sh: jq: command not found' >&2\nexit 127\n",  # jq is not there
+], ids=["jq-fails", "jq-missing"])
+def test_the_wide_scan_guard_refuses_when_jq_fails(tmp_path: Path, jq: str) -> None:
+    """Review (wide-scan-guard.sh:7): with jq failing, `rg needle /` left the guard an empty command and it exited 0
+    through its empty-command allow, per-hook and through the dispatcher. It now refuses on both paths."""
+    _home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
+    env = stub_bin(tmp_path, env, "jq", jq)
+    call = {"tool_name": "Bash", "tool_input": {"command": "rg needle /"}, "hook_event_name": "PreToolUse",
+            "cwd": str(tmp_path)}
+    old = run_hook(hook["command"], call, env)
+    assert old.returncode == 2 and "could not read the hook input" in old.stderr, old
+    new = run_owned(DISPATCH_BASH, call, env, 30)
+    assert new is not None and decision(new) == "deny", new
+    assert "could not read the hook input" in json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_guard_missing_a_tool_it_needs_is_never_skipped(tmp_path: Path) -> None:
+    """With jq gone from PATH the wide-scan guard refuses every call per-hook, so its prefilter no longer proves it
+    cannot act: the dispatcher runs it (and refuses) even for a call the prefilter would skip."""
+    home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
+    registry_path = home / ".claude/hooks/dispatch/registry.json"
+    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()),
+                                             script_sha=policy_module().script_pins(SOURCE))))
+    tools = tmp_path / "tools"  # every tool the guard and the dispatcher use, but jq
+    tools.mkdir()
+    for name in ("bash", "sh", "cat", "python3", "printf", "env"):
+        found = shutil.which(name, path=env["PATH"])
+        if found:
+            (tools / name).symlink_to(found)
+    env = env | {"PATH": str(tools)}
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse",
+            "cwd": str(home / "project")}
+    assert decision(run_hook(hook["command"], call, env)) == "deny"
+    result = run_owned(DISPATCH_BASH, call, env, 30)
+    assert result is not None and decision(result) == "deny", result
+
+
+def test_the_wide_scan_guard_refuses_when_its_scanner_fails(tmp_path: Path) -> None:
+    """Review (wide-scan-guard.sh:530): its Python scanner crashing (exit 1, as an uncaught exception exits) fell
+    through to exit 0, so `rg needle /` was allowed on both paths. A scanner that does not answer refuses the call."""
+    _home, env, hook = guard_home(tmp_path, "wide-scan-guard.sh", WIDE_SCAN)
+    real = shutil.which("python3", path=env["PATH"])
+    assert real
+    env = stub_bin(tmp_path, env, "python3", f"""#!/bin/sh
+if [ "$1" = "-" ]; then echo 'Traceback (most recent call last): synthetic scanner crash' >&2; exit 1; fi
+exec "{real}" "$@"
+""")
+    call = {"tool_name": "Bash", "tool_input": {"command": "rg needle /"}, "hook_event_name": "PreToolUse",
+            "cwd": str(tmp_path)}
+    old = run_hook(hook["command"], call, env)
+    assert old.returncode == 2 and "scanner failed (python3 exit 1)" in old.stderr, old
+    new = run_owned(DISPATCH_BASH, call, env, 30)
+    assert new is not None and decision(new) == "deny", new
+    assert "scanner failed" in json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_bootout_guard_that_times_out_refuses_a_raw_restart(tmp_path: Path) -> None:
+    """Review (hook-dispatch.py:89): agent-lb-bootout-guard.sh was no floor guard, so for a raw kickstart of the live
+    agent-lb its timeout was dropped at the merge and the call allowed. It is a floor guard: the timeout denies."""
+    home, env, _hook = guard_home(tmp_path, "agent-lb-bootout-guard.sh", BOOTOUT, timeout=1)
+    (home / ".claude/hooks/agent-lb-bootout-guard.sh").write_text("#!/bin/bash\nexec sleep 30\n")
+    call = {"tool_name": "Bash", "tool_input": {"command": RAW_RESTART}, "hook_event_name": "PreToolUse"}
+    result = run_owned(DISPATCH_BASH, call, env, 30)
+    assert result is not None and result.returncode == 2, result
+    reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "floor guard agent-lb-bootout-guard.sh timed out" in reason, reason
+
+
+def test_the_adopted_bootout_guard_refuses_input_it_cannot_read(tmp_path: Path) -> None:
+    """The hand-installed bootout guard read its input with `jq ... 2>/dev/null` and allowed whatever it could not
+    read; agent-lb now holds its source and it fails closed. Its raw-restart refusal and its allow are unchanged."""
+    _home, env, hook = guard_home(tmp_path, "agent-lb-bootout-guard.sh", BOOTOUT)
+    if not (Path("/opt/homebrew/bin/jq").exists() or shutil.which("jq", path=env["PATH"])):
+        pytest.skip("the guard reads its input with jq")
+    call = {"tool_name": "Bash", "tool_input": {"command": RAW_RESTART}, "hook_event_name": "PreToolUse"}
+    refused = run_hook(hook["command"], call, env)
+    assert refused.returncode == 2 and "BLOCKED: raw launchctl restart" in refused.stderr, refused
+    assert decision(run_hook(hook["command"], dict(call, tool_input={"command": "ls"}), env)) == "allow"
+    broken = subprocess.run(["/bin/sh", "-c", hook["command"]], input="{not json " + RAW_RESTART, env=env,
+                            capture_output=True, text=True, timeout=60)
+    assert broken.returncode == 2 and "could not read the hook input" in broken.stderr, broken
+
+
+def test_install_derives_the_guard_pins_from_their_source(tmp_path: Path) -> None:
+    """System cause of four unpins in one round: the wide-scan pin was hand-kept in hook-dispatch.py, so each edit of
+    the guard's source by another lane left the dispatcher running it on every Bash call. install-policy now writes
+    the source's hash into the registry: the installed pin equals the installed file, and the dispatcher skips the
+    guard where its prefilter proves it cannot act."""
+    home, _ = make_home(tmp_path)
+    install, env = installer(tmp_path, home)
+    install()  # the managed guards land first, as on a machine that already has the policy
+    install("--hook-dispatcher", "on")
+    registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    for name in ("wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "railway-vars-guard.sh"):
+        installed = home / ".claude/hooks" / name
+        assert registry["script_sha"][name] == hashlib.sha256(installed.read_bytes()).hexdigest(), name
+    if shutil.which("jq", path=env["PATH"]) is None:
+        pytest.skip("the wide-scan guard reads its input with jq")
+    trace = tmp_path / "trace.jsonl"
+    hooks = [{"type": "command", "command": '"$HOME/.claude/hooks/wide-scan-guard.sh"'},
+             {"type": "command", "command": '"$HOME/.claude/hooks/agent-lb-bootout-guard.sh"'}]
+    pinned = tmp_path / "pinned-registry.json"
+    pinned.write_text(json.dumps({"schema": 1, "entries": {"PreToolUse": {"Bash": hooks}}, "inproc": [],
+                                  "script_sha": registry["script_sha"]}))
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse",
+            "cwd": str(home / "project")}
+    result = run_hook(DISPATCH_BASH, call, env | {"HOOK_DISPATCH_TRACE": str(trace),
+                                                  "HOOK_DISPATCH_REGISTRY": str(pinned)})
+    assert decision(result) == "allow", result
+    modes = [row.get("mode") for row in json.loads(trace.read_text().splitlines()[-1])["hooks"]]
+    assert modes == ["skipped", "skipped"], modes
+
+
+RAILWAY = SOURCE / "hooks/railway-vars-guard.sh"
+RAILWAY_PAYLOADS = [
+    {"command": c} for c in (
+        "ls -la", "git status", "railway status", "railway variables --set KEY=v", "npx @railway/cli up",
+        "echo railway", "RAILWAY_TOKEN=x railway up", "bash -c 'railway up'", "cat <<EOF\nrailway up\nEOF",
+        "echo $(railway up)", "railwayish thing", "grep -r railway docs")
+] + [{"command": None}, {"command": 5}, {}, None, "text"]
+
+
+def test_the_pinned_railway_guard_is_skipped_only_where_it_cannot_act(tmp_path: Path) -> None:
+    """The railway lane's custody rewrite (agent-lb 7a71805e and later) unpinned the guard, so the dispatcher ran it
+    on every Bash call (4 hook-layer processes against a budget of 2). Its pin is now derived from the source; its
+    prefilter must stay a superset: on every payload the dispatcher answers as the guard does per-hook, and a call
+    without `railway` skips it."""
+    hook = {"type": "command", "command": '"$HOME/.claude/hooks/railway-vars-guard.sh"'}
+    home, env, _hook = guard_home(tmp_path, "railway-vars-guard.sh", RAILWAY)
+    registry_path = home / ".claude/hooks/dispatch/registry.json"
+    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()),
+                                             script_sha=policy_module().script_pins(SOURCE))))
+    trace = tmp_path / "trace.jsonl"
+    differ, skipped = [], set()
+    for tool_input in RAILWAY_PAYLOADS:
+        call = {"tool_name": "Bash", "tool_input": tool_input, "hook_event_name": "PreToolUse", "cwd": str(tmp_path)}
+        old = run_hook(hook["command"], call, env)
+        new = run_hook(DISPATCH_BASH, call, env | {"HOOK_DISPATCH_TRACE": str(trace)})
+        if decision(old) != decision(new):
+            differ.append((tool_input, old.returncode, new.returncode, new.stdout[:200]))
+        if json.loads(trace.read_text().splitlines()[-1])["hooks"][0].get("mode") == "skipped":
+            skipped.add(json.dumps(tool_input))
+    assert not differ, differ
+    assert {json.dumps({"command": "ls -la"}), json.dumps({"command": "git status"})} <= skipped, skipped

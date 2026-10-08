@@ -235,8 +235,10 @@ def effect(event, results):
         view["context"] += [text.rstrip("\n") for text in view["plain"]]
     plain = view.pop("plain")
     # Several messages or contexts reach the model either as separate items (old) or joined (dispatcher).
-    view["block"] = "\n".join(FLOOR_MESSAGE.sub(r"\1hook-dispatch: floor guard refusal", message)
-                              for message in view["block"])
+    view["block_raw"] = "\n".join(view["block"])
+    view["block_parts"] = [FLOOR_MESSAGE.sub(r"\1hook-dispatch: floor guard refusal", message)
+                           for message in view["block"]]
+    view["block"] = "\n".join(view["block_parts"])
     view["context"] = "\n".join(view["context"])
     view["shown"] = "\n".join(view["shown"])
     view["stopReason"] = "\n".join(view["stopReason"])
@@ -250,11 +252,13 @@ def effect(event, results):
 # whatever its per-hook wrapper made of the failure; its exit 2 blocks under any wrapper. Every other guard fails
 # open as before. The expected effect of the dispatcher path is the per-hook effect with this rule applied.
 FLOOR_NAMES = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny", "stash-guard",
-               "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard", "wide-scan-guard.sh")
+               "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard", "wide-scan-guard.sh",
+               "agent-lb-bootout-guard.sh")
 FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)
 NOTICE_PREFIX = "Failed with non-blocking status code: "
-WRAPPER = re.compile(r"\s+(?:2>\s*/dev/null)?\s*(?:\|\|\s+(?:true|\{\s*printf\s+%s\s+'[^']*'\s*;\s*\}))?\s*$")
+# Whatever trails the wrapper (`;`, whitespace, `&`) is read too, as hook-dispatch.py WRAPPER_TAIL does (2026-10-08).
+WRAPPER = re.compile(r"\s+(?:2>\s*/dev/null)?\s*(?:\|\|\s*(?:true|\{\s*printf\s+%s\s+'[^']*'\s*;\s*\}))?[\s;&]*$")
 
 
 def floor_of(command):
@@ -646,6 +650,28 @@ def same(value, run):
     return json.loads(json.dumps(value).replace(run, "<run>"))
 
 
+FLOOR_REFUSAL = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard refusal$")
+
+
+def same_effect(old_view, new_view):
+    """The two views agree. The dispatcher joins every block message into one reason, so a floor refusal that is not
+    the first message is not normalized there (FLOOR_MESSAGE reads from the start): it matches the expected refusal
+    when it starts with that guard's `[<command>]: hook-dispatch: floor guard ` and the messages around it are equal
+    (2026-10-08: with the railway guard install-policy registers but has not yet installed, a fresh home's first fold
+    failed the fixture on that alone)."""
+    def strip(view):
+        return {key: value for key, value in view.items() if key not in ("block", "block_parts", "block_raw")}
+
+    if strip(old_view) != strip(new_view):
+        return False
+    if old_view["block"] == new_view["block"]:
+        return True
+    pattern = "\n".join(
+        re.escape(match.group(1) + "hook-dispatch: floor guard ") + ".*?" if match else re.escape(part)
+        for part, match in ((part, FLOOR_REFUSAL.match(part)) for part in old_view["block_parts"]))
+    return bool(pattern) and re.fullmatch(pattern, new_view["block_raw"], re.S) is not None
+
+
 def run_case(sandbox, registry, case):
     event, tool = case["event"], case.get("tool")
     olds = old_hooks(registry["per_hook"], event, tool)
@@ -663,7 +689,7 @@ def run_case(sandbox, registry, case):
     old_view = same(effect(event, with_floor(event, expected, unfolded)), run)
     new_view = same(effect(event, new_results), run2)
     # (2) what Claude Code does with the answers
-    if old_view != new_view:
+    if not same_effect(old_view, new_view):
         outcome["mismatches"].append({"what": "effect", "old": old_view, "new": new_view})
     # (1) each guard: the dispatcher's own record of it, or its direct run when it was left per-hook
     new_by_command, modes = {}, []
@@ -1124,7 +1150,8 @@ SH_STUBS = {"timeout": "#!/bin/bash\nexec sleep 30\n",
             "missing": "#!/bin/bash\necho \"bash: $0: No such file or directory\" >&2\nexit 127\n",
             "malformed": "#!/bin/bash\ncat >/dev/null\necho 'not a hook answer {'\n"}
 # The Bash input reaches every pinned floor guard's prefilter (dangerous-command, railway, link-cli; launchctl for the
-# bootout control), so each one runs; a guard its prefilter skips never runs, and so cannot fail. Never executed.
+# bootout guard, a floor guard since 2026-10-08), so each one runs; a guard its prefilter skips never runs, and so
+# cannot fail. Never executed.
 REPLAY_INPUT = {"Bash": {"command": "echo launchctl railway link-cli; rm -" "rf /tmp/hook-dispatch-floor-replay"},
                 "Agent": {"subagent_type": "Explore", "prompt": "x", "description": "x"},
                 "Workflow": {"script": "agent('x', {agentType: 'Explore'})"}}

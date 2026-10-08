@@ -112,9 +112,8 @@ def test_documented_residuals(command):
     assert result.returncode == 2
 
 
-@pytest.mark.skip(reason="Missing jq is an accepted residual; hook requires jq on the host")
-def test_missing_jq():
-    pass
+# Missing or failing jq (and a failing scanner) is no longer an accepted residual: the guard is a floor guard and
+# refuses (hook-dispatcher-4, 2026-10-08); tests/unit/test_hook_dispatcher.py covers both paths.
 
 
 def test_installed_hook_matches_source():
