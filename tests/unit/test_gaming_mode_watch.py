@@ -22,7 +22,9 @@ def _setup(tmp_path: Path, tasklist: str | None) -> dict[str, str]:
     else:
         (tmp_path / "tasklist.txt").write_text(tasklist)
         warning = "** WARNING: connection is not using a post-quantum key exchange algorithm."
-        ssh.write_text(f"#!/bin/sh\necho '{warning}'\ncat {tmp_path / 'tasklist.txt'}\n")
+        # The real host is the fifth argument after -o BatchMode=yes -o ConnectTimeout=10.
+        ssh.write_text(f"#!/bin/sh\necho \"$5\" >> {tmp_path / 'ssh-hosts'}\necho '{warning}'\n"
+                       f"cat {tmp_path / 'tasklist.txt'}\n")
     ssh.chmod(0o755)
     throttle = tmp_path / "throttle"
     state = home / ".agent-lb" / "state" / "upload-throttle.json"
@@ -146,3 +148,11 @@ def test_generation_drop_is_accepted_and_logged_once(tmp_path: Path) -> None:
     assert (ack["generation"], ack["mode"], ack["ok"]) == (1, "normal", True)
     log = (Path(env["GAMING_MODE_HOME"]) / ".agent-lb" / "logs" / "gaming-mode.log").read_text()
     assert log.count("factory restart") == 1
+
+
+def test_the_poll_reads_the_tasklist_from_pc_wsl_never_windows_ssh(tmp_path: Path) -> None:
+    """A Windows-side `ssh pc` opens a console over the game (2026-10-08); the tasklist comes from pc-wsl's pc-facts."""
+    env = _setup(tmp_path, CSV_GAME)
+    _poll(env)
+    assert (tmp_path / "ssh-hosts").read_text().split() == ["pc-wsl"]
+    assert _throttle(env) is True

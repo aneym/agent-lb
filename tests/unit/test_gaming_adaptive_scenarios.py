@@ -198,3 +198,18 @@ def test_stale_samples_and_the_end_of_the_game_hand_back(tmp_path: Path) -> None
     _run(env, T0 + timedelta(minutes=11))
     assert _holds(env) == {}
     assert _effective(env)[0] is False
+
+
+def test_the_default_samples_read_comes_from_pc_wsl_never_windows_ssh(tmp_path: Path) -> None:
+    """A Windows-side `ssh pc` opens a console over the game (2026-10-08); PingHud samples come from pc-wsl's pc-facts."""
+    env = _env(tmp_path)
+    del env["GAMING_ADAPTIVE_SAMPLES_CMD"]
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "ssh").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {tmp_path / 'ssh-args'}\nexit 255\n")
+    (shim / "ssh").chmod(0o755)
+    env["PATH"] = f"{shim}:{env['PATH']}"
+    _floor(env)
+    _run(env, datetime.now(timezone.utc))
+    args = (tmp_path / "ssh-args").read_text().split("\n")
+    assert "pc-wsl" in args and "pc" not in args

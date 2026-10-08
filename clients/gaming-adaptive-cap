@@ -42,9 +42,11 @@ GAME_AVG = 10
 GAME_LOSS = 12
 MIN_COLUMNS = 13
 
+# Read over pc-wsl, never `ssh pc`: a Windows-side command opens a console over Alex's game (2026-10-08). The hidden
+# pc-facts task (factory fleet/pc/windows-tasks) copies the PingHud tail there every 15 s; a missing or stale file fails.
 DEFAULT_SAMPLES_CMD = (
-    "ssh pc powershell -NoProfile -Command "
-    "'Get-Content -Tail 15 \"$env:LOCALAPPDATA\\PingHud\\samples.csv\"'"
+    "ssh -o BatchMode=yes -o ConnectTimeout=5 pc-wsl "
+    "'test -n \"$(find pc-facts/pinghud-samples.csv -mmin -2 2>/dev/null)\" && cat pc-facts/pinghud-samples.csv'"
 )
 
 
