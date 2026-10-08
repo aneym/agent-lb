@@ -39,17 +39,19 @@ New machine setup: `GETTING-STARTED.md`. Account work: the
    custody, auth, the selector and quota marks, migrations, `lb-restart` and
    the front, and seat routing (`clients/route`, the seat guard). The surfaces
    are listed in the long form; when in doubt, it is on the money path.
-9. Every change names one check that proves it. Before push, a fresh verifier
-   from the vendor that did not write it reviews it (`verifier` for GPT,
-   Cursor, Devin, GLM or Kimi authors; `codex-verifier`, Sol at xhigh, for Claude
-   authors), and the brief names the author vendor. Money-path changes get
-   three lenses (payload, accounts, release) at xhigh by default; the lead may
-   run fewer when judgment says the risk is covered, and records the count and
-   why in a `Lenses: <n> (<reason>)` trailer. Any one FAIL blocks.
-10. Never push after a FAIL: fix and re-verify the final diff, or record
-    `Verify-override: <reason>` in the commit. The commit carries `Seat:` and
-    `Verified-by:` trailers with the diff id. Nothing checks them; they are
-    the record.
+9. Every change names one check that proves it. Pre-launch (Alex, 2026-10-07:
+   "treat this as a personal project"), one fresh verifier from the vendor that
+   did not write it reviews it after push (`verifier` for GPT, Cursor, Devin,
+   GLM or Kimi authors; `codex-verifier`, Sol at xhigh, for Claude authors), and
+   the brief names the author vendor. Money-path changes get the same one
+   reviewer after push; no three-lens panel before GA. Must-fix findings become
+   the next change.
+10. Two kinds of change still take that review before push: credential custody
+    (crypto, OAuth, auth scripts) and spend-cap code. A FAIL there is fixed and
+    re-verified, or the commit records `Verify-override: <reason>`. The privacy,
+    real-outbound and destructive-data floors are unchanged. Commits carry
+    `Seat:` and, when reviewed before push, `Verified-by:` trailers with the
+    diff id; nothing checks them.
 11. An incident fix ships its fixture test or check in the same commit.
 12. Rules change with evidence: a dated `DECISIONS.md` entry. History stays in
     git.

@@ -46,10 +46,11 @@ Rules:
   direction. Every slice names its files, fixed interfaces and one check
   command. >~3 direct reads on one question or ANY retry of a failed empirical
   step → dispatch a seat. Dispatch independent seats in parallel.
-- Review: every slice gets a fresh cross-vendor verifier (`verifier` for GPT,
-  Cursor or Devin authors; `codex-verifier`, Sol at xhigh, for Claude
-  authors); the brief names the author vendor. Money path: three lenses, any
-  fail blocks, xhigh. Never accept after a FAIL without a re-verify.
+- Review: every slice gets one fresh cross-vendor verifier after merge
+  (`verifier` for GPT, Cursor or Devin authors; `codex-verifier`, Sol at
+  xhigh, for Claude authors); the brief names the author vendor. Money path
+  included, no panel before GA (2026-10-07); must-fix findings become the
+  next slice.
 - Run the lane as a workflow; pass agentType and effort on every agent() call.
 - Never use general-purpose as an implementer; never spawn another planner
   (one brain per lane; if the lane needs splitting, report to the

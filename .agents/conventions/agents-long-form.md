@@ -286,41 +286,38 @@ handle, where the person came from, a machine handle, and where the machine came
 
 ### Review
 
+Pre-launch (Alex, 2026-10-07 21:35 ET: "treat this as a personal project. we want fast
+iteration and not treating it liek a prod app yet until we're launched"), review runs after
+merge. The three-lens money-path panel is the GA setting.
+
 - **One check per change.** Every change names the command that proves it. A bug fix gets its
   test at the failing product path (the trapdoor above).
-- **A fresh verifier from the other vendor reviews every change before push**, and every fix
-  round. `verifier` (Opus, high) reviews GPT, Cursor, Devin, GLM and Kimi authors;
-  `codex-verifier` (Sol, xhigh) reviews Claude authors. The brief names the author vendor.
-  Off the money path one verifier judges the `correct` lens at its own effort.
-- **Money path: three lenses at xhigh, and any one FAIL blocks.**
-  - `payload`: request fidelity, the billing block stays first, streaming, the cache.
-  - `accounts`: credential custody, account ownership on failover, reservations settled
-    before health writes, quota marks, admission and auditor choice in `clients/route`.
-  - `release`: tests at the failing product path, migrations additive and single-head, the
-    lb-restart health gate, the cache eval receipt.
-- **At most two fix rounds.** Then split the change or park it, and log the reason.
+- **One fresh verifier from the other vendor reads every change after push.** `verifier`
+  (Sonnet, high) reviews GPT, Cursor, Devin, GLM and Kimi authors; `codex-verifier` (Sol,
+  xhigh) reviews Claude authors. The brief names the author vendor. Money-path changes get the
+  same one reviewer. Must-fix findings become the next change; nothing waits for them.
+- **Still reviewed before push:** credential custody (crypto, OAuth and auth scripts) and
+  spend-cap code. A FAIL there is fixed and re-verified, or the commit records
+  `Verify-override: <reason>`.
+- **Unchanged floors.** Privacy allow-lists, real outbound to a person and destructive data
+  keep their rules and tests; the Anthropic cache eval still runs after every request-path
+  restart or deploy (rule 4).
 
 ### The verdict record
 
-Stage everything, then take the diff id:
+For a change reviewed before push, stage everything, then take the diff id:
 `git diff --cached | git patch-id --stable | cut -c1-12`. Hand the id to the verifier in its
-brief. The verifier echoes it: `VERDICT PASS|FAIL lens=<lens> diff=<id>`. The commit records
-the author seat and each verdict as trailers:
+brief; it echoes `VERDICT PASS|FAIL diff=<id>`. The commit records the author seat and the
+verdict as trailers:
 
 ```
 Seat: gpt-implementer (openai)
-Verified-by: verifier (anthropic) PASS lens=payload effort=xhigh diff=3f9c1a2b7d04
-Verified-by: verifier (anthropic) PASS lens=accounts effort=xhigh diff=3f9c1a2b7d04
-Verified-by: verifier (anthropic) PASS lens=release effort=xhigh diff=3f9c1a2b7d04
+Verified-by: verifier (anthropic) PASS effort=high diff=3f9c1a2b7d04
 ```
 
 - Vendors: `anthropic`, `openai`, `cursor`, `devin`, `glm`, `kimi`, `human`.
-- Several authors: one `Seat:` line each. Every verifier differs in vendor from all of them.
-- Record every verdict in order, FAILs included. The last verdict per lens decides.
+- Several authors: one `Seat:` line each. The verifier differs in vendor from all of them.
 - A clean `git pull --rebase` keeps the id; a conflicted one needs a re-verify.
-- **Never push after a FAIL.** Fix and re-verify the final diff, or record
-  `Verify-override: <reason>` in the commit. An urgent infra fix may go live first with that
-  override and get its review within a day.
 
 ### Incidents and rule changes
 
