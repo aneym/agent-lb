@@ -23,8 +23,11 @@ def _setup(tmp_path: Path, tasklist: str | None) -> dict[str, str]:
         (tmp_path / "tasklist.txt").write_text(tasklist)
         warning = "** WARNING: connection is not using a post-quantum key exchange algorithm."
         # The real host is the fifth argument after -o BatchMode=yes -o ConnectTimeout=10.
+        facts = tmp_path / 'pc-facts'
+        facts.mkdir()
+        (facts / 'tasklist.csv').write_text(tasklist)
         ssh.write_text(f"#!/bin/sh\necho \"$5\" >> {tmp_path / 'ssh-hosts'}\necho '{warning}'\n"
-                       f"cat {tmp_path / 'tasklist.txt'}\n")
+                       f"shift 5\ncd {tmp_path}\nexec sh -c \"$1\"\n")
     ssh.chmod(0o755)
     throttle = tmp_path / "throttle"
     state = home / ".agent-lb" / "state" / "upload-throttle.json"
@@ -61,6 +64,7 @@ def _throttle(env: dict[str, str]) -> bool | None:
 
 def _set_tasklist(env: dict[str, str], tmp_path: Path, text: str) -> None:
     (tmp_path / "tasklist.txt").write_text(text)
+    (tmp_path / "pc-facts/tasklist.csv").write_text(text)
 
 
 CSV_GAME = (
@@ -155,4 +159,17 @@ def test_the_poll_reads_the_tasklist_from_pc_wsl_never_windows_ssh(tmp_path: Pat
     env = _setup(tmp_path, CSV_GAME)
     _poll(env)
     assert (tmp_path / "ssh-hosts").read_text().split() == ["pc-wsl"]
+    assert _throttle(env) is True
+
+
+def test_stale_tasklist_cannot_release_gaming_protection(tmp_path: Path) -> None:
+    import time
+    env = _setup(tmp_path, CSV_GAME)
+    _poll(env)
+    assert _throttle(env) is True
+    _set_tasklist(env, tmp_path, CSV_IDLE)
+    stale = time.time() - 3600
+    os.utime(tmp_path / 'pc-facts/tasklist.csv', (stale, stale))
+    for _ in range(3):
+        _poll(env)
     assert _throttle(env) is True
