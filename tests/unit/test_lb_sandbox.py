@@ -1038,6 +1038,115 @@ def test_a_store_snapshot_from_before_a_mirror_cycle_is_still_a_leak(
     assert lb.scan_paths([out], secrets, keys=[key])["found"] is False
 
 
+@pytest.mark.parametrize(
+    "encode",
+    [
+        base64.b64encode,
+        base64.urlsafe_b64encode,
+        base64.encodebytes,  # MIME: a newline every 76 characters
+        lambda raw: b"\r\n".join(
+            base64.urlsafe_b64encode(raw)[i : i + 64] for i in range(0, len(base64.urlsafe_b64encode(raw)), 64)
+        ),
+    ],
+    ids=["standard", "urlsafe", "mime-wrapped", "urlsafe-crlf-64"],
+)
+def test_a_base64_encoded_store_snapshot_from_before_a_mirror_cycle_is_still_a_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encode
+) -> None:
+    """Review finding on 54018fbe: the snapshot above, base64-encoded, read clean (found False, 10924 bytes
+    exported). The key must open its ciphertexts inside base64 too, in either alphabet, wrapped or not, and
+    across any chunk boundary of the streaming scan that export uses. The controls: without the key it is
+    missed, and the same encoding of another key's store is not this sandbox's leak."""
+    import io
+    import shutil as sh
+    import sqlite3
+
+    from cryptography.fernet import Fernet
+
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    _keyed_store(lb, root)
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    out = tmp_path / "out"
+    out.mkdir()
+    snapshot = (root / "data" / "store.db").read_bytes()
+    fernet = Fernet((root / "data" / "encryption.key").read_bytes())
+    con = sqlite3.connect(root / "data" / "store.db")
+    con.execute(
+        "UPDATE accounts SET access_token_encrypted = ?, refresh_token_encrypted = ?",
+        (fernet.encrypt(MIRRORED_TOKEN.encode()), fernet.encrypt(b"")),
+    )
+    con.commit()
+    con.close()
+    encoded = encode(snapshot)
+    (out / "snapshot.b64").write_bytes(encoded)
+    secrets = lb.load_secrets(root)
+    key = lb.load_key(root)
+    assert lb.scan_paths([out], secrets, keys=[key])["hits"] == [str((out / "snapshot.b64").resolve())]
+    assert lb.scan_paths([out], secrets)["found"] is False  # current ciphertexts and plaintexts alone miss it
+    detector = lb.Detector(secrets, [key])
+    for chunk in (61, 97, 128):  # boundaries at every alignment of the encoded text
+        assert lb.scan_stream(io.BytesIO(encoded).read, detector, chunk=chunk)[0] is True, chunk
+    other_root = tmp_path / "other" / "r2"
+    _keyed_store(lb, other_root)
+    (out / "snapshot.b64").write_bytes(encode((other_root / "data" / "store.db").read_bytes()))
+    sh.rmtree(other_root)
+    assert lb.scan_paths([out], secrets, keys=[key])["found"] is False
+
+
+DESCENDANT_PARENT = (
+    "import subprocess, sys, time\n"
+    "token = sys.stdin.readline().strip()\n"
+    "if sys.argv[1] == 'token':\n"
+    "    env = {'PATH': '/usr/bin:/bin', 'AGENT_LB_FEDERATION_TOKEN': token}\n"
+    "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'], env=env)\n"
+    "else:\n"
+    "    child = subprocess.Popen(['/bin/sleep', '20'])  # a platform binary: ps never shows its environment\n"
+    "print(child.pid, flush=True)\n"
+    "time.sleep(20)\n"
+)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
+@pytest.mark.parametrize("child", ["token", "hidden"])
+def test_process_scan_reads_children_whose_argv_names_neither_root_nor_run(tmp_path: Path, child: str) -> None:
+    """Review finding: a sandbox child whose argv omits the run id and root was never selected, so a token in
+    its environment read clean (process_envs_requested [111], found False, complete True). Every descendant of
+    a run process is scanned; one whose environment ps cannot show leaves the scan incomplete."""
+    import signal
+    import time
+
+    lb = _load()
+    root = (tmp_path / "sandboxes" / "r1").resolve()
+    root.mkdir(parents=True)
+    parent = subprocess.Popen(
+        [sys.executable, "-c", DESCENDANT_PARENT, child, str(root)],
+        env={"PATH": "/usr/bin:/bin", "LB_SANDBOX_ROOT": str(root)},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        start_new_session=True,  # parent and child in one group, killed together below
+    )
+    try:
+        parent.stdin.write(FAKE_TOKEN.encode() + b"\n")
+        parent.stdin.close()
+        child_pid = int(parent.stdout.readline())
+        time.sleep(0.5)
+        result = lb.scan_processes(root, "r1", [FAKE_TOKEN])
+    finally:
+        try:
+            os.killpg(parent.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        parent.wait(10)
+    assert parent.pid in result["visible_pids"]
+    if child == "token":
+        assert (result["found"], result["hits"], result["descendant_pids"]) == (True, [child_pid], [child_pid])
+    else:
+        assert (result["found"], result["complete"], result["invisible_pids"]) == (False, False, [child_pid])
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
 def test_process_scan_is_incomplete_when_any_run_process_hides_its_environment(tmp_path: Path) -> None:
     """Finding: environment visibility was checked only for named roles. A run process whose environment ps

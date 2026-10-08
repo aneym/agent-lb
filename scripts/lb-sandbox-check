@@ -42,6 +42,10 @@ HOME = Path.home()
 LIVE_LABEL = "com.aneyman.agent-lb"
 LIVE_FRONT_LABEL = "com.aneyman.agent-lb-front"
 LIVE_FRONT_STATE = HOME / ".agent-lb" / "state" / "front.json"
+# lb-restart appends one line per live restart here and holds this lock (holder line inside) while one runs.
+LIVE_SYNC_LOG = HOME / ".agent-lb" / "runtime" / "sync.log"
+LIVE_RESTART_LOCK = HOME / ".agent-lb" / "runtime" / "lb-restart.lock"
+SYNC_RESTART_RE = re.compile(r"^\S+ lb-restart (ok|FAILED)\b")
 GATE_ALLOWED = {("GET", "/api/federation/mirror"), ("GET", "/api/federation/status")}
 HOLD_S = 30  # the edge holds the restart stream at most this long; the check releases it right after cutover
 CUTOVER_RE = re.compile(r"front -> :(\d+); primary pid (\d+) had (-?\d+|None) in flight")
@@ -65,6 +69,7 @@ class Check:
         self.n = 0
         self.lock = threading.Lock()
         self.steps: list[dict] = []
+        self.env_infra: str | None = None  # a concurrent live deploy: environment, not a slice defect
         self.unverified = [
             "Other hosts: Studio only; boxes use their own follower agent-lb.",
             "OAuth refresh in the sandbox: mirrored accounts carry access tokens only; refresh is refused in code.",
@@ -123,6 +128,53 @@ def live_identity() -> dict:
         "listeners_2457": listener_pids(2457),
         "preferred_port": preferred,
     }
+
+
+def sync_log_size() -> int:
+    """Bytes in the live restart log now: the mark after which a line is a restart during this run."""
+    try:
+        return LIVE_SYNC_LOG.stat().st_size
+    except OSError:
+        return 0
+
+
+def live_restarts_since(offset: int) -> list[str]:
+    """The live restarts lb-restart logged after offset (another lane's deploy), one line each, shortened."""
+    try:
+        with open(LIVE_SYNC_LOG, "rb") as fh:
+            fh.seek(offset)
+            text = fh.read(1 << 20).decode("utf-8", "replace")
+    except OSError:
+        return []
+    return [line[:300] for line in text.splitlines() if SYNC_RESTART_RE.match(line)]
+
+
+def live_restart_holder() -> str | None:
+    """The holder line of the live lb-restart lock (pid, since, reason) while a live restart runs, else None.
+    Read only: the lock is never taken."""
+    try:
+        text = LIVE_RESTART_LOCK.read_text(errors="replace").strip()
+    except OSError:
+        return None
+    return text[:300] or None
+
+
+def live_untouched(before: dict, after: dict, restarts: list[str], holders: list[str]) -> tuple[str, str]:
+    """('pass' | 'infra_error' | 'fail', why) for the live identity across the run.
+
+    A changed identity with a live lb-restart logged or holding its lock during the run is another lane's
+    deploy, not this sandbox's doing: infra_error naming that restart, never pass (the run proved nothing about
+    the live service) and never a bare fail (build lead, 2026-10-07). A change with no such restart is a fail.
+    """
+    if after == before:
+        return "pass", f"before {before}; after {after}"
+    named = [f"logged: {line}" for line in restarts] + [f"in progress: {line}" for line in holders]
+    if named:
+        return "infra_error", (
+            f"live agent-lb restarted by another lane during the run ({'; '.join(named)}); "
+            f"before {before}; after {after}"
+        )
+    return "fail", f"live identity changed with no live lb-restart logged or running: before {before}; after {after}"
 
 
 def resolve_model(alias: str, fallback: str) -> str:
@@ -470,6 +522,8 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     marker = out / "marker"
     marker.write_text(f"{run_id} {utc()}\n")
     time.sleep(1.1)  # mtime resolution: anything written after this is newer than the marker
+    sync_mark = sync_log_size()
+    holder_before = live_restart_holder()
     before = live_identity()
     (out / "live-before.json").write_text(json.dumps(before, indent=1))
     c.step(
@@ -778,13 +832,22 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
 
     # 9. live identity after
     after = live_identity()
+    holders = sorted({h for h in (holder_before, live_restart_holder()) if h})
+    restarts = live_restarts_since(sync_mark)
     (out / "live-after.json").write_text(json.dumps(after, indent=1))
-    c.step(
-        "live-untouched",
-        after == before,
-        f"before {before}; after {after}",
-        [str(out / "live-before.json"), str(out / "live-after.json")],
+    (out / "live-restarts.json").write_text(
+        json.dumps({"sync_log": str(LIVE_SYNC_LOG), "offset": sync_mark, "logged": restarts, "lock_holders": holders})
     )
+    verdict, detail = live_untouched(before, after, restarts, holders)
+    evidence = [str(out / "live-before.json"), str(out / "live-after.json"), str(out / "live-restarts.json")]
+    if verdict == "infra_error":
+        # The contract's step results have no infra_error: the step is unverified, the run is infra_error.
+        c.env_infra = detail
+        c.unverified.append(f"Live agent-lb untouched: not provable this run; {detail}")
+        c.steps.append({"name": "live-untouched", "result": "unverified", "detail": detail, "evidence": evidence})
+        print(f"[{utc()}] INFRA live-untouched: {detail}", flush=True)
+    else:
+        c.step("live-untouched", verdict == "pass", detail, evidence)
 
 
 def stop_and_verify(c: Check, run_id: str) -> None:
@@ -816,6 +879,20 @@ def leftover_pids(run_id: str) -> list[int]:
         if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) != os.getpid() and run_id in parts[1]:
             leftover.append(int(parts[0]))
     return leftover
+
+
+def run_verdict(steps: list[dict], infra: str | None, env_infra: str | None) -> str:
+    """The run's result. A real failure is never hidden behind a concurrent live deploy (env_infra); with no
+    failure, that deploy makes the run infra_error; pass needs every step pass with evidence."""
+    if infra:
+        return "infra_error"
+    if any(s["result"] == "fail" for s in steps):
+        return "fail"
+    if env_infra:
+        return "infra_error"
+    if steps and all(s["result"] == "pass" and s["evidence"] for s in steps):
+        return "pass"
+    return "fail"
 
 
 OUT_CLAIM = ".lb-sandbox-check.claim"
@@ -868,12 +945,7 @@ def main() -> int:
         if c.started and not c.stopped and c.run_id:
             stop_and_verify(c, c.run_id)
     steps = c.steps
-    if c.infra:
-        verdict = "infra_error"
-    elif steps and all(s["result"] == "pass" and s["evidence"] for s in steps):
-        verdict = "pass"
-    else:
-        verdict = "fail"
+    verdict = run_verdict(steps, c.infra, c.env_infra)
     failed = [s["name"] for s in steps if s["result"] != "pass"]
     result = {
         "schema": 1,
@@ -886,6 +958,7 @@ def main() -> int:
         "result": verdict,
         "summary": (
             c.infra
+            or (c.env_infra if verdict == "infra_error" else None)
             or (
                 "lb-sandbox mirrored the live pool, served both vendors, failed over an injected 429 on each edge, "
                 "restarted blue/green with a held stream in flight across the cutover, kept every token out of "

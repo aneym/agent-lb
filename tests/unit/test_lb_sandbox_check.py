@@ -213,3 +213,50 @@ def test_a_run_refuses_an_out_dir_another_run_holds(tmp_path: Path) -> None:
     assert "--out" in verdict["summary"]
     assert sorted(p.name for p in out.iterdir()) == ["result.json"]
     assert first.read_text() == '{"result": "pass"}\n'
+
+
+LIVE = {
+    "primary_pid": 39914,
+    "front_pid": 86258,
+    "listeners_2455": [45020, 86273],
+    "listeners_2457": [],
+    "preferred_port": 2459,
+}
+MOVED = {**LIVE, "primary_pid": 10421, "listeners_2457": [10421], "preferred_port": 2457}
+OTHER_LANE = (
+    '2026-10-08T01:05:56Z lb-restart ok reason="jacob-codex: member refusal text (agent-lb 7bceb106)" '
+    "primary_in_flight_at_cutover=8 old_pid=39914 new_pid=10421"
+)
+
+
+def test_a_live_restart_by_another_lane_during_the_run_is_infra_error_naming_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S3 run 2026-10-08: another lane's live lb-restart landed mid-run and live-untouched read as a bare fail.
+    A changed live identity with a live restart logged (runtime/sync.log, after the run's mark) or holding the
+    lock is infra_error naming it, never pass; with no such restart it stays a fail; a real failure elsewhere
+    keeps the run a fail."""
+    check = _load()
+    log = tmp_path / "sync.log"
+    log.write_text("2026-10-07T23:21:45Z lb-restart ok reason='before the run' old_pid=77624 new_pid=39914\n")
+    monkeypatch.setattr(check, "LIVE_SYNC_LOG", log)
+    mark = check.sync_log_size()
+    with log.open("a") as fh:
+        fh.write("2026-10-08T01:04:00Z lb-restart reaper: standby pid 5 still alive 30s after SIGTERM\n")
+        fh.write(OTHER_LANE + "\n")
+    restarts = check.live_restarts_since(mark)
+    assert restarts == [OTHER_LANE]
+
+    verdict, detail = check.live_untouched(LIVE, MOVED, restarts, [])
+    assert verdict == "infra_error" and "jacob-codex" in detail and "new_pid=10421" in detail
+    held = "pid=4242 since=2026-10-08T01:01:00Z reason=deploy in progress"
+    verdict, detail_held = check.live_untouched(LIVE, MOVED, [], [held])
+    assert verdict == "infra_error" and held in detail_held
+    assert check.live_untouched(LIVE, MOVED, [], [])[0] == "fail"
+    assert check.live_untouched(LIVE, LIVE, restarts, [held])[0] == "pass"
+
+    ok = {"name": "scan", "result": "pass", "detail": "", "evidence": ["e"]}
+    deferred = {"name": "live-untouched", "result": "unverified", "detail": detail, "evidence": ["e"]}
+    assert check.run_verdict([ok, deferred], None, detail) == "infra_error"
+    assert check.run_verdict([ok, {**ok, "result": "fail"}, deferred], None, detail) == "fail"
+    assert check.run_verdict([ok], None, None) == "pass"

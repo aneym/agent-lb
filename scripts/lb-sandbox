@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import datetime as dt
 import errno
 import hashlib
@@ -1474,6 +1475,25 @@ def secret_patterns(secret: str) -> list[bytes]:
 # 56 characters decode to 42 bytes: version, timestamp, IV and the first ciphertext block.
 FERNET_FRAGMENT = re.compile(rb"(?=(gAAAAA[A-Za-z0-9_-]{50}))")
 FERNET_FRAGMENT_CHARS = 56
+# A store snapshot base64-encoded once more (standard or URL-safe alphabet, one line or wrapped) holds each
+# Fernet token as base64 of base64. 56 fragment characters take at least 75 encoded characters; a run that short
+# or longer is decoded at each of the four alignments and the decoded bytes are searched like a raw file.
+B64_RUN = re.compile(rb"[A-Za-z0-9+/_\-\r\n]{75,}")
+# Window the scan keeps across a chunk boundary for that search: an encoded fragment spans at most 78
+# characters, and line breaks (CRLF every 64 or 76 characters) add at most a few more.
+B64_FRAGMENT_SPAN = 96
+B64_STANDARD = bytes.maketrans(b"-_", b"+/")
+
+
+def base64_decodings(buf: bytes):
+    """The bytes each long base64 run in buf decodes to, at each of the four alignments, either alphabet."""
+    for match in B64_RUN.finditer(buf):
+        text = match.group(0).translate(B64_STANDARD, b"\r\n")
+        for offset in range(4):
+            piece = text[offset:]
+            piece = piece[: len(piece) - len(piece) % 4]
+            if len(piece) >= 4:
+                yield binascii.a2b_base64(piece)
 
 
 def plausible_plaintext(block: bytes) -> bool:
@@ -1491,8 +1511,9 @@ class Detector:
 
     The secrets raw and inside base64 (secret_patterns), and, given the sandbox store key, any ciphertext
     that key opens: a Fernet token (even a fragment, such as one split across SQLite overflow pages) whose
-    first block decrypts to token text. That catches a copy of the store taken before a mirror cycle
-    re-encrypted every row, which matches no current ciphertext.
+    first block decrypts to token text, raw or inside standard or URL-safe base64 (base64_decodings). That
+    catches a copy of the store taken before a mirror cycle re-encrypted every row, which matches no current
+    ciphertext, and the same copy base64-encoded.
     """
 
     def __init__(self, secrets: list[str], keys: list[str] | None = None) -> None:
@@ -1505,7 +1526,7 @@ class Detector:
 
             raw = base64.urlsafe_b64decode(key.encode() if isinstance(key, str) else key)
             self.decryptors.append(Cipher(algorithms.AES(raw[16:]), modes.ECB()).decryptor())
-        lengths = [len(p) for p in self.patterns] + ([FERNET_FRAGMENT_CHARS] if self.decryptors else [])
+        lengths = [len(p) for p in self.patterns] + ([B64_FRAGMENT_SPAN] if self.decryptors else [])
         self.overlap = max(lengths, default=1) - 1
 
     def __bool__(self) -> bool:
@@ -1519,12 +1540,16 @@ class Detector:
             for dec in self.decryptors
         )
 
+    def keyed(self, buf: bytes) -> bool:
+        return b"gAAAAA" in buf and any(self.opens(m.group(1)) for m in FERNET_FRAGMENT.finditer(buf))
+
     def hit(self, buf: bytes) -> bool:
         if any(p in buf for p in self.patterns):
             return True
-        if self.decryptors and b"gAAAAA" in buf:
-            return any(self.opens(m.group(1)) for m in FERNET_FRAGMENT.finditer(buf))
-        return False
+        if not self.decryptors:
+            return False
+        # Raw, then inside base64: a snapshot encoded for transport is still the snapshot.
+        return self.keyed(buf) or any(self.keyed(decoded) for decoded in base64_decodings(buf))
 
 
 def scan_stream(read, detector: Detector, write=None, chunk: int = 4 << 20) -> tuple[bool, int]:
@@ -1924,40 +1949,101 @@ def env_shows_root(env_text: bytes, root: Path) -> bool:
 PROCESS_SETTLE_S = 2.0
 
 
-def env_part(argv_text: bytes, text: bytes, root: Path) -> bool:
-    """True when `ps -E` output, past the argv `ps` printed alone, holds this root's marker entry."""
-    return bool(argv_text.strip()) and text.startswith(argv_text) and env_shows_root(text[len(argv_text) :], root)
+def run_processes(rows: list[tuple[int, int, str]], root: Path, run_id: str) -> tuple[list[int], list[int]]:
+    """(named, descendants): processes whose command line names this root or passes this run id, and every
+    process below one of them, whatever its argv says. The scanner's own lineage is never either."""
+    lineage = own_lineage(rows)
+    named = {pid for pid, _, cmd in rows if (names_root(cmd, root) or run_argument(cmd, run_id)) and pid not in lineage}
+    children: dict[int, list[int]] = {}
+    for pid, ppid, _ in rows:
+        if pid != ppid:
+            children.setdefault(ppid, []).append(pid)
+    below: set[int] = set()
+    stack = sorted(named)
+    while stack:
+        for child in children.get(stack.pop(), []):
+            if child not in named and child not in below and child not in lineage:
+                below.add(child)
+                stack.append(child)
+    return sorted(named), sorted(below)
+
+
+def executable_path(pid: int) -> str | None:
+    """The file the kernel runs for pid (proc_pidpath), never the argv the process chose for itself."""
+    try:
+        import ctypes
+
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        buf = ctypes.create_string_buffer(4096)
+        size = libproc.proc_pidpath(ctypes.c_int(pid), buf, ctypes.c_uint32(len(buf)))
+    except (OSError, AttributeError):
+        return None
+    return buf.value.decode(errors="replace") if size > 0 else None
+
+
+# Platform tools lb-sandbox and lb-restart run as children with the caller's own environment (no env= argument):
+# macOS never shows a platform binary's environment, and a long lsof or a `launchctl kickstart -k` waiting out a
+# drain outlives the settle wait. Set aside only below a run process whose environment was read, and only when the
+# kernel names the binary (proc_pidpath), never by argv.
+INHERITING_TOOLS = frozenset({"/bin/launchctl", "/bin/ps", "/usr/sbin/lsof"})
+
+
+def zombie(pid: int) -> bool:
+    """True for an exited process its parent has not reaped: no memory, no environment left to hold a secret."""
+    out = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, timeout=30, check=False)
+    return out.stdout.strip().startswith(b"Z")
+
+
+def env_rest(argv_text: bytes, text: bytes) -> bytes | None:
+    """The environment part of `ps -E` output (past the argv `ps` printed alone), None when they disagree."""
+    if not argv_text.strip() or not text.startswith(argv_text):
+        return None
+    return text[len(argv_text) :]
 
 
 def scan_processes(root: Path, run_id: str, secrets: list[str]) -> dict:
     """Search the exec environment and argv (`ps -E`, as `ps eww` shows them) of every process of this run.
 
-    Returns pids and counts only. Every process that names the run must show its environment: ps prints
-    argv, then the environment, so the part after the argv (`ps` without -E) must hold this root's
-    LB_SANDBOX_ROOT entry. A process whose environment ps did not show (visible_pids lacks it) makes the
-    scan incomplete, whichever process it is, so no extra child can read clean unseen. A command that names
-    only the run's launchd label (`launchctl kickstart -k gui/<uid>/<label>`, which lb-restart leaves waiting
-    out the drain) is not selected: launchctl is a platform binary whose environment macOS never shows, and
-    its environment is its caller's, lb-restart, which names the root and is scanned.
+    Returns pids and counts only. The run's processes are those whose command line names the root or passes
+    the run id, and every descendant of one of them (run_processes): a child whose argv names neither still
+    inherits, or is handed, the environment its parent had. ps prints argv, then the environment. A named
+    process's environment counts as shown only when the part after the argv (`ps` without -E) holds this root's
+    LB_SANDBOX_ROOT entry; a descendant's, when that part is not empty (a child may be given an environment
+    without the marker). A process whose environment ps did not show (visible_pids lacks it) makes the scan
+    incomplete, whichever process it is, so no extra child can read clean unseen.
+
+    A command that names only the run's launchd label (`launchctl kickstart -k gui/<uid>/<label>`, which
+    lb-restart leaves waiting out the drain) is not selected by name. Below a run process, a hidden child is set
+    aside (tool_pids) only when the kernel says it runs one of INHERITING_TOOLS and its parent's environment
+    was read: those are platform binaries whose environment macOS never shows, and lb-sandbox and lb-restart
+    hand them their own, which is scanned. Any other hidden descendant leaves the scan incomplete.
     """
     patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
     rows = processes()
-    lineage = own_lineage(rows)
-    pids = sorted(
-        pid for pid, _, cmd in rows if (names_root(cmd, root) or run_argument(cmd, run_id)) and pid not in lineage
-    )
-    hits, visible, invisible, unreadable, scanned = [], [], [], [], []
+    named, below = run_processes(rows, root, run_id)
+    parent_of = {pid: ppid for pid, ppid, _ in rows}
+    pids = sorted({*named, *below})
+
+    def shown_for(pid: int, argv_text: bytes, text: bytes) -> bool:
+        rest = env_rest(argv_text, text)
+        if rest is None:
+            return False
+        if pid in below:
+            return bool(rest.strip())
+        return env_shows_root(rest, root)
+
+    hits, visible, invisible, unreadable, scanned, inherited = [], [], [], [], [], []
     for pid in pids:
         argv_text = ps_command(pid, with_env=False)
         text = ps_command(pid, with_env=True)
         if not text.strip() or not argv_text.strip():
-            if pid_alive(pid):
+            if pid_alive(pid) and not zombie(pid):
                 unreadable.append(pid)
             continue
         scanned.append(pid)
         if any(p in text for p in patterns):
             hits.append(pid)
-        shown = env_part(argv_text, text, root)
+        shown = shown_for(pid, argv_text, text)
         # macOS hides the environment of platform binaries (launchctl, ps): a short-lived one that names the
         # run gets a moment to exit; one that stays is unreadable and the scan is incomplete.
         deadline = time.monotonic() + PROCESS_SETTLE_S
@@ -1966,21 +2052,28 @@ def scan_processes(root: Path, run_id: str, secrets: list[str]) -> dict:
             argv_text, text = ps_command(pid, with_env=False), ps_command(pid, with_env=True)
             if any(p in text for p in patterns) and pid not in hits:
                 hits.append(pid)
-            shown = env_part(argv_text, text, root)
+            shown = shown_for(pid, argv_text, text)
         if shown:
             visible.append(pid)
-        elif pid_alive(pid):
+        elif pid_alive(pid) and not zombie(pid):
             invisible.append(pid)
         elif pid not in hits:
             scanned.remove(pid)  # exited before ps could show its environment: nothing left to hold a secret
+    for pid in list(invisible):
+        if pid in below and parent_of.get(pid) in visible and executable_path(pid) in INHERITING_TOOLS:
+            invisible.remove(pid)
+            scanned.remove(pid)
+            inherited.append(pid)
     return {
         "found": bool(hits),
         "complete": bool(patterns) and not unreadable and not invisible and bool(scanned),
         "processes_scanned": len(scanned),
         "pids": scanned,
+        "descendant_pids": [pid for pid in below if pid in scanned],
         "visible_pids": visible,
         "invisible_pids": invisible,
         "unreadable_pids": unreadable,
+        "tool_pids": inherited,
         "hits": hits,
         "secrets_loaded": len(secrets),
     }
