@@ -905,6 +905,12 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
     assert refused.returncode == 2 and "BLOCKED: recursive search" in refused.stderr, refused
     allowed = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg -n needle src"}}, env)
     assert allowed.returncode == 0 and not allowed.stdout, allowed
+    # The installed mirror's own installer (the rollback command) reads the guard from the mirror: it must be there.
+    mirror = home / ".agents/policy/coding-agents"
+    assert os.access(mirror / "hooks/wide-scan-guard.sh", os.X_OK)
+    rollback = subprocess.run([sys.executable, str(mirror / "install-policy.py"), "--home", str(home),
+                               "--hook-dispatcher", "off"], env=env, capture_output=True, text=True, timeout=600)
+    assert rollback.returncode == 0, rollback.stdout + rollback.stderr
 
 
 def test_rollback_passes_over_a_registry_that_cannot_restore_the_guards(tmp_path: Path) -> None:

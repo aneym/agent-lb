@@ -1291,7 +1291,9 @@ def main() -> int:
         if replace_policy_link or policy_dir.resolve() != source:
             policy_sources = [Path(name) for name in POLICY_FILES]
             policy_sources += [path.relative_to(source) for path in sorted((source / "agents").glob("*.md"))]
-            policy_sources += [path.relative_to(source) for path in sorted((source / "hooks").glob("*.py"))]
+            # Shell guard sources too (wide-scan-guard.sh, 2026-10-08): the mirror's own install-policy.py reads them.
+            policy_sources += [path.relative_to(source) for pattern in ("*.py", "*.sh")
+                               for path in sorted((source / "hooks").glob(pattern))]
             for relative in policy_sources:
                 wanted = (source / relative).read_text()
                 # Behind a symlink every file must be written: the link is replaced
