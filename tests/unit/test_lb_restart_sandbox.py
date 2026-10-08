@@ -913,7 +913,9 @@ def test_front_state_replaced_between_open_and_fstat_is_read_not_refused(
 # ---------------------------------------------------------------- lbsb-4 fix round (S2-3 review, parked findings)
 
 
-def _job_print(label: str, plist: dict, program: str | None = None, arguments: list[str] | None = None) -> str:
+def _job_print(
+    label: str, plist: dict, program: str | None = None, arguments: list[str] | None = None, submitted: bool = False
+) -> str:
     """`launchctl print gui/<uid>/<label>` for a job loaded from plist, in the layout launchd prints on macOS 26
     (taken from a real print of a throwaway com.agent-lb.drill.* job): program and arguments, working directory,
     stream paths, the three environment blocks, then launchd's own fields."""
@@ -931,7 +933,11 @@ def _job_print(label: str, plist: dict, program: str | None = None, arguments: l
     env = {"OSLogRateLimit": "64", **plist.get("EnvironmentVariables", {}), "XPC_SERVICE_NAME": label}
     lines += ["\tenvironment = {", *(f"\t\t{k} => {v}" for k, v in env.items()), "\t}", ""]
     lines += ["\tdomain = gui/501 [100023]", "\truns = 0", "\tresource coalition = {", "\t\tID = 1", "\t}"]
-    lines += ["", "\tproperties = inferred program", "}"]
+    lines += ["", "\tproperties = inferred program"]
+    if submitted:  # a job handed to launchd by value (SMJobSubmit), as lb-sandbox start loads every sandbox job
+        lines[2:4] = ["\tpath = (submitted by python3.14[4242])", "\ttype = Submitted"]
+        lines += ["", "\tsubmitted job. ignore execute allowed", ""]
+    lines += ["}"]
     return "\n".join(lines) + "\n"
 
 
@@ -1167,3 +1173,28 @@ def test_a_root_that_is_not_its_own_volume_is_refused_before_its_lock_is_touched
         subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", str(root2)], timeout=180, check=False)
         if devices and os.path.ismount(root2):
             subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", devices[0]], timeout=180, check=False)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchd is macOS")
+def test_a_job_start_submitted_by_value_passes_the_loaded_job_check(tmp_path: Path) -> None:
+    """Fix round 6 live check (run-14358): start now hands launchd its jobs by value (SMJobSubmit), and launchd
+    prints such a job with one bare line, `submitted job. ignore execute allowed`, which the parser refused as a
+    mangled key, so every sandbox restart exited 2 before its standby. That exact line is accepted once at the top
+    level; the same text inside a block, a variant of it or a second copy is still refused."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    _apply(lb, config, tmp_path)
+    root = config.parent
+    plist = plistlib.loads(Path(lb.PLIST).read_bytes())
+    python = lb.sandbox_python_for(root)
+    want = [*lb.sandbox_program(root), "--host", "127.0.0.1", "--port", str(lb.PRIMARY_PORT)]
+    text = _job_print(lb.LABEL, plist, program=str(python), arguments=want, submitted=True)
+    lb.check_loaded_job_print(text, plist, python, want)
+    flag = "\tsubmitted job. ignore execute allowed\n"
+    for forged in (
+        text.replace(flag, flag + flag),
+        text.replace(flag, "\tsubmitted job. ignore execute allowed; DYLD_INSERT_LIBRARIES\n"),
+        text.replace("\tenvironment = {\n", "\tenvironment = {\n\t" + flag),
+    ):
+        with pytest.raises(lb.SandboxRefused):
+            lb.check_loaded_job_print(forged, plist, python, want)

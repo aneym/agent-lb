@@ -1317,6 +1317,9 @@ JOB_ENV_BLOCKS = ("environment", "inherited environment", "default environment")
 LAUNCHD_ENV_KEYS = frozenset({"XPC_SERVICE_NAME", "OSLogRateLimit", "XPC_FLAGS"})
 # Where launchd sends a job's standard streams, as `launchctl print` names them, and the plist keys behind them.
 JOB_STREAMS = {"stdout path": "StandardOutPath", "stderr path": "StandardErrorPath", "stdin path": "StandardInPath"}
+# The one bare top-level line launchd prints for a job submitted by value (SMJobSubmit, as lb-sandbox start loads
+# every sandbox job; measured on macOS 26). It carries no key or value; it is accepted once, exactly as printed.
+JOB_FLAG_LINES = frozenset({"submitted job. ignore execute allowed"})
 
 
 def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
@@ -1332,6 +1335,7 @@ def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
     if not lines or not lines[0].endswith(" = {"):
         raise SandboxRefused("launchctl print of the sandbox job is not one job")
     current: str | None = None
+    flags: set[str] = set()
     for line in lines[1:]:
         if current is not None:
             if line == "\t}":
@@ -1345,6 +1349,9 @@ def parse_job_print(text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
             continue
         if not line.startswith("\t") or line.startswith("\t\t"):
             raise SandboxRefused("launchctl print of the sandbox job has a line at the wrong depth")
+        if line[1:] in JOB_FLAG_LINES and line[1:] not in flags:
+            flags.add(line[1:])
+            continue
         key, sep, value = line[1:].partition(" = ")
         if not sep or key in scalars or key in blocks:
             raise SandboxRefused(f"launchctl print of the sandbox job repeats or mangles {key!r}")

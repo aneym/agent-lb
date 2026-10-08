@@ -92,4 +92,5 @@
 - [x] M4: `lb-restart --sandbox` refuses a root that is not its own volume before opening anything in it.
 - [x] P1: the keyed ciphertext search runs on the unwrapped bytes too, and the stream window covers a wrapped keyed fragment; an indented CRLF 64-column stale snapshot regression.
 - [x] P2: the check arms the hold at lb-sandbox's ceiling and releases it only after the cutover process scan, which is bounded by the time left on the hold.
+- [x] `lb-restart --sandbox` accepts, once and only at the top level, the bare `submitted job. ignore execute allowed` line launchd prints for a job submitted by value (found by the live check, run-14358: every sandbox restart exited 2).
 - [x] Each regression fails on ef7ceb98 for the reason it names.
