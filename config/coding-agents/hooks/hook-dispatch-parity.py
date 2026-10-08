@@ -509,6 +509,9 @@ class Sandbox(object):
             "LOAD_GOVERNOR_FAKE_MEM": "10",
             "LOAD_GOVERNOR_FAKE_IDLE": "90",
             "ALEX_SAID_UNBLOCK": "",
+            # No custody token, whatever the caller's environment holds: the railway delete case is refused.
+            "RAILWAY_TOKEN": "",
+            "RAILWAY_API_TOKEN": "",
             "LANG": os.environ.get("LANG") or "en_US.UTF-8",
         })
         env.update(extra or {})
@@ -571,9 +574,14 @@ def builtin_cases():
         dict(bash("grep -r needle ~/.agent-rails/x"), name="rewrite-wide-scan-fifo", expect=None),
         dict(bash("rg needle /"), name="deny-wide-scan-root", expect=None),
         dict(bash("rg -l b-123 ~/.agent-rails"), name="deny-wide-scan-lanes", expect=None),
+        # The wide-scan guard still refuses input it cannot read (here a tool_input that is not an object: its jq fails).
+        dict(event="PreToolUse", tool="Bash", input="rg needle /", name="deny-wide-scan-unreadable", expect=deny),
         dict(bash("link-cli auth status"), name="deny-link-cli-secret", expect=deny),
-        dict(bash("railway variables --kv"), name="deny-railway-kv", expect=deny),
-        dict(bash("railway run printenv"), name="deny-railway-printenv", expect=deny),
+        # Pre-GA the railway secret floor is advisory (agent-lb de5a6eba, GA-RESTORE: RAILWAY_SECRET_FLOOR=1): value
+        # reads warn and pass; a destructive delete without a custody token is still refused (destructive data floor).
+        dict(bash("railway variables --kv"), name="deny-railway-kv", expect=None),
+        dict(bash("railway run printenv"), name="deny-railway-printenv", expect=None),
+        dict(bash("railway down"), name="deny-railway-delete", expect=deny),
         dict(bash('open -a "Google Chrome" https://example.com'), name="deny-no-chrome", expect=deny),
         dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
         dict(bash("ssh pc chr'" + "ome'"), name="deny-no-chrome-pc-quote-split", expect=deny),
@@ -599,12 +607,18 @@ def builtin_cases():
         dict(event="PreToolUse", tool="Agent",
              input={"subagent_type": "general-purpose", "model": "gpt-5.4-mini", "prompt": "x", "description": "x"},
              name="deny-seat-guard-blocked-model", expect=None),
+        # The seat guard still refuses input it cannot read (a subagent_type that is not text).
+        dict(event="PreToolUse", tool="Agent", input={"subagent_type": 5, "prompt": "x", "description": "x"},
+             name="deny-seat-guard-unreadable", expect=deny),
         dict(event="PreToolUse", tool="Agent",
              input={"subagent_type": "Explore", "prompt": "find files", "description": "explore"},
              name="allow-seat-guard", expect=None),
         # Workflow: the relay guard and the workflow seat guard
         dict(event="PreToolUse", tool="Workflow", input={"script": "agent('do the thing')"},
              name="deny-relay-guard", expect=None),
+        # A genuine relay guard refusal: a script that is not text (the missing marker above only advises).
+        dict(event="PreToolUse", tool="Workflow", input={"script": 123}, name="deny-relay-guard-unreadable",
+             expect=deny),
         dict(event="PreToolUse", tool="Workflow", input={"script": "// RELAYED-REQUEST-GUARD\nagent('x')"},
              name="allow-relay-guard", expect=None),
         # aside
@@ -840,6 +854,9 @@ def run_case(sandbox, registry, case):
     # What the dispatcher path showed and how long its entries ran: the exec'd rewriter's timeout case reads these.
     outcome["new_updated_input"] = new_view["updatedInput"]
     outcome["new_shown"] = new_view["shown"][:400]
+    # The context each path hands the model: a warn-only guard's finding reaches it here (guard trim, 2026-10-08).
+    outcome["context"] = old_plain["context"]
+    outcome["new_context"] = new_view["context"]
     outcome["new_codes"] = [result["code"] for result in new_results]
     outcome["new_seconds"] = max([result["seconds"] for result in new_results] or [0])
     outcome["new_timed_out"] = any(result["timed_out"] for result in new_results)
@@ -1267,10 +1284,19 @@ def replay_leaves(registry):
     return leaves + ([control] if control else [])
 
 
+def folded_in(registry, key, hook):
+    """The fold under test runs this hook through the dispatcher: its matcher's entry lists the same command. A floor
+    leaf left per-hook fails open there whatever the replay shows (2026-10-08 review M2: the replay folds every leaf
+    into its own registry, so the lone Agent seat guard read as covered though the live settings ran it per-hook);
+    each replay row says so in `folded`."""
+    entry = ((registry.get("entries") or {}).get("PreToolUse") or {}).get(key) or []
+    return any(isinstance(other, dict) and other.get("command") == hook["command"] for other in entry)
+
+
 SHAPE_SCRIPT = re.compile(r'^\s*(?:(/usr/bin/python3|python3|/bin/bash|bash)\s+)?("\$HOME/[^"]+"|\$HOME/\S+|~/\S+)')
 
 
-def replay_case(root, dispatcher, real_home, inproc, index, name, key, hook, mode):
+def replay_case(root, dispatcher, real_home, inproc, index, name, key, hook, mode, live=None):
     command = hook["command"]
     match = SHAPE_SCRIPT.match(legacy(command) or command)
     extra, remove = {}, []
@@ -1296,10 +1322,14 @@ def replay_case(root, dispatcher, real_home, inproc, index, name, key, hook, mod
     outcome = run_case(sandbox, registry, case)
     shutil.rmtree(sandbox.root, ignore_errors=True)
     want = "deny" if name else outcome["decision"]
+    # `ok` is the replay's own result (the install gate: a fold whose config order keeps a floor group per-hook still
+    # beats no fold); `folded` says whether the fold under test runs this leaf through the dispatcher at all, which
+    # the harden check requires of every live floor leaf.
+    folded = folded_in(live, key, hook) if live is not None else True
     return {"name": case["name"], "leaf": name, "control": name is None, "mode": mode, "command": command[:120],
             "per_hook_decision": outcome["decision"], "decision": outcome["new_decision"],
             "message": outcome["new_block_message"][:300], "parity": outcome["result"],
-            "mismatches": outcome["mismatches"],
+            "mismatches": outcome["mismatches"], "folded": folded,
             "ok": outcome["new_decision"] == want and outcome["result"] == "pass"}
 
 
@@ -1318,7 +1348,8 @@ def floor_replay(root, dispatcher, real_home, registry, jobs=4):
                  for mode in FLOOR_MODES]
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         return list(pool.map(lambda job: replay_case(root, dispatcher, real_home, inproc, job[0] * 10 +
-                                                     FLOOR_MODES.index(job[4]), *job[1:]), jobs_list))
+                                                     FLOOR_MODES.index(job[4]), *job[1:], live=registry),
+                             jobs_list))
 
 
 def build_registry(per_hook, inproc):

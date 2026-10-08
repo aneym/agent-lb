@@ -914,7 +914,10 @@ def is_folded(settings: dict[str, Any]) -> bool:
 
 def dispatch_worth(source: Path, home: Path) -> Any:
     """A matcher gains from the dispatcher when it has two or more hooks, or one the dispatcher runs without a
-    process of its own (in-process, prefiltered or exec'd); a lone hook that would spawn anyway stays per-hook."""
+    process of its own (in-process, prefiltered or exec'd); a lone hook that would spawn anyway stays per-hook,
+    unless it is a floor guard: per-hook its timeout or crash fails open, so it always folds and the dispatcher's
+    fail-closed floor rule covers it (2026-10-08 review M2 of hook-dispatcher-5: the lone Agent seat guard stayed
+    per-hook, so a seat guard that hung or crashed allowed the dispatch). That costs one process per Agent call."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("hook_dispatch", source / DISPATCH_SCRIPT)
@@ -924,7 +927,7 @@ def dispatch_worth(source: Path, home: Path) -> Any:
     spec.loader.exec_module(module)
 
     def worth(hooks: list[dict[str, Any]]) -> bool:
-        if len({hook["command"] for hook in hooks}) > 1:
+        if len({hook["command"] for hook in hooks}) > 1 or module.floor_name(hooks[0]["command"]):
             return True
         saved = dict(os.environ)
         # Plan as a hook would run: this home, a UTF-8 locale (Claude Code sessions have one).

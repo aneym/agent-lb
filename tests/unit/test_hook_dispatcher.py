@@ -1553,7 +1553,7 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     install("--hook-dispatcher", "on")
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
-    # A lone Agent guard stays per-hook (it gains nothing from the dispatcher); the Bash entry folds.
+    # The Agent seat guard (a floor guard, so it folds even alone) and the Bash entry fold.
     commands = [hook["command"] for hooks in registry["entries"]["PreToolUse"].values() for hook in hooks] + [
         hook["command"] for group in hooks_of(home)["PreToolUse"] for hook in group["hooks"]]
     assert '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"' in commands
@@ -1701,3 +1701,58 @@ def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, prefix, 
         ref.rename(original)
         ref.symlink_to(original)
         assert run().returncode == 2
+
+@pytest.mark.parametrize("breakage", ["execute-bit-removed", "jq-not-a-system-tool"])
+def test_a_pinned_floor_guard_is_never_skipped_when_it_could_not_start_as_reviewed(tmp_path: Path,
+                                                                                    breakage: str) -> None:
+    """2026-10-08 review of hook-dispatcher-5 (M1, hook-dispatch.py:737/:1564; and :730): the prefilter skipped a
+    pinned floor guard for a call it ignores while the guard could not run as reviewed, so the dispatcher allowed
+    where the guard does not. With its execute bit removed the direct exec fails (per-hook /bin/sh exits 126), so the
+    floor rule refuses; with a `jq` earlier on PATH that exits 1 the guard refuses per-hook, and now through the
+    dispatcher too. A healthy guard on the same call is still skipped and the call allowed."""
+    home, env, hook = guard_home(tmp_path, "dangerous-command-guard.sh", DANGER)
+    registry_path = home / ".claude/hooks/dispatch/registry.json"
+    registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()),
+                                             script_sha=policy_module().script_pins(SOURCE))))
+    call = {"tool_name": "Bash", "tool_input": {"command": "echo hello"}, "hook_event_name": "PreToolUse",
+            "cwd": str(home)}
+    healthy = run_owned(DISPATCH_BASH, call, env, 30)
+    assert healthy is not None and healthy.returncode == 0 and decision(healthy) == "allow", healthy
+    if breakage == "execute-bit-removed":
+        (home / ".claude/hooks/dangerous-command-guard.sh").chmod(0o644)
+        assert run_hook(hook["command"], call, env).returncode == 126  # per-hook the shell cannot start it
+    else:
+        env = stub_bin(tmp_path, env, "jq", "#!/bin/sh\nexit 1\n")
+        assert decision(run_hook(hook["command"], call, env)) == "deny"  # per-hook the guard refuses
+    new = run_owned(DISPATCH_BASH, call, env, 30)
+    assert new is not None and decision(new) == "deny", new
+    assert "dangerous-command-guard" in json.loads(new.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_install_folds_a_lone_floor_guard_so_its_failure_refuses(tmp_path: Path) -> None:
+    """2026-10-08 review M2 (install-policy.py:922): a matcher holding one floor guard that spawns anyway (no prefilter,
+    not in-process) stayed per-hook, where its crash or timeout allows the call. A floor guard always folds: the
+    installed entry is the dispatcher, and the same guard crashing refuses the call through it. (The seat guard the
+    review named is no longer a floor guard since guard-trim-r2, agent-lb ce9f82b8; plutil-guard.sh is one.)"""
+    home, settings = make_home(tmp_path)
+    guard = home / ".claude/hooks/plutil-guard.sh"
+    guard.write_text("#!/bin/bash\ncat >/dev/null || exit 2\n"
+                     "if [ -n \"${HOOK_FLOOR_RECEIPT:-}\" ]; then echo 'floor-ok plutil-guard.sh'; fi\nexit 0\n")
+    guard.chmod(0o755)
+    command = '"$HOME/.claude/hooks/plutil-guard.sh"'
+    settings["hooks"]["PreToolUse"].append({"matcher": "Write", "hooks": [{"type": "command", "command": command}]})
+    (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    install, env = installer(tmp_path, home)
+    install("--hook-dispatcher", "on")
+    registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
+    assert [hook["command"] for hook in registry["entries"]["PreToolUse"]["Write"]] == [command]
+    write = [group for group in hooks_of(home)["PreToolUse"] if group.get("matcher") == "Write"]
+    assert len(write) == 1 and len(write[0]["hooks"]) == 1, write
+    entry = write[0]["hooks"][0]["command"]
+    assert entry == f"{DISPATCH} PreToolUse 'Write' {registry['rev']}", entry
+    guard.write_text("#!/bin/bash\necho 'synthetic plutil guard crash' >&2\nexit 1\n")
+    call = {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "a.plist"), "content": "x"},
+            "hook_event_name": "PreToolUse"}
+    refused = run_owned(entry, call, env, 30)
+    assert refused is not None and decision(refused) == "deny", refused
+    assert "floor guard plutil-guard.sh" in json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]

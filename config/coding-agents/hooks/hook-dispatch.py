@@ -17,7 +17,8 @@ How each hook runs (doubt keeps the old path: its own process through /bin/sh -c
   proves it cannot act on this input (the prefilter is a superset of every input the guard blocks or acts on);
   otherwise the real script runs. A changed script loses its pin and always runs. A guard whose source agent-lb
   installs (wide-scan-guard.sh) is pinned by install-policy.py from that source's hash (registry `script_sha`), so
-  editing the source never unpins it; a guard missing a tool it needs (jq, python3) always runs and fails closed.
+  editing the source never unpins it; a guard missing a tool it needs (jq, python3), one whose tool or #! interpreter
+  is not the system's or Homebrew's, or a script that is not executable always runs (and a floor guard fails closed).
 - rewriter: `rtk hook claude` (side-effect free, never blocks). It is skipped when a guard already denied or a later
   guard rewrote the input (that rewrite wins either way); when it is the only process still needed and every other
   guard answered nothing, this process execs into it, so the usual Bash call costs one process per event. The exec'd
@@ -580,18 +581,59 @@ SCRIPT_PREFILTERS = {
                             "64cf185450a08b3faab701fb8c289d32b55611ebe6049065854b2c92fd2450c8",
                             "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
                             "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b",
-                            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84"), pf_no_chrome),
+                            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84",
+                            # 9efe7bf: factory 10c83fb32 (guard trim, 2026-10-08): an alex-approval record allows and
+                            # the refusal names its floor, both after its `MAC=0 and not browser -> exit 0` gate, so
+                            # what it acts on is unchanged.
+                            "9efe7bff245b917e9fc9ad3a39e853e5f5f1083219b008518dcd52b2442c71a3"), pf_no_chrome),
     # 9fa0e82: the hand-reviewed copy; since agent-lb 7a71805e its source is installed and its pin derived at install.
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
 # Tools a pinned guard needs (each a tuple of alternatives: a name on PATH or an absolute path). Without one the guard
-# fails closed on every input, so its prefilter proves nothing and it always runs.
+# fails closed on every input, so its prefilter proves nothing and it always runs. A prefilter's proof also assumes
+# each tool, and the interpreter on the guard's #! line, is the system's or Homebrew's: one that resolves anywhere
+# else (a stub or wrapper earlier on PATH) may answer otherwise, so the guard runs (2026-10-08 review of
+# hook-dispatcher-5: a PATH `cat` that exits 1 made wide-scan-guard.sh refuse `echo hello` per-hook while the
+# dispatcher skipped it and allowed).
+TRUSTED_TOOL_DIRS = ("/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/", "/usr/libexec/", "/opt/homebrew/", "/usr/local/bin/",
+                     "/usr/local/Cellar/", "/usr/local/opt/", "/Library/Developer/CommandLineTools/",
+                     "/Applications/Xcode.app/", "/Library/Frameworks/Python.framework/", "/System/")
 SCRIPT_NEEDS = {"wide-scan-guard.sh": (("cat",), ("jq",), ("python3",)),  # cat: review M2 (hook-dispatcher-5)
                 "agent-lb-bootout-guard.sh": (("/opt/homebrew/bin/jq", "jq"), ("grep",)),
                 "railway-vars-guard.sh": (("cat",), ("python3",)),
                 "link-cli-guard.sh": (("jq",), ("grep",)),
-                "dangerous-command-guard.sh": (("jq",), ("grep",))}
+                # python3: its SQL parse runs on every command since guard-trim-r2 (agent-lb ce9f82b8)
+                "dangerous-command-guard.sh": (("jq",), ("grep",), ("python3",))}
+
+
+def tool_problem(need):
+    """Why a needed tool (alternatives: names on PATH or absolute paths) does not hold a prefilter's proof, or None:
+    none is found, or the first found is not an executable system or Homebrew tool."""
+    for tool in need:
+        found = which(tool)
+        if found:
+            real = os.path.realpath(found)
+            if real.startswith(TRUSTED_TOOL_DIRS) and os.access(real, os.X_OK):
+                return None
+            return "%s resolves to %s, not a system tool" % (tool, real)
+    return "%s is not on PATH" % need[0]
+
+
+def exec_problem(script):
+    """Why a direct exec of a pinned script would not start its guard as reviewed, or None: the file is not
+    executable (2026-10-08 review M1: with its execute bit removed the prefilter still skipped it and the call was
+    allowed, where the exec fails), it has no #! line, or its #! interpreter is missing or not a system tool."""
+    real = os.path.realpath(script)
+    if not os.path.isfile(real) or not os.access(real, os.X_OK):
+        return "it is not an executable file"
+    interp = interpreter_of(real)
+    if not interp:
+        return "it has no #! line"
+    problem = tool_problem((interp,))
+    return ("its interpreter " + problem) if problem else None
+
+
 # Inline commands: sha256 of the exact command string -> prefilter.
 # The inline dangerous-command leaf is no longer one: LEGACY_FLOOR_COMMANDS runs its script (S44).
 COMMAND_PREFILTERS = {
@@ -727,14 +769,18 @@ def plan_hook(hook, inproc_names, script_pins=None):
             derived = (script_pins or {}).get(name) if isinstance(script_pins, dict) else None
             if isinstance(derived, str) and REV_SHA.fullmatch(derived):
                 hashes = hashes + (derived,)
-            missing = [need[0] for need in SCRIPT_NEEDS.get(name, ()) if not any(which(tool) for tool in need)]
+            script = expand_word(match.group("script"))
+            tools = [problem for problem in (tool_problem(need) for need in SCRIPT_NEEDS.get(name, ())) if problem]
+            unstartable = exec_problem(script)
             if match.group("fb") is not None:
                 plan.reason = "pinned script with a fallback answer"
             elif sensitive:
                 plan.reason = "pinned script, but %s is set" % sensitive
-            elif missing:
-                plan.reason = "pinned script, but %s is not on PATH" % ", ".join(missing)
-            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) in hashes:
+            elif tools:
+                plan.reason = "pinned script, but %s" % "; ".join(tools)
+            elif unstartable:
+                plan.reason = "pinned script, but %s" % unstartable
+            elif sha256_file(os.path.realpath(script)) in hashes:
                 plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
             else:
                 plan.reason = "script changed since its prefilter was reviewed"
