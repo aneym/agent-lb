@@ -1607,13 +1607,24 @@ def ready_candidates(args: argparse.Namespace, registry: list[dict[str, Any]], s
     return None, EXIT_NO_ACCOUNT
 
 
+def finish_text() -> str:
+    for path in (Path(__file__).resolve().parent.parent / "config/coding-agents/FINISH.md",
+                 Path.home() / ".agents/policy/coding-agents/FINISH.md",
+                 Path.home() / ".agent-lb/managed/coding-agents/FINISH.md"):
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            pass
+    print("seat: warning: FINISH.md unavailable; omitting finish contract", file=sys.stderr)
+    return ""
+
+
 def final_prompt(prompt: str) -> str:
     """Use the same finish contract for previews and every vendor's real prompt."""
     if "END HANDOFF" in prompt.splitlines():
         return prompt
-    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "FINISH.md"
-    managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "FINISH.md"
-    return prompt + "\n\n" + (repo if repo.is_file() else managed).read_text(encoding="utf-8")
+    finish = finish_text()
+    return prompt + "\n\n" + finish if finish else prompt
 
 
 def command_run(args: argparse.Namespace) -> int:

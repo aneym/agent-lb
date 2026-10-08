@@ -2728,6 +2728,18 @@ def _chain_effort(table: dict[str, Any], class_name: str, seat: str) -> str | No
     return None
 
 
+def finish_text() -> str:
+    for path in (Path(__file__).resolve().parent.parent / "config/coding-agents/FINISH.md",
+                 Path.home() / ".agents/policy/coding-agents/FINISH.md",
+                 Path.home() / ".agent-lb/managed/coding-agents/FINISH.md"):
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            pass
+    print("route: warning: FINISH.md unavailable; omitting finish contract", file=sys.stderr)
+    return ""
+
+
 def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any]) -> dict[str, Any]:
     """Turn one pick entry into the agent() options and brief line that reach it."""
     seat = entry["seat"]
@@ -2761,9 +2773,9 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     if "vendor" not in out and isinstance(seat_spec, dict) and seat_spec.get("vendor"):
         out["vendor"] = seat_spec["vendor"]
     if class_name != "verify":
-        repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "FINISH.md"
-        managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "FINISH.md"
-        brief += "\n\n" + (repo if repo.is_file() else managed).read_text(encoding="utf-8")
+        finish = finish_text()
+        if finish:
+            brief += "\n\n" + finish
     out.update(effort=effort, opts=opts, brief=brief)
     return out
 
