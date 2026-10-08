@@ -25,11 +25,9 @@ def invoke(command, shell=None, **tokens):
 
 @pytest.mark.parametrize('command', [
     'railway up', 'railway deploy', 'railway redeploy',
-    'railway variables --set PORT=8080', 'railway variables set PORT 8080',
-    'railway variables delete PORT', 'railway environment new staging',
+    'railway environment new staging',
     'railway service delete api', 'env railway up', 'sudo railway up',
     'npx railway up', 'bunx railway up', 'sh -c "railway up"',
-    'env sh -c "railway variables --set PORT=8080"',
     'echo okay; railway up', 'echo okay\nrailway up',
     'echo "$(railway up)"', 'RAILWAY_TOKEN=x echo okay; railway up',
     'RAILWAY_TOKEN=x env -u RAILWAY_TOKEN railway up',
@@ -47,8 +45,7 @@ def test_login_only_writes_are_refused(command):
     'env RAILWAY_TOKEN=x railway redeploy',
     'RAILWAY_TOKEN=x sh -c "railway up"',
     'RAILWAY_TOKEN=x railway variables --set PORT=8080',
-    'railway status', 'railway logs', 'railway variables',
-    'railway variables --json', 'railway environment', 'echo ordinary',
+    'railway status', 'railway logs', 'railway environment', 'echo ordinary',
     # Live overblock after 7a71805e: paths and prose that merely name the guard.
     'cmp config/coding-agents/hooks/railway-vars-guard.sh ~/.claude/hooks/railway-vars-guard.sh',
     'python3 -m pytest -q tests/test_railway_write_guard.py',
@@ -89,10 +86,10 @@ def test_secret_shaped_argv_is_refused_even_with_custody(command):
 # reads that print every secret value; `railway variables --kv` was allowed. These print values whatever token is
 # in custody.
 @pytest.mark.parametrize('command,denial', [
-    ('railway variables --kv', 'railway variables --kv prints values'),
-    ('RAILWAY_TOKEN=x railway variables --kv', 'railway variables --kv prints values'),
-    ('RAILWAY_TOKEN=x railway variables -s api -k', 'railway variables --kv prints values'),
-    ('echo "$(railway variables --kv)"', 'railway variables --kv prints values'),
+    ('railway variables --kv', 'railway variables read prints values'),
+    ('RAILWAY_TOKEN=x railway variables --kv', 'railway variables read prints values'),
+    ('RAILWAY_TOKEN=x railway variables -s api -k', 'railway variables read prints values'),
+    ('echo "$(railway variables --kv)"', 'railway variables read prints values'),
     ('railway run printenv', 'railway run printenv/env prints every secret'),
     ('RAILWAY_TOKEN=x railway run -s api -- env', 'railway run printenv/env prints every secret'),
 ])
@@ -100,7 +97,7 @@ def test_reads_that_print_secret_values_are_refused_even_with_custody(command, d
     result = invoke(command)
     assert result.returncode == 2, result.stderr
     assert denial in result.stderr
-    assert "--json | jq 'keys'" in result.stderr
+    assert "value output is refused" in result.stderr
 
 # Review F1-F7: subprocess JSON boundary covers missed executable routes and
 # overblocked data without executing the CLI or adding a production seam.
@@ -114,7 +111,7 @@ def test_reads_that_print_secret_values_are_refused_even_with_custody(command, d
     ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 2),
     ('echo "$(railway up --service \'api(staging)\')"', {}, 2),
     ('echo "`railway up --service \'api(staging)\'`"', {}, 2),
-    ('railway variables < /dev/null --set PORT=8080', {}, 2),
+    ('railway variables < /dev/null --set PORT=8080', {}, 0),
     ('RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic', {}, 2),
     ('RAILWAY_TOKEN="$MISSING" railway up', {}, 2),
     ('RAILWAY_TOKEN="" railway up', {}, 2),
@@ -204,3 +201,48 @@ def test_r4_counterexamples(command, tokens, expected):
 ])
 def test_deliberate_obfuscation_residuals(command, tokens):
     assert invoke(command, **tokens).returncode == 2
+
+
+# Pre-GA policy at the real hook JSON/subprocess boundary. These cases protect
+# session-based non-prod writes, production custody, and the retained output
+# floor; wrappers and short flags would otherwise bypass the new branch.
+@pytest.mark.parametrize('command,expected', [
+    ('railway variables --set FOO=bar', 0),
+    ('railway variables -s FOO=bar', 0),
+    ('railway variables -sFOO=bar', 0),
+    ('railway variables -sAPI_TOKEN=synthetic', 2),
+    ('railway variable set FOO bar --environment test', 0),
+    ('railway variables delete FOO -e dev', 0),
+    ('env sh -c "railway variables --set FOO=bar"', 0),
+    ('eval "railway variables --set FOO=bar"', 0),
+    ('env -S "railway variables --set FOO=bar"', 0),
+    ('railway variables --set FOO=bar --environment production', 2),
+    ('railway variables --set FOO=bar -e prod', 2),
+    ('railway variables delete FOO --environment=PRODUCTION', 2),
+    ('railway variables --set FOO=bar -eprod', 2),
+    ('railway -e production variables --set FOO=bar', 2),
+    ('RAILWAY_TOKEN=x railway variables --set FOO=bar -e prod', 0),
+    ('railway variables --set API_TOKEN=synthetic -e dev', 2),
+    ('railway variables -s API_TOKEN synthetic', 2),
+    ('eval "railway variables --set API_TOKEN=synthetic"', 2),
+    ('env -S "railway variables --set API_TOKEN=synthetic"', 2),
+    ('railway variables', 2),
+    ('railway variables --json', 2),
+    ('railway variables get FOO', 2),
+    ('RAILWAY_TOKEN=x railway variables get FOO', 2),
+    ('railway variables --set FOO=bar --json', 2),
+    ('railway up --environment dev', 2),
+])
+def test_pre_ga_variable_policy(command, expected):
+    result = invoke(command)
+    assert result.returncode == expected, result.stderr
+    assert 'synthetic' not in result.stderr
+    assert 'bar' not in result.stderr
+
+
+def test_unknown_link_write_is_logged_without_values():
+    result = invoke('railway variables --set FOO=bar')
+    assert result.returncode == 0, result.stderr
+    assert 'unknown linked environment' in result.stderr
+    assert 'FOO' not in result.stderr
+    assert 'bar' not in result.stderr

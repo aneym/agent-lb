@@ -1,5 +1,5 @@
 #!/bin/bash
-# Railway writes must use custody tokens, never the owner's interactive login.
+# Pre-GA non-production variable writes may use the interactive login; other writes need custody.
 INPUT=$(cat)
 RAILWAY_GUARD_INPUT="$INPUT" python3 - <<'PY'
 import json
@@ -16,11 +16,32 @@ READS = {'status', 'logs', 'list', 'whoami', 'version', 'help'}
 SECRET_NAME = re.compile(r'(?:token|secret|password|passwd|api[_-]?key|authorization|bearer|credential)', re.I)
 SECRET_VALUE = re.compile(r'(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)', re.I)
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
-# Reads that print every secret value, refused with or without a custody token (the guard before 7a71805e refused both;
-# 2026-10-08 review: the custody rewrite let `railway variables --kv` through). Names only: --json | jq 'keys'.
-KV_DENIAL = "BLOCKED: railway variables --kv prints values. Use: railway variables ... --json | jq 'keys'."
-PRINTENV_DENIAL = ("BLOCKED: railway run printenv/env prints every secret. Read names with: "
-                   "railway variables ... --json | jq 'keys'.")
+# Never suggest --json | jq: values still pass through the shell before filtering.
+KV_DENIAL = "BLOCKED: railway variables read prints values; value output is refused."
+PRINTENV_DENIAL = "BLOCKED: railway run printenv/env prints every secret; value output is refused."
+
+
+def variable_write(args):
+    return any(arg in {'set', 'delete', 'remove', '--set', '-s', '--delete', '--remove'}
+               or arg.startswith(('--set=', '--delete=', '--remove='))
+               or (arg.startswith('-s') and not arg.startswith('--') and len(arg) > 2) for arg in args)
+
+
+def production_environment(args):
+    # Do not run status --json: it can use the owner's session and needs network
+    # access, so it is neither cheap nor offline-safe. Explicit flags are the
+    # only reliable local evidence; an unknown link is allowed and logged below.
+    for i, arg in enumerate(args):
+        value = None
+        if arg in {'--environment', '-e'} and i + 1 < len(args):
+            value = args[i + 1]
+        elif arg.startswith('--environment='):
+            value = arg.split('=', 1)[1]
+        elif arg.startswith('-e') and len(arg) > 2:
+            value = arg[2:].lstrip('=')
+        if value is not None and value.casefold() in {'production', 'prod'}:
+            return True
+    return False
 
 
 def substitutions(text, heredoc=False):
@@ -246,31 +267,49 @@ def check(command, inherited):
             if name == 'railway':
                 args = words[i + 1:]
                 for j, arg in enumerate(args):
-                    if (j > 0 and args[j - 1] in {'set', '--set'} and SECRET_NAME.search(arg)
+                    if (j > 0 and args[j - 1] in {'set', '--set', '-s'} and SECRET_NAME.search(arg)
                             and '=' not in arg and j + 1 < len(args) and not args[j + 1].startswith('-')):
                         return DENIAL
                     value = arg.split('=', 1)[1] if arg.startswith('--set=') else arg
+                    if arg.startswith('-s') and not arg.startswith('--') and len(arg) > 2:
+                        value = arg[2:].lstrip('=')
                     match = ASSIGNMENT.match(value)
                     if match and match[2] and (SECRET_NAME.search(match[1]) or SECRET_VALUE.search(match[2])
                                               or len(match[2]) >= 24):
                         return DENIAL
                     if SECRET_VALUE.search(arg):
                         return DENIAL
-                if not args or args[0] in READS or '--help' in args or '-h' in args:
+                # Environment/service flags may precede the subcommand.
+                command_args = list(args)
+                while command_args and command_args[0].startswith('-'):
+                    flag = command_args.pop(0)
+                    if flag in {'--environment', '-e', '--service', '-s', '--project', '-p'} and command_args:
+                        command_args.pop(0)
+                    elif flag in {'--help', '-h'}:
+                        break
+                if not command_args or command_args[0] in READS or '--help' in args or '-h' in args:
                     break
-                if args[0] in {'variables', 'variable', 'vars'} and any(
-                        arg in {'--kv', '-k'} for arg in args[1:]):
-                    return KV_DENIAL
-                if args[0] == 'run':
+                subcommand = command_args[0]
+                if subcommand == 'run':
                     k = 1
-                    while k < len(args) and args[k].startswith('-'):
-                        k += 2 if args[k] in {'-s', '--service', '-e', '--environment'} else 1
-                    if k < len(args) and args[k].rsplit('/', 1)[-1] in {'printenv', 'env'}:
+                    while k < len(command_args) and command_args[k].startswith('-'):
+                        k += 2 if command_args[k] in {'-s', '--service', '-e', '--environment'} else 1
+                    if k < len(command_args) and command_args[k].rsplit('/', 1)[-1] in {'printenv', 'env'}:
                         return PRINTENV_DENIAL
-                if args[0] in {'variables', 'variable', 'vars'}:
-                    write = any(arg in {'set', 'delete', 'remove', '--set', '--delete', '--remove'}
-                                or arg.startswith(('--set=', '--delete=', '--remove=')) for arg in args[1:])
-                elif args[0] in {'environment', 'environments', 'service', 'services'}:
+                if subcommand in {'variables', 'variable', 'vars'}:
+                    write = variable_write(command_args[1:])
+                    # Bare listings, get, --json and --kv all expose values.
+                    # No supported names-only CLI output is known.
+                    if (not write or 'get' in command_args[1:]
+                            or any(arg in {'--kv', '-k', '--json'} for arg in command_args[1:])):
+                        return KV_DENIAL
+                    if production_environment(args):
+                        if not any(env.get(key) for key in TOKEN_NAMES):
+                            return DENIAL
+                    else:
+                        print('Railway variable write allowed pre-GA: explicit non-production or unknown linked environment; values withheld.', file=sys.stderr)
+                    break
+                elif subcommand in {'environment', 'environments', 'service', 'services'}:
                     write = any(arg in {'new', 'create', 'delete', 'remove', 'rename', '--new', '--delete', '--rename'}
                                 or arg.startswith(('--new=', '--delete=', '--rename=')) for arg in args[1:])
                     write = write or any(not arg.startswith('-') for arg in args[1:])
