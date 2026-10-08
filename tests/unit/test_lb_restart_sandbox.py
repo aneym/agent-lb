@@ -209,7 +209,8 @@ def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) 
     """The same link planted after the guard ran: lock acquisition refuses instead of overwriting live state."""
     lb = _load()
     root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, mode=0o700)
+    root.chmod(0o700)  # as lb-sandbox start makes it; the pinned root must be 0700 and ours
     live = tmp_path / ".agent-lb" / "state" / "front-preferred-port"
     live.parent.mkdir(parents=True)
     live.write_text("2457\n")
@@ -321,6 +322,7 @@ def test_standby_start_refuses_a_bootstrap_that_is_a_link(tmp_path: Path) -> Non
     lb = _load()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
     (root / "launchd").mkdir(parents=True)
+    root.chmod(0o700)
     (root / "launchd" / "com.agent-lb.drill.sbx-r1.plist").write_bytes(plistlib.dumps(_plist(root)))
     (root / "bin").mkdir()
     bootstrap = root / "bin" / "lb-sandbox"
@@ -354,6 +356,7 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
         state_dir=str(root / "state"),
     )
     (root / "launchd").mkdir(parents=True)
+    root.chmod(0o700)  # lb-sandbox start makes the root 0700; the pinned root must be
     (root / "runtime").mkdir()
     (root / "bin").mkdir()
     (root / "bin" / "lb-sandbox").write_text("#!/usr/bin/env python3\n")
@@ -384,12 +387,15 @@ def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_s
     sandboxes = tmp_path / ".agent-lb" / "sandboxes"
     sandboxes.rename(tmp_path / ".agent-lb" / "moved")
     sandboxes.symlink_to(tmp_path / ".agent-lb")
-    with lb.Lock("unit", 1):
-        pass
-    lb.sync_log("unit")
+    # Every state operation re-checks that the root path still names the pinned root (S2-2): the run stops.
+    with pytest.raises(lb.SandboxRefused):
+        with lb.Lock("unit", 1):
+            pass
+    with pytest.raises(lb.SandboxRefused):
+        lb.sync_log("unit")
     assert (live / "lb-restart.lock").read_text() == "pid=1 live\n"
     assert (live / "sync.log").read_text() == "live log\n"
-    assert (tmp_path / ".agent-lb" / "moved" / "runtime" / "logs" / "sync.log").read_text().endswith("unit\n")
+    assert not (tmp_path / ".agent-lb" / "moved" / "runtime" / "logs").exists()
     with pytest.raises(lb.SandboxRefused):
         lb.verify_sandbox_ancestry()  # what start_standby runs before it execs anything by path
 
@@ -490,3 +496,103 @@ def test_the_reaper_reads_back_exactly_what_spawn_reaper_writes() -> None:
     for bad in (["--reap", "0", "90"], ["--reap", "-5", "90"], ["--reap", "1", "90"], ["--reap", "12", "nan"]):
         with pytest.raises(lb.SandboxRefused):
             lb.parse_reaper_args(bad)
+
+
+# ---------------------------------------------------------------- S2-2 fix round (M5, Codex live-safety review of S1)
+
+
+def _live_state(tmp_path: Path) -> Path:
+    """A stand-in for the live ~/.agent-lb/state: a preference, a leftover preference temp file and a pidfile."""
+    live = tmp_path / ".agent-lb" / "state"
+    live.mkdir(parents=True)
+    (live / "front-preferred-port").write_text("2457\n")
+    (live / "front-preferred-port.tmp").write_text("2459\n")
+    (live / "lb-standby.pid").write_text("4242\n")
+    return live
+
+
+def test_a_state_dir_swapped_between_write_and_rename_never_replaces_the_live_preference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M5 (lb-restart:484): after the temp file is written, state/ becomes a link to the live state dir. A rename
+    by path then moved the live front-preferred-port.tmp over the live preference. The rename now goes through
+    the state dir's descriptor (the real sandbox dir), and the swap is refused."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    live = _live_state(tmp_path)
+    _apply(lb, config, tmp_path)
+    (root / "state").mkdir(mode=0o700)
+    real_replace = os.replace
+
+    def swap_then_replace(*args, **kwargs):
+        if not (root / "state").is_symlink():
+            (root / "state").rename(root / "state.moved")
+            (root / "state").symlink_to(live)
+        return real_replace(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", swap_then_replace)
+    with pytest.raises(lb.SandboxRefused, match="swapped|link"):
+        lb.set_preferred(2472)
+    monkeypatch.setattr(os, "replace", real_replace)
+    assert (live / "front-preferred-port").read_text() == "2457\n"
+    assert (live / "front-preferred-port.tmp").read_text() == "2459\n"
+    assert (root / "state.moved" / "front-preferred-port").read_text() == "2472\n"  # renamed in the sandbox's own dir
+
+
+def test_a_state_dir_swapped_before_pidfile_cleanup_never_unlinks_the_live_pidfile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M5 (lb-restart:1028): state/ swapped for a link to the live state dir before the standby pidfile is
+    cleaned up. An unlink by path removed the live lb-standby.pid; now the walk refuses the link."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    live = _live_state(tmp_path)
+    _apply(lb, config, tmp_path)
+    monkeypatch.setattr(lb, "listener_pid", lambda port: None)  # no standby left: the cleanup-only branch
+    (root / "state").symlink_to(live)
+    with pytest.raises(lb.SandboxRefused):
+        lb.stop_leftover_standby(0)
+    assert (live / "lb-standby.pid").read_text() == "4242\n"
+    with pytest.raises(lb.SandboxRefused):
+        lb.front_routes_to(2471, timeout=0)  # a read through the swapped dir is refused too
+
+
+def test_a_hard_linked_pidfile_is_refused_not_removed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    live = _live_state(tmp_path)
+    _apply(lb, config, tmp_path)
+    monkeypatch.setattr(lb, "listener_pid", lambda port: None)
+    (root / "state").mkdir(mode=0o700)
+    os.link(live / "lb-standby.pid", root / "state" / "lb-standby.pid")
+    with pytest.raises(lb.SandboxRefused, match="single-link"):
+        lb.stop_leftover_standby(0)
+    assert (live / "lb-standby.pid").read_text() == "4242\n"
+    assert (root / "state" / "lb-standby.pid").exists()
+    (root / "state" / "lb-standby.pid").unlink()
+    (root / "state" / "lb-standby.pid").write_text("1\n")
+    lb.stop_leftover_standby(0)  # control: its own single-link pidfile is removed
+    assert not (root / "state" / "lb-standby.pid").exists()
+
+
+@pytest.mark.parametrize("which,mode", [("root", 0o755), ("root", 0o710), ("sandboxes", 0o777)])
+def test_a_root_lb_sandbox_did_not_make_is_refused(tmp_path: Path, which: str, mode: int) -> None:
+    """p13D: the root must be one lb-sandbox made (0700, ours) in a sandboxes dir no one else can write."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    before = config.read_bytes()
+    target = config.parent if which == "root" else config.parent.parent
+    target.chmod(mode)
+    try:
+        with pytest.raises(lb.SandboxRefused, match="mode"):
+            _apply(lb, config, tmp_path)
+    finally:
+        target.chmod(0o700)
+    assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
+    assert not (config.parent / "lb-restart.lock").exists() and config.read_bytes() == before
+    _apply(lb, config, tmp_path)  # control: the same root at 0700 is accepted
+    with lb.Lock("unit", 1):
+        pass

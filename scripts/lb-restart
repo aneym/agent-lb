@@ -394,18 +394,45 @@ def _open_dir_nofollow(path: Path) -> int:
         raise
 
 
+def _check_owned_dir(fd: int, what: str, path: Path, private: bool) -> os.stat_result:
+    """fd is a directory this user owns; private: no group or other bits at all (lb-sandbox makes roots 0700),
+    else no group or other write. Raises SandboxRefused."""
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise SandboxRefused(f"{what} {path} is not a directory owned by uid {os.getuid()}")
+    if info.st_mode & (0o077 if private else 0o022):
+        raise SandboxRefused(f"{what} {path} has mode {stat.S_IMODE(info.st_mode):o}; lb-sandbox makes it 0700")
+    return info
+
+
 def pin_sandbox_root() -> int:
-    """The descriptor for SANDBOX_ROOT, opened once (from / down, no links) and held for the whole run."""
+    """The descriptor for SANDBOX_ROOT, opened once (from / down, no links) and held for the whole run.
+
+    The root must be one lb-sandbox made: owned by this user, mode 0700, in a sandboxes dir this user owns."""
     global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
     assert SANDBOX_ROOT is not None
     if SANDBOX_ROOT_FD is not None and SANDBOX_ROOT_PINNED is not None and SANDBOX_ROOT_PINNED[0] == SANDBOX_ROOT:
         return SANDBOX_ROOT_FD
     unpin_sandbox_root()
     try:
-        fd = _open_dir_nofollow(SANDBOX_ROOT)
+        parent = _open_dir_nofollow(SANDBOX_ROOT.parent)
     except OSError as exc:
-        raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} or an ancestor is a link or missing ({exc})") from exc
-    info = os.fstat(fd)
+        raise SandboxRefused(
+            f"sandboxes dir {SANDBOX_ROOT.parent} or an ancestor is a link or missing ({exc})"
+        ) from exc
+    try:
+        _check_owned_dir(parent, "sandboxes dir", SANDBOX_ROOT.parent, private=False)
+        try:
+            fd = os.open(SANDBOX_ROOT.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        except OSError as exc:
+            raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} is a link or missing ({exc})") from exc
+    finally:
+        os.close(parent)
+    try:
+        info = _check_owned_dir(fd, "sandbox root", SANDBOX_ROOT, private=True)
+    except BaseException:
+        os.close(fd)
+        raise
     SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = fd, (SANDBOX_ROOT, info.st_dev, info.st_ino)
     return fd
 
@@ -433,7 +460,10 @@ def verify_sandbox_ancestry() -> None:
 
 
 def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
-    """A descriptor for directory, walked from the pinned root with O_NOFOLLOW (missing dirs made 0700)."""
+    """A descriptor for directory, walked from the pinned root with O_NOFOLLOW (missing dirs made 0700).
+
+    Every call first checks the root path still names the pinned root, so a sandboxes dir or root swapped
+    mid-run is refused at the next state operation instead of the run carrying on in the moved directory."""
     assert SANDBOX_ROOT is not None
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
@@ -442,6 +472,7 @@ def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
         raise SandboxRefused(f"{directory} is outside the sandbox root") from exc
     if ".." in rel.parts:
         raise SandboxRefused(f"{directory} climbs out of the sandbox root")
+    verify_sandbox_ancestry()
     fd = os.dup(pin_sandbox_root())
     try:
         for part in rel.parts:
@@ -453,20 +484,19 @@ def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
             child = os.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = child
+            if os.fstat(fd).st_uid != os.getuid():
+                raise SandboxRefused(f"{directory}: {part} is not owned by uid {os.getuid()}")
         return fd
     except BaseException:
         os.close(fd)
         raise
 
 
-def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
-    """Open a file under the sandbox root without following a link; O_TRUNC only after the link check."""
+def _open_in(dir_fd: int, path: Path, flags: int, mode: int = 0o600) -> int:
+    """openat(dir_fd, path.name) with O_NOFOLLOW; the file must be a single-link regular file. O_TRUNC is applied
+    only after that check, so a hard link to live state is refused before a byte of it is lost."""
     try:
-        dir_fd = _sandbox_dir_fd(path.parent)
-        try:
-            fd = os.open(path.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
-        finally:
-            os.close(dir_fd)
+        fd = os.open(path.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
     except OSError as exc:
         raise SandboxRefused(f"{path} is a link or unreachable inside the sandbox root ({exc})") from exc
     info = os.fstat(fd)
@@ -476,6 +506,36 @@ def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
     if flags & os.O_TRUNC:
         os.ftruncate(fd, 0)
     return fd
+
+
+def _state_dir_fd(directory: Path, create: bool = True) -> int:
+    try:
+        return _sandbox_dir_fd(directory, create=create)
+    except SandboxRefused:
+        raise
+    except OSError as exc:
+        raise SandboxRefused(f"{directory} is a link or unreachable inside the sandbox root ({exc})") from exc
+
+
+def _same_dir_still(dir_fd: int, directory: Path) -> None:
+    """After a rename or unlink through dir_fd: the path still names that directory. A state dir swapped for a
+    link (or for another directory) while the operation ran is refused, so the run stops instead of going on."""
+    again = _state_dir_fd(directory, create=False)
+    try:
+        now, held = os.fstat(again), os.fstat(dir_fd)
+    finally:
+        os.close(again)
+    if (now.st_dev, now.st_ino) != (held.st_dev, held.st_ino):
+        raise SandboxRefused(f"{directory} was swapped during the operation; refusing to continue")
+
+
+def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open a file under the sandbox root without following a link; O_TRUNC only after the link check."""
+    dir_fd = _state_dir_fd(path.parent)
+    try:
+        return _open_in(dir_fd, path, flags, mode)
+    finally:
+        os.close(dir_fd)
 
 
 def read_state(path: Path) -> tuple[str, float] | None:
@@ -511,14 +571,20 @@ def remove_state(path: Path) -> None:
     if SANDBOX_ROOT is None:
         path.unlink(missing_ok=True)
         return
+    dir_fd = _state_dir_fd(path.parent)
     try:
-        dir_fd = _sandbox_dir_fd(path.parent)
-    except OSError as exc:
-        raise SandboxRefused(f"{path.parent} is a link or unreachable inside the sandbox root ({exc})") from exc
-    try:
-        os.unlink(path.name, dir_fd=dir_fd)
-    except FileNotFoundError:
-        pass
+        try:
+            info = os.stat(path.name, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            # Unlinking our name would not touch the target, but a planted link means the state is not ours.
+            raise SandboxRefused(f"{path} is not a single-link regular file; refusing to remove it")
+        try:
+            os.unlink(path.name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
+        _same_dir_still(dir_fd, path.parent)
     finally:
         os.close(dir_fd)
 
@@ -696,19 +762,17 @@ def set_preferred(port: int) -> None:
         tmp.write_text(f"{port}\n")
         os.replace(tmp, PREFERRED_FILE)
         return
-    # A link or hard link planted after the guard ran must not carry the write out of the sandbox, and the
-    # rename goes by name inside the state dir reached from the pinned root, never by path.
-    fd = sandbox_open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(f"{port}\n")
+    # One descriptor for the state dir, reached from the pinned root: the temp file is written and renamed by
+    # name inside it, so a state dir swapped for a link to live state between the write and the rename cannot
+    # carry the rename to the live preference. The swap itself is then refused (exit 2).
     if tmp.parent != PREFERRED_FILE.parent:
         raise SandboxRefused("preference temp file is not beside the preference file")
+    dir_fd = _state_dir_fd(PREFERRED_FILE.parent)
     try:
-        dir_fd = _sandbox_dir_fd(PREFERRED_FILE.parent)
-    except OSError as exc:
-        raise SandboxRefused(f"{PREFERRED_FILE.parent} is a link or unreachable inside the sandbox root") from exc
-    try:
+        with os.fdopen(_open_in(dir_fd, tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644), "w") as fh:
+            fh.write(f"{port}\n")
         os.replace(tmp.name, PREFERRED_FILE.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        _same_dir_still(dir_fd, PREFERRED_FILE.parent)
     finally:
         os.close(dir_fd)
 
@@ -1097,10 +1161,11 @@ def main() -> int:
             pid, deadline, config = parse_reaper_args(sys.argv[1:])
             if config is not None:
                 apply_sandbox(config)
+            return reap(pid, deadline)
         except SandboxRefused as exc:
+            # Also at the reaper's own log write: a root swapped or removed while it waited.
             print(f"lb-restart --reap refused: {exc}", file=sys.stderr)
             return 2
-        return reap(pid, deadline)
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--reason", required=True, help="Why; goes into sync.log.")
     p.add_argument("--from", dest="src", type=Path, help="Source root (a worktree) for --files.")
