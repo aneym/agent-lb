@@ -23,3 +23,13 @@
 - [x] Teardown scans the whole root; `stop` and the check fail on a hit or an incomplete scan.
 - [x] Each review finding has a test that fails on c957bb05e.
 - [ ] Deferred: agent-lb store read guard / service identity (live and sandbox).
+
+## 5. Fix round 2 (review FAIL on 41a2f667)
+
+- [x] Confined file access under the root: every component opened O_NOFOLLOW, single-link files only (log export source, key read and unlink, restart log, client-env, fault, aux and start writes).
+- [x] `_serve` refuses a store, journal or key with more than one link.
+- [x] Scans hold the store key: any ciphertext it opens, or a fragment of one, is a hit; the export scans every byte it copies.
+- [x] `scan --processes` is incomplete when any run process hides its environment; run commands carry the marker.
+- [x] Teardown stops processes naming the run id; leftovers reported by pid and hash only.
+- [x] `lb-restart --sandbox`: hard links refused at the guard and at every open; the plist must run `_serve <root>` with an env inside the root.
+- [x] Each finding has a test that fails on 41a2f667.

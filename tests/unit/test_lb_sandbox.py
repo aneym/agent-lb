@@ -44,6 +44,14 @@ def _load() -> ModuleType:
     return module
 
 
+def _key(root: Path) -> None:
+    """The store key start creates: data/encryption.key, 0600, one link (_serve refuses to boot without it)."""
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    key = root / "data" / "encryption.key"
+    key.write_bytes(b"k" * 44)
+    key.chmod(0o600)
+
+
 @pytest.mark.parametrize(
     ("check", "value"),
     [
@@ -178,7 +186,7 @@ def test_serve_keeps_the_token_out_of_the_exec_env_and_argv(tmp_path: Path, monk
     lb = _load()
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
-    (root / "data").mkdir(parents=True)
+    _key(root)
     (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
     live_plist = tmp_path / "live.plist"
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
@@ -256,6 +264,7 @@ def _fake_sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
     for sub in ("data", "bin", "runtime", "logs", "state", "home"):
         (root / sub).mkdir(parents=True)
     (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS, "transport": "http"}))
+    _key(root)
     (root / "bin" / "lb-sandbox").write_bytes(SCRIPT.read_bytes())
     for rel, text in FAKE_APP.items():
         (root / "runtime" / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -349,7 +358,7 @@ def test_serve_refuses_other_hosts_and_ports(tmp_path: Path, monkeypatch: pytest
     lb = _load()
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
-    root.mkdir(parents=True)
+    _key(root)
     (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
@@ -542,8 +551,8 @@ def test_log_export_copies_only_scanned_regular_files(tmp_path: Path) -> None:
     (logs / "dir-link").symlink_to(tmp_path, target_is_directory=True)
     scanned = lb.scan_paths([logs], [FAKE_TOKEN])
     dest = tmp_path / "export"
-    copied = lb.export_logs(logs, dest, scanned["_files"])
-    assert (scanned["found"], scanned["complete"], copied) == (False, True, 1)
+    copied = lb.export_logs(tmp_path, dest, scanned["_files"], lb.Detector([FAKE_TOKEN]))
+    assert (scanned["found"], scanned["complete"], copied["files"]) == (False, True, 1)
     assert sorted(p.name for p in dest.rglob("*")) == ["edge.jsonl"]
 
 
@@ -649,7 +658,7 @@ def test_log_export_never_truncates_redirected_destination(tmp_path, link):
         parent.symlink_to(live)
         dest = parent / "export"
     with pytest.raises(OSError):
-        lb.export_logs(logs, dest, [str(logs / "primary.log")])
+        lb.export_logs(tmp_path, dest, [str(logs / "primary.log")], lb.Detector([FAKE_TOKEN]))
     assert target.read_text() == "live sentinel"
 
 
@@ -723,7 +732,9 @@ def test_a_copy_of_the_store_or_its_key_outside_custody_is_a_leak(
     linked = lb.scan_paths([root], secrets, skip_exact=lb.custody_paths(root))
     assert linked["hits"] == [str((root / "logs" / "primary.log").resolve())]
     with pytest.raises(OSError):
-        lb.export_logs(root / "logs", tmp_path / "export", [str((root / "logs" / "primary.log").resolve())])
+        lb.export_logs(
+            root, tmp_path / "export", [str((root / "logs" / "primary.log").resolve())], lb.Detector(secrets)
+        )
 
 
 def _teardown_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) -> Path:
@@ -821,3 +832,237 @@ def test_hold_stream_fault_is_bounded() -> None:
     for spec in ("hold_stream:0", f"hold_stream:{lb.HOLD_MAX_S + 1}", "hold_stream:", "hold_stream:-1"):
         with pytest.raises(lb.Refused):
             lb.parse_fault(spec)
+
+
+# ---------------------------------------------------------------- fix round 2 (review FAIL on 41a2f667)
+# Each test below replays one review finding and fails on 41a2f667 for the reason named in it.
+
+
+def test_log_export_refuses_a_directory_swapped_for_a_link_after_the_scan(tmp_path: Path) -> None:
+    """Finding: no-follow covered only the last component. The scan reads a clean logs/d/encryption.key;
+    then logs/d becomes a link to <root>/data, and export must not copy the real key out."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    _key(root)
+    (root / "data" / "encryption.key").write_bytes(b"real-store-key-" + b"q" * 29)
+    (root / "logs" / "d").mkdir(parents=True)
+    (root / "logs" / "d" / "encryption.key").write_text("an innocent log line\n")
+    (root / "logs" / "primary.log").write_text("INFO started\n")
+    scanned = lb.scan_paths([root / "logs"], [FAKE_TOKEN])
+    assert (scanned["found"], scanned["complete"], scanned["files_scanned"]) == (False, True, 2)
+    (root / "logs" / "d" / "encryption.key").unlink()
+    (root / "logs" / "d").rmdir()
+    (root / "logs" / "d").symlink_to(root / "data", target_is_directory=True)
+    export = tmp_path / "export"
+    with pytest.raises(OSError):
+        lb.export_logs(root, export, sorted(scanned["_files"]), lb.Detector([FAKE_TOKEN]))
+    copied = [p.read_bytes() for p in export.rglob("*") if p.is_file()]
+    assert all(b"real-store-key" not in data for data in copied), "the store key left the root"
+
+
+def test_log_export_scans_the_bytes_it_copies(tmp_path: Path) -> None:
+    """Finding: the exported bytes were never scanned. A log that gains a token after the scan is not exported."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    (root / "logs").mkdir(parents=True)
+    (root / "logs" / "edge.jsonl").write_text('{"ok": 1}\n')
+    scanned = lb.scan_paths([root / "logs"], [FAKE_TOKEN])
+    assert scanned["found"] is False
+    with (root / "logs" / "edge.jsonl").open("a") as fh:
+        fh.write(f"Authorization: Bearer {FAKE_TOKEN}\n")
+    export = tmp_path / "export"
+    with pytest.raises(lb.LeakFound):
+        lb.export_logs(root, export, scanned["_files"], lb.Detector([FAKE_TOKEN]))
+    assert not any(FAKE_TOKEN.encode() in p.read_bytes() for p in export.rglob("*") if p.is_file())
+
+
+def test_a_store_snapshot_from_before_a_mirror_cycle_is_still_a_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding: a DB copy taken before the mirror re-encrypted the rows matched no current ciphertext.
+
+    Any ciphertext the store key opens is a hit, whole or as a fragment (SQLite splits long blobs across
+    overflow pages). The control: the same scan without the key misses it, as 41a2f667 did.
+    """
+    import shutil as sh
+    import sqlite3
+
+    from cryptography.fernet import Fernet
+
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    _keyed_store(lb, root)
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    out = tmp_path / "out"
+    out.mkdir()
+    sh.copy2(root / "data" / "store.db", out / "snapshot.db")
+    fernet = Fernet((root / "data" / "encryption.key").read_bytes())
+    con = sqlite3.connect(root / "data" / "store.db")
+    old = con.execute("SELECT access_token_encrypted FROM accounts").fetchone()[0]
+    con.execute(
+        "UPDATE accounts SET access_token_encrypted = ?, refresh_token_encrypted = ?",
+        (fernet.encrypt(MIRRORED_TOKEN.encode()), fernet.encrypt(b"")),
+    )
+    con.commit()
+    con.close()
+    (out / "fragment.txt").write_bytes(b"page tail " + bytes(old)[:60] + b" next page")
+    secrets = lb.load_secrets(root)
+    key = lb.load_key(root)
+    keyed = lb.scan_paths([out], secrets, keys=[key])
+    unkeyed = lb.scan_paths([out], secrets)
+    assert sorted(Path(h).name for h in keyed["hits"]) == ["fragment.txt", "snapshot.db"]
+    assert unkeyed["found"] is False  # current ciphertexts and plaintexts alone miss the snapshot
+    # Ciphertexts of another key (the live store's) are not this sandbox's leak.
+    other = Fernet(Fernet.generate_key()).encrypt(MIRRORED_TOKEN.encode())
+    (out / "snapshot.db").unlink()
+    (out / "fragment.txt").write_bytes(other)
+    assert lb.scan_paths([out], secrets, keys=[key])["found"] is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
+def test_process_scan_is_incomplete_when_any_run_process_hides_its_environment(tmp_path: Path) -> None:
+    """Finding: environment visibility was checked only for named roles. A run process whose environment ps
+    does not show as this run's (no LB_SANDBOX_ROOT entry after its argv) makes the scan incomplete."""
+    import time
+
+    lb = _load()
+    root = (tmp_path / "sandboxes" / "r1").resolve()
+    root.mkdir(parents=True)
+    seen = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(20)", str(root)],
+        env={"PATH": "/usr/bin:/bin", "LB_SANDBOX_ROOT": str(root)},
+    )
+    # The marker only in argv, not the environment: it must not count as a shown environment.
+    unseen = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(20)", str(root), f"LB_SANDBOX_ROOT={root}"],
+        env={"PATH": "/usr/bin:/bin"},
+    )
+    try:
+        time.sleep(0.5)
+        result = lb.scan_processes(root, "r1", [FAKE_TOKEN])
+    finally:
+        for proc in (seen, unseen):
+            proc.kill()
+            proc.wait()
+    assert seen.pid in result["visible_pids"] and unseen.pid not in result["visible_pids"]
+    assert (result["found"], result["complete"], result["invisible_pids"]) == (False, False, [unseen.pid])
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
+def test_teardown_stops_a_process_that_names_only_the_run_and_never_reports_its_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding: a leftover naming the run id but not the root survived, and its raw command (which can hold
+    a token) went into the JSON. It is stopped, and leftovers are reported by pid and hash only."""
+    lb = _load()
+    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", root.name, FAKE_TOKEN])
+    try:
+        result = lb.teardown(root.name, None)
+        stopped = proc.wait(10) is not None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert stopped and result["processes"] == []
+    assert FAKE_TOKEN not in json.dumps(result)
+    assert set(lb.command_ref("x " + FAKE_TOKEN)) <= set("0123456789abcdef")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
+def test_teardown_never_unlinks_a_key_through_a_linked_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding: with <root>/data swapped for a link to the live data dir, stop deleted the live key."""
+    import shutil as sh
+
+    lb = _load()
+    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    live = tmp_path / "live-data"
+    live.mkdir()
+    (live / "encryption.key").write_bytes(b"live key")
+    sh.rmtree(root / "data")
+    (root / "data").symlink_to(live, target_is_directory=True)
+    result = lb.teardown(root.name, None)
+    assert (live / "encryption.key").read_bytes() == b"live key"
+    assert result["custody"]["key_unlinked"] is False
+    assert result["root_exists"] is False
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_restart_log_never_writes_through_a_planted_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Finding: logs/lb-restart.log was opened (append, following links) before lb-restart's config guard."""
+    import argparse
+
+    lb = _load()
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    (root / "logs").mkdir(parents=True)
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
+    live = tmp_path / "live.plist"
+    live.write_text("live plist")
+    if kind == "symlink":
+        (root / "logs" / "lb-restart.log").symlink_to(live)
+    else:
+        os.link(live, root / "logs" / "lb-restart.log")
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    monkeypatch.setattr(lb, "check_launchctl", lambda: None)
+    with pytest.raises(lb.Refused):
+        lb.cmd_restart(argparse.Namespace(run_id="r1", reason="unit"))
+    assert live.read_text() == "live plist"
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_client_env_never_truncates_a_planted_link(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """Finding: client-env truncated clients/codex/config.toml through a planted link to a live file."""
+    import argparse
+
+    lb = _load()
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    (root / "clients" / "codex").mkdir(parents=True)
+    (root / "sandbox.json").write_text(
+        json.dumps({"run_id": "r1", "ports": SERVE_PORTS, "label": "com.agent-lb.drill.sbx-r1"})
+    )
+    live = tmp_path / "live-config.toml"
+    live.write_text("live config")
+    if kind == "symlink":
+        (root / "clients" / "codex" / "config.toml").symlink_to(live)
+    else:
+        os.link(live, root / "clients" / "codex" / "config.toml")
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    lb.cmd_client_env(argparse.Namespace(run_id="r1", vendor="codex"))
+    assert live.read_text() == "live config"
+    assert "backend-api/codex" in (root / "clients" / "codex" / "config.toml").read_text()
+
+
+@pytest.mark.parametrize("name", ["store.db", "encryption.key", "store.db-wal"])
+def test_serve_refuses_a_store_or_key_hard_linked_to_live_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """Finding: a hard link passed the symlink and resolve checks, so the sandbox opened the live DB."""
+    lb = _load()
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    _key(root)
+    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
+    live = tmp_path / "live-data"
+    live.mkdir()
+    (live / name).write_bytes(b"live custody file")
+    (root / "data" / name).unlink(missing_ok=True)
+    os.link(live / name, root / "data" / name)
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
+    with pytest.raises(lb.Refused):
+        lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])
+    (root / "data" / name).unlink()
+    if name == "encryption.key":
+        _key(root)
+    assert lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])[3] == FAKE_TOKEN  # control

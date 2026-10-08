@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -172,3 +173,101 @@ def test_sandbox_mode_signals_only_processes_of_its_root(tmp_path: Path) -> None
         for proc in (other, mine):
             proc.kill()
             proc.wait(10)
+
+
+# ---------------------------------------------------------------- fix round 2 (review FAIL on 41a2f667)
+
+
+@pytest.mark.parametrize(
+    "planted", ["lb-restart.lock", "logs/sync.log", "state/front-preferred-port", "state/lb-standby.pid"]
+)
+def test_sandbox_guard_refuses_hard_links_to_live_state(tmp_path: Path, planted: str) -> None:
+    """Finding: an in-root lb-restart.lock hard-linked to the live front-preferred-port passed the path guard."""
+    lb = _load()
+    root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
+    live = tmp_path / ".agent-lb" / "state" / "front-preferred-port"
+    live.parent.mkdir(parents=True)
+    live.write_text("2457\n")
+    (root / planted).parent.mkdir(parents=True, exist_ok=True)
+    os.link(live, root / planted)
+    with pytest.raises(lb.SandboxRefused):
+        lb.sandbox_bindings(_config(tmp_path), home=tmp_path)
+    assert live.read_text() == "2457\n"
+
+
+def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) -> None:
+    """The same link planted after the guard ran: lock acquisition refuses instead of overwriting live state."""
+    lb = _load()
+    root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
+    root.mkdir(parents=True)
+    live = tmp_path / ".agent-lb" / "state" / "front-preferred-port"
+    live.parent.mkdir(parents=True)
+    live.write_text("2457\n")
+    lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
+    os.link(live, root / "lb-restart.lock")
+    with pytest.raises(lb.SandboxRefused):
+        with lb.Lock("unit", 1):
+            pass
+    (root / "state").mkdir()
+    os.link(live, root / "state" / "front-preferred-port.tmp")
+    with pytest.raises(lb.SandboxRefused):
+        lb.set_preferred(2472)  # its temp file, hard-linked to live state, must not be truncated
+    assert live.read_text() == "2457\n"
+    os.unlink(root / "lb-restart.lock")
+    with lb.Lock("unit", 1):  # control: a fresh lock of its own is taken
+        pass
+
+
+def _plist(root: Path, **overrides) -> dict:
+    data = {
+        "Label": "com.agent-lb.drill.sbx-r1",
+        "ProgramArguments": [
+            str(root / "runtime" / ".venv" / "bin" / "python"),
+            str(root / "bin" / "lb-sandbox"),
+            "_serve",
+            str(root),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "2471",
+        ],
+        "WorkingDirectory": str(root / "runtime"),
+        "EnvironmentVariables": {
+            "HOME": str(root / "home"),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PYTHONPATH": str(root / "runtime"),
+            "LB_SANDBOX_ROOT": str(root),
+            "AGENT_LB_DATA_DIR": str(root / "data"),
+            "AGENT_LB_DATABASE_URL": f"sqlite+aiosqlite:///{root / 'data' / 'store.db'}",
+            "AGENT_LB_ENCRYPTION_KEY_FILE": str(root / "data" / "encryption.key"),
+            "AGENT_LB_FEDERATION_PEER_URL": "http://127.0.0.1:2476",
+            "AGENT_LB_DASHBOARD_AUTH_MODE": "trusted_header",
+        },
+    }
+    env = overrides.pop("env", {})
+    data.update(overrides)
+    data["EnvironmentVariables"] = {**data["EnvironmentVariables"], **env}
+    return data
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"env": {"AGENT_LB_DATABASE_URL": "sqlite+aiosqlite:////h/.agent-lb/store.db"}},
+        {"env": {"AGENT_LB_ENCRYPTION_KEY_FILE": "/h/.agent-lb/encryption.key"}},
+        {"env": {"AGENT_LB_DATA_DIR": "/h/.agent-lb"}},
+        {"env": {"HOME": "/h"}},
+        {"env": {"AGENT_LB_FEDERATION_PEER_URL": "http://127.0.0.1:2455"}},
+        {"env": {"AGENT_LB_FEDERATION_TOKEN": "x"}},
+        {"ProgramArguments": ["/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb", "--port", "2471"]},
+        {"Label": "com.aneyman.agent-lb"},
+        {"WorkingDirectory": "/h/.agent-lb/runtime/agent-lb"},
+    ],
+)
+def test_sandbox_plist_must_run_serve_against_its_own_store(tmp_path: Path, overrides: dict) -> None:
+    """Finding: an in-root plist with a live DB URL or key path was trusted, so the standby booted on live."""
+    lb = _load()
+    root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
+    lb.check_sandbox_plist(_plist(root), root, "com.agent-lb.drill.sbx-r1", 2471)  # control
+    with pytest.raises(lb.SandboxRefused):
+        lb.check_sandbox_plist(_plist(root, **overrides), root, "com.agent-lb.drill.sbx-r1", 2471)

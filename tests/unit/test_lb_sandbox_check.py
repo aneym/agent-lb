@@ -102,12 +102,25 @@ def test_a_scan_counts_only_when_complete_and_clean(rc, scan: dict) -> None:
     assert check.scan_problems("x", rc, scan) != []
 
 
+def test_a_keyed_scan_must_have_held_the_store_key() -> None:
+    """Without the key a store snapshot taken before a mirror cycle reads clean (finding on 41a2f667)."""
+    check = _load()
+    assert check.scan_problems("x", 0, {**GOOD_SCAN, "ciphertext_keys": 1}, keyed=True) == []
+    assert check.scan_problems("x", 0, {**GOOD_SCAN, "ciphertext_keys": 0}, keyed=True) != []
+    assert check.scan_problems("x", 0, GOOD_SCAN, keyed=True) != []
+
+
 def test_process_scan_must_read_every_named_process_environment() -> None:
     check = _load()
-    procs = {"found": False, "complete": True, "visible_pids": [10, 11, 12], "pids": [10, 11, 12, 13]}
+    procs = {"found": False, "complete": True, "visible_pids": [10, 11, 12], "pids": [10, 11, 12]}
     good = {**GOOD_SCAN, "processes": procs}
     assert check.process_scan_problems(0, good, {"primary": 10, "aux": 11, "front": 12}) == []
     assert check.process_scan_problems(0, good, {"primary": 10, "standby": 13}) != []  # env never shown
+    # Finding on 41a2f667: an extra run process (no named role) whose env ps did not show still passed.
+    extra = {**procs, "pids": [10, 11, 12, 13]}
+    assert check.process_scan_problems(0, {**good, "processes": extra}, {"primary": 10}) != []
+    hidden = {**procs, "invisible_pids": [14]}
+    assert check.process_scan_problems(0, {**good, "processes": hidden}, {"primary": 10}) != []
     assert check.process_scan_problems(0, good, {"primary": None}) != []
     assert check.process_scan_problems(0, {**good, "processes": {**procs, "found": True}}, {"primary": 10}) != []
     assert check.process_scan_problems(0, {**GOOD_SCAN}, {"primary": 10}) != []
@@ -115,7 +128,15 @@ def test_process_scan_must_read_every_named_process_environment() -> None:
 
 GOOD_STOP = {
     "clean": True,
-    "logs": {"scan_scope": "root", "scan_found": False, "scan_complete": True, "copied": True, "files_copied": 8},
+    "logs": {
+        "scan_scope": "root",
+        "scan_found": False,
+        "scan_complete": True,
+        "copied": True,
+        "files_copied": 8,
+        "export_scanned": True,
+        "ciphertext_keys": 1,
+    },
     "custody": {"key_unlinked": True},
 }
 
@@ -133,7 +154,12 @@ GOOD_STOP = {
         (0, {**GOOD_STOP, "custody": {}}, [], ""),
         (1, GOOD_STOP, [], ""),
         (0, {**GOOD_STOP, "clean": False}, [], ""),
-        (0, GOOD_STOP, ["123 python lb-sandbox _boot"], ""),
+        (0, GOOD_STOP, [123], ""),
+        # Finding on 41a2f667: the export was never rescanned; a link swap after the scan copied the key out.
+        (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "export_scanned": False}}, [], ""),
+        (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "export_found": True}}, [], ""),
+        (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "files_copied": 0}}, [], ""),
+        (0, {**GOOD_STOP, "logs": {**GOOD_STOP["logs"], "ciphertext_keys": 0}}, [], ""),
         (0, GOOD_STOP, [], "456\t0\tcom.agent-lb.drill.sbx-r1"),
     ],
 )

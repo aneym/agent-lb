@@ -372,9 +372,15 @@ def restart_problems(
     return problems
 
 
-def scan_problems(name: str, rc: int | None, scan: dict, min_secrets: int = 2) -> list[str]:
-    """A file or process scan counts only when it ran, loaded the secrets, read everything and found nothing."""
+def scan_problems(name: str, rc: int | None, scan: dict, min_secrets: int = 2, keyed: bool = False) -> list[str]:
+    """A file or process scan counts only when it ran, loaded the secrets, read everything and found nothing.
+
+    keyed: the scan must also have held the store key, so any ciphertext it opens (a store snapshot taken
+    before a mirror cycle re-encrypted the rows) is a hit.
+    """
     problems = []
+    if keyed and scan.get("ciphertext_keys") != 1:
+        problems.append(f"{name}: scanned without the store key ({scan.get('ciphertext_keys')})")
     if rc != 0:
         problems.append(f"{name}: exit {rc}")
     if scan.get("found") is not False:
@@ -393,6 +399,10 @@ def process_scan_problems(rc: int | None, scan: dict, must_see: dict[str, int | 
     if procs.get("found") is not False or procs.get("complete") is not True:
         problems.append(f"process scan: found {procs.get('found')} complete {procs.get('complete')}")
     visible = set(procs.get("visible_pids") or [])
+    unseen = sorted(set(procs.get("pids") or []) - visible) + list(procs.get("invisible_pids") or [])
+    if unseen:
+        # Any process of the run, named role or not, whose environment ps did not show could hold the token.
+        problems.append(f"process scan did not read the environment of pids {sorted(set(unseen))}")
     for role, pid in must_see.items():
         if not isinstance(pid, int) or pid not in visible:
             problems.append(f"process scan did not read the environment of the {role} (pid {pid})")
@@ -415,6 +425,13 @@ def stop_problems(rc: int | None, stop: dict, leftover: list[str], labels: str, 
         problems.append(f"teardown scan found {logs.get('scan_found')} complete {logs.get('scan_complete')}")
     if logs.get("secret_load_error") or logs.get("copy_error") or logs.get("copied") is not True:
         problems.append(f"log export: {logs}")
+    if logs.get("export_found") or logs.get("export_scanned") is not True or not logs.get("files_copied"):
+        problems.append(
+            f"log export not scanned byte for byte: export_scanned {logs.get('export_scanned')} "
+            f"found {logs.get('export_found')} files {logs.get('files_copied')}"
+        )
+    if logs.get("ciphertext_keys") != 1:
+        problems.append(f"teardown scan ran without the store key ({logs.get('ciphertext_keys')})")
     if custody.get("key_unlinked") is not True:
         problems.append(f"store key unlinked: {custody.get('key_unlinked')}")
     return problems
@@ -728,9 +745,9 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
         timeout=1500,
     )
     problems = (
-        scan_problems("sandbox root", rc_s0, scan_root)
-        + scan_problems("--out", rc_s1, scan_out_dir)
-        + scan_problems("shared trees", rc_s2, scan_new)
+        scan_problems("sandbox root", rc_s0, scan_root, keyed=True)
+        + scan_problems("--out", rc_s1, scan_out_dir, keyed=True)
+        + scan_problems("shared trees", rc_s2, scan_new, keyed=True)
     )
     if not scan_root.get("files_scanned"):
         problems.append("the sandbox root scan read no file")
@@ -764,20 +781,32 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
 def stop_and_verify(c: Check, run_id: str) -> None:
     rc, stop, stop_out = c.sb("stop", "stop", "--run-id", run_id, "--logs-to", str(c.out / "logs"))
     c.stopped = True
-    rows = sh("/bin/ps", "-axww", "-o", "pid=,command=").splitlines()
-    mine = {str(os.getpid())}
-    leftover = [r.strip()[:160] for r in rows if run_id in r and r.split(None, 1)[0] not in mine]
+    leftover = leftover_pids(run_id)
     labels = sh("/bin/launchctl", "list")
     problems = stop_problems(rc, stop, leftover, labels, run_id)
+    # The exported logs once more, after the root is gone: only the live token is left to look for.
+    rc_x, exported, x_out = c.sb("scan-exported-logs", "scan", "--run-id", run_id, str(c.out / "logs"))
+    problems += scan_problems("exported logs after stop", rc_x, exported, min_secrets=1)
     c.step(
         "stop-clean",
         not problems,
         f"stop exit {rc} clean {stop.get('clean')}: labels {stop.get('labels_loaded')}, listeners "
         f"{stop.get('listeners')}, processes {stop.get('processes')}, root exists {stop.get('root_exists')}; "
-        f"logs {stop.get('logs')}; custody {stop.get('custody')}; independent ps leftovers {leftover}; "
-        f"problems {problems or 'none'}",
-        [str(stop_out), str(c.out / "logs")],
+        f"logs {stop.get('logs')}; custody {stop.get('custody')}; independent ps leftover pids {leftover}; "
+        f"exported logs rescanned for the live token: found {exported.get('found')} in "
+        f"{exported.get('files_scanned')} files; problems {problems or 'none'}",
+        [str(stop_out), str(x_out), str(c.out / "logs")],
     )
+
+
+def leftover_pids(run_id: str) -> list[int]:
+    """Pids whose command line names the run, this check excepted. Pids only: a command line may hold a token."""
+    leftover = []
+    for row in sh("/bin/ps", "-axww", "-o", "pid=,command=").splitlines():
+        parts = row.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit() and int(parts[0]) != os.getpid() and run_id in parts[1]:
+            leftover.append(int(parts[0]))
+    return leftover
 
 
 def main() -> int:
