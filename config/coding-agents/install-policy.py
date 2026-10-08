@@ -340,7 +340,10 @@ def is_workflow_seat_guard_hook(command: Any) -> bool:
 # `python3 "$HOME/.claude/hooks/hook-dispatch.py" <Event> '<matcher>'`, which runs that matcher's hooks from
 # hooks/dispatch/registry.json. The registry keeps the per-hook config verbatim, so `--hook-dispatcher off`
 # restores it exactly. Absent the flag the state is sticky: a folded config is refolded over only the groups the
-# parity fixture passed on; a group added or changed since stays a per-hook entry until the next `on`.
+# parity fixture passed on; a group added or changed since stays a per-hook entry until the next `on`. A sticky run
+# whose fixture fails twice keeps the installed fold as it is, never unfolds (a flake on a loaded machine must not
+# drop the dispatcher). Each fold drops the hooks DISPATCH_DROPPED names. Rollback reads only a registry of the
+# settings' own fold that accounts for every hook it folded (registry_problem); with none, nothing is written.
 DISPATCH_EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop")
 DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
@@ -358,6 +361,16 @@ DISPATCH_SKIP_MATCHERS = ("AskUserQuestion",)
 DISPATCH_HOOK_KEYS = {"type", "command", "timeout", "statusMessage"}
 SIMPLE_MATCHER = re.compile(r"[A-Za-z0-9_]+(?:\|[A-Za-z0-9_]+)*")
 DEFAULT_HOOK_TIMEOUT = 600
+# Claude Code 2.1.293's matcher (read from its bundle, 2026-10-07): a matcher of only these characters is a list of
+# exact tool names split on `|` or `,`, each read through its alias table; anything else is a regex searched in the
+# tool name and the names that alias to it.
+NAME_LIST = re.compile(r"[a-zA-Z0-9_|, -]+")
+TOOL_ALIASES = {"Task": "Agent", "KillShell": "TaskStop", "KillBash": "TaskStop", "ListPeers": "ListAgents",
+                "Brief": "SendUserMessage", "ListMcpResources": "ListMcpResourcesTool",
+                "ReadMcpResource": "ReadMcpResourceTool", "ReadMcpResourceDir": "ReadMcpResourceDirTool"}
+# Dropped at the fold (simplify lead, 2026-10-07: repos format in their own checks): the global PostToolUse
+# `npx prettier --write` hook on Edit|Write|MultiEdit, by the sha256 of its exact command.
+DISPATCH_DROPPED = {"55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write"}
 
 
 def is_dispatch_hook(hook: Any) -> bool:
@@ -374,8 +387,12 @@ def matcher_key(group: dict[str, Any]) -> str | None:
     return None
 
 
+def tool_names(key: str) -> set[str]:
+    return {TOOL_ALIASES.get(name.strip(), name.strip()) for name in re.split(r"[|,]", key) if name.strip()}
+
+
 def keys_overlap(first: str, second: str) -> bool:
-    return first == "*" or second == "*" or bool(set(first.split("|")) & set(second.split("|")))
+    return first == "*" or second == "*" or bool(tool_names(first) & tool_names(second))
 
 
 def foldable_groups(groups: list[Any], event: str) -> list[bool]:
@@ -421,11 +438,15 @@ def group_overlaps(group: Any, key: str) -> bool:
         return keys_overlap(own, key)
     if key == "*" or not isinstance(group.get("matcher"), str):
         return True
+    if NAME_LIST.fullmatch(group["matcher"]):  # `Bash, Read` and the like: a name list to Claude Code
+        return keys_overlap(group["matcher"], key)
     try:
         pattern = re.compile(group["matcher"])
     except re.error:
         return True
-    return any(pattern.search(name) for name in key.split("|"))
+    names = tool_names(key)
+    names |= {alias for alias, tool in TOOL_ALIASES.items() if tool in names}
+    return any(pattern.search(name) for name in names)
 
 
 def keep_config_order(groups: list[Any], eligible: list[bool]) -> list[bool]:
@@ -452,6 +473,81 @@ def keep_config_order(groups: list[Any], eligible: list[bool]) -> list[bool]:
                 eligible[index] = False
                 changed = True
     return eligible
+
+
+def drop_hooks(hooks: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The hook config without the hooks DISPATCH_DROPPED names (a group left empty goes too), and what went."""
+    kept, dropped = json.loads(json.dumps(hooks)), []
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        out = []
+        for group in groups:
+            if not (isinstance(group, dict) and isinstance(group.get("hooks"), list)):
+                out.append(group)
+                continue
+            left = []
+            for hook in group["hooks"]:
+                command = hook.get("command") if isinstance(hook, dict) else None
+                name = DISPATCH_DROPPED.get(hashlib.sha256(command.encode("utf-8")).hexdigest()) \
+                    if isinstance(command, str) else None
+                if name:
+                    dropped.append(f"{event} {group.get('matcher') or '*'}: {name}")
+                else:
+                    left.append(hook)
+            if left:
+                out.append({**group, "hooks": left})
+            elif not group["hooks"]:
+                out.append(group)
+        kept[event] = out
+    return kept, dropped
+
+
+def registry_problem(registry: Any) -> str | None:
+    """Why a registry cannot be trusted to restore the per-hook config, or None. Its per_hook block must account for
+    every hook it folded: each entries hook sits in a per_hook group under the same matcher key, each per_hook group
+    is either still in the folded list verbatim or folded whole into its key's entry, and each dispatcher entry of the
+    folded list names a key of entries."""
+    if not isinstance(registry, dict):
+        return "not a registry"
+    per_hook, entries, dispatch = registry.get("per_hook"), registry.get("entries"), registry.get("dispatch")
+    if not (isinstance(per_hook, dict) and isinstance(entries, dict) and isinstance(dispatch, dict)):
+        return "per_hook, entries or dispatch is missing"
+    for event, keyed in entries.items():
+        groups = per_hook.get(event)
+        folded = dispatch.get(event)
+        if not isinstance(keyed, dict) or not isinstance(groups, list) or not isinstance(folded, list):
+            return f"{event}: entries, per_hook or dispatch is not the right shape"
+        commands: dict[str, set[str]] = {}
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                return f"{event}: a per_hook group is not a group"
+            if group in folded:
+                continue
+            key = matcher_key(group)
+            if key is None or key not in keyed:
+                return f"{event}: per_hook group {group.get('matcher')!r} is neither kept nor folded"
+            for hook in group["hooks"]:
+                if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
+                    return f"{event}: a per_hook hook is not a command hook"
+                commands.setdefault(key, set()).add(hook["command"])
+        for key, hooks in keyed.items():
+            if not isinstance(hooks, list) or not hooks:
+                return f"{event} '{key}': the entry is not a list of hooks"
+            for hook in hooks:
+                if not isinstance(hook, dict) or hook.get("command") not in commands.get(key, set()):
+                    return f"{event} '{key}': entry hook {str(hook)[:80]} is not in per_hook"
+        for group in folded:
+            if not isinstance(group, dict):
+                return f"{event}: a folded group is not a group"
+            for hook in group.get("hooks") or []:
+                if is_dispatch_hook(hook):
+                    match = re.search(r"hook-dispatch\.py\"?\s+(\w+)\s+'([^']*)'", hook["command"])
+                    if not match or match.group(1) != event or match.group(2) not in keyed:
+                        return f"{event}: folded entry {hook['command'][:80]!r} names no entry"
+            if not any(is_dispatch_hook(hook) for hook in group.get("hooks") or []) and group not in groups:
+                return f"{event}: folded list keeps a group per_hook does not have"
+    return None
 
 
 def registry_rev(entries: dict[str, Any]) -> str:
@@ -594,7 +690,7 @@ def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict
 
 DISPATCH_REV = re.compile(r"hook-dispatch\.py\"?\s+\w+\s+'[^']*'\s+([0-9a-f]{12})\b")
 REV_FILE = re.compile(r"registry\.([0-9a-f]{12}|legacy)\.json")
-REV_KEEP_SECONDS = 7 * 86400  # a session keeps the hooks it started with; its registry stays this long
+REV_KEEP_SECONDS = 30 * 86400  # a session keeps the hooks it started with; its registry stays this long
 
 
 def folded_rev(settings: dict[str, Any]) -> str | None:
@@ -610,18 +706,27 @@ def folded_rev(settings: dict[str, Any]) -> str | None:
 
 
 def read_registry(home: Path, rev: str | None = None) -> dict[str, Any] | None:
-    paths = [home / DISPATCH_REGISTRY, (home / DISPATCH_REGISTRY).with_name("registry.json.bak")]
+    """The registry of the fold these settings run (same rev, or none for entries without one) that can restore the
+    per-hook config: the first consistent copy (registry_problem) of rev file, registry.json, its backup, and for
+    entries without a rev registry.legacy.json. A damaged copy is passed over for a good one; None when no copy is
+    good, so the caller leaves the settings as they are."""
+    base = home / DISPATCH_REGISTRY
+    paths = [base, base.with_name("registry.json.bak")]
     if rev:
-        paths.insert(0, (home / DISPATCH_REGISTRY).with_name(f"registry.{rev}.json"))
+        paths.insert(0, base.with_name(f"registry.{rev}.json"))
+    else:
+        paths.append(base.with_name("registry.legacy.json"))
     for path in paths:
         try:
             registry = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        if isinstance(registry, dict) and isinstance(registry.get("per_hook"), dict) and isinstance(
-            registry.get("entries"), dict
-        ):
+        if (registry.get("rev") if isinstance(registry, dict) else None) != rev:
+            continue
+        if registry_problem(registry) is None:
             return registry
+        print(f"WARNING hook dispatcher: {path} cannot restore the per-hook config ({registry_problem(registry)}); "
+              "trying the next copy")
     return None
 
 
@@ -717,7 +822,9 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool
             result = subprocess.run(
                 [sys.executable, str(source / "hooks" / "hook-dispatch-parity.py"), "--home", str(home),
                  "--registry", str(staged), "--dispatcher", str(source / DISPATCH_SCRIPT), "--out", str(report),
-                 "--workdir", str(Path(tempfile.gettempdir()) / "hook-dispatch-parity")],
+                 "--workdir", str(Path(tempfile.gettempdir()) / "hook-dispatch-parity"),
+                 # This run holds the per-home install lock; the process budget is the harden check's to prove.
+                 "--lock-held", "--no-process-count"],
                 capture_output=True, text=True, timeout=600, check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -936,7 +1043,12 @@ def main() -> int:
     desired_settings = reconcile_settings(settings, args.uninstall, sonnet_model)
     mode = "off" if args.uninstall else (args.hook_dispatcher or ("sticky" if folded_now else "off"))
     new_registry: dict[str, Any] | None = None
+    keep_fold = False  # a sticky refold whose fixture failed twice keeps the fold already installed
     if mode != "off" and isinstance(desired_settings.get("hooks"), dict):
+        kept_hooks, dropped = drop_hooks(desired_settings["hooks"])
+        for name in dropped:
+            print(f"hook dispatcher: dropped {name} at this fold")
+        desired_settings = {**desired_settings, "hooks": kept_hooks}
         only = None
         if mode == "sticky" and old_registry is not None:
             # Refold only what the fixture passed on; added or edited groups stay per-hook until the next `on`.
@@ -959,6 +1071,10 @@ def main() -> int:
                 new_registry = candidate
             else:
                 ok, summary = run_parity(source, args.home, candidate)
+                if not ok and mode == "sticky":
+                    # The coding-agents sync runs this on a loaded machine: one more run before calling it a change.
+                    print(f"hook dispatcher: parity fixture failed ({summary}); running it once more")
+                    ok, summary = run_parity(source, args.home, candidate)
                 if ok:
                     candidate["parity"] = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                                            "summary": summary}
@@ -966,11 +1082,26 @@ def main() -> int:
                     print(f"hook dispatcher parity passed: {summary}")
                 elif mode == "on":
                     raise SystemExit(f"error: hook dispatcher not installed; parity fixture failed: {summary}")
+                elif folded_now and old_registry is not None:
+                    # Never unfold on a failed sticky run: the installed fold passed its own fixture, and its
+                    # settings entries and registry stay exactly as they are (a flake must not drop the dispatcher;
+                    # a real change is reported here and by the harden check, and `on` or `off` decides it).
+                    keep_fold = True
+                    print(f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
+                          f"twice ({summary}); keeping the installed fold (rev {old_registry.get('rev')}) unchanged")
                 else:
                     print(f"WARNING hook dispatcher: a guard or the dispatcher changed and the parity fixture failed "
                           f"({summary}); restoring the per-hook config")
             if new_registry is not None:
                 desired_settings = {**desired_settings, "hooks": folded_hooks}
+            elif keep_fold:
+                hooks_now = dict(desired_settings["hooks"])
+                for event in DISPATCH_EVENTS:
+                    if event in (disk_settings.get("hooks") or {}):
+                        hooks_now[event] = disk_settings["hooks"][event]
+                    else:
+                        hooks_now.pop(event, None)
+                desired_settings = {**desired_settings, "hooks": hooks_now}
     desired_settings_text = json.dumps(desired_settings, indent=2, ensure_ascii=False) + "\n"
     changes: dict[Path, str | None] = {
         path: desired for path, desired in desired_docs.items() if desired != originals[path]
@@ -1010,7 +1141,7 @@ def main() -> int:
         for path in (rev_path, backup_path, registry_path):
             if read_text(path) != registry_text:
                 changes[path] = registry_text
-    else:
+    elif not keep_fold:
         for path in (registry_path, backup_path):
             if path.exists():
                 changes[path] = None
@@ -1021,10 +1152,11 @@ def main() -> int:
         legacy_text = json.dumps(old_registry, indent=2, ensure_ascii=False) + "\n"
         if read_text(legacy_path) != legacy_text:
             changes[legacy_path] = legacy_text
+    in_use = {f"registry.{rev}.json" for rev in (folded_rev(desired_settings), folded_rev(disk_settings)) if rev}
     if registry_path.parent.is_dir():
         for path in registry_path.parent.iterdir():
             if REV_FILE.fullmatch(path.name) and path != rev_path and path not in changes and \
-                    time.time() - path.stat().st_mtime > REV_KEEP_SECONDS:
+                    path.name not in in_use and time.time() - path.stat().st_mtime > REV_KEEP_SECONDS:
                 changes[path] = None
     if not args.uninstall:
         codex_config = args.home / ".codex" / "config.toml"

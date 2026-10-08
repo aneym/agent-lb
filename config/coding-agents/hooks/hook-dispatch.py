@@ -19,9 +19,9 @@ How each hook runs (doubt keeps the old path: its own process through /bin/sh -c
 - rewriter: `rtk hook claude` (side-effect free, never blocks). It is skipped when a guard already denied or a later
   guard rewrote the input (that rewrite wins either way); when it is the only process still needed and every other
   guard answered nothing, this process execs into it, so the usual Bash call costs one process per event. The exec'd
-  rewriter keeps its own timeout to the fraction of a second (an inherited ITIMER_REAL from the moment it starts);
-  at that point it is stopped with nothing written, so its answer is discarded as Claude Code discards a timed-out
-  hook's. The payload file is unlinked before the exec (fd 0 keeps it readable), so nothing is left behind.
+  rewriter has no timer of its own: Claude Code's timeout for the entry cancels one that hangs, with nothing shown,
+  as it cancelled the rewriter per-hook (a timer here would kill it with SIGALRM, which Claude Code reports as a
+  failed hook). The payload file is unlinked before the exec (fd 0 keeps it readable), so nothing is left behind.
 - external: everything else, exactly as configured.
 
 Answer: one guard with output passes through byte for byte, except an exit 2 without a JSON block reason, which
@@ -31,23 +31,29 @@ config order; JSON answers merge (deny > ask > allow, contexts joined, the last 
 plain stdout and errors follow Claude Code's per-event rules. Claude Code (2.1.293, probed 2026-10-07) reads a hook's
 stdout as JSON whatever its exit code and then ignores its stderr, so one process cannot answer with JSON and also
 raise a non-blocking error notice. A guard that failed without a JSON answer (exit 1, a crash) while another answered
-with JSON therefore has its notice (`<stderr>`, or `No stderr output`) carried in the merged answer's systemMessage,
-in config order, so the user still sees it; without any JSON answer the dispatcher exits with the failed guard's
-code and the notices on stderr, as Claude Code shows them.
+with JSON therefore has its notice, as Claude Code words it (`Failed with non-blocking status code: <stderr>`, or
+`No stderr output`), carried in the merged answer's systemMessage, in config order, so the user still sees it;
+without any JSON answer the dispatcher exits with the failed guard's code and the notices on stderr, one line each.
 
-Failing closed (2026-10-07 post-merge review of 4e1cea13): on PreToolUse, where the guards can deny, a broken
-registry or entry list, a temp file that cannot be written, guard answers that cannot be merged and any uncaught
-error refuse the call with exit 2 and a reason, never a silent exit 0 or 1. The other events' guards are notices and
-side effects (every one is `|| true` today), so there the same faults give a non-blocking notice (exit 1), as a
-failed guard did per-hook; a refused UserPromptSubmit would erase every prompt of the session.
+Failing closed (2026-10-07 post-merge review of 4e1cea13; p13D: any dispatcher error denies, never skips): on
+PreToolUse, where the guards can deny, a broken registry or entry list, a registry of another fold, a temp file that
+cannot be written, guard answers that cannot be merged and any uncaught error refuse the call with exit 2 and a
+reason, never a silent exit 0 or 1. A floor guard (FLOOR_SCRIPTS, FLOOR_COMMANDS) that times out, crashes, is missing
+or prints something that is not a hook answer refuses the call too, even where its per-hook wrapper failed open;
+its exit 2 under a `|| true` or `|| { printf ...; }` wrapper still blocks. Every other guard fails open as before,
+and each failure is logged to dispatch/failures.jsonl. The other events' guards are notices and side effects (every
+one is `|| true` today), so there the dispatcher's own faults give a non-blocking notice (exit 1), as a failed guard
+did per-hook; a refused UserPromptSubmit would erase every prompt of the session.
 
 Registry revisions: install-policy names each fold `registry.<rev>.json` and puts the rev in every settings entry
 (`... <Event> '<matcher>' <rev>`), so settings and the guards they run switch in one atomic settings write and a
-session still on older settings keeps the guards it started with. Each candidate registry is tried in turn and the
-first whose entry for this matcher is a valid hook list wins, so a damaged copy falls back to a good one: the rev's
-own file, then registry.json and its backup (whatever their rev: a rev file is kept 7 days, a session may run
-longer), then, for an entry without a rev, registry.legacy.json (the fold that entries without a rev were written
-with, kept by install-policy when it first writes revs). No valid entry anywhere refuses (PreToolUse).
+session still on older settings keeps the guards it started with. Each candidate registry of the entry's own fold is
+tried in turn and the first whose entry for this matcher is a valid hook list wins, so a damaged copy falls back to a
+good copy of the same fold: the rev's own file, then registry.json and its backup when they carry that rev; for an
+entry without a rev, registry.json and its backup when they have none, then registry.legacy.json (the fold entries
+without a rev were written with, kept by install-policy when it first writes revs). A registry of another fold never
+answers, since it may lack a guard the entry's fold had; no valid entry refuses (PreToolUse). Rev files are kept
+30 days.
 
 Rollback: `python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off` restores the per-hook
 config verbatim from the registry. Must stay Python 3.9 compatible: `python3` may resolve to /usr/bin/python3.
@@ -71,6 +77,19 @@ SHELL = "/bin/sh"  # Claude Code spawns command hooks with shell: true (observed
 HERE = os.path.dirname(os.path.abspath(__file__))
 REWRITERS = {"rtk hook claude"}  # side-effect free, never blocks; may be skipped or exec'd into
 REV = re.compile(r"[0-9a-f]{12}")
+# Floor guards (p13D and the simplify lead, 2026-10-07): PreToolUse guards that hold a kept floor (destructive
+# commands, secrets, merges, relays, seats). On PreToolUse one that times out, crashes, is missing or answers with
+# something that is not a hook answer refuses the call, whatever the per-hook config made of that failure (a
+# `|| true` or `|| { printf ...; }` wrapper included); any other guard fails open as before, and the failure is
+# logged to dispatch/failures.jsonl. Matched by script name anywhere in the command, or by the exact inline command.
+FLOOR_SCRIPTS = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny",
+                 "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard")
+FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
+FLOOR_COMMANDS = {  # sha256 of the exact inline command -> its name
+    "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": "dangerous-command",
+}
+FLOOR_TEXT = "BLOCKED: Dangerous command"  # the inline leaf's own refusal, in any later version of its text
+NOTICE_PREFIX = "Failed with non-blocking status code: "  # what Claude Code puts before a failed hook's stderr
 # Environment that changes what a pinned shell guard does before or while it runs (a startup file, shell options,
 # exported functions that replace jq, grep or echo, injected libraries). With any of it set the prefilter's proof
 # does not hold, so the guard runs.
@@ -99,11 +118,12 @@ SHAPE = re.compile(
 
 
 class Result(object):
-    __slots__ = ("code", "out", "err", "timed_out", "mode", "spawned")
+    __slots__ = ("code", "out", "err", "timed_out", "mode", "spawned", "floor_failure")
 
     def __init__(self, code=0, out=b"", err=b"", timed_out=False, mode="", spawned=0):
         self.code, self.out, self.err, self.timed_out = code, out, err, timed_out
         self.mode, self.spawned = mode, spawned
+        self.floor_failure = None  # why a floor guard failed (timeout, crash, missing, malformed), or None
 
     def empty(self):
         """Nothing Claude Code acts on: exit 0 and no stdout (stderr of an exit-0 hook is ignored)."""
@@ -216,6 +236,16 @@ def _jq_field(payload, field):
     if not isinstance(value, str):
         return None
     return value.replace("\x00", "")  # bash $(...) drops NUL bytes
+
+
+def escapes_in_input(payload):
+    """A backslash anywhere in the tool input. An `echo "$CMD"` under a shell or option with xpg_echo (macOS /bin/sh,
+    a bash built or started with it) turns escapes into other text (`l\\x69nk-cli` into `link-cli`), which no
+    prefilter reads; such an input always runs the pinned guard."""
+    tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
+    if not isinstance(tool_input, dict):
+        return False
+    return any(isinstance(value, str) and "\\" in value for value in tool_input.values())
 
 
 def pf_dangerous(payload):
@@ -347,7 +377,11 @@ def pf_prettier(payload):
 SCRIPT_PREFILTERS = {
     "agent-lb-bootout-guard.sh": ("8f4a0eea5f7639e7d0f6e8d02a048ffd00db3c37daa9b6f4acb86d612a36d304", pf_bootout),
     "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
-    "wide-scan-guard.sh": ("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac", pf_wide_scan),
+    # fab6ad8: before the simplify lane's 2026-10-08 edit; b169f02: that edit adds an early allow for plain
+    # echo/printf and turns the FIFO grep refusal into a `-D skip` rewrite inside the same FIFO branch, so the
+    # prefilter's FIFO clause still covers every input it blocks or rewrites.
+    "wide-scan-guard.sh": (("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac",
+                            "b169f02eb85ed225fcebaef814e1c7ad0fccda755b1a21a7887a3f6c8df4bc44"), pf_wide_scan),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
     # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
     # 31b899775, after its review fixes; 64cf185: factory a6f53ea1e, destination parsed by shlex; 77520a3: factory
@@ -377,7 +411,7 @@ COMMAND_PREFILTERS = {
 
 class Plan(object):
     __slots__ = ("hook", "command", "timeout", "kind", "script", "argv", "interp", "devnull", "fallback_true",
-                 "fallback_text", "source", "reason", "prefilter")
+                 "fallback_text", "source", "reason", "prefilter", "floor", "bare")
 
     def __init__(self, hook):
         self.hook = hook
@@ -387,6 +421,20 @@ class Plan(object):
         self.kind, self.script, self.argv, self.interp = "external", None, None, None
         self.devnull, self.fallback_true, self.fallback_text, self.source = False, False, None, None
         self.reason, self.prefilter = "", None
+        self.floor = floor_name(self.command)  # the floor guard this hook runs, or None
+        self.bare = None  # a floor guard's own command without its shell wrapper (run bare, wrapper applied here)
+
+
+def floor_name(command):
+    if not command:
+        return None
+    named = FLOOR_COMMANDS.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
+    if named:
+        return named
+    match = FLOOR_WORD.search(command)
+    if match:
+        return match.group(1)
+    return "dangerous-command" if FLOOR_TEXT in command else None
 
 
 def sibling_sources(script_dir, source, depth=0, seen=None):
@@ -443,6 +491,12 @@ def plan_hook(hook, inproc_names):
     if not match:
         plan.reason = "shape"
         return plan
+    plan.devnull = bool(match.group("devnull"))
+    plan.fallback_true = bool(match.group("true"))
+    plan.fallback_text = match.group("fb")
+    if plan.floor and (plan.devnull or plan.fallback_true or plan.fallback_text is not None):
+        # Run the guard bare and apply its wrapper here, so its own failure is seen before the wrapper hides it.
+        plan.bare = command[:match.end("args")]
     if match.group("interp") is None:
         # A pinned shell guard, bare or inside `2>/dev/null || true`: when its prefilter says it cannot act, the
         # wrapped command ends with exit 0 and no output either way. A printf fallback answers whenever the guard
@@ -493,9 +547,6 @@ def plan_hook(hook, inproc_names):
         return plan
     plan.script, plan.interp, plan.source = script, interp, source
     plan.argv = [script] + match.group("args").split()
-    plan.devnull = bool(match.group("devnull"))
-    plan.fallback_true = bool(match.group("true"))
-    plan.fallback_text = match.group("fb")
     plan.kind = "inproc"
     plan.reason = "same interpreter" if same_interpreter(interp) else "other interpreter"
     return plan
@@ -686,6 +737,55 @@ def apply_wrapper(plan, result):
     return result
 
 
+_DECISIONS = {"allow", "ask", "deny"}
+
+
+def answer_problem(out):
+    """Why a hook's stdout is not a hook answer Claude Code reads cleanly, or None (nothing, or a well-formed one)."""
+    if not out.strip():
+        return None
+    obj = parse_json(out)
+    if obj is None:
+        return "printed output that is not a JSON hook answer"
+    specific = obj.get("hookSpecificOutput")
+    if specific is not None:
+        if not isinstance(specific, dict):
+            return "printed a malformed hook answer (hookSpecificOutput is not an object)"
+        decision = specific.get("permissionDecision", "allow")
+        if not isinstance(decision, str) or decision not in _DECISIONS:
+            return "printed a malformed hook answer (permissionDecision %s)" % json.dumps(decision)
+        reason = specific.get("permissionDecisionReason")
+        if reason is not None and not isinstance(reason, str):
+            return "printed a malformed hook answer (permissionDecisionReason is not text)"
+    if "decision" in obj and obj["decision"] not in ("block", "approve"):
+        return "printed a malformed hook answer (decision %s)" % json.dumps(obj["decision"])
+    return None
+
+
+def floor_failure(result):
+    """How a floor guard failed (before any shell wrapper), or None when it answered: allow, deny or block."""
+    if result.timed_out:
+        return "timed out"
+    if result.code == 2:
+        return None  # a block
+    if result.code == 127:
+        return "is missing (exit 127)"
+    if result.code != 0:
+        return "crashed (exit %d)" % result.code
+    return answer_problem(result.out)
+
+
+def finish(plan, raw):
+    """The guard's result as Claude Code would see it; for a floor guard, its failure is read first."""
+    if plan.floor:
+        raw.floor_failure = floor_failure(raw)
+        if raw.code == 2 and not raw.timed_out:
+            return raw  # a floor guard's block stands, whatever its wrapper would make of exit 2
+    if plan.kind == "inproc" or plan.bare:
+        return apply_wrapper(plan, raw)
+    return raw
+
+
 class External(object):
     """A hook in its own process, through /bin/sh -c, as Claude Code runs it; drained by a reader thread."""
 
@@ -696,7 +796,7 @@ class External(object):
         self.outcome = None
         stdin = payload.open_fd()
         try:
-            self.proc = subprocess.Popen([SHELL, "-c", plan.command], stdin=stdin, stdout=subprocess.PIPE,
+            self.proc = subprocess.Popen([SHELL, "-c", plan.bare or plan.command], stdin=stdin, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, start_new_session=True,
                                          env=rewriter_env() if plan.kind == "rewriter" else None)
         finally:
@@ -792,8 +892,20 @@ def refusal(event, note, blocked=False):
 
 
 def notice_text(result):
-    """The text of the non-blocking error notice Claude Code shows for a guard that failed without JSON."""
-    return result.err.decode("utf-8", "replace").rstrip("\n") or "No stderr output"
+    """The non-blocking error notice Claude Code (2.1.293) shows for a guard that failed without JSON:
+    `Failed with non-blocking status code: <stderr, trimmed>`, or `No stderr output` in its place."""
+    return NOTICE_PREFIX + (result.err.decode("utf-8", "replace").strip() or "No stderr output")
+
+
+def refuse_failed_floor(plan, result):
+    """A floor guard that failed answers as a block of its own, with the reason in its message."""
+    if result is None or not result.floor_failure:
+        return result
+    note = "hook-dispatch: floor guard %s %s, so this call is refused (a floor guard that fails denies)" % (
+        plan.floor, result.floor_failure)
+    detail = result.err.decode("utf-8", "replace").strip()[-500:]
+    return Result(2, b"", (note + ("\n" + detail if detail else "") + "\n").encode("utf-8", "backslashreplace"),
+                  False, "floor-refused", result.spawned)
 
 
 def merge(event, plans, results):
@@ -825,6 +937,8 @@ def merge_answers(event, plans, results):
     blocks with its reason, and an exit 2 without one blocks with `[<command>]: <stderr>`. The dispatcher answers
     with that same text as a JSON block reason, so the message keeps the guard's own command, not the dispatcher's.
     """
+    if event == "PreToolUse":
+        results = [refuse_failed_floor(p, r) for p, r in zip(plans, results)]
     pairs = [(p, r) for p, r in zip(plans, results) if r is not None and not r.empty()]
     pairs = [(p, r) for p, r in pairs if not r.timed_out]  # a cancelled hook has no effect
     if not pairs:
@@ -857,7 +971,10 @@ def merge_answers(event, plans, results):
             merged["decision"] = "block"
             merged["reason"] = "\n".join(messages)
         return Result(2, encode(merged), b"".join(r.err for _p, r, _obj in blocks))
-    notice_err = ("\n".join(notices) + "\n").encode("utf-8", "backslashreplace") if notices else b""
+    # Without a JSON answer Claude Code puts its prefix before this process's stderr itself: the first notice goes
+    # without it, each later one keeps its own, so the user reads one `Failed with ...` line per failed guard.
+    notice_err = ("\n".join(notices)[len(NOTICE_PREFIX):] + "\n").encode("utf-8", "backslashreplace") \
+        if notices else b""
     if not objects and not plain:
         return Result(errors[0].code, b"", notice_err)
     if not objects and (not errors or event != "UserPromptSubmit"):
@@ -956,8 +1073,12 @@ def registry_candidates(rev=None):
 
 
 def load_entry(event, key, rev=None):
-    """(registry, hooks, path) from the first candidate whose entry for (event, key) is a valid hook list. A damaged or
-    missing entry in one copy falls through to the next; raises with every reason when none has it."""
+    """(registry, hooks, path) from the first candidate of this entry's own fold whose entry for (event, key) is a
+    valid hook list. A damaged or missing entry in one copy falls through to the next copy of the same fold; a copy
+    of another fold never answers (2026-10-07 review M1: a session on rev R1 whose file is gone must not run the
+    guards of R2, which may lack R1's deny). An entry with a rev reads only registries carrying that rev; one
+    without a rev reads only registries without one (the fold before revs: registry.legacy.json, or a registry.json
+    still from then). Raises with every reason when none has it."""
     errors = []
     for path in registry_candidates(rev):
         try:
@@ -968,6 +1089,10 @@ def load_entry(event, key, rev=None):
             continue
         if not (isinstance(registry, dict) and isinstance(registry.get("entries"), dict)):
             errors.append("%s: not a registry" % os.path.basename(path))
+            continue
+        if (registry.get("rev") or None) != rev:
+            errors.append("%s: fold %s, not this entry's %s" % (
+                os.path.basename(path), registry.get("rev") or "without a rev", rev or "(without a rev)"))
             continue
         try:
             return registry, entry_hooks(registry, event, key), path
@@ -1037,9 +1162,11 @@ def rewriter_env():
 
 
 def exec_into(plan, payload, record):
-    """Replace this process with the rewriter: same pid. Its own timeout, to the fraction of a second, runs from the
-    moment it starts (per-hook it ran beside the others with that much time of its own), kept by an inherited
-    ITIMER_REAL; at expiry SIGALRM stops it before it writes, so its answer is discarded as a timed-out hook's is.
+    """Replace this process with the rewriter: same pid, no timer of its own. Claude Code's timeout for this entry
+    (every guard's timeout added up, plus 5 s) is the one that ends a rewriter that hangs, and Claude Code cancels a
+    timed-out hook with nothing shown, as it cancelled the rewriter per-hook. A timer here would kill it with
+    SIGALRM instead, which Claude Code reports as a failed hook (`Failed with non-blocking status code`); that
+    notice is not what the user saw per-hook (2026-10-07 review M2). Timers this process inherited are cleared.
     The payload file is unlinked first (fd 0 keeps it readable): a successful exec leaves nothing behind. When the
     exec fails, the file is written again and the caller runs the rewriter through /bin/sh."""
     words = plan.command.split()
@@ -1048,19 +1175,17 @@ def exec_into(plan, payload, record):
         return  # not on PATH: let the caller run it through /bin/sh, which reports it as before
     fd = payload.open_fd()
     record["exec"] = plan.command
-    record["exec_timeout"] = plan.timeout
     trace(record)
     sys.stdout.flush()
     sys.stderr.flush()
     os.dup2(fd, 0)
     os.close(fd)
     payload.close()
+    signal.setitimer(signal.ITIMER_REAL, 0)
     signal.signal(signal.SIGALRM, signal.SIG_DFL)
-    signal.setitimer(signal.ITIMER_REAL, plan.timeout)
     try:
         os.execve(target, words, rewriter_env())
     except OSError:
-        signal.setitimer(signal.ITIMER_REAL, 0)
         payload.restore()
 
 
@@ -1097,7 +1222,33 @@ def suppress_subagent_owner(result, payload, event):
     return Result(result.code, encode(obj), result.err)
 
 
-def run_entry(event, hooks, raw, inproc_names):
+def log_failures(event, key, plans, results):
+    """One line per guard that failed (timeout, crash, missing, malformed) in dispatch/failures.jsonl; a floor guard's
+    failure refused the call, any other guard's failed open. Never raises; the file is rotated past 1 MB."""
+    rows = []
+    for plan, result in zip(plans, results):
+        if result is None or result.mode.startswith("skipped"):
+            continue
+        failure = result.floor_failure if plan.floor else (
+            "timed out" if result.timed_out else
+            ("exited %d" % result.code if result.code not in (0, 2) else None))
+        if failure:
+            rows.append({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": event, "key": key,
+                         "command": plan.command[:300], "floor": plan.floor, "failure": failure,
+                         "outcome": "refused" if plan.floor and event == "PreToolUse" else "failed open"})
+    if not rows:
+        return
+    try:
+        path = os.path.join(HERE, "dispatch", "failures.jsonl")
+        if os.path.exists(path) and os.path.getsize(path) > (1 << 20):
+            os.replace(path, path + ".1")
+        with open(path, "a") as handle:
+            handle.write("".join(json.dumps(row) + "\n" for row in rows))
+    except (OSError, ValueError):
+        pass
+
+
+def run_entry(event, hooks, raw, inproc_names, key=None):
     record = {"event": event, "pid": os.getpid(), "ppid": os.getppid()}
     plans = []
     for hook in hooks:
@@ -1118,7 +1269,7 @@ def run_entry(event, hooks, raw, inproc_names):
         for index, plan in enumerate(plans):
             if plan.kind == "filtered":
                 try:
-                    needed = plan.prefilter(payload_obj)
+                    needed = escapes_in_input(payload_obj) or plan.prefilter(payload_obj)
                 except Exception:
                     needed = True
                 if needed:
@@ -1142,7 +1293,7 @@ def run_entry(event, hooks, raw, inproc_names):
                 plan.kind, plan.reason = "external", "crashed under another interpreter"
                 started[index] = External(plan, payload)
                 continue
-            results[index] = apply_wrapper(plan, result)
+            results[index] = finish(plan, result)
         for index, plan in enumerate(plans):
             if plan.kind != "rewriter":
                 continue
@@ -1161,7 +1312,8 @@ def run_entry(event, hooks, raw, inproc_names):
                 exec_into(plan, payload, record)
             started[index] = External(plan, payload)
         for index, external in started.items():
-            results[index] = external.result()
+            results[index] = finish(plans[index], external.result())
+        log_failures(event, key, plans, results)
         record["hooks"] = trace_hooks(plans, results)
         record["spawned"] = _SPAWNS[0]
         answer = suppress_subagent_owner(merge(event, plans, results), payload_obj, event)
@@ -1212,7 +1364,7 @@ def main(argv=None):
         # its own process until install-policy reruns the fixture.
         inproc_names = registry.get("inproc_sha") if isinstance(registry.get("inproc_sha"), dict) else \
             dict.fromkeys(name for name in registry.get("inproc") or [] if isinstance(name, str))
-        result = run_entry(event, hooks, raw, inproc_names)
+        result = run_entry(event, hooks, raw, inproc_names, key)
     except BaseException as exc:
         # Anything this process did not plan for (no temp file, no process, a bug) refuses: the guards it was
         # running might have.
