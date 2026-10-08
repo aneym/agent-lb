@@ -4,17 +4,18 @@ This is the one rules source for every machine (2026-10-05), installed at `~/.ag
 Ask `factory ask "<question>" --json` for the current answer with live state. Record a fix with `factory learn "<problem>" "<fix>"`: other agents see it for 24 hours or until the rules change; a fix recorded twice becomes a rule (2026-10-05).
 Machines come from the deterministic factory registry (`factory machines`), not markdown. Alex, 2026-10-05: "machine registry should be deterministic and not based on md files"; "rules should live on the factory home". Environment rules (browser, repo placement, machine etiquette) are in `WORKSPACE.md`, installed beside this file from the private factory repo (`rules/WORKSPACE.md`).
 
-## Model ladder (2026-09-30; updated 2026-10-05)
+## Model ladder (2026-09-30; updated 2026-10-08)
 
 Best first; only Claude is precious. Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
-- Spec'd code: `cursor-seat` Grok medium, then Composer, then `gpt-implementer` Sol medium, `devin-seat` SWE high, Sonnet high last. Opus stays off the routine code ladder.
-- Mechanical: `cursor-seat` Composer, then Grok low, then `devin-seat` SWE medium, then Sol low. Standard speed, never Fast; inputs under 256k.
+- Spec'd code: `gpt-implementer` Sol medium first, `devin-seat` SWE high overflow, Sonnet high last. Opus stays off the routine code ladder.
+- Mechanical: `gpt-implementer` Sol low first, then `devin-seat` SWE medium overflow. Standard speed, never Fast; inputs under 256k.
+- Ladder update (2026-10-08, audit SIMPLIFY-2026-10-07 item 9): Cursor is out until a passing probe at the 2026-10-30 reset; switch only on real 429s or usage-limit errors.
 - Read/explore: `gpt-explorer` Sol low; no decision rides on it.
 - Review, after merge only (2026-10-07): Sonnet high `verifier` for non-Claude authors; `codex-verifier` Sol xhigh for Claude-authored work. Money path, migrations and gate config get the same one post-merge reviewer as any change; no panel before GA (Alex, 2026-10-07: "not treating it liek a prod app yet until we're launched"). Grok and Composer never review.
 - Plans, specs, verdicts, design, build-lane tabs, job runners and fact helpers stay Opus until an eval says otherwise. Tabs Alex talks to stay Opus unless he picks Fable. Claude decides; other seats advise or type.
 - Every agent tab and session runs Opus, effort medium, ultracode on (2026-10-07). Alex, 2026-10-07 19:27 ET: "for now, default all our agents to opus medium but with ultracode on please. including cc zsh command"; then: "like \"agents\" and new temrinal sessions i dispatch". That covers the orchestrator, lead, CoS, talk and Q&A tabs, the pinned agent tabs and every session cc, herdr-agent-spawn, box-session or agent-launch starts; an explicit `--model`, `--effort` or `--settings` wins, and `CLAUDE_ULTRACODE=0` turns ultracode off in the zsh launchers. Ladder seats, workflow `agent()` seats and `-p` job runners keep their own models and effort.
 - Fable and Astra are readmitted for two roles (2026-10-05). Alex, 2026-10-05 19:44 ET: "right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens." `fable-orchestrator` (`fable-latest`, falling back to `opus-latest` once Fable leaves the upstream list) runs those tabs only when Alex or a dispatch asks for Fable (2026-10-07; no longer the default). `astra-consult` (`astra-latest`, high, read-only) gives plan second opinions: at most one per plan, brief under 2k tokens. Neither is on an implementer or review ladder; every other seat still treats both as retired (`readmitted` in `routing-table.json`).
-- Orchestrators come first (Alex, 2026-09-29: "we cant have any of these go down, especially orchestrators like claude"). While Claude is down to its last account or a 5h window is under 40%, Claude runs lane tabs, orchestrators and Opus plans and specs only; post-merge review goes to the cross-vendor seat (2026-10-07). Explore goes to `gpt-explorer`, never `Explore`; mechanical to Cursor; non-Claude review to Sonnet `verifier`. `review_pr.py` only queues to the secret scan pre-GA and needs no model pin; no new Claude-driven eval judging or helper workflows.
+- Orchestrators come first (Alex, 2026-09-29: "we cant have any of these go down, especially orchestrators like claude"). While Claude is down to its last account or a 5h window is under 40%, Claude runs lane tabs, orchestrators and Opus plans and specs only; post-merge review goes to the cross-vendor seat (2026-10-07). Explore goes to `gpt-explorer`, never `Explore`; mechanical to Sol low; non-Claude review to Sonnet `verifier`. `review_pr.py` only queues to the secret scan pre-GA and needs no model pin; no new Claude-driven eval judging or helper workflows.
 - Cursor-Sonnet is unavailable until 2026-10-30; on-demand billing stays off. Re-test then with `seat run --vendor cursor --model claude-sonnet-5-5-high`. While this overflow rung is empty, the next Claude overflow rung is Opus (2026-10-05).
 - Every GPT seat runs `sol-latest`, resolved at runtime (Alex, 2026-09-29: "swap all gpt routing to sol latest, 6.1 please").
 
@@ -51,7 +52,7 @@ Once architecture is agreed, start independent slices together; only true depend
 Hundreds of agents must remain possible (Alex, 2026-09-25). Back off on real upstream 429s, usage-limit errors, an account under about 15% of its 5h window, or climbing error rates. `route pools` hides spent accounts; use live provider status. Agent-lb throttling is a bug; report request IDs to the usage audit owner.
 Anthropic limits become an item only when the final usable account is under 15% of its week; the orchestrator monitor alerts there (2026-09-27). Design as if accounts are not the bottleneck: optimize machines, filesystem and dispatch width. Real 429s still move work.
 
-## Seats and effort (2026-09-30; updated 2026-10-05)
+## Seats and effort (2026-09-30; updated 2026-10-08)
 
 | Job | Seat | Model / effort |
 |---|---|---|
@@ -59,10 +60,10 @@ Anthropic limits become an item only when the final usable account is under 15% 
 | Plan second opinion, light | astra-consult (read-only; one per plan, brief under 2k tokens) | astra-latest high |
 | Orchestrator, lead, CoS, talk and agent tabs Alex talks to, factory decider | Opus tab (cc, ultracode on) | opus-latest medium |
 | Same tabs, Fable on request | fable-orchestrator | fable-latest medium |
-| Code to a spec | interim ladder; gpt-implementer | sol-latest medium |
+| Code to a spec | gpt-implementer; devin-seat overflow; Sonnet last | sol-latest medium; swe-latest high; sonnet-latest high |
 | Judgment code, fallback | opus-seat | Opus |
 | Read-only exploration | gpt-explorer / Explore | sol-latest low / Sonnet medium |
-| Mechanical sweeps | cursor-seat | Composer / grok-latest low |
+| Mechanical sweeps | gpt-implementer; devin-seat overflow | sol-latest low; swe-latest medium |
 | Non-Claude review, after merge | verifier | Sonnet high; no panel before GA (2026-10-07) |
 | Claude-authored review | codex-verifier | sol-latest xhigh |
 | Remote-machine relay (batch templates only) | host-relay | Sonnet low |

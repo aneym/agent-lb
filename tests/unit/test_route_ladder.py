@@ -81,26 +81,22 @@ def pick(env: dict[str, str], table: Path, *args: str) -> dict:
     return json.loads(result.stdout)
 
 
-def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> None:
+def test_best_first_ladder_starts_with_sol_even_when_codex_is_low(tmp_path: Path) -> None:
     env = setup(tmp_path)
 
-    # While Grok and Composer are out of usage the canonical table gates both and Devin leads.
-    gated = pick(env, CANONICAL_TABLE, "implement")
-    assert gated["rung"] == "swe2-high"
-    assert {row["rung"] for row in gated["skipped"] if row["reason"].startswith("gated:")} >= {"grok-medium", "composer"}
-
-    grok_open = cursor_open(tmp_path)
-    held = pick(env, grok_open, "implement")
+    # Low pace is advisory for Sol; Cursor rungs are out until the reset probe.
+    held = pick(env, CANONICAL_TABLE, "implement")
+    assert not any(row["rung"] in {"grok-medium", "composer"} for row in held["skipped"])
     assert (held["ladder"], held["rung"], held["seat"], held["model"]) == (
-        "interim", "grok-medium", "cursor-seat", "grok-4.7-medium")
+        "interim", "sol-medium", "gpt-implementer", "gpt-6.1-sol")
     assert held["reason"] == "first open rung"
     assert held["pace"]["openai-codex"]["state"] == "low"
     assert (held["audit"]["rung"], held["audit"]["seat"], held["audit"]["model"], held["audit"]["effort"]) == (
         "sonnet-high", "verifier", "claude-sonnet-5-5", "high")
-    assert held["intended"] == "grok-medium"
-    text = route(env, grok_open, "pick", "implement")
+    assert held["intended"] == "sol-medium"
+    text = route(env, CANONICAL_TABLE, "pick", "implement")
     assert text.returncode == 0, text.stderr
-    assert text.stdout.strip().splitlines()[-1] == "→ grok-4.7-medium (cursor-models)"
+    assert text.stdout.strip().splitlines()[-1] == "→ gpt-6.1-sol (openai-codex)"
 
     # Grok's work never goes to Grok or to Sonnet's own pool twice: Sonnet high, then Sol high.
     review = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai")
@@ -108,10 +104,10 @@ def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> N
     retry = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-high")
     assert (retry["rung"], retry["seat"], retry["effort"]) == ("sol-high", "codex-verifier", "high")
 
-    # Mechanical work starts with Composer when Cursor has usage, else Devin SWE medium.
-    mechanical = pick(env, grok_open, "mechanical")
-    assert (mechanical["rung"], mechanical["seat"], mechanical["model"]) == ("composer", "cursor-seat", "composer-2.5")
-    held = pick(env, CANONICAL_TABLE, "mechanical")
+    # Mechanical work starts with Sol low, with Devin SWE medium overflow.
+    mechanical = pick(env, CANONICAL_TABLE, "mechanical")
+    assert (mechanical["rung"], mechanical["seat"], mechanical["model"]) == ("sol-low", "gpt-implementer", "gpt-6.1-sol")
+    held = pick(env, CANONICAL_TABLE, "mechanical", "--skip", "sol-low")
     assert (held["rung"], held["seat"], held["model"]) == ("swe2-medium", "devin-seat", "swe-2-medium")
 
     # Claude on its last account, Codex healthy: orchestrators keep Claude, and Grok's review moves to Sol high.

@@ -4,32 +4,11 @@
   "implement_default_note": "The default implementer switch (2026-09-28): route moves this seat to the head of the implement and mechanical chains. gpt-implementer (Sol medium) by E12; sonnet-implementer is the Codex-empty fallback, not the default.",
     "ladder": "interim",
     "ladder_note": "2026-09-30 (Alex approved 02:35Z): the interim ladder. Set baseline to get the class chains below back on the next pick. A closed gate opens only on eval evidence (DECISIONS T2, T3).",
-    "implement_note": "2026-09-30 E17: implement order is grok-medium, composer, sol-medium, swe2-high, sonnet-standin.",
+    "implement_note": "2026-10-08 SIMPLIFY-2026-10-07 item 9: implement order is sol-medium, swe2-high, sonnet-standin; mechanical order is sol-low, swe2-medium. Re-add Cursor rungs after a passing probe at the 2026-10-30 Cursor reset; switch only on real 429s or usage-limit errors.",
     "ladders": {
       "baseline": {},
       "interim": {
         "implement": [
-          {
-            "id": "grok-medium",
-            "seat": "cursor-seat",
-            "model": "grok-latest",
-            "effort": "medium",
-            "maker": "xai",
-            "pool": "cursor-models",
-            "gate": {"open": false, "until": "2026-10-05: Grok out of usage on cursor-main and cursor-gmail (seat runs fail with zero tokens); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
-          },
-          {
-            "id": "composer",
-            "seat": "cursor-seat",
-            "model": "composer-latest",
-            "effort": null,
-            "maker": "cursor",
-            "pool": "cursor-models",
-            "gate": {
-              "open": false,
-              "until": "2026-10-05: Composer out of usage on cursor-main and cursor-gmail (seat runs on Studio and ax42 fail with \"You're out of usage\"); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"
-            }
-          },
           {
             "id": "sol-medium",
             "seat": "gpt-implementer",
@@ -62,22 +41,11 @@
         ],
         "mechanical": [
           {
-            "id": "composer",
-            "seat": "cursor-seat",
-            "model": "composer-latest",
-            "effort": null,
-            "maker": "cursor",
-            "pool": "cursor-models",
-            "gate": {"open": false, "until": "2026-10-05: Composer out of usage on cursor-main and cursor-gmail (seat runs on Studio and ax42 fail with \"You're out of usage\"); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
-          },
-          {
-            "id": "grok-low",
-            "seat": "cursor-seat",
-            "model": "grok-latest-low",
+            "id": "sol-low",
+            "seat": "gpt-implementer",
+            "model": "sol-latest",
             "effort": "low",
-            "maker": "xai",
-            "pool": "cursor-models",
-            "gate": {"open": false, "until": "2026-10-05: Grok out of usage on cursor-main and cursor-gmail (seat runs fail with zero tokens); reopen at the Cursor cycle reset 2026-10-30 or when a probe passes"}
+            "maker": "openai"
           },
           {
             "id": "swe2-medium",
@@ -86,13 +54,6 @@
             "effort": "medium",
             "maker": "cognition",
             "pool": "devin"
-          },
-          {
-            "id": "sol-low",
-            "seat": "gpt-implementer",
-            "model": "sol-latest",
-            "effort": "low",
-            "maker": "openai"
           }
         ],
         "explore": [
@@ -574,8 +535,8 @@
       }
     },
     "pace": {
-      "guarded_pools": ["anthropic-general", "anthropic-fable", "openai-codex"],
-      "guarded_note": "2026-10-05: openai-codex added while Codex runs low before the 10-09 reset; Sol rungs go soft (after every open rung) only while the pool is behind pace, so this releases itself on refill.",
+      "guarded_pools": ["anthropic-general", "anthropic-fable"],
+      "guarded_note": "2026-10-08 SIMPLIFY-2026-10-07 item 9: only Anthropic pools stay pace-guarded; switch Sol only on real 429s or usage-limit errors.",
       "ahead_gt": 15,
       "behind_lt": -10,
       "cycle_hours": 168
