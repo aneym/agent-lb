@@ -339,3 +339,37 @@ def test_pre_ga_ssh_run_linked_environment(mode, environment, expected, tmp_path
     # Explicit targeting takes precedence over the linked default.
     result = invoke(f'railway {mode} -e staging -- python -c ...', cwd=child, HOME=str(home))
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('command,expected', [
+    ('npx @railway/cli@latest variables', 2),
+    ('npx @railway/cli@1.2.3 up', 2),
+    ('RAILWAY_TOKEN=x npx @railway/cli@1.2.3 up', 0),
+    ('railway variables -e dev --set TASK_ID=3', 0),
+    ('railway variables -e dev --set DISK_SIZE=10', 0),
+    ('railway variables -e dev -s task-api --set PORT=8080', 0),
+    ('railway variables -e dev --set VALUE=sk-synthetic', 2),
+    *[(f'railway {mode} -e production -- {output}', 2)
+      for mode in ['ssh', 'run']
+      for output in ['time env', 'sudo env', 'nice env', 'command env',
+                     'sudo -n -u user env', 'nice -n 5 printenv',
+                     'sh -c "true; env"', 'sh -c "FOO=1 env"',
+                     'sh -c "echo hi && env"']],
+    ('railway variables --set X=$(agent-secret get synthetic)', 2),
+    ('railway variables --set X=$(echo secret)', 2),
+    ('railway variables --set X="$(echo secret)"', 2),
+    ('railway variables --set X=$(cat input)', 2),
+    ('railway variables --set PORT=8080 -ks api', 2),
+    ('railway variables --set PORT=8080 -sk', 2),
+])
+def test_pre_ga_review_advisories(command, expected):
+    result = invoke(command)
+    assert result.returncode == expected, result.stderr
+    assert 'synthetic' not in result.stderr
+
+
+# Accident prevention does not interpret arbitrary Python or script bodies.
+@pytest.mark.xfail(strict=True, reason='Accepted arbitrary Python value-output residual')
+def test_python_environment_printing_residual():
+    result = invoke('railway ssh -e production -- python -c "import os; print(os.environ)"')
+    assert result.returncode == 2

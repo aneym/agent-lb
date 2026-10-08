@@ -15,7 +15,7 @@ DENIAL = ('Railway write refused: use a custody RAILWAY_TOKEN or RAILWAY_API_TOK
 TOKEN_NAMES = {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}
 READS = {'status', 'logs', 'list', 'whoami', 'version', 'help'}
 SECRET_NAME = re.compile(r'(?:token|secret|password|passwd|api[_-]?key|authorization|bearer|credential)', re.I)
-SECRET_VALUE = re.compile(r'(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)', re.I)
+SECRET_VALUE = re.compile(r'''(?:^|[=\s'"])(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)''', re.I)
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
 # Never suggest --json | jq: values still pass through the shell before filtering.
 KV_DENIAL = "BLOCKED: railway variables read prints values; value output is refused."
@@ -44,12 +44,27 @@ def variable_write(args):
 def run_value_output(args):
     if not args:
         return False
+    if ASSIGNMENT.match(args[0]):
+        return run_value_output(args[1:])
     name = args[0].rsplit('/', 1)[-1]
+    if name in {'time', 'sudo', 'nice', 'command', 'exec', 'nohup'}:
+        i = 1
+        while i < len(args) and args[i].startswith('-'):
+            flag = args[i]
+            i += 1
+            if flag == '--':
+                break
+            if flag in {'-n', '-u', '-g', '--user', '--group', '--adjustment'}:
+                # sudo -n is a switch; nice -n takes an adjustment.
+                if flag != '-n' or name == 'nice':
+                    i += 1
+        return run_value_output(args[i:])
     if name in {'printenv', 'env', 'set'} or (name == 'export' and '-p' in args[1:]):
         return True
     if name == 'railway' and len(args) > 1 and args[1] in {'variables', 'variable', 'vars'}:
         return (not variable_write(args[2:]) or 'get' in args[2:]
-                or any(arg in {'--kv', '-k', '--json'} for arg in args[2:]))
+                or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
+                       for arg in args[2:]))
     if name in {'echo', 'printf'} and any(
             SECRET_NAME.search(variable)
             for arg in args[1:]
@@ -74,6 +89,8 @@ def run_value_output(args):
                             segment.append(word)
                 except ValueError:
                     return True
+    # Arbitrary Python/script bodies are an accepted residual; this is accident
+    # prevention, not an interpreter or an adversarial execution boundary.
     return False
 
 
@@ -304,7 +321,7 @@ def check(command, inherited):
                     i += 1
                 while i < len(words) and words[i].startswith('-'):
                     i += 1
-                if i < len(words) and words[i] == '@railway/cli':
+                if i < len(words) and re.fullmatch(r'@railway/cli(?:@.+)?', words[i]):
                     words[i] = 'railway'
                 continue
             if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
@@ -317,6 +334,9 @@ def check(command, inherited):
             if name == 'railway':
                 args = words[i + 1:]
                 for j, arg in enumerate(args):
+                    if '$UNKNOWN_SUBSTITUTION' in arg and (
+                            arg.startswith('--set=') or (j > 0 and args[j - 1] in {'--set', 'set'})):
+                        return DENIAL  # An expanded value still lands in argv.
                     if (j > 0 and args[j - 1] in {'set', '--set'} and SECRET_NAME.search(arg)
                             and '=' not in arg and j + 1 < len(args) and not args[j + 1].startswith('-')):
                         return DENIAL
@@ -365,7 +385,8 @@ def check(command, inherited):
                     # Bare listings, get, --json and --kv all expose values.
                     # No supported names-only CLI output is known.
                     if (not write or 'get' in command_args[1:]
-                            or any(arg in {'--kv', '-k', '--json'} for arg in command_args[1:])):
+                            or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
+                                   for arg in command_args[1:])):
                         return KV_DENIAL
                     if production_environment(args):
                         if not any(env.get(key) for key in TOKEN_NAMES):
