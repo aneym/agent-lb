@@ -94,7 +94,7 @@ Every lb-sandbox read or write under a root MUST go through a descriptor for the
 
 ### Requirement: Every process that works in a root runs under kernel confinement
 
-The app, the front and the aux open paths by name with code lb-sandbox does not own. Each sandbox root MUST therefore be its own volume: `start` mounts a fresh encrypted sparse image (random passphrase held only in the `start` process, given to hdiutil on stdin) at the root, so no name under the root can be a hard link to a live file and the image on disk is ciphertext. `_serve`, `_boot` and `_aux` MUST refuse a root that is not its own volume. `_boot` and `_aux` MUST put themselves (and so the front and every other child) under a Seatbelt profile that denies writes anywhere under the home directory except the root and denies reads of the agent-lb home, the legacy store directory and the live plist (the installed runtime's code stays readable), before they open anything under the root. `start` MUST populate the root (runtime copy, bootstrap copy, plists, metadata) in a child under the write-confinement profile, and the store reads of `status`, `scan` and `stop` MUST run in a child under the full profile. `status` MUST report `own_volume` and whether the primary, aux and front are confined; the live check fails unless all are true. Stop MUST detach the volume and delete its image.
+The app, the front and the aux open paths by name with code lb-sandbox does not own. Each sandbox root MUST therefore be its own volume: `start` mounts a fresh encrypted sparse image (random passphrase held only in the `start` process, given to hdiutil on stdin) at the root, so no name under the root can be a hard link to a live file and the image on disk is ciphertext. `_serve`, `_boot` and `_aux` MUST refuse a root that is not its own volume. `_boot` and `_aux` MUST put themselves (and so the front and every other child) under a Seatbelt profile that denies writes anywhere under the home directory except the root and denies reads of the agent-lb home, the legacy store directory and the live plist (the installed runtime's code stays readable), before they open anything under the root. `start` MUST populate the root (runtime copy, bootstrap copy, plists, metadata) in a child under the write-confinement profile, and the store reads of `status`, `scan` and `stop` MUST run in a child under the full profile. `start` MUST take the root's (device, inode) through a descriptor that is the directory its mkdir just made (this user's, on the sandboxes dir's volume, empty, born no earlier than the mkdir), and MUST refuse, owning nothing, a directory swapped into the name in between. A failed start's teardown MUST only rmdir a root that was never stamped, and MUST unlink the store key only from a root that is its own volume or the recorded directory. `status` MUST report `own_volume` and whether the primary, aux and front are confined; the live check fails unless all are true. Stop MUST detach the volume and delete its image.
 
 #### Scenario: Front temp file linked to live state
 - **WHEN** `<root>/state/front.json.tmp` is a link to the live `state/front.json` while the front runs
@@ -103,6 +103,10 @@ The app, the front and the aux open paths by name with code lb-sandbox does not 
 #### Scenario: Data dir swapped after the custody checks
 - **WHEN** `<root>/data` is replaced by a link to the live agent-lb home after `_serve` validated it
 - **THEN** the app's SQLite and key opens, and `read_accounts`, are denied; nothing under the live home is read or written
+
+#### Scenario: Live state moved into a new root's name
+- **WHEN** right after start's mkdir the new root is renamed aside and live `state` moved into its name, and a non-image file at the run's image name makes the volume attach fail
+- **THEN** start refuses before recording or chmod'ing the directory, and nothing in it is deleted; live state moved in after the record, or live files moved into the root start made, are left in place by the failed start's teardown
 
 #### Scenario: Hard link to a live file
 - **WHEN** a caller tries to hard-link a live file into a root
@@ -146,11 +150,15 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 
 ### Requirement: launchd loads only the jobs lb-sandbox made, and lb-restart kickstarts only that job
 
-`start` MUST hand launchd each sandbox job from bytes it made itself, through a private file (`O_EXCL`, 0600) in `<sandboxes>/.launchd` that no confined process can write, unlinked once loaded; it MUST NOT bootstrap a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
+`start` MUST hand launchd each sandbox job from bytes it made itself, through a private file (`O_EXCL`, 0600) in a fresh directory (mkdir, random name, 0500 while launchd reads it) under `<sandboxes>/.launchd` that no confined process can write; it MUST NOT unlink any name it did not make there, and cleanup MUST empty the file through its own descriptor and unlink the name only while it is still that inode; it MUST NOT bootstrap a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
 
 #### Scenario: Aux rewrites the primary plist before the primary loads
 - **WHEN** the aux job, started first, rewrites `<root>/launchd/<label>.plist` to another program
 - **THEN** launchd still loads the primary job start made, from a file outside every root
+
+#### Scenario: Live file renamed into the launchd staging dir
+- **WHEN** a single-link live file is renamed to `.launchd/<label>.plist` before a bootstrap, or over the private job file while launchd reads it
+- **THEN** the live file keeps its name's inode and bytes; only the file start made loses its bytes
 
 #### Scenario: Hostile job loaded, plist restored
 - **WHEN** the sandbox label was loaded with the expected argv plus `DYLD_INSERT_LIBRARIES` or a stderr path into live state, and the plist on disk was then restored

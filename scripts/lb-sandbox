@@ -2316,42 +2316,91 @@ def bootstrap(plist: Path, label: str, deadline_s: float = 20) -> None:
     raise Unhealthy(f"launchctl bootstrap {label} failed")
 
 
+def _same_inode(dir_fd: int, name: str, ident: tuple[int, int]) -> bool:
+    """True when name in dir_fd is (still) the single-link regular file or the directory ident names."""
+    try:
+        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    if (info.st_dev, info.st_ino) != ident:
+        return False
+    return stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+
+
 def bootstrap_job(root: Path, body: dict) -> None:
     """Load one sandbox job into launchd from bytes this process made, never from a plist file under the root.
 
     Every process confined to a root can write anywhere in it, so a plist there is only as trusted as the jobs
     already running: an aux (or its front) started first could rewrite the primary's plist to an unconfined
-    payload just before its bootstrap. The job goes to launchd through a private file (O_EXCL, 0600) in
-    <sandboxes>/.launchd, which no confined process can write (their profile allows writes in their own root
-    only), and the file is unlinked once launchd holds the job."""
+    payload just before its bootstrap. The job goes to launchd through a private file in <sandboxes>/.launchd,
+    which no confined process can write (their profile allows writes in their own root only).
+
+    That directory sits on the live service's volume, so nothing here deletes a name it did not make: each job
+    gets a fresh directory (mkdir, a random name, never reused) holding one file made O_EXCL, 0600; nothing that
+    was there before is unlinked. The directory is 0500 while launchd reads the file, so nothing can be renamed
+    into or out of it without first changing its mode. Cleanup empties the file through its own descriptor
+    (only this inode loses bytes), then unlinks the name only while it is still that inode with one link, and
+    rmdir's the directory only while it is still the one made here; anything else is left in place. macOS has
+    no unlink by descriptor (no funlinkat), so a check-then-unlink is the narrowest delete there is."""
+    import secrets as secrets_module
+
     label = check_label(str(body.get("Label", "")))
     sb = sandboxes_fd(Path(root).parent)
     try:
         os.mkdir(".launchd", 0o700, dir_fd=sb)
     except FileExistsError:
         pass
-    dir_fd = os.open(".launchd", DIR_FLAGS, dir_fd=sb)
+    launchd_fd = os.open(".launchd", DIR_FLAGS, dir_fd=sb)
     try:
-        if os.fstat(dir_fd).st_uid != os.getuid():
+        if os.fstat(launchd_fd).st_uid != os.getuid():
             raise Refused("the sandboxes .launchd dir is not this user's own")
-        os.fchmod(dir_fd, 0o700)
-        name = f"{label}.plist"
+        os.fchmod(launchd_fd, 0o700)
+        made_after = time.time()
+        sub = f"{label}.{secrets_module.token_hex(12)}"
+        os.mkdir(sub, 0o700, dir_fd=launchd_fd)  # a fresh name: FileExistsError (never a reuse) on a collision
+        job_dir = os.open(sub, DIR_FLAGS, dir_fd=launchd_fd)
+        dir_id: tuple[int, int] | None = None
         try:
-            os.unlink(name, dir_fd=dir_fd)  # a stale copy from a start that died: the name only
-        except FileNotFoundError:
-            pass
-        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(plistlib.dumps(body))
-        try:
-            bootstrap(Path(fd_path(dir_fd)) / name, label)
-        finally:
+            made = os.fstat(job_dir)
+            with os.scandir(job_dir) as listing:
+                empty = next(iter(listing), None) is None
+            if not (
+                stat.S_ISDIR(made.st_mode)
+                and made.st_uid == os.getuid()
+                and made.st_dev == os.fstat(launchd_fd).st_dev
+                and made.st_nlink == 2
+                and empty
+                and made.st_birthtime >= made_after - 2
+            ):
+                raise Refused("the private launchd dir was swapped before use; nothing loaded")
+            dir_id = (made.st_dev, made.st_ino)
+            os.fchmod(job_dir, 0o700)
+            name = "job.plist"
+            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=job_dir)
             try:
-                os.unlink(name, dir_fd=dir_fd)
-            except FileNotFoundError:
-                pass
+                written = os.fstat(fd)
+                file_id = (written.st_dev, written.st_ino)
+                os.write(fd, plistlib.dumps(body))
+                os.fsync(fd)
+                os.fchmod(job_dir, 0o500)  # no rename into or out of it while launchd reads the file
+                try:
+                    bootstrap(Path(fd_path(job_dir)) / name, label)
+                finally:
+                    os.ftruncate(fd, 0)  # through the descriptor: only this inode, whatever its name now holds
+                    os.fchmod(job_dir, 0o700)
+                    if _same_inode(job_dir, name, file_id):
+                        os.unlink(name, dir_fd=job_dir)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(job_dir)
+            if dir_id is not None and _same_inode(launchd_fd, sub, dir_id):
+                try:
+                    os.rmdir(sub, dir_fd=launchd_fd)  # only an empty directory; one holding a file stays
+                except OSError:
+                    pass
     finally:
-        os.close(dir_fd)
+        os.close(launchd_fd)
 
 
 def label_names_root(label: str, root: Path) -> bool:
@@ -2434,6 +2483,37 @@ def populate_root(root: Path, run_id: str, ports: dict[str, int], meta: dict, tr
     write_in_root(root, "state/front-preferred-port", f"{ports['primary']}\n".encode(), 0o644)
 
 
+def acquire_new_root(root: Path, made_after: float) -> tuple[int, int]:
+    """(device, inode) of the root start's mkdir just made, taken through a descriptor that must be that very
+    directory; Refused (nothing recorded, chmod'ed or owned) otherwise.
+
+    macOS has no mkdir that returns a descriptor, so the name is opened again; what it opens must look like a
+    directory nobody else made: this user's, on the sandboxes dir's volume, no entries (one link to itself and
+    one from its name) and born no earlier than this start's mkdir. Live state moved into the name in between
+    (a directory with files, or an empty one made long before) fails one of them and so never becomes a root
+    teardown may empty. Teardown's later deletes check this identity again (remove_root, unlink_key)."""
+    sb = sandboxes_fd(Path(root).parent)
+    fd = os.open(Path(root).name, DIR_FLAGS, dir_fd=sb)
+    try:
+        info = os.fstat(fd)
+        with os.scandir(fd) as listing:
+            empty = next(iter(listing), None) is None
+        fresh = getattr(info, "st_birthtime", info.st_ctime) >= made_after - 2
+        if not (
+            stat.S_ISDIR(info.st_mode)
+            and info.st_uid == os.getuid()
+            and info.st_dev == os.fstat(sb).st_dev
+            and info.st_nlink == 2
+            and empty
+            and fresh
+        ):
+            raise Refused(f"sandbox root {root} was swapped right after its mkdir; it is not this start's to own")
+        os.fchmod(fd, 0o700)  # mkdir's mode is masked by umask; set it exactly
+        return info.st_dev, info.st_ino
+    finally:
+        os.close(fd)
+
+
 def cmd_start(args) -> int:
     run_id = check_run_id(args.run_id)
     if not args.from_live:
@@ -2485,19 +2565,16 @@ def cmd_start(args) -> int:
             sb = sandboxes_fd(create=True)
         except OSError as exc:
             raise Refused(f"{SANDBOXES} is not a real private directory ({exc})") from None
+        made_after = time.time()
         try:
             os.mkdir(root.name, 0o700, dir_fd=sb)
         except FileExistsError:
             # A concurrent start with the same run id won the race; its root is not ours to tear down.
             raise Refused(f"sandbox root {root} already exists") from None
+        # The mountpoint itself, before the volume covers it, and only if it is the directory mkdir just made:
+        # a directory swapped into the name in between is refused here, never recorded, chmod'ed or torn down.
+        ROOT_IDS[run_id] = acquire_new_root(root, made_after)
         created = True
-        root_fd = open_root(root)
-        try:
-            os.fchmod(root_fd, 0o700)  # mkdir's mode is masked by umask; set it exactly
-            made = os.fstat(root_fd)
-        finally:
-            os.close(root_fd)
-        ROOT_IDS[run_id] = (made.st_dev, made.st_ino)  # the mountpoint itself, before the volume covers it
         attach_volume(root, run_id)  # the root is its own volume from here on: no hard link reaches live files
         meta = {
             "run_id": run_id,
@@ -3532,20 +3609,34 @@ def stop_pid(pid: int, bound: float = 15) -> None:
             return
 
 
-def unlink_key(root: Path) -> dict:
-    """Unlink data/encryption.key through a descriptor for a real data dir under a real root.
+def unlink_key(root: Path, expect: tuple[int, int] | None) -> dict:
+    """Unlink data/encryption.key through a descriptor for a real data dir under this run's own root.
 
     A data dir (or root) swapped for a link to the live data dir is refused: unlinking through it would
-    delete the live key. Unlinking the name inside a real data dir removes only that name.
+    delete the live key. So is a root that is not the directory this run made: its own volume (start creates
+    the key only on it, and nothing on another volume can be renamed onto that mount), or else the recorded
+    (device, inode) of the directory start made (expect). Live state moved into the root's name is never
+    touched. Unlinking the name inside a real data dir removes only that name.
     """
     if entry_of(root) is None:
         return {"key_unlinked": None}
     try:
-        data_fd = open_dir(root, "data")
-    except FileNotFoundError:
-        return {"key_unlinked": "absent"}
+        root_fd = open_root(root)
     except OSError as exc:
         return {"key_unlinked": False, "key_error": f"root or data dir is a link ({exc.__class__.__name__})"}
+    try:
+        info = os.fstat(root_fd)
+        own_volume = info.st_dev != os.fstat(sandboxes_fd(Path(root).parent)).st_dev
+        if not own_volume and (expect is None or (info.st_dev, info.st_ino) != tuple(expect)):
+            return {"key_unlinked": False, "key_error": "the root is not the directory this run made"}
+        try:
+            data_fd = os.open("data", DIR_FLAGS, dir_fd=root_fd)
+        except FileNotFoundError:
+            return {"key_unlinked": "absent"}
+        except OSError as exc:
+            return {"key_unlinked": False, "key_error": f"root or data dir is a link ({exc.__class__.__name__})"}
+    finally:
+        os.close(root_fd)
     try:
         os.unlink("encryption.key", dir_fd=data_fd)
         return {"key_unlinked": True}
@@ -3615,17 +3706,18 @@ def _empty_dir(dir_fd: int) -> None:
         os.rmdir(name, dir_fd=dir_fd)  # only an empty directory: one swapped in since is left alone
 
 
-def remove_root(root: Path, expect: tuple[int, int] | None, was_volume: bool) -> bool:
+def remove_root(root: Path, expect: tuple[int, int] | None, rmdir_only: bool) -> bool:
     """Delete the (unmounted) root by name inside the pinned sandboxes dir, never through a path: a sandboxes
     dir renamed aside and replaced by a link to ~/.agent-lb after the checks leaves the delete in the directory
     this run was made in. True when gone.
 
     Only the directory start made is removed: it must be the recorded (device, inode) (expect; None removes
-    nothing), so live state moved into the root's name after the detach is refused untouched. A root that was
-    its own volume until the detach is the bare mountpoint, empty by construction, so it is only rmdir'ed: even
-    a forged record cannot make this delete anything inside a directory. A root that never was a volume is
-    emptied through the descriptor checked against the record, then rmdir'ed. A link, a non-directory or a
-    root still mounted is refused."""
+    nothing), so live state moved into the root's name after the detach is refused untouched. rmdir_only: a
+    root that was its own volume until the detach is the bare mountpoint, and a root start made but never
+    stamped was never filled outside its volume; both are empty by construction, so they are only rmdir'ed:
+    even a forged record, or live files moved into the directory start made, cannot make this delete anything
+    inside a directory. Any other root (one that never was a volume) is emptied through the descriptor checked
+    against the record, then rmdir'ed. A link, a non-directory or a root still mounted is refused."""
     sb = sandboxes_fd(root.parent)
     try:
         fd = os.open(root.name, DIR_FLAGS, dir_fd=sb)
@@ -3637,7 +3729,7 @@ def remove_root(root: Path, expect: tuple[int, int] | None, was_volume: bool) ->
         info = os.fstat(fd)
         if expect is None or (info.st_dev, info.st_ino) != tuple(expect) or info.st_dev != os.fstat(sb).st_dev:
             return False
-        if not was_volume:
+        if not rmdir_only:
             _empty_dir(fd)
     except OSError:
         return False
@@ -3762,7 +3854,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
     custody: dict = {"key_unlinked": None}
     volume: dict = {}
     if owned:
-        custody = unlink_key(root)
+        custody = unlink_key(root, root_id_of(meta, run_id))
         entry = entry_of(root)
         if entry == "link":
             os.unlink(root.name, dir_fd=sandboxes_fd(root.parent))  # the link only; never its target
@@ -3770,7 +3862,9 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
             was_volume = on_own_volume(root)
             volume = detach_volume(root)
             if volume.get("volume") != "still mounted":
-                volume["root_removed"] = remove_root(root, root_id_of(meta, run_id), was_volume)
+                # A root with no stamped sandbox.json (start's failure path) was never filled outside its volume:
+                # it is only rmdir'ed, so anything moved into it after start recorded it is left, never emptied.
+                volume["root_removed"] = remove_root(root, root_id_of(meta, run_id), was_volume or not meta)
         if not on_own_volume(root):
             volume["image_removed"] = remove_image(run_id)
     time.sleep(0.5)

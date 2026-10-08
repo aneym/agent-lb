@@ -68,3 +68,10 @@
 - [x] The edge reads a request's stream flag through `Content-Encoding: gzip` and treats Codex `/codex/responses` as streamed, so `cut_after_bytes` applies to Codex streams and `hold_stream` to a real (gzipped) Claude Code turn; the fault file is told apart by inode, not only mtime.
 - [x] `status` reports `request_log_store`.
 - [x] Each finding has a test that fails on dd8f4c29 for the reason it names.
+
+## 10. lbsb-5 fix round (lbsb-4 live-service-safety review FAIL on 8c4099b6)
+
+- [x] `bootstrap_job` never unlinks a name it did not make: each job gets a fresh random directory under `<sandboxes>/.launchd` (0500 while launchd reads) and an `O_EXCL` file; cleanup empties the file through its descriptor, unlinks the name only while it is still that single-link inode, and rmdir's only that directory. macOS has no unlink by descriptor, so check-then-unlink inside a mode-locked private directory is the narrowest delete.
+- [x] `start` takes the root identity through a descriptor checked to be the directory its mkdir made (owner, volume, empty, link count, birth time) before any chmod or record; a swapped directory is refused and nothing is owned or torn down.
+- [x] A failed start's teardown only rmdir's a never-stamped root, and `unlink_key` requires the root to be its own volume or the recorded directory.
+- [x] Fake-live regressions for each: a live file planted at the old plist name or renamed over the job file, and live state moved into the root's name before the record, after it, or into the root itself; each fails on 8c4099b6 for the reason it names.

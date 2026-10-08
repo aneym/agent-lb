@@ -2341,3 +2341,147 @@ def test_restart_runs_lb_restart_isolated_from_a_planted_pythonpath(
     out = json.loads(capsys.readouterr().out)
     assert code == lb.EXIT_UNHEALTHY and out["lb_restart_exit"] == 2, "lb-restart did not run to its refusal"
     assert not ran.exists(), "a planted sitecustomize.py ran inside lb-restart"
+
+
+# ------------------------------------------------ lbsb-5 fix round (lbsb-4 review, live-service-safety)
+
+
+def _fake_live_file(tmp_path: Path) -> Path:
+    """A single-link stand-in for live ~/.agent-lb/state/front.json, on the sandboxes dir's volume."""
+    live = tmp_path / "live-home" / "state" / "front.json"
+    live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_text('{"preferred": 2457}')
+    return live
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchd and st_birthtime are macOS")
+@pytest.mark.parametrize("attack", ["planted-at-the-old-name", "renamed-over-the-job-file", "none"])
+def test_bootstrap_job_never_deletes_a_live_file_renamed_into_its_private_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attack: str
+) -> None:
+    """lbsb-4 review (lb-sandbox:2340, 2350 at 8c4099b6): bootstrap_job unlinked the deterministic name
+    .launchd/<label>.plist before its O_EXCL create, so single-link live state/front.json renamed there was
+    deleted; cleanup unlinked whatever held the name after the bootstrap. Each job now gets a fresh private dir
+    and file, nothing preexisting is unlinked, and cleanup removes only the inode it made.
+
+    Integration with real files; only launchctl (the OS edge) is faked: its bootstrap reads the plist it is
+    handed, and the attacker's rename runs while launchd holds the path. none is the control: the private copy
+    is gone once loaded."""
+    lb = _load()
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "lbsbx-attack"
+    root.mkdir(parents=True)
+    sandboxes.chmod(0o700)
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    label = "com.agent-lb.drill.sbx-lbsbx-attack-aux"
+    body = {"Label": label, "ProgramArguments": ["/usr/bin/true"]}
+    live = _fake_live_file(tmp_path)
+    launchd_dir = sandboxes / ".launchd"
+    launchd_dir.mkdir(mode=0o700)
+    if attack == "planted-at-the-old-name":
+        os.rename(live, launchd_dir / f"{label}.plist")
+        live = launchd_dir / f"{label}.plist"
+    handed: list[dict] = []
+    real_run = subprocess.run
+
+    def launchd(argv, *args, **kwargs):
+        if not argv or argv[0] != "/bin/launchctl":
+            return real_run(argv, *args, **kwargs)
+        assert argv[1] == "bootstrap"
+        path = Path(argv[3])
+        handed.append(plistlib.loads(path.read_bytes()))
+        if attack == "renamed-over-the-job-file":
+            path.parent.chmod(0o700)  # the private dir is 0500 while launchd reads; the attacker undoes it
+            os.rename(live, path)
+            moved.append(path)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    moved: list[Path] = []
+    monkeypatch.setattr(lb.subprocess, "run", launchd)
+    lb.bootstrap_job(root, body)
+    monkeypatch.setattr(lb.subprocess, "run", real_run)
+    assert handed == [body]
+    if moved:
+        live = moved[0]
+    left = sorted(p.relative_to(launchd_dir).as_posix() for p in launchd_dir.rglob("*"))
+    if attack == "none":
+        assert left == [], "the private copy outlived its bootstrap"
+        return
+    assert live.read_text() == '{"preferred": 2457}', "bootstrap_job deleted a live file"
+    assert live.relative_to(launchd_dir).as_posix() in left
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, st_birthtime and launchd are macOS")
+@pytest.mark.parametrize("swap", ["live-dir-for-new-root", "live-dir-after-record", "live-file-into-root"])
+def test_a_failed_start_never_adopts_or_empties_live_state_moved_into_its_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, swap: str
+) -> None:
+    """lbsb-4 review (lb-sandbox:2494, 3641 at 8c4099b6): start took the root's identity by reopening its name
+    after mkdir. Live ~/.agent-lb/state moved into the name in between was chmod'ed and recorded as the root;
+    a non-image file preplanted at the run's image name failed attach_volume, and the failed start's teardown
+    emptied the moved directory. A directory swapped in before the record is now refused (nothing owned or torn
+    down); one swapped in after it fails the recorded identity (no key unlinked, nothing removed); live files
+    moved into the root start made are left, because a root that was never stamped is only rmdir'ed.
+
+    Integration through the real `start` with real files and the real image guard; the attacker's moves run
+    right after the root's mkdir (live-dir-for-new-root) or right before attach (the other two)."""
+    import signal as signals
+
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    home = lb_home.parent
+    _install_venv(lb_home)
+    (lb.LIVE_RUNTIME / "app").mkdir(parents=True)
+    lb.LIVE_PLIST.parent.mkdir(parents=True)
+    lb.LIVE_PLIST.write_bytes(plistlib.dumps({"EnvironmentVariables": {lb.TOKEN_ENV: FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "LIVE_VENV", lb.LIVE_RUNTIME / ".venv")
+    _use_bootstrap(lb, home)
+    run_id = "lbsbx-unit-adopt"
+    root = lb.SANDBOXES / run_id
+    live = home / "live-state"
+    (live / "data").mkdir(parents=True)
+    (live / "front.json").write_text('{"preferred": 2457}')
+    (live / "data" / "encryption.key").write_bytes(b"live key")
+    image = lb.image_for(run_id)
+    image.parent.mkdir(mode=0o700)
+    image.write_bytes(b"not an image")  # attach_volume refuses to remove it, so start fails before any mount
+    real_mkdir, real_attach = os.mkdir, lb.attach_volume
+
+    def mkdir_then_swap(path, mode=0o777, *, dir_fd=None):
+        real_mkdir(path, mode, dir_fd=dir_fd)
+        if path == run_id and swap == "live-dir-for-new-root":
+            os.rename(root, root.parent / "aside")
+            os.rename(live, root)
+
+    def swap_then_attach(path: Path, rid: str) -> None:
+        if swap == "live-dir-after-record":
+            os.rename(root, root.parent / "aside")
+            os.rename(live, root)
+        elif swap == "live-file-into-root":
+            os.rename(live / "front.json", root / "front.json")
+        real_attach(path, rid)
+
+    monkeypatch.setattr(lb.os, "mkdir", mkdir_then_swap)
+    monkeypatch.setattr(lb, "attach_volume", swap_then_attach)
+    handlers = {sig: signals.getsignal(sig) for sig in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
+    args = lb.build_parser().parse_args(["start", "--run-id", run_id, "--from-live"])
+    try:
+        code: int | str = lb.cmd_start(args)
+    except lb.Refused:
+        code = "refused"
+    finally:
+        for sig, handler in handlers.items():
+            signals.signal(sig, handler)
+        monkeypatch.setattr(lb.os, "mkdir", real_mkdir)
+    out = capsys.readouterr().out
+    assert (root / "front.json").read_text() == '{"preferred": 2457}', "the failed start deleted live state"
+    if swap == "live-file-into-root":
+        assert code == lb.EXIT_UNHEALTHY and json.loads(out)["teardown"]["volume"]["root_removed"] is False
+        return
+    assert (root / "data" / "encryption.key").read_bytes() == b"live key", "the failed start unlinked a live key"
+    if swap == "live-dir-for-new-root":
+        assert code == "refused" and not out, "start owned (and tore down) a directory it did not make"
+    else:
+        teardown = json.loads(out)["teardown"]
+        assert code == lb.EXIT_UNHEALTHY
+        assert teardown["custody"]["key_unlinked"] is False and teardown["volume"]["root_removed"] is False
