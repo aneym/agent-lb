@@ -1178,7 +1178,9 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
             if matcher is not None:
                 group["matcher"] = matcher
             if hook is RAILWAY_GUARD_HOOK:
-                event_groups.insert(0, group)
+                workflow_index = next((i for i, existing in enumerate(event_groups)
+                                       if existing.get("matcher") == "Workflow"), len(event_groups))
+                event_groups.insert(workflow_index, group)
             else:
                 event_groups.append(group)
     return updated
