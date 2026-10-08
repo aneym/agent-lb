@@ -359,6 +359,7 @@ def builtin_cases():
         dict(bash("railway run printenv"), name="deny-railway-printenv", expect=deny),
         dict(bash('open -a "Google Chrome" https://example.com'), name="deny-no-chrome", expect=deny),
         dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
+        dict(bash("ssh pc chr'" + "ome'"), name="deny-no-chrome-pc-quote-split", expect=deny),
         dict(bash("ssh pc 'dir'"), name="allow-ssh-pc", expect="allow"),
         dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=deny),
         dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=deny),
