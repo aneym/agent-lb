@@ -1139,3 +1139,57 @@ def test_the_rewriter_beside_another_hook_is_the_rtk_on_the_callers_path(tmp_pat
     result = run_owned(DISPATCH_BASH, call, env, 30)
     assert result is not None and result.returncode == 0, result
     assert json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"] == "rewritten", result
+
+
+# wide-scan-guard.sh as the source holds it (sha256 7a518f44 since agent-lb bb83dc35): it must stay pinned.
+WIDE_SCAN = SOURCE / "hooks/wide-scan-guard.sh"
+WIDE_SCAN_COMMANDS = (
+    "rg -n foo src", "find . -name '*.py'", "ls -la", "git status", "rg x /tmp/project", "find /tmp -name x",
+    "rg foo .", "rg foo ..", "find ..", "fd x ../..", "cd .. && rg foo .", "cd / && rg x src",
+    "cd src && cd .. && cd .. && rg x .", "rg x /", "rg x ~", "rg x $HOME", "rg x \"$HOME/repos\"",
+    "grep -r x .", "grep -rn x ~/.agent-rails/lanes", "grep -r x ~/.agent-rails/agents/home 2>/dev/null",
+    "rg x ~/.agent-rails", "fd x /Volumes/Media500", "bash -c 'cd ~ && rg x .'", "env -S'rg x /'",
+    "echo \"$(find ~ -name x)\"", "rg x \"/Volumes/StudioExt/repos/a b/../..\"", "rg x '/tmp/a b/../../..'",
+    "cat <<'EOF'\nrg x /\nEOF", "xargs grep -r x ..", "printf x | rg foo /Volumes/Media500 | head",
+    # bb83dc35: a path-less search's cwd, a bare cd, pushd, find -f, rg --files, nesting through watch, and input
+    # it cannot parse (refused whatever the command).
+    "rg foo", "cd && rg x .", "pushd / && rg x .", "find -f / -name x", "rg --files /", "watch " * 9 + "ls",
+    "echo \"unbalanced", "bash -c 'echo \"x'", "cat <<EOF\nx", "echo x #\" \necho \"y", "ls -la # it's fine",
+    "python3 -c 'print(1)'",
+)
+
+
+def rewrite_of(result: subprocess.CompletedProcess) -> Any:
+    try:
+        return ((json.loads(result.stdout) or {}).get("hookSpecificOutput") or {}).get("updatedInput")
+    except ValueError:
+        return None
+
+
+def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path: Path) -> None:
+    """d402b454 and bb83dc35 rewrote the guard (search paths resolved from the cwd and any `cd`, unparsable input
+    refused) without re-pinning it, so it ran on every Bash call: 4 hook-layer processes per call against a budget of
+    2. Its prefilter must be a superset: across commands and cwds the dispatcher's decision and rewrite equal the
+    guard's own per-hook ones, and a scoped search is still skipped. A guard edit without a re-pin fails here."""
+    hook = {"type": "command", "command": '"$HOME/.claude/hooks/wide-scan-guard.sh"'}
+    home, env = dispatcher_home(tmp_path, [hook])
+    shutil.copy(WIDE_SCAN, home / ".claude/hooks/wide-scan-guard.sh")
+    (home / ".claude/hooks/wide-scan-guard.sh").chmod(0o755)
+    trace = tmp_path / "trace.jsonl"
+    cwds = [str(home / "project"), str(home), str(home / ".agent-rails/lanes/a"), "/Volumes/StudioExt/repos/x"]
+    differ, skipped = [], set()
+    for cwd in cwds:
+        for command in WIDE_SCAN_COMMANDS:
+            call = {"tool_name": "Bash", "tool_input": {"command": command}, "hook_event_name": "PreToolUse",
+                    "cwd": cwd}
+            old = run_hook(hook["command"], call, env)
+            new = run_hook(DISPATCH_BASH, call, env | {"HOOK_DISPATCH_TRACE": str(trace)})
+            if (decision(old), rewrite_of(old)) != (decision(new), rewrite_of(new)):
+                differ.append((cwd, command, old.returncode, new.returncode, new.stdout[:200]))
+            row = json.loads(trace.read_text().splitlines()[-1])
+            if row["hooks"][0].get("mode") == "skipped":
+                skipped.add((cwd, command))
+    assert not differ, differ
+    for command in ("rg -n foo src", "find . -name '*.py'", "ls -la", "rg x /tmp/project", "ls -la # it's fine",
+                    "python3 -c 'print(1)'"):
+        assert (str(home / "project"), command) in skipped, command

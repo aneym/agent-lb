@@ -323,6 +323,135 @@ def pf_wide_scan(payload):
     return norm.count("$(") + norm.count("`") + norm.count("sh") + norm.count("env") >= 8
 
 
+_SCAN_NAMES = ("rg", "find", "fd", "grep", "egrep", "fgrep", "ggrep")
+_SCAN_SPLIT = re.compile(r"[\s;&|()<>`]+")
+
+
+def _scan_resolve(word, cwd):
+    """wide-scan-guard.sh resolve_path: $HOME and ~ expanded, relative words joined to cwd, normalised."""
+    home = os.path.expanduser("~")
+    word = re.sub(r"^\$(?:HOME|\{HOME\})(?=/|$)", lambda _m: home, word)
+    if word.startswith("~"):
+        head, _sep, rest = word.partition("/")
+        word = (home if head == "~" else "/home/" + head[1:]) + "/" + rest
+    return os.path.normpath(word if word.startswith("/") else os.path.join(cwd, word))
+
+
+def _scan_maybe_wide(path):
+    """A superset of the guard's wide_root plus its FIFO rule's `.agent-rails` component test."""
+    if ".agent-rails" in path.lower():
+        return True
+    parts = [part for part in path.split("/") if part]
+    if len(parts) <= 1:  # /, /System, /Library, /home, /root and every other top directory
+        return True
+    if parts[0] in ("Users", "home", "Volumes") and (len(parts) == 2 or (len(parts) == 3 and parts[2] == "repos")):
+        return True
+    home = os.path.expanduser("~")
+    return path in (home, home + "/repos")
+
+
+def pf_wide_scan_paths(payload):
+    """wide-scan-guard.sh since agent-lb d402b454 (2026-10-08): it acts only when a search tool (rg, find, fd or a
+    grep) is the command of some segment and one of its path words resolves, from the payload cwd or a `cd` earlier
+    in the command, to a wide root or into .agent-rails; or past nesting depth 8. This reads every word of the
+    command, quotes removed, as both a possible tool and a possible path, and every word as a possible `cd` target
+    (one round per `cd`), so it is a superset; the older versions' rules (pf_wide_scan) are kept beside it."""
+    command = _jq_field(payload, "command")
+    if command is None:
+        return True
+    if not command:
+        return False
+    if pf_wide_scan(payload):
+        return True
+    cwd = payload.get("cwd")
+    if cwd is not None and not isinstance(cwd, str):
+        return True
+    pieces, cds = {"."}, 0  # "." too: a search with no path searches its cwd (bb83dc35)
+    for word in _SCAN_SPLIT.split(re.sub(r"[\"'\\]", "", command)):
+        if word:
+            # env -S'<command>' and --split-string=<command> carry a command inside one word.
+            forms = {word, word.split("=", 1)[-1], word[2:] if word.startswith("-S") else word}
+            pieces |= forms
+            cds += bool(forms & {"cd", "pushd"})
+    if not any(piece.rsplit("/", 1)[-1] in _SCAN_NAMES for piece in pieces):
+        return False
+    if ".." in command and re.search(r"[\"']", command):
+        return True  # a quoted word with a space split above, whose `..` the guard resolves whole
+    candidates = {cwd or os.getcwd(), os.getcwd()}
+    if cds:
+        candidates.add(os.path.expanduser("~"))  # a bare `cd` goes home
+    if cds > 4:
+        return True
+    for _round in range(cds):
+        if len(candidates) * len(pieces) > 4096:
+            return True
+        candidates |= {_scan_resolve(piece, base) for base in candidates for piece in pieces}
+    return any(_scan_maybe_wide(_scan_resolve(piece, base)) for base in candidates for piece in pieces)
+
+
+def _guard_shell_tokens(text):
+    """wide-scan-guard.sh shell_tokens, verbatim: comments dropped, then shlex with shell punctuation."""
+    import shlex
+    cleaned, quote, escaped, boundary, comment = [], None, False, True, False
+    for char in text:
+        if comment:
+            if char != "\n":
+                continue
+            comment = False
+        if escaped:
+            escaped = False
+            boundary = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+            boundary = False
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+            boundary = False
+        elif char == "#" and boundary:
+            comment = True
+            continue
+        else:
+            boundary = char in " \t\r\n;&|()"
+        cleaned.append(char)
+    lexer = shlex.shlex("".join(cleaned), posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def pf_wide_scan_parse(payload):
+    """wide-scan-guard.sh since agent-lb bb83dc35 (2026-10-08) also refuses any input it cannot parse (an unfinished
+    heredoc, substitution or quote, at any nesting level), nests through `watch`, follows `pushd` and a bare `cd`, and
+    checks the cwd of a search with no path. On top of pf_wide_scan_paths (which reads "." and those `cd` forms): a
+    heredoc, a substitution, a quote the guard's own tokenizer cannot close, any token still holding a quote (the text
+    of a nested shell, which the guard parses again) or eight nesting words run the guard. A backslash anywhere already
+    runs it (escapes_in_input), so line continuations never reach here."""
+    command = _jq_field(payload, "command")
+    if command is None:
+        return True
+    if not command:
+        return False
+    if pf_wide_scan_paths(payload):
+        return True
+    if "<<" in command or "$(" in command or "`" in command:
+        return True
+    flat = re.sub(r"[\s\"'\\]", "", command)
+    if sum(flat.count(word) for word in ("sh", "env", "watch")) >= 8:
+        return True
+    if "'" in command or '"' in command:
+        try:
+            tokens = _guard_shell_tokens(command)
+        except ValueError:
+            return True
+        if any("'" in token or '"' in token for token in tokens):
+            return True
+    return False
+
+
 def pf_display_wake(payload):
     if not isinstance(payload, dict):
         return True
@@ -390,8 +519,13 @@ SCRIPT_PREFILTERS = {
     # fab6ad8: before the simplify lane's 2026-10-08 edit; b169f02: that edit adds an early allow for plain
     # echo/printf and turns the FIFO grep refusal into a `-D skip` rewrite inside the same FIFO branch, so the
     # prefilter's FIFO clause still covers every input it blocks or rewrites.
+    # 557b21d: agent-lb d402b454 (2026-10-08), search tools parsed per segment with paths resolved from the cwd and
+    # any `cd`; 7a518f4: bb83dc35, parse failures refused, `watch`, `pushd`, a path-less search's cwd.
+    # pf_wide_scan_parse covers each version. Re-pin on every change (test_the_pinned_wide_scan_guard_...).
     "wide-scan-guard.sh": (("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac",
-                            "b169f02eb85ed225fcebaef814e1c7ad0fccda755b1a21a7887a3f6c8df4bc44"), pf_wide_scan),
+                            "b169f02eb85ed225fcebaef814e1c7ad0fccda755b1a21a7887a3f6c8df4bc44",
+                            "557b21dbfc1291d0fb7454ff8ddaac823c40ef11636a2451f62192e4e9d35985",
+                            "7a518f44edf83c06f5e1565f6e5fe0cb43f5e453ec459837a4b7d1cd02d2aad2"), pf_wide_scan_parse),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
     # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
     # 31b899775, after its review fixes; 64cf185: factory a6f53ea1e, destination parsed by shlex; 77520a3: factory

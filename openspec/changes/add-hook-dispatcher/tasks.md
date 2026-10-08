@@ -35,4 +35,4 @@
 - [x] `--uninstall` keeps the adopted wide-scan-guard.sh, which settings still register (M3).
 - [x] The fold checks shared commands against groups left per-hook too, until stable.
 - [x] The child-run rewriter is resolved on the caller's PATH, before git's directory is put first.
-
+- [x] wide-scan-guard.sh as d402b454 and bb83dc35 left it (sha256 557b21db, 7a518f44) is pinned again, with a prefilter that reads every word as a possible tool, path and `cd` target and runs the guard on anything it could fail to parse; a differential test against the real guard proves it a superset.
