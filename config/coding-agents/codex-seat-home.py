@@ -38,6 +38,7 @@ def main() -> None:
         "apps", "plugins", "hooks", "memories", "multi_agent", "goals", "chronicle", "js_repl",
         "responses_websockets", "responses_websockets_v2",
     )]
+    lines += ["", "[agents]", "max_depth = 1"]
     if provider:
         header = re.compile(r'\[\s*model_providers\.(?:"%s"|%s)\s*\]\s*(?:#.*)?$'
                             % (re.escape(provider), re.escape(provider)))
