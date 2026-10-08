@@ -14,11 +14,11 @@ import pytest
 HOOK = Path(__file__).resolve().parents[1] / 'config/coding-agents/hooks/railway-vars-guard.sh'
 
 
-def invoke(command, **tokens):
+def invoke(command, shell=None, **tokens):
     env = {key: value for key, value in os.environ.items()
            if key not in {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}}
     env.update(tokens)
-    return subprocess.run(['bash', str(HOOK)], input=json.dumps({
+    return subprocess.run([shell or os.environ.get('RAILWAY_TEST_SHELL', '/bin/bash'), str(HOOK)], input=json.dumps({
         'tool_name': 'Bash', 'tool_input': {'command': command},
     }), text=True, capture_output=True, env=env)
 
@@ -119,6 +119,35 @@ def test_secret_shaped_argv_is_refused_even_with_custody(command):
     ('env -S "railway up"', {'RAILWAY_TOKEN': 'synthetic'}, 0),
 ])
 def test_review_counterexamples(command, tokens, expected):
+    result = invoke(command, **tokens)
+    assert result.returncode == expected, result.stderr
+    assert 'synthetic' not in result.stderr
+
+
+# R3 floor regressions: real hook decisions for numeric argv, unknown custody,
+# sudo options and executable heredoc expansions; no CLI or test-only seam.
+@pytest.mark.parametrize('command,tokens,expected', [
+    ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null', {}, 2),
+    ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null', {}, 2),
+    ('railway status 2>/dev/null', {}, 0),
+    ('RAILWAY_TOKEN=$() railway up', {}, 2),
+    ('RAILWAY_TOKEN="$(printf \'\')" railway up', {}, 2),
+    ('RAILWAY_API_TOKEN="$(unknown)" railway up', {}, 2),
+    ('RAILWAY_TOKEN="$(unknown)" railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+    *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 2)
+      for options in ['-n', '-u USER', '-E', '--', '-n -u USER -E --', '--user USER']],
+    ('sudo -n railway up', {}, 2),
+    ('sudo -n railway status', {}, 0),
+    ('# docs: cat <<EOF\nrailway up\n', {}, 2),
+    ("echo '<<EOF'\nrailway up\n", {}, 2),
+    ('echo "<<EOF"\nrailway up\n', {}, 2),
+    ("cat <<EOF\n'$(railway up)'\nEOF\n", {}, 2),
+    ("cat <<EOF\n'`railway up`'\nEOF\n", {}, 2),
+    ("cat <<EOF\n'$(RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic)'\nEOF\n", {}, 2),
+    ("cat <<EOF\n'`RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic`'\nEOF\n", {}, 2),
+    ("cat <<'EOF'\n'$(railway up)'\nEOF\n", {}, 0),
+])
+def test_r3_counterexamples(command, tokens, expected):
     result = invoke(command, **tokens)
     assert result.returncode == expected, result.stderr
     assert 'synthetic' not in result.stderr

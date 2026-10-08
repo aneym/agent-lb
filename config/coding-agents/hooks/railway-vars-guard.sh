@@ -18,7 +18,7 @@ SECRET_VALUE = re.compile(r'(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[bapr
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
 
 
-def substitutions(text):
+def substitutions(text, heredoc=False):
     """Return executable expansions and mask them for the outer lexer."""
     result, out = [], []
     i, quote = 0, None
@@ -28,9 +28,9 @@ def substitutions(text):
             out.append(text[i:i + 2])
             i += 2
             continue
-        if c in "\"'" and (quote is None or quote == c):
+        if not heredoc and c in "\"'" and (quote is None or quote == c):
             quote = None if quote else c
-        if quote != "'" and (text.startswith('$(', i) or c == '`'):
+        if (heredoc or quote != "'") and (text.startswith('$(', i) or c == '`'):
             backtick = c == '`'
             start = i + (1 if backtick else 2)
             j, depth, inner_quote = start, 1, None
@@ -53,7 +53,7 @@ def substitutions(text):
                                 break
                 j += 1
             result.append(text[start:j])
-            out.append('EXPANSION')
+            out.append('$UNKNOWN_SUBSTITUTION')
             i = j + 1
             continue
         out.append(c)
@@ -63,8 +63,8 @@ def substitutions(text):
 
 def heredocs(command):
     lines = command.splitlines(keepends=True)
-    out, nested = [], []
-    pending = []
+    out, nested, pending = [], [], []
+    quote = None
     for line in lines:
         if pending:
             delimiter, quoted, tabs = pending[0]
@@ -72,11 +72,38 @@ def heredocs(command):
             if data.rstrip('\r\n') == delimiter:
                 pending.pop(0)
             elif not quoted:
-                nested.extend(substitutions(data)[1])
+                nested.extend(substitutions(data, heredoc=True)[1])
             continue
-        out.append(line)
-        for match in re.finditer(r"<<(-?)\s*('([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))", line):
-            pending.append((match[3] or match[4] or match[5], bool(match[3] or match[4]), bool(match[1])))
+        i, cleaned = 0, []
+        while i < len(line):
+            c = line[i]
+            if c == '\\' and quote != "'":
+                cleaned.append(line[i:i + 2])
+                i += 2
+                continue
+            if c in "\"'" and (quote is None or quote == c):
+                quote = None if quote else c
+            elif not quote:
+                if c == '#' and (i == 0 or line[i - 1] in ' \t;|&()'):
+                    cleaned.append(line[i:])
+                    break
+                # Only an attached IO number belongs to a redirection.
+                fd = re.match(r'\d+(?=[<>])', line[i:])
+                if fd and (i == 0 or line[i - 1] in ' \t;|&()'):
+                    i += len(fd[0])
+                    continue
+                if line.startswith('<<', i) and not line.startswith('<<<', i):
+                    match = re.match(r"<<(-?)[ \t]*('([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))", line[i:])
+                    if match:
+                        pending.append((match[3] if match[3] is not None else
+                                        match[4] if match[4] is not None else match[5],
+                                        match[3] is not None or match[4] is not None, bool(match[1])))
+                        cleaned.append(match[0])
+                        i += len(match[0])
+                        continue
+            cleaned.append(c)
+            i += 1
+        out.append(''.join(cleaned))
     return ''.join(out), nested
 
 
@@ -107,8 +134,6 @@ def check(command, inherited):
     while i < len(words):
         word = words[i]
         if re.fullmatch(r'[<>]+|[<>]+&', word):
-            if current and current[-1].isdigit():
-                current.pop()
             i += 2  # A redirection's target isn't argv; later words still are.
             continue
         if word and all(c in ';&|()\n' for c in word):
@@ -125,7 +150,10 @@ def check(command, inherited):
             word = words[i]
             assignment = ASSIGNMENT.match(word)
             if assignment:
-                env[assignment[1]] = expand(assignment[2], env)
+                if '$UNKNOWN_SUBSTITUTION' in assignment[2] and assignment[1] in TOKEN_NAMES:
+                    env[assignment[1]] = inherited.get(assignment[1], '')
+                else:
+                    env[assignment[1]] = expand(assignment[2], env)
                 i += 1
                 continue
             name = word.rsplit('/', 1)[-1]
@@ -161,7 +189,13 @@ def check(command, inherited):
                 while i < len(words) and words[i].startswith('-'):
                     option = words[i]
                     i += 1
-                    if option in {'-n', '-u', '-g', '-t', '-k', '-s', '-I', '-P'}:
+                    if option == '--':
+                        break
+                    operands = ({'-u', '-g', '-h', '-p', '-C', '-T', '-R', '-D', '-r',
+                                 '--user', '--group', '--host', '--prompt', '--close-from',
+                                 '--command-timeout', '--chroot', '--chdir', '--role', '--type'}
+                                if name == 'sudo' else {'-n', '-u', '-g', '-t', '-k', '-s', '-I', '-P'})
+                    if option in operands:
                         i += 1
                 if name == 'timeout':
                     i += 1  # duration
