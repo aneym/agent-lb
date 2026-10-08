@@ -15,17 +15,26 @@ import shlex
 import sys
 from pathlib import Path
 
-DENIAL = ('Railway destructive delete refused: use a custody RAILWAY_TOKEN or RAILWAY_API_TOKEN, '
-          'not the owner\'s CLI login. Never put secrets in argv; use '
-          '`railway variables --set KEY` with the value from stdin or an env file.')
+DENIAL = ('Railway destructive delete refused (destructive data floor): use a custody '
+          "RAILWAY_TOKEN or RAILWAY_API_TOKEN, not the owner's CLI login.")
+# GA-RESTORE: secret floor; set RAILWAY_SECRET_FLOOR=1 at launch.
+SECRET_FLOOR = os.environ.get('RAILWAY_SECRET_FLOOR') == '1'
+WARNINGS = set()
+ARGV_DENIAL = 'Railway secret-looking argv detected (secret floor); use stdin or an env file.'
+
+
+def secret_warning(message):
+    WARNINGS.add(message)
+
+
 TOKEN_NAMES = {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}
 READS = {'status', 'logs', 'list', 'whoami', 'version', 'help'}
 SECRET_NAME = re.compile(r'(?:token|secret|password|passwd|api[_-]?key|authorization|bearer|credential)', re.I)
 SECRET_VALUE = re.compile(r'''(?:^|[=\s'"])(?:bearer\s+|(?:sk|rk|pk|ghp|gho|github_pat|xox[baprs])[-_]|eyJ[A-Za-z0-9_-]+\.)''', re.I)
 ASSIGNMENT = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', re.S)
 # Never suggest --json | jq: values still pass through the shell before filtering.
-KV_DENIAL = "BLOCKED: railway variables read prints values; value output is refused."
-PRINTENV_DENIAL = "BLOCKED: railway run printenv/env prints every secret; value output is refused."
+KV_DENIAL = "railway variables read prints values (secret floor)."
+PRINTENV_DENIAL = "railway run printenv/env prints every secret (secret floor)."
 
 
 OPTION_VALUES = {'--environment', '-e', '--service', '-s', '--project', '-p'}
@@ -232,14 +241,19 @@ def check(command, inherited, value_output=False):
         found = check(value, inherited, value_output)
         if found:
             return found
+    words = []
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
         lexer.commenters = ''  # heredocs() already removed shell comments.
         lexer.whitespace_split = True
-        words = list(lexer)
+        for word in lexer:
+            words.append(word)
     except ValueError:
-        return DENIAL
+        # Keep the incomplete final argument so a shell wrapper's destructive
+        # executable prefix is still checked; other parse failures are advisory.
+        if lexer.token:
+            words.append(lexer.token)
     segments, current = [], []
     i = 0
     while i < len(words):
@@ -269,7 +283,7 @@ def check(command, inherited, value_output=False):
                 continue
             name = word.rsplit('/', 1)[-1]
             if value_output and run_value_output(words[i:]):
-                return PRINTENV_DENIAL
+                secret_warning(PRINTENV_DENIAL)
             if name == 'env':
                 i += 1
                 while i < len(words) and words[i].startswith('-'):
@@ -349,10 +363,10 @@ def check(command, inherited, value_output=False):
                 for j, arg in enumerate(args):
                     if '$UNKNOWN_SUBSTITUTION' in arg and (
                             arg.startswith('--set=') or (j > 0 and args[j - 1] in {'--set', 'set'})):
-                        return DENIAL  # An expanded value still lands in argv.
+                        secret_warning(ARGV_DENIAL)  # An expanded value still lands in argv.
                     if (j > 0 and args[j - 1] in {'set', '--set'} and SECRET_NAME.search(arg)
                             and '=' not in arg and j + 1 < len(args) and not args[j + 1].startswith('-')):
-                        return DENIAL
+                        secret_warning(ARGV_DENIAL)
                     value = arg.split('=', 1)[1] if arg.startswith('--set=') else arg
                     match = ASSIGNMENT.match(value)
                     secret_expansion = match and any(
@@ -360,9 +374,9 @@ def check(command, inherited, value_output=False):
                         for name in re.findall(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', match[2]))
                     if match and match[2] and (SECRET_NAME.search(match[1]) or SECRET_VALUE.search(match[2])
                                               or len(match[2]) >= 24 or secret_expansion):
-                        return DENIAL
+                        secret_warning(ARGV_DENIAL)
                     if SECRET_VALUE.search(arg):
-                        return DENIAL
+                        secret_warning(ARGV_DENIAL)
                 # Help belongs to the CLI only before its subcommand.
                 command_args = list(args)
                 help_requested = False
@@ -402,8 +416,10 @@ def check(command, inherited, value_output=False):
                     if (not write or 'get' in command_args[1:]
                             or any(arg in {'--kv', '--json'} or re.fullmatch(r'-[^-]*k[^-]*', arg)
                                    for arg in command_args[1:])):
-                        return KV_DENIAL
-                    print('Railway variable write allowed pre-GA: explicit or unknown linked environment; values withheld.', file=sys.stderr)
+                        secret_warning(KV_DENIAL)
+                        break
+                    if not WARNINGS:
+                        print('Railway variable write allowed pre-GA: explicit or unknown linked environment; values withheld.', file=sys.stderr)
                     break
                 destructive = subcommand in {'delete', 'down'}
                 if subcommand in {'service', 'volume', 'environment'}:
@@ -423,15 +439,25 @@ def check(command, inherited, value_output=False):
     return ''
 
 
+command = ''
 try:
     payload = json.loads(os.environ['RAILWAY_GUARD_INPUT'])
-    command = payload.get('tool_input', {}).get('command', '')
+    tool_input = payload.get('tool_input', {}) if isinstance(payload, dict) else {}
+    command = tool_input.get('command', '') if isinstance(tool_input, dict) else ''
+    if not isinstance(command, str):
+        command = ''
     denied = check(command, dict(os.environ))
 except Exception as error:
-    denied = f'railway guard error: {type(error).__name__}'
+    # A parser failure is advisory unless a destructive action is explicit.
+    destructive = re.search(r'\brailway\s+(?:(?:service|volume|environment)\s+)?(?:delete|down)\b', command)
+    denied = (f'{DENIAL} railway guard error: {type(error).__name__}'
+              if destructive and not any(os.environ.get(key) for key in TOKEN_NAMES) else '')
 if denied:
     print(denied, file=sys.stderr)
     sys.exit(2)
+if WARNINGS:
+    print(('BLOCKED: ' if SECRET_FLOOR else 'WARNING: ') + ' '.join(sorted(WARNINGS)), file=sys.stderr)
+    sys.exit(2 if SECRET_FLOOR else 0)
 PY
 if [ "$STATUS" -eq 0 ] && [ -n "${HOOK_FLOOR_RECEIPT:-}" ]; then printf 'floor-ok %s\n' railway-vars-guard.sh; fi
 exit "$STATUS"

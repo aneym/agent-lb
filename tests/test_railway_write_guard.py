@@ -16,7 +16,7 @@ HOOK = Path(__file__).resolve().parents[1] / 'config/coding-agents/hooks/railway
 
 def invoke(command, shell=None, cwd=None, **tokens):
     env = {key: value for key, value in os.environ.items()
-           if key not in {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN'}}
+           if key not in {'RAILWAY_TOKEN', 'RAILWAY_API_TOKEN', 'RAILWAY_SECRET_FLOOR'}}
     env.update(tokens)
     return subprocess.run([shell or os.environ.get('RAILWAY_TEST_SHELL', '/bin/bash'), str(HOOK)], input=json.dumps({
         'tool_name': 'Bash', 'tool_input': {'command': command},
@@ -28,7 +28,7 @@ def test_login_only_writes_are_refused(command):
     result = invoke(command)
     assert result.returncode == 2, result.stderr
     assert 'custody' in result.stderr
-    assert 'stdin or an env file' in result.stderr
+    assert 'destructive data' in result.stderr
 
 
 @pytest.mark.parametrize('command', [
@@ -80,9 +80,11 @@ def test_exported_custody_token_allows_write(token):
     'RAILWAY_TOKEN=x railway up --header "Bearer synthetic"',
     'env RAILWAY_TOKEN=x sh -c "railway variables --set API_TOKEN=synthetic"',
 ])
-def test_secret_shaped_argv_is_refused_even_with_custody(command):
+def test_secret_shaped_argv_warns_even_with_custody(command):
     result = invoke(command)
-    assert result.returncode == 2
+    assert result.returncode == 0
+    assert 'WARNING:' in result.stderr
+    assert len(result.stderr.splitlines()) == 1
     assert 'synthetic' not in result.stderr
 
 
@@ -98,11 +100,12 @@ def test_secret_shaped_argv_is_refused_even_with_custody(command):
     ('railway run printenv', 'railway run printenv/env prints every secret'),
     ('RAILWAY_TOKEN=x railway run -s api -- env', 'railway run printenv/env prints every secret'),
 ])
-def test_reads_that_print_secret_values_are_refused_even_with_custody(command, denial):
+def test_reads_that_print_secret_values_warn_even_with_custody(command, denial):
     result = invoke(command)
-    assert result.returncode == 2, result.stderr
+    assert result.returncode == 0, result.stderr
+    assert 'WARNING:' in result.stderr
     assert denial in result.stderr
-    assert "value output is refused" in result.stderr
+    assert "secret floor" in result.stderr
 
 # Review F1-F7: subprocess JSON boundary covers missed executable routes and
 # overblocked data without executing the CLI or adding a production seam.
@@ -111,13 +114,13 @@ def test_reads_that_print_secret_values_are_refused_even_with_custody(command, d
       ['npx', 'bunx', 'pnpm dlx', 'yarn dlx', 'npm exec', 'npm exec --']],
     ('eval "railway up"', {}, 0),
     ('env -S "railway up"', {}, 0),
-    ('RAILWAY_TOKEN=x npx @railway/cli variables --set API_TOKEN=synthetic', {}, 2),
-    ('RAILWAY_TOKEN=x eval "railway variables --set API_TOKEN=synthetic"', {}, 2),
-    ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 2),
+    ('RAILWAY_TOKEN=x npx @railway/cli variables --set API_TOKEN=synthetic', {}, 0),
+    ('RAILWAY_TOKEN=x eval "railway variables --set API_TOKEN=synthetic"', {}, 0),
+    ('RAILWAY_TOKEN=x env -S "railway variables --set API_TOKEN=synthetic"', {}, 0),
     ('echo "$(railway up --service \'api(staging)\')"', {}, 0),
     ('echo "`railway up --service \'api(staging)\'`"', {}, 0),
     ('railway variables < /dev/null --set PORT=8080', {}, 0),
-    ('RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic', {}, 2),
+    ('RAILWAY_TOKEN=x railway variables --set < /dev/null API_TOKEN=synthetic', {}, 0),
     ('RAILWAY_TOKEN="$MISSING" railway up', {}, 0),
     ('RAILWAY_TOKEN="" railway up', {}, 0),
     ('RAILWAY_TOKEN="$CUSTODY" railway up', {'CUSTODY': 'synthetic'}, 0),
@@ -141,20 +144,22 @@ def test_reads_that_print_secret_values_are_refused_even_with_custody(command, d
 def test_review_counterexamples(command, tokens, expected):
     result = invoke(command, **tokens)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     assert 'synthetic' not in result.stderr
 
 
 # R3 floor regressions: real hook decisions for numeric argv, unknown custody,
 # sudo options and executable heredoc expansions; no CLI or test-only seam.
 @pytest.mark.parametrize('command,tokens,expected', [
-    ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null', {}, 2),
-    ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null', {}, 2),
+    ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 > /dev/null', {}, 0),
+    ('RAILWAY_TOKEN=x railway variables --set API_TOKEN 1234 2 > /dev/null', {}, 0),
     ('railway status 2>/dev/null', {}, 0),
     ('RAILWAY_TOKEN=$() railway up', {}, 0),
     ('RAILWAY_TOKEN="$(printf \'\')" railway up', {}, 0),
     ('RAILWAY_API_TOKEN="$(unknown)" railway up', {}, 0),
     ('RAILWAY_TOKEN="$(unknown)" railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
-    *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 2)
+    *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 0)
       for options in ['-n', '-u USER', '-E', '--', '-n -u USER -E --', '--user USER']],
     ('sudo -n railway up', {}, 0),
     ('sudo -n railway status', {}, 0),
@@ -163,13 +168,15 @@ def test_review_counterexamples(command, tokens, expected):
     ('echo "<<EOF"\nrailway up\n', {}, 0),
     ("cat <<EOF\n'$(railway up)'\nEOF\n", {}, 0),
     ("cat <<EOF\n'`railway up`'\nEOF\n", {}, 0),
-    ("cat <<EOF\n'$(RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic)'\nEOF\n", {}, 2),
-    ("cat <<EOF\n'`RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic`'\nEOF\n", {}, 2),
+    ("cat <<EOF\n'$(RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic)'\nEOF\n", {}, 0),
+    ("cat <<EOF\n'`RAILWAY_TOKEN=x railway variables --set API_TOKEN=synthetic`'\nEOF\n", {}, 0),
     ("cat <<'EOF'\n'$(railway up)'\nEOF\n", {}, 0),
 ])
 def test_r3_counterexamples(command, tokens, expected):
     result = invoke(command, **tokens)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     assert 'synthetic' not in result.stderr
 
 
@@ -188,13 +195,15 @@ def test_r3_counterexamples(command, tokens, expected):
       ['-nu USER', '-Eu USER', '-nuUSER', '-EuUSER', '-nEu USER', '-ng GROUP']],
     *[(f'sudo {options} railway status', {}, 0) for options in
       ['-nu USER', '-Eu USER']],
-    *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 2)
+    *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 0)
       for options in ['-nu USER', '-Eu USER']],
     ('sudo -nu USER railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
 ])
 def test_r4_counterexamples(command, tokens, expected):
     result = invoke(command, **tokens)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     assert 'synthetic' not in result.stderr
 
 
@@ -213,9 +222,9 @@ def test_deliberate_obfuscation_residuals(command, tokens):
 # floor; wrappers and short flags would otherwise bypass the new branch.
 @pytest.mark.parametrize('command,expected', [
     ('railway variables --set FOO=bar', 0),
-    ('railway variables -s FOO=bar', 2),
-    ('railway variables -sFOO=bar', 2),
-    ('railway variables -sAPI_TOKEN=synthetic', 2),
+    ('railway variables -s FOO=bar', 0),
+    ('railway variables -sFOO=bar', 0),
+    ('railway variables -sAPI_TOKEN=synthetic', 0),
     ('railway variable set FOO bar --environment test', 0),
     ('railway variables delete FOO -e dev', 0),
     ('env sh -c "railway variables --set FOO=bar"', 0),
@@ -227,20 +236,22 @@ def test_deliberate_obfuscation_residuals(command, tokens):
     ('railway variables --set FOO=bar -eprod', 0),
     ('railway -e production variables --set FOO=bar', 0),
     ('RAILWAY_TOKEN=x railway variables --set FOO=bar -e prod', 0),
-    ('railway variables --set API_TOKEN=synthetic -e dev', 2),
-    ('railway variables -s API_TOKEN synthetic', 2),
-    ('eval "railway variables --set API_TOKEN=synthetic"', 2),
-    ('env -S "railway variables --set API_TOKEN=synthetic"', 2),
-    ('railway variables', 2),
-    ('railway variables --json', 2),
-    ('railway variables get FOO', 2),
-    ('RAILWAY_TOKEN=x railway variables get FOO', 2),
-    ('railway variables --set FOO=bar --json', 2),
+    ('railway variables --set API_TOKEN=synthetic -e dev', 0),
+    ('railway variables -s API_TOKEN synthetic', 0),
+    ('eval "railway variables --set API_TOKEN=synthetic"', 0),
+    ('env -S "railway variables --set API_TOKEN=synthetic"', 0),
+    ('railway variables', 0),
+    ('railway variables --json', 0),
+    ('railway variables get FOO', 0),
+    ('RAILWAY_TOKEN=x railway variables get FOO', 0),
+    ('railway variables --set FOO=bar --json', 0),
     ('railway up --environment dev', 0),
 ])
 def test_pre_ga_variable_policy(command, expected):
     result = invoke(command)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     assert 'synthetic' not in result.stderr
     assert 'bar' not in result.stderr
 
@@ -255,7 +266,7 @@ def test_unknown_link_write_is_logged_without_values():
 
 # CLI argv ownership regressions at the hook boundary, without running Railway.
 @pytest.mark.parametrize('command,expected', [
-    *[(f'{prefix} {args}{suffix}', 2)
+    *[(f'{prefix} {args}{suffix}', 0)
       for prefix, suffix in [('railway', ''), ('eval "railway', '"'),
                              ('npx @railway/cli', '')]
       for args in ['variables -s api', 'variables -sapi', 'vars -s api',
@@ -270,22 +281,24 @@ def test_unknown_link_write_is_logged_without_values():
     ('railway -h run env', 0),
     ('railway run --help env', 0),
     ('railway run -s api -h env', 0),
-    ('railway run env -h', 2),
-    ('railway run printenv --help', 2),
-    ('railway run sh -c env -h', 2),
-    ('railway run sh -c printenv --help', 2),
-    ('railway run -- env -h', 2),
-    ('railway variables -s api --help', 2),
+    ('railway run env -h', 0),
+    ('railway run printenv --help', 0),
+    ('railway run sh -c env -h', 0),
+    ('railway run sh -c printenv --help', 0),
+    ('railway run -- env -h', 0),
+    ('railway variables -s api --help', 0),
     ('railway up --help', 0),
-    ('railway variables --set NAME="$TOKEN"', 2),
-    ('railway variables --set NAME="${SECRET}"', 2),
-    ('railway variables --set NAME="$KEY"', 2),
-    ('railway variables --set NAME="$PASSWORD"', 2),
+    ('railway variables --set NAME="$TOKEN"', 0),
+    ('railway variables --set NAME="${SECRET}"', 0),
+    ('railway variables --set NAME="$KEY"', 0),
+    ('railway variables --set NAME="$PASSWORD"', 0),
     ('railway variables --set NAME="$PORT"', 0),
 ])
 def test_pre_ga_r2_argv_ownership(command, expected):
     result = invoke(command)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
 
 
 # SSH/run policy is exercised through hook stdin, never the CLI. Existing r2
@@ -294,7 +307,7 @@ def test_pre_ga_r2_argv_ownership(command, expected):
     ('railway ssh --service rails --environment staging -- python -c ...', 0),
     ("railway ssh --service rails --environment staging -- python -c 'print(1)'", 0),
     ("railway ssh --service rails --environment production -- python -c 'print(1)'", 0),
-    ('railway ssh -e production -- printenv', 2),
+    ('railway ssh -e production -- printenv', 0),
     ('railway run -e dev -- pytest', 0),
     ('railway ssh -e preview -- python -c "print(1)"', 0),
     ('railway -e test run -- pytest', 0),
@@ -306,7 +319,7 @@ def test_pre_ga_r2_argv_ownership(command, expected):
     ('railway run -- pytest', 0),
     ('RAILWAY_TOKEN=x railway ssh -e production -- python -c ...', 0),
     ('RAILWAY_TOKEN=x railway run -e prod -- pytest', 0),
-    *[(f'railway {mode} -e staging -- {output}', 2)
+    *[(f'railway {mode} -e staging -- {output}', 0)
       for mode in ['ssh', 'run']
       for output in ['printenv', 'env', 'set', 'export -p',
                      'railway variables', 'railway variables --json',
@@ -315,12 +328,14 @@ def test_pre_ga_r2_argv_ownership(command, expected):
                      'sh -c "printenv"', 'sh -c "echo okay; env"']],
     ('railway ssh -e staging -- echo "$PORT"', 0),
     ('railway run -e dev -- cat README.md', 0),
-    ('railway ssh -e staging -- echo sk-synthetic', 2),
-    ('railway run -e dev -- pytest API_TOKEN=synthetic', 2),
+    ('railway ssh -e staging -- echo sk-synthetic', 0),
+    ('railway run -e dev -- pytest API_TOKEN=synthetic', 0),
 ])
 def test_pre_ga_ssh_run_policy(command, expected, tmp_path):
     result = invoke(command, HOME=str(tmp_path))
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     assert 'synthetic' not in result.stderr
 
 
@@ -341,35 +356,39 @@ def test_pre_ga_ssh_run_linked_environment(mode, environment, expected, tmp_path
     }}}))
     result = invoke(f'railway {mode} -- python -c ...', cwd=child, HOME=str(home))
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     # Explicit targeting takes precedence over the linked default.
     result = invoke(f'railway {mode} -e staging -- python -c ...', cwd=child, HOME=str(home))
     assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize('command,expected', [
-    ('npx @railway/cli@latest variables', 2),
+    ('npx @railway/cli@latest variables', 0),
     ('npx @railway/cli@1.2.3 up', 0),
     ('RAILWAY_TOKEN=x npx @railway/cli@1.2.3 up', 0),
     ('railway variables -e dev --set TASK_ID=3', 0),
     ('railway variables -e dev --set DISK_SIZE=10', 0),
     ('railway variables -e dev -s task-api --set PORT=8080', 0),
-    ('railway variables -e dev --set VALUE=sk-synthetic', 2),
-    *[(f'railway {mode} -e production -- {output}', 2)
+    ('railway variables -e dev --set VALUE=sk-synthetic', 0),
+    *[(f'railway {mode} -e production -- {output}', 0)
       for mode in ['ssh', 'run']
       for output in ['time env', 'sudo env', 'nice env', 'command env',
                      'sudo -n -u user env', 'nice -n 5 printenv',
                      'sh -c "true; env"', 'sh -c "FOO=1 env"',
                      'sh -c "echo hi && env"']],
-    ('railway variables --set X=$(agent-secret get synthetic)', 2),
-    ('railway variables --set X=$(echo secret)', 2),
-    ('railway variables --set X="$(echo secret)"', 2),
-    ('railway variables --set X=$(cat input)', 2),
-    ('railway variables --set PORT=8080 -ks api', 2),
-    ('railway variables --set PORT=8080 -sk', 2),
+    ('railway variables --set X=$(agent-secret get synthetic)', 0),
+    ('railway variables --set X=$(echo secret)', 0),
+    ('railway variables --set X="$(echo secret)"', 0),
+    ('railway variables --set X=$(cat input)', 0),
+    ('railway variables --set PORT=8080 -ks api', 0),
+    ('railway variables --set PORT=8080 -sk', 0),
 ])
 def test_pre_ga_review_advisories(command, expected):
     result = invoke(command)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     assert 'synthetic' not in result.stderr
 
 
@@ -383,14 +402,14 @@ def test_python_environment_printing_residual():
 # Full nested checks protect wrapper output and destructive deletes after stripping
 # ssh/run argv. This table reproduces the bypass through real hook stdin.
 @pytest.mark.parametrize('command,expected', [
-    ('railway run -- npx @railway/cli variables', 2),
+    ('railway run -- npx @railway/cli variables', 0),
     ('railway run -- bash -c "railway service delete x"', 2),
     ('railway run -- sudo railway down', 2),
     ('railway ssh -- sh -c "true && railway delete"', 2),
     ('railway run -- railway up', 0),
     ('railway up', 0),
-    ('railway run -- xargs printenv', 2),
-    ('railway run -- eval "railway variables"', 2),
+    ('railway run -- xargs printenv', 0),
+    ('railway run -- eval "railway variables"', 0),
     ('railway run -- timeout 10 railway delete', 2),
     ('railway run -- exec railway delete', 2),
     ('railway run -- su -c "railway delete"', 2),
@@ -406,8 +425,10 @@ def test_python_environment_printing_residual():
 def test_ssh_run_full_nested_policy(command, expected):
     result = invoke(command)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     if expected == 2 and any(word in command for word in ['delete', 'down']):
-        assert 'destructive delete' in result.stderr
+        assert 'destructive data' in result.stderr
 
 
 # R4 trims cover permissive non-delete commands and option operand ownership
@@ -418,15 +439,17 @@ def test_ssh_run_full_nested_policy(command, expected):
     ('railway volume delete data', 2),
     *[(f'railway ssh {flag} abc -- sh -c "railway delete"', 2)
       for flag in ['--deployment-instance', '-i', '--service-instance']],
-    *[(f'railway run -- xargs {flag} f printenv', 2)
+    *[(f'railway run -- xargs {flag} f printenv', 0)
       for flag in ['-a', '-I', '-n', '-P', '-L', '-s', '-d', '-E']],
-    ('railway run -- ' + 'nice ' * 3000 + 'printenv', 2),
+    ('railway run -- ' + 'nice ' * 3000 + 'printenv', 0),
 ])
 def test_r4_trim_counterexamples(command, expected):
     result = invoke(command)
     assert result.returncode == expected, result.stderr
+    if expected == 0 and result.stderr and 'allowed pre-GA' not in result.stderr:
+        assert 'WARNING:' in result.stderr
     if 'printenv' in command:
-        assert 'value output is refused' in result.stderr
+        assert 'secret floor' in result.stderr
 
 
 def test_deep_check_exception_is_denied():
@@ -434,3 +457,38 @@ def test_deep_check_exception_is_denied():
     assert result.returncode == 2, result.stderr
     assert 'railway guard error: RecursionError' in result.stderr
     assert 'Traceback' not in result.stderr
+
+
+# The launch flag restores secret blocking at the real hook boundary.
+@pytest.mark.parametrize('command', [
+    'railway variables', 'railway variables --kv', 'railway variables --json',
+    'railway variables get FOO', 'railway run printenv', 'railway ssh env',
+    'railway variables --set API_TOKEN=synthetic',
+    'railway run -- sh -c "echo okay; env"',
+])
+def test_ga_secret_floor_restores_blocking(command):
+    result = invoke(command, RAILWAY_SECRET_FLOOR='1')
+    assert result.returncode == 2, result.stderr
+    assert 'secret floor' in result.stderr
+    assert 'synthetic' not in result.stderr
+
+
+@pytest.mark.parametrize('command,expected', [
+    ('railway status "', 0), ('echo railway "', 0),
+    ('railway delete "', 2), ('railway down "', 2),
+    ('railway run -- sh -c "railway delete \\"', 2),
+])
+def test_unbalanced_quotes_are_advisory_except_destructive(command, expected):
+    result = invoke(command)
+    assert result.returncode == expected, result.stderr
+    if expected == 2:
+        assert 'destructive data' in result.stderr
+
+
+@pytest.mark.parametrize('payload', ['not json', '[]', 'null', '42',
+                                        '{"tool_input": null}',
+                                        '{"tool_input": {"command": []}}'])
+def test_malformed_non_railway_input_fails_open(payload):
+    result = subprocess.run(['/bin/bash', str(HOOK)], input=payload,
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
