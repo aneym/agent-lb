@@ -347,8 +347,8 @@ SCRIPT_PREFILTERS = {
     "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
     "wide-scan-guard.sh": ("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac", pf_wide_scan),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
-    # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; f8cbd0b: factory
-    # d0d4a7243 (all 2026-10-07).
+    # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
+    # 31b899775, after its review fixes (all 2026-10-07).
     "no-chrome-guard.sh": (("110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
                             "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
                             "3464abbaaf2e8c8ed5ce6fa6203dc51745aad9bb17e220580b442026356bbeee"), pf_no_chrome),
