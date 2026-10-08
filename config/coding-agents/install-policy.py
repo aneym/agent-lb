@@ -188,6 +188,12 @@ MANAGED_AGENTS = (
         Path("hooks/wide-scan-guard.sh"),
     ),
     (
+        Path(".claude/hooks/railway-vars-guard.sh"),
+        Path(".agent-lb/managed/coding-agents/railway-vars-guard"),
+        "agent-lb:railway-vars-guard:v1\n",
+        Path("hooks/railway-vars-guard.sh"),
+    ),
+    (
         # Copy the guard without registering it as a hook.
         Path(".claude/hooks/plutil-guard.sh"),
         Path(".agent-lb/managed/coding-agents/plutil-guard"),
@@ -210,7 +216,7 @@ MANAGED_AGENTS = (
 # Guards adopted from a live copy another config registers (settings.json names them, not this installer):
 # uninstall leaves the file in place and drops only the ownership marker, since removing it would turn the guard's
 # registration into a missing executable that never denies (2026-10-08 review M3).
-ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"),)
+ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"), Path(".claude/hooks/railway-vars-guard.sh"))
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
 # removes the definition, its ownership marker and the policy mirror copy; the
@@ -1034,6 +1040,15 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
                 pre_tool_use.append({"matcher": "Workflow", "hooks": [dict(WORKFLOW_SEAT_GUARD_HOOK)]})
             else:
                 workflow_group.setdefault("hooks", []).insert(0, dict(WORKFLOW_SEAT_GUARD_HOOK))
+        if not any(
+            "hooks/railway-vars-guard.sh" in hook.get("command", "")
+            for group in pre_tool_use if group.get("matcher") in ("Bash", "*")
+            for hook in group.get("hooks", [])
+        ):
+            pre_tool_use.append({"matcher": "Bash", "hooks": [{
+                "type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"',
+                "timeout": 10,
+            }]})
         # The closeout hook writes the outcome/tokens side of the dispatch ledger.
         subagent_stop = updated["hooks"].setdefault("SubagentStop", [])
         if not any(is_closeout_hook(hook.get("command")) for group in subagent_stop for hook in group.get("hooks", [])):
