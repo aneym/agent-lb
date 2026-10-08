@@ -153,6 +153,31 @@ def test_r3_counterexamples(command, tokens, expected):
     assert 'synthetic' not in result.stderr
 
 
+# R4 floor regressions: comments must preserve command boundaries, here-strings
+# must not swallow later commands, and sudo bundles must expose executable argv.
+@pytest.mark.parametrize('command,tokens,expected', [
+    ('echo hi # note\nrailway up', {}, 2),
+    ("echo hi # owner's note\nrailway status", {}, 0),
+    ("echo hi # owner's note\nrailway up", {}, 2),
+    ('echo hi # $(railway up)\nrailway status', {}, 0),
+    ("echo '# literal'\nrailway up", {}, 2),
+    ('cat <<< hello\nrailway up', {}, 2),
+    ('cat <<< hello\nrailway status', {}, 0),
+    ('cat <<< hello\nrailway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+    *[(f'sudo {options} railway up', {}, 2) for options in
+      ['-nu USER', '-Eu USER', '-nuUSER', '-EuUSER', '-nEu USER', '-ng GROUP']],
+    *[(f'sudo {options} railway status', {}, 0) for options in
+      ['-nu USER', '-Eu USER']],
+    *[(f'RAILWAY_TOKEN=x sudo {options} railway variables --set API_TOKEN=synthetic', {}, 2)
+      for options in ['-nu USER', '-Eu USER']],
+    ('sudo -nu USER railway up', {'RAILWAY_TOKEN': 'synthetic'}, 0),
+])
+def test_r4_counterexamples(command, tokens, expected):
+    result = invoke(command, **tokens)
+    assert result.returncode == expected, result.stderr
+    assert 'synthetic' not in result.stderr
+
+
 @pytest.mark.xfail(strict=True, reason='Accepted deliberate shell obfuscation residual')
 @pytest.mark.parametrize('command,tokens', [
     ("rail''way up", {}),

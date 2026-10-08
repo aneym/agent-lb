@@ -85,14 +85,20 @@ def heredocs(command):
                 quote = None if quote else c
             elif not quote:
                 if c == '#' and (i == 0 or line[i - 1] in ' \t;|&()'):
-                    cleaned.append(line[i:])
+                    # Keep the separator, but never lex quotes or expansions
+                    # from a shell comment as executable syntax.
+                    cleaned.append('\n' if line.endswith('\n') else '')
                     break
                 # Only an attached IO number belongs to a redirection.
                 fd = re.match(r'\d+(?=[<>])', line[i:])
                 if fd and (i == 0 or line[i - 1] in ' \t;|&()'):
                     i += len(fd[0])
                     continue
-                if line.startswith('<<', i) and not line.startswith('<<<', i):
+                if line.startswith('<<<', i):
+                    cleaned.append('<<<')
+                    i += 3
+                    continue
+                if line.startswith('<<', i):
                     match = re.match(r"<<(-?)[ \t]*('([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))", line[i:])
                     if match:
                         pending.append((match[3] if match[3] is not None else
@@ -125,6 +131,7 @@ def check(command, inherited):
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()<>\n')
         lexer.whitespace = ' \t\r'
+        lexer.commenters = ''  # heredocs() already removed shell comments.
         lexer.whitespace_split = True
         words = list(lexer)
     except ValueError:
@@ -193,10 +200,18 @@ def check(command, inherited):
                         break
                     operands = ({'-u', '-g', '-h', '-p', '-C', '-T', '-R', '-D', '-r',
                                  '--user', '--group', '--host', '--prompt', '--close-from',
-                                 '--command-timeout', '--chroot', '--chdir', '--role', '--type'}
+                                 '-t', '--command-timeout', '--chroot', '--chdir', '--role', '--type'}
                                 if name == 'sudo' else {'-n', '-u', '-g', '-t', '-k', '-s', '-I', '-P'})
                     if option in operands:
                         i += 1
+                    elif name == 'sudo' and not option.startswith('--'):
+                        for j, flag in enumerate(option[1:], 1):
+                            if '-' + flag in operands:
+                                # The rest of a bundle is its attached operand;
+                                # otherwise the operand is the next argv word.
+                                if j == len(option) - 1:
+                                    i += 1
+                                break
                 if name == 'timeout':
                     i += 1  # duration
                 continue
