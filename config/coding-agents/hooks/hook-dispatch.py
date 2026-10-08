@@ -351,12 +351,14 @@ SCRIPT_PREFILTERS = {
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
     # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
     # 31b899775, after its review fixes; 64cf185: factory a6f53ea1e, destination parsed by shlex; 77520a3: factory
-    # 03b60384a, shell flag clusters, redirections, keywords and live heredoc bodies (all 2026-10-07).
+    # 03b60384a, shell flag clusters, redirections, keywords and live heredoc bodies; 67708a8: factory 61b9e24f5,
+    # quoted operators stay words (all 2026-10-07).
     "no-chrome-guard.sh": (("110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
                             "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
                             "3464abbaaf2e8c8ed5ce6fa6203dc51745aad9bb17e220580b442026356bbeee",
                             "64cf185450a08b3faab701fb8c289d32b55611ebe6049065854b2c92fd2450c8",
-                            "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48"), pf_no_chrome),
+                            "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
+                            "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b"), pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway),
     "route.sh": ("7735c06fbe7264f0d92403e0bd7b18920f9457196493e9bce9b787e53404ed97", pf_jev_alert),
 }
