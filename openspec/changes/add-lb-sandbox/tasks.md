@@ -44,3 +44,10 @@
 - [x] `stop` and `gc` act only on a sandbox stamped with the run id (else exit 2) and signal only processes naming the root or the run's label, never a bare word.
 - [x] `status` reports `own_volume` and `confined`; the live check fails unless the primary, aux and front are confined on their own volume.
 - [ ] Deferred: same-UID force-unmount of a running sandbox's volume (covered by the service identity follow-up); `launchctl bootstrap` reads its plist by path.
+
+## 7. S2-2 fix round 4 (live-safety review FAIL on cf915e10)
+
+- [x] Every sandbox job runs the installed runtime's venv python (`~/.agent-lb/runtime/agent-lb/.venv/bin/python`), never `<root>/runtime/.venv/bin/python`. `lb-restart --sandbox` requires that program in the plist, checks what it leads to (no link from the top to its bin dir; a regular executable owned by this user or root, not group or other writable, outside every sandbox root) just before the standby exec, and checks the loaded launchd job's program and arguments before each kickstart. `_serve` checks the same before its exec.
+- [x] The sandboxes dir and every ancestor must be real directories (no link) and the sandboxes dir this user's own with no group or other write. `check_root` no longer resolves paths; root opens walk from the top with `O_NOFOLLOW`; `stop` removes the root by name inside a pinned sandboxes-dir descriptor; `restart` writes its log only on a root that is its own volume.
+- [x] `lb-restart` reads `front.json` replaced between open and fstat (st_nlink 0) as the front's own write and reads the name again; only a second hard link is refused.
+- [x] Each finding has a test that fails on cf915e10.

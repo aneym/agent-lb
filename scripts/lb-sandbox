@@ -174,13 +174,105 @@ def check_ports(ports: list[int]) -> list[int]:
     return ports
 
 
+def _lexical(path: Path) -> Path:
+    """path with . and .. folded by text alone: nothing on disk is followed."""
+    return Path(os.path.normpath(str(path)))
+
+
+def _refuse_linked_dirs(what: str, path: Path) -> os.stat_result:
+    """Every component of absolute path, lstat'd from the top down, is a real directory. Returns the last one's
+    stat. Raises Refused on a link, a non-directory or a missing component."""
+    if not path.is_absolute():
+        raise Refused(f"{what} {path} is not absolute")
+    info = None
+    for i in range(1, len(path.parts) + 1):
+        prefix = Path(*path.parts[:i])
+        try:
+            info = prefix.lstat()
+        except OSError as exc:
+            raise Refused(f"{what} {path}: {prefix} is missing ({exc.__class__.__name__})") from None
+        if not stat.S_ISDIR(info.st_mode):
+            raise Refused(f"{what} {path}: {prefix} is a link or not a directory")
+    assert info is not None
+    return info
+
+
+def check_sandboxes(sandboxes: Path | None = None) -> Path:
+    """The sandboxes dir and every ancestor are real directories (no link followed), and the sandboxes dir is
+    this user's own with no group or other write. ~/.agent-lb/sandboxes made a link to ~/.agent-lb would make
+    run id `state` name the live state dir. Raises Refused."""
+    base = _lexical(Path(sandboxes or SANDBOXES))
+    info = _refuse_linked_dirs("sandboxes dir", base)
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise Refused(f"sandboxes dir {base} is not this user's own private directory")
+    return base
+
+
 def check_root(root: Path, sandboxes: Path | None = None) -> Path:
-    base = (sandboxes or SANDBOXES).resolve()
-    resolved = Path(root).resolve()
-    if resolved.parent != base:
-        raise Refused(f"sandbox root {resolved} is not directly under {base}")
-    check_run_id(resolved.name)
-    return resolved
+    """root, by its text, is directly under a link-free sandboxes dir and is not itself a link. Never resolved:
+    resolving accepted a linked ancestor and then named live state as a sandbox root."""
+    base = _lexical(Path(sandboxes or SANDBOXES))
+    path = _lexical(Path(root))
+    if path.parent != base:
+        raise Refused(f"sandbox root {path} is not directly under {base}")
+    check_run_id(path.name)
+    if not os.path.lexists(base):
+        # Nothing at the sandboxes path, so nothing to follow; every existing ancestor must still be a real dir.
+        _refuse_linked_dirs("sandboxes dir", next(a for a in base.parents if os.path.lexists(a)))
+        return path
+    check_sandboxes(base)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return path
+    if not stat.S_ISDIR(info.st_mode):
+        raise Refused(f"sandbox root {path} is a link or not a directory")
+    return path
+
+
+def open_dir_nofollow(path: Path) -> int:
+    """A descriptor for absolute path, opened from the top one component at a time with O_NOFOLLOW: a link
+    anywhere, an ancestor included, is refused (ELOOP or ENOTDIR), never followed."""
+    path = _lexical(path)
+    fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def interpreter_for(root: Path) -> Path:
+    """The interpreter every sandbox job runs: the installed runtime's venv python (<home>/.agent-lb/runtime/
+    agent-lb/.venv/bin/python), never <root>/runtime/.venv/bin/python, which anything in the root could swap
+    for a shim. lb-restart --sandbox requires this exact name in the plist (sandbox_python_for)."""
+    return _lexical(Path(root)).parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
+
+
+def check_interpreter(python: Path, root: Path) -> None:
+    """What python runs is the venv's own interpreter: no link from the top to its bin dir, and the file it
+    leads to is a regular executable owned by this user or root that group and other cannot write, outside
+    every sandbox root. Checked just before each exec. Raises Refused."""
+    python = _lexical(python)
+    sandboxes = _lexical(Path(root)).parent
+    if python != interpreter_for(root) or sandboxes in python.parents:
+        raise Refused(f"interpreter {python} is not the installed runtime's venv python")
+    _refuse_linked_dirs("interpreter", python.parent)
+    try:
+        target = Path(os.path.realpath(python))
+        info = os.stat(target)
+    except OSError:
+        raise Refused(f"interpreter {python} is missing") from None
+    if target == sandboxes or sandboxes in target.parents:
+        raise Refused(f"interpreter {python} leads into a sandbox root")
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR:
+        raise Refused(f"interpreter {python} does not lead to an executable regular file")
+    if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
+        raise Refused(f"interpreter {python} leads to a file another user could write")
 
 
 def check_launchctl() -> None:
@@ -221,8 +313,9 @@ class Confinement(OSError):
 
 
 def open_root(root: Path) -> int:
-    """A descriptor for the sandbox root itself; a root that is a link is refused."""
-    parent = os.open(os.path.realpath(root.parent), os.O_RDONLY | os.O_DIRECTORY)
+    """A descriptor for the sandbox root itself; a root that is a link, or one under a linked ancestor, is
+    refused: the sandboxes dir is opened from the top with no link followed, never by its resolved path."""
+    parent = open_dir_nofollow(root.parent)
     try:
         return os.open(root.name, DIR_FLAGS, dir_fd=parent)
     finally:
@@ -250,10 +343,13 @@ def open_dir(root: Path, rel: str | Path = "", create: bool = False) -> int:
         raise
 
 
-def single_link(fd: int, what: object) -> int:
-    """fd when it is a regular file with one link; otherwise closes it and raises Confinement."""
+def single_link(fd: int, what: object, reading: bool = False) -> int:
+    """fd when it is a regular file with one link; otherwise closes it and raises Confinement.
+
+    reading: a file the front or aux replaced atomically between the open and this check has no name left
+    (st_nlink 0); for a read that is their own write, not a planted link. A second name is always refused."""
     info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1 or (info.st_nlink == 0 and not reading):
         os.close(fd)
         raise Confinement(f"{what} is not a single-link regular file")
     return fd
@@ -268,7 +364,7 @@ def open_in_root(root: Path, rel: str | Path, flags: int, mode: int = 0o600, cre
         fd = os.open(rel.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
-    single_link(fd, rel)
+    single_link(fd, rel, reading=flags & os.O_ACCMODE == os.O_RDONLY)
     if flags & os.O_TRUNC:
         os.ftruncate(fd, 0)
     return fd
@@ -398,8 +494,11 @@ def seatbelt_profile(root: Path, reads: bool) -> str:
             f"(allow file-read-data (subpath {q(runtime)}))",
             f"(deny file-read-data {private})",
         ]
-    # The root's own name is never resolved: a root that is a link is refused by confine, not followed here.
-    own = Path(os.path.realpath(Path(root).parent)) / Path(root).name
+    # The root's own name is never resolved: a root that is a link is refused by confine, not followed here. Its
+    # parent must already be its own real path: a linked sandboxes dir would put live state inside the profile.
+    if os.path.realpath(Path(root).parent) != str(_lexical(Path(root).parent)):
+        raise Refused(f"sandbox root {root} sits under a linked directory")
+    own = _lexical(Path(root))
     if reads:
         # The sandboxes directory itself (a listing of run ids, no file in it): confined opens start from a
         # descriptor for it (open_root).
@@ -508,7 +607,7 @@ def check_own_volume(root: Path) -> None:
 
 def images_dir_fd() -> int:
     """A descriptor for SANDBOXES/.images, created 0700, never a link."""
-    parent = os.open(os.path.realpath(SANDBOXES), os.O_RDONLY | os.O_DIRECTORY)
+    parent = open_dir_nofollow(SANDBOXES)
     try:
         try:
             os.mkdir(IMAGES.name, 0o700, dir_fd=parent)
@@ -763,7 +862,7 @@ def stamped_meta(root: Path, run_id: str) -> dict:
 
 
 def load_meta(run_id: str) -> tuple[Path, dict]:
-    root = root_for(run_id)
+    root = check_root(root_for(run_id))
     meta = stamped_meta(root, run_id)
     if not meta:
         raise Unhealthy(f"no sandbox {run_id} (no sandbox.json stamped with this run id under {root})")
@@ -1487,7 +1586,7 @@ def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) 
 
 def write_plists(root: Path, run_id: str, ports: dict[str, int], transport: str) -> tuple[Path, Path]:
     label, aux_label = labels_for(run_id)
-    python = str(root / "runtime" / ".venv" / "bin" / "python")
+    python = str(interpreter_for(root))
     script = str(root / "bin" / "lb-sandbox")
     primary = {
         "Label": label,
@@ -1685,16 +1784,25 @@ def cmd_start(args) -> int:
     created = False
     try:
         SANDBOXES.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if SANDBOXES.is_symlink() or not SANDBOXES.is_dir():
-            raise Refused(f"{SANDBOXES} is not a real directory")
-        os.chmod(SANDBOXES, 0o700)  # agent-lb's own directory; no other user may list sandbox roots
+        _refuse_linked_dirs("sandboxes dir", _lexical(SANDBOXES))  # before anything is changed through it
+        sandboxes_fd = open_dir_nofollow(SANDBOXES)
         try:
-            root.mkdir(mode=0o700)
-        except FileExistsError:
-            # A concurrent start with the same run id won the race; its root is not ours to tear down.
-            raise Refused(f"sandbox root {root} already exists") from None
-        created = True
-        os.chmod(root, 0o700)  # mkdir's mode is masked by umask; set it exactly
+            os.fchmod(sandboxes_fd, 0o700)  # agent-lb's own directory; no other user may list sandbox roots
+            check_sandboxes()
+            try:
+                os.mkdir(root.name, 0o700, dir_fd=sandboxes_fd)
+            except FileExistsError:
+                # A concurrent start with the same run id won the race; its root is not ours to tear down.
+                raise Refused(f"sandbox root {root} already exists") from None
+            created = True
+            root_fd = os.open(root.name, DIR_FLAGS, dir_fd=sandboxes_fd)
+            try:
+                os.fchmod(root_fd, 0o700)  # mkdir's mode is masked by umask; set it exactly
+            finally:
+                os.close(root_fd)
+        finally:
+            os.close(sandboxes_fd)
+        check_root(root)
         attach_volume(root, run_id)  # the root is its own volume from here on: no hard link reaches live files
         meta = {
             "run_id": run_id,
@@ -1817,7 +1925,8 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
     token = live_federation_token()
     if not token:
         raise Unhealthy("live plist has no federation token")
-    python = str(root / "runtime" / ".venv" / "bin" / "python")
+    python = str(interpreter_for(root))
+    check_interpreter(Path(python), root)  # what execve runs, checked just before it
     # --port last and literal: lb-restart recognises its standby by "--port <standby>" in the command line.
     args = [
         python,
@@ -2547,6 +2656,9 @@ def cmd_fault(args) -> int:
 def cmd_restart(args) -> int:
     check_launchctl()
     root, _ = load_meta(args.run_id)
+    # Nothing is written (not even the restart log) unless the root is a real directory under a link-free
+    # sandboxes dir (load_meta) and is its own volume, so no name in it can reach a live file.
+    check_own_volume(root)
     lb_restart = Path(__file__).resolve().parent / "lb-restart"
     if not lb_restart.is_file():
         raise Unhealthy(f"{lb_restart} missing")
@@ -2669,9 +2781,47 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
     single-link file whose run_id is this run's), or this process created the root (start's failure path). A
     typo, a stale id or a hostile one (`aneyman`, `runtime`) stops nothing. Processes are matched by the root
     path or the run's launchd label, never by a bare word.
+
+    The sandboxes dir must be link-free from the top and agent-lb's own (check_sandboxes), else nothing is
+    done: with ~/.agent-lb/sandboxes a link to ~/.agent-lb, run id `state` named the live state dir. The
+    sandboxes dir is then pinned by a descriptor and the root is removed by name inside it, so a swap during
+    teardown cannot turn the removal toward live state.
     """
     root = root_for(run_id)
-    real_root = root.is_dir() and not root.is_symlink()
+    sandboxes_fd = None
+    if os.path.lexists(SANDBOXES):
+        try:
+            check_sandboxes()
+            sandboxes_fd = open_dir_nofollow(SANDBOXES)
+        except (Refused, OSError) as exc:
+            return {
+                "refused": f"the sandboxes dir is a link or not agent-lb's own ({exc}): nothing was signalled,"
+                " scanned or deleted",
+                "clean": False,
+            }
+    try:
+        return _teardown(run_id, root, sandboxes_fd, logs_to, created)
+    finally:
+        if sandboxes_fd is not None:
+            os.close(sandboxes_fd)
+
+
+def _root_kind(sandboxes_fd: int | None, name: str) -> str:
+    """'dir', 'link', 'other' or 'missing' for name inside the pinned sandboxes dir (lstat, never followed)."""
+    if sandboxes_fd is None:
+        return "missing"
+    try:
+        info = os.stat(name, dir_fd=sandboxes_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return "missing"
+    if stat.S_ISLNK(info.st_mode):
+        return "link"
+    return "dir" if stat.S_ISDIR(info.st_mode) else "other"
+
+
+def _teardown(run_id: str, root: Path, sandboxes_fd: int | None, logs_to: Path | None, created: bool) -> dict:
+    kind = _root_kind(sandboxes_fd, root.name)
+    real_root = kind == "dir"
     meta = stamped_meta(root, run_id) if real_root else {}
     owned = bool(meta) or created
     label, aux_label = labels_for(run_id)
@@ -2708,7 +2858,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         for pid, _, cmd in processes():
             if owned_process(cmd, root, run_id) and pid not in lineage:
                 stop_pid(pid, bound=5)
-    elif real_root or root.is_symlink():
+    elif kind != "missing":
         refused = "no sandbox.json stamped with this run id: nothing was signalled, scanned or deleted"
     logs: dict = {"copied": False}
     if owned and real_root:
@@ -2754,13 +2904,16 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
     volume: dict = {}
     if owned:
         custody = unlink_key(root)
-        if root.is_symlink():
-            root.unlink()  # the link only; its target is not this sandbox's to delete
-        elif root.exists():
+        kind = _root_kind(sandboxes_fd, root.name)
+        if kind == "link":
+            os.unlink(root.name, dir_fd=sandboxes_fd)  # the link only; its target is not this sandbox's to delete
+        elif kind == "dir":
             volume = detach_volume(root)
             if volume.get("volume") != "still mounted":
                 check_root(root)
-                shutil.rmtree(root)
+                # By name inside the pinned sandboxes dir, every level opened without following a link.
+                assert shutil.rmtree.avoids_symlink_attacks
+                shutil.rmtree(root.name, dir_fd=sandboxes_fd)
         if not on_own_volume(root):
             volume["image_removed"] = remove_image(run_id)
     time.sleep(0.5)

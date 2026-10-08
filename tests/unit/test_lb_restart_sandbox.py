@@ -211,6 +211,7 @@ def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) 
     root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
     root.mkdir(parents=True, mode=0o700)
     root.chmod(0o700)  # as lb-sandbox start makes it; the pinned root must be 0700 and ours
+    root.parent.chmod(0o700)  # and the sandboxes dir, whatever the umask
     live = tmp_path / ".agent-lb" / "state" / "front-preferred-port"
     live.parent.mkdir(parents=True)
     live.write_text("2457\n")
@@ -255,7 +256,7 @@ def _plist(root: Path, **overrides) -> dict:
     data = {
         "Label": "com.agent-lb.drill.sbx-r1",
         "ProgramArguments": [
-            str(root / "runtime" / ".venv" / "bin" / "python"),
+            str(_venv_python(root.parent.parent.parent)),
             str(root / "bin" / "lb-sandbox"),
             "_serve",
             str(root),
@@ -345,6 +346,7 @@ def test_standby_start_refuses_a_bootstrap_that_is_a_link(tmp_path: Path) -> Non
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
     (root / "launchd").mkdir(parents=True)
     root.chmod(0o700)
+    root.parent.chmod(0o700)  # as lb-sandbox start makes the sandboxes dir, whatever the umask
     (root / "launchd" / "com.agent-lb.drill.sbx-r1.plist").write_bytes(plistlib.dumps(_plist(root)))
     (root / "bin").mkdir()
     bootstrap = root / "bin" / "lb-sandbox"
@@ -367,6 +369,24 @@ def test_standby_start_refuses_a_bootstrap_that_is_a_link(tmp_path: Path) -> Non
 # ---------------------------------------------------------------- S2 fix round 3 (review FAIL on ea866e22)
 
 
+def _venv_python(home: Path) -> Path:
+    """Where the installed runtime's venv python sits for this home (what every sandbox job must run)."""
+    return home / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
+
+
+def _install_venv_python(home: Path) -> Path:
+    """A stand-in for the installed venv's interpreter (never run here): bin/python -> a private executable
+    file outside the sandboxes, as the real venv's python leads to its base interpreter."""
+    python = _venv_python(home)
+    python.parent.mkdir(parents=True, exist_ok=True)
+    base = home / "base-python" / "python3"
+    base.parent.mkdir(exist_ok=True)
+    base.write_text("#!/bin/sh\nexit 99\n")
+    base.chmod(0o755)
+    python.symlink_to(base)
+    return python
+
+
 def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
     """A sandbox laid out as lb-sandbox start leaves it (config, plist, bootstrap); returns the config path."""
     root = tmp_path / ".agent-lb" / "sandboxes" / name
@@ -379,10 +399,13 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
     )
     (root / "launchd").mkdir(parents=True)
     root.chmod(0o700)  # lb-sandbox start makes the root 0700; the pinned root must be
+    root.parent.chmod(0o700)  # and the sandboxes dir 0700, whatever the umask
     (root / "runtime").mkdir()
     (root / "bin").mkdir()
     (root / "bin" / "lb-sandbox").write_text("#!/usr/bin/env python3\n")
     Path(config["plist"]).write_bytes(plistlib.dumps(_plist(root)))
+    if not os.path.lexists(_venv_python(tmp_path)):
+        _install_venv_python(tmp_path)
     path = root / "lb-restart.json"
     path.write_text(json.dumps(config))
     return path
@@ -401,7 +424,7 @@ def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_s
     lb = _load()
     config = _built_sandbox(tmp_path, "runtime")
     live = tmp_path / ".agent-lb" / "runtime"  # the live runtime dir the swapped path would name
-    live.mkdir()
+    live.mkdir(exist_ok=True)
     for name, text in (("lb-restart.lock", "pid=1 live\n"), ("sync.log", "live log\n")):
         (live / name).write_text(text)
     (tmp_path / ".agent-lb" / "state").mkdir()
@@ -430,7 +453,7 @@ def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path) -> No
     sandboxes.rename(tmp_path / ".agent-lb" / "moved")
     sandboxes.symlink_to(tmp_path / ".agent-lb")
     live_lock = tmp_path / ".agent-lb" / "runtime" / "lb-restart.lock"
-    live_lock.parent.mkdir()
+    live_lock.parent.mkdir(exist_ok=True)
     live_lock.write_text("pid=1 live\n")
     with pytest.raises(lb.SandboxRefused, match="link"):
         _apply(lb, tmp_path / ".agent-lb" / "moved" / "runtime" / "lb-restart.json", tmp_path)
@@ -618,3 +641,132 @@ def test_a_root_lb_sandbox_did_not_make_is_refused(tmp_path: Path, which: str, m
     _apply(lb, config, tmp_path)  # control: the same root at 0700 is accepted
     with lb.Lock("unit", 1):
         pass
+
+
+# ---------------------------------------------------------------- S2-2 fix round 4 (live-safety review, cf915e10)
+
+# What a shim on the interpreter path would run: a kickstart of the live service (text only, never executed).
+SHIM_BODY = "#!/bin/sh\nlaunch" + "ctl kick" + "start -k gui/$UID/com.aneyman.agent-lb\n"
+
+
+@pytest.mark.parametrize("shim", ["link-into-root", "bin-dir-link", "group-writable", "in-root-name"])
+def test_a_shim_on_the_interpreter_path_is_refused_and_never_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shim: str
+) -> None:
+    """M1 (lb-restart:285,969): the guard checked only the text <root>/runtime/.venv/bin/python, so a shim there
+    (one that kickstarts the live agent-lb) passed and Popen ran it. The program is now the installed venv's
+    python and what it leads to is checked just before the exec. subprocess.Popen is the OS edge, recorded."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    _apply(lb, config, tmp_path)
+    started: list[list[str]] = []
+
+    class _Proc:
+        pid = 424242
+
+    def record(args, **kwargs):
+        started.append(list(args))
+        return _Proc()
+
+    monkeypatch.setattr(lb.subprocess, "Popen", record)
+    lb.start_standby(1)  # control: the installed venv's python is accepted
+    assert [args[0] for args in started] == [str(_venv_python(tmp_path))]
+    started.clear()
+    shim_file = root / "shim"
+    shim_file.write_text(SHIM_BODY)
+    shim_file.chmod(0o755)
+    python = _venv_python(tmp_path)
+    if shim == "link-into-root":
+        python.unlink()
+        python.symlink_to(shim_file)
+    elif shim == "bin-dir-link":
+        python.parent.rename(python.parent.with_name("bin.real"))
+        (root / "fakebin").mkdir()
+        (root / "fakebin" / "python").symlink_to(shim_file)
+        python.parent.symlink_to(root / "fakebin", target_is_directory=True)
+    elif shim == "group-writable":
+        writable = tmp_path / "writable-python"
+        writable.write_text("#!/bin/sh\n")
+        writable.chmod(0o775)
+        python.unlink()
+        python.symlink_to(writable)
+    else:
+        in_root = root / "runtime" / ".venv" / "bin" / "python"
+        in_root.parent.mkdir(parents=True)
+        in_root.symlink_to(shim_file)
+        plist = _plist(root)
+        plist["ProgramArguments"][0] = str(in_root)
+        Path(json.loads(config.read_text())["plist"]).write_bytes(plistlib.dumps(plist))
+    with pytest.raises(lb.SandboxRefused):
+        lb.start_standby(1)
+    assert started == []
+
+
+def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M1, launchd's side: a kickstart execs the job launchd loaded, not the plist file. The loaded job's program
+    and arguments (from the job manager's print, the OS edge, faked here) must be the checked interpreter on
+    `lb-sandbox _serve <root>`, else nothing is kickstarted."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    _apply(lb, config, tmp_path)
+    python = str(_venv_python(tmp_path))
+    shown = {"program": python, "arguments": [python, str(root / "bin" / "lb-sandbox"), "_serve", str(root)]}
+    kicked: list[list[str]] = []
+
+    def job_print(argv, **kwargs):
+        args = "".join(f"\t\t{a}\n" for a in shown["arguments"])
+        head = f"{lb.LABEL} = {{\n\tactive count = 1\n\tprogram = {shown['program']}\n"
+        text = f"{head}\targuments = {{\n{args}\t}}\n}}\n"
+        return subprocess.CompletedProcess(argv, 0, stdout=text, stderr="")
+
+    monkeypatch.setattr(lb.subprocess, "run", job_print)
+    monkeypatch.setattr(lb.subprocess, "Popen", lambda argv, **kwargs: kicked.append(list(argv)))
+    lb.kickstart_primary(wait=False)  # control
+    assert len(kicked) == 1 and kicked[0][-1] == f"gui/{os.getuid()}/{lb.LABEL}"
+    kicked.clear()
+    in_root = str(root / "runtime" / ".venv" / "bin" / "python")
+    for program, arguments in (
+        (in_root, [in_root, *shown["arguments"][1:]]),
+        (python, [python, "/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb", "--port", "2471"]),
+    ):
+        shown.update(program=program, arguments=arguments)
+        with pytest.raises(lb.SandboxRefused):
+            lb.kickstart_primary(wait=False)
+    assert kicked == []
+
+
+def test_front_state_replaced_between_open_and_fstat_is_read_not_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (09a842e65..cf915e10, lb-restart:564): the front replaces front.json atomically
+    (agent-lb-front.mjs:191). Replaced after our open, the inode we hold has st_nlink 0, which read as "not a
+    single link" and made a legitimate sandbox restart exit 2. A second hard link is still refused."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    _apply(lb, config, tmp_path)
+    state = root / "state"
+    state.mkdir(mode=0o700)
+    (state / "front.json").write_text('{"preferred": 2471}')
+    real_open = os.open
+    replaced: list[bool] = []
+
+    def open_then_front_replaces(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if path == "front.json" and not replaced:
+            replaced.append(True)  # what the front does: write front.json.tmp, rename over front.json
+            (state / "front.json.tmp").write_text('{"preferred": 2472}')
+            os.replace(state / "front.json.tmp", state / "front.json")
+        return fd
+
+    monkeypatch.setattr(os, "open", open_then_front_replaces)
+    got = lb.read_state(lb.FRONT_STATE)
+    monkeypatch.setattr(os, "open", real_open)
+    assert replaced and got is not None and got[0] == '{"preferred": 2472}'
+    os.link(state / "front.json", tmp_path / "second-name")
+    with pytest.raises(lb.SandboxRefused, match="single-link"):
+        lb.read_state(lb.FRONT_STATE)

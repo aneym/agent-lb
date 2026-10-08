@@ -44,12 +44,38 @@ def _load() -> ModuleType:
     return module
 
 
+def _install_venv(home_lb: Path, runnable: bool = False) -> Path:
+    """<home_lb>/runtime/agent-lb/.venv as interpreter_for names it for roots under <home_lb>/sandboxes.
+
+    runnable: a real venv dir whose bin/python leads to the interpreter running this test, with this test
+    venv's packages (the integration test execs it). Otherwise bin/python leads to a private stand-in file:
+    the guards only inspect it, and the box's interpreter may be group-writable."""
+    venv = home_lb / "runtime" / "agent-lb" / ".venv"
+    python = venv / "bin" / "python"
+    if not os.path.lexists(python):
+        python.parent.mkdir(parents=True, exist_ok=True)
+        if runnable:
+            python.symlink_to(os.path.realpath(sys.executable))
+            cfg = Path(sys.prefix) / "pyvenv.cfg"
+            if cfg.is_file():
+                (venv / "pyvenv.cfg").write_bytes(cfg.read_bytes())
+            (venv / "lib").symlink_to(Path(sys.prefix) / "lib", target_is_directory=True)
+        else:
+            base = home_lb / "base-python" / "python3"
+            base.parent.mkdir(exist_ok=True)
+            base.write_text("#!/bin/sh\nexit 99\n")
+            base.chmod(0o755)
+            python.symlink_to(base)
+    return python
+
+
 def _key(root: Path) -> None:
     """The store key start creates: data/encryption.key, 0600, one link (_serve refuses to boot without it)."""
     (root / "data").mkdir(parents=True, exist_ok=True)
     key = root / "data" / "encryption.key"
     key.write_bytes(b"k" * 44)
     key.chmod(0o600)
+    root.parent.chmod(0o700)  # start makes the sandboxes dir 0700 whatever the umask; the guards require it
 
 
 @pytest.mark.parametrize(
@@ -219,6 +245,7 @@ def test_serve_keeps_the_token_out_of_the_exec_env_and_argv(tmp_path: Path, monk
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
     monkeypatch.setenv("AGENT_LB_DATA_DIR", str(root.resolve() / "data"))
     monkeypatch.delenv("AGENT_LB_FEDERATION_TOKEN", raising=False)
+    _install_venv(tmp_path)
     reads_fake_plist = lb.live_federation_token() == FAKE_TOKEN
     assert reads_fake_plist, "the test must never read the live plist"
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
@@ -294,6 +321,7 @@ def _fake_sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
         (root / "runtime" / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / "runtime" / rel).write_text(text)
     (root / "runtime" / ".venv").symlink_to(Path(sys.prefix), target_is_directory=True)
+    _install_venv(tmp_path, runnable=True)  # what _serve execs: the installed venv's python, never the root's
     live_plist = tmp_path / "live.plist"
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
     return sandboxes, root.resolve(), live_plist
@@ -1279,8 +1307,11 @@ def test_restart_log_never_writes_through_a_planted_link(
         (root / "logs" / "lb-restart.log").symlink_to(live)
     else:
         os.link(live, root / "logs" / "lb-restart.log")
+    sandboxes.chmod(0o700)  # as start makes it, whatever the umask
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
     monkeypatch.setattr(lb, "check_launchctl", lambda: None)
+    # The root's own volume is checked first now; stubbed so the link refusal itself stays under test.
+    monkeypatch.setattr(lb, "check_own_volume", lambda root: None)
     with pytest.raises(lb.Refused):
         lb.cmd_restart(argparse.Namespace(run_id="r1", reason="unit"))
     assert live.read_text() == "live plist"
@@ -1295,6 +1326,7 @@ def test_client_env_never_truncates_a_planted_link(tmp_path: Path, monkeypatch: 
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
     (root / "clients" / "codex").mkdir(parents=True)
+    sandboxes.chmod(0o700)  # as start makes it, whatever the umask
     (root / "sandbox.json").write_text(
         json.dumps({"run_id": "r1", "ports": SERVE_PORTS, "label": "com.agent-lb.drill.sbx-r1"})
     )
@@ -1330,9 +1362,149 @@ def test_serve_refuses_a_store_or_key_hard_linked_to_live_custody(
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
     monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
+    _install_venv(tmp_path)
     with pytest.raises(lb.Refused):
         lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])
     (root / "data" / name).unlink()
     if name == "encryption.key":
         _key(root)
     assert lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])[3] == FAKE_TOKEN  # control
+
+
+# ---------------------------------------------------------------- S2-2 fix round 4 (live-safety review, cf915e10)
+
+
+def _live_home_with_linked_sandboxes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType, where: str):
+    """A home whose live agent-lb dir holds state the sandbox code must never touch, reached through a link.
+
+    where="sandboxes": ~/.agent-lb/sandboxes is a link to ~/.agent-lb, so run id `state` names the live state dir.
+    where="ancestor": ~/.agent-lb itself is a link (to the real agent-lb home) and run r1's root sits under it.
+    The target holds a sandbox.json stamped with the run id, the worst case: a stamp alone must not be enough.
+    Returns (run_id, target dir, its files before)."""
+    home = tmp_path / "home"
+    if where == "sandboxes":
+        lb_home = home / ".agent-lb"
+        lb_home.mkdir(parents=True)
+        (lb_home / "sandboxes").symlink_to(lb_home, target_is_directory=True)
+        run_id, target = "state", lb_home / "state"
+    else:
+        real = tmp_path / "real-agent-lb"
+        (real / "sandboxes").mkdir(parents=True)
+        (real / "sandboxes").chmod(0o700)
+        home.mkdir()
+        (home / ".agent-lb").symlink_to(real, target_is_directory=True)
+        lb_home = home / ".agent-lb"
+        run_id, target = "r1", real / "sandboxes" / "r1"
+    (target / "data").mkdir(parents=True)
+    (target / "front.json").write_text('{"preferred": 2457}')
+    (target / "data" / "encryption.key").write_bytes(b"live key")
+    (target / "sandbox.json").write_text(json.dumps({"run_id": run_id, "ports": SERVE_PORTS}))
+    monkeypatch.setattr(lb, "SANDBOXES", lb_home / "sandboxes")
+    monkeypatch.setattr(lb, "IMAGES", lb_home / "sandboxes" / ".images")
+    live_plist = tmp_path / "live.plist"  # a regressed teardown loads secrets: never the real live plist
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    files = {p: p.read_bytes() for p in target.rglob("*") if p.is_file()}
+    return run_id, target, files
+
+
+@pytest.mark.parametrize("where", ["sandboxes", "ancestor"])
+def test_a_linked_sandboxes_dir_never_makes_live_state_a_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """M3 (lb-sandbox:166,213,2253): with ~/.agent-lb/sandboxes a link to ~/.agent-lb, check_root resolved both
+    sides and accepted live state as root `state`; stop then removed it recursively, and restart wrote its log
+    there first. Every owner command now refuses a linked sandboxes dir or ancestor before touching anything."""
+    import argparse
+
+    lb = _load()
+    run_id, target, files = _live_home_with_linked_sandboxes(tmp_path, monkeypatch, lb, where)
+    with pytest.raises(lb.Refused):
+        lb.check_root(lb.SANDBOXES / run_id)
+    with pytest.raises(lb.Refused):
+        lb.load_meta(run_id)
+    monkeypatch.setattr(lb, "check_launchctl", lambda: None)
+    with pytest.raises(lb.Refused):
+        lb.cmd_restart(argparse.Namespace(run_id=run_id, reason="unit"))
+    result = lb.teardown(run_id, None)
+    assert result.get("refused") and result["clean"] is False
+    assert {p: p.read_bytes() for p in target.rglob("*") if p.is_file()} == files
+    assert not (target / "logs").exists()
+
+
+def test_teardown_removes_the_root_inside_the_sandboxes_dir_it_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M3, during teardown: the sandboxes dir is swapped for a link to ~/.agent-lb after teardown checked it,
+    with ~/.agent-lb/r1 standing for live state. The root is removed by name inside the descriptor teardown
+    pinned, so the real sandbox goes and the live dir stays. check_root is stubbed to isolate the pin (it would
+    refuse the swap first); launchctl, ps and the volume are the OS edge."""
+    lb = _load()
+    home = tmp_path / "home"
+    lb_home = home / ".agent-lb"
+    sandboxes = lb_home / "sandboxes"
+    root = sandboxes / "r1"
+    (root / "logs").mkdir(parents=True)
+    sandboxes.chmod(0o700)
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": {}}))
+    live = lb_home / "r1"
+    live.mkdir()
+    (live / "front.json").write_text('{"preferred": 2457}')
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    monkeypatch.setattr(lb, "IMAGES", sandboxes / ".images")
+    monkeypatch.setattr(lb, "LIVE_PLIST", tmp_path / "no-live.plist")
+    monkeypatch.setattr(lb, "label_loaded", lambda label: False)
+    monkeypatch.setattr(lb, "processes", lambda: [])
+    monkeypatch.setattr(lb, "load_secrets", lambda root: [FAKE_TOKEN])
+    monkeypatch.setattr(lb, "load_key", lambda root: None)
+
+    def detach_then_swap(path: Path) -> dict:
+        sandboxes.rename(lb_home / "moved")
+        sandboxes.symlink_to(lb_home, target_is_directory=True)
+        return {"volume": "not mounted"}
+
+    monkeypatch.setattr(lb, "detach_volume", detach_then_swap)
+    monkeypatch.setattr(lb, "check_root", lambda path, sandboxes=None: path)
+    lb.teardown("r1", None)
+    assert (live / "front.json").read_text() == '{"preferred": 2457}'
+    assert not (lb_home / "moved" / "r1").exists()
+
+
+@pytest.mark.parametrize("shim", ["link-into-root", "bin-dir-link", "group-writable"])
+def test_serve_execs_only_the_installed_venv_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shim: str) -> None:
+    """M1 on lb-sandbox's side: _serve exec'd <root>/runtime/.venv/bin/python, a name anything in the root can
+    swap for a shim, and handed it the token pipe. It now execs the installed venv's python, and what that name
+    leads to is checked just before the exec. The plist start writes names the same interpreter."""
+    lb = _load()
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    _key(root)
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
+    live_plist = tmp_path / "live.plist"
+    live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    monkeypatch.setenv("LB_SANDBOX_ROOT", str(root))
+    python = _install_venv(tmp_path)
+    assert lb.serve_exec_args(root, ["--port", "2482"])[0] == str(python)  # control
+    primary, _aux = lb.write_plists(root, "r1", SERVE_PORTS, "http")
+    assert plistlib.loads(primary.read_bytes())["ProgramArguments"][0] == str(python)
+    shim_file = root / "shim"
+    shim_file.write_text("#!/bin/sh\nexit 0\n")
+    shim_file.chmod(0o755)
+    if shim == "link-into-root":
+        python.unlink()
+        python.symlink_to(shim_file)
+    elif shim == "bin-dir-link":
+        python.parent.rename(python.parent.with_name("bin.real"))
+        (root / "fakebin").mkdir()
+        (root / "fakebin" / "python").symlink_to(shim_file)
+        python.parent.symlink_to(root / "fakebin", target_is_directory=True)
+    else:
+        writable = tmp_path / "writable-python"
+        writable.write_text("#!/bin/sh\n")
+        writable.chmod(0o775)
+        python.unlink()
+        python.symlink_to(writable)
+    with pytest.raises(lb.Refused):
+        lb.serve_exec_args(root, ["--port", "2482"])

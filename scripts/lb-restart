@@ -271,6 +271,38 @@ def check_sandbox_bootstrap(root: Path) -> None:
         raise SandboxRefused("sandbox bootstrap is a link, not lb-sandbox's own copy inside the root")
 
 
+def sandbox_python_for(root: Path) -> Path:
+    """The interpreter a sandbox job and its standby run: the installed runtime's venv python, outside the root.
+
+    root is <home>/.agent-lb/sandboxes/<run> (sandbox_bindings proves it), so this is <home>/.agent-lb/runtime/
+    agent-lb/.venv/bin/python. Never <root>/runtime/.venv/bin/python: anything under the root can be swapped
+    for a shim (one that kickstarts the live agent-lb, say) after a check of its name."""
+    return root.parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
+
+
+def check_sandbox_interpreter(python: Path, root: Path) -> None:
+    """The interpreter that will run is the installed venv's own: every directory from / to its bin is a real
+    directory (no link), and the file it names (after the venv's own python -> base interpreter link) is a
+    regular executable owned by this user or root that group and other cannot write, outside every sandbox
+    root. Checked just before each exec. Raises SandboxRefused."""
+    python = _lexical(python)
+    sandboxes = root.parent
+    if python != sandbox_python_for(root) or _inside(python, sandboxes):
+        raise SandboxRefused(f"interpreter {python} is not the installed runtime's venv python")
+    _refuse_links_on("interpreter", python.parent, "dir")
+    try:
+        target = Path(os.path.realpath(python))
+        info = os.stat(target)
+    except OSError as exc:
+        raise SandboxRefused(f"interpreter {python} is missing ({exc.__class__.__name__})") from exc
+    if _inside(target, sandboxes) or _inside(target, root):
+        raise SandboxRefused(f"interpreter {python} leads into a sandbox root")
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR:
+        raise SandboxRefused(f"interpreter {python} does not lead to an executable regular file")
+    if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
+        raise SandboxRefused(f"interpreter {python} leads to a file another user could write")
+
+
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
     """The sandbox plist must run `lb-sandbox _serve <root>` on its primary port with an env inside the root.
 
@@ -283,7 +315,7 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
     if extra:
         raise SandboxRefused(f"sandbox plist has keys lb-sandbox never writes: {', '.join(extra)}")
     want = [
-        str(root / "runtime" / ".venv" / "bin" / "python"),
+        str(sandbox_python_for(root)),
         str(root / "bin" / "lb-sandbox"),
         "_serve",
         str(root),
@@ -360,6 +392,7 @@ def apply_sandbox(config_path: Path) -> None:
             plist = plistlib.load(fh)
         check_sandbox_plist(plist, bindings["SANDBOX_ROOT"], bindings["LABEL"], bindings["PRIMARY_PORT"])
         check_sandbox_bootstrap(bindings["SANDBOX_ROOT"])
+        check_sandbox_interpreter(sandbox_python_for(bindings["SANDBOX_ROOT"]), bindings["SANDBOX_ROOT"])
     except BaseException as exc:
         globals().update(LIVE_BINDINGS)
         unpin_sandbox_root()
@@ -551,19 +584,27 @@ def read_state(path: Path) -> tuple[str, float] | None:
         return None
     except OSError as exc:
         raise SandboxRefused(f"{path.parent} is a link or unreachable inside the sandbox root ({exc})") from exc
+    # The front replaces front.json atomically (write .tmp, rename). Replaced between our open and fstat, the inode
+    # we hold has no name left (st_nlink 0): that is the front's own write, not a planted link, so read the name
+    # again. Only a second name (st_nlink > 1, a hard link to live state) is refused.
     try:
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise SandboxRefused(f"{path} is a link inside the sandbox root ({exc})") from exc
+        for attempt in range(5):
+            try:
+                fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise SandboxRefused(f"{path} is a link inside the sandbox root ({exc})") from exc
+            with os.fdopen(fd, "rb") as fh:
+                info = os.fstat(fh.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
+                    raise SandboxRefused(f"{path} is not a single-link regular file")
+                text = fh.read().decode(errors="replace")
+            if info.st_nlink == 1 or attempt == 4:
+                return text, info.st_mtime  # after 5 replacements in a row, the last version read is still the front's
     finally:
         os.close(dir_fd)
-    with os.fdopen(fd, "rb") as fh:
-        info = os.fstat(fh.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise SandboxRefused(f"{path} is not a single-link regular file")
-        return fh.read().decode(errors="replace"), info.st_mtime
+    return None  # not reached
 
 
 def remove_state(path: Path) -> None:
@@ -961,6 +1002,9 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
         # exec goes by path, so check the path still names the pinned root just before it, and start the
         # standby in the pinned runtime dir (fchdir), not in whatever the runtime path names now.
         verify_sandbox_ancestry()
+        # The program is the installed venv's python (check_sandbox_plist pins the name), and what that name runs
+        # is checked here, just before the exec: a shim planted anywhere on its path is refused, never run.
+        check_sandbox_interpreter(Path(args[0]), SANDBOX_ROOT)
         try:
             runtime_fd = _sandbox_dir_fd(RUNTIME, create=False)
         except OSError as exc:
@@ -1096,9 +1140,49 @@ def job_loaded(label: str) -> bool:
     return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True).returncode == 0
 
 
+def loaded_job_program(text: str) -> tuple[str | None, list[str]]:
+    """(program, arguments) from `launchctl print` output: the job launchd will exec, not the plist on disk."""
+    program, arguments, inside = None, [], False
+    for line in text.splitlines():
+        if inside:
+            if line.strip() == "}":
+                inside = False
+            else:
+                arguments.append(line.strip())
+        elif line.startswith("\tprogram = "):
+            program = line.split(" = ", 1)[1]
+        elif line == "\targuments = {":
+            inside = True
+    return program, arguments
+
+
+def check_loaded_sandbox_job() -> None:
+    """Before a kickstart of the sandbox label: the loaded job runs the checked interpreter on
+    `<root>/bin/lb-sandbox _serve <root>`. launchd execs what it loaded at bootstrap, so this is checked, not the
+    plist file. Raises SandboxRefused."""
+    assert SANDBOX_ROOT is not None
+    python = sandbox_python_for(SANDBOX_ROOT)
+    check_sandbox_interpreter(python, SANDBOX_ROOT)
+    out = subprocess.run(["launchctl", "print", f"gui/{UID}/{LABEL}"], capture_output=True, text=True).stdout
+    program, arguments = loaded_job_program(out)
+    want = [str(python), str(SANDBOX_ROOT / "bin" / "lb-sandbox"), "_serve", str(SANDBOX_ROOT)]
+    if program != str(python) or arguments[:4] != want:
+        raise SandboxRefused(f"loaded job {LABEL} does not run `lb-sandbox _serve` on the checked interpreter")
+
+
+def kickstart_primary(wait: bool) -> None:
+    if SANDBOX_ROOT is not None:
+        check_loaded_sandbox_job()
+    argv = ["launchctl", "kickstart", "-k", f"gui/{UID}/{LABEL}"]
+    if wait:
+        subprocess.run(argv, check=False)
+    else:
+        subprocess.Popen(argv)
+
+
 def restart_primary(reload_plist: bool, old_pid: int | None, bound: float) -> None:
     if not reload_plist:
-        subprocess.Popen(["launchctl", "kickstart", "-k", f"gui/{UID}/{LABEL}"])
+        kickstart_primary(wait=False)
         return
     # Pause the watchdog so it does not re-bootstrap mid-swap. bootout returns
     # while the old process is still draining and bootstrap fails with EIO
@@ -1262,6 +1346,8 @@ def run(args) -> int:
             )
         return 3
 
+    if SANDBOX_ROOT is not None:
+        check_loaded_sandbox_job()  # before anything moves; kickstart_primary checks it again at use
     stop_leftover_standby(drain, hold_for_oauth)
     set_preferred(PRIMARY_PORT)
     old_pid = launchd_pid(LABEL)
@@ -1344,7 +1430,7 @@ def run(args) -> int:
         say("new primary failed its health gate; rolling back files and restarting the primary on them")
         rolled = files.rollback()
         if rolled:
-            subprocess.run(["launchctl", "kickstart", "-k", f"gui/{UID}/{LABEL}"], check=False)
+            kickstart_primary(wait=True)
             primary_ok = wait_until(lambda: healthy(PRIMARY_PORT), args.boot_timeout, 0.5)
         if not primary_ok:
             sync_log(
