@@ -49,6 +49,12 @@ def test_login_only_writes_are_refused(command):
     'RAILWAY_TOKEN=x railway variables --set PORT=8080',
     'railway status', 'railway logs', 'railway variables',
     'railway variables --json', 'railway environment', 'echo ordinary',
+    # Live overblock after 7a71805e: paths and prose that merely name the guard.
+    'cmp config/coding-agents/hooks/railway-vars-guard.sh ~/.claude/hooks/railway-vars-guard.sh',
+    'python3 -m pytest -q tests/test_railway_write_guard.py',
+    'env PYTHONPATH=. python3 tests/test_railway_write_guard.py',
+    'nohup cat ~/.claude/hooks/railway-vars-guard.sh',
+    'git commit -m "fix railway guard overblock"',
 ])
 def test_custody_writes_and_reads_are_allowed(command):
     result = invoke(command)

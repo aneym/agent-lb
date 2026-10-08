@@ -103,7 +103,8 @@ def check(command, inherited):
                     return True
                 break
             # An unknown wrapper containing Railway must not silently bypass the floor.
-            if any(re.search(r'\brailway\b', value) for value in words[i + 1:]):
+            # Match a Railway executable word, never prose or a path that merely names it.
+            if any(value == 'railway' or value.endswith('/railway') for value in words[i + 1:]):
                 return True
             break
     # Expansions can execute inside a quoted argument, even on a non-Railway command.
