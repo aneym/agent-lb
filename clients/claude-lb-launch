@@ -826,14 +826,24 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
         return
 
     def do_CONNECT(self) -> None:
-        host, _, port_text = self.path.partition(":")
-        try:
-            port = int(port_text) if port_text else 443
-        except ValueError:
-            port = 443
+        # Validate the entire authority before deriving any loggable target:
+        # splitting on ':' can mistake userinfo for a harmless host prefix.
+        target = re.fullmatch(
+            r"([A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(?::([0-9]{1,5}))?",
+            self.path,
+        )
+        port = int(target.group(2) or 443) if target else 0
         # Everything is handled inline; never let the base handler reuse the
         # raw socket after we hijack it for TLS or a tunnel.
         self.close_connection = True
+        if target is None or not 1 <= port <= 65535:
+            try:
+                self.connection.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            except OSError:
+                pass
+            _log_tunnel_connect("", 0, 0.0, "failed")
+            return
+        host = target.group(1)
         if host in INTERCEPT_HOSTS:
             self._mitm()
         else:

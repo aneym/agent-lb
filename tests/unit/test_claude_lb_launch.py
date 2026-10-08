@@ -1466,7 +1466,7 @@ def test_connect_logging_preserves_response_privacy_and_bounds(monkeypatch, sink
         for _ in range(35):
             with socket.create_connection(server.server_address, timeout=2) as client:
                 client.sendall(f'CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n'.encode())
-                assert client.recv(1024).startswith(b'HTTP/1.1 502')
+                assert client.recv(1024).startswith(b'HTTP/1.1 400')
         assert time.monotonic() - started < 5
     finally:
         released.set()
@@ -1525,3 +1525,62 @@ def test_successful_tunnel_transfers_before_stalled_slow_log(monkeypatch):
         server.shutdown()
         server.server_close()
     launcher._tunnel_logs.join()
+
+
+@pytest.mark.parametrize("target", [
+    "user:SECRET@host:443",
+    "SECRET:x@h",
+    "example.com:SECRET",
+    "example.com:0",
+    "example.com:65536",
+])
+def test_connect_rejects_invalid_authority_without_logging_userinfo(target, capsys):
+    """Real CONNECT rejects the whole malformed authority, not a sanitized prefix.
+
+    Existing path/query coverage misses userinfo mistaken for a host and invalid ports.
+    """
+    import threading
+
+    launcher = load_launcher_module()
+    server = launcher._ThreadingProxyServer(("127.0.0.1", 0), launcher._ProxyHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with socket.create_connection(server.server_address, timeout=2) as client:
+            client.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+            reply = client.recv(1024)
+    finally:
+        server.shutdown()
+        server.server_close()
+    launcher._tunnel_logs.join()
+    text = capsys.readouterr().err
+    assert reply.startswith(b"HTTP/1.1 400")
+    assert "SECRET" not in text
+    assert target not in text
+    assert "connect <invalid target> failed" in text
+
+
+def test_connect_valid_domain_logs_validated_target(monkeypatch, capsys):
+    """Real CONNECT keeps normal domain diagnostics when the network edge refuses it."""
+    import threading
+
+    launcher = load_launcher_module()
+    connect = socket.create_connection
+
+    def refuse_example(address, *args, **kwargs):
+        if address == ("example.com", 443):
+            raise OSError("network refused")
+        return connect(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "create_connection", refuse_example)
+    server = launcher._ThreadingProxyServer(("127.0.0.1", 0), launcher._ProxyHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with socket.create_connection(server.server_address, timeout=2) as client:
+            client.sendall(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+            reply = client.recv(1024)
+    finally:
+        server.shutdown()
+        server.server_close()
+    launcher._tunnel_logs.join()
+    assert reply.startswith(b"HTTP/1.1 502")
+    assert "connect example.com:443 failed" in capsys.readouterr().err
