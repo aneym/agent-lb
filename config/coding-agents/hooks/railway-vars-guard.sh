@@ -42,12 +42,13 @@ def variable_write(args):
 
 
 def run_value_output(args):
-    if not args:
-        return False
-    if ASSIGNMENT.match(args[0]):
-        return run_value_output(args[1:])
-    name = args[0].rsplit('/', 1)[-1]
-    if name in {'time', 'sudo', 'nice', 'command', 'exec', 'nohup'}:
+    while args:
+        if ASSIGNMENT.match(args[0]):
+            args = args[1:]
+            continue
+        name = args[0].rsplit('/', 1)[-1]
+        if name not in {'time', 'sudo', 'nice', 'command', 'exec', 'nohup'}:
+            break
         i = 1
         while i < len(args) and args[i].startswith('-'):
             flag = args[i]
@@ -58,7 +59,9 @@ def run_value_output(args):
                 # sudo -n is a switch; nice -n takes an adjustment.
                 if flag != '-n' or name == 'nice':
                     i += 1
-        return run_value_output(args[i:])
+        args = args[i:]
+    if not args:
+        return False
     if name in {'printenv', 'env', 'set'} or (name == 'export' and '-p' in args[1:]):
         return True
     if name == 'railway' and len(args) > 1 and args[1] in {'variables', 'variable', 'vars'}:
@@ -301,7 +304,9 @@ def check(command, inherited, value_output=False):
                     operands = ({'-u', '-g', '-h', '-p', '-C', '-T', '-R', '-D', '-r',
                                  '--user', '--group', '--host', '--prompt', '--close-from',
                                  '-t', '--command-timeout', '--chroot', '--chdir', '--role', '--type'}
-                                if name == 'sudo' else {'-n', '-u', '-g', '-t', '-k', '-s', '-I', '-P'})
+                                if name == 'sudo' else
+                                {'-a', '-I', '-n', '-P', '-L', '-s', '-d', '-E'} if name == 'xargs' else
+                                {'-n', '-u', '-g', '-t', '-k', '-s', '-I', '-P'})
                     if option in operands:
                         i += 1
                     elif name == 'sudo' and not option.startswith('--'):
@@ -374,7 +379,8 @@ def check(command, inherited, value_output=False):
                         if command_args[k] == '--':
                             k += 1
                             break
-                        k += 2 if command_args[k] in OPTION_VALUES else 1
+                        k += 2 if command_args[k] in OPTION_VALUES | {
+                            '--deployment-instance', '-i', '--service-instance'} else 1
                     if help_requested:
                         break
                     found = check(shlex.join(command_args[k:]), env, value_output=True)
@@ -393,13 +399,17 @@ def check(command, inherited, value_output=False):
                         return KV_DENIAL
                     print('Railway variable write allowed pre-GA: explicit or unknown linked environment; values withheld.', file=sys.stderr)
                     break
-                elif subcommand in {'environment', 'environments', 'service', 'services'}:
-                    write = any(arg in {'new', 'create', 'delete', 'remove', 'rename', '--new', '--delete', '--rename'}
-                                or arg.startswith(('--new=', '--delete=', '--rename=')) for arg in args[1:])
-                    write = write or any(not arg.startswith('-') for arg in args[1:])
-                else:
-                    write = True
-                if write and not any(env.get(key) for key in TOKEN_NAMES):
+                destructive = subcommand in {'delete', 'down'}
+                if subcommand in {'service', 'volume', 'environment'}:
+                    operands = command_args[1:]
+                    while operands and operands[0].startswith('-'):
+                        flag = operands.pop(0)
+                        if flag == '--':
+                            break
+                        if flag in OPTION_VALUES and operands:
+                            operands.pop(0)
+                    destructive = bool(operands and operands[0] == 'delete')
+                if destructive and not any(env.get(key) for key in TOKEN_NAMES):
                     return DENIAL
                 break
             # Ordinary arguments naming Railway are data, not executable words.
@@ -411,8 +421,8 @@ try:
     payload = json.loads(os.environ['RAILWAY_GUARD_INPUT'])
     command = payload.get('tool_input', {}).get('command', '')
     denied = check(command, dict(os.environ))
-except (ValueError, TypeError, AttributeError):
-    denied = DENIAL
+except Exception as error:
+    denied = f'railway guard error: {type(error).__name__}'
 if denied:
     print(denied, file=sys.stderr)
     sys.exit(2)

@@ -23,7 +23,7 @@ def invoke(command, shell=None, cwd=None, **tokens):
     }), text=True, capture_output=True, env=env, cwd=cwd)
 
 
-@pytest.mark.parametrize('command', ['railway environment new staging', 'railway service delete api'])
+@pytest.mark.parametrize('command', ['railway environment delete staging', 'railway service delete api'])
 def test_login_only_writes_are_refused(command):
     result = invoke(command)
     assert result.returncode == 2, result.stderr
@@ -408,3 +408,29 @@ def test_ssh_run_full_nested_policy(command, expected):
     assert result.returncode == expected, result.stderr
     if expected == 2 and any(word in command for word in ['delete', 'down']):
         assert 'destructive delete' in result.stderr
+
+
+# R4 trims cover permissive non-delete commands and option operand ownership
+# through the real hook boundary; no CLI execution or production seam is needed.
+@pytest.mark.parametrize('command,expected', [
+    *[(f'railway {args}', 0) for args in
+      ['link', 'add', 'volume', 'service api', 'environment new staging']],
+    ('railway volume delete data', 2),
+    *[(f'railway ssh {flag} abc -- sh -c "railway delete"', 2)
+      for flag in ['--deployment-instance', '-i', '--service-instance']],
+    *[(f'railway run -- xargs {flag} f printenv', 2)
+      for flag in ['-a', '-I', '-n', '-P', '-L', '-s', '-d', '-E']],
+    ('railway run -- ' + 'nice ' * 3000 + 'printenv', 2),
+])
+def test_r4_trim_counterexamples(command, expected):
+    result = invoke(command)
+    assert result.returncode == expected, result.stderr
+    if 'printenv' in command:
+        assert 'value output is refused' in result.stderr
+
+
+def test_deep_check_exception_is_denied():
+    result = invoke('eval ' * 3000 + 'railway delete')
+    assert result.returncode == 2, result.stderr
+    assert 'railway guard error: RecursionError' in result.stderr
+    assert 'Traceback' not in result.stderr
