@@ -1121,7 +1121,8 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
         cleaned = [
             {**group, "hooks": [hook for hook in group.get("hooks", [])
                                if not is_seat_guard_hook(hook.get("command"))
-                               and not is_workflow_seat_guard_hook(hook.get("command"))]}
+                               and not is_workflow_seat_guard_hook(hook.get("command"))
+                               and "hooks/railway-vars-guard.sh" not in hook.get("command", "")]}
             for group in cleaned
         ]
         cleaned = [group for group in cleaned if group["hooks"]]
@@ -1177,7 +1178,7 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
             for group in pre_tool_use if group.get("matcher") in ("Bash", "*")
             for hook in group.get("hooks", [])
         ):
-            pre_tool_use.append({"matcher": "Bash", "hooks": [{
+            pre_tool_use.insert(0, {"matcher": "Bash", "hooks": [{
                 "type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"',
                 "timeout": 10,
             }]})

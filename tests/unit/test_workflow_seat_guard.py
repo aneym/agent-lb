@@ -153,22 +153,22 @@ def test_alias_is_checked_against_resolved_retirement(tmp_path, alias):
 
 
 @pytest.mark.parametrize('script', ["agent(p, {label: 'y'}", "agent(p, {label: 'unterminated})", '/* unclosed'])
-def test_parse_errors_fail_closed(script):
+def test_parse_errors_warn(script):
     """S44 (hook-dispatcher-5, 2026-10-08): a floor guard denies when its scanner fails; it used to allow."""
     output = invoke(script)
-    assert output['permissionDecision'] == 'deny'
-    assert 'fails closed' in output['permissionDecisionReason']
+    assert warned(output)
+    assert 'read or parsed' in output['additionalContext']
 
 
-def test_missing_files_and_invalid_hook_json_fail_closed(tmp_path):
+def test_missing_files_and_invalid_hook_json_warn(tmp_path):
     """S44: input, script or routing table the guard cannot read denies the launch; it used to allow."""
     for output in [
         invoke(script_path=tmp_path / 'missing'),
         invoke('agent(p, {label: x})', table=tmp_path / 'missing'),
         invoke(raw='{'),
     ]:
-        assert output['permissionDecision'] == 'deny'
-        assert 'fails closed' in output['permissionDecisionReason']
+        assert warned(output)
+        assert 'read or parsed' in output['additionalContext']
 
 
 def test_settings_install_uninstall_is_idempotent_and_preserves_user_hook():

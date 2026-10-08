@@ -362,10 +362,9 @@ def main() -> None:
             output['additionalContext'] = 'workflow-seat-guard: dynamic agent() options could not be checked; pass agentType and avoid retired model pins (models.md, Workflows).'
     except Exception as error:
         output.pop('additionalContext', None)
-        output.update(permissionDecision='deny', permissionDecisionReason=(
-            'workflow-seat-guard: the hook input, script or routing table could not be read or parsed (%s), so this '
-            'launch is refused (the guard fails closed). Retry; if it repeats, check the script and '
-            '~/.agent-lb/managed/coding-agents/routing-table.json.' % type(error).__name__))
+        output['additionalContext'] = (
+            'workflow-seat-guard (warn only, not blocked): the hook input, script or routing table could not be '
+            'read or parsed (%s); check ~/.agent-lb/managed/coding-agents/routing-table.json.' % type(error).__name__)
     print(json.dumps({'hookSpecificOutput': output}))
 
 

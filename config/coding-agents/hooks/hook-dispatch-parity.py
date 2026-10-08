@@ -259,8 +259,8 @@ def effect(event, results):
 # a floor guard that times out, crashes, is missing or prints something that is not a hook answer refuses the call,
 # whatever its per-hook wrapper made of the failure; its exit 2 blocks under any wrapper. Every other guard fails
 # open as before. The expected effect of the dispatcher path is the per-hook effect with this rule applied.
-FLOOR_NAMES = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny", "stash-guard",
-               "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard", "wide-scan-guard.sh",
+FLOOR_NAMES = ("rm-dynamic-deny", "stash-guard",
+               "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
                "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
 FLOOR_INLINE = "BLOCKED: Dangerous command"
 FLOOR_MESSAGE = re.compile(r"^(\[[^\n]*\]: )hook-dispatch: floor guard [^\n]*(?:\n.*)?$", re.S)

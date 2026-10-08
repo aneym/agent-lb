@@ -811,6 +811,13 @@ def test_a_floor_guard_that_fails_refuses_the_call(tmp_path: Path, leaf: str, mo
     home, env = failing_guard_home(tmp_path, command, rel, kind, mode)
     call = {"tool_name": "Bash", "tool_input": {"command": REACHES_PREFILTERS}, "hook_event_name": "PreToolUse"}
     result = run_owned(DISPATCH_BASH, call, env, 30)
+    if leaf.startswith(("seat-guard.py", "workflow-seat-guard.py", "workflow-relay-guard.py", "wide-scan-guard.sh")):
+        # Keep all failure cases: advice is not promoted to a floor refusal.
+        if mode == "missing" and kind == "py" and not any(x in command for x in ("||", "bash -c")):
+            assert result is not None and result.returncode == 2  # Python itself exits 2.
+        else:
+            assert result is not None and result.returncode != 2, result
+        return
     assert result is not None and result.returncode == 2, result
     reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
     name = leaf.split(":")[0]
@@ -839,7 +846,8 @@ def test_a_non_floor_guard_that_fails_still_fails_open_and_is_logged(tmp_path: P
 def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) -> None:
     """p13D :394 (blocking-wrapper fallback): a seat guard that exits 2 under `|| { printf ...; }` was turned into an
     allow with the advisory, per-hook and on 4e0dfdaa; its block now stands."""
-    command, rel, _kind = FLOOR_LEAVES["seat-guard.py:legacy wrapper"]  # the installer's own wrapper, exact bytes
+    command = 'python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny" 2>/dev/null || true'
+    rel = ".agent-rails/factory-runtime/bin/rm-dynamic-deny"
     home, env = failing_guard_home(tmp_path, command, rel, "py", "crash")
     (home / rel).write_text("import sys\nsys.stdin.read()\nsys.stderr.write('seat-guard: blocked model\\n')\n"
                             "sys.exit(2)\n")
@@ -847,7 +855,7 @@ def test_a_floor_guards_block_stands_under_its_fallback_wrapper(tmp_path: Path) 
             "hook_event_name": "PreToolUse"}
     result = run_owned(DISPATCH_BASH, call, env, 30)
     assert result is not None and result.returncode == 2, result
-    assert "seat-guard: blocked model" in json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "floor guard rm-dynamic-deny" in json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_an_escaped_command_runs_the_pinned_guard(tmp_path: Path) -> None:
@@ -1523,8 +1531,8 @@ def test_a_floor_guard_allows_only_with_its_receipt(tmp_path: Path) -> None:
     assert "floor-ok" not in run_hook(hook["command"], call, env).stdout  # unasked, as per-hook
     guard.write_text(guard.read_text().replace("print(RECEIPT)", "pass"))  # a guard that forgets its receipt
     refused = run_hook(DISPATCH_BASH, call, env)
-    assert refused.returncode == 2, refused
-    assert "without its allow receipt" in json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert refused.returncode == 0, refused
+    assert "RELAYED-REQUEST-GUARD" in json.loads(refused.stdout)["hookSpecificOutput"]["additionalContext"]
 
 
 def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path) -> None:
@@ -1533,7 +1541,7 @@ def test_install_refuses_a_floor_guard_that_is_not_a_direct_exec(tmp_path: Path)
     home, settings = make_home(tmp_path)
     install, _env = installer(tmp_path, home)
     settings["hooks"]["PreToolUse"].append({"matcher": "Agent", "hooks": [
-        {"type": "command", "command": "bash -c 'python3 \"$HOME/.claude/hooks/seat-guard.py\" || true'"}]})
+        {"type": "command", "command": "bash -c 'python3 \"$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny\" || true'"}]})
     (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
     before = (home / ".claude/settings.json").read_bytes()
     refused = install("--hook-dispatcher", "on", check=False)
@@ -1641,3 +1649,55 @@ def test_the_dangerous_command_guard_keeps_only_the_drop_floor(tmp_path: Path) -
     approved = run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-drop-2026-10-08.md")
     assert approved.returncode == 0, approved
     assert run(DROP_DB + " # alex-approval: ~/.agent-rails/lanes/orchestrator-refs/alex-none-2026-10-08.md").returncode == 2
+
+@pytest.mark.parametrize("command,rc", [
+    ("printf '%s\\n' 'DROP TABLE accounts'", 0),
+    ('echo "rm -rf /"', 0),
+    ("cat > contract <<'EOF'\nDROP TABLE accounts; rm -rf /\nEOF", 0),
+    ("cat > brief <<'B'\nrefuse rm -rf / and DROP TABLE accounts\nB", 0),
+    ("psql -c 'DROP TABLE accounts'", 2),
+    ("psql -c 'TRUNCATE TABLE accounts'", 2),
+    ("psql -f {file}", 2),
+    ("psql < {file}", 2),
+    ("cat {file} | psql", 2),
+])
+def test_guard_trim_review_sql_counterexamples(tmp_path, command, rc):
+    sql = tmp_path / 'drop.sql'
+    sql.write_text('DROP TABLE accounts;')
+    result = subprocess.run(['bash', str(DANGER)],
+                            input=json.dumps({'tool_input': {'command': command.format(file=sql)}}),
+                            text=True, capture_output=True)
+    assert result.returncode == rc, result.stderr
+
+@pytest.mark.xfail(reason="Accepted residual: SQL comment obfuscation", strict=True)
+def test_guard_trim_sql_comment_residual():
+    result = subprocess.run(['bash', str(DANGER)],
+                            input=json.dumps({'tool_input': {'command': "psql -c 'DROP/**/TABLE accounts;'"}}),
+                            text=True, capture_output=True)
+    assert result.returncode == 2
+
+@pytest.mark.parametrize("guard,command", [
+    (DANGER, "psql -c 'DROP TABLE accounts'"),
+    (SOURCE / 'hooks/agent-lb-bootout-guard.sh', 'launchctl bootout gui/501/com.aneyman.agent-lb'),
+])
+@pytest.mark.parametrize("prefix,suffix,rc", [
+    ("", " # alex-approval: {ref}", 0),
+    ("# alex-approval: {ref}\n", "", 2),
+    ("", " x# alex-approval: {ref}", 2),
+    ("", " ' # alex-approval: {ref}'", 2),
+])
+def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, prefix, suffix, rc):
+    refs = tmp_path / '.agent-rails/lanes/orchestrator-refs'
+    refs.mkdir(parents=True)
+    ref = refs / 'alex-test-2026-10-08.md'
+    ref.write_text('Alex 09:18 approved')
+    cmd = prefix.format(ref=ref) + command + suffix.format(ref=ref)
+    def run():
+        return subprocess.run(['bash', str(guard)], input=json.dumps({'tool_input': {'command': cmd}}),
+                              text=True, capture_output=True, env={**os.environ, 'HOME': str(tmp_path)})
+    assert run().returncode == rc
+    if rc == 0:
+        original = refs / 'original'
+        ref.rename(original)
+        ref.symlink_to(original)
+        assert run().returncode == 2

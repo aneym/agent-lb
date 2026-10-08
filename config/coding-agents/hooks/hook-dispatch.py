@@ -102,9 +102,9 @@ REV_SHA = re.compile(r"[0-9a-f]{64}")
 # the exact inline command. agent-lb-bootout-guard.sh keeps raw restarts off the live agent-lb (2026-10-08 review:
 # per-hook its timeout was merged away, so a raw kickstart of the service was allowed).
 # dangerous-command-guard.sh (S44) replaces the inline `bash -c 'CMD=$(cat | jq ...)'` leaf.
-FLOOR_SCRIPTS = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny",
+FLOOR_SCRIPTS = ("rm-dynamic-deny",
                  "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
-                 "wide-scan-guard.sh", "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
+                 "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_TEXT = "BLOCKED: Dangerous command"  # an inline copy of the dangerous-command leaf, in any version of its text
 INLINE_FLOOR = "dangerous-command"  # its floor name: never a script, so never a direct exec
@@ -292,7 +292,7 @@ def pf_dangerous(payload):
     if command is None:
         return True
     # grep -iE "rm\s+-rf\s+/|DROP\s+(DATABASE|TABLE)"; [\ss] also covers a grep that reads \s as a literal s.
-    return re.search(r"rm[\ss]+-rf[\ss]+/|drop[\ss]+(database|table)", command, re.I) is not None
+    return "psql" in command  # File SQL and truncate need inspection even without DROP in the command.
 
 
 def pf_bootout(payload):
