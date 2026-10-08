@@ -390,6 +390,20 @@ def is_workflow_seat_guard_hook(command: Any) -> bool:
 
 
 DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
+RAILWAY_GUARD_HOOK = {"type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}
+# Installation and removal share this registry, including guards registered only with a source tree.
+SETTINGS_HOOKS = (
+    ("PreToolUse", "Agent", SEAT_GUARD_HOOK, False),
+    ("PreToolUse", "Workflow", WORKFLOW_SEAT_GUARD_HOOK, False),
+    ("PreToolUse", "Bash", RAILWAY_GUARD_HOOK, False),
+    ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
+    ("SubagentStop", None, CLOSEOUT_HOOK, False),
+)
+
+
+def is_settings_hook(command: Any, hook: dict[str, Any]) -> bool:
+    path = re.search(r'hooks/[^"\s]+', hook["command"])
+    return isinstance(command, str) and path is not None and path.group() in command
 
 
 def dispatcher_module(source: Path) -> Any:
@@ -1107,25 +1121,20 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
             group_copy["hooks"] = remaining
             cleaned.append(group_copy)
     if uninstall:
-        stop_groups = hooks.get("SubagentStop", [])
-        kept_stop = [
-            {**group, "hooks": [hook for hook in group.get("hooks", []) if not is_closeout_hook(hook.get("command"))]}
-            for group in stop_groups
-        ]
-        kept_stop = [group for group in kept_stop if group["hooks"]]
-        if kept_stop:
-            hooks["SubagentStop"] = kept_stop
-        else:
-            hooks.pop("SubagentStop", None)
-        # The managed guard file goes away on uninstall; so does its registration.
-        cleaned = [
-            {**group, "hooks": [hook for hook in group.get("hooks", [])
-                               if not is_seat_guard_hook(hook.get("command"))
-                               and not is_workflow_seat_guard_hook(hook.get("command"))
-                               and "hooks/railway-vars-guard.sh" not in hook.get("command", "")]}
-            for group in cleaned
-        ]
-        cleaned = [group for group in cleaned if group["hooks"]]
+        for event in dict.fromkeys(entry[0] for entry in SETTINGS_HOOKS):
+            managed = [entry[2] for entry in SETTINGS_HOOKS if entry[0] == event]
+            kept = [
+                {**group, "hooks": [hook for hook in group.get("hooks", [])
+                                   if not any(is_settings_hook(hook.get("command"), owned) for owned in managed)]}
+                for group in (cleaned if event == "PreToolUse" else hooks.get(event, []))
+            ]
+            kept = [group for group in kept if group["hooks"]]
+            if event == "PreToolUse":
+                cleaned = kept
+            elif kept:
+                hooks[event] = kept
+            else:
+                hooks.pop(event, None)
     if groups:
         if cleaned:
             hooks["PreToolUse"] = cleaned
@@ -1148,52 +1157,30 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
     if not uninstall:
         updated["model"] = MODEL
         updated["effortLevel"] = EFFORT_LEVEL
-        # The seat guard only enforces the lineup if Claude Code runs it on every
-        # Agent dispatch; register it unless some Agent hook already runs it.
-        pre_tool_use = updated.setdefault("hooks", {}).setdefault("PreToolUse", [])
-        registered = any(
-            is_seat_guard_hook(hook.get("command"))
-            for group in pre_tool_use
-            if group.get("matcher") == "Agent"
-            for hook in group.get("hooks", [])
-        )
-        if not registered:
-            agent_group = next((group for group in pre_tool_use if group.get("matcher") == "Agent"), None)
-            if agent_group is None:
-                pre_tool_use.append({"matcher": "Agent", "hooks": [dict(SEAT_GUARD_HOOK)]})
+        for event, matcher, hook, needs_source in SETTINGS_HOOKS:
+            if needs_source and source is None:
+                continue
+            event_groups = updated.setdefault("hooks", {}).setdefault(event, [])
+            matchers = ("Bash", "*") if matcher == "Bash" else (matcher,)
+            if any(
+                is_settings_hook(existing.get("command"), hook)
+                for group in event_groups
+                if matcher is None or group.get("matcher") in matchers
+                for existing in group.get("hooks", [])
+            ):
+                continue
+            if matcher in ("Agent", "Workflow"):
+                group = next((group for group in event_groups if group.get("matcher") == matcher), None)
+                if group is not None:
+                    group.setdefault("hooks", []).insert(0, dict(hook))
+                    continue
+            group = {"hooks": [dict(hook)]}
+            if matcher is not None:
+                group["matcher"] = matcher
+            if hook is RAILWAY_GUARD_HOOK:
+                event_groups.insert(0, group)
             else:
-                agent_group.setdefault("hooks", []).insert(0, dict(SEAT_GUARD_HOOK))
-        if not any(
-            is_workflow_seat_guard_hook(hook.get("command"))
-            for group in pre_tool_use if group.get("matcher") == "Workflow"
-            for hook in group.get("hooks", [])
-        ):
-            workflow_group = next((group for group in pre_tool_use if group.get("matcher") == "Workflow"), None)
-            if workflow_group is None:
-                pre_tool_use.append({"matcher": "Workflow", "hooks": [dict(WORKFLOW_SEAT_GUARD_HOOK)]})
-            else:
-                workflow_group.setdefault("hooks", []).insert(0, dict(WORKFLOW_SEAT_GUARD_HOOK))
-        if not any(
-            "hooks/railway-vars-guard.sh" in hook.get("command", "")
-            for group in pre_tool_use if group.get("matcher") in ("Bash", "*")
-            for hook in group.get("hooks", [])
-        ):
-            pre_tool_use.insert(0, {"matcher": "Bash", "hooks": [{
-                "type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"',
-                "timeout": 10,
-            }]})
-        # The dangerous-command guard is registered like the railway guard (S44): in the inline leaf's place where it
-        # was (rewrite_floor_commands), else as its own Bash group.
-        if source is not None and not any(
-            "hooks/dangerous-command-guard.sh" in hook.get("command", "")
-            for group in pre_tool_use if group.get("matcher") in ("Bash", "*")
-            for hook in group.get("hooks", [])
-        ):
-            pre_tool_use.append({"matcher": "Bash", "hooks": [dict(DANGEROUS_GUARD_HOOK)]})
-        # The closeout hook writes the outcome/tokens side of the dispatch ledger.
-        subagent_stop = updated["hooks"].setdefault("SubagentStop", [])
-        if not any(is_closeout_hook(hook.get("command")) for group in subagent_stop for hook in group.get("hooks", [])):
-            subagent_stop.append({"hooks": [dict(CLOSEOUT_HOOK)]})
+                event_groups.append(group)
     return updated
 
 
