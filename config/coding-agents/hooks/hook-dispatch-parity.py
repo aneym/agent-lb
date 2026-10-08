@@ -342,6 +342,7 @@ def builtin_cases():
         dict(bash("railway variables --kv"), name="deny-railway-kv", expect=deny),
         dict(bash("railway run printenv"), name="deny-railway-printenv", expect=deny),
         dict(bash('open -a "Google Chrome" https://example.com'), name="deny-no-chrome", expect=deny),
+        dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
         dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=deny),
         dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=deny),
         dict(bash("cua do click 10 10"), name="deny-desktop-guard", expect=deny),
