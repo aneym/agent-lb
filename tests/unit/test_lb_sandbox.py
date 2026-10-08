@@ -160,6 +160,11 @@ def test_a_run_id_that_is_a_word_of_the_live_command_never_claims_it(run_id: str
     (or runtime, agent-lb) matched the live agent-lb primary and, on Studio, 911 other processes."""
     lb = _load()
     root = Path("/Users/aneyman/.agent-lb/sandboxes") / run_id
+    if run_id in lb.RESERVED_RUN_IDS:
+        # Since S1-3 a run id naming a live agent-lb directory is refused outright: it cannot even be matched.
+        with pytest.raises(lb.Refused):
+            lb.owned_process(LIVE_PRIMARY_CMD, root, run_id)
+        return
     assert lb.owned_process(LIVE_PRIMARY_CMD, root, run_id) is False
     assert lb.names_run(LIVE_PRIMARY_CMD, run_id) is False
 
@@ -298,6 +303,11 @@ FAKE_APP = {
         "    report = {'pid': os.getpid(), 'argv': list(argv if argv is not None else sys.argv[1:]),\n"
         "              'token_in_environ': 'AGENT_LB_FEDERATION_TOKEN' in os.environ,\n"
         "              'settings_sha': hashlib.sha256((held or '').encode()).hexdigest()}\n"
+        "    swap = root / 'swap-data-to'\n"
+        "    if swap.exists():  # an attacker inside the run: data/ swapped for a link once the app is up\n"
+        "        (root / 'data').rename(root / 'data-aside')\n"
+        "        (root / 'data').symlink_to(swap.read_text(), target_is_directory=True)\n"
+        "        (Path(os.environ['AGENT_LB_DATA_DIR']) / 'app-touched').write_text('the app opened its store here')\n"
         "    (root / 'boot-report.json').write_text(json.dumps(report))\n"
         "    deadline = time.time() + 30\n"
         "    while time.time() < deadline and not (root / 'stop').exists():\n"
@@ -1245,12 +1255,12 @@ def test_store_reads_never_reach_live_custody_through_a_swapped_data_dir(
         con.execute("INSERT INTO accounts (id, provider, status) VALUES (?, 'anthropic', 'active')", (directory.name,))
         con.commit()
         con.close()
-    rows = lb.run_confined(root, lambda: lb.store_rows(root / "data" / "store.db"), reads=True)
+    rows = lb.run_confined(root, lambda: lb.store_rows(root), reads=True)
     assert [row[0] for row in rows] == ["data"]  # control: the sandbox's own store reads
     sh.rmtree(root / "data")
     (root / "data").symlink_to(lb_home, target_is_directory=True)
     with pytest.raises((lb.Refused, lb.Unhealthy)):
-        lb.run_confined(root, lambda: lb.store_rows(root / "data" / "store.db"), reads=True)
+        lb.run_confined(root, lambda: lb.store_rows(root), reads=True)
     with pytest.raises((lb.Refused, lb.Unhealthy)):
         lb.run_confined(root, lambda: (root / "data" / "encryption.key").read_bytes(), reads=True)
 
@@ -1400,7 +1410,7 @@ def _live_home_with_linked_sandboxes(tmp_path: Path, monkeypatch: pytest.MonkeyP
     (target / "data" / "encryption.key").write_bytes(b"live key")
     (target / "sandbox.json").write_text(json.dumps({"run_id": run_id, "ports": SERVE_PORTS}))
     monkeypatch.setattr(lb, "SANDBOXES", lb_home / "sandboxes")
-    monkeypatch.setattr(lb, "IMAGES", lb_home / "sandboxes" / ".images")
+    monkeypatch.setattr(lb, "IMAGES", lb_home / "sandboxes" / ".images", raising=False)
     live_plist = tmp_path / "live.plist"  # a regressed teardown loads secrets: never the real live plist
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
     monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
@@ -1426,8 +1436,12 @@ def test_a_linked_sandboxes_dir_never_makes_live_state_a_root(
     monkeypatch.setattr(lb, "check_launchctl", lambda: None)
     with pytest.raises(lb.Refused):
         lb.cmd_restart(argparse.Namespace(run_id=run_id, reason="unit"))
-    result = lb.teardown(run_id, None)
-    assert result.get("refused") and result["clean"] is False
+    if run_id in lb.RESERVED_RUN_IDS:  # since S1-3 a run id naming a live directory is refused outright
+        with pytest.raises(lb.Refused):
+            lb.teardown(run_id, None)
+    else:
+        result = lb.teardown(run_id, None)
+        assert result.get("refused") and result["clean"] is False
     assert {p: p.read_bytes() for p in target.rglob("*") if p.is_file()} == files
     assert not (target / "logs").exists()
 
@@ -1451,7 +1465,7 @@ def test_teardown_removes_the_root_inside_the_sandboxes_dir_it_pinned(
     live.mkdir()
     (live / "front.json").write_text('{"preferred": 2457}')
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
-    monkeypatch.setattr(lb, "IMAGES", sandboxes / ".images")
+    monkeypatch.setattr(lb, "IMAGES", sandboxes / ".images", raising=False)
     monkeypatch.setattr(lb, "LIVE_PLIST", tmp_path / "no-live.plist")
     monkeypatch.setattr(lb, "label_loaded", lambda label: False)
     monkeypatch.setattr(lb, "processes", lambda: [])
@@ -1508,3 +1522,208 @@ def test_serve_execs_only_the_installed_venv_python(tmp_path: Path, monkeypatch:
         python.symlink_to(writable)
     with pytest.raises(lb.Refused):
         lb.serve_exec_args(root, ["--port", "2482"])
+
+
+# ------------------------------------------------ S1-3: review of b72e4560b (P1 x3) and cf915e10 (M2, M3)
+
+
+def test_scan_never_reads_a_hard_link_to_a_live_file_in_an_output_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding (P1, b72e4560b:1128): outside the sandbox root a second hard link was read, so a link in a
+    test-owned output dir to live state/front.json read the live inode and the scan said complete and clean.
+    A file that is an inode alias of a live agent-lb file is never read: the scan is incomplete, a gate failure.
+    A multi-link file that is no live file (a local git clone's objects in TMPDIR) is still read."""
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "result.json").write_text("{}")
+    os.link(lb_home / "state" / "front.json", out / "front.json")
+    result = lb.scan_paths([out], [FAKE_TOKEN])
+    assert (result["complete"], result["files_scanned"]) == (False, 1)
+    assert result["unreadable_paths"] == [str((out / "front.json").resolve())]
+    live_itself = lb.scan_paths([lb_home / "encryption.key"], [FAKE_TOKEN])  # control: a live file at its own
+    assert (live_itself["complete"], live_itself["files_scanned"]) == (True, 1)  # path is read (step 7 scans it)
+    other = tmp_path / "clone-object"  # control: a second name for a file that is not live is read
+    (tmp_path / "origin-object").write_text("blob")
+    os.link(tmp_path / "origin-object", other)
+    assert lb.scan_paths([other], [FAKE_TOKEN])["complete"] is True
+
+
+@pytest.mark.parametrize("target", ["encryption.key", "state"])
+def test_scan_never_follows_a_scan_top_that_is_a_link_to_live_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    """Finding (P1, b72e4560b:1093): an explicit scan top was resolved before it was opened, so a top that is a
+    link to the live key (or live state/) was read and could report found false, complete true. The top is
+    opened with no link followed: refused, nothing read, the scan incomplete."""
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    top = tmp_path / "out-link"
+    top.symlink_to(lb_home / target)
+    result = lb.scan_paths([top], [FAKE_TOKEN])
+    assert (result["complete"], result["files_scanned"], result["found"]) == (False, 0, False)
+
+
+@pytest.mark.parametrize("run_id", ["state", "data", "bin", "runtime", "logs", "custom-live-dir"])
+def test_a_run_id_naming_a_live_agent_lb_directory_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_id: str
+) -> None:
+    """Finding (P1, b72e4560b:178): run `state` under a sandboxes dir linked to ~/.agent-lb names live state.
+    A run id that is a live agent-lb directory's name, fixed or present in the live home, is refused."""
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    (lb_home / "custom-live-dir").mkdir()
+    with pytest.raises(lb.Refused):
+        lb.check_run_id(run_id)
+    assert lb.check_run_id("lbsbx-20261007t170000z-42") == "lbsbx-20261007t170000z-42"  # control
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
+@pytest.mark.parametrize("when", ["after-detach", "before-stop"])
+def test_teardown_never_deletes_through_a_sandboxes_dir_swapped_for_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, when: str
+) -> None:
+    """Findings (P1, b72e4560b:178 and :2763; M3, cf915e10:2253). after-detach: once the volume detaches, the
+    sandboxes dir is renamed aside and replaced by a link to a live home holding a directory of the run's name;
+    check_root resolved both sides, accepted it, and rmtree deleted the live directory. before-stop: the
+    sandboxes dir is a link to a directory holding a stamped root of that name; stop deleted it. The root is
+    removed only by name in the sandboxes dir pinned at the start of stop, and a linked sandboxes dir is refused.
+
+    detach_volume is replaced to run the attacker's swap at the exact point of the race; nothing else is faked.
+    """
+    lb = _load()
+    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    sandboxes = root.parent
+    live_home = tmp_path / "live-home"
+    (live_home / root.name / "state").mkdir(parents=True)
+    live_file = live_home / root.name / "state" / "front.json"
+    live_file.write_text('{"preferred": 2457}')
+    aside = tmp_path / "sandboxes-aside"
+    if when == "after-detach":
+
+        def detach_and_swap(path: Path) -> dict:
+            sandboxes.rename(aside)
+            sandboxes.symlink_to(live_home, target_is_directory=True)
+            return {"volume": "detached"}
+
+        monkeypatch.setattr(lb, "detach_volume", detach_and_swap)
+    else:
+        (live_home / root.name / "sandbox.json").write_text(json.dumps({"run_id": root.name, "ports": {}}))
+        sandboxes.rename(aside)
+        sandboxes.symlink_to(live_home, target_is_directory=True)
+    result = lb.teardown(root.name, None)
+    assert live_file.read_text() == '{"preferred": 2457}', "teardown deleted a live directory through the link"
+    if when == "after-detach":
+        assert not (aside / root.name).exists(), "the run's own root, in the pinned sandboxes dir, is removed"
+        assert result["root_exists"] is False
+    else:
+        assert "link" in result.get("refused", ""), "a linked sandboxes dir is refused, nothing deleted"
+        assert (aside / root.name / "data" / "encryption.key").exists()
+
+
+def test_image_swapped_for_a_link_is_never_chmoded_or_attached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Finding (P1, b72e4560b:563): after hdiutil create, the image entry swapped for a link to the installed
+    lb-restart was chmod'ed by name (the live helper lost its execute bits) and handed to attach. The image is
+    opened with no link followed and set 0600 through its descriptor; a swapped entry is refused before attach.
+
+    hdiutil is the external edge, so it is faked: create makes the image and then the attacker swaps it.
+    """
+    import stat as st
+
+    lb = _load()
+    root, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    monkeypatch.setattr(lb, "IMAGES", lb_home / "sandboxes" / ".images", raising=False)  # b72e4560b's constant
+    helper = lb_home / "bin" / "lb-restart"
+    helper.parent.mkdir()
+    helper.write_text("#!/bin/sh\nexit 0\n")
+    helper.chmod(0o755)
+    calls: list[list[str]] = []
+
+    def fake_hdiutil(swap: bool):
+        def run(argv, **kwargs):
+            calls.append([str(a) for a in argv])
+            if argv[1] == "create":
+                image = lb_home / "sandboxes" / ".images" / Path(argv[-1]).name
+                image.write_bytes(b"sparse image")
+                if swap:
+                    image.unlink()
+                    image.symlink_to(helper)
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+        return run
+
+    monkeypatch.setattr(lb.subprocess, "run", fake_hdiutil(swap=True))
+    with pytest.raises((lb.Refused, lb.Unhealthy)):
+        lb.attach_volume(root, "r1")
+    assert st.S_IMODE(helper.stat().st_mode) == 0o755, "chmod followed the swapped image to the live helper"
+    assert [c[1] for c in calls] == ["create"], "a swapped image must never reach attach"
+    calls.clear()
+    monkeypatch.setattr(lb.subprocess, "run", fake_hdiutil(swap=False))  # control: the image itself is attached
+    with pytest.raises(lb.Unhealthy):  # the fake attach mounts nothing at the root
+        lb.attach_volume(root, "r1")
+    image = lb_home / "sandboxes" / ".images" / lb.image_for("r1").name
+    assert [c[1] for c in calls] == ["create", "attach"] and calls[1][-1] == image.name
+    assert st.S_IMODE(image.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil and Seatbelt are macOS")
+@pytest.mark.parametrize("when", ["before-boot", "after-boot"])
+def test_app_store_opens_never_follow_a_swapped_data_dir(tmp_path: Path, mounted_root: Path, when: str) -> None:
+    """Finding (M2, cf915e10:1457): after _serve's custody checks, data/ swapped for a link to live data led the
+    app's store and key opens (by name) into live custody. _boot opens data/ by descriptor from the pinned root,
+    refuses any directory but the one _serve checked (before-boot), and runs the app inside it with relative
+    data paths, so a swap once the app is up (after-boot) changes nothing it opens.
+
+    Integration: the real _serve path, the real _boot exec and Seatbelt, a stand-in app. The fake live data dir
+    sits outside the home, where the root's profile does not deny writes, so only the fix keeps it clean.
+    """
+    import time
+
+    sandboxes, root, live_plist = _fake_sandbox(tmp_path)
+    live_data = tmp_path / "live-data"
+    live_data.mkdir()
+    swap = ""
+    if when == "before-boot":
+        swap = f"os.rename(root / 'data', root / 'data-aside')\nos.symlink({str(live_data)!r}, root / 'data')\n"
+    else:
+        (root / "swap-data-to").write_text(str(live_data))
+    driver = (
+        "import importlib.machinery, importlib.util, os, sys\n"
+        "from pathlib import Path\n"
+        f"loader = importlib.machinery.SourceFileLoader('lbs', {str(SCRIPT)!r})\n"
+        "spec = importlib.util.spec_from_loader('lbs', loader)\n"
+        "m = importlib.util.module_from_spec(spec)\n"
+        "loader.exec_module(m)\n"
+        f"m.SANDBOXES = Path({str(sandboxes)!r})\n"
+        f"m.LIVE_PLIST = Path({str(live_plist)!r})\n"
+        f"root = Path({str(root)!r})\n"
+        "python, args, env, token = m.serve_exec_args(root, ['--host', '127.0.0.1', '--port', '2481'])\n"
+        f"{swap}"
+        "fd = m.token_pipe(token)\n"
+        "os.chdir(root / 'runtime')\n"
+        "os.execve(python, [*args[:4], '--token-fd', str(fd), *args[4:]], env)\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_LB_FEDERATION_TOKEN"}
+    env["LB_SANDBOX_ROOT"] = str(root)
+    proc = subprocess.Popen([sys.executable, "-c", driver], env=env, stderr=subprocess.PIPE, start_new_session=True)
+    report = root / "boot-report.json"
+    try:
+        deadline = time.monotonic() + 30
+        while not report.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        started = report.exists()
+    finally:
+        (root / "stop").touch()
+        try:
+            proc.wait(30)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, 9)
+            proc.wait()
+    assert sorted(p.name for p in live_data.iterdir()) == [], "the app opened its data through the swapped link"
+    if when == "before-boot":
+        assert (started, proc.returncode) == (False, 2), "_boot must refuse a data dir other than the one checked"
+    else:
+        assert started, f"control: the app must start (exit {proc.returncode})"
+        assert (root / "data-aside" / "app-touched").exists(), "the app's data opens stay in the checked dir"
