@@ -27,3 +27,12 @@
 
 - [x] The exec'd rewriter's own timeout is armed before the exec: a late rewrite never lands, the kill shows a notice; the fixture's 1.45 s rewriter under a 1 s timeout proves it.
 - [x] `~/.claude/hooks/wide-scan-guard.sh` is adopted as `config/coding-agents/hooks/wide-scan-guard.sh` and installed by install-policy.py; edits go to the source only.
+
+## 6. Fix round (2026-10-08 review of 234faaf1 and dbb1d5dc)
+
+- [x] wide-scan-guard.sh is a floor guard on both the dispatcher and the fixture (M1).
+- [x] A floor guard whose command shape the dispatcher does not read still runs without its trailing wrapper (M2).
+- [x] `--uninstall` keeps the adopted wide-scan-guard.sh, which settings still register (M3).
+- [x] The fold checks shared commands against groups left per-hook too, until stable.
+- [x] The child-run rewriter is resolved on the caller's PATH, before git's directory is put first.
+

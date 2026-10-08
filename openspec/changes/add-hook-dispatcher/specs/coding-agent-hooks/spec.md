@@ -25,6 +25,14 @@ The hook dispatcher MUST give Claude Code the same decision, block message, upda
 - **THEN** it is stopped at T (to the fraction of a second, from the exec) by a timer armed before the exec, with nothing written, so no late rewrite applies, and no payload temp file is left
 - **AND** Claude Code shows the kill as a failed-hook notice (build lead decision (a), 2026-10-08), where per-hook the cancel showed nothing
 
+#### Scenario: A floor guard fails under its wrapper
+- **WHEN** a PreToolUse floor guard (the seat, relay, rm, stash, secret, link-cli, dangerous-command and wide-scan guards) times out, crashes, is missing or prints something that is not a hook answer, whatever shape its command has and whatever `2>/dev/null`, `|| true` or `|| { printf ...; }` wrapper ends it
+- **THEN** the call is refused, where per-hook the wrapper or the timeout let it through
+
+#### Scenario: The rewriter runs beside another hook
+- **WHEN** the rewriter runs as a child because another hook of the entry also runs
+- **THEN** it is the `rtk` the caller's own PATH finds, not one in git's directory, which only the rewriter's children see first
+
 ### Requirement: Half-installed states fail closed
 
 The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the rollback command) when no candidate registry has a valid entry (a non-empty list of command hooks) for the event and matcher it was called with, when its payload temp file cannot be written, or on any error of its own. A damaged entry in one candidate MUST fall through to the next (the entry's rev file, registry.json, its backup, then registry.legacy.json for entries without a rev). For the other events it MUST exit 1 with the same note; their guards are notices and side effects.
@@ -44,6 +52,14 @@ The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the 
 #### Scenario: Round trip
 - **WHEN** an operator runs `--hook-dispatcher on` then `--hook-dispatcher off`
 - **THEN** the settings hooks equal the hooks before `on`
+
+#### Scenario: A command two overlapping groups list
+- **WHEN** a command sits in a folding group and in another group that may match the same tool and does not fold into the same entry (a regex matcher, or another key)
+- **THEN** the folding group stays per-hook, so the command still runs once per call
+
+#### Scenario: Uninstall keeps an adopted guard
+- **WHEN** `--uninstall` runs over a home where install-policy installed the adopted `wide-scan-guard.sh`
+- **THEN** the file stays in place (settings still register it) and only its ownership marker goes
 
 #### Scenario: Parity fails
 - **WHEN** a guard answers differently on the two paths

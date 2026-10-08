@@ -80,12 +80,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REWRITERS = {"rtk hook claude"}  # side-effect free, never blocks; may be skipped or exec'd into
 REV = re.compile(r"[0-9a-f]{12}")
 # Floor guards (p13D and the simplify lead, 2026-10-07): PreToolUse guards that hold a kept floor (destructive
-# commands, secrets, merges, relays, seats). On PreToolUse one that times out, crashes, is missing or answers with
-# something that is not a hook answer refuses the call, whatever the per-hook config made of that failure (a
-# `|| true` or `|| { printf ...; }` wrapper included); any other guard fails open as before, and the failure is
-# logged to dispatch/failures.jsonl. Matched by script name anywhere in the command, or by the exact inline command.
+# commands, secrets, merges, relays, seats), and wide-scan-guard.sh, which the U1 spec names beside kill-guard and the
+# seat guard as a deny case that must hold (2026-10-08 review M1: it failed open). On PreToolUse one that times out,
+# crashes, is missing or answers with something that is not a hook answer refuses the call, whatever the per-hook
+# config made of that failure (a `|| true` or `|| { printf ...; }` wrapper included); any other guard fails open as
+# before, and the failure is logged to dispatch/failures.jsonl. Matched by script name anywhere in the command, or by
+# the exact inline command.
 FLOOR_SCRIPTS = ("workflow-seat-guard.py", "workflow-relay-guard.py", "seat-guard.py", "rm-dynamic-deny",
-                 "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard")
+                 "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
+                 "wide-scan-guard.sh")
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_COMMANDS = {  # sha256 of the exact inline command -> its name
     "0fbf6582d067534e0cf7179a1801b12c675c75397170a48d36aec72171483e7c": "dangerous-command",
@@ -117,6 +120,11 @@ SHAPE = re.compile(
     r"^\s*(?:(?P<interp>/usr/bin/python3|python3)\s+)?(?P<script>%s)(?P<args>(?:\s+%s)*)"
     r"(?P<devnull>\s+2>\s*/dev/null)?"
     r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$" % (_PATH_WORD, _ARG_WORD))
+# The same wrappers at the end of any command (2026-10-08 review M2): a floor guard whose command SHAPE does not read
+# (`python3 -u "<guard>" 2>/dev/null || true`) still runs bare, so its own failure is seen before the wrapper hides it.
+WRAPPER_TAIL = re.compile(
+    r"(?P<devnull>\s+2>\s*/dev/null)?"
+    r"(?:\s+\|\|\s+(?:(?P<true>true)|\{\s*printf\s+%s\s+'(?P<fb>[^']*)'\s*;\s*\}))?\s*$")
 
 
 class Result(object):
@@ -492,6 +500,13 @@ def plan_hook(hook, inproc_names):
     match = SHAPE.match(command)
     if not match:
         plan.reason = "shape"
+        tail = WRAPPER_TAIL.search(command) if plan.floor else None
+        if tail and (tail.group("devnull") or tail.group("true") or tail.group("fb") is not None) \
+                and command[:tail.start()].strip():
+            plan.devnull = bool(tail.group("devnull"))
+            plan.fallback_true = bool(tail.group("true"))
+            plan.fallback_text = tail.group("fb")
+            plan.bare = command[:tail.start()]
         return plan
     plan.devnull = bool(match.group("devnull"))
     plan.fallback_true = bool(match.group("true"))
@@ -796,11 +811,20 @@ class External(object):
         import threading
         self.plan, self.started = plan, time.monotonic()
         self.outcome = None
+        argv, executable, env = [SHELL, "-c", plan.bare or plan.command], None, None
+        if plan.kind == "rewriter":
+            # The rewriter is found on this process's own PATH, as /bin/sh would per-hook, before rewriter_env puts
+            # git's directory first (2026-10-08 review: another rtk in that directory would have run instead). The
+            # same argv as `/bin/sh -c 'rtk hook claude'` hands it; not on PATH, the shell reports it as before.
+            words = plan.command.split()
+            target = which(words[0])
+            if target:
+                argv, executable = words, target
+            env = rewriter_env()
         stdin = payload.open_fd()
         try:
-            self.proc = subprocess.Popen([SHELL, "-c", plan.bare or plan.command], stdin=stdin, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, start_new_session=True,
-                                         env=rewriter_env() if plan.kind == "rewriter" else None)
+            self.proc = subprocess.Popen(argv, executable=executable, stdin=stdin, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, start_new_session=True, env=env)
         finally:
             os.close(stdin)
         self.thread = threading.Thread(target=self._drain)

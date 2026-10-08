@@ -200,6 +200,10 @@ MANAGED_AGENTS = (
         Path("hooks/hook-dispatch-parity.py"),
     ),
 )
+# Guards adopted from a live copy another config registers (settings.json names them, not this installer):
+# uninstall leaves the file in place and drops only the ownership marker, since removing it would turn the guard's
+# registration into a missing executable that never denies (2026-10-08 review M3).
+ADOPTED_KEEP = (Path(".claude/hooks/wide-scan-guard.sh"),)
 # Retired seats: astra (owner lineup 2026-09-22, no Codex Astra) and
 # implementer (2026-09-25, its terra-latest model is unserved). The installer
 # removes the definition, its ownership marker and the policy mirror copy; the
@@ -423,18 +427,41 @@ def foldable_groups(groups: list[Any], event: str) -> list[bool]:
             )
         )
         ok.append(good)
-    # Claude Code runs a command once per tool call even when two matched groups list it; across two dispatcher
-    # entries it would run twice, so a command under two overlapping keys keeps both groups per-hook.
-    keys_of: dict[str, set[str]] = {}
-    for group, good in zip(groups, ok):
-        if good:
-            for hook in group["hooks"]:
-                keys_of.setdefault(hook["command"], set()).add(matcher_key(group))
-    shared = {
-        command for command, keys in keys_of.items()
-        if any(a != b and keys_overlap(a, b) for a in keys for b in keys)
-    }
-    return [good and not any(hook["command"] in shared for hook in group["hooks"]) for group, good in zip(groups, ok)]
+    return unfold_shared(groups, ok)
+
+
+def commands_of(group: Any) -> set[str]:
+    hooks = group.get("hooks") if isinstance(group, dict) else None
+    return {hook["command"] for hook in hooks if isinstance(hook, dict) and isinstance(hook.get("command"), str)} \
+        if isinstance(hooks, list) else set()
+
+
+def unfold_shared(groups: list[Any], eligible: list[bool]) -> list[bool]:
+    """Claude Code runs a command once per tool call even when two matched groups list it; across two dispatcher
+    entries, or a dispatcher entry and a group left per-hook, it would run twice. So a folding group that shares a
+    command with another group that may match the same tool stays per-hook, unless both fold into the same key's
+    entry (deduplicated there). The other group may itself be per-hook (2026-10-08 review: `Bash:[G, true]` beside
+    `^Bash$:[G]` folded the first and ran G twice). Repeats until stable: each pass only unfolds."""
+    eligible = list(eligible)
+    changed = True
+    while changed:
+        changed = False
+        for index, (group, good) in enumerate(zip(groups, eligible)):
+            if not good:
+                continue
+            key, mine = matcher_key(group), commands_of(group)
+            for other_index, other in enumerate(groups):
+                if other_index == index or not mine & commands_of(other):
+                    continue
+                if eligible[other_index]:
+                    clash = matcher_key(other) != key and keys_overlap(key, matcher_key(other))
+                else:
+                    clash = group_overlaps(other, key)
+                if clash:
+                    eligible[index] = False
+                    changed = True
+                    break
+    return eligible
 
 
 def group_overlaps(group: Any, key: str) -> bool:
@@ -620,6 +647,11 @@ def fold_hooks(
             eligible = [good and matcher_key(group) not in unworthy for group, good in zip(groups, eligible)]
             # A group left per-hook by `worth` can now sit between the groups of another key.
             eligible = keep_config_order(groups, eligible)
+        while True:  # a group the steps above left per-hook can share a command with one still folding
+            settled = keep_config_order(groups, unfold_shared(groups, eligible))
+            if settled == eligible:
+                break
+            eligible = settled
         if not any(eligible):
             continue
         out: list[Any] = []
@@ -1214,7 +1246,11 @@ def main() -> int:
         agent_text = read_text(agent_path)
         agent_owned = read_text(owner_path) == owner_marker
         if args.uninstall:
-            if agent_owned:
+            if agent_owned and relative_path in ADOPTED_KEEP:
+                changes[owner_path] = None
+                if agent_path.exists():
+                    preserved_agents.append(("adopted guard, still registered,", agent_path))
+            elif agent_owned:
                 changes[owner_path] = None
                 if agent_text == agent_template:
                     changes[agent_path] = None

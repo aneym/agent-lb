@@ -710,6 +710,12 @@ FLOOR_LEAVES = {
                                ".claude/hooks/workflow-seat-guard.py", "py"),
     "plutil-guard.sh": ('"$HOME/.claude/hooks/plutil-guard.sh"', ".claude/hooks/plutil-guard.sh", "sh"),
     "dangerous-command": (DANGEROUS, None, "sh"),
+    # 2026-10-08 review M1: the spec's wide-scan deny case is a floor too; it failed open.
+    "wide-scan-guard.sh": ('"$HOME/.claude/hooks/wide-scan-guard.sh"', ".claude/hooks/wide-scan-guard.sh", "sh"),
+    # 2026-10-08 review M2: a wrapped floor guard whose command the dispatcher's shape does not read ran with its
+    # wrapper, so `|| true` turned its crash or its absence into an allow.
+    "seat-guard.py:python3 -u": ('python3 -u "$HOME/.claude/hooks/seat-guard.py" 2>/dev/null || true',
+                                 ".claude/hooks/seat-guard.py", "py"),
 }
 FAIL_STUBS = {
     "py": {"timeout": "import time\ntime.sleep(30)\n", "crash": "raise RuntimeError('synthetic floor crash')\n",
@@ -756,11 +762,12 @@ def test_a_floor_guard_that_fails_refuses_the_call(tmp_path: Path, leaf: str, mo
     result = run_owned(DISPATCH_BASH, call, env, 30)
     assert result is not None and result.returncode == 2, result
     reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    name = leaf.split(":")[0]
     if not (mode == "missing" and kind == "py"):  # python3 exits 2 on a missing script: a block of its own
-        assert f"floor guard {leaf}" in reason and "refused" in reason, reason
+        assert f"floor guard {name}" in reason and "refused" in reason, reason
         lines = (home / ".claude/hooks/dispatch/failures.jsonl").read_text().splitlines()
         logged = json.loads(lines[-1])
-        assert logged["floor"] == leaf and logged["outcome"] == "refused"
+        assert logged["floor"] == name and logged["outcome"] == "refused"
 
 
 @pytest.mark.parametrize("mode", ["timeout", "crash", "malformed"])
@@ -911,6 +918,13 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
     rollback = subprocess.run([sys.executable, str(mirror / "install-policy.py"), "--home", str(home),
                                "--hook-dispatcher", "off"], env=env, capture_output=True, text=True, timeout=600)
     assert rollback.returncode == 0, rollback.stdout + rollback.stderr
+    # 2026-10-08 review M3: settings register the guard by path, and not through this installer, so uninstall must
+    # leave it in place; removing it turned the registration into a missing executable that never denies.
+    install("--uninstall")
+    assert guard.read_bytes() == (SOURCE / "hooks/wide-scan-guard.sh").read_bytes() and os.access(guard, os.X_OK)
+    assert not (home / ".agent-lb/managed/coding-agents/wide-scan-guard").exists()
+    refused = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg needle /"}}, env)
+    assert refused.returncode == 2 and "BLOCKED: recursive search" in refused.stderr, refused
 
 
 def test_rollback_passes_over_a_registry_that_cannot_restore_the_guards(tmp_path: Path) -> None:
@@ -1055,3 +1069,73 @@ def test_unfold_splits_hooks_another_installer_appended_to_a_dispatcher_group():
     folded["PreToolUse"][0]["hooks"].append(added)
     unfolded = policy.unfold_hooks(folded, registry)
     assert unfolded["PreToolUse"] == hooks["PreToolUse"] + [{"matcher": "Bash", "hooks": [added]}]
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 4
+# The 2026-10-08 cross-vendor review of 234faaf1/dbb1d5dc (M1-M3 are rows and lines in the tests above).
+
+COUNTED = """import sys
+sys.stdin.read()
+with open(sys.argv[1], "a") as handle:
+    handle.write("ran\\n")
+"""
+
+
+def test_a_command_shared_with_a_per_hook_group_runs_once_per_call(tmp_path: Path) -> None:
+    """Claude Code runs a command once per tool call even when two matched groups list it. With `Bash:[G, true]`
+    beside `^Bash$:[G]` (a regex group, which stays per-hook) the fold put G in the dispatcher entry and left it in
+    the per-hook group too, so G ran twice (a guard that denies a repeat would deny). The folding group now stays
+    per-hook."""
+    home, _ = make_home(tmp_path)
+    (home / "g").mkdir()
+    (home / "g/count.py").write_text(COUNTED)
+    counter = tmp_path / "runs.txt"
+    guard = {"type": "command", "command": f'python3 "$HOME/g/count.py" "{counter}"'}
+    settings = {"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [guard, {"type": "command", "command": "true"}]},
+        {"matcher": "^Bash$", "hooks": [guard]},
+    ]}}
+    (home / ".claude/settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    install, env = installer(tmp_path, home)
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+    parity = parity_module()
+
+    def runs_per_call() -> int:
+        counter.write_text("")
+        seen: list[str] = []  # Claude Code runs each distinct command of the matched groups once
+        for group in hooks_of(home)["PreToolUse"]:
+            if parity.matches(group.get("matcher"), "Bash"):
+                seen += [hook["command"] for hook in group["hooks"] if hook["command"] not in seen]
+        for command in seen:
+            run_hook(command, call, env)
+        return len(counter.read_text().splitlines())
+
+    assert runs_per_call() == 1
+    install("--hook-dispatcher", "on")
+    assert runs_per_call() == 1
+
+
+def test_the_rewriter_beside_another_hook_is_the_rtk_on_the_callers_path(tmp_path: Path) -> None:
+    """Beside another hook the rewriter runs as a child, under a PATH with git's directory first. When that directory
+    also holds an rtk that the caller's PATH puts behind the user's own, the dispatcher ran that other rtk, whose
+    rewrite can differ from the per-hook one. It now runs the rtk the caller's PATH finds."""
+    home, env = rewriter_home(tmp_path)
+    registry_path = home / ".claude/hooks/dispatch/registry.json"
+    registry = json.loads(registry_path.read_text())
+    registry["entries"]["PreToolUse"]["Bash"].append({"type": "command", "command": "true"})
+    registry_path.write_text(json.dumps(registry))
+    other = tmp_path / "git-dir"
+    other.mkdir()
+    git = shutil.which("git", path=env["PATH"])
+    assert git
+    (other / "git").symlink_to(git)
+    (other / "rtk").write_text(FAKE_RTK.replace('"rewritten"', '"other rtk"'))
+    (other / "rtk").chmod(0o755)
+    bin_dir, rest = env["PATH"].split(os.pathsep, 1)
+    env = env | {"PATH": os.pathsep.join([bin_dir, str(other), rest])}
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+    per_hook_out = run_hook("rtk hook claude", call, env).stdout
+    assert json.loads(per_hook_out)["hookSpecificOutput"]["updatedInput"]["command"] == "rewritten"
+    result = run_owned(DISPATCH_BASH, call, env, 30)
+    assert result is not None and result.returncode == 0, result
+    assert json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"] == "rewritten", result
