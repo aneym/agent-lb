@@ -829,18 +829,64 @@ def image_exists(run_id: str) -> bool:
         os.close(fd)
 
 
+# What hdiutil writes first in an encrypted image: anything else at an image's name is not one this code made.
+IMAGE_MAGIC = b"encrcdsa"
+
+
+def _is_image(fd: int) -> bool:
+    """True when fd is this user's single-link regular file that starts as an encrypted image does."""
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+        return False
+    return os.pread(fd, len(IMAGE_MAGIC), 0) == IMAGE_MAGIC
+
+
 def remove_image(run_id: str) -> bool:
-    """Unlink the run's image by name inside the real images dir; True when it is gone."""
+    """Unlink the run's image inside the real images dir; True when it is gone.
+
+    The entry is renamed to a private name first, then unlinked only when that removes nothing but a name (a
+    symlink, or a file with another hard link) or the inode there is checked as an image. A live file renamed
+    over the image's name (bin/lb-restart, say), its only name now, is never unlinked: it goes back under that
+    name and the image counts as not removed."""
+    name = image_for(run_id).name
     try:
         fd = images_dir_fd()
     except FileNotFoundError:
         return True
     except OSError:
         return False
+    aside = f".{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.rm"
     try:
-        os.unlink(image_for(run_id).name, dir_fd=fd)
-    except FileNotFoundError:
-        pass
+        try:
+            os.rename(name, aside, src_dir_fd=fd, dst_dir_fd=fd)
+        except FileNotFoundError:
+            return True
+        entry = os.stat(aside, dir_fd=fd, follow_symlinks=False)
+        if stat.S_ISLNK(entry.st_mode) or (stat.S_ISREG(entry.st_mode) and entry.st_nlink > 1):
+            os.unlink(aside, dir_fd=fd)  # only this name goes; the link's target or the file's other name stays
+            return True
+        image = -1
+        if stat.S_ISREG(entry.st_mode):
+            try:
+                image = os.open(aside, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            except OSError:
+                image = -1  # swapped since the stat, or unreadable: not checked as an image, so not removed
+        try:
+            if image >= 0 and _is_image(image):
+                info = os.fstat(image)
+                if _same_entry(fd, aside, (info.st_dev, info.st_ino)):
+                    os.unlink(aside, dir_fd=fd)
+                    return True
+        finally:
+            if image >= 0:
+                os.close(image)
+        # Not ours: put it back under the image's name (left in place if that name was taken meanwhile), so the
+        # image still counts as present and the teardown is not clean.
+        try:
+            os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            os.rename(aside, name, src_dir_fd=fd, dst_dir_fd=fd)
+        return False
     except OSError:
         return False
     finally:
@@ -849,20 +895,33 @@ def remove_image(run_id: str) -> bool:
 
 
 def _in_dir(fd: int):
-    """A preexec_fn that moves the child into directory fd before exec: the bare names the tool gets resolve from
-    that directory's inode, never through a path that could be swapped."""
-    return lambda: os.fchdir(fd)
+    """A preexec_fn that moves the child into directory fd before exec, with umask 077: the bare names the tool
+    gets resolve from that directory's inode, never through a path that could be swapped, and what it creates is
+    private from the start (the image is never chmod'ed after the fact)."""
+
+    def enter() -> None:
+        os.umask(0o077)
+        os.fchdir(fd)
+
+    return enter
 
 
-def _image_identity(images_fd: int, name: str) -> tuple[int, int]:
-    """(device, inode) of the image at name in the images dir, opened with no link followed, after checking it is
-    this user's single-link regular file and setting it 0600 through the descriptor (never chmod by name)."""
+def _image_identity(images_fd: int, name: str, made_after: float) -> tuple[int, int]:
+    """(device, inode) of the image hdiutil just made at name in the images dir, opened with no link followed.
+
+    Nothing is changed on it. It must be this user's single-link regular file, private (hdiutil created it under
+    umask 077), born no earlier than the create began, and start as an encrypted image does. A live file renamed
+    over the name after the create (bin/lb-restart, state/front.json) fails these and is refused untouched."""
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=images_fd)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
             raise Confinement(f"image {name} is not this user's single-link regular file")
-        os.fchmod(fd, 0o600)
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            raise Confinement(f"image {name} is not private; not the image hdiutil made")
+        born = getattr(info, "st_birthtime", info.st_mtime)
+        if born < made_after - 1 or os.pread(fd, len(IMAGE_MAGIC), 0) != IMAGE_MAGIC:
+            raise Confinement(f"image {name} is not the encrypted image this create made")
         return info.st_dev, info.st_ino
     finally:
         os.close(fd)
@@ -892,8 +951,9 @@ def attach_volume(root: Path, run_id: str) -> None:
     The passphrase is random, lives only in this process and goes to hdiutil on stdin, so the image on disk is
     ciphertext: neither the scan of ~/.agent-lb nor a copy of the image finds the store, key or tokens in it.
 
-    hdiutil runs inside the images dir held by descriptor and gets the image by its bare name. The image is
-    opened with no link followed and set 0600 through that descriptor; its identity is checked again right
+    hdiutil runs inside the images dir held by descriptor, under umask 077, and gets the image by its bare name.
+    The image is opened with no link followed and must be the private encrypted image this create made
+    (_image_identity); nothing is ever chmod'ed. Its identity is checked again right
     before attach and after it, and the mount must land on root as reached from the pinned sandboxes dir. An
     image swapped for a link (to a live helper, say) is refused, never chmod'ed or attached through.
     """
@@ -905,6 +965,7 @@ def attach_volume(root: Path, run_id: str) -> None:
     images = images_dir_fd()
     try:
         passphrase = secrets_module.token_hex(32).encode()
+        made_after = time.time()
         create = subprocess.run(
             ["/usr/bin/hdiutil", "create", "-quiet", "-size", VOLUME_SIZE, "-type", "SPARSE", "-fs", "APFS"]
             + ["-volname", "lb-sandbox", "-encryption", "AES-256", "-stdinpass", name],
@@ -917,7 +978,7 @@ def attach_volume(root: Path, run_id: str) -> None:
         if create.returncode != 0:
             raise Unhealthy(f"hdiutil create failed (exit {create.returncode})")
         try:
-            ident = _image_identity(images, name)
+            ident = _image_identity(images, name, made_after)
         except OSError as exc:
             raise Refused(f"the new image was swapped before attach ({exc.__class__.__name__}); not attached") from None
         mountpoint = os.path.join(fd_path(sandboxes_fd(Path(root).parent)), Path(root).name)
@@ -1484,6 +1545,9 @@ def scan_stream(read, detector: Detector, write=None, chunk: int = 4 << 20) -> t
 
 NOFOLLOW_ANY = getattr(os, "O_NOFOLLOW_ANY", 0)  # macOS: refuse a link at any component of the path
 READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+# A multi-link file whose inode changed within this long before the live inode set's last refresh forces another
+# (filesystem timestamps can trail the wall clock by a tick).
+ALIAS_CTIME_SLACK_NS = 2_000_000_000
 # A whole path with no link anywhere (O_NOFOLLOW_ANY; macOS refuses it combined with O_NOFOLLOW, EINVAL).
 PATH_FLAGS = os.O_RDONLY | os.O_NONBLOCK | (NOFOLLOW_ANY or os.O_NOFOLLOW)
 # The event log fseventsd keeps at the top of every mounted volume: owned by root, unreadable to the run and
@@ -1520,44 +1584,123 @@ def live_trees() -> list[str]:
     return [os.path.abspath(LB_HOME), os.path.abspath(LIVE_KEY_DIR_LEGACY)]
 
 
-def live_alias_ids() -> set[tuple[int, int]]:
-    """(device, inode) of every live agent-lb file that has a second name: the files of the live trees (the
-    sandboxes dir and the runtime's venvs, which are code, excepted) and the live plist. A file elsewhere with one
-    of these inodes is an alias of a live file. Only files with st_nlink > 1 can have an alias, so only those
-    are kept."""
-    ids: set[tuple[int, int]] = set()
-    skip = {os.path.abspath(SANDBOXES)}
+class LiveInodes:
+    """(device, inode) of every regular file in the live agent-lb trees (the sandboxes dir and the runtime's venvs,
+    which are code, excepted) and of the live plist. A file elsewhere with one of these inodes is a live file
+    reached by another name.
 
-    def keep(info: os.stat_result) -> None:
-        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
-            ids.add((info.st_dev, info.st_ino))
+    Every file is kept, not only those with a second name now: a hard link made later to a live file that has one
+    name today (state/front.json) is still its inode. refresh() first walks the trees once; after that it
+    re-lists only directories whose mtime changed since it last listed them (a new entry, a live file written
+    by rename, changes it), so the set is current as of the moment the latest refresh began (started_ns)."""
 
-    try:
-        keep(os.stat(LIVE_PLIST, follow_symlinks=False))
-    except OSError:
-        pass
-    for top in live_trees():
-        for dirpath, dirnames, filenames in os.walk(top):
-            dirnames[:] = [d for d in dirnames if d != ".venv" and os.path.join(dirpath, d) not in skip]
-            for name in filenames:
-                try:
-                    keep(os.stat(os.path.join(dirpath, name), follow_symlinks=False))
-                except OSError:
-                    continue
-    return ids
+    def __init__(self) -> None:
+        self.ids: set[tuple[int, int]] = set()
+        self.dirs: dict[str, tuple[int, int, int]] = {}  # path -> (device, inode, mtime_ns when last listed)
+        self.started_ns: int | None = None
+        self.skip = {os.path.abspath(SANDBOXES)}
+
+    def _list(self, path: str) -> list[tuple[str, os.stat_result]]:
+        """Add the regular files directly in path; return its subdirectories not yet known."""
+        new = []
+        try:
+            with os.scandir(path) as listing:
+                entries = [entry.path for entry in listing]
+        except OSError:
+            return new
+        for child in entries:
+            try:
+                info = os.stat(child, follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                self.ids.add((info.st_dev, info.st_ino))
+            elif stat.S_ISDIR(info.st_mode) and os.path.basename(child) != ".venv" and child not in self.skip:
+                if child not in self.dirs:
+                    new.append((child, info))
+        return new
+
+    def _add_tree(self, path: str, info: os.stat_result) -> None:
+        stack = [(path, info)]
+        while stack:
+            here, seen = stack.pop()
+            # The mtime is the one read before the listing: an entry added during it shows at the next refresh.
+            self.dirs[here] = (seen.st_dev, seen.st_ino, seen.st_mtime_ns)
+            stack.extend(self._list(here))
+
+    def refresh(self) -> None:
+        self.started_ns = time.time_ns()
+        try:
+            info = os.stat(LIVE_PLIST, follow_symlinks=False)
+            if stat.S_ISREG(info.st_mode):
+                self.ids.add((info.st_dev, info.st_ino))
+        except OSError:
+            pass
+        for path, (dev, ino, mtime_ns) in list(self.dirs.items()):
+            try:
+                info = os.stat(path, follow_symlinks=False)
+            except OSError:
+                del self.dirs[path]
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                del self.dirs[path]
+            elif (info.st_dev, info.st_ino) != (dev, ino):
+                del self.dirs[path]
+                self._add_tree(path, info)  # a directory replaced at this path: all of it is new
+            elif info.st_mtime_ns != mtime_ns:
+                self.dirs[path] = (dev, ino, info.st_mtime_ns)
+                for sub, sub_info in self._list(path):
+                    self._add_tree(sub, sub_info)
+        for top in live_trees():
+            if top in self.dirs:
+                continue
+            try:
+                info = os.stat(top, follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                self._add_tree(top, info)
+
+
+def system_links_resolved(text: str) -> str:
+    """text with only root-owned links resolved (/var -> private/var, /tmp -> private/tmp: TMPDIR sits behind
+    them). A link this user could have made, at any component, is refused with ELOOP, never followed: a scan path
+    out/linked-parent/front.json with linked-parent -> ~/.agent-lb/state would otherwise name the live file."""
+    parts = list(Path(os.path.abspath(text)).parts[1:])
+    done = "/"
+    hops = 0
+    while parts:
+        part = parts.pop(0)
+        candidate = os.path.join(done, part)
+        try:
+            info = os.lstat(candidate)
+        except (FileNotFoundError, NotADirectoryError):
+            return os.path.join(candidate, *parts)  # the open that follows fails the same way
+        if not stat.S_ISLNK(info.st_mode):
+            done = candidate
+            continue
+        hops += 1
+        if info.st_uid != 0 or hops > 32:
+            raise Confinement(errno.ELOOP, f"{candidate} is a link this user could have made; not followed")
+        target = os.readlink(candidate)
+        rest = Path(os.path.normpath(os.path.join(done, target))).parts[1:]
+        parts = [*rest, *parts]
+        done = "/"
+    return done
 
 
 def _open_top(top: Path, root: Path | None) -> tuple[int, str]:
-    """(descriptor, path text) for a scan top, never following a link at the top itself.
+    """(descriptor, path text) for a scan top, never following a link this user could have made.
 
     Inside the sandbox root the path is opened from a root descriptor one component at a time, no link
-    followed. Elsewhere only the top's parent is resolved (TMPDIR sits behind /var -> /private/var), opened with
-    no link at any component since, and the top is opened in it with O_NOFOLLOW: a top that is a link (to the
-    live key, say) is refused with ELOOP and the scan is incomplete, never read through.
+    followed. Elsewhere only root-owned links in the top's parent are resolved (TMPDIR sits behind /var ->
+    /private/var; system_links_resolved), the parent is opened with no link at any component since, and the
+    top is opened in it with O_NOFOLLOW: a top that is a link (to the live key, say), or under a parent that is
+    a user's link (to live state/), is refused with ELOOP and the scan is incomplete, never read through.
     """
     text = os.path.abspath(top)
     parent, name = os.path.split(text)
-    resolved = os.path.join(os.path.realpath(parent), name) if name else os.path.realpath(text)
+    resolved = os.path.join(system_links_resolved(parent), name) if name else system_links_resolved(text)
     if root is not None:
         base = root_text(root)
         for candidate in (text, resolved):
@@ -1593,7 +1736,7 @@ def walk_files(
     parent swapped for a link between the listing and the open is never followed; a file is read only when the
     descriptor is the inode the listing named. Symlinks are never followed, a top that is a link included. A file
     with a second hard link under the sandbox root or in a live agent-lb tree, or anywhere with the inode of a
-    live agent-lb file (live_alias_ids: an output dir holding a hard link to live state/front.json), is not read
+    live agent-lb file (LiveInodes: an output dir holding a hard link to live state/front.json), is not read
     and counts as unreadable (the scan is incomplete). Other multi-link files (git objects of a local clone in
     TMPDIR) are read: they cannot be a live file.
     skip_exact names single files to pass over, by exact path only. The caller closes each descriptor.
@@ -1605,7 +1748,11 @@ def walk_files(
     skipped = {os.path.join(os.path.realpath(p.parent), p.name) for p in (skip_exact or [])}
     base = root_text(root) if root is not None else None
     trees = live_trees()
-    aliases: dict[str, set[tuple[int, int]]] = {}  # computed once, on the first multi-link file outside them
+    # Built on the first multi-link file outside them, and refreshed for a multi-link file it does not hold whose
+    # inode changed (st_ctime: a new hard link sets it) since the last refresh began: that inode may be a live
+    # file made after the refresh. Any other inode it does not hold was no live file then, and has had no new
+    # name since.
+    live = LiveInodes()
 
     def is_excluded(path: str) -> bool:
         return any(_under(path, e) for e in excluded)
@@ -1619,9 +1766,12 @@ def walk_files(
             if (base is not None and _under(path, base)) or any(_under(path, t) for t in trees):
                 unreadable.append(path)  # a second name in the root or a live tree: possibly a live file
                 return None
-            if "ids" not in aliases:
-                aliases["ids"] = live_alias_ids()
-            if (info.st_dev, info.st_ino) in aliases["ids"]:
+            ident = (info.st_dev, info.st_ino)
+            if live.started_ns is None or (
+                ident not in live.ids and info.st_ctime_ns >= live.started_ns - ALIAS_CTIME_SLACK_NS
+            ):
+                live.refresh()
+            if ident in live.ids:
                 unreadable.append(path)  # a live agent-lb file reached by another name: never read
                 return None
         if newer_than is not None and info.st_mtime <= newer_than:
@@ -2205,8 +2355,10 @@ def cmd_start(args) -> int:
         root_fd = open_root(root)
         try:
             os.fchmod(root_fd, 0o700)  # mkdir's mode is masked by umask; set it exactly
+            made = os.fstat(root_fd)
         finally:
             os.close(root_fd)
+        ROOT_IDS[run_id] = (made.st_dev, made.st_ino)  # the mountpoint itself, before the volume covers it
         attach_volume(root, run_id)  # the root is its own volume from here on: no hard link reaches live files
         meta = {
             "run_id": run_id,
@@ -2221,6 +2373,8 @@ def cmd_start(args) -> int:
             "volume": image_for(run_id).name,
             # The sandboxes dir this root was made in: stop removes the root only through that very directory.
             "sandboxes_id": list(sandboxes_id()),
+            # The mountpoint directory start made: stop removes only that directory, never another put at its name.
+            "root_id": list(ROOT_IDS[run_id]),
         }
         source = str(bootstrap_script())
         check_bootstrap(Path(source), root)
@@ -3245,20 +3399,78 @@ def has_dir(root: Path, rel: str) -> bool:
     return True
 
 
-def remove_root(root: Path) -> bool:
+# (device, inode) of each root this process made, taken at mkdir before its volume covers it: start's failure
+# path has no sandbox.json to read it from.
+ROOT_IDS: dict[str, tuple[int, int]] = {}
+
+
+def root_id_of(meta: dict, run_id: str) -> tuple[int, int] | None:
+    """The root directory's recorded (device, inode): this process's own record, else sandbox.json's."""
+    if run_id in ROOT_IDS:
+        return ROOT_IDS[run_id]
+    value = meta.get("root_id")
+    if isinstance(value, list) and len(value) == 2 and all(type(v) is int for v in value):
+        return value[0], value[1]
+    return None
+
+
+def _empty_dir(dir_fd: int) -> None:
+    """Remove everything inside the directory at dir_fd, by name inside descriptors only: a subdirectory is
+    entered only when the descriptor is the inode the listing named, on the same device, never through a link;
+    a link or a second hard link loses only its name here."""
+    device = os.fstat(dir_fd).st_dev
+    with os.scandir(dir_fd) as listing:
+        names = sorted(entry.name for entry in listing)
+    for name in names:
+        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode):
+            os.unlink(name, dir_fd=dir_fd)
+            continue
+        child = os.open(name, DIR_FLAGS, dir_fd=dir_fd)
+        try:
+            opened = os.fstat(child)
+            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or opened.st_dev != device:
+                raise Confinement(f"{name} was swapped or is another volume; not entered")
+            _empty_dir(child)
+        finally:
+            os.close(child)
+        os.rmdir(name, dir_fd=dir_fd)  # only an empty directory: one swapped in since is left alone
+
+
+def remove_root(root: Path, expect: tuple[int, int] | None, was_volume: bool) -> bool:
     """Delete the (unmounted) root by name inside the pinned sandboxes dir, never through a path: a sandboxes
     dir renamed aside and replaced by a link to ~/.agent-lb after the checks leaves the delete in the directory
-    this run was made in. Refuses a root that is a link, not a directory or still a mount. True when gone."""
+    this run was made in. True when gone.
+
+    Only the directory start made is removed: it must be the recorded (device, inode) (expect; None removes
+    nothing), so live state moved into the root's name after the detach is refused untouched. A root that was
+    its own volume until the detach is the bare mountpoint, empty by construction, so it is only rmdir'ed: even
+    a forged record cannot make this delete anything inside a directory. A root that never was a volume is
+    emptied through the descriptor checked against the record, then rmdir'ed. A link, a non-directory or a
+    root still mounted is refused."""
     sb = sandboxes_fd(root.parent)
     try:
-        info = os.stat(root.name, dir_fd=sb, follow_symlinks=False)
+        fd = os.open(root.name, DIR_FLAGS, dir_fd=sb)
     except FileNotFoundError:
         return True
-    if not stat.S_ISDIR(info.st_mode) or info.st_dev != os.fstat(sb).st_dev:
+    except OSError:
         return False
-    if not shutil.rmtree.avoids_symlink_attacks:
-        return False  # this platform's rmtree could follow a swapped link
-    shutil.rmtree(root.name, dir_fd=sb)
+    try:
+        info = os.fstat(fd)
+        if expect is None or (info.st_dev, info.st_ino) != tuple(expect) or info.st_dev != os.fstat(sb).st_dev:
+            return False
+        if not was_volume:
+            _empty_dir(fd)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    try:
+        os.rmdir(root.name, dir_fd=sb)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
     return True
 
 
@@ -3377,9 +3589,10 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         if entry == "link":
             os.unlink(root.name, dir_fd=sandboxes_fd(root.parent))  # the link only; never its target
         elif entry == "dir":
+            was_volume = on_own_volume(root)
             volume = detach_volume(root)
             if volume.get("volume") != "still mounted":
-                volume["root_removed"] = remove_root(root)
+                volume["root_removed"] = remove_root(root, root_id_of(meta, run_id), was_volume)
         if not on_own_volume(root):
             volume["image_removed"] = remove_image(run_id)
     time.sleep(0.5)

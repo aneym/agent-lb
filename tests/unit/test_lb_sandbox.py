@@ -847,6 +847,11 @@ def test_a_copy_of_the_store_or_its_key_outside_custody_is_a_leak(
         )
 
 
+def _dir_id(path: Path) -> list[int]:
+    info = path.stat()
+    return [info.st_dev, info.st_ino]
+
+
 def _teardown_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) -> Path:
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "lbsbx-unit-teardown"
@@ -854,8 +859,10 @@ def _teardown_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: Modul
     for sub in ("logs", "state", "home"):
         (root / sub).mkdir()
     (root / "logs" / "primary.log").write_text("INFO started\n")
-    # Ports nothing listens on; labels that are never loaded: teardown has no live job to stop.
-    (root / "sandbox.json").write_text(json.dumps({"run_id": root.name, "ports": {"front": 2597, "primary": 2598}}))
+    # Ports nothing listens on; labels that are never loaded: teardown has no live job to stop. root_id is the
+    # root directory's own identity, as start records it at mkdir.
+    meta = {"run_id": root.name, "ports": {"front": 2597, "primary": 2598}, "root_id": _dir_id(root)}
+    (root / "sandbox.json").write_text(json.dumps(meta))
     live_plist = tmp_path / "live.plist"
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes.resolve())
@@ -1506,7 +1513,7 @@ def test_teardown_removes_the_root_inside_the_sandboxes_dir_it_pinned(
     root = sandboxes / "r1"
     (root / "logs").mkdir(parents=True)
     sandboxes.chmod(0o700)
-    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": {}}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": {}, "root_id": _dir_id(root)}))
     live = lb_home / "r1"
     live.mkdir()
     (live / "front.json").write_text('{"preferred": 2457}')
@@ -1710,9 +1717,11 @@ def test_image_swapped_for_a_link_is_never_chmoded_or_attached(tmp_path: Path, m
     def fake_hdiutil(swap: bool):
         def run(argv, **kwargs):
             calls.append([str(a) for a in argv])
-            if argv[1] == "create":
+            if argv[1] == "create":  # as hdiutil does under the umask 077 lb-sandbox sets: private, magic first
                 image = lb_home / "sandboxes" / ".images" / Path(argv[-1]).name
-                image.write_bytes(b"sparse image")
+                fd = os.open(image, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.write(fd, lb.IMAGE_MAGIC + b" sparse image")
+                os.close(fd)
                 if swap:
                     image.unlink()
                     image.symlink_to(helper)
@@ -1881,3 +1890,162 @@ def test_a_confined_process_reads_its_own_root_in_the_real_sandboxes_dir() -> No
         assert root.parent == sandboxes and root.name.startswith("lbsbx-unit-")
         shutil.rmtree(root)
     assert got == {"run_id": root.name, "unit_test": True}
+
+
+# ------------------------------------------------ S1-3 fix round 2: review of 479849b4 and 435cbabd
+
+
+def test_scan_never_reads_a_live_file_through_a_linked_parent_of_a_scan_top(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding (lb-sandbox:1480-1497 at 435cbabd): a scan top out/linked-parent/front.json with linked-parent ->
+    ~/.agent-lb/state had its parent resolved before the no-follow open, so the live file was read and the scan
+    said complete and clean. Only root-owned links (/var -> private/var) are resolved now; a link this user made
+    in a top's path is refused and the scan is incomplete."""
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "linked-parent").symlink_to(lb_home / "state", target_is_directory=True)
+    result = lb.scan_paths([out / "linked-parent" / "front.json"], [FAKE_TOKEN])
+    assert (result["complete"], result["files_scanned"]) == (False, 0), "a live file was read through the link"
+    real = os.path.realpath(tmp_path)
+    if not real.startswith("/private/var/"):
+        pytest.skip("control needs TMPDIR behind the system link /var -> private/var")
+    (out / "plain.json").write_text(f"x {FAKE_TOKEN} y")
+    spelled = Path(real[len("/private") :]) / "out" / "plain.json"  # through the root-owned /var link
+    control = lb.scan_paths([spelled], [FAKE_TOKEN])
+    assert (control["complete"], control["found"], control["files_scanned"]) == (True, True, 1)
+
+
+@pytest.mark.parametrize("live_file", ["there-before-the-scan", "made-during-the-scan"])
+def test_scan_never_reads_a_live_file_hard_linked_after_the_live_inodes_were_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_file: str
+) -> None:
+    """Finding (lb-sandbox:1542-1545 at 435cbabd): the live inodes were listed once, on the first multi-link
+    file, and only those with a second name then. An unrelated multi-link file early in the walk filled that list;
+    a later output file then swapped for a hard link to single-link live state/front.json was not in it and was
+    read, and the scan said clean. The list holds every live file, and a multi-link file whose inode changed
+    since the list was made refreshes it, so a live file written during the scan (made-during-the-scan) is
+    caught too.
+
+    The attacker runs at the race point: after the first file is read, before the walk reaches the second."""
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    front = lb_home / "state" / "front.json"
+    out = tmp_path / "out"
+    out.mkdir()
+    (tmp_path / "origin-object").write_text("blob")
+    os.link(tmp_path / "origin-object", out / "a-clone-object")  # read first, in name order
+    target = out / "z-result.json"
+    target.write_text("{}")
+    real_scan_fd = lb.scan_fd
+    swapped: list[bool] = []
+
+    def scan_then_swap(fd, detector, chunk=4 << 20):
+        if not swapped:
+            swapped.append(True)
+            if live_file == "made-during-the-scan":  # the front rewrites its state file: a new inode, one name
+                tmp = front.with_name("front.json.tmp")
+                tmp.write_text('{"preferred": 2457}')
+                os.rename(tmp, front)
+            target.unlink()
+            os.link(front, target)
+        return real_scan_fd(fd, detector, chunk)
+
+    monkeypatch.setattr(lb, "scan_fd", scan_then_swap)
+    result = lb.scan_paths([out], [FAKE_TOKEN])
+    assert swapped, "the race point was never reached"
+    assert result["unreadable_paths"] == [str(target.resolve())], "the hard link to live state was read"
+    assert (result["complete"], result["files_scanned"]) == (False, 1)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
+def test_a_live_file_renamed_over_the_new_image_is_never_chmoded_attached_or_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding (lb-sandbox:840, 780-785 at 435cbabd): after hdiutil create, single-link live bin/lb-restart
+    renamed over the image entry passed the identity check (a regular file with one link), was chmod'ed 0600
+    and lost its execute bit. Nothing is chmod'ed now (hdiutil creates under umask 077), the entry must be the
+    private encrypted image this create made, and teardown's remove_image never unlinks what is not an image.
+
+    Integration with the real hdiutil; the attacker's rename runs right after the real create returns."""
+    import stat as st
+
+    lb = _load()
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    images = lb_home / "sandboxes" / ".images"
+    helper = lb_home / "bin" / "lb-restart"
+    helper.parent.mkdir()
+    helper.write_text("#!/bin/sh\nexit 0\n")
+    helper.chmod(0o755)
+    root = lb_home / "sandboxes" / "lbsbx-unit-image"
+    root.mkdir()
+    real_run = subprocess.run
+    calls: list[str] = []
+
+    def create_then_rename(argv, **kwargs):
+        calls.append(str(argv[1]))
+        done = real_run(argv, **kwargs)
+        if argv[1] == "create":
+            os.rename(helper, images / str(argv[-1]))
+        return done
+
+    monkeypatch.setattr(lb.subprocess, "run", create_then_rename)
+    with pytest.raises(lb.Refused):
+        lb.attach_volume(root, root.name)
+    monkeypatch.setattr(lb.subprocess, "run", real_run)
+    entry = images / lb.image_for(root.name).name
+    assert calls == ["create"], "the renamed live file reached attach"
+    assert st.S_IMODE(entry.stat().st_mode) == 0o755, "the live helper was chmod'ed"
+    assert lb.remove_image(root.name) is False
+    assert entry.read_text() == "#!/bin/sh\nexit 0\n", "remove_image unlinked a file that is no image"
+    entry.unlink()
+    try:  # control: the image the real create makes is attached at the root, then removed
+        lb.attach_volume(root, root.name)
+        assert lb.on_own_volume(root)
+    finally:
+        detached = lb.detach_volume(root)
+    assert detached == {"volume": "detached"}
+    assert lb.remove_image(root.name) is True and not entry.exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl; hdiutil is macOS")
+@pytest.mark.parametrize("root_kind", ["plain-dir", "volume-with-forged-record"])
+def test_teardown_never_removes_live_state_moved_into_the_roots_name_after_the_detach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, root_kind: str
+) -> None:
+    """Finding (lb-sandbox:3290-3292, 3164-3171 at 435cbabd): after the detach, the empty mountpoint renamed
+    aside and live ~/.agent-lb/state moved into its name inside the pinned sandboxes dir passed remove_root's
+    checks (a directory on the sandboxes dir's device) and was rmtree'd. Only the directory start made (its
+    recorded device and inode) is removed, and a root that was its own volume is only rmdir'ed: its mountpoint
+    is empty, so even a sandbox.json forged with the live dir's identity deletes nothing (volume-with-forged-record).
+
+    detach_volume runs for real on the volume, then the attacker's moves run at that exact point."""
+    lb = _load()
+    live_state = tmp_path / "live-home" / "state"
+    live_state.mkdir(parents=True)
+    (live_state / "front.json").write_text('{"preferred": 2457}')
+    if root_kind == "plain-dir":
+        root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    else:
+        root = request.getfixturevalue("mounted_root")
+        (root / "sandbox.json").write_text(
+            json.dumps({"run_id": root.name, "ports": {}, "root_id": _dir_id(live_state)})
+        )
+        monkeypatch.setattr(lb, "SANDBOXES", root.parent)
+        monkeypatch.setattr(lb, "LIVE_PLIST", tmp_path / "no-live.plist")
+        monkeypatch.setattr(lb, "load_secrets", lambda root: [FAKE_TOKEN])
+        monkeypatch.setattr(lb, "load_key", lambda root: None)
+    real_detach = lb.detach_volume
+
+    def detach_then_move(path: Path) -> dict:
+        done = real_detach(path)
+        root.rename(root.parent / "aside")
+        live_state.rename(root)
+        return done if root_kind != "plain-dir" else {"volume": "detached"}
+
+    monkeypatch.setattr(lb, "detach_volume", detach_then_move)
+    result = lb.teardown(root.name, None)
+    assert (root / "front.json").read_text() == '{"preferred": 2457}', "teardown deleted live state"
+    assert (result["root_exists"], result["clean"], result["volume"].get("root_removed")) == (True, False, False)
