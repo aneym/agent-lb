@@ -193,6 +193,21 @@ class UpstreamTruncatedEvent(UpstreamStallTimeout):
         self.code = "upstream_truncated_event"
 
 
+class UpstreamBrokenStream(UpstreamStallTimeout):
+    """The upstream connection broke in the middle of the body (incomplete transfer framing).
+
+    aiohttp reports it as ``ClientPayloadError``. Handled like a stall: the
+    unfinished event never reaches the client, the attempt is logged as a
+    failure, and it fails over or ends with a retryable error event.
+    """
+
+    def __init__(self) -> None:
+        Exception.__init__(self, "Anthropic stream broke before the response finished (upstream_stream_broken)")
+        self.phase = "stream_broken"
+        self.seconds = 0.0
+        self.code = "upstream_stream_broken"
+
+
 class _StallCatcher:
     """Ends an upstream attempt on a stall and records it for the attempt loop."""
 
@@ -251,6 +266,8 @@ async def _stall_bounded_chunks(
                 chunk = await anext(iterator)
         except StopAsyncIteration:
             return
+        except aiohttp.ClientPayloadError as exc:
+            raise UpstreamBrokenStream() from exc
         except TimeoutError:
             if not bound.expired():
                 raise

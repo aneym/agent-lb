@@ -112,6 +112,13 @@ class StandIn:
             await response.write(MESSAGE_START[:40])
         elif first and self.mode == "closes_mid_event":
             await response.write(MESSAGE_START + REST[:CUT])
+        elif first and self.mode == "breaks_mid_body":
+            # A TCP close mid-body, as a network cut does: no terminating chunk.
+            await response.write(MESSAGE_START + REST[:CUT])
+            await asyncio.sleep(0.05)
+            assert request.transport is not None
+            request.transport.close()
+            return response
         elif self.mode == "crlf_split_last_terminator":
             # The final CRLF arrives in two reads: the CR, then the LF.
             await response.write(CRLF_SSE[:-1])
@@ -361,6 +368,24 @@ async def test_a_stream_that_closes_mid_event_ends_with_a_clean_retryable_error_
     error = json.loads(events[0].split(b"data: ", 1)[1])
     assert error["error"]["type"] == "overloaded_error"
     assert [(log.status, log.error_code) for log in await _logs()] == [("error", "upstream_truncated_event")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream", ["breaks_mid_body"], indirect=True)
+async def test_a_stream_whose_connection_breaks_mid_body_is_logged_as_a_failed_attempt(upstream, async_client):
+    # Harden run agent-lb-20261008T051116Z-8ab07e: a cut Claude stream raised ClientPayloadError out of
+    # the route (an ASGI 500 mid-stream) and the cut attempt left no request-log row at all.
+    await _insert_anthropic_accounts(1)
+
+    status, body, _ = await _call(async_client, stream=True)
+
+    assert status == 200
+    assert body.startswith(MESSAGE_START)
+    events = [block for block in body[len(MESSAGE_START) :].split(b"\n\n") if block.strip()]
+    assert len(events) == 1 and events[0].startswith(b"event: error\ndata: "), body
+    error = json.loads(events[0].split(b"data: ", 1)[1])
+    assert error["error"]["type"] == "overloaded_error"
+    assert [(log.status, log.error_code) for log in await _logs()] == [("error", "upstream_stream_broken")]
 
 
 @pytest.mark.asyncio
