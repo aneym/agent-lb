@@ -520,12 +520,14 @@ SCRIPT_PREFILTERS = {
     # echo/printf and turns the FIFO grep refusal into a `-D skip` rewrite inside the same FIFO branch, so the
     # prefilter's FIFO clause still covers every input it blocks or rewrites.
     # 557b21d: agent-lb d402b454 (2026-10-08), search tools parsed per segment with paths resolved from the cwd and
-    # any `cd`; 7a518f4: bb83dc35, parse failures refused, `watch`, `pushd`, a path-less search's cwd.
+    # any `cd`; 7a518f4: bb83dc35, parse failures refused, `watch`, `pushd`, a path-less search's cwd; 8515084:
+    # ad7c78e5, heredocs and here-strings parsed across the whole command (both need `<<`, which always runs it).
     # pf_wide_scan_parse covers each version. Re-pin on every change (test_the_pinned_wide_scan_guard_...).
     "wide-scan-guard.sh": (("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac",
                             "b169f02eb85ed225fcebaef814e1c7ad0fccda755b1a21a7887a3f6c8df4bc44",
                             "557b21dbfc1291d0fb7454ff8ddaac823c40ef11636a2451f62192e4e9d35985",
-                            "7a518f44edf83c06f5e1565f6e5fe0cb43f5e453ec459837a4b7d1cd02d2aad2"), pf_wide_scan_parse),
+                            "7a518f44edf83c06f5e1565f6e5fe0cb43f5e453ec459837a4b7d1cd02d2aad2",
+                            "8515084976daadf0072d5438dc3194ebddb99ac662188eb6195fcd2e6d5614ff"), pf_wide_scan_parse),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
     # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; 3464abb: factory
     # 31b899775, after its review fixes; 64cf185: factory a6f53ea1e, destination parsed by shlex; 77520a3: factory

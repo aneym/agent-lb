@@ -1141,7 +1141,7 @@ def test_the_rewriter_beside_another_hook_is_the_rtk_on_the_callers_path(tmp_pat
     assert json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"] == "rewritten", result
 
 
-# wide-scan-guard.sh as the source holds it (sha256 7a518f44 since agent-lb bb83dc35): it must stay pinned.
+# wide-scan-guard.sh as the source holds it (sha256 85150849 since agent-lb ad7c78e5): it must stay pinned.
 WIDE_SCAN = SOURCE / "hooks/wide-scan-guard.sh"
 WIDE_SCAN_COMMANDS = (
     "rg -n foo src", "find . -name '*.py'", "ls -la", "git status", "rg x /tmp/project", "find /tmp -name x",
@@ -1156,6 +1156,8 @@ WIDE_SCAN_COMMANDS = (
     "rg foo", "cd && rg x .", "pushd / && rg x .", "find -f / -name x", "rg --files /", "watch " * 9 + "ls",
     "echo \"unbalanced", "bash -c 'echo \"x'", "cat <<EOF\nx", "echo x #\" \necho \"y", "ls -la # it's fine",
     "python3 -c 'print(1)'",
+    # ad7c78e5: heredocs and here-strings read across the whole command.
+    "bash <<< 'rg x /'", "cat <<< 'rg x /'", "git commit -F - <<'EOF'\nrg x /\nEOF", "bash <<EOF\nrg x /\nEOF",
 )
 
 
