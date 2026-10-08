@@ -986,12 +986,20 @@ SELFTEST = (  # command, exact processes, exact hook_layer
 
 
 def counter_selftest(env, cwd):
-    """The observer counts exactly, from a plain exec (1) to grandchildren (4), and claims nothing it missed."""
+    """The observer counts exactly, from a plain exec (1) to grandchildren (4), and claims nothing it missed. A case
+    the watch did not observe completely (a short-lived child gone before it was found, on a loaded machine) is
+    observed again, up to three times, as the dispatcher's counts are (harden run hook-dispatcher-20261008T090944Z,
+    load 57: `/usr/bin/true; /usr/bin/true` saw 2 forks and found 1 child); only a complete observation counts, and
+    it must be exact."""
     rows = []
     for command, processes, hook_layer in SELFTEST:
-        seen = observe(command, b"", env, cwd, 30)
+        for attempt in range(1, 4):
+            seen = observe(command, b"", env, cwd, 30)
+            if seen["observed"]:
+                break
         rows.append({"command": command, "expected": processes, "processes": seen["processes"],
                      "hook_layer": seen["hook_layer"], "observed": seen["observed"], "why": seen["why"],
+                     "attempts": attempt,
                      "ok": seen["observed"] and seen["processes"] == processes and seen["hook_layer"] == hook_layer})
     return {"ok": all(row["ok"] for row in rows), "cases": rows}
 
