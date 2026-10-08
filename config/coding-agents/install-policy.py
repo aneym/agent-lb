@@ -188,6 +188,13 @@ MANAGED_AGENTS = (
         Path("hooks/wide-scan-guard.sh"),
     ),
     (
+        # Copy the guard without registering it as a hook.
+        Path(".claude/hooks/plutil-guard.sh"),
+        Path(".agent-lb/managed/coding-agents/plutil-guard"),
+        "agent-lb:plutil-guard:v1\n",
+        Path("hooks/plutil-guard.sh"),
+    ),
+    (
         Path(".claude/hooks/hook-dispatch.py"),
         Path(".agent-lb/managed/coding-agents/hook-dispatch"),
         "agent-lb:hook-dispatch:v1\n",
