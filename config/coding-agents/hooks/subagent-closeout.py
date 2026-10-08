@@ -589,6 +589,7 @@ def main() -> None:
     record = {
         "ts": stamp(now()),
         "event": "closeout",
+        "host": os.environ.get("FACTORY_LOCAL_HOST") or os.environ.get("FACTORY_ADMIT_HOST") or os.uname().nodename,
         "session_id": session_id,
         # agent_type is what the payload calls it, which is the NAME whenever the
         # dispatch had one. The seat, model and class are the dispatch's own, so

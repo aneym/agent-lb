@@ -62,7 +62,9 @@ def _write_transcript(path: Path) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
 
-def _run(interpreter: str, tmp_path: Path, transcript: Path) -> list[dict[str, object]]:
+def _run(
+    interpreter: str, tmp_path: Path, transcript: Path, env: dict[str, str] | None = None
+) -> list[dict[str, object]]:
     ledger = tmp_path / "dispatch.jsonl"
     dispatch = {
         "ts": "2026-09-22T10:00:00Z",
@@ -87,7 +89,7 @@ def _run(interpreter: str, tmp_path: Path, transcript: Path) -> list[dict[str, o
         input=json.dumps(payload),
         text=True,
         check=True,
-        env={**os.environ, "DISPATCH_LEDGER": str(ledger)},
+        env={**os.environ, "DISPATCH_LEDGER": str(ledger), **(env or {})},
     )
     records = [json.loads(line) for line in ledger.read_text().splitlines()]
     return [record for record in records if record.get("event") == "closeout"]
@@ -121,6 +123,22 @@ def test_missing_transcript_writes_null_cost(interpreter: str, tmp_path: Path) -
     for field in ("model", "tokens_in", "tokens_out", "cache_read_tokens", "wall_s", "nav"):
         assert closeout[field] is None
     assert closeout["matched"] is True
+
+
+@pytest.mark.parametrize("interpreter", INTERPRETERS)
+def test_closeout_names_the_host_it_ran_on(interpreter: str, tmp_path: Path) -> None:
+    """A closeout records where the seat ran (2026-10-08): the placed box's name, else the machine's own."""
+    transcript = tmp_path / "subagents" / "agent-1.jsonl"
+    transcript.parent.mkdir()
+    _write_transcript(transcript)
+    clear = {"FACTORY_LOCAL_HOST": "", "FACTORY_ADMIT_HOST": ""}
+
+    (local,) = _run(interpreter, tmp_path, transcript, {**clear, "FACTORY_LOCAL_HOST": "forge-lanes"})
+    assert local["host"] == "forge-lanes"
+    (admit,) = _run(interpreter, tmp_path, transcript, {**clear, "FACTORY_ADMIT_HOST": "ax42"})
+    assert admit["host"] == "ax42"
+    (default,) = _run(interpreter, tmp_path, transcript, clear)
+    assert default["host"] == os.uname().nodename
 
 
 def _tool_turn(message_id: str, call_id: str, name: str, tool_input: dict, result: str, is_error: bool) -> list:
