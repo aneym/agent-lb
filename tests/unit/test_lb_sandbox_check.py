@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -187,3 +190,26 @@ def test_custody_parity_wants_private_directories_and_key(tmp_path: Path) -> Non
     key.chmod(0o600)
     (tmp_path / "copy.key").hardlink_to(key)
     assert check.custody_problems(sandboxes, root) != []
+
+
+def test_a_run_refuses_an_out_dir_another_run_holds(tmp_path: Path) -> None:
+    """CLI boundary, run as a subprocess: two verifiers once shared one --out, overwrote each other's step files and
+    both failed on the other's output. A second run must refuse the dir, exit 2 and leave the first run's files
+    as they were. --lb-sandbox points nowhere, so even a run that wrongly proceeds starts no sandbox."""
+    out = tmp_path / "run"
+    out.mkdir()
+    first = out / "result.json"
+    first.write_text('{"result": "pass"}\n')
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--out", str(out), "--lb-sandbox", str(tmp_path / "no-lb-sandbox")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 2
+    verdict = json.loads(proc.stdout)
+    assert verdict["result"] == "infra_error"
+    assert "--out" in verdict["summary"]
+    assert sorted(p.name for p in out.iterdir()) == ["result.json"]
+    assert first.read_text() == '{"result": "pass"}\n'

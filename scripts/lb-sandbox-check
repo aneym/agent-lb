@@ -10,7 +10,8 @@ a stream open across the cutover, scan files and every sandbox process's exec
 environment for leaked tokens, stop it, and prove the live agent-lb kept the
 same pids and preferred port. This script never reads a credential: every
 token stays inside lb-sandbox. Every lb-sandbox stdout and stderr is saved in
-DIR; the verdict is DIR/result.json (schema 1, build/CONTRACT.md).
+DIR; the verdict is DIR/result.json (schema 1, build/CONTRACT.md). DIR must be new or
+empty and belongs to one run: a used DIR is refused (exit 2) and left untouched.
 
 It authorizes agent-lb restarts, so any doubt is a fail: zero streams in flight
 at cutover, a hold released by its timeout, an incomplete scan or a hit in a
@@ -809,13 +810,40 @@ def leftover_pids(run_id: str) -> list[int]:
     return leftover
 
 
+OUT_CLAIM = ".lb-sandbox-check.claim"
+
+
+def claim_out(out: Path) -> str | None:
+    """Give this run sole use of DIR, or say why not. Two runs sharing one DIR overwrite each other's numbered
+    step files and verdict, so both results are garbage (2026-10-08: two verifiers both wrote run-v3r1; each run
+    read the other's status and stop output and failed on it). DIR must be new or empty; the claim file is
+    created with O_EXCL, so of two runs that both found it empty only one proceeds."""
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        held = sorted(p.name for p in out.iterdir())
+    except OSError as exc:
+        return f"--out {out} unusable: {exc.__class__.__name__}"
+    if held:
+        return f"--out {out} is not empty ({len(held)} entries, e.g. {held[0]}); give each run its own dir"
+    try:
+        fd = os.open(out / OUT_CLAIM, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except FileExistsError:
+        return f"--out {out} was claimed by another lb-sandbox-check run; give each run its own"
+    with os.fdopen(fd, "w") as f:
+        f.write(f"{os.getpid()} {utc()}\n")
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--lb-sandbox", type=Path, default=HOME / ".agent-lb" / "bin" / "lb-sandbox")
     args = parser.parse_args()
     out = args.out.expanduser().resolve()
-    out.mkdir(parents=True, exist_ok=True)
+    refused = claim_out(out)
+    if refused:  # another run owns DIR: write nothing there, its step files and verdict stay its own
+        print(json.dumps({"result": "infra_error", "run_id": None, "summary": refused}, indent=1))
+        return 2
     c = Check(out, args.lb_sandbox)
     c.run_id, c.started, c.stopped, c.infra = None, False, False, None
     started_at = utc()
