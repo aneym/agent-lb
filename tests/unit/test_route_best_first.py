@@ -97,7 +97,7 @@ def test_cursor_worker_makers_get_claude_reviewer(tmp_path: Path, author: str) -
     env, _ = installed_policy(tmp_path)
     selected = installed_pick(env, "verify", "--author-maker", author)
     assert (selected["rung"], selected["seat"], selected["model"]) == (
-        "sonnet-high", "sonnet-verifier", "claude-sonnet-5-5")
+        "sonnet-high", "verifier", "claude-sonnet-5-5")
 
 
 def test_missing_guarded_pools_keeps_old_pace_demotion(tmp_path: Path) -> None:

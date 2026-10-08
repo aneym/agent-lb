@@ -108,12 +108,6 @@ MANAGED_AGENTS = (
         Path("agents/codex-test-runner.md"),
     ),
     (
-        Path(".claude/agents/sonnet-verifier.md"),
-        Path(".agent-lb/managed/coding-agents/sonnet-verifier"),
-        "agent-lb:sonnet-verifier:v1\n",
-        Path("agents/sonnet-verifier.md"),
-    ),
-    (
         Path(".claude/agents/verifier.md"),
         Path(".agent-lb/managed/coding-agents/verifier"),
         "agent-lb:verifier:v1\n",

@@ -6,7 +6,7 @@
 #### Scenario: Default pools
 - **GIVEN** Cursor, Codex and Claude pools are eligible
 - **WHEN** `route workflow-args` runs
-- **THEN** implement is cursor-seat with brief `Seat model: grok-4.7-medium`, its auditor is sonnet-verifier with model and effort in opts, explore is gpt-explorer with model `sol-latest-low`, and review for anthropic authors is codex-verifier
+- **THEN** implement is cursor-seat with brief `Seat model: grok-4.7-medium`, its auditor is verifier with model and effort in opts, explore is gpt-explorer with model `sol-latest-low`, and review for anthropic authors is codex-verifier
 
 #### Scenario: Cursor models empty
 - **GIVEN** cursor-models has no eligible account

@@ -37,7 +37,7 @@ def inputs(*, head_maker="openai"):
                 "openai": ["@sonnet-high"], "xai": ["@sonnet-high"], "anthropic": ["@sol-xhigh"],
             },
             "rungs": {
-                "sonnet-high": {"seat": "sonnet-verifier", "model": "sonnet-latest", "maker": "anthropic"},
+                "sonnet-high": {"seat": "verifier", "model": "sonnet-latest", "maker": "anthropic"},
                 "sol-xhigh": {"seat": "codex-verifier", "model": "sol-latest", "maker": "openai"},
             },
         },

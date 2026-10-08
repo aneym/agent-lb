@@ -65,7 +65,7 @@ def test_the_last_claude_account_is_kept_for_orchestrators(tmp_path: Path) -> No
 
     # Sol's work has no reviewer but Claude: the reserve bends rather than leave the work unreviewed, and says so.
     verify = pick(last, "verify", "--author-vendor", "openai")
-    assert verify["seat"] == "sonnet-verifier"
+    assert verify["seat"] == "verifier"
     assert verify["reason"].startswith("reserved for orchestrators: 1 eligible account (keep 2); no other rung open")
 
     # Enough accounts but the best is under 40%: the same rule.

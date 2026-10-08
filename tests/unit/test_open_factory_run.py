@@ -169,7 +169,7 @@ def test_a_seat_capacity_wait_stands_in_and_verify_carries_the_author(tmp_path: 
     """A4d fix round: `seat run --class verify` needs the author vendor, and its exit 4 is a capacity wait."""
     env = world(tmp_path)
     cursor = {"seat": "cursor-seat", "model": "claude-sonnet-5-5-high", "pool": "cursor-other", "rung": "cursor"}
-    sonnet = {"seat": "sonnet-verifier", "model": "claude-sonnet-5-5", "pool": "anthropic-general", "rung": "sonnet"}
+    sonnet = {"seat": "verifier", "model": "claude-sonnet-5-5", "pool": "anthropic-general", "rung": "sonnet"}
     env["OF_BIN_ROUTE"] = stub(tmp_path / "route", f'''case "$*" in
     *"--skip cursor"*) echo '{json.dumps(sonnet)}' ;;
     *) echo '{json.dumps(cursor)}' ;;
@@ -181,7 +181,7 @@ esac
     done = of(env, "run", "verify", "--author-vendor", "openai", "--json", "--", "Review the diff")
     receipt = json.loads(done.stdout)
     assert done.returncode == 0, done.stderr
-    assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("cursor-seat", "wait"), ("sonnet-verifier", "ok")]
+    assert [(a["seat"], a["outcome"]) for a in receipt["attempts"]] == [("cursor-seat", "wait"), ("verifier", "ok")]
     argv = next(call["argv"] for call in rows(env, "CALLS") if call["argv"][0].endswith("seat"))
     assert argv[argv.index("--author-vendor") + 1] == "openai"
 

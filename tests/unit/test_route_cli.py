@@ -700,7 +700,7 @@ def test_canonical_plan_and_implement_follow_the_lineup(tmp_path: Path) -> None:
     picked = json.loads(implement.stdout)
     assert (picked["seat"], picked["model"]) == ("gpt-implementer", "gpt-6-sol")
     assert picked["audit"]["alias"] == "sonnet-latest"
-    assert picked["audit"]["seat"] == "sonnet-verifier"
+    assert picked["audit"]["seat"] == "verifier"
     assert picked["fallbacks"] == []
     assert json.loads(audit.stdout)["model"] == "gpt-6-sol"
 
@@ -891,7 +891,7 @@ def test_implement_prefers_opus_only_while_its_pool_is_on_pace(
     if expected_seat == "opus-seat":
         assert (auditor["alias"], auditor["model"]) == ("sol-latest", "gpt-6-sol")
     else:
-        assert (auditor["alias"], auditor["model"]) == ("opus-latest", "claude-opus-5-5")
+        assert (auditor["alias"], auditor["model"]) == ("sonnet-latest", "claude-sonnet-5-5")
 
 
 def test_record_and_report_compare_implement_seats_per_model(tmp_path: Path) -> None:

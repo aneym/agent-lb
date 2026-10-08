@@ -96,7 +96,7 @@ def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> N
     assert held["reason"] == "first open rung"
     assert held["pace"]["openai-codex"]["state"] == "low"
     assert (held["audit"]["rung"], held["audit"]["seat"], held["audit"]["model"], held["audit"]["effort"]) == (
-        "sonnet-high", "sonnet-verifier", "claude-sonnet-5-5", "high")
+        "sonnet-high", "verifier", "claude-sonnet-5-5", "high")
     assert held["intended"] == "grok-medium"
     text = route(env, grok_open, "pick", "implement")
     assert text.returncode == 0, text.stderr
@@ -104,7 +104,7 @@ def test_best_first_ladder_starts_with_approved_grok_medium(tmp_path: Path) -> N
 
     # Grok's work never goes to Grok or to Sonnet's own pool twice: Sonnet high, then Sol high.
     review = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai")
-    assert (review["rung"], review["seat"], review["model"]) == ("sonnet-high", "sonnet-verifier", "claude-sonnet-5-5")
+    assert (review["rung"], review["seat"], review["model"]) == ("sonnet-high", "verifier", "claude-sonnet-5-5")
     retry = pick(env, CANONICAL_TABLE, "verify", "--author-vendor", "xai", "--skip", "sonnet-high")
     assert (retry["rung"], retry["seat"], retry["effort"]) == ("sol-high", "codex-verifier", "high")
 

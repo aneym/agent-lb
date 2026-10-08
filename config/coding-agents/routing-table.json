@@ -163,7 +163,7 @@
       },
           "rungs": {
             "sonnet-high": {
-              "seat": "sonnet-verifier",
+              "seat": "verifier",
               "model": "sonnet-latest",
               "effort": "high",
               "maker": "anthropic"
@@ -315,31 +315,31 @@
         "by_author_vendor": {
           "openai": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "cursor": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "devin": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "glm": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "kimi": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
@@ -398,31 +398,31 @@
         "by_author_vendor": {
           "openai": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "cursor": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "devin": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "glm": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
           "kimi": {
             "seat": "verifier",
-            "model": "opus-latest",
+            "model": "sonnet-latest",
             "vendor": "anthropic",
             "effort": "high"
           },
@@ -502,7 +502,6 @@
     "opus-seat-full": {"vendor": "anthropic", "box": {"adapter": "claude-code"}, "model": "opus-latest", "effort": "medium"},
     "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}},
     "devin-seat": {"vendor": "devin", "box": {"adapter": "devin"}},
-    "sonnet-verifier": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"},
     "verifier": {"vendor": "anthropic", "box": null, "needs_test_run": false},
     "codex-verifier": {"vendor": "openai", "box": null, "needs_test_run": true},
     "computer-use": {"vendor": "openai", "box": null},

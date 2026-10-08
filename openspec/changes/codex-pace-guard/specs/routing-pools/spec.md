@@ -21,7 +21,7 @@ The canonical table SHALL list openai-codex in policy.pace.guarded_pools alongsi
 #### Scenario: Cursor and Devin authors get Sonnet first
 - **GIVEN** Codex and anthropic-general are both running low and the orchestrator reserve on anthropic-general is inactive
 - **WHEN** verification is picked for an xai, cursor or cognition author
-- **THEN** the pick selects sonnet-high on sonnet-verifier; while the reserve is active, the existing sonnet-cursor-high adapter on cursor-seat may lead instead
+- **THEN** the pick selects sonnet-high on verifier; while the reserve is active, the existing sonnet-cursor-high adapter on cursor-seat may lead instead
 
 ### Requirement: Grok rungs hold while Grok is out of usage
 The interim grok-medium and grok-low rungs SHALL carry a closed gate whose note names the evidence and the reopen condition (the Cursor cycle reset or a passing probe). A gated Grok rung SHALL be skipped with a reason that starts with "gated:".

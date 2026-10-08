@@ -21,7 +21,7 @@ The interim implement ladder SHALL order grok-low, sol-medium, composer, swe2-hi
 #### Scenario: Cursor worker makers receive a Claude reviewer
 - **GIVEN** anthropic-general is eligible and not running low
 - **WHEN** verification is picked with --author-maker xai or --author-maker cursor (an alias of --author-vendor)
-- **THEN** the pick selects sonnet-high on sonnet-verifier rather than a Cursor seat
+- **THEN** the pick selects sonnet-high on verifier rather than a Cursor seat
 
 ### Requirement: Only configured pools are pace guarded
 The ladder walker SHALL apply low-pace demotion only to pools in policy.pace.guarded_pools when that key is present. The canonical table SHALL guard anthropic-general and anthropic-fable. A missing key SHALL preserve all-pool low-pace demotion. Rich promotion, exhaustion and other availability checks SHALL remain unchanged.

@@ -46,7 +46,6 @@ MANAGED = (
     ("codex-verifier", ".claude/agents/codex-verifier.md", "agents/codex-verifier.md"),
     ("codex-test-runner", ".claude/agents/codex-test-runner.md", "agents/codex-test-runner.md"),
     ("verifier", ".claude/agents/verifier.md", "agents/verifier.md"),
-    ("sonnet-verifier", ".claude/agents/sonnet-verifier.md", "agents/sonnet-verifier.md"),
     ("gpt-implementer", ".claude/agents/gpt-implementer.md", "agents/gpt-implementer.md"),
     ("gpt-explorer", ".claude/agents/gpt-explorer.md", "agents/gpt-explorer.md"),
     ("sol-consult", ".claude/agents/sol-consult.md", "agents/sol-consult.md"),
@@ -199,10 +198,10 @@ for name in ("implement", "mechanical"):
         audit.get("required") is True
         and by_vendor.get("anthropic", {}).get("model") == "sol-latest"
         and all(
-            by_vendor.get(v, {}).get("model") == "opus-latest"
+            by_vendor.get(v, {}).get("model") == "sonnet-latest"
             for v in ("openai", "cursor", "devin", "glm", "kimi")
         ),
-        f"{name} closeouts are audited cross-vendor (newest Opus / newest Sol)",
+        f"{name} closeouts are audited cross-vendor (Sonnet / newest Sol)",
     )
 
 # Factory invariants are source checks in both modes.
@@ -240,7 +239,7 @@ factory(
     "dated off-default seats are absent from chains",
 )
 expected_auditors = {
-    vendor: {"seat": "verifier", "model": "opus-latest", "vendor": "anthropic", "effort": "high"}
+    vendor: {"seat": "verifier", "model": "sonnet-latest", "vendor": "anthropic", "effort": "high"}
     for vendor in ("openai", "cursor", "devin", "glm", "kimi")
 }
 expected_auditors["anthropic"] = {

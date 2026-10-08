@@ -31,7 +31,7 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     assert implement["brief"] == "Seat model: grok-4.7-medium\n"
     # Its reviewer is a Claude seat: model and effort override the definition's frontmatter.
     assert implement["audit"]["opts"] == {
-        "agentType": "sonnet-verifier", "model": "claude-sonnet-5-5", "effort": "high"}
+        "agentType": "verifier", "model": "claude-sonnet-5-5", "effort": "high"}
 
     # GPT bridge seat: the bridge locks effort from the model name, so no separate effort.
     assert seats["explore"]["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
