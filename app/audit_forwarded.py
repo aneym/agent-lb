@@ -54,6 +54,7 @@ def resolved_model(model):
 
 def run(args):
     try:
+        args.caller_seat = args.caller_seat.strip().lower()
         since = datetime.now(UTC) - timedelta(hours=24)
         if args.since:
             try:
