@@ -362,20 +362,37 @@ def _fake_sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
     return sandboxes, root.resolve(), live_plist
 
 
+# The mountpoint directory of each mounted_root, as start records it (identity before the volume covers it).
+MOUNT_IDS: dict[str, os.stat_result] = {}
+
+
 @pytest.fixture
 def mounted_root(tmp_path: Path):
     """tmp_path/sandboxes/r1 as its own volume (a small sparse image), as start makes a root; detached after."""
     root = tmp_path / "sandboxes" / "r1"
     root.mkdir(parents=True)
+    MOUNT_IDS[str(root)] = root.stat()
     image = tmp_path / "volume.sparseimage"
     create = ["/usr/bin/hdiutil", "create", "-quiet", "-size", "64m", "-type", "SPARSE", "-fs", "APFS"]
     subprocess.run([*create, "-volname", "lbsbx-unit", str(image)], check=True, timeout=180)
-    attach = ["/usr/bin/hdiutil", "attach", "-quiet", "-nobrowse", "-noautoopen", "-owners", "on", "-mountpoint"]
-    subprocess.run([*attach, str(root), str(image)], check=True, timeout=180)
+    attach = ["/usr/bin/hdiutil", "attach", "-plist", "-nobrowse", "-noautoopen", "-owners", "on", "-mountpoint"]
+    done = subprocess.run([*attach, str(root), str(image)], check=True, capture_output=True, timeout=180)
+    entities = plistlib.loads(done.stdout).get("system-entities", [])
+    devices = sorted({e["dev-entry"] for e in entities if isinstance(e.get("dev-entry"), str)}, key=len)
     try:
         yield root
     finally:
+        # By device, wherever the mount is now: a test may rename the sandboxes dir around a live mount, and
+        # hdiutil then reports the volume busy; umount -f by its current path frees it.
         subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", str(root)], timeout=180, check=False)
+        mounts = subprocess.run(["/sbin/mount"], capture_output=True, text=True, timeout=60).stdout.splitlines()
+        for line in mounts:
+            for device in devices:
+                if line.startswith(f"{device} on "):
+                    where = line[len(device) + 4 :].rsplit(" (", 1)[0]
+                    subprocess.run(["/sbin/umount", "-f", where], capture_output=True, timeout=60, check=False)
+        if devices:
+            subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", devices[0]], timeout=180, check=False)
 
 
 def _ps_env(pid: int) -> bytes:
@@ -820,15 +837,20 @@ def _keyed_store(lb: ModuleType, root: Path) -> None:
 def test_store_key_is_created_private_and_exclusive(tmp_path: Path) -> None:
     lb = _load()
     key = tmp_path / "encryption.key"
-    lb.create_key(key)
-    assert (oct(key.stat().st_mode & 0o777), key.stat().st_nlink, len(key.read_bytes())) == ("0o600", 1, 44)
-    with pytest.raises(FileExistsError):
-        lb.create_key(key)  # never reuses a key someone placed there
-    planted = tmp_path / "planted.key"
-    (tmp_path / "link.key").symlink_to(planted)
-    with pytest.raises(OSError):
-        lb.create_key(tmp_path / "link.key")
-    assert not planted.exists()
+    dir_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        made = lb.create_key(dir_fd)
+        assert (oct(key.stat().st_mode & 0o777), key.stat().st_nlink, len(key.read_bytes())) == ("0o600", 1, 44)
+        assert made == lb.identity(key.stat()), "the recorded identity is the key's own"
+        with pytest.raises(FileExistsError):
+            lb.create_key(dir_fd)  # never reuses a key someone placed there
+        planted = tmp_path / "planted.key"
+        (tmp_path / "link.key").symlink_to(planted)
+        with pytest.raises(OSError):
+            lb.create_key(dir_fd, "link.key")
+        assert not planted.exists()
+    finally:
+        os.close(dir_fd)
 
 
 @pytest.mark.parametrize("copied", ["data/store.db", "data/encryption.key"])
@@ -864,37 +886,53 @@ def test_a_copy_of_the_store_or_its_key_outside_custody_is_a_leak(
         )
 
 
-def _dir_id(path: Path) -> list[int]:
-    info = path.stat()
-    return [info.st_dev, info.st_ino]
+def _record_start(lb: ModuleType, root: Path, key: bool = True):
+    """What start records in the run's private dir for a mounted root it made: the mountpoint (MOUNT_IDS), the
+    volume it attached and, once made, the store key. Returns the private dir (closed)."""
+    priv = lb.make_private(root.name)
+    priv.record("root", lb.identity(MOUNT_IDS[str(root)]))
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        priv.record("volume", {"st_dev": os.fstat(fd).st_dev, "device": lb._statfs_from(fd)})
+    finally:
+        os.close(fd)
+    if key:
+        priv.record("key", lb.identity((root / "data" / "encryption.key").stat()))
+    priv.close()
+    for fd, _ in lb._PINNED.values():  # start ran in another process: the command under test pins afresh
+        os.close(fd)
+    lb._PINNED.clear()
+    return priv
 
 
-def _teardown_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) -> Path:
-    sandboxes = tmp_path / "sandboxes"
-    root = sandboxes / "lbsbx-unit-teardown"
+def _teardown_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType, root: Path) -> Path:
+    """A sandbox as start leaves it: root (mounted_root) its own volume holding a keyed store, logs and a stamped
+    sandbox.json, and the run's private dir recording the mountpoint, the volume and the key."""
+    sandboxes = root.parent
+    sandboxes.chmod(0o700)
     _keyed_store(lb, root)
     for sub in ("logs", "state", "home"):
         (root / sub).mkdir()
     (root / "logs" / "primary.log").write_text("INFO started\n")
-    # Ports nothing listens on; labels that are never loaded: teardown has no live job to stop. root_id is the
-    # root directory's own identity, as start records it at mkdir.
-    meta = {"run_id": root.name, "ports": {"front": 2597, "primary": 2598}, "root_id": _dir_id(root)}
+    # Ports nothing listens on; labels that are never loaded: teardown has no live job to stop.
+    meta = {"run_id": root.name, "ports": {"front": 2597, "primary": 2598}}
     (root / "sandbox.json").write_text(json.dumps(meta))
     live_plist = tmp_path / "live.plist"
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes.resolve())
     monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
+    _record_start(lb, root)
     return root
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
 @pytest.mark.parametrize("planted", [None, "state/front.json", "home/.cache/blob", "logs/edge.jsonl"])
 def test_teardown_scans_the_whole_root_and_refuses_export_on_a_hit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, planted: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path, planted: str | None
 ) -> None:
     """Integration over real files, ps, lsof and launchctl (for labels that were never loaded)."""
     lb = _load()
-    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
     if planted:
         (root / planted).parent.mkdir(parents=True, exist_ok=True)
         (root / planted).write_text(f"x {MIRRORED_TOKEN} y")
@@ -1249,13 +1287,13 @@ def test_process_scan_skips_a_label_only_launchctl_call_and_still_requires_run_i
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
 def test_teardown_stops_a_process_that_names_the_run_label_and_never_reports_its_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path
 ) -> None:
     """Findings: a leftover naming the run's label but not the root survived, and its raw command (which can
     hold a token) went into the JSON. It is stopped, leftovers are reported by pid and hash only, and a process
     that holds the run id only as a bare word (as the live agent-lb holds `aneyman`) is never signalled."""
     lb = _load()
-    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
     sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
     labelled = subprocess.Popen([*sleeper, f"gui/{os.getuid()}/com.agent-lb.drill.sbx-{root.name}", FAKE_TOKEN])
     bare = subprocess.Popen([*sleeper, f"/x/{root.name}/y", root.name, FAKE_TOKEN])
@@ -1276,7 +1314,7 @@ def test_teardown_stops_a_process_that_names_the_run_label_and_never_reports_its
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
 @pytest.mark.parametrize("meta", ["absent", "symlink", "hardlink", "other-run"])
 def test_stop_signals_scans_and_deletes_nothing_without_this_runs_stamped_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, meta: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path, meta: str
 ) -> None:
     """Findings: stop killed any process naming the run id with no check that the sandbox existed, and read
     sandbox.json through a link to live state/front.json. Without a single-link sandbox.json stamped with this
@@ -1284,7 +1322,7 @@ def test_stop_signals_scans_and_deletes_nothing_without_this_runs_stamped_metada
     import argparse
 
     lb = _load()
-    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
     monkeypatch.setattr(lb, "check_launchctl", lambda: None)
     monkeypatch.setattr(lb.signal, "signal", lambda *args: None)  # stop ignores SIGINT; not in the test runner
     live = tmp_path / "live-state" / "front.json"
@@ -1294,7 +1332,9 @@ def test_stop_signals_scans_and_deletes_nothing_without_this_runs_stamped_metada
     if meta == "symlink":
         (root / "sandbox.json").symlink_to(live)
     elif meta == "hardlink":
-        os.link(live, root / "sandbox.json")
+        # The run's own volume: no hard link to a live file can exist there, so a second name in the root stands in.
+        (root / "state" / "stamped.json").write_text(live.read_text())
+        os.link(root / "state" / "stamped.json", root / "sandbox.json")
     elif meta == "other-run":
         (root / "sandbox.json").write_text(json.dumps({"run_id": "lbsbx-someone-else", "ports": {}}))
     label = f"com.agent-lb.drill.sbx-{root.name}"
@@ -1488,13 +1528,13 @@ def test_serve_refuses_a_root_that_is_not_its_own_volume(tmp_path: Path, monkeyp
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
 def test_teardown_never_unlinks_a_key_through_a_linked_data_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path
 ) -> None:
     """Finding: with <root>/data swapped for a link to the live data dir, stop deleted the live key."""
     import shutil as sh
 
     lb = _load()
-    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
     live = tmp_path / "live-data"
     live.mkdir()
     (live / "encryption.key").write_bytes(b"live key")
@@ -1534,29 +1574,41 @@ def test_restart_log_never_writes_through_a_planted_link(
     assert live.read_text() == "live plist"
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
 @pytest.mark.parametrize("kind", ["symlink", "hardlink"])
-def test_client_env_never_truncates_a_planted_link(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
-    """Finding: client-env truncated clients/codex/config.toml through a planted link to a live file."""
+def test_client_env_never_truncates_a_planted_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, kind: str
+) -> None:
+    """Finding: client-env truncated clients/codex/config.toml through a planted link to a live file. On the run's
+    own volume a symlink is replaced by a new inode, never followed; a hard link to a live file cannot be made
+    there (another volume), and a root that is not its own volume is refused before anything is written."""
     import argparse
 
     lb = _load()
-    sandboxes = tmp_path / "sandboxes"
-    root = sandboxes / "r1"
+    live = tmp_path / "live-config.toml"
+    live.write_text("live config")
+    if kind == "symlink":
+        root = request.getfixturevalue("mounted_root")
+    else:
+        root = tmp_path / "sandboxes" / "r1"
+        root.mkdir(parents=True)
+    sandboxes = root.parent
     (root / "clients" / "codex").mkdir(parents=True)
     sandboxes.chmod(0o700)  # as start makes it, whatever the umask
     (root / "sandbox.json").write_text(
         json.dumps({"run_id": "r1", "ports": SERVE_PORTS, "label": "com.agent-lb.drill.sbx-r1"})
     )
-    live = tmp_path / "live-config.toml"
-    live.write_text("live config")
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    args = argparse.Namespace(run_id="r1", vendor="codex")
     if kind == "symlink":
         (root / "clients" / "codex" / "config.toml").symlink_to(live)
+        lb.cmd_client_env(args)
+        assert "backend-api/codex" in (root / "clients" / "codex" / "config.toml").read_text()
     else:
         os.link(live, root / "clients" / "codex" / "config.toml")
-    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
-    lb.cmd_client_env(argparse.Namespace(run_id="r1", vendor="codex"))
+        with pytest.raises(lb.Refused):
+            lb.cmd_client_env(args)
     assert live.read_text() == "live config"
-    assert "backend-api/codex" in (root / "clients" / "codex" / "config.toml").read_text()
 
 
 @pytest.mark.parametrize("name", ["store.db", "encryption.key", "store.db-wal"])
@@ -1654,42 +1706,46 @@ def test_a_linked_sandboxes_dir_never_makes_live_state_a_root(
     assert not (target / "logs").exists()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
 def test_teardown_removes_the_root_inside_the_sandboxes_dir_it_pinned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path
 ) -> None:
     """M3, during teardown: the sandboxes dir is swapped for a link to ~/.agent-lb after teardown checked it,
     with ~/.agent-lb/r1 standing for live state. The root is removed by name inside the descriptor teardown
-    pinned, so the real sandbox goes and the live dir stays. check_root is stubbed to isolate the pin (it would
-    refuse the swap first); launchctl, ps and the volume are the OS edge."""
+    pinned (by its recorded identity, through the run's private dir), so the real sandbox goes and the live dir
+    stays. check_root is stubbed to isolate the pin (it would refuse the swap first); launchctl and ps are the OS
+    edge; the volume detaches for real before the swap."""
     lb = _load()
-    home = tmp_path / "home"
-    lb_home = home / ".agent-lb"
-    sandboxes = lb_home / "sandboxes"
-    root = sandboxes / "r1"
-    (root / "logs").mkdir(parents=True)
+    root = mounted_root
+    sandboxes = root.parent
+    lb_home = tmp_path / "home" / ".agent-lb"
+    (root / "logs").mkdir()
     sandboxes.chmod(0o700)
-    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": {}, "root_id": _dir_id(root)}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": {}}))
     live = lb_home / "r1"
-    live.mkdir()
+    live.mkdir(parents=True)
     (live / "front.json").write_text('{"preferred": 2457}')
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
-    monkeypatch.setattr(lb, "IMAGES", sandboxes / ".images", raising=False)
     monkeypatch.setattr(lb, "LIVE_PLIST", tmp_path / "no-live.plist")
     monkeypatch.setattr(lb, "label_loaded", lambda label: False)
     monkeypatch.setattr(lb, "processes", lambda: [])
     monkeypatch.setattr(lb, "load_secrets", lambda root: [FAKE_TOKEN])
     monkeypatch.setattr(lb, "load_key", lambda root: None)
+    _record_start(lb, root, key=False)
+    real_detach = lb.detach_volume
 
     def detach_then_swap(path: Path) -> dict:
-        sandboxes.rename(lb_home / "moved")
+        done = real_detach(path)
+        sandboxes.rename(tmp_path / "moved")
         sandboxes.symlink_to(lb_home, target_is_directory=True)
-        return {"volume": "not mounted"}
+        return done
 
     monkeypatch.setattr(lb, "detach_volume", detach_then_swap)
     monkeypatch.setattr(lb, "check_root", lambda path, sandboxes=None: path)
-    lb.teardown("r1", None)
+    result = lb.teardown("r1", None)
     assert (live / "front.json").read_text() == '{"preferred": 2457}'
-    assert not (lb_home / "moved" / "r1").exists()
+    assert result["volume"]["root_removed"] is True and not (tmp_path / "moved" / "r1").exists()
+    assert sorted(os.listdir(tmp_path / "moved")) == [], "the private dir and its record go with the root"
 
 
 @pytest.mark.parametrize(
@@ -1811,7 +1867,7 @@ def test_a_run_id_naming_a_live_agent_lb_directory_is_refused(
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
 @pytest.mark.parametrize("when", ["after-detach", "before-stop"])
 def test_teardown_never_deletes_through_a_sandboxes_dir_swapped_for_a_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, when: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path, when: str
 ) -> None:
     """Findings (P1, b72e4560b:178 and :2763; M3, cf915e10:2253). after-detach: once the volume detaches, the
     sandboxes dir is renamed aside and replaced by a link to a live home holding a directory of the run's name;
@@ -1822,7 +1878,7 @@ def test_teardown_never_deletes_through_a_sandboxes_dir_swapped_for_a_link(
     detach_volume is replaced to run the attacker's swap at the exact point of the race; nothing else is faked.
     """
     lb = _load()
-    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
     sandboxes = root.parent
     live_home = tmp_path / "live-home"
     (live_home / root.name / "state").mkdir(parents=True)
@@ -1830,11 +1886,13 @@ def test_teardown_never_deletes_through_a_sandboxes_dir_swapped_for_a_link(
     live_file.write_text('{"preferred": 2457}')
     aside = tmp_path / "sandboxes-aside"
     if when == "after-detach":
+        real_detach = lb.detach_volume
 
         def detach_and_swap(path: Path) -> dict:
+            done = real_detach(path)
             sandboxes.rename(aside)
             sandboxes.symlink_to(live_home, target_is_directory=True)
-            return {"volume": "detached"}
+            return done
 
         monkeypatch.setattr(lb, "detach_volume", detach_and_swap)
     else:
@@ -1851,29 +1909,38 @@ def test_teardown_never_deletes_through_a_sandboxes_dir_swapped_for_a_link(
         assert (aside / root.name / "data" / "encryption.key").exists()
 
 
+def _published_root(lb: ModuleType, run_id: str):
+    """The run's private dir and the mountpoint start made in it and published at <sandboxes>/run_id."""
+    lb.sandboxes_fd(create=True)
+    priv = lb.make_private(run_id)
+    fd, ident = lb.make_root(lb.SANDBOXES / run_id, priv)
+    os.close(fd)
+    return priv, lb.SANDBOXES / run_id, ident
+
+
 def test_image_swapped_for_a_link_is_never_chmoded_or_attached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Finding (P1, b72e4560b:563): after hdiutil create, the image entry swapped for a link to the installed
     lb-restart was chmod'ed by name (the live helper lost its execute bits) and handed to attach. The image is
-    opened with no link followed and set 0600 through its descriptor; a swapped entry is refused before attach.
+    opened with no link followed and never chmod'ed; a swapped entry is refused before attach.
 
-    hdiutil is the external edge, so it is faked: create makes the image and then the attacker swaps it.
+    hdiutil is the external edge, so it is faked: create makes the image (in the run's private dir, the directory
+    lb-sandbox runs it in) and then the attacker swaps it.
     """
     import stat as st
 
     lb = _load()
-    root, lb_home = _home_layout(tmp_path, monkeypatch, lb)
-    monkeypatch.setattr(lb, "IMAGES", lb_home / "sandboxes" / ".images", raising=False)  # b72e4560b's constant
+    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
     helper = lb_home / "bin" / "lb-restart"
     helper.parent.mkdir()
     helper.write_text("#!/bin/sh\nexit 0\n")
     helper.chmod(0o755)
     calls: list[list[str]] = []
 
-    def fake_hdiutil(swap: bool):
+    def fake_hdiutil(priv, swap: bool):
         def run(argv, **kwargs):
             calls.append([str(a) for a in argv])
             if argv[1] == "create":  # as hdiutil does under the umask 077 lb-sandbox sets: private, magic first
-                image = lb_home / "sandboxes" / ".images" / Path(argv[-1]).name
+                image = Path(lb.fd_path(priv.fd)) / Path(argv[-1]).name
                 fd = os.open(image, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 os.write(fd, lb.IMAGE_MAGIC + b" sparse image")
                 os.close(fd)
@@ -1884,18 +1951,21 @@ def test_image_swapped_for_a_link_is_never_chmoded_or_attached(tmp_path: Path, m
 
         return run
 
-    monkeypatch.setattr(lb.subprocess, "run", fake_hdiutil(swap=True))
+    priv, root, ident = _published_root(lb, "lbsbx-unit-swap")
+    monkeypatch.setattr(lb.subprocess, "run", fake_hdiutil(priv, swap=True))
     with pytest.raises((lb.Refused, lb.Unhealthy)):
-        lb.attach_volume(root, "r1")
+        lb.attach_volume(root, root.name, priv, ident)
     assert st.S_IMODE(helper.stat().st_mode) == 0o755, "chmod followed the swapped image to the live helper"
     assert [c[1] for c in calls] == ["create"], "a swapped image must never reach attach"
+    assert "image" not in priv.ids, "a swapped image was recorded as the run's"
     calls.clear()
-    monkeypatch.setattr(lb.subprocess, "run", fake_hdiutil(swap=False))  # control: the image itself is attached
+    priv2, root2, ident2 = _published_root(lb, "lbsbx-unit-ctl")
+    monkeypatch.setattr(lb.subprocess, "run", fake_hdiutil(priv2, swap=False))  # control: the image is attached
     with pytest.raises(lb.Unhealthy):  # the fake attach mounts nothing at the root
-        lb.attach_volume(root, "r1")
-    image = lb_home / "sandboxes" / ".images" / lb.image_for("r1").name
-    assert [c[1] for c in calls] == ["create", "attach"] and calls[1][-1] == image.name
-    assert st.S_IMODE(image.stat().st_mode) == 0o600
+        lb.attach_volume(root2, root2.name, priv2, ident2)
+    image = Path(lb.fd_path(priv2.fd)) / lb.IMAGE_NAME
+    assert [c[1] for c in calls] == ["create", "attach"] and calls[1][-1] == lb.IMAGE_NAME
+    assert st.S_IMODE(image.stat().st_mode) == 0o600 and priv2.ids["image"] == lb.identity(image.stat())
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil and Seatbelt are macOS")
@@ -2122,20 +2192,19 @@ def test_a_live_file_renamed_over_the_new_image_is_never_chmoded_attached_or_del
     """Finding (lb-sandbox:840, 780-785 at 435cbabd): after hdiutil create, single-link live bin/lb-restart
     renamed over the image entry passed the identity check (a regular file with one link), was chmod'ed 0600
     and lost its execute bit. Nothing is chmod'ed now (hdiutil creates under umask 077), the entry must be the
-    private encrypted image this create made, and teardown's remove_image never unlinks what is not an image.
+    private encrypted image this create made before it is recorded, and teardown deletes only the recorded image.
 
     Integration with the real hdiutil; the attacker's rename runs right after the real create returns."""
     import stat as st
 
     lb = _load()
     _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
-    images = lb_home / "sandboxes" / ".images"
     helper = lb_home / "bin" / "lb-restart"
     helper.parent.mkdir()
     helper.write_text("#!/bin/sh\nexit 0\n")
     helper.chmod(0o755)
-    root = lb_home / "sandboxes" / "lbsbx-unit-image"
-    root.mkdir()
+    priv, root, ident = _published_root(lb, "lbsbx-unit-image")
+    entry = Path(lb.fd_path(priv.fd)) / lb.IMAGE_NAME
     real_run = subprocess.run
     calls: list[str] = []
 
@@ -2143,26 +2212,27 @@ def test_a_live_file_renamed_over_the_new_image_is_never_chmoded_attached_or_del
         calls.append(str(argv[1]))
         done = real_run(argv, **kwargs)
         if argv[1] == "create":
-            os.rename(helper, images / str(argv[-1]))
+            os.rename(helper, entry)
         return done
 
     monkeypatch.setattr(lb.subprocess, "run", create_then_rename)
     with pytest.raises(lb.Refused):
-        lb.attach_volume(root, root.name)
+        lb.attach_volume(root, root.name, priv, ident)
     monkeypatch.setattr(lb.subprocess, "run", real_run)
-    entry = images / lb.image_for(root.name).name
     assert calls == ["create"], "the renamed live file reached attach"
     assert st.S_IMODE(entry.stat().st_mode) == 0o755, "the live helper was chmod'ed"
-    assert lb.remove_image(root.name) is False
-    assert entry.read_text() == "#!/bin/sh\nexit 0\n", "remove_image unlinked a file that is no image"
+    assert lb.remove_recorded(priv.fd, lb.IMAGE_NAME, priv.ids.get("image"), "file") is False
+    assert entry.read_text() == "#!/bin/sh\nexit 0\n", "the image delete unlinked a file that is no image"
     entry.unlink()
-    try:  # control: the image the real create makes is attached at the root, then removed
-        lb.attach_volume(root, root.name)
-        assert lb.on_own_volume(root)
+    priv2, root2, ident2 = _published_root(lb, "lbsbx-unit-image2")
+    try:  # control: the image the real create makes is attached at the root, then removed by its record
+        lb.attach_volume(root2, root2.name, priv2, ident2)
+        assert lb.on_own_volume(root2) and lb.on_run_volume(root2, priv2.ids)
     finally:
-        detached = lb.detach_volume(root)
+        detached = lb.detach_volume(root2)
     assert detached == {"volume": "detached"}
-    assert lb.remove_image(root.name) is True and not entry.exists()
+    assert lb.remove_recorded(priv2.fd, lb.IMAGE_NAME, priv2.ids["image"], "file") is True
+    assert not (Path(lb.fd_path(priv2.fd)) / lb.IMAGE_NAME).exists()
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl; hdiutil is macOS")
@@ -2181,24 +2251,27 @@ def test_teardown_never_removes_live_state_moved_into_the_roots_name_after_the_d
     live_state = tmp_path / "live-home" / "state"
     live_state.mkdir(parents=True)
     (live_state / "front.json").write_text('{"preferred": 2457}')
+    mounted_root = request.getfixturevalue("mounted_root")
     if root_kind == "plain-dir":
-        root = _teardown_fixture(tmp_path, monkeypatch, lb)
+        root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
     else:
-        root = request.getfixturevalue("mounted_root")
+        root = mounted_root
+        # A sandbox.json forged by the confined app to name the live dir: deletes follow only the private record.
         (root / "sandbox.json").write_text(
-            json.dumps({"run_id": root.name, "ports": {}, "root_id": _dir_id(live_state)})
+            json.dumps({"run_id": root.name, "ports": {}, "root_id": lb.identity(live_state.stat())})
         )
         monkeypatch.setattr(lb, "SANDBOXES", root.parent)
         monkeypatch.setattr(lb, "LIVE_PLIST", tmp_path / "no-live.plist")
         monkeypatch.setattr(lb, "load_secrets", lambda root: [FAKE_TOKEN])
         monkeypatch.setattr(lb, "load_key", lambda root: None)
+        _record_start(lb, root, key=False)
     real_detach = lb.detach_volume
 
     def detach_then_move(path: Path) -> dict:
         done = real_detach(path)
         root.rename(root.parent / "aside")
         live_state.rename(root)
-        return done if root_kind != "plain-dir" else {"volume": "detached"}
+        return done
 
     monkeypatch.setattr(lb, "detach_volume", detach_then_move)
     result = lb.teardown(root.name, None)
@@ -2245,22 +2318,9 @@ class _StartStopsHere(Exception):
     """Raised by the faked launchd at the primary's bootstrap: start has handed launchd its job."""
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, Seatbelt and launchd are macOS")
-def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
-    """S2-3 review (lb-sandbox:2234): start bootstrapped the aux before the primary, both from plists under the
-    root. The aux (and the front it starts) can write anywhere in the root, so a compromised one could rewrite the
-    primary's plist to an unconfined payload that start then loaded. launchd now gets each job from bytes start
-    made, through a private file outside every root, removed once loaded.
-
-    Integration through the real `start`: a real volume (hdiutil), the real confined populate, real ports. Only
-    launchd is faked (the OS edge): its bootstrap records the plist it is handed, the aux's runs by writing its
-    ready state and rewriting the primary's plist in the root, and the primary's ends the start (its teardown
-    runs for real)."""
-    import signal as signals
-
-    lb = _load()
+def _start_rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) -> tuple[Path, Path]:
+    """A home with a live agent-lb (runtime, venv, plist with a fake token, state) for a real `start`; returns
+    (agent-lb home, the installed lb-sandbox the jobs run). The live labels are drill labels nothing loads."""
     _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
     home = lb_home.parent
     _install_venv(lb_home)
@@ -2276,39 +2336,106 @@ def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote
         "LIVE_FRONT_LABEL": "com.agent-lb.drill.unit-no-live-front",
     }.items():
         monkeypatch.setattr(lb, name, value)
-    script = _use_bootstrap(lb, home)
+    return lb_home, _use_bootstrap(lb, home)
+
+
+def _fake_launchd(real_run, on_bootstrap, seen: list[list[str]] | None = None):
+    """launchctl as the OS edge: `list` shows no job, print and bootout find nothing, bootstrap calls
+    on_bootstrap(argv, plist path). Every other command runs for real."""
+
+    def launchd(argv, *args, **kwargs):
+        if not argv or os.path.basename(str(argv[0])) != "launchctl":
+            return real_run(argv, *args, **kwargs)
+        if seen is not None:
+            seen.append([str(a) for a in argv])
+        if argv[1] == "list":
+            return subprocess.CompletedProcess(argv, 0, "PID\tStatus\tLabel\n", "")
+        if argv[1] != "bootstrap":
+            return subprocess.CompletedProcess(argv, 113, "", "")
+        return on_bootstrap(argv, Path(argv[3]))
+
+    return launchd
+
+
+def _run_start(lb: ModuleType, argv: list[str], root: Path) -> int | str:
+    """lb-sandbox start in this process ("refused" when it raises Refused); the volume is detached after."""
+    import signal as signals
+
+    handlers = {sig: signals.getsignal(sig) for sig in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
+    try:
+        return lb.cmd_start(lb.build_parser().parse_args(argv))
+    except lb.Refused:
+        return "refused"
+    finally:
+        for sig, handler in handlers.items():
+            signals.signal(sig, handler)
+        if lb.on_own_volume(root):
+            lb.detach_volume(root)
+
+
+def _git_repo(path: Path) -> str:
+    """A tiny agent-lb repo: one commit with app/, config/ and scripts/; returns its sha."""
+    for rel, text in {
+        "app/__init__.py": "",
+        "app/marker.py": "FROM_REF = True\n",
+        "config/unit.json": "{}\n",
+        "scripts/agent-lb-front.mjs": "// front\n",
+        "README.md": "not runtime code\n",
+    }.items():
+        (path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (path / rel).write_text(text)
+    git = ["git", "-C", str(path), "-c", "user.name=unit", "-c", "user.email=unit@example.invalid"]
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "unit"]):
+        subprocess.run([*git, *args], check=True, capture_output=True, timeout=60)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, Seatbelt and launchd are macOS")
+@pytest.mark.parametrize("source", ["live", "ref"])
+def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, source: str
+) -> None:
+    """S2-3 review (lb-sandbox:2234): start bootstrapped the aux before the primary, both from plists under the
+    root. The aux (and the front it starts) can write anywhere in the root, so a compromised one could rewrite the
+    primary's plist to an unconfined payload that start then loaded. launchd now gets each job from bytes start
+    made, through a private file outside every root (the run's private dir), removed once loaded.
+
+    source "ref" (agent-lb-5): `start --from-ref REF` runs the sandbox on that commit's code, exported from git
+    into the root, while accounts still mirror live: the runtime the aux finds is the ref's files, not live's.
+
+    Integration through the real `start`: a real volume (hdiutil), the real confined populate, real ports, a real
+    git repo. Only launchd is faked (the OS edge): its bootstrap records the plist it is handed, the aux's runs by
+    writing its ready state and rewriting the primary's plist in the root, and the primary's ends the start (its
+    teardown runs for real and removes the private dir)."""
+    lb = _load()
+    lb_home, script = _start_rig(tmp_path, monkeypatch, lb)
     run_id = "lbsbx-unit-boot"
     root = lb.SANDBOXES / run_id
     label = f"com.agent-lb.drill.sbx-{run_id}"
     hostile = {"Label": label, "ProgramArguments": ["/bin/sh", "-c", "echo unconfined"], "RunAtLoad": True}
     handed: list[tuple[str, dict]] = []
-    real_run = subprocess.run
+    runtime_seen: dict[str, bool] = {}
 
-    def launchd(argv, *args, **kwargs):
-        if not argv or argv[0] != "/bin/launchctl":
-            return real_run(argv, *args, **kwargs)
-        if argv[1] != "bootstrap":
-            return subprocess.CompletedProcess(argv, 113, "", "")  # print, bootout: nothing is loaded
-        body = plistlib.loads(Path(argv[3]).read_bytes())
-        handed.append((argv[3], body))
+    def bootstrap(argv, path: Path):
+        body = plistlib.loads(path.read_bytes())
+        handed.append((str(path), body))
         if body["Label"] == label:
             raise _StartStopsHere()
+        runtime_seen["marker"] = (root / "runtime" / "app" / "marker.py").is_file()
+        runtime_seen["readme"] = (root / "runtime" / "README.md").exists()
         # The aux job runs: confined to the root, it may write anything in it.
         (root / "state" / "aux.json").write_text(json.dumps({"ready": True}))
         (root / "launchd" / f"{label}.plist").write_bytes(plistlib.dumps(hostile))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setattr(lb.subprocess, "run", launchd)
-    handlers = {sig: signals.getsignal(sig) for sig in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
-    args = lb.build_parser().parse_args(["start", "--run-id", run_id, "--from-live"])
-    try:
-        code = lb.cmd_start(args)
-    finally:
-        for sig, handler in handlers.items():
-            signals.signal(sig, handler)
-        monkeypatch.setattr(lb.subprocess, "run", real_run)
-        if lb.on_own_volume(root):
-            lb.detach_volume(root)
+    argv = ["start", "--run-id", run_id, "--from-live"]
+    sha = None
+    if source == "ref":
+        repo = tmp_path / "agent-lb-repo"
+        sha = _git_repo(repo)
+        argv = ["start", "--run-id", run_id, "--from-ref", "HEAD", "--repo", str(repo)]
+    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(subprocess.run, bootstrap))
+    code = _run_start(lb, argv, root)
     out = json.loads(capsys.readouterr().out)
     assert code == lb.EXIT_UNHEALTHY and "_StartStopsHere" in out["error"]
     assert [body["Label"] for _, body in handed] == [f"{label}-aux", label]
@@ -2318,7 +2445,30 @@ def test_start_hands_launchd_only_the_jobs_it_made_never_a_plist_the_aux_rewrote
     for path, _ in handed:
         assert not Path(path).is_relative_to(root), "launchd was handed a plist from inside the root"
         assert not os.path.lexists(path), "the private copy outlived its bootstrap"
-    assert out["teardown"]["root_exists"] is False
+    assert out["teardown"]["root_exists"] is False and out["teardown"]["private_exists"] is False
+    assert out["teardown"]["clean"] is True
+    if source == "ref":
+        assert runtime_seen == {"marker": True, "readme": False}, "the root's runtime is not the ref's files"
+        assert out["runtime"] == {"kind": "ref", "ref": "HEAD", "sha": sha, "repo": str(repo)}
+    else:
+        assert runtime_seen == {"marker": False, "readme": False}
+        assert out["runtime"]["kind"] == "live"
+
+
+@pytest.mark.parametrize("ref", ["-c", "HEAD..x", "a b", "--output=x", ""])
+def test_start_refuses_a_ref_that_is_not_a_plain_name_before_making_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ref: str
+) -> None:
+    """`--from-ref` goes to git as an argument: an option-looking or range ref is refused, nothing is created."""
+    lb = _load()
+    _start_rig(tmp_path, monkeypatch, lb)
+    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(subprocess.run, lambda argv, path: pytest.fail("ran")))
+    before = sorted(os.listdir(lb.SANDBOXES))
+    assert _run_start(lb, ["start", "--run-id", "lbsbx-unit-ref", f"--from-ref={ref}"], lb.SANDBOXES / "x") in (
+        "refused",
+        lb.EXIT_REFUSED,
+    )
+    assert sorted(os.listdir(lb.SANDBOXES)) == before
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
@@ -2343,7 +2493,7 @@ def test_restart_runs_lb_restart_isolated_from_a_planted_pythonpath(
     assert not ran.exists(), "a planted sitecustomize.py ran inside lb-restart"
 
 
-# ------------------------------------------------ lbsb-5 fix round (lbsb-4 review, live-service-safety)
+# ------------------------------------------------ sys-lb-sandbox-5 fix round (lbsb-5 review: M1-M4, P1, custody)
 
 
 def _fake_live_file(tmp_path: Path) -> Path:
@@ -2354,134 +2504,228 @@ def _fake_live_file(tmp_path: Path) -> Path:
     return live
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="launchd and st_birthtime are macOS")
-@pytest.mark.parametrize("attack", ["planted-at-the-old-name", "renamed-over-the-job-file", "none"])
-def test_bootstrap_job_never_deletes_a_live_file_renamed_into_its_private_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attack: str
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, Seatbelt and launchd are macOS")
+@pytest.mark.parametrize("attack", ["renamed-over-the-job-file", "live-dir-at-the-staging-name", "none"])
+def test_launchd_staging_never_deletes_or_chmods_live_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, attack: str
 ) -> None:
-    """lbsb-4 review (lb-sandbox:2340, 2350 at 8c4099b6): bootstrap_job unlinked the deterministic name
-    .launchd/<label>.plist before its O_EXCL create, so single-link live state/front.json renamed there was
-    deleted; cleanup unlinked whatever held the name after the bootstrap. Each job now gets a fresh private dir
-    and file, nothing preexisting is unlinked, and cleanup removes only the inode it made.
+    """lbsb-5 review M1 (lb-sandbox:2391-2392 at 26d90565): after the job file's identity check, single-link live
+    state/front.json renamed over job.plist was unlinked by the cleanup (its directory was writable again). M3
+    (2355-2357): with <sandboxes>/.launchd renamed aside and a live directory moved into its name before bootstrap,
+    only ownership was checked and the live directory was chmod'ed 0700. The job file now lives in the run's
+    private dir, is renamed aside and checked by descriptor before any unlink, and no shared staging dir is used.
 
-    Integration with real files; only launchctl (the OS edge) is faked: its bootstrap reads the plist it is
-    handed, and the attacker's rename runs while launchd holds the path. none is the control: the private copy
-    is gone once loaded."""
+    Integration through the real `start` (real volume, confined populate); launchd is the faked OS edge.
+    renamed-over-the-job-file: the attacker's rename runs at the cleanup's unlink, aimed at the job file's own name.
+    live-dir-at-...: a live directory sits at the old staging name when start runs. none is the control."""
     lb = _load()
-    sandboxes = tmp_path / "sandboxes"
-    root = sandboxes / "lbsbx-attack"
-    root.mkdir(parents=True)
-    sandboxes.chmod(0o700)
-    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
-    label = "com.agent-lb.drill.sbx-lbsbx-attack-aux"
-    body = {"Label": label, "ProgramArguments": ["/usr/bin/true"]}
+    _start_rig(tmp_path, monkeypatch, lb)
+    run_id = "lbsbx-unit-stage"
+    root = lb.SANDBOXES / run_id
+    label = f"com.agent-lb.drill.sbx-{run_id}"
     live = _fake_live_file(tmp_path)
-    launchd_dir = sandboxes / ".launchd"
-    launchd_dir.mkdir(mode=0o700)
-    if attack == "planted-at-the-old-name":
-        os.rename(live, launchd_dir / f"{label}.plist")
-        live = launchd_dir / f"{label}.plist"
-    handed: list[dict] = []
-    real_run = subprocess.run
+    staging = lb.SANDBOXES / ".launchd"
+    if attack == "live-dir-at-the-staging-name":
+        staging.mkdir()
+        staging.chmod(0o755)
+        os.rename(live, staging / "front.json")
+        live = staging / "front.json"
+    handed: list[Path] = []
+    armed: list[bool] = []
 
-    def launchd(argv, *args, **kwargs):
-        if not argv or argv[0] != "/bin/launchctl":
-            return real_run(argv, *args, **kwargs)
-        assert argv[1] == "bootstrap"
-        path = Path(argv[3])
-        handed.append(plistlib.loads(path.read_bytes()))
-        if attack == "renamed-over-the-job-file":
-            path.parent.chmod(0o700)  # the private dir is 0500 while launchd reads; the attacker undoes it
-            os.rename(live, path)
-            moved.append(path)
+    def bootstrap(argv, path: Path):
+        handed.append(path)
+        if plistlib.loads(path.read_bytes())["Label"] == label:
+            raise _StartStopsHere()
+        (root / "state" / "aux.json").write_text(json.dumps({"ready": True}))
+        armed.append(attack == "renamed-over-the-job-file")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
+    real_unlink = os.unlink
     moved: list[Path] = []
-    monkeypatch.setattr(lb.subprocess, "run", launchd)
-    lb.bootstrap_job(root, body)
-    monkeypatch.setattr(lb.subprocess, "run", real_run)
-    assert handed == [body]
-    if moved:
+
+    def unlink_after_rename(path, *, dir_fd=None):
+        if armed and armed[0] and dir_fd is not None and lb.fd_path(dir_fd) == str(handed[0].parent):
+            armed[0] = False
+            os.rename(live, handed[0])  # the attacker aims at the job file's own name, right before the unlink
+            moved.append(handed[0])
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(subprocess.run, bootstrap))
+    monkeypatch.setattr(lb.os, "unlink", unlink_after_rename)
+    code = _run_start(lb, ["start", "--run-id", run_id, "--from-live"], root)
+    monkeypatch.setattr(lb.os, "unlink", real_unlink)
+    out = json.loads(capsys.readouterr().out)
+    assert code == lb.EXIT_UNHEALTHY and "_StartStopsHere" in out["error"]
+    if attack == "renamed-over-the-job-file":
+        assert moved, "the race point was never reached"
         live = moved[0]
-    left = sorted(p.relative_to(launchd_dir).as_posix() for p in launchd_dir.rglob("*"))
+    if attack != "none":
+        assert live.is_file() and live.read_text() == '{"preferred": 2457}', "start deleted a live file"
+    if attack == "live-dir-at-the-staging-name":
+        assert oct(staging.stat().st_mode & 0o777) == "0o755", "start chmod'ed a live directory"
+        assert sorted(os.listdir(staging)) == ["front.json"], "start wrote into a live directory"
     if attack == "none":
-        assert left == [], "the private copy outlived its bootstrap"
-        return
-    assert live.read_text() == '{"preferred": 2457}', "bootstrap_job deleted a live file"
-    assert live.relative_to(launchd_dir).as_posix() in left
+        assert out["teardown"]["clean"] is True and not any(os.path.lexists(p) for p in handed)
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, st_birthtime and launchd are macOS")
-@pytest.mark.parametrize("swap", ["live-dir-for-new-root", "live-dir-after-record", "live-file-into-root"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="st_birthtime, Seatbelt and launchd are macOS")
+@pytest.mark.parametrize(
+    "swap", ["live-dir-for-new-root", "live-key-into-root", "live-dir-after-publish", "live-file-into-root"]
+)
 def test_a_failed_start_never_adopts_or_empties_live_state_moved_into_its_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, swap: str
 ) -> None:
-    """lbsb-4 review (lb-sandbox:2494, 3641 at 8c4099b6): start took the root's identity by reopening its name
-    after mkdir. Live ~/.agent-lb/state moved into the name in between was chmod'ed and recorded as the root;
-    a non-image file preplanted at the run's image name failed attach_volume, and the failed start's teardown
-    emptied the moved directory. A directory swapped in before the record is now refused (nothing owned or torn
-    down); one swapped in after it fails the recorded identity (no key unlinked, nothing removed); live files
-    moved into the root start made are left, because a root that was never stamped is only rmdir'ed.
+    """lbsb-5 review M4 (lb-sandbox:2501-2511 at 26d90565): acquire_new_root accepted an empty live directory of
+    this user on the same volume, made up to 2 s before the mkdir and moved into the root's name, and chmod'ed and
+    recorded it. M2 (3641): with attach failed, the failed start's cleanup unlinked a live encryption.key moved
+    into data/ of the recorded unmounted root, a key start never made. The root is now made inside the run's
+    private dir and must be born after it; a failed start deletes only what it recorded (no key was made, so
+    none is unlinked, and an unmounted root is only rmdir'ed by its recorded identity).
 
-    Integration through the real `start` with real files and the real image guard; the attacker's moves run
-    right after the root's mkdir (live-dir-for-new-root) or right before attach (the other two)."""
-    import signal as signals
+    Integration through the real `start`; hdiutil is the faked OS edge (its create fails after the attacker's
+    moves, as an attach failure does) and the attacker's moves run at the root's mkdir or at that create.
+    live-dir-after-publish and live-file-into-root are the lbsb-4 regressions, kept."""
+    import time as clock
 
     lb = _load()
-    _, lb_home = _home_layout(tmp_path, monkeypatch, lb)
-    home = lb_home.parent
-    _install_venv(lb_home)
-    (lb.LIVE_RUNTIME / "app").mkdir(parents=True)
-    lb.LIVE_PLIST.parent.mkdir(parents=True)
-    lb.LIVE_PLIST.write_bytes(plistlib.dumps({"EnvironmentVariables": {lb.TOKEN_ENV: FAKE_TOKEN}}))
-    monkeypatch.setattr(lb, "LIVE_VENV", lb.LIVE_RUNTIME / ".venv")
-    _use_bootstrap(lb, home)
+    _start_rig(tmp_path, monkeypatch, lb)
     run_id = "lbsbx-unit-adopt"
     root = lb.SANDBOXES / run_id
-    live = home / "live-state"
+    live = tmp_path / "home" / "live-state"
     (live / "data").mkdir(parents=True)
     (live / "front.json").write_text('{"preferred": 2457}')
     (live / "data" / "encryption.key").write_bytes(b"live key")
-    image = lb.image_for(run_id)
-    image.parent.mkdir(mode=0o700)
-    image.write_bytes(b"not an image")  # attach_volume refuses to remove it, so start fails before any mount
-    real_mkdir, real_attach = os.mkdir, lb.attach_volume
+    empty_live = tmp_path / "home" / "live-empty"
+    empty_live.mkdir()
+    empty_live.chmod(0o755)
+    clock.sleep(0.2)  # the live directory is older than anything start makes, but well within the old 2 s slack
+    real_mkdir, real_run = os.mkdir, subprocess.run
+    placed: list[Path] = []
 
     def mkdir_then_swap(path, mode=0o777, *, dir_fd=None):
         real_mkdir(path, mode, dir_fd=dir_fd)
-        if path == run_id and swap == "live-dir-for-new-root":
-            os.rename(root, root.parent / "aside")
-            os.rename(live, root)
+        if swap == "live-dir-for-new-root" and dir_fd is not None and path in (run_id, "root") and not placed:
+            parent = Path(lb.fd_path(dir_fd))
+            os.rename(parent / path, parent / "aside")
+            os.rename(empty_live, parent / path)
+            placed.append(parent / path)
 
-    def swap_then_attach(path: Path, rid: str) -> None:
-        if swap == "live-dir-after-record":
-            os.rename(root, root.parent / "aside")
-            os.rename(live, root)
-        elif swap == "live-file-into-root":
-            os.rename(live / "front.json", root / "front.json")
-        real_attach(path, rid)
+    def hdiutil(argv, *args, **kwargs):
+        if not argv or argv[0] != "/usr/bin/hdiutil":
+            return real_run(argv, *args, **kwargs)
+        if argv[1] == "create":
+            if swap == "live-key-into-root":
+                os.rename(live / "data", root / "data")
+            elif swap == "live-dir-after-publish":
+                os.rename(root, root.parent / "aside")
+                os.rename(live, root)
+            elif swap == "live-file-into-root":
+                os.rename(live / "front.json", root / "front.json")
+        return subprocess.CompletedProcess(argv, 1, b"", b"")  # the image is never made: attach fails
 
     monkeypatch.setattr(lb.os, "mkdir", mkdir_then_swap)
-    monkeypatch.setattr(lb, "attach_volume", swap_then_attach)
-    handlers = {sig: signals.getsignal(sig) for sig in (signals.SIGTERM, signals.SIGINT, signals.SIGHUP)}
-    args = lb.build_parser().parse_args(["start", "--run-id", run_id, "--from-live"])
-    try:
-        code: int | str = lb.cmd_start(args)
-    except lb.Refused:
-        code = "refused"
-    finally:
-        for sig, handler in handlers.items():
-            signals.signal(sig, handler)
-        monkeypatch.setattr(lb.os, "mkdir", real_mkdir)
+    monkeypatch.setattr(lb.subprocess, "run", _fake_launchd(hdiutil, lambda argv, path: pytest.fail("bootstrap")))
+    code = _run_start(lb, ["start", "--run-id", run_id, "--from-live"], root)
+    monkeypatch.setattr(lb.os, "mkdir", real_mkdir)
     out = capsys.readouterr().out
-    assert (root / "front.json").read_text() == '{"preferred": 2457}', "the failed start deleted live state"
-    if swap == "live-file-into-root":
-        assert code == lb.EXIT_UNHEALTHY and json.loads(out)["teardown"]["volume"]["root_removed"] is False
-        return
-    assert (root / "data" / "encryption.key").read_bytes() == b"live key", "the failed start unlinked a live key"
     if swap == "live-dir-for-new-root":
-        assert code == "refused" and not out, "start owned (and tore down) a directory it did not make"
+        assert placed, "the race point was never reached"
+        assert placed[0].is_dir(), "the failed start deleted a live directory"
+        assert oct(placed[0].stat().st_mode & 0o777) == "0o755", "start chmod'ed live state"
+        assert code in ("refused", lb.EXIT_REFUSED), "start owned a directory it did not make"
+        return
+    teardown = json.loads(out)["teardown"]
+    assert code == lb.EXIT_UNHEALTHY
+    if swap == "live-key-into-root":
+        key = root / "data" / "encryption.key"
+        assert key.is_file() and key.read_bytes() == b"live key", "the failed start unlinked a live key"
+        assert teardown["custody"]["key_unlinked"] == "never created"
+    elif swap == "live-dir-after-publish":
+        assert (root / "front.json").read_text() == '{"preferred": 2457}', "the failed start deleted live state"
+        assert (root / "data" / "encryption.key").read_bytes() == b"live key"
     else:
-        teardown = json.loads(out)["teardown"]
-        assert code == lb.EXIT_UNHEALTHY
-        assert teardown["custody"]["key_unlinked"] is False and teardown["volume"]["root_removed"] is False
+        assert (root / "front.json").read_text() == '{"preferred": 2457}', "the failed start deleted live state"
+    assert teardown["volume"]["root_removed"] is False and teardown["clean"] is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="launchctl is macOS")
+def test_no_code_path_prints_a_live_launchd_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted_root: Path):
+    """Custody floor (lbsb-5 review FIRST, lb-sandbox:1086, 1098, 2408 at 26d90565): `launchctl print` of the live
+    agent-lb jobs (start --from-live's live identity, label checks) carried their whole environment, the federation
+    token included, into lb-sandbox. Live jobs are read only from the bare `launchctl list` table; print is refused
+    for any job but a sandbox's own, at the one place lb-sandbox runs commands.
+
+    launchctl is the faked OS edge: list shows the live jobs and the run's own, print answers with an environment
+    holding a token. live_identity, the label checks and a whole teardown run through it."""
+    lb = _load()
+    label = lb.labels_for(mounted_root.name)[0]
+    table = f"PID\tStatus\tLabel\n4242\t0\t{lb.LIVE_LABEL}\n4343\t0\t{lb.LIVE_FRONT_LABEL}\n-\t0\t{label}\n"
+    seen: list[list[str]] = []
+    real_run = subprocess.run
+
+    def launchctl(argv, *args, **kwargs):
+        if not argv or os.path.basename(str(argv[0])) != "launchctl":
+            return real_run(argv, *args, **kwargs)
+        seen.append([str(a) for a in argv])
+        if argv[1] == "list":
+            return subprocess.CompletedProcess(argv, 0, table, "")
+        if argv[1] == "print":
+            env = f"\tpid = 4242\n\tenvironment = {{\n\t\t{lb.TOKEN_ENV} => {FAKE_TOKEN}\n\t}}\n"
+            return subprocess.CompletedProcess(argv, 0, env, "")
+        return subprocess.CompletedProcess(argv, 113, "", "")
+
+    monkeypatch.setattr(lb.subprocess, "run", launchctl)
+    live = lb.live_identity()
+    assert (live["primary_pid"], live["front_pid"]) == (4242, 4343)
+    assert lb.label_loaded(lb.LIVE_LABEL) and not lb.label_loaded("com.aneyman.agent-lb-nothing")
+    assert [argv for argv in seen if argv[1] == "print"] == [], "live identity printed a live job"
+    root = _teardown_fixture(tmp_path, monkeypatch, lb, mounted_root)
+    result = lb.teardown(root.name, None)
+    printed = [argv[2] for argv in seen if argv[1] == "print"]
+    assert printed == [f"gui/{os.getuid()}/{label}"], f"launchctl print reached {printed}"
+    assert result["bootout"][label].startswith("refused")  # the printed job does not run this root: left alone
+    with pytest.raises(lb.Refused):
+        lb.run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{lb.LIVE_LABEL}"])
+    with pytest.raises(lb.Refused):
+        lb.own_job_print(lb.LIVE_LABEL, root.name)
+    assert [argv for argv in seen if argv[1] == "print" and lb.LIVE_LABEL in argv[2]] == []
+
+
+@pytest.mark.parametrize("shift", [0, 1, 2])
+@pytest.mark.parametrize("wrap", ["mime", "crlf-indented"])
+def test_scan_and_export_find_a_token_in_base64_wrapped_onto_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shift: int, wrap: str
+) -> None:
+    """lbsb-5 review P1 (lb-sandbox:1546, 2174 at 26d90565): the synthetic 72-byte token, base64-encoded with
+    base64.encodebytes (MIME: 76-character lines) into <root>/logs/mime-token.log, was not found: the scan said
+    found=false, complete=true, and the export gate copied all 98 encoded bytes. The plaintext patterns needed
+    contiguous bytes, and base64 runs were only decoded to look for keyed ciphertext.
+
+    The detector is a pure algorithm with many edge cases (byte alignment, line endings, read boundaries), so it is
+    driven directly here; the scan and the export run over real files. Every read size from 1 byte up must find
+    it: a wrapped encoding spans more bytes than the encoded pattern."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    (root / "logs").mkdir(parents=True)
+    root.parent.chmod(0o700)
+    monkeypatch.setattr(lb, "SANDBOXES", root.parent)
+    encoded = base64.encodebytes(b"\0" * shift + FAKE_TOKEN.encode())
+    if wrap == "crlf-indented":
+        encoded = encoded.replace(b"\n", b"\r\n  ")
+    blob = b"INFO request body follows\n" + encoded + b"INFO done\n"
+    assert FAKE_TOKEN.encode() not in blob and b"\n" in encoded.strip()
+    (root / "logs" / "mime-token.log").write_bytes(blob)
+    scanned = lb.scan_paths([root], [FAKE_TOKEN], root=root)
+    assert (scanned["found"], scanned["complete"]) == (True, True)
+    assert scanned["hits"] == [os.path.join(os.path.realpath(root), "logs", "mime-token.log")]
+    detector = lb.Detector([FAKE_TOKEN])
+    for chunk in (1, 2, 7, 64, 77, 97, len(blob)):
+        reader = iter([blob[i : i + chunk] for i in range(0, len(blob), chunk)] + [b""])
+        assert lb.scan_stream(lambda n: next(reader), detector, chunk=chunk)[0], f"missed at read size {chunk}"
+    export = tmp_path / "export"
+    with pytest.raises(lb.LeakFound):
+        lb.export_logs(root, export, scanned["_files"], detector)
+    assert not (export / "mime-token.log").exists(), "the export gate kept a copy holding the token"
+    clean = base64.encodebytes(os.urandom(300))  # control: wrapped base64 with no token in it is not a hit
+    assert not detector.hit(b"x\n" + clean)

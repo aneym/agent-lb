@@ -1018,3 +1018,26 @@ def test_a_value_with_a_line_break_cannot_pass_for_launchd_structure(tmp_path: P
     bad["EnvironmentVariables"]["AGENT_LB_X"] = "x" + forged
     with pytest.raises(lb.SandboxRefused, match="control character"):
         lb.check_sandbox_plist(bad, config.parent, lb.LABEL, lb.PRIMARY_PORT)
+
+
+def test_a_sandbox_restart_never_prints_a_live_launchd_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Custody floor (lbsb-5 review FIRST): `launchctl print` shows a job's whole environment, and the live
+    agent-lb's holds its federation token. With --sandbox, lb-restart prints only the sandbox's own label; a live
+    label is refused before launchctl runs. launchctl is the faked OS edge (it records what it is asked)."""
+    lb = _load()
+    _apply(lb, _built_sandbox(tmp_path), tmp_path)
+    asked: list[list[str]] = []
+
+    def launchctl(argv, *args, **kwargs):
+        asked.append([str(a) for a in argv])
+        return subprocess.CompletedProcess(argv, 0, "\tpid = 4242\n", "")
+
+    monkeypatch.setattr(lb.subprocess, "run", launchctl)
+    for label in ("com.aneyman.agent-lb", "com.aneyman.agent-lb-front"):
+        with pytest.raises(lb.SandboxRefused):
+            lb.launchd_pid(label)
+        with pytest.raises(lb.SandboxRefused):
+            lb.job_loaded(label)
+    assert asked == [], "launchctl was asked to print a live job"
+    assert lb.launchd_pid(lb.LABEL) == 4242  # control: the sandbox's own job is printed
+    assert asked == [["launchctl", "print", f"gui/{os.getuid()}/{lb.LABEL}"]]

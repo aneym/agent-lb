@@ -150,16 +150,52 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 
 ### Requirement: launchd loads only the jobs lb-sandbox made, and lb-restart kickstarts only that job
 
-`start` MUST hand launchd each sandbox job from bytes it made itself, through a private file (`O_EXCL`, 0600) in a fresh directory (mkdir, random name, 0500 while launchd reads it) under `<sandboxes>/.launchd` that no confined process can write; it MUST NOT unlink any name it did not make there, and cleanup MUST empty the file through its own descriptor and unlink the name only while it is still that inode; it MUST NOT bootstrap a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
+`start` MUST hand launchd each sandbox job from bytes it made itself, through a private file (`O_EXCL`, 0600, random name) in the run's private directory that no confined process can write; cleanup MUST empty the file through its own descriptor and delete it only through the recorded-identity removal below; it MUST NOT bootstrap a plist under the root, which a running aux or front could have rewritten. Before a kickstart, `lb-restart --sandbox` MUST compare the loaded job (`launchctl print`) with its checked plist whole: program, every argument, the environment block (less the keys launchd adds), the working directory and every stream path, and MUST refuse a `DYLD_*` variable inherited from the domain or a print it cannot parse unambiguously. Every interpreter lb-sandbox or lb-restart starts for a sandbox (the command re-exec, `restart`'s lb-restart, the reaper) MUST run with `-I` and without `PYTHON*` or `DYLD_*` variables.
 
 #### Scenario: Aux rewrites the primary plist before the primary loads
 - **WHEN** the aux job, started first, rewrites `<root>/launchd/<label>.plist` to another program
 - **THEN** launchd still loads the primary job start made, from a file outside every root
 
-#### Scenario: Live file renamed into the launchd staging dir
-- **WHEN** a single-link live file is renamed to `.launchd/<label>.plist` before a bootstrap, or over the private job file while launchd reads it
-- **THEN** the live file keeps its name's inode and bytes; only the file start made loses its bytes
+#### Scenario: Live file renamed over the job file
+- **WHEN** a single-link live file is renamed over the private job file while launchd reads it, or a live directory sits at a staging name
+- **THEN** the live file or directory keeps its name, inode, bytes and mode; only the file start made loses its bytes
 
 #### Scenario: Hostile job loaded, plist restored
 - **WHEN** the sandbox label was loaded with the expected argv plus `DYLD_INSERT_LIBRARIES` or a stderr path into live state, and the plist on disk was then restored
 - **THEN** `lb-restart --sandbox` exits 2 before any kickstart
+
+### Requirement: lb-sandbox creates, chmods and deletes only inodes it recorded, inside a private directory
+
+Every path `start` creates MUST live under a private directory it makes with an unpredictable name (`.lbsbx.<run hash>.<32 random hex>`, 0700) inside the pinned sandboxes dir: the record (`ids.jsonl`, `O_EXCL`), the volume image, the job files and the staged mountpoint, which is published to `<sandboxes>/<run-id>` with an exclusive rename (`renameatx_np RENAME_EXCL` on macOS, `renameat2 RENAME_NOREPLACE` elsewhere). Each object's identity (device, inode, birth time) MUST be recorded when it is made, and chmod and stat MUST go through its own descriptor (`O_NOFOLLOW`, `O_DIRECTORY` for directories). Deletion MUST touch only a recorded inode: the name is renamed exclusively into the private directory, opened there, compared with its record, emptied through its descriptor (files), re-checked by name and only then unlinked or rmdir'd; anything that does not match is renamed back and left. The store key MUST be unlinked only on the run's own recorded volume, which no live file can reach by rename. A failed start MUST delete only what that start recorded. macOS has no unlink by descriptor; the remaining check-then-unlink window is accepted only inside the 0700 private directory with the inode re-verified by descriptor just before the unlink.
+
+#### Scenario: Live directory created at the root name during start
+- **WHEN** a live empty directory takes `<sandboxes>/<run-id>` before the exclusive publish
+- **THEN** start exits non-zero and the live directory keeps its name, inode and mode
+
+#### Scenario: Live key moved into an unmounted root's data dir
+- **WHEN** a live `encryption.key` is renamed into `<root>/data/` and the start then fails
+- **THEN** the live key keeps its inode and bytes; only the run's own recorded objects are removed
+
+### Requirement: No code path prints a live launchd job
+
+`lb-sandbox`, `lb-restart --sandbox` and `lb-sandbox-check` MUST read the pid and loaded state of a live agent-lb job only from the `launchctl list` table (pid, status, label), never `launchctl print` of a live label, whose output can carry the job's environment. Each script MUST refuse, before exec, a `launchctl print` of any label that is not the sandbox's own (`com.agent-lb.drill.sbx-` prefix).
+
+#### Scenario: Live identity during start from live
+- **WHEN** `start --from-live` or the check records the live service's pids
+- **THEN** only `launchctl list` runs against the live labels
+
+### Requirement: Scans find a token in line-wrapped base64
+
+Every file scan and the log export MUST report a secret whose base64 form is wrapped onto lines (MIME 76-column, CRLF, indented continuation), at any byte offset and across read boundaries.
+
+#### Scenario: MIME-wrapped token in exported logs
+- **WHEN** a log holds the base64 of a token wrapped at 76 columns
+- **THEN** `scan` reports it and the export removes the copy
+
+### Requirement: A sandbox can run code from a git ref
+
+`start --from-ref <ref> [--repo DIR]` MUST take the runtime code (`app`, `config`, `scripts`) from that commit as a clean tree (`git archive`), never from a working tree, and accounts from live as `--from-live` does. A ref that is not a plain name or does not resolve to a commit MUST be refused before anything is made. `start` output and the check's `result.json` name the runtime source.
+
+#### Scenario: Start from a branch
+- **WHEN** `start --run-id R --from-ref feature-x` runs
+- **THEN** `<root>/runtime` holds that commit's tree and `runtime.ref` names its commit sha

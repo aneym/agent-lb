@@ -75,3 +75,11 @@
 - [x] `start` takes the root identity through a descriptor checked to be the directory its mkdir made (owner, volume, empty, link count, birth time) before any chmod or record; a swapped directory is refused and nothing is owned or torn down.
 - [x] A failed start's teardown only rmdir's a never-stamped root, and `unlink_key` requires the root to be its own volume or the recorded directory.
 - [x] Fake-live regressions for each: a live file planted at the old plist name or renamed over the job file, and live state moved into the root's name before the record, after it, or into the root itself; each fails on 8c4099b6 for the reason it names.
+
+## 11. sys-lb-sandbox-5 fix round (build lead amendment, 2026-10-07 19:10 ET)
+
+- [x] Credential custody floor: `launchd_pid`, `label_loaded` and `lb-sandbox-check`'s live identity read the `launchctl list` table, never `launchctl print` of a live label; `lb-sandbox` and `lb-restart` refuse a print of any label outside the sandbox's own before exec. Regressions in all three scripts' tests fail on the pre-fix code.
+- [x] Structural: every created path lives in a private 0700 directory with an unpredictable name; identities (dev, ino, birth) are recorded in `ids.jsonl`; chmod and stat by descriptor; deletion only through recorded-identity removal; the root is published by exclusive rename; a failed start deletes only what it recorded. Closes M1 (live file renamed over the job file), M2 (live key moved into an unmounted root), M3 (staging dir swapped with a live dir then chmoded) and M4 (live empty dir accepted as the new root) as a class; each has a fake-live regression that fails on 26d90565. The accepted residual (no unlink by descriptor on macOS) is documented in `lb-sandbox` and the spec.
+- [x] P1: scans and the export find the synthetic token in MIME and CRLF-indented wrapped base64 at shifts 0-2 and across read boundaries.
+- [x] `start --from-ref <ref>`: runtime from a clean `git archive` tree of the ref, accounts from live; the check takes `--from-ref`.
+- [ ] Deferred (unchanged): an agent-lb store read guard or service identity, live and sandbox alike.

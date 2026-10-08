@@ -845,8 +845,16 @@ def established(port: int) -> int:
     return sum(1 for line in out.splitlines()[1:] if f":{port}->" in line)
 
 
+def launchctl_print(label: str) -> subprocess.CompletedProcess:
+    """`launchctl print` of one job. With --sandbox only the sandbox's own label: print shows a job's whole
+    environment, and the live agent-lb's holds its federation token."""
+    if SANDBOX_ROOT is not None and label != LABEL:
+        raise SandboxRefused(f"launchctl print of {label} refused in a sandbox restart (only {LABEL})")
+    return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True, text=True)
+
+
 def launchd_pid(label: str) -> int | None:
-    out = subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True, text=True).stdout
+    out = launchctl_print(label).stdout
     for line in out.splitlines():
         line = line.strip()
         if line.startswith("pid = "):
@@ -1230,7 +1238,7 @@ def reap(pid: int, deadline_s: float) -> int:
 
 
 def job_loaded(label: str) -> bool:
-    return subprocess.run(["launchctl", "print", f"gui/{UID}/{label}"], capture_output=True).returncode == 0
+    return launchctl_print(label).returncode == 0
 
 
 # The blocks of `launchctl print` that hold environment entries (`KEY => value`), and the keys launchd itself adds
@@ -1330,7 +1338,7 @@ def check_loaded_sandbox_job() -> None:
     check_sandbox_interpreter(python, SANDBOX_ROOT)
     check_sandbox_bootstrap(SANDBOX_ROOT)
     plist = read_plist()  # checked by check_sandbox_plist on the way
-    out = subprocess.run(["launchctl", "print", f"gui/{UID}/{LABEL}"], capture_output=True, text=True).stdout
+    out = launchctl_print(LABEL).stdout
     want = [*sandbox_program(SANDBOX_ROOT), "--host", "127.0.0.1", "--port", str(PRIMARY_PORT)]
     check_loaded_job_print(out, plist, python, want)
 

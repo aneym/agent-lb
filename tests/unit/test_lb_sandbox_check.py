@@ -260,3 +260,25 @@ def test_a_live_restart_by_another_lane_during_the_run_is_infra_error_naming_it(
     assert check.run_verdict([ok, deferred], None, detail) == "infra_error"
     assert check.run_verdict([ok, {**ok, "result": "fail"}, deferred], None, detail) == "fail"
     assert check.run_verdict([ok], None, None) == "pass"
+
+
+def test_live_identity_reads_the_launchd_table_never_a_job_print(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Custody floor (lbsb-5 review FIRST): the check's live identity used `launchctl print` of the live jobs, which
+    shows their whole environment (the federation token included). It reads pids from the bare `launchctl list`
+    table. launchctl, lsof and the front state are the faked edge; a print would answer with a token."""
+    check = _load()
+    table = f"PID\tStatus\tLabel\n4242\t0\t{check.LIVE_LABEL}\n4343\t0\t{check.LIVE_FRONT_LABEL}\n"
+    asked: list[list[str]] = []
+
+    def edge(argv, *args, **kwargs):
+        asked.append([str(a) for a in argv])
+        if list(argv[:2]) == ["/bin/launchctl", "list"]:
+            return subprocess.CompletedProcess(argv, 0, table, "")
+        if "print" in argv:
+            return subprocess.CompletedProcess(argv, 0, "\tpid = 1\n\tAGENT_LB_FEDERATION_TOKEN => x\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(check.subprocess, "run", edge)
+    live = check.live_identity()
+    assert (live["primary_pid"], live["front_pid"]) == (4242, 4343)
+    assert [argv for argv in asked if "print" in argv] == []

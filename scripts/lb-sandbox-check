@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lb-sandbox-check: the live check for scripts/lb-sandbox (Studio only).
 
-    lb-sandbox-check --out DIR [--lb-sandbox ~/.agent-lb/bin/lb-sandbox]
+    lb-sandbox-check --out DIR [--lb-sandbox ~/.agent-lb/bin/lb-sandbox] [--from-ref REF]
 
 Runs the installed lb-sandbox end to end: start a sandbox that mirrors the live
 pool, send one tiny Anthropic and one tiny Codex turn straight to its front,
@@ -105,10 +105,12 @@ def sh(*argv: str) -> str:
 
 
 def launchd_pid(label: str) -> int | None:
-    for line in sh("/bin/launchctl", "print", f"gui/{os.getuid()}/{label}").splitlines():
-        line = line.strip()
-        if line.startswith("pid = "):
-            return int(line.split("=", 1)[1])
+    """A job's pid from the bare `launchctl list` table (pid, status, label). Never `launchctl print`: it shows the
+    job's whole environment, and the live agent-lb's holds its federation token."""
+    for line in sh("/bin/launchctl", "list").splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[2] == label:
+            return int(parts[0]) if parts[0].isdigit() else None
     return None
 
 
@@ -535,15 +537,16 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
     )
 
     # 2. start
-    rc, start, start_out = c.sb("start", "start", "--from-live", "--run-id", run_id, timeout=300)
+    source = ["--from-ref", args.from_ref] if args.from_ref else ["--from-live"]
+    rc, start, start_out = c.sb("start", "start", *source, "--run-id", run_id, timeout=300)
     c.started = rc == 0 or (HOME / ".agent-lb" / "sandboxes" / run_id).exists()
     if not c.step(
         "start",
         rc == 0 and bool(start.get("front_port")),
         f"lb-sandbox start exit {rc}; front {start.get('front_port')}, primary {start.get('primary_port')}, "
         f"standby {start.get('standby_port')}, gate {start.get('gate_port')}, edges {start.get('edge_ports')}; "
-        f"usable accounts {start.get('accounts_per_vendor')}; ready in {start.get('ready_s')} s"
-        + (f"; error {start.get('error')}" if rc else ""),
+        f"usable accounts {start.get('accounts_per_vendor')}; ready in {start.get('ready_s')} s; "
+        f"runtime {start.get('runtime')}" + (f"; error {start.get('error')}" if rc else ""),
         [str(start_out), str(start_out.with_suffix(".err"))],
     ):
         c.infra = f"sandbox never got healthy: {start.get('error')}"
@@ -923,6 +926,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--lb-sandbox", type=Path, default=HOME / ".agent-lb" / "bin" / "lb-sandbox")
+    parser.add_argument(
+        "--from-ref",
+        metavar="REF",
+        help="run the sandbox on this agent-lb git ref's code (lb-sandbox start --from-ref); default: live runtime",
+    )
     args = parser.parse_args()
     out = args.out.expanduser().resolve()
     refused = claim_out(out)
@@ -970,6 +978,7 @@ def main() -> int:
         "steps": steps,
         "unverified": c.unverified,
         "lb_sandbox": str(args.lb_sandbox),
+        "runtime_ref": args.from_ref,
     }
     (out / "result.json").write_text(json.dumps(result, indent=1) + "\n")
     print(json.dumps({k: result[k] for k in ("result", "run_id", "summary")}, indent=1))

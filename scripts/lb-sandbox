@@ -7,7 +7,8 @@ reading the live federation token, mirroring accounts, forwarding upstream
 Authorization headers, injecting account faults and scanning for leaks. A caller
 gets ports, account ids, 12-character hashes and counts, never a token.
 
-    lb-sandbox start --run-id R --from-live [--port P] [--min-accounts N] [--transport http] [--json]
+    lb-sandbox start --run-id R (--from-live | --from-ref REF [--repo DIR]) [--port P] [--min-accounts N]
+                     [--transport http] [--json]
     lb-sandbox status --run-id R [--json]
     lb-sandbox client-env --run-id R --vendor claude|codex [--json]
     lb-sandbox fault --run-id R --edge anthropic|openai (--arm account_429|cut_after_bytes:N|hold_stream:S | --clear)
@@ -17,10 +18,16 @@ gets ports, account ids, 12-character hashes and counts, never a token.
     lb-sandbox gc [--older-than 3600] [--json]
 
 Layout: root ~/.agent-lb/sandboxes/R/ is its own volume (an encrypted sparse
-image under ~/.agent-lb/sandboxes/.images, mounted at the root, its passphrase
-never stored) and holds a copy of the installed runtime (app, config, scripts;
-the venv is a symlink), its own SQLite store and key, logs and state. Two
-launchd jobs run it:
+image, its passphrase never stored, mounted at the root) and holds a copy of
+the runtime code (app, config, scripts: the installed live runtime's, or with
+--from-ref the files of one agent-lb commit; the venv is a symlink), its own
+SQLite store and key, logs and state. Everything lb-sandbox makes off that
+volume (the image, the launchd job files, the identity record, the mountpoint
+before it is published at R) lives in the run's private dir
+~/.agent-lb/sandboxes/.lbsbx.<hash>.<random> (0700, held by descriptor), and a
+delete or chmod touches only an inode recorded there when it was made. Live
+jobs are read only from the bare `launchctl list` table, never `launchctl
+print` (which shows a job's environment). Two launchd jobs run it:
 - com.agent-lb.drill.sbx-R: `<venv python> -I <installed lb-sandbox> _serve <root>` (nothing under the root
   runs before confinement: the script is the installed file and -I ignores PYTHONPATH), which reads the live
   federation token from the live plist, writes it into a pipe and execs
@@ -436,6 +443,287 @@ def fd_path(fd: int) -> str:
     return os.readlink(f"/proc/self/fd/{fd}")
 
 
+# ---------------------------------------------------------------- the run's private dir
+# Everything lb-sandbox itself creates, chmods or deletes off the run's own volume lives in one private dir per
+# run: made 0700 under an unpredictable name (as mkdtemp does) inside the pinned sandboxes dir and held by
+# descriptor. It holds the run's identity record (ids.jsonl), the encrypted image, the launchd job files, and the
+# root's mountpoint until start publishes it at <sandboxes>/R with an exclusive rename (renameatx_np RENAME_EXCL).
+# Every operation goes through directory descriptors opened with O_NOFOLLOW | O_DIRECTORY; a chmod goes to the
+# descriptor of what was just made, and a delete touches only an inode whose (device, inode, birth time) was
+# recorded when this code made it: the name is first renamed aside inside the private dir, the inode there is
+# checked by descriptor, and anything else goes back under its name. A failed start deletes only what it recorded.
+#
+# Residual, accepted (macOS has no unlink or rmdir by descriptor): between the last check and the unlink of the
+# random aside name, a process of this same user that knows the private dir's random name could rename another
+# file onto that aside name. The window exists only inside the private 0700 dir (or, for the store key, inside the
+# run's own volume, which no live file can reach: a rename or a hard link cannot cross volumes), and the inode is
+# re-checked by name immediately before the unlink. The private dir's own rmdir has the same window, in the
+# sandboxes dir, and removes only an empty directory.
+
+PRIVATE_PREFIX = ".lbsbx."
+PRIVATE_NAME_RE = re.compile(r"^\.lbsbx\.[0-9a-f]{24}\.[0-9a-f]{32}$")
+RECORD_NAME = "ids.jsonl"
+IMAGE_NAME = "volume.sparseimage"
+ROOT_STAGE = "root"  # the mountpoint's name in the private dir before start publishes it at <sandboxes>/R
+RENAME_EXCL = 0x00000004  # <stdio.h>, renameatx_np: fail with EEXIST instead of replacing the destination
+RENAME_NOREPLACE = 0x00000001  # <linux/fs.h>, renameat2: the same, off macOS (unit tests only)
+# A directory this code makes is born no earlier than the clock read just before its mkdir (measured on APFS:
+# never earlier at all); the slack only absorbs float rounding. A directory made before that moment is not ours.
+BIRTH_SLACK_S = 0.01
+
+
+def identity(info: os.stat_result) -> list[int]:
+    """(device, inode, birth time in ns): an inode, told apart from a later one that reuses its number."""
+    birth = getattr(info, "st_birthtime_ns", None)
+    if birth is None:
+        seconds = getattr(info, "st_birthtime", None)
+        birth = round(seconds * 1e9) if seconds is not None else 0
+    return [info.st_dev, info.st_ino, int(birth)]
+
+
+def born(info: os.stat_result) -> float:
+    return getattr(info, "st_birthtime", info.st_ctime)
+
+
+def rename_excl(src_dir: int, src: str, dst_dir: int, dst: str) -> None:
+    """rename src (in src_dir) to dst (in dst_dir), failing with FileExistsError instead of replacing dst."""
+    import ctypes
+
+    if sys.platform == "darwin":
+        fn = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True).renameatx_np
+        flags = RENAME_EXCL
+    else:
+        fn = ctypes.CDLL(None, use_errno=True).renameat2
+        flags = RENAME_NOREPLACE
+    fn.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    fn.restype = ctypes.c_int
+    if fn(src_dir, os.fsencode(src), dst_dir, os.fsencode(dst), flags) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), dst)
+
+
+def private_prefix(run_id: str) -> str:
+    """The private dir's name prefix for a run: a hash, so no command line (hdiutil's helpers) carries the run id."""
+    return f"{PRIVATE_PREFIX}{hashlib.sha256(check_run_id(run_id).encode()).hexdigest()[:24]}."
+
+
+def fresh_dir(fd: int, parent_fd: int, made_after: float, what: str) -> os.stat_result:
+    """fstat of the directory this code just made: this user's, on its parent's volume, empty (two links) and born
+    no earlier than made_after. Anything else (a directory moved into the name between the mkdir and the open) is
+    refused, never chmod'ed, recorded or deleted."""
+    info = os.fstat(fd)
+    with os.scandir(fd) as listing:
+        empty = next(iter(listing), None) is None
+    if not (
+        stat.S_ISDIR(info.st_mode)
+        and info.st_uid == os.getuid()
+        and info.st_dev == os.fstat(parent_fd).st_dev
+        and info.st_nlink == 2
+        and empty
+        and born(info) >= made_after - BIRTH_SLACK_S
+    ):
+        raise Refused(f"the {what} start just made was swapped before use; nothing of it is owned")
+    return info
+
+
+class Private:
+    """A run's private dir held by descriptor, and what its record says the run made there and on its volume.
+
+    ids: "private", "root", "image", "key" -> identity; "volume" -> {"st_dev", "device"}; "jobs" -> [{name, id}]."""
+
+    def __init__(self, sb: int, name: str, fd: int, ident: list[int], ids: dict, record_id: list[int]) -> None:
+        self.sb, self.name, self.fd, self.ident, self.ids, self.record_id = sb, name, fd, ident, ids, record_id
+        self.record_fd: int | None = None  # start's own append descriptor for ids.jsonl
+
+    def record(self, what: str, value: object) -> None:
+        if self.record_fd is None:
+            raise Refused("only the start that made the private dir records into it")
+        os.write(self.record_fd, (json.dumps({"what": what, "value": value}, sort_keys=True) + "\n").encode())
+        os.fsync(self.record_fd)
+        add_record(self.ids, what, value)
+
+    def close(self) -> None:
+        for fd in (self.record_fd, self.fd):
+            if fd is not None and fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self.record_fd, self.fd = None, -1
+
+
+def add_record(ids: dict, what: str, value: object) -> None:
+    if what == "job":
+        if isinstance(value, dict) and isinstance(value.get("name"), str):
+            ids.setdefault("jobs", []).append(value)
+    elif what in ("private", "root", "image", "key", "volume"):
+        ids.setdefault(what, value)  # the first record of a kind wins: a later line never re-points it
+
+
+def make_private(run_id: str) -> Private:
+    """Make the run's private dir (0700, random name) in the pinned sandboxes dir and its record (O_EXCL, 0600)."""
+    import secrets as secrets_module
+
+    sb = sandboxes_fd()
+    made_after = time.time()
+    name = private_prefix(run_id) + secrets_module.token_hex(16)
+    os.mkdir(name, 0o700, dir_fd=sb)
+    fd = os.open(name, DIR_FLAGS, dir_fd=sb)
+    try:
+        info = fresh_dir(fd, sb, made_after, "private dir")
+        os.fchmod(fd, 0o700)  # through the descriptor of the directory just checked
+        record_fd = os.open(
+            RECORD_NAME, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_APPEND, 0o600, dir_fd=fd
+        )
+    except BaseException:
+        os.close(fd)
+        raise
+    priv = Private(sb, name, fd, identity(info), {}, identity(os.fstat(record_fd)))
+    priv.record_fd = record_fd
+    priv.record("private", priv.ident)
+    return priv
+
+
+def private_names(run_id: str) -> list[str]:
+    prefix = private_prefix(run_id)
+    with os.scandir(sandboxes_fd()) as listing:
+        return sorted(e.name for e in listing if e.name.startswith(prefix) and PRIVATE_NAME_RE.match(e.name))
+
+
+def open_private(run_id: str) -> Private | None:
+    """The run's private dir and its record (None when there is none). Refused when there are two, or the dir is
+    not this user's private directory, or its record is not a single-link file naming this very directory."""
+    names = private_names(run_id)
+    if not names:
+        return None
+    if len(names) > 1:
+        raise Refused(f"run {run_id} has {len(names)} private dirs; refusing to pick one")
+    sb = sandboxes_fd()
+    fd = os.open(names[0], DIR_FLAGS, dir_fd=sb)
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid() or info.st_dev != os.fstat(sb).st_dev or stat.S_IMODE(info.st_mode) & 0o077:
+            raise Refused(f"the private dir of run {run_id} is not this user's private directory")
+        record = os.open(RECORD_NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        try:
+            rinfo = os.fstat(record)
+            if not stat.S_ISREG(rinfo.st_mode) or rinfo.st_nlink != 1 or rinfo.st_uid != os.getuid():
+                raise Refused(f"the record of run {run_id} is not a private single-link file")
+            data = os.read(record, 1 << 20)
+        finally:
+            os.close(record)
+        ids: dict = {}
+        for line in data.decode(errors="replace").splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(entry, dict):
+                add_record(ids, str(entry.get("what")), entry.get("value"))
+        if ids.get("private") != identity(info):
+            raise Refused(f"the record of run {run_id} names another directory")
+    except BaseException:
+        os.close(fd)
+        raise
+    return Private(sb, names[0], fd, identity(info), ids, identity(rinfo))
+
+
+def remove_recorded(dir_fd: int, name: str, ident: list[int] | None, kind: str, into: int | None = None) -> bool | None:
+    """Delete name in dir_fd only if it is the recorded inode ident (kind "file": a single-link regular file;
+    "dir": an empty directory). None: nothing there. True: removed. False: left in place.
+
+    The name is renamed aside first, exclusively, to a random name inside into (the run's private dir; dir_fd when
+    None), and checked there by descriptor: a file swapped into the name is never the recorded inode, and goes back
+    under its name. A recorded file is emptied through that descriptor (only that inode loses bytes); its aside
+    name is re-checked right before the unlink (see the residual above)."""
+    import secrets as secrets_module
+
+    stage = dir_fd if into is None else into
+    aside = f".rm.{secrets_module.token_hex(16)}"
+    try:
+        rename_excl(dir_fd, name, stage, aside)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return False
+    removed = False
+    flags = (os.O_RDONLY | os.O_DIRECTORY) if kind == "dir" else os.O_RDWR
+    try:
+        fd = os.open(aside, flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=stage)
+    except OSError:
+        fd = -1
+    if fd >= 0:
+        try:
+            info = os.fstat(fd)
+            shape = stat.S_ISDIR(info.st_mode) if kind == "dir" else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+            ours = ident is not None and shape and identity(info) == list(ident)
+            if ours and kind != "dir":
+                os.ftruncate(fd, 0)
+            if ours and identity(os.stat(aside, dir_fd=stage, follow_symlinks=False)) == list(ident):
+                if kind == "dir":
+                    os.rmdir(aside, dir_fd=stage)  # only an empty directory
+                else:
+                    os.unlink(aside, dir_fd=stage)
+                removed = True
+        except OSError:
+            removed = False
+        finally:
+            os.close(fd)
+    if not removed:
+        try:
+            rename_excl(stage, aside, dir_fd, name)  # back under its own name while that name is free
+        except OSError:
+            pass
+    return removed
+
+
+def remove_private(priv: Private) -> bool:
+    """Remove the private dir once nothing but its record is left in it: the record by its recorded inode, then the
+    directory itself, only while its name in the sandboxes dir is still the recorded inode. True when gone."""
+    try:
+        with os.scandir(priv.fd) as listing:
+            left = sorted(entry.name for entry in listing)
+    except OSError:
+        return False
+    if left not in ([RECORD_NAME], []):
+        return False
+    if left and remove_recorded(priv.fd, RECORD_NAME, priv.record_id, "file") is False:
+        return False
+    try:
+        if identity(os.stat(priv.name, dir_fd=priv.sb, follow_symlinks=False)) != priv.ident:
+            return False
+        os.rmdir(priv.name, dir_fd=priv.sb)  # only an empty directory
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def make_root(root: Path, priv: Private) -> tuple[int, list[int]]:
+    """Make the run's mountpoint inside its private dir, check it is the directory just made, record it, set it 0700
+    through its descriptor and publish it at <sandboxes>/R with an exclusive rename. Returns (descriptor, identity).
+
+    Nothing is ever chmod'ed or recorded through the predictable name R: a directory moved into the stage name
+    between the mkdir and the open was born before the private dir and is refused (fresh_dir), and the publish
+    fails rather than replace anything already at R."""
+    made_after = born(os.fstat(priv.fd))
+    os.mkdir(ROOT_STAGE, 0o700, dir_fd=priv.fd)
+    fd = os.open(ROOT_STAGE, DIR_FLAGS, dir_fd=priv.fd)
+    try:
+        ident = identity(fresh_dir(fd, priv.fd, made_after, "sandbox root"))
+        priv.record("root", ident)
+        os.fchmod(fd, 0o700)
+        try:
+            rename_excl(priv.fd, ROOT_STAGE, priv.sb, Path(root).name)
+        except FileExistsError:
+            raise Refused(f"sandbox root {root} already exists") from None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, ident
+
+
 def root_entry(root: Path) -> str | None:
     """What sits at root's name in the pinned sandboxes dir: "dir", "link", "other" or None (nothing)."""
     root = Path(root)
@@ -720,11 +1008,6 @@ def run_confined(root: Path, action, reads: bool, timeout_s: int = 120):
     raise kind(f"confined step failed: {out.get('error', 'no result')}: {out.get('message', '')}")
 
 
-def image_for(run_id: str) -> Path:
-    """The run's volume image. Named by a hash: no command line (hdiutil's helpers) carries the run id."""
-    return SANDBOXES / ".images" / f"{hashlib.sha256(check_run_id(run_id).encode()).hexdigest()[:24]}.sparseimage"
-
-
 def on_own_volume(root: Path) -> bool:
     """True when root, opened by name in the pinned sandboxes dir with no link followed, is the top of a volume
     other than the sandboxes dir's."""
@@ -796,103 +1079,28 @@ def volume_device(root: Path) -> str | None:
         os.close(fd)
 
 
-def images_dir_fd() -> int:
-    """A descriptor for <sandboxes>/.images, opened by name in the pinned sandboxes dir, created 0700, never a
-    link, this user's own."""
-    sb = sandboxes_fd()
-    try:
-        os.mkdir(".images", 0o700, dir_fd=sb)
-    except FileExistsError:
-        pass
-    fd = os.open(".images", DIR_FLAGS, dir_fd=sb)
-    if os.fstat(fd).st_uid != os.getuid():
-        os.close(fd)
-        raise Confinement("the images dir is not this user's own")
-    os.fchmod(fd, 0o700)
-    return fd
-
-
 def image_exists(run_id: str) -> bool:
-    """Whether the run's image is still there; True when the images dir cannot be reached safely (never "gone"
+    """Whether the run's image is still in its private dir; True when that dir cannot be read safely (never "gone"
     unseen)."""
     try:
-        fd = images_dir_fd()
+        priv = open_private(run_id)
+    except (OSError, Refused):
+        return True
+    if priv is None:
+        return False
+    try:
+        os.stat(IMAGE_NAME, dir_fd=priv.fd, follow_symlinks=False)
+        return True
     except FileNotFoundError:
         return False
     except OSError:
         return True
-    try:
-        os.stat(image_for(run_id).name, dir_fd=fd, follow_symlinks=False)
-        return True
-    except FileNotFoundError:
-        return False
     finally:
-        os.close(fd)
+        priv.close()
 
 
-# What hdiutil writes first in an encrypted image: anything else at an image's name is not one this code made.
+# What hdiutil writes first in an encrypted image: anything else at the image's name is not one this code made.
 IMAGE_MAGIC = b"encrcdsa"
-
-
-def _is_image(fd: int) -> bool:
-    """True when fd is this user's single-link regular file that starts as an encrypted image does."""
-    info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
-        return False
-    return os.pread(fd, len(IMAGE_MAGIC), 0) == IMAGE_MAGIC
-
-
-def remove_image(run_id: str) -> bool:
-    """Unlink the run's image inside the real images dir; True when it is gone.
-
-    The entry is renamed to a private name first, then unlinked only when that removes nothing but a name (a
-    symlink, or a file with another hard link) or the inode there is checked as an image. A live file renamed
-    over the image's name (bin/lb-restart, say), its only name now, is never unlinked: it goes back under that
-    name and the image counts as not removed."""
-    name = image_for(run_id).name
-    try:
-        fd = images_dir_fd()
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    aside = f".{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.rm"
-    try:
-        try:
-            os.rename(name, aside, src_dir_fd=fd, dst_dir_fd=fd)
-        except FileNotFoundError:
-            return True
-        entry = os.stat(aside, dir_fd=fd, follow_symlinks=False)
-        if stat.S_ISLNK(entry.st_mode) or (stat.S_ISREG(entry.st_mode) and entry.st_nlink > 1):
-            os.unlink(aside, dir_fd=fd)  # only this name goes; the link's target or the file's other name stays
-            return True
-        image = -1
-        if stat.S_ISREG(entry.st_mode):
-            try:
-                image = os.open(aside, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
-            except OSError:
-                image = -1  # swapped since the stat, or unreadable: not checked as an image, so not removed
-        try:
-            if image >= 0 and _is_image(image):
-                info = os.fstat(image)
-                if _same_entry(fd, aside, (info.st_dev, info.st_ino)):
-                    os.unlink(aside, dir_fd=fd)
-                    return True
-        finally:
-            if image >= 0:
-                os.close(image)
-        # Not ours: put it back under the image's name (left in place if that name was taken meanwhile), so the
-        # image still counts as present and the teardown is not clean.
-        try:
-            os.stat(name, dir_fd=fd, follow_symlinks=False)
-        except FileNotFoundError:
-            os.rename(aside, name, src_dir_fd=fd, dst_dir_fd=fd)
-        return False
-    except OSError:
-        return False
-    finally:
-        os.close(fd)
-    return True
 
 
 def _in_dir(fd: int):
@@ -907,107 +1115,131 @@ def _in_dir(fd: int):
     return enter
 
 
-def _image_identity(images_fd: int, name: str, made_after: float) -> tuple[int, int]:
-    """(device, inode) of the image hdiutil just made at name in the images dir, opened with no link followed.
+def _image_identity(dir_fd: int, name: str, made_after: float) -> list[int]:
+    """identity() of the image hdiutil just made at name in the private dir, opened with no link followed.
 
     Nothing is changed on it. It must be this user's single-link regular file, private (hdiutil created it under
-    umask 077), born no earlier than the create began, and start as an encrypted image does. A live file renamed
-    over the name after the create (bin/lb-restart, state/front.json) fails these and is refused untouched."""
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=images_fd)
+    umask 077), born no earlier than the create began, and start as an encrypted image does."""
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
             raise Confinement(f"image {name} is not this user's single-link regular file")
         if stat.S_IMODE(info.st_mode) & 0o077:
             raise Confinement(f"image {name} is not private; not the image hdiutil made")
-        born = getattr(info, "st_birthtime", info.st_mtime)
-        if born < made_after - 1 or os.pread(fd, len(IMAGE_MAGIC), 0) != IMAGE_MAGIC:
+        if born(info) < made_after - BIRTH_SLACK_S or os.pread(fd, len(IMAGE_MAGIC), 0) != IMAGE_MAGIC:
             raise Confinement(f"image {name} is not the encrypted image this create made")
-        return info.st_dev, info.st_ino
+        return identity(info)
     finally:
         os.close(fd)
 
 
-def _same_entry(dir_fd: int, name: str, ident: tuple[int, int]) -> bool:
+def _same_entry(dir_fd: int, name: str, ident: list[int]) -> bool:
     try:
         info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
     except OSError:
         return False
-    return stat.S_ISREG(info.st_mode) and (info.st_dev, info.st_ino) == ident
+    return stat.S_ISREG(info.st_mode) and identity(info) == list(ident)
 
 
-def _detach_attached(plist_out: bytes) -> None:
-    """Unmount, by device, whatever one hdiutil attach -plist reported."""
+def _attached_devices(plist_out: bytes) -> list[str]:
     try:
         entities = plistlib.loads(plist_out).get("system-entities", [])
     except Exception:
         entities = []
-    for device in sorted({e["dev-entry"] for e in entities if isinstance(e.get("dev-entry"), str)}, key=len):
+    return sorted({e["dev-entry"] for e in entities if isinstance(e.get("dev-entry"), str)}, key=len)
+
+
+def _detach_attached(plist_out: bytes) -> None:
+    """Unmount, by device, whatever one hdiutil attach -plist reported."""
+    for device in _attached_devices(plist_out):
         subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", device], capture_output=True, timeout=60)
 
 
-def attach_volume(root: Path, run_id: str) -> None:
-    """Create the run's encrypted sparse image and mount it at root (an empty directory start just made).
+def attach_volume(root: Path, run_id: str, priv: Private, root_ident: list[int]) -> None:
+    """Create the run's encrypted sparse image in its private dir and mount it at root (the empty mountpoint start
+    made and published).
 
     The passphrase is random, lives only in this process and goes to hdiutil on stdin, so the image on disk is
     ciphertext: neither the scan of ~/.agent-lb nor a copy of the image finds the store, key or tokens in it.
 
-    hdiutil runs inside the images dir held by descriptor, under umask 077, and gets the image by its bare name.
-    The image is opened with no link followed and must be the private encrypted image this create made
-    (_image_identity); nothing is ever chmod'ed. Its identity is checked again right
-    before attach and after it, and the mount must land on root as reached from the pinned sandboxes dir. An
-    image swapped for a link (to a live helper, say) is refused, never chmod'ed or attached through.
-    """
+    hdiutil runs inside the private dir held by descriptor, under umask 077, and gets the image by its bare name;
+    the image must be the private encrypted image this create made (_image_identity), and its identity is
+    recorded. Right before the attach, the mountpoint must still be the root start recorded; after it, the volume
+    on root (as reached from the pinned sandboxes dir) must be one hdiutil reports for this image. Then the volume's
+    device is recorded: the store key is created, and later unlinked, only on that volume."""
     import secrets as secrets_module
 
-    name = image_for(run_id).name
-    if not remove_image(run_id):
-        raise Unhealthy(f"stale image {name} could not be removed")
-    images = images_dir_fd()
+    passphrase = secrets_module.token_hex(32).encode()
+    made_after = time.time()
+    create = subprocess.run(
+        ["/usr/bin/hdiutil", "create", "-quiet", "-size", VOLUME_SIZE, "-type", "SPARSE", "-fs", "APFS"]
+        + ["-volname", "lb-sandbox", "-encryption", "AES-256", "-stdinpass", IMAGE_NAME],
+        input=passphrase,
+        capture_output=True,
+        timeout=180,
+        check=False,
+        preexec_fn=_in_dir(priv.fd),
+    )
+    if create.returncode != 0:
+        raise Unhealthy(f"hdiutil create failed (exit {create.returncode})")
     try:
-        passphrase = secrets_module.token_hex(32).encode()
-        made_after = time.time()
-        create = subprocess.run(
-            ["/usr/bin/hdiutil", "create", "-quiet", "-size", VOLUME_SIZE, "-type", "SPARSE", "-fs", "APFS"]
-            + ["-volname", "lb-sandbox", "-encryption", "AES-256", "-stdinpass", name],
-            input=passphrase,
-            capture_output=True,
-            timeout=180,
-            check=False,
-            preexec_fn=_in_dir(images),
-        )
-        if create.returncode != 0:
-            raise Unhealthy(f"hdiutil create failed (exit {create.returncode})")
-        try:
-            ident = _image_identity(images, name, made_after)
-        except OSError as exc:
-            raise Refused(f"the new image was swapped before attach ({exc.__class__.__name__}); not attached") from None
-        mountpoint = os.path.join(fd_path(sandboxes_fd(Path(root).parent)), Path(root).name)
-        if not _same_entry(images, name, ident):
-            raise Refused("the new image was swapped before attach; not attached")
-        attach = subprocess.run(
-            ["/usr/bin/hdiutil", "attach", "-plist", "-nobrowse", "-noautoopen", "-owners", "on", "-stdinpass"]
-            + ["-mountpoint", mountpoint, name],
-            input=passphrase,
-            capture_output=True,
-            timeout=120,
-            check=False,
-            preexec_fn=_in_dir(images),
-        )
-        del passphrase
-        if attach.returncode == 0 and not (_same_entry(images, name, ident) and on_own_volume(root)):
-            _detach_attached(attach.stdout)  # mounted, but not our image or not at our root
-            raise Unhealthy("the sandbox volume did not mount our image at the root")
-    finally:
-        os.close(images)
-    if attach.returncode != 0 or not on_own_volume(root):
+        ident = _image_identity(priv.fd, IMAGE_NAME, made_after)
+    except OSError as exc:
+        raise Refused(f"the new image was swapped before attach ({exc.__class__.__name__}); not attached") from None
+    priv.record("image", ident)
+    try:
+        now = identity(os.stat(Path(root).name, dir_fd=priv.sb, follow_symlinks=False))
+    except OSError:
+        now = None
+    if now != list(root_ident):
+        raise Refused(f"sandbox root {root} was swapped before attach; not mounted")
+    mountpoint = os.path.join(fd_path(priv.sb), Path(root).name)
+    if not _same_entry(priv.fd, IMAGE_NAME, ident):
+        raise Refused("the new image was swapped before attach; not attached")
+    attach = subprocess.run(
+        ["/usr/bin/hdiutil", "attach", "-plist", "-nobrowse", "-noautoopen", "-owners", "on", "-stdinpass"]
+        + ["-mountpoint", mountpoint, IMAGE_NAME],
+        input=passphrase,
+        capture_output=True,
+        timeout=120,
+        check=False,
+        preexec_fn=_in_dir(priv.fd),
+    )
+    del passphrase
+    if attach.returncode != 0:
         raise Unhealthy(f"the sandbox volume did not mount at {root} (hdiutil exit {attach.returncode})")
+    device = volume_device(root)
+    if not (_same_entry(priv.fd, IMAGE_NAME, ident) and device and device in _attached_devices(attach.stdout)):
+        _detach_attached(attach.stdout)  # mounted, but not our image or not at our root
+        raise Unhealthy("the sandbox volume did not mount our image at the root")
     fd = open_root(root)
     try:
-        os.fchmod(fd, 0o700)
+        info = os.fstat(fd)
+        priv.record("volume", {"st_dev": info.st_dev, "device": device})
+        os.fchmod(fd, 0o700)  # the top of the volume this start just attached
     finally:
         os.close(fd)
     write_in_root(root, ".metadata_never_index", b"")  # Spotlight never reads the store
+
+
+def on_run_volume(root: Path, ids: dict) -> bool:
+    """True when root, opened from the pinned sandboxes dir with no link followed, is the top of the volume this
+    run's start attached (its recorded device number, never the sandboxes dir's)."""
+    volume = ids.get("volume") if isinstance(ids.get("volume"), dict) else {}
+    want = volume.get("st_dev")
+    if type(want) is not int:
+        return False
+    try:
+        sb = sandboxes_fd(Path(root).parent)
+        fd = os.open(Path(root).name, DIR_FLAGS, dir_fd=sb)
+    except OSError:
+        return False
+    try:
+        dev = os.fstat(fd).st_dev
+        return dev == want and dev != os.fstat(sb).st_dev
+    finally:
+        os.close(fd)
 
 
 def detach_volume(root: Path) -> dict:
@@ -1077,25 +1309,55 @@ def pick_ports(count: int, taken: set[int]) -> list[int]:
     raise Unhealthy("no free sandbox ports in 2470-2599")
 
 
+SANDBOX_LABEL_PREFIX = f"{LABEL_PREFIX}sbx-"
+
+
+def refuse_foreign_launchctl_print(argv: list[str]) -> None:
+    """Refuse `launchctl print` of any job but a sandbox's own (com.agent-lb.drill.sbx-*).
+
+    `launchctl print gui/<uid>/<label>` shows the job's whole environment: for the live agent-lb that is its
+    federation token. lb-sandbox reads live jobs only from the bare `launchctl list` table (pid, status, label)."""
+    if len(argv) >= 2 and os.path.basename(str(argv[0])) == "launchctl" and argv[1] == "print":
+        target = str(argv[2]) if len(argv) > 2 else ""
+        label = target.rsplit("/", 1)[-1]
+        if not (target.startswith(f"gui/{os.getuid()}/") and label.startswith(SANDBOX_LABEL_PREFIX)):
+            raise Refused(f"launchctl print of {target!r} refused: only a sandbox's own job is printed")
+
+
 def run(argv: list[str], timeout: float = 30) -> subprocess.CompletedProcess:
-    # Output of these tools carries no credentials (launchctl, lsof, ps); still never relayed raw.
+    # Output of these tools carries no credentials (launchctl list, lsof, ps); still never relayed raw.
+    refuse_foreign_launchctl_print(argv)
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def launchctl_jobs() -> dict[str, int | None]:
+    """label -> pid (None while loaded but not running) for every job in this user's launchd domain, from the bare
+    `launchctl list` table. That table holds pid, last exit status and label only, never a job's environment."""
+    out = run(["/bin/launchctl", "list"]).stdout
+    lines = out.splitlines()
+    if not lines or lines[0].split() != ["PID", "Status", "Label"]:
+        raise Unhealthy("launchctl list printed no job table")
+    jobs: dict[str, int | None] = {}
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) == 3:
+            jobs[parts[2]] = int(parts[0]) if parts[0].isdigit() else None
+    return jobs
+
+
 def launchd_pid(label: str) -> int | None:
-    out = run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).stdout
-    for line in out.splitlines():
-        line = line.strip()
-        if line.startswith("pid = "):
-            try:
-                return int(line.split("=", 1)[1])
-            except ValueError:
-                return None
-    return None
+    return launchctl_jobs().get(label)
 
 
 def label_loaded(label: str) -> bool:
-    return run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).returncode == 0
+    return label in launchctl_jobs()
+
+
+def own_job_print(label: str, run_id: str) -> str:
+    """`launchctl print` of one of this run's own two jobs (never another job: see refuse_foreign_launchctl_print)."""
+    if label not in labels_for(run_id):
+        raise Refused(f"launchctl print of {label} refused: not a job of run {run_id}")
+    return run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).stdout
 
 
 def listener_pids(port: int) -> list[int]:
@@ -1415,13 +1677,29 @@ def read_key(root: Path) -> str | None:
         return fh.read().strip().decode("ascii", "replace") or None
 
 
-def create_key(path: Path) -> None:
-    """A fresh store key, 0600, created exclusively: never reuses or follows a file someone placed there."""
+def create_key(dir_fd: int, name: str = "encryption.key") -> list[int]:
+    """A fresh store key, 0600, created exclusively in the directory at dir_fd: never reuses or follows a file
+    someone placed there. Returns its identity, taken from the very descriptor that created it."""
     from cryptography.fernet import Fernet
 
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
     with os.fdopen(fd, "wb") as fh:
+        ident = identity(os.fstat(fh.fileno()))
         fh.write(Fernet.generate_key())
+    return ident
+
+
+def create_run_key(root: Path, priv: Private) -> None:
+    """The store key, made by start itself (never by the confined populate) on the volume it attached, recorded."""
+    if not on_run_volume(root, priv.ids):
+        raise Refused(f"sandbox root {root} is not the volume this start attached; no key made")
+    data_fd = open_data_dir(root)
+    try:
+        if os.fstat(data_fd).st_dev != priv.ids["volume"]["st_dev"]:
+            raise Refused("sandbox data dir is not on the run's volume; no key made")
+        priv.record("key", create_key(data_fd))
+    finally:
+        os.close(data_fd)
 
 
 def load_secrets(root: Path | None) -> list[str]:
@@ -1483,6 +1761,21 @@ B64_RUN = re.compile(rb"[A-Za-z0-9+/_\-\r\n]{75,}")
 # characters, and line breaks (CRLF every 64 or 76 characters) add at most a few more.
 B64_FRAGMENT_SPAN = 96
 B64_STANDARD = bytes.maketrans(b"-_", b"+/")
+# Base64 wrapped onto lines (MIME's 76-character lines from base64.encodebytes, PEM's 64, LF or CRLF, indented
+# continuation lines) is one-line base64 with line breaks inside it. Every break that sits between two base64
+# characters is taken out (one linear pass: fixed-width lookarounds, possessive runs) and the result is searched for
+# the same encoded patterns as one-line base64 (secret_patterns covers every byte alignment). For the window kept
+# across reads, wrapped lines are assumed at least WRAP_MIN_LINE characters long with separators of at most
+# WRAP_MAX_SEPARATOR bytes (MIME 76 + 2, PEM 64 + 2).
+B64_CHAR = rb"[A-Za-z0-9+/=_-]"
+WRAP_BREAK = re.compile(rb"(?<=" + B64_CHAR + rb")[ \t]*+\r?\n[ \t]*+(?=" + B64_CHAR + rb")")
+WRAP_MIN_LINE = 16
+WRAP_MAX_SEPARATOR = 8
+
+
+def wrapped_span(length: int) -> int:
+    """The most bytes an encoded pattern of length characters spans once wrapped onto lines."""
+    return length + (length // WRAP_MIN_LINE + 1) * WRAP_MAX_SEPARATOR
 
 
 def base64_decodings(buf: bytes):
@@ -1526,7 +1819,7 @@ class Detector:
 
             raw = base64.urlsafe_b64decode(key.encode() if isinstance(key, str) else key)
             self.decryptors.append(Cipher(algorithms.AES(raw[16:]), modes.ECB()).decryptor())
-        lengths = [len(p) for p in self.patterns] + ([B64_FRAGMENT_SPAN] if self.decryptors else [])
+        lengths = [wrapped_span(len(p)) for p in self.patterns] + ([B64_FRAGMENT_SPAN] if self.decryptors else [])
         self.overlap = max(lengths, default=1) - 1
 
     def __bool__(self) -> bool:
@@ -1543,8 +1836,15 @@ class Detector:
     def keyed(self, buf: bytes) -> bool:
         return b"gAAAAA" in buf and any(self.opens(m.group(1)) for m in FERNET_FRAGMENT.finditer(buf))
 
+    def wrapped(self, buf: bytes) -> bool:
+        """A secret inside base64 wrapped onto lines (a MIME body, a PEM-style block), raw secret bytes encoded."""
+        if b"\n" not in buf:
+            return False
+        joined = WRAP_BREAK.sub(b"", buf)
+        return len(joined) != len(buf) and any(p in joined for p in self.patterns)
+
     def hit(self, buf: bytes) -> bool:
-        if any(p in buf for p in self.patterns):
+        if any(p in buf for p in self.patterns) or self.wrapped(buf):
             return True
         if not self.decryptors:
             return False
@@ -2166,15 +2466,21 @@ def export_logs(root: Path, dest: Path, scanned_files: list[str], detector: Dete
                         child = os.open(part, flags, dir_fd=parent_fd)
                         os.close(parent_fd)
                         parent_fd = child
-                    # Existing files may be hard links to live files: never truncate.
+                    # Existing files may be hard links to live files: never truncate. The copy is a new inode,
+                    # its identity taken from the descriptor that created it.
                     target_fd = os.open(
-                        rel.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd
+                        rel.name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd
                     )
+                    made = identity(os.fstat(target_fd))
                     with os.fdopen(target_fd, "wb") as out:
                         leaked, size = scan_stream(src.read, detector, write=out.write)
+                        if leaked:
+                            out.flush()
+                            os.ftruncate(out.fileno(), 0)  # what was copied goes, through this inode only
                     if leaked:
-                        os.unlink(rel.name, dir_fd=parent_fd)
-                        raise LeakFound(f"log {rel} holds a secret; its copy was removed")
+                        # Only the copy made above, by its identity: a file renamed over its name is put back.
+                        remove_recorded(parent_fd, rel.name, made, "file")
+                        raise LeakFound(f"log {rel} holds a secret; its copy was emptied and removed")
                 finally:
                     os.close(parent_fd)
             copied += 1
@@ -2316,96 +2622,38 @@ def bootstrap(plist: Path, label: str, deadline_s: float = 20) -> None:
     raise Unhealthy(f"launchctl bootstrap {label} failed")
 
 
-def _same_inode(dir_fd: int, name: str, ident: tuple[int, int]) -> bool:
-    """True when name in dir_fd is (still) the single-link regular file or the directory ident names."""
-    try:
-        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-    except OSError:
-        return False
-    if (info.st_dev, info.st_ino) != ident:
-        return False
-    return stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
-
-
-def bootstrap_job(root: Path, body: dict) -> None:
+def bootstrap_job(root: Path, body: dict, priv: Private) -> None:
     """Load one sandbox job into launchd from bytes this process made, never from a plist file under the root.
 
     Every process confined to a root can write anywhere in it, so a plist there is only as trusted as the jobs
     already running: an aux (or its front) started first could rewrite the primary's plist to an unconfined
-    payload just before its bootstrap. The job goes to launchd through a private file in <sandboxes>/.launchd,
-    which no confined process can write (their profile allows writes in their own root only).
-
-    That directory sits on the live service's volume, so nothing here deletes a name it did not make: each job
-    gets a fresh directory (mkdir, a random name, never reused) holding one file made O_EXCL, 0600; nothing that
-    was there before is unlinked. The directory is 0500 while launchd reads the file, so nothing can be renamed
-    into or out of it without first changing its mode. Cleanup empties the file through its own descriptor
-    (only this inode loses bytes), then unlinks the name only while it is still that inode with one link, and
-    rmdir's the directory only while it is still the one made here; anything else is left in place. macOS has
-    no unlink by descriptor (no funlinkat), so a check-then-unlink is the narrowest delete there is."""
+    payload just before its bootstrap. launchd reads a job only from a path (a pipe or /dev/fd is refused), so the
+    job goes through a file in the run's private dir, which no confined process can write (their profile allows
+    writes in their own root only): made O_EXCL, 0600, under a random name, its identity recorded from the
+    descriptor that made it. Once launchd has it, the file is emptied through that descriptor and removed by its
+    recorded identity (remove_recorded); nothing else in any directory is touched."""
     import secrets as secrets_module
 
     label = check_label(str(body.get("Label", "")))
-    sb = sandboxes_fd(Path(root).parent)
+    name = f"job.{secrets_module.token_hex(12)}.plist"
+    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=priv.fd)
     try:
-        os.mkdir(".launchd", 0o700, dir_fd=sb)
-    except FileExistsError:
-        pass
-    launchd_fd = os.open(".launchd", DIR_FLAGS, dir_fd=sb)
-    try:
-        if os.fstat(launchd_fd).st_uid != os.getuid():
-            raise Refused("the sandboxes .launchd dir is not this user's own")
-        os.fchmod(launchd_fd, 0o700)
-        made_after = time.time()
-        sub = f"{label}.{secrets_module.token_hex(12)}"
-        os.mkdir(sub, 0o700, dir_fd=launchd_fd)  # a fresh name: FileExistsError (never a reuse) on a collision
-        job_dir = os.open(sub, DIR_FLAGS, dir_fd=launchd_fd)
-        dir_id: tuple[int, int] | None = None
+        ident = identity(os.fstat(fd))
+        priv.record("job", {"name": name, "id": ident})
+        os.write(fd, plistlib.dumps(body))
+        os.fsync(fd)
         try:
-            made = os.fstat(job_dir)
-            with os.scandir(job_dir) as listing:
-                empty = next(iter(listing), None) is None
-            if not (
-                stat.S_ISDIR(made.st_mode)
-                and made.st_uid == os.getuid()
-                and made.st_dev == os.fstat(launchd_fd).st_dev
-                and made.st_nlink == 2
-                and empty
-                and made.st_birthtime >= made_after - 2
-            ):
-                raise Refused("the private launchd dir was swapped before use; nothing loaded")
-            dir_id = (made.st_dev, made.st_ino)
-            os.fchmod(job_dir, 0o700)
-            name = "job.plist"
-            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=job_dir)
-            try:
-                written = os.fstat(fd)
-                file_id = (written.st_dev, written.st_ino)
-                os.write(fd, plistlib.dumps(body))
-                os.fsync(fd)
-                os.fchmod(job_dir, 0o500)  # no rename into or out of it while launchd reads the file
-                try:
-                    bootstrap(Path(fd_path(job_dir)) / name, label)
-                finally:
-                    os.ftruncate(fd, 0)  # through the descriptor: only this inode, whatever its name now holds
-                    os.fchmod(job_dir, 0o700)
-                    if _same_inode(job_dir, name, file_id):
-                        os.unlink(name, dir_fd=job_dir)
-            finally:
-                os.close(fd)
+            bootstrap(Path(fd_path(priv.fd)) / name, label)
         finally:
-            os.close(job_dir)
-            if dir_id is not None and _same_inode(launchd_fd, sub, dir_id):
-                try:
-                    os.rmdir(sub, dir_fd=launchd_fd)  # only an empty directory; one holding a file stays
-                except OSError:
-                    pass
+            os.ftruncate(fd, 0)  # through the descriptor: only this inode, whatever its name holds now
     finally:
-        os.close(launchd_fd)
+        os.close(fd)
+        remove_recorded(priv.fd, name, ident, "file")
 
 
-def label_names_root(label: str, root: Path) -> bool:
-    """True when the loaded job's program or arguments name this sandbox root."""
-    out = run(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"]).stdout
+def label_names_root(label: str, root: Path, run_id: str) -> bool:
+    """True when the loaded job (one of this run's own two) has a program or argument naming this sandbox root."""
+    out = own_job_print(label, run_id)
     return any(names_root(line.strip(), root) for line in out.splitlines())
 
 
@@ -2445,21 +2693,82 @@ def plist_paths(root: Path, run_id: str) -> tuple[Path, Path]:
     return root / "launchd" / f"{label}.plist", root / "launchd" / f"{aux_label}.plist"
 
 
-def populate_root(root: Path, run_id: str, ports: dict[str, int], meta: dict, transport: str, source: str) -> None:
-    """Fill a new root: key, metadata, runtime copy, plists, restart config, front preference.
+RUNTIME_PARTS = ("app", "config", "scripts")
+DEFAULT_REPO = Path(os.environ.get("AGENT_LB_REPO") or "/Volumes/StudioExt/repos/agent-lb")
+GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@{}^~-]{0,199}$")
 
-    start runs this in a child confined to the root (write-only profile): a link planted in the root while it
-    runs (runtime/app -> live state, say) leads the copy to a denied write, never a live file. No lb-sandbox
-    copy goes into the root: the plists run source, the installed file outside it (bootstrap_script).
+
+def ref_tree(repo: Path, ref: str) -> tuple[str, bytes]:
+    """(commit sha, tar of app/, config/ and scripts/ at that commit) from the agent-lb repo: the runtime code a
+    clean worktree of ref holds, read from git's object store (no checkout, no working-tree file, nothing written).
+    Raises Refused on a ref that is not a plain name, Unhealthy when git cannot resolve or export it."""
+    if not GIT_REF_RE.match(ref or "") or ".." in ref:
+        raise Refused(f"--from-ref {ref!r} is not a plain git ref")
+    git = shutil.which("git") or "/usr/bin/git"
+    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin", "HOME": str(REAL_HOME), "LANG": "C"}
+    base = [git, "-C", str(repo), "-c", "core.fsmonitor=false"]
+    found = subprocess.run(
+        [*base, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"],
+        capture_output=True,
+        timeout=60,
+        check=False,
+        env=env,
+    )
+    sha = found.stdout.decode(errors="replace").strip()
+    if found.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise Unhealthy(f"--from-ref {ref!r} does not name a commit in {repo}")
+    archive = subprocess.run(
+        [*base, "archive", "--format=tar", sha, "--", *RUNTIME_PARTS],
+        capture_output=True,
+        timeout=300,
+        check=False,
+        env=env,
+    )
+    if archive.returncode != 0 or not archive.stdout:
+        raise Unhealthy(f"git archive of {sha[:12]} failed (exit {archive.returncode})")
+    return sha, archive.stdout
+
+
+def extract_tree(tree: bytes, runtime: Path) -> None:
+    """Unpack a ref_tree tar into runtime/: regular files and directories only ("data" filter: no link, device,
+    absolute name or name leaving runtime/), in the confined populate."""
+    import io
+    import tarfile
+
+    with tarfile.open(fileobj=io.BytesIO(tree), mode="r:") as archive:
+        members = [m for m in archive.getmembers() if m.isfile() or m.isdir()]
+        archive.extractall(runtime, members=members, filter="data")
+
+
+def populate_root(
+    root: Path,
+    run_id: str,
+    ports: dict[str, int],
+    meta: dict,
+    transport: str,
+    source: str,
+    tree: bytes | None = None,
+) -> None:
+    """Fill a new root: metadata, runtime copy, plists, restart config, front preference. The store key is made
+    afterwards by start itself (create_run_key), so its identity is recorded from the descriptor that created it.
+
+    The runtime code is the installed live runtime's app, config and scripts, or with tree (start --from-ref) the
+    files of that commit. start runs this in a child confined to the root (write-only profile): a link planted in
+    the root while it runs (runtime/app -> live state, say) leads the copy to a denied write, never a live file. No
+    lb-sandbox copy goes into the root: the plists run source, the installed file outside it (bootstrap_script).
     """
     for sub in ("data", "home", "logs", "state", "clients", "runtime"):
         os.mkdir(root / sub, 0o700)
-    create_key(root / "data" / "encryption.key")
     write_json(root, "sandbox.json", meta)
     runtime = root / "runtime"
-    for part in ("app", "config", "scripts"):
-        if (LIVE_RUNTIME / part).is_dir():
-            shutil.copytree(LIVE_RUNTIME / part, runtime / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    if tree is not None:
+        extract_tree(tree, runtime)
+    else:
+        for part in RUNTIME_PARTS:
+            if (LIVE_RUNTIME / part).is_dir():
+                shutil.copytree(
+                    LIVE_RUNTIME / part, runtime / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+                )
     os.symlink(LIVE_VENV, runtime / ".venv")
     managed = Path("home/.agent-lb/managed/coding-agents")
     for name in ("routing-table.json", "decider.json"):
@@ -2483,41 +2792,24 @@ def populate_root(root: Path, run_id: str, ports: dict[str, int], meta: dict, tr
     write_in_root(root, "state/front-preferred-port", f"{ports['primary']}\n".encode(), 0o644)
 
 
-def acquire_new_root(root: Path, made_after: float) -> tuple[int, int]:
-    """(device, inode) of the root start's mkdir just made, taken through a descriptor that must be that very
-    directory; Refused (nothing recorded, chmod'ed or owned) otherwise.
-
-    macOS has no mkdir that returns a descriptor, so the name is opened again; what it opens must look like a
-    directory nobody else made: this user's, on the sandboxes dir's volume, no entries (one link to itself and
-    one from its name) and born no earlier than this start's mkdir. Live state moved into the name in between
-    (a directory with files, or an empty one made long before) fails one of them and so never becomes a root
-    teardown may empty. Teardown's later deletes check this identity again (remove_root, unlink_key)."""
-    sb = sandboxes_fd(Path(root).parent)
-    fd = os.open(Path(root).name, DIR_FLAGS, dir_fd=sb)
-    try:
-        info = os.fstat(fd)
-        with os.scandir(fd) as listing:
-            empty = next(iter(listing), None) is None
-        fresh = getattr(info, "st_birthtime", info.st_ctime) >= made_after - 2
-        if not (
-            stat.S_ISDIR(info.st_mode)
-            and info.st_uid == os.getuid()
-            and info.st_dev == os.fstat(sb).st_dev
-            and info.st_nlink == 2
-            and empty
-            and fresh
-        ):
-            raise Refused(f"sandbox root {root} was swapped right after its mkdir; it is not this start's to own")
-        os.fchmod(fd, 0o700)  # mkdir's mode is masked by umask; set it exactly
-        return info.st_dev, info.st_ino
-    finally:
-        os.close(fd)
+# The private dir each start in this process made (start's failure path has no sandbox.json to find it by).
+CREATED: dict[str, Private] = {}
 
 
-def cmd_start(args) -> int:
+def cleanup_unpublished(priv: Private) -> dict:
+    """A start that failed before its root was published at <sandboxes>/R: remove what it recorded in its private
+    dir (the staged mountpoint, if made) and the private dir itself; nothing at R is touched."""
+    out: dict = {}
+    if "root" in priv.ids:
+        out["stage_removed"] = remove_recorded(priv.fd, ROOT_STAGE, priv.ids["root"], "dir")
+    out["private_removed"] = remove_private(priv)
+    return out
+
+
+def cmd_start(args) -> int:  # noqa: C901 - one sequence, each step torn down on failure
     run_id = check_run_id(args.run_id)
-    if not args.from_live:
-        raise Refused("start needs --from-live (the only supported account source)")
+    if not (args.from_live or args.from_ref):
+        raise Refused("start needs --from-live or --from-ref REF (accounts always come from live)")
     if args.transport != "http":
         raise Refused("only --transport http is supported (the edge must see and cut streams)")
     check_launchctl()
@@ -2525,6 +2817,8 @@ def cmd_start(args) -> int:
     try:
         if root_entry(root) is not None:
             raise Refused(f"sandbox root {root} already exists")
+        if private_names(run_id):
+            raise Refused(f"run {run_id} already has a private dir (an earlier start); stop it first")
     except FileNotFoundError:
         pass  # no sandboxes dir yet: start makes it
     except OSError as exc:
@@ -2534,6 +2828,14 @@ def cmd_start(args) -> int:
         raise Refused(f"label {label} is already loaded")
     if not LIVE_PLIST.is_file() or not (LIVE_RUNTIME / "app").is_dir() or not (LIVE_VENV / "bin" / "python").exists():
         raise Unhealthy("live runtime, venv or plist missing")
+    # The runtime code: the installed live runtime, or (--from-ref) the files of one agent-lb commit, so a check can
+    # prove origin/main's code against the live pool without a live deploy. Accounts come from live either way,
+    # through the federation mirror (the live token stays in agent-lb custody).
+    tree = None
+    runtime_source: dict = {"kind": "live", "path": str(LIVE_RUNTIME)}
+    if args.from_ref:
+        sha, tree = ref_tree(Path(args.repo), args.from_ref)
+        runtime_source = {"kind": "ref", "ref": args.from_ref, "sha": sha, "repo": str(args.repo)}
     taken = ports_in_use_by_sandboxes()
     if args.port is not None:
         check_ports([args.port])
@@ -2547,6 +2849,7 @@ def cmd_start(args) -> int:
     check_ports(list(ports.values()))
     started = time.monotonic()
     out: dict = {"run_id": run_id, "root": str(root), "label": label, "aux_label": aux_label}
+    out["runtime"] = runtime_source
 
     stopping: list[int] = []
 
@@ -2557,25 +2860,23 @@ def cmd_start(args) -> int:
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, interrupted)
-    created = False
+    priv: Private | None = None
+    published = False
     try:
         # The sandboxes dir, held by descriptor from here to the end of this process (cleanup included): every
-        # mkdir, mount, open and delete of the root goes by name inside it, never through the path again.
+        # mkdir, mount, open and delete goes by name inside it or inside the run's private dir, never by path.
         try:
-            sb = sandboxes_fd(create=True)
+            sandboxes_fd(create=True)
         except OSError as exc:
             raise Refused(f"{SANDBOXES} is not a real private directory ({exc})") from None
-        made_after = time.time()
+        priv = make_private(run_id)
+        CREATED[run_id] = priv
+        root_fd, root_ident = make_root(root, priv)  # made, checked and recorded in the private dir, then published
+        published = True
         try:
-            os.mkdir(root.name, 0o700, dir_fd=sb)
-        except FileExistsError:
-            # A concurrent start with the same run id won the race; its root is not ours to tear down.
-            raise Refused(f"sandbox root {root} already exists") from None
-        # The mountpoint itself, before the volume covers it, and only if it is the directory mkdir just made:
-        # a directory swapped into the name in between is refused here, never recorded, chmod'ed or torn down.
-        ROOT_IDS[run_id] = acquire_new_root(root, made_after)
-        created = True
-        attach_volume(root, run_id)  # the root is its own volume from here on: no hard link reaches live files
+            attach_volume(root, run_id, priv, root_ident)  # from here the root is the run's own volume
+        finally:
+            os.close(root_fd)
         meta = {
             "run_id": run_id,
             "label": label,
@@ -2586,30 +2887,32 @@ def cmd_start(args) -> int:
             "created_epoch": time.time(),
             "transport": args.transport,
             "node": find_node(),
-            "volume": image_for(run_id).name,
+            "runtime": runtime_source,
             # The sandboxes dir this root was made in: stop removes the root only through that very directory.
             "sandboxes_id": list(sandboxes_id()),
-            # The mountpoint directory start made: stop removes only that directory, never another put at its name.
-            "root_id": list(ROOT_IDS[run_id]),
         }
         source = str(bootstrap_script())
         check_bootstrap(Path(source), root)
         check_interpreter(interpreter_for(root), root)
         run_confined(
-            root, lambda: populate_root(root, run_id, ports, meta, args.transport, source), reads=False, timeout_s=300
+            root,
+            lambda: populate_root(root, run_id, ports, meta, args.transport, source, tree),
+            reads=False,
+            timeout_s=300,
         )
+        create_run_key(root, priv)
         # The jobs launchd runs are made here, in this unconfined process, from the same inputs populate_root
         # used; the plist files it wrote under the root are never loaded (bootstrap_job).
         primary_job, aux_job = plist_bodies(root, run_id, ports, args.transport, Path(source))
         out["live"] = live_identity()
 
-        bootstrap_job(root, aux_job)
+        bootstrap_job(root, aux_job, priv)
         deadline = time.monotonic() + 30
         while not read_root_json(root, "state/aux.json").get("ready"):
             if time.monotonic() > deadline:
                 raise Unhealthy("aux (gate, edges, front) did not become ready in 30 s")
             time.sleep(0.25)
-        bootstrap_job(root, primary_job)
+        bootstrap_job(root, primary_job, priv)
         deadline = time.monotonic() + 90
         while not (
             http(ports["primary"], "/health/ready")[0] == 200 and http(ports["front"], "/health/ready")[0] == 200
@@ -2638,16 +2941,21 @@ def cmd_start(args) -> int:
             }
         )
         return emit(out, EXIT_OK)
-    except Exception as exc:  # any failure tears the sandbox down before exit 3
-        if isinstance(exc, Refused) and not created:
-            raise
-        out["error"] = f"{exc.__class__.__name__}: {exc}"
-        if created and entry_of(root) is not None:
+    except Exception as exc:  # any failure tears down what this start made before exiting
+        if priv is None:
+            if isinstance(exc, Refused):
+                raise
+            out["error"] = f"{exc.__class__.__name__}: {exc}"
+            return emit(out, EXIT_UNHEALTHY)
+        out["refused" if isinstance(exc, Refused) else "error"] = f"{exc.__class__.__name__}: {exc}"
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, signal.SIG_IGN)
+        if published:
             out["failure"] = log_failure_classes(root)
-            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                signal.signal(sig, signal.SIG_IGN)
             out["teardown"] = teardown(run_id, Path(args.logs_to) if args.logs_to else None, created=True)
-        return emit(out, EXIT_UNHEALTHY)
+        else:
+            out["teardown"] = cleanup_unpublished(priv)
+        return emit(out, EXIT_REFUSED if isinstance(exc, Refused) else EXIT_UNHEALTHY)
 
 
 # ---------------------------------------------------------------- _serve and _aux (run by launchd)
@@ -3457,6 +3765,7 @@ CODEX_PLACEHOLDER = "lb-sandbox-placeholder-not-a-credential"
 
 def cmd_client_env(args) -> int:
     root, meta = load_meta(args.run_id)
+    check_own_volume(root)  # every write below lands on the run's own volume, which no live file can reach
     front = meta["ports"]["front"]
     if args.vendor == "claude":
         os.close(confined(lambda: open_dir(root, "clients/claude", create=True)))
@@ -3507,6 +3816,7 @@ def parse_fault(spec: str) -> tuple[str, int | None]:
 
 def cmd_fault(args) -> int:
     root, _ = load_meta(args.run_id)
+    check_own_volume(root)  # the fault file is written on the run's own volume, which no live file can reach
     path = f"state/fault-{args.edge}.json"
     if args.clear:
         confined(lambda: write_json(root, path, {"armed": False, "nonce": uuid.uuid4().hex, "at": now_iso()}))
@@ -3609,43 +3919,54 @@ def stop_pid(pid: int, bound: float = 15) -> None:
             return
 
 
-def unlink_key(root: Path, expect: tuple[int, int] | None) -> dict:
-    """Unlink data/encryption.key through a descriptor for a real data dir under this run's own root.
+def unlink_key(root: Path, ids: dict) -> dict:
+    """Unlink data/encryption.key only when it is the key start made (its recorded identity) on the volume start
+    attached (its recorded device number).
 
-    A data dir (or root) swapped for a link to the live data dir is refused: unlinking through it would
-    delete the live key. So is a root that is not the directory this run made: its own volume (start creates
-    the key only on it, and nothing on another volume can be renamed onto that mount), or else the recorded
-    (device, inode) of the directory start made (expect). Live state moved into the root's name is never
-    touched. Unlinking the name inside a real data dir removes only that name.
-    """
+    The volume is what makes the unlink safe: no live file can be renamed or hard linked onto another volume, so
+    nothing at that name on the run's volume can be live custody. A root that is not that volume (never mounted,
+    detached, or something else mounted or moved there) is never unlinked in: a key start never made is "never
+    created"; one it made is still inside the encrypted image, which teardown removes. The name is renamed aside
+    within the data dir, checked by descriptor and emptied through it before the unlink (remove_recorded)."""
     if entry_of(root) is None:
         return {"key_unlinked": None}
+    key_id = ids.get("key")
+    if not on_run_volume(root, ids):
+        if key_id is None:
+            return {"key_unlinked": "never created"}
+        if on_own_volume(root):
+            return {"key_unlinked": False, "key_error": "the root is a volume this run did not attach"}
+        return {"key_unlinked": "in the image", "key_note": "the run's volume is not mounted; the image goes"}
     try:
         root_fd = open_root(root)
     except OSError as exc:
-        return {"key_unlinked": False, "key_error": f"root or data dir is a link ({exc.__class__.__name__})"}
+        return {"key_unlinked": False, "key_error": f"the root is a link ({exc.__class__.__name__})"}
     try:
-        info = os.fstat(root_fd)
-        own_volume = info.st_dev != os.fstat(sandboxes_fd(Path(root).parent)).st_dev
-        if not own_volume and (expect is None or (info.st_dev, info.st_ino) != tuple(expect)):
-            return {"key_unlinked": False, "key_error": "the root is not the directory this run made"}
         try:
             data_fd = os.open("data", DIR_FLAGS, dir_fd=root_fd)
         except FileNotFoundError:
             return {"key_unlinked": "absent"}
         except OSError as exc:
-            return {"key_unlinked": False, "key_error": f"root or data dir is a link ({exc.__class__.__name__})"}
+            return {"key_unlinked": False, "key_error": f"the data dir is a link ({exc.__class__.__name__})"}
     finally:
         os.close(root_fd)
     try:
-        os.unlink("encryption.key", dir_fd=data_fd)
-        return {"key_unlinked": True}
-    except FileNotFoundError:
-        return {"key_unlinked": "absent"}
+        if os.fstat(data_fd).st_dev != ids["volume"]["st_dev"]:
+            return {"key_unlinked": False, "key_error": "the data dir is not on the run's volume"}
+        if key_id is None:
+            try:
+                os.stat("encryption.key", dir_fd=data_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return {"key_unlinked": "absent"}
+            return {"key_unlinked": False, "key_error": "a key no start recorded; not unlinked"}
+        removed = remove_recorded(data_fd, "encryption.key", key_id, "file")
     except OSError as exc:
         return {"key_unlinked": False, "key_error": exc.__class__.__name__}
     finally:
         os.close(data_fd)
+    if removed is None:
+        return {"key_unlinked": "absent"}
+    return {"key_unlinked": True} if removed else {"key_unlinked": False, "key_error": "not the key start made"}
 
 
 def entry_of(root: Path) -> str | None:
@@ -3668,80 +3989,19 @@ def has_dir(root: Path, rel: str) -> bool:
     return True
 
 
-# (device, inode) of each root this process made, taken at mkdir before its volume covers it: start's failure
-# path has no sandbox.json to read it from.
-ROOT_IDS: dict[str, tuple[int, int]] = {}
+def remove_root(root: Path, root_id: list[int] | None, priv: Private | None) -> bool:
+    """Remove the (unmounted) root: the mountpoint start made, by its recorded identity. True when gone.
 
-
-def root_id_of(meta: dict, run_id: str) -> tuple[int, int] | None:
-    """The root directory's recorded (device, inode): this process's own record, else sandbox.json's."""
-    if run_id in ROOT_IDS:
-        return ROOT_IDS[run_id]
-    value = meta.get("root_id")
-    if isinstance(value, list) and len(value) == 2 and all(type(v) is int for v in value):
-        return value[0], value[1]
-    return None
-
-
-def _empty_dir(dir_fd: int) -> None:
-    """Remove everything inside the directory at dir_fd, by name inside descriptors only: a subdirectory is
-    entered only when the descriptor is the inode the listing named, on the same device, never through a link;
-    a link or a second hard link loses only its name here."""
-    device = os.fstat(dir_fd).st_dev
-    with os.scandir(dir_fd) as listing:
-        names = sorted(entry.name for entry in listing)
-    for name in names:
-        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-        if not stat.S_ISDIR(info.st_mode):
-            os.unlink(name, dir_fd=dir_fd)
-            continue
-        child = os.open(name, DIR_FLAGS, dir_fd=dir_fd)
-        try:
-            opened = os.fstat(child)
-            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino) or opened.st_dev != device:
-                raise Confinement(f"{name} was swapped or is another volume; not entered")
-            _empty_dir(child)
-        finally:
-            os.close(child)
-        os.rmdir(name, dir_fd=dir_fd)  # only an empty directory: one swapped in since is left alone
-
-
-def remove_root(root: Path, expect: tuple[int, int] | None, rmdir_only: bool) -> bool:
-    """Delete the (unmounted) root by name inside the pinned sandboxes dir, never through a path: a sandboxes
-    dir renamed aside and replaced by a link to ~/.agent-lb after the checks leaves the delete in the directory
-    this run was made in. True when gone.
-
-    Only the directory start made is removed: it must be the recorded (device, inode) (expect; None removes
-    nothing), so live state moved into the root's name after the detach is refused untouched. rmdir_only: a
-    root that was its own volume until the detach is the bare mountpoint, and a root start made but never
-    stamped was never filled outside its volume; both are empty by construction, so they are only rmdir'ed:
-    even a forged record, or live files moved into the directory start made, cannot make this delete anything
-    inside a directory. Any other root (one that never was a volume) is emptied through the descriptor checked
-    against the record, then rmdir'ed. A link, a non-directory or a root still mounted is refused."""
-    sb = sandboxes_fd(root.parent)
-    try:
-        fd = os.open(root.name, DIR_FLAGS, dir_fd=sb)
-    except FileNotFoundError:
-        return True
-    except OSError:
+    The name R is renamed, exclusively, into the run's private dir, checked there by descriptor against the record
+    and rmdir'ed (an empty directory only): live state moved into R after the detach, or live files moved into the
+    mountpoint, never match or never leave it empty, and go back to R untouched. A link, a non-directory, a root
+    still mounted, or no record removes nothing."""
+    if priv is None or root_id is None:
+        return entry_of(root) is None
+    sb = sandboxes_fd(Path(root).parent)
+    if on_own_volume(root):
         return False
-    try:
-        info = os.fstat(fd)
-        if expect is None or (info.st_dev, info.st_ino) != tuple(expect) or info.st_dev != os.fstat(sb).st_dev:
-            return False
-        if not rmdir_only:
-            _empty_dir(fd)
-    except OSError:
-        return False
-    finally:
-        os.close(fd)
-    try:
-        os.rmdir(root.name, dir_fd=sb)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    return True
+    return remove_recorded(sb, Path(root).name, root_id, "dir", into=priv.fd) is not False
 
 
 def command_ref(cmd: str) -> str:
@@ -3791,7 +4051,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
     for name in (label, aux_label):
         if not label_loaded(name):
             booted[name] = "not loaded"
-        elif label_names_root(name, root):
+        elif label_names_root(name, root, run_id):
             booted[name] = bootout(name)
         else:
             booted[name] = "refused: the loaded job does not run this sandbox root"
@@ -3854,19 +4114,33 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
     custody: dict = {"key_unlinked": None}
     volume: dict = {}
     if owned:
-        custody = unlink_key(root, root_id_of(meta, run_id))
-        entry = entry_of(root)
-        if entry == "link":
-            os.unlink(root.name, dir_fd=sandboxes_fd(root.parent))  # the link only; never its target
-        elif entry == "dir":
-            was_volume = on_own_volume(root)
+        # Deletes go only to what the run's record says start made (its private dir: this process's own, in start's
+        # failure path, else the one on disk), each checked against its recorded identity (remove_recorded).
+        priv, priv_error = (CREATED.get(run_id), None) if created else (None, None)
+        if priv is None:
+            try:
+                priv = open_private(run_id)
+            except (OSError, Refused) as exc:
+                priv_error = f"{exc.__class__.__name__}: {exc}"
+        ids = priv.ids if priv is not None else {}
+        custody = unlink_key(root, ids)
+        if entry_of(root) == "dir":
             volume = detach_volume(root)
             if volume.get("volume") != "still mounted":
-                # A root with no stamped sandbox.json (start's failure path) was never filled outside its volume:
-                # it is only rmdir'ed, so anything moved into it after start recorded it is left, never emptied.
-                volume["root_removed"] = remove_root(root, root_id_of(meta, run_id), was_volume or not meta)
-        if not on_own_volume(root):
-            volume["image_removed"] = remove_image(run_id)
+                volume["root_removed"] = remove_root(root, ids.get("root"), priv)
+        if priv is not None:
+            if "root" in ids:  # a mountpoint start made but never published stays staged in the private dir
+                remove_recorded(priv.fd, ROOT_STAGE, ids["root"], "dir")
+            for job in ids.get("jobs", []):
+                remove_recorded(priv.fd, str(job["name"]), job.get("id"), "file")
+            if not on_own_volume(root):
+                volume["image_removed"] = remove_recorded(priv.fd, IMAGE_NAME, ids.get("image"), "file") is not False
+            if entry_of(root) is None:
+                volume["private_removed"] = remove_private(priv)
+            if not created:
+                priv.close()
+        else:
+            volume["private"] = priv_error or "no private dir: nothing this run made can be proven, nothing deleted"
     time.sleep(0.5)
     rows = processes()
     lineage = own_lineage(rows)
@@ -3882,6 +4156,7 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         "root_exists": entry_of(root) is not None,
         "volume_mounted": on_own_volume(root),
         "image_exists": image_exists(run_id),
+        "private_exists": private_left(run_id),
         "bootout": booted,
         "logs": logs,
         "custody": custody,
@@ -3896,8 +4171,19 @@ def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
         or result["root_exists"]
         or result["volume_mounted"]
         or result["image_exists"]
+        or result["private_exists"]
     )
     return result
+
+
+def private_left(run_id: str) -> bool:
+    """Whether the run's private dir is still there; True when the sandboxes dir cannot be listed safely."""
+    try:
+        return bool(private_names(run_id))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
 
 
 def cmd_stop(args) -> int:
@@ -3955,7 +4241,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = command("start", "create, boot and mirror a sandbox")
     p.add_argument("--run-id", required=True)
-    p.add_argument("--from-live", action="store_true")
+    p.add_argument("--from-live", action="store_true", help="runtime code from the installed live runtime")
+    p.add_argument(
+        "--from-ref",
+        metavar="REF",
+        help="runtime code from this agent-lb git ref (a clean tree of that commit); accounts still mirror live",
+    )
+    p.add_argument("--repo", default=str(DEFAULT_REPO), help="the agent-lb repo --from-ref resolves REF in")
     p.add_argument("--port", type=int)
     p.add_argument("--min-accounts", type=int, default=2)
     p.add_argument("--transport", default="http")
