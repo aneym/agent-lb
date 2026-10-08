@@ -1619,9 +1619,9 @@ def finish_text() -> str:
     return ""
 
 
-def final_prompt(prompt: str) -> str:
+def final_prompt(prompt: str, task_class: str | None = None) -> str:
     """Use the same finish contract for previews and every vendor's real prompt."""
-    if "END HANDOFF" in prompt.splitlines():
+    if task_class == "verify" or "END HANDOFF" in prompt.splitlines():
         return prompt
     finish = finish_text()
     return prompt + "\n\n" + finish if finish else prompt
@@ -1636,7 +1636,7 @@ def command_run(args: argparse.Namespace) -> int:
     if not prompt:
         fail("empty prompt: pass --prompt-file or a prompt after --")
     if args.print_prompt:
-        sys.stdout.write(final_prompt(prompt))
+        sys.stdout.write(final_prompt(prompt, args.task_class))
         return EXIT_OK
     cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
     registry = load_registry() + lease_accounts(args.vendor)
@@ -1768,7 +1768,7 @@ def run_on_accounts(
         print(f"seat: debug: dropped local proxy variables: {', '.join(removed_proxies)}", file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="seat-") as scratch:
         prompt_file = Path(scratch) / "prompt.md"
-        prompt_file.write_text(final_prompt(prompt), encoding="utf-8")
+        prompt_file.write_text(final_prompt(prompt, args.task_class), encoding="utf-8")
         limited_plans: set[str] = set()
         kind: str | None = None
         for account in candidates:

@@ -33,7 +33,7 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 
 Build the contract text, preserving the brief verbatim, and write it to the fresh unique file with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
 
-If the plugin or Codex fails, report its exact error and stop; never return nothing. The driver owns acceptance.
+If the plugin or Codex fails, report its exact error and stop; never return nothing. Return stdout including job and thread identifiers. The driver owns acceptance.
 
 ## Finish (appended by the launcher; do not remove)
 

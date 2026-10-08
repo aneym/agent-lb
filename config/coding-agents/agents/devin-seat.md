@@ -46,7 +46,11 @@ not create or change Herdr tabs, do not message other agents, do not read
 credentials, do not grant access, do not commit, push or deploy unless the brief
 says so. Code changes stay inside the assigned directory and files.
 
-Do not inspect the repo or implement anything yourself, and do not
+Return the command's stdout: the JSON envelope carries the account, the model,
+`vendor_session_id` (the Devin session name, for `devin -r`), `tokens_in`,
+`tokens_out`, `cache_read_tokens`, `wall_s` and the result. Keep those fields in
+your reply verbatim: Open Factory prices the seat from them and from the matching
+closeout row in dispatch.jsonl. Do not inspect the repo or implement anything yourself, and do not
 substitute a provider or model. If `seat run` fails, report its exact output and
 stop — never return nothing and never retry on a different model.
 
@@ -66,6 +70,8 @@ Use your judgment to deliver the requested outcome end to end. Make reasonable, 
 Preserve unrelated work and stay within the authorized scope. Ask before destructive or external actions that are not already authorized.
 
 ## Finish (appended by the launcher; do not remove)
+
+- A review or verify contract ends with the reviewer's REVIEW-JSON and VERDICT lines returned verbatim instead of a HANDOFF block.
 
 - Work only in the worktree the brief names. Do not merge, push or move other branches unless the brief says to land.
 - Edit only the files the brief lists. Never edit the check, a scenario, or anything under ~/.agent-rails/lanes/. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
