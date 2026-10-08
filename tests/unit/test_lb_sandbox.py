@@ -1159,6 +1159,26 @@ def test_a_volume_event_log_the_run_could_write_is_still_scanned(tmp_path: Path)
     ]
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil is macOS")
+def test_another_volumes_event_log_the_run_could_write_is_still_scanned(tmp_path: Path, mounted_root: Path) -> None:
+    """The shared-tree scan of ~/.agent-lb enters a concurrent run's root, its own volume, whose root-owned
+    .fseventsd it cannot read (the S1-3 check on the installed copy went incomplete on exactly that). The skip
+    covers the top of any volume, root-owned only: a .fseventsd this user made there is scanned like any other."""
+    lb = _load()
+    planted = mounted_root / ".fseventsd" / "0000"
+    planted.parent.mkdir()
+    planted.write_text(FAKE_TOKEN)
+    top = os.open(mounted_root, os.O_RDONLY | os.O_DIRECTORY)
+    parent = os.open(mounted_root.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        assert (lb.volume_top(top), lb.volume_top(parent)) == (True, False)
+    finally:
+        os.close(top)
+        os.close(parent)
+    result = lb.scan_paths([mounted_root.parent], [FAKE_TOKEN])
+    assert result["hits"] == [os.path.join(os.path.realpath(mounted_root), ".fseventsd", "0000")]
+
+
 def test_scan_never_follows_a_directory_swapped_for_a_link_mid_walk(tmp_path: Path) -> None:
     """Finding: O_NOFOLLOW covered only the final component, so a parent directory replaced by a link after
     the walk listed it led the scanner out of the tree. Each entry is opened from its parent's descriptor."""

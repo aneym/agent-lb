@@ -1407,9 +1407,18 @@ READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 # A whole path with no link anywhere (O_NOFOLLOW_ANY; macOS refuses it combined with O_NOFOLLOW, EINVAL).
 PATH_FLAGS = os.O_RDONLY | os.O_NONBLOCK | (NOFOLLOW_ANY or os.O_NOFOLLOW)
 # The event log fseventsd keeps at the top of every mounted volume: owned by root, unreadable to the run and
-# unwritable by it, so it can hold no token the run wrote. Skipped only there, only root-owned, only on the
-# root's own volume; a directory of that name the run could have made is scanned like any other.
+# unwritable by it, so it can hold no token the run wrote. Skipped only there (the top of this run's root, or of
+# any other volume the walk enters, such as a concurrent run's root), only root-owned, only on that volume; a
+# directory of that name the run could have made is scanned like any other.
 VOLUME_EVENT_LOG = ".fseventsd"
+
+
+def volume_top(dir_fd: int) -> bool:
+    """True when the directory at dir_fd is the top of a mounted volume (its .. is on another device)."""
+    try:
+        return os.fstat(dir_fd).st_dev != os.stat("..", dir_fd=dir_fd).st_dev
+    except OSError:
+        return False
 
 
 def _under(path: str, base: str) -> bool:
@@ -1565,7 +1574,7 @@ def walk_files(
             try:
                 if is_dir:
                     listed = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-                    if base is not None and path == base and volume_event_log(name, listed, dir_fd):
+                    if volume_event_log(name, listed, dir_fd) and (path == base or volume_top(dir_fd)):
                         continue
                     fd = os.open(name, DIR_FLAGS | os.O_NONBLOCK, dir_fd=dir_fd)
                     try:
