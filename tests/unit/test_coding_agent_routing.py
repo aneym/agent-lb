@@ -87,7 +87,7 @@ def test_verify_routing_rejects_each_factory_violation(
             "seat": "verifier", "model": "opus-latest", "vendor": "anthropic", "effort": "high"
         }
     elif violation == "review-policy":
-        table["policy"]["review"]["money_path"]["rule"] = "majority"
+        table["policy"]["review"]["never_after_fail"] = True
     elif violation == "implement-effort":
         classes["implement"]["chain"][0]["effort"] = "xhigh"
     elif violation == "explore-effort":

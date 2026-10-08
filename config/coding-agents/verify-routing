@@ -262,10 +262,13 @@ factory(
     classes.get("verify", {}).get("cross_vendor") is True
     and any(entry.get("seat") == "codex-verifier" and entry.get("effort") == "xhigh"
         for entry in classes.get("verify", {}).get("chain", []))
-    and review.get("money_path") == {"lenses": 3, "rule": "any-fail", "effort": "xhigh"}
-    and all(review.get(key) is True for key in ("never_after_fail", "fresh_per_unit", "cross_vendor", "release_facts"))
+    # Pre-GA (2026-10-07): review runs after merge, money path included; nothing holds a merge but the secret scan.
+    and review.get("timing") == "after_merge"
+    and review.get("money_path") == {"lenses": 1, "timing": "after_merge"}
+    and all(review.get(key) is True for key in ("fresh_per_unit", "cross_vendor"))
+    and all(review.get(key) is False for key in ("never_after_fail", "release_facts"))
     and review.get("max_fix_rounds") == 1,
-    "fresh cross-vendor review, any-fail money path and one fix round",
+    "fresh cross-vendor review after merge, money path included, and one fix round",
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
 forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat"}
