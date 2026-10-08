@@ -1321,6 +1321,15 @@ def main() -> int:
                 changes[owner_path] = owner_marker
 
     if not args.uninstall:
+        # Adopt the previously hand-installed Jev hooks (2026-10-08). Keep the
+        # launchd target on the internal volume; its TCC context cannot read the repo.
+        for name, template in (("route.sh", "jev-route.sh"),
+                               ("health-check.sh", "jev-health-check.sh"),
+                               ("jev-health.py", "jev-health.py")):
+            target = args.home / ".jev/hooks" / name
+            wanted = (source / "hooks" / template).read_text()
+            if read_text(target) != wanted:
+                changes[target] = wanted
         luna_owner = args.home / ".agent-lb/managed/coding-agents/luna-implementer"
         if read_text(luna_owner) == "agent-lb:luna-implementer:v1\n":
             for relative in (
