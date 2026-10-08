@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 _AGGREGATE_CACHE_TTL_SECONDS = 5.0
 _NEAR_CAP_RATIO = 0.8
+# Members are people, not agents: every refusal they see ends with who to ask.
+MEMBER_CONTACT_LINE = "Text Alex if you have any questions."
 
 GATE_OK = "ok"
 GATE_NEAR_CAP = "near_cap"
@@ -284,11 +286,13 @@ class TeamService:
             return
 
         if _status_value(member.status) == TeamMemberStatus.SUSPENDED.value:
-            raise TeamMemberSuspendedError(f"Team member '{member.name}' is suspended")
+            raise TeamMemberSuspendedError(f"Your Agent LB access is switched off for now. {MEMBER_CONTACT_LINE}")
 
         allowed_models = deserialize_allowed_models(member.allowed_models)
         if allowed_models and model is not None and not _model_is_allowed(model, allowed_models):
-            raise TeamModelNotAllowedError(f"Model '{model}' is not allowed for team member '{member.name}'")
+            raise TeamModelNotAllowedError(
+                f"The model '{model}' isn't turned on for you. Pick another model and try again. {MEMBER_CONTACT_LINE}"
+            )
 
         now = utcnow()
         for window in TEAM_WINDOWS:
@@ -299,14 +303,15 @@ class TeamService:
 
             totals = await self._usage_for_window(member.id, window, now=now)
             if cost_cap is not None and totals.cost_usd >= float(cost_cap):
-                raise _over_cap_error(member, window, now, f"cost cap ${float(cost_cap):.2f}")
+                raise _over_cap_error(window, now, f"cost cap ${float(cost_cap):.2f}")
             if token_cap is not None and totals.tokens >= int(token_cap):
-                raise _over_cap_error(member, window, now, f"token cap {int(token_cap)}")
+                raise _over_cap_error(window, now, f"token cap {int(token_cap)}")
 
         for pool_window in await self._pool_windows(member, now=now):
             if pool_window.used_percent >= pool_window.limit_percent:
                 raise TeamMemberOverCapError(
-                    f"Team member '{member.name}' reached its {pool_window.window} pool share limit",
+                    f"You've used your share of the shared accounts for this {pool_window.window} window; "
+                    f"it resets at {_reset_text(pool_window.reset_at)}. {MEMBER_CONTACT_LINE}",
                     window=pool_window.window,
                     reset_at=pool_window.reset_at,
                 )
@@ -529,12 +534,18 @@ def _empty_usage() -> dict[str, TeamUsageTotals]:
     return {window: TeamUsageTotals(cost_usd=0.0, tokens=0) for window in TEAM_WINDOWS}
 
 
-def _over_cap_error(member: TeamMember, window: str, now: datetime, detail: str) -> TeamMemberOverCapError:
+def _over_cap_error(window: str, now: datetime, detail: str) -> TeamMemberOverCapError:
+    reset_at = window_end(window, now)
     return TeamMemberOverCapError(
-        f"Team member '{member.name}' reached its {window} {detail}",
+        f"You've used your {window} allowance ({detail}); it resets at {_reset_text(reset_at)}. {MEMBER_CONTACT_LINE}",
         window=window,
-        reset_at=window_end(window, now),
+        reset_at=reset_at,
     )
+
+
+def _reset_text(reset_at: datetime) -> str:
+    # Window ends are naive UTC; say so, since the reader is a person in another zone.
+    return reset_at.strftime("%a %H:%M UTC")
 
 
 def _to_member_data(

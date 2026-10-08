@@ -194,7 +194,7 @@ from app.modules.proxy.types import (
     RateLimitWindowSnapshotData,
 )
 from app.modules.team.gate import check_member_gate, get_member_self_status
-from app.modules.team.service import TeamMemberSelfStatus
+from app.modules.team.service import MEMBER_CONTACT_LINE, TeamMemberSelfStatus
 from app.modules.usage.mappers import usage_history_to_window_row
 from app.modules.usage.repository import UsageRepository
 
@@ -3840,6 +3840,12 @@ async def _opportunistic_admission_denial(
     message = selection.error_message or "opportunistic burn window closed"
     if not message.startswith("opportunistic burn window closed"):
         message = f"opportunistic burn window closed: {message}"
+    if getattr(api_key, "member_id", None):
+        # A member is a person reading this in Codex or Claude Code, not an operator.
+        message = (
+            "The shared accounts are busy right now, so this request was held back. "
+            f"Try again in a minute. {MEMBER_CONTACT_LINE}"
+        )
     return _logged_error_json_response(
         request,
         429,

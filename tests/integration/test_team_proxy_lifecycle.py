@@ -96,6 +96,7 @@ async def test_untrusted_member_lifecycle_through_proxy_routes(async_client, app
             denied = await member.get("/v1/models")
             assert denied.status_code == 403, denied.text
             assert denied.json()["error"]["type"] == "team_member_suspended"
+            assert denied.json()["error"]["message"].endswith("Text Alex if you have any questions.")
         assert (await member.get("/v1/usage")).status_code == 200
 
         updated = await async_client.patch(
@@ -135,6 +136,7 @@ async def test_untrusted_member_lifecycle_through_proxy_routes(async_client, app
             denied = await member.get("/v1/models")
             assert denied.status_code == 429, denied.text
             assert denied.json()["error"]["type"] == "team_member_over_cap"
+            assert denied.json()["error"]["message"].endswith("Text Alex if you have any questions.")
             assert denied.headers["X-Team-Window"] == "day"
             assert denied.headers["X-Team-Reset"].endswith("Z")
 
