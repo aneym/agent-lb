@@ -12,7 +12,8 @@ Best first; only Claude is precious. Alex, 2026-09-30: "use things up that are b
 - Read/explore: `gpt-explorer` Sol low; no decision rides on it.
 - Review: Sonnet high `verifier` for non-Claude authors; `codex-verifier` Sol xhigh for Claude-authored work. Money path, migrations and gate config use an Opus panel. Grok and Composer never review.
 - Plans, specs, verdicts, design, build-lane tabs, job runners and fact helpers stay Opus until an eval says otherwise. Tabs Alex talks to stay Opus unless he picks Fable. Claude decides; other seats advise or type.
-- Fable and Astra are readmitted for two roles (2026-10-05). Alex, 2026-10-05 19:44 ET: "right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens." `fable-orchestrator` (`fable-latest`, falling back to `opus-latest` once Fable leaves the upstream list) runs the orchestrator, lead, talk and Q&A tabs Alex talks to and the factory decider. `astra-consult` (`astra-latest`, high, read-only) gives plan second opinions: at most one per plan, brief under 2k tokens. Neither is on an implementer or review ladder; every other seat still treats both as retired (`readmitted` in `routing-table.json`).
+- Every agent tab and session runs Opus, effort medium, ultracode on (2026-10-07). Alex, 2026-10-07 19:27 ET: "for now, default all our agents to opus medium but with ultracode on please. including cc zsh command"; then: "like \"agents\" and new temrinal sessions i dispatch". That covers the orchestrator, lead, CoS, talk and Q&A tabs, the pinned agent tabs and every session cc, herdr-agent-spawn, box-session or agent-launch starts; an explicit `--model`, `--effort` or `--settings` wins, and `CLAUDE_ULTRACODE=0` turns ultracode off in the zsh launchers. Ladder seats, workflow `agent()` seats and `-p` job runners keep their own models and effort.
+- Fable and Astra are readmitted for two roles (2026-10-05). Alex, 2026-10-05 19:44 ET: "right now i'm just using fable because opus has sort of failed this project. i also want you to consult with astra throughout this without burning too many tokens." `fable-orchestrator` (`fable-latest`, falling back to `opus-latest` once Fable leaves the upstream list) runs those tabs only when Alex or a dispatch asks for Fable (2026-10-07; no longer the default). `astra-consult` (`astra-latest`, high, read-only) gives plan second opinions: at most one per plan, brief under 2k tokens. Neither is on an implementer or review ladder; every other seat still treats both as retired (`readmitted` in `routing-table.json`).
 - Orchestrators come first (Alex, 2026-09-29: "we cant have any of these go down, especially orchestrators like claude"). While Claude is down to its last account or a 5h window is under 40%, Claude runs lane tabs, orchestrators and Opus plans/specs/verdicts only. Explore goes to `gpt-explorer`, never `Explore`; mechanical to Cursor; non-Claude review to Sonnet `verifier`. Use `ANTHROPIC_MODEL=claude-sonnet-5-5` for `review_pr.py`; no new Claude-driven eval judging or helper workflows.
 - Cursor-Sonnet is unavailable until 2026-10-30; on-demand billing stays off. Re-test then with `seat run --vendor cursor --model claude-sonnet-5-5-high`. While this overflow rung is empty, the next Claude overflow rung is Opus (2026-10-05).
 - Every GPT seat runs `sol-latest`, resolved at runtime (Alex, 2026-09-29: "swap all gpt routing to sol latest, 6.1 please").
@@ -48,7 +49,8 @@ Anthropic limits become an item only when the final usable account is under 15% 
 |---|---|---|
 | Plan second opinion | sol-consult (read-only) | sol-latest high |
 | Plan second opinion, light | astra-consult (read-only; one per plan, brief under 2k tokens) | astra-latest high |
-| Orchestrator and lead tabs Alex talks to, factory decider | fable-orchestrator | fable-latest medium |
+| Orchestrator, lead, CoS, talk and agent tabs Alex talks to, factory decider | Opus tab (cc, ultracode on) | opus-latest medium |
+| Same tabs, Fable on request | fable-orchestrator | fable-latest medium |
 | Code to a spec | interim ladder; gpt-implementer | sol-latest medium |
 | Judgment code, fallback | opus-seat | Opus |
 | Read-only exploration | gpt-explorer / Explore | sol-latest low / Sonnet medium |
@@ -70,7 +72,7 @@ Fixed effort per stage, no per-request router (2026-09-26).
 | Security, money path, brownfield bugs, parsers, perf, concurrency | xhigh | security-reviewer; money-path verify stages |
 | Fully autonomous hard problem, no human in loop | max | ask first |
 
-Open-ended work stays Opus xhigh. Lane, orchestrator and scoping tabs use medium; audit and planner tabs high (2026-10-01). Scoping tabs also launch with ultracode on, so they use workflows by default: `herdr-agent-spawn --scoping` adds `--effort medium --settings '{"ultracode":true}'` (Alex, 2026-10-05 12:06 ET). Sonnet is not a talk or scoping default.
+Open-ended work stays Opus xhigh. Lane, orchestrator and scoping tabs use medium; audit and planner tabs high (2026-10-01). Scoping tabs also launch with ultracode on, so they use workflows by default (Alex, 2026-10-05 12:06 ET); since 2026-10-07 every tab does (see the model ladder). Sonnet is not a talk or scoping default.
 
 ## Workflows, waits and leads (2026-09-29; updated 2026-10-05)
 
