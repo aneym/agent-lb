@@ -33,3 +33,14 @@
 - [x] Teardown stops processes naming the run id; leftovers reported by pid and hash only.
 - [x] `lb-restart --sandbox`: hard links refused at the guard and at every open; the plist must run `_serve <root>` with an env inside the root.
 - [x] Each finding has a test that fails on 41a2f667.
+
+## 6. Fix round 3 (live-safety review FAIL on 1667b000, 41a2f667, 397b5122)
+
+- [x] Each root is its own volume (encrypted sparse image mounted at the root; passphrase only in memory): no hard link reaches a live file. `_serve`, `_boot` and `_aux` refuse a root that is not.
+- [x] `_boot` and `_aux` (and the front, their child) run under the root's Seatbelt profile: no write under home outside the root, no read of live custody. `start` populates the root, and `status`/`scan`/`stop` read the store, in confined children.
+- [x] Metadata reads (`sandbox.json`, aux and front state, fault state, pidfile, primary log) go through root descriptors; the plists name no `StandardOutPath`; `_serve` and `_aux` open their logs from the root.
+- [x] The scanner walks by directory descriptors; under the root it never reads a file with a second link.
+- [x] `lb-restart --sandbox` renames the preference and unlinks the pidfile and pause through a state-dir descriptor.
+- [x] `stop` and `gc` act only on a sandbox stamped with the run id (else exit 2) and signal only processes naming the root or the run's label, never a bare word.
+- [x] `status` reports `own_volume` and `confined`; the live check fails unless the primary, aux and front are confined on their own volume.
+- [ ] Deferred: same-UID force-unmount of a running sandbox's volume (covered by the service identity follow-up); `launchctl bootstrap` reads its plist by path.

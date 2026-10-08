@@ -70,15 +70,51 @@ The sandbox MUST reach the live service only through its peer gate, which forwar
 
 ### Requirement: Files under a sandbox root are opened without following links
 
-Every lb-sandbox read or write under a root MUST go through a descriptor for the root, opening each path component with O_NOFOLLOW, and MUST refuse a file with more than one link: `restart` (its log), `client-env`, `fault`, `_aux` and `start` writes, the store key read and unlink, and the log export source. `_serve` MUST refuse a store, journal or key with more than one link before it reads a credential.
+Every lb-sandbox read or write under a root MUST go through a descriptor for the root, opening each path component with O_NOFOLLOW, and MUST refuse a file with more than one link: `restart` (its log), `client-env`, `fault`, `_aux` and `start` writes, every metadata read (`sandbox.json`, `aux.json`, `front.json`, fault state, the standby pidfile, the primary log), the store key read and unlink, and the log export source. `_serve` MUST refuse a store, journal or key with more than one link before it reads a credential. The scanner MUST walk by directory descriptors, opening each entry relative to its parent with O_NOFOLLOW and reading a file only when the descriptor is the inode the listing named; under the root it MUST NOT read a file with a second link and MUST report the scan incomplete. `lb-restart --sandbox` MUST write the front preference as a new file renamed into place and remove the standby pidfile and watchdog pause through a descriptor for the real state directory, so a state directory swapped for a link is refused. `_serve` and `_aux` MUST open their own logs from a root descriptor; the sandbox plists name no `StandardOutPath`, which launchd would follow.
 
 #### Scenario: Data dir swapped for the live data dir
 - **WHEN** `<root>/data` is a link to the live data dir at stop
 - **THEN** the live key is not unlinked, `custody.key_unlinked` is false and stop exits 1
 
+#### Scenario: Metadata swapped for a link to live state
+- **WHEN** `<root>/sandbox.json` is a link (or a hard link) to the live `state/front.json` at stop
+- **THEN** stop reads it as no metadata, signals and deletes nothing, and exits 2
+
+#### Scenario: State directory swapped during a sandbox restart
+- **WHEN** `<root>/state` is replaced by a link to the live state directory after the restart guard ran
+- **THEN** setting the preference and removing the standby pidfile are refused and the live `front-preferred-port` and `lb-standby.pid` keep their bytes
+
+#### Scenario: Directory swapped for a link mid-walk
+- **WHEN** a directory the scanner has listed but not entered is replaced by a link to another tree
+- **THEN** the scanner does not follow it and reports the scan incomplete
+
 #### Scenario: Log directory swapped after the scan
 - **WHEN** `logs/d` is replaced by a link to `<root>/data` after the teardown scan read it
 - **THEN** the export refuses `logs/d/encryption.key` and the store key never reaches `--logs-to`
+
+### Requirement: Every process that works in a root runs under kernel confinement
+
+The app, the front and the aux open paths by name with code lb-sandbox does not own. Each sandbox root MUST therefore be its own volume: `start` mounts a fresh encrypted sparse image (random passphrase held only in the `start` process, given to hdiutil on stdin) at the root, so no name under the root can be a hard link to a live file and the image on disk is ciphertext. `_serve`, `_boot` and `_aux` MUST refuse a root that is not its own volume. `_boot` and `_aux` MUST put themselves (and so the front and every other child) under a Seatbelt profile that denies writes anywhere under the home directory except the root and denies reads of the agent-lb home, the legacy store directory and the live plist (the installed runtime's code stays readable), before they open anything under the root. `start` MUST populate the root (runtime copy, bootstrap copy, plists, metadata) in a child under the write-confinement profile, and the store reads of `status`, `scan` and `stop` MUST run in a child under the full profile. `status` MUST report `own_volume` and whether the primary, aux and front are confined; the live check fails unless all are true. Stop MUST detach the volume and delete its image.
+
+#### Scenario: Front temp file linked to live state
+- **WHEN** `<root>/state/front.json.tmp` is a link to the live `state/front.json` while the front runs
+- **THEN** the front's write is denied by the profile and the live file keeps its bytes
+
+#### Scenario: Data dir swapped after the custody checks
+- **WHEN** `<root>/data` is replaced by a link to the live agent-lb home after `_serve` validated it
+- **THEN** the app's SQLite and key opens, and `read_accounts`, are denied; nothing under the live home is read or written
+
+#### Scenario: Hard link to a live file
+- **WHEN** a caller tries to hard-link a live file into a root
+- **THEN** the link fails across volumes (EXDEV)
+
+### Requirement: Stop signals only processes of a stamped sandbox
+
+`stop` and `gc` MUST NOT signal, scan or delete anything unless `<root>/sandbox.json` is a single-link regular file whose `run_id` is the run id given (and whose label, when present, is the run's label); otherwise `stop` exits 2. Processes MUST be matched for signalling by the sandbox root path (or a path inside it) or the run's launchd label as a whole token, never by the run id as a bare word.
+
+#### Scenario: A run id that is a word of the live command line
+- **WHEN** `lb-sandbox stop --run-id aneyman` (or `runtime`, `agent-lb`) runs with no such sandbox
+- **THEN** no process is signalled; the live agent-lb, whose command line holds those words as path segments, is untouched
 
 ### Requirement: Scans hold the store key and see every run process
 
@@ -90,7 +126,7 @@ A file scan with a sandbox root MUST hold its store key and report as a hit any 
 
 ### Requirement: Stop tears down to nothing and proves it
 
-`lb-sandbox stop` MUST boot out both labels, stop a leftover standby by its pidfile, stop every process whose command line names the sandbox root or the run id, report a leftover process by pid and command hash only, scan the whole root (store and key at their own paths excepted) before deleting it, copy the logs to `--logs-to` only after that scan is complete and clean, unlink the store key, delete the root and report `clean` only when no label is loaded, no listener holds a run port, no process names the run and the root is gone. It MUST exit 1 when the scan found anything, could not read everything or could not load every secret, even when cleanup succeeded.
+`lb-sandbox stop` MUST boot out both labels, stop a leftover standby by its pidfile, stop every process whose command line names the sandbox root or the run's launchd label, report a leftover process (one naming the root, the label or `--run-id R`) by pid and command hash only, scan the whole root (store and key at their own paths excepted) before deleting it, copy the logs to `--logs-to` only after that scan is complete and clean, unlink the store key, detach the root's volume, delete the root and the volume image, and report `clean` only when no label is loaded, no listener holds a run port, no process names the run, the volume is detached, the image is gone and the root is gone. It MUST exit 1 when the scan found anything, could not read everything or could not load every secret, even when cleanup succeeded.
 
 #### Scenario: Clean stop
 - **WHEN** a started sandbox is stopped

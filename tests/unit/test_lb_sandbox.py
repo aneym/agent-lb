@@ -98,20 +98,44 @@ def test_root_must_sit_directly_under_sandboxes(tmp_path: Path, relative: str) -
 
 
 @pytest.mark.parametrize(
-    ("cmd", "owned"),
+    ("cmd", "owned", "named"),
     [
-        ("/h/.agent-lb/sandboxes/r1/runtime/.venv/bin/python -m app.cli --port 2471", True),
-        ("node /h/.agent-lb/sandboxes/r1/runtime/scripts/agent-lb-front.mjs /h/.agent-lb/sandboxes/r1", True),
-        ("python lb-restart --reap 9 210 --sandbox /h/.agent-lb/sandboxes/r1/lb-restart.json", True),
-        ("/h/.agent-lb/sandboxes/r10/runtime/.venv/bin/python -m app.cli --port 2481", False),
-        ("node agent-lb-front.mjs /h/.agent-lb/sandboxes/r1-b", False),
-        ("/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb --host 127.0.0.1 --port 2457", False),
+        ("/h/.agent-lb/sandboxes/r1/runtime/.venv/bin/python -m app.cli --port 2471", True, False),
+        ("node /h/.agent-lb/sandboxes/r1/runtime/scripts/agent-lb-front.mjs /h/.agent-lb/sandboxes/r1", True, False),
+        ("python lb-restart --reap 9 210 --sandbox /h/.agent-lb/sandboxes/r1/lb-restart.json", True, False),
+        ("/bin/launchctl print gui/501/com.agent-lb.drill.sbx-r1", True, True),
+        ("/bin/launchctl bootout gui/501/com.agent-lb.drill.sbx-r1-aux", True, True),
+        ("python lb-sandbox status --run-id r1", False, True),
+        ("python lb-sandbox status --run-id=r1", False, True),
+        ("/h/.agent-lb/sandboxes/r10/runtime/.venv/bin/python -m app.cli --port 2481", False, False),
+        ("node agent-lb-front.mjs /h/.agent-lb/sandboxes/r1-b", False, False),
+        ("/bin/launchctl print gui/501/com.agent-lb.drill.sbx-r10", False, False),
+        ("python lb-sandbox status --run-id r10", False, False),
+        ("python worker.py r1 /tmp/r1/x", False, False),
+        ("/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb --host 127.0.0.1 --port 2457", False, False),
     ],
 )
-def test_stop_only_claims_processes_of_its_own_root(cmd: str, owned: bool) -> None:
+def test_stop_only_claims_processes_of_its_own_root(cmd: str, owned: bool, named: bool) -> None:
+    """owned: what stop may signal (the root path or the run's label). named: what it reports or inspects."""
     lb = _load()
-    assert lb.names_root(cmd, Path("/h/.agent-lb/sandboxes/r1")) is owned
-    assert lb.names_run(cmd, "r1") is (owned and "r1" in cmd.split("/"))
+    assert lb.owned_process(cmd, Path("/h/.agent-lb/sandboxes/r1"), "r1") is owned
+    assert lb.names_run(cmd, "r1") is named
+
+
+LIVE_PRIMARY_CMD = (
+    "/Users/aneyman/.agent-lb/runtime/agent-lb/.venv/bin/python "
+    "/Users/aneyman/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb --host 127.0.0.1 --port 2457"
+)
+
+
+@pytest.mark.parametrize("run_id", ["aneyman", "runtime", "agent-lb", "bin", "python", "host"])
+def test_a_run_id_that_is_a_word_of_the_live_command_never_claims_it(run_id: str) -> None:
+    """Finding: stop killed any process whose command line held the run id as a word. `stop --run-id aneyman`
+    (or runtime, agent-lb) matched the live agent-lb primary and, on Studio, 911 other processes."""
+    lb = _load()
+    root = Path("/Users/aneyman/.agent-lb/sandboxes") / run_id
+    assert lb.owned_process(LIVE_PRIMARY_CMD, root, run_id) is False
+    assert lb.names_run(LIVE_PRIMARY_CMD, run_id) is False
 
 
 def test_cli_refuses_a_launchctl_shim(tmp_path: Path) -> None:
@@ -187,7 +211,7 @@ def test_serve_keeps_the_token_out_of_the_exec_env_and_argv(tmp_path: Path, monk
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
     _key(root)
-    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
     live_plist = tmp_path / "live.plist"
     live_plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"AGENT_LB_FEDERATION_TOKEN": FAKE_TOKEN}}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
@@ -275,16 +299,33 @@ def _fake_sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
     return sandboxes, root.resolve(), live_plist
 
 
+@pytest.fixture
+def mounted_root(tmp_path: Path):
+    """tmp_path/sandboxes/r1 as its own volume (a small sparse image), as start makes a root; detached after."""
+    root = tmp_path / "sandboxes" / "r1"
+    root.mkdir(parents=True)
+    image = tmp_path / "volume.sparseimage"
+    create = ["/usr/bin/hdiutil", "create", "-quiet", "-size", "64m", "-type", "SPARSE", "-fs", "APFS"]
+    subprocess.run([*create, "-volname", "lbsbx-unit", str(image)], check=True, timeout=180)
+    attach = ["/usr/bin/hdiutil", "attach", "-quiet", "-nobrowse", "-noautoopen", "-owners", "on", "-mountpoint"]
+    subprocess.run([*attach, str(root), str(image)], check=True, timeout=180)
+    try:
+        yield root
+    finally:
+        subprocess.run(["/usr/bin/hdiutil", "detach", "-quiet", "-force", str(root)], timeout=180, check=False)
+
+
 def _ps_env(pid: int) -> bytes:
     return subprocess.run(["/bin/ps", "-E", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True).stdout
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
-def test_serve_hands_the_token_over_a_pipe_never_through_ps_eww(tmp_path: Path) -> None:
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics, hdiutil and Seatbelt are macOS")
+def test_serve_hands_the_token_over_a_pipe_never_through_ps_eww(tmp_path: Path, mounted_root: Path) -> None:
     """Integration: the real _serve execs the real _boot, which starts a stand-in app in the same process.
 
     `ps eww` (here `ps -E`) of that process must show its environment (the control) and never the token;
-    the app's settings must hold it while os.environ, which children inherit, must not.
+    the app's settings must hold it while os.environ, which children inherit, must not. The root is its own
+    volume, as start makes it, and the app runs under the root's Seatbelt profile.
     """
     import hashlib
     import time
@@ -316,10 +357,16 @@ def test_serve_hands_the_token_over_a_pipe_never_through_ps_eww(tmp_path: Path) 
         leaked = FAKE_TOKEN.encode() in shown
         assert not leaked, "ps eww of the app process shows the federation token"
         procs = _load().scan_processes(root, "r1", [FAKE_TOKEN])
+        confined = _load().is_confined(report["pid"])
     finally:
         (root / "stop").touch()
-        proc.wait(30)
+        try:
+            proc.wait(30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
     assert report["pid"] == proc.pid, "the app must run in the exec'd process itself, no second exec"
+    assert confined is True, "the app must run under the root's Seatbelt profile"
     assert report["settings_sha"] == hashlib.sha256(FAKE_TOKEN.encode()).hexdigest()
     assert report["token_in_environ"] is False, "children of the app would inherit the token"
     assert report["argv"][-2:] == ["--port", "2481"]
@@ -359,7 +406,7 @@ def test_serve_refuses_other_hosts_and_ports(tmp_path: Path, monkeypatch: pytest
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
     _key(root)
-    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
     monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
     monkeypatch.setenv("AGENT_LB_DATA_DIR", str(root.resolve() / "data"))
@@ -410,7 +457,7 @@ class _EdgeRig:
         handler = self.lb.make_edge_handler(
             "anthropic",
             f"http://127.0.0.1:{up_port}",
-            self.lb.FaultState(self.fault_file),
+            self.lb.FaultState(self.fault_file.parent, self.fault_file.name),
             self.session,
             counters,
             self.entries.append,
@@ -609,7 +656,7 @@ def test_serve_validates_all_metadata_ports_before_credentials(tmp_path, monkeyp
     root = tmp_path / "sandboxes" / "r1"
     root.mkdir(parents=True)
     ports = dict(SERVE_PORTS, **{redirect: 2455})
-    (root / "sandbox.json").write_text(json.dumps({"ports": ports}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": ports}))
     monkeypatch.setattr(lb, "SANDBOXES", root.parent)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root))
     with pytest.raises(lb.Refused):
@@ -621,7 +668,7 @@ def test_serve_refuses_redirected_data_before_credentials(tmp_path, monkeypatch,
     lb = _load()
     root = tmp_path / "sandboxes" / "r1"
     (root / "data").mkdir(parents=True)
-    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
     outside = tmp_path / "live"
     outside.mkdir()
     path = root / relative
@@ -950,25 +997,248 @@ def test_process_scan_is_incomplete_when_any_run_process_hides_its_environment(t
     assert (result["found"], result["complete"], result["invisible_pids"]) == (False, False, [unseen.pid])
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
-def test_teardown_stops_a_process_that_names_only_the_run_and_never_reports_its_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Finding: a leftover naming the run id but not the root survived, and its raw command (which can hold
-    a token) went into the JSON. It is stopped, and leftovers are reported by pid and hash only."""
+@pytest.mark.skipif(sys.platform != "darwin", reason="ps -E semantics are macOS")
+def test_process_scan_skips_a_label_only_launchctl_call_and_still_requires_run_id_commands(tmp_path: Path) -> None:
+    """Pre-land check, round 3: lb-restart's `launchctl kickstart -k gui/<uid>/<label>` waits out the drain and
+    macOS never shows a platform binary's environment, so naming the label made the cutover scan incomplete.
+    A command naming only the label is not selected; one passing --run-id must still show its environment."""
+    import time
+
     lb = _load()
-    root = _teardown_fixture(tmp_path, monkeypatch, lb)
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", root.name, FAKE_TOKEN])
+    root = (tmp_path / "sandboxes" / "r1").resolve()
+    root.mkdir(parents=True)
+    label = lb.labels_for("r1")[0]
+    sleep = [sys.executable, "-c", "import time; time.sleep(20)"]
+    label_only = subprocess.Popen([*sleep, "kickstart", "-k", f"gui/{os.getuid()}/{label}"], env={"PATH": "/bin"})
+    by_run_id = subprocess.Popen([*sleep, "--run-id", "r1"], env={"PATH": "/bin"})
     try:
-        result = lb.teardown(root.name, None)
-        stopped = proc.wait(10) is not None
+        time.sleep(0.5)
+        result = lb.scan_processes(root, "r1", [FAKE_TOKEN])
     finally:
-        if proc.poll() is None:
+        for proc in (label_only, by_run_id):
             proc.kill()
             proc.wait()
-    assert stopped and result["processes"] == []
+    assert label_only.pid not in result["pids"] + result["invisible_pids"]
+    assert (result["complete"], result["invisible_pids"]) == (False, [by_run_id.pid])
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
+def test_teardown_stops_a_process_that_names_the_run_label_and_never_reports_its_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Findings: a leftover naming the run's label but not the root survived, and its raw command (which can
+    hold a token) went into the JSON. It is stopped, leftovers are reported by pid and hash only, and a process
+    that holds the run id only as a bare word (as the live agent-lb holds `aneyman`) is never signalled."""
+    lb = _load()
+    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    labelled = subprocess.Popen([*sleeper, f"gui/{os.getuid()}/com.agent-lb.drill.sbx-{root.name}", FAKE_TOKEN])
+    bare = subprocess.Popen([*sleeper, f"/x/{root.name}/y", root.name, FAKE_TOKEN])
+    try:
+        result = lb.teardown(root.name, None)
+        stopped = labelled.wait(10) is not None
+        spared = bare.poll() is None
+    finally:
+        for proc in (labelled, bare):
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+    assert stopped and spared and result["processes"] == []
     assert FAKE_TOKEN not in json.dumps(result)
     assert set(lb.command_ref("x " + FAKE_TOKEN)) <= set("0123456789abcdef")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
+@pytest.mark.parametrize("meta", ["absent", "symlink", "hardlink", "other-run"])
+def test_stop_signals_scans_and_deletes_nothing_without_this_runs_stamped_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, meta: str
+) -> None:
+    """Findings: stop killed any process naming the run id with no check that the sandbox existed, and read
+    sandbox.json through a link to live state/front.json. Without a single-link sandbox.json stamped with this
+    run id, nothing is signalled, the root is not scanned or deleted, its key stays, and stop exits 2."""
+    import argparse
+
+    lb = _load()
+    root = _teardown_fixture(tmp_path, monkeypatch, lb)
+    monkeypatch.setattr(lb, "check_launchctl", lambda: None)
+    monkeypatch.setattr(lb.signal, "signal", lambda *args: None)  # stop ignores SIGINT; not in the test runner
+    live = tmp_path / "live-state" / "front.json"
+    live.parent.mkdir()
+    live.write_text(json.dumps({"run_id": root.name, "preferred": 2457}))
+    (root / "sandbox.json").unlink()
+    if meta == "symlink":
+        (root / "sandbox.json").symlink_to(live)
+    elif meta == "hardlink":
+        os.link(live, root / "sandbox.json")
+    elif meta == "other-run":
+        (root / "sandbox.json").write_text(json.dumps({"run_id": "lbsbx-someone-else", "ports": {}}))
+    label = f"com.agent-lb.drill.sbx-{root.name}"
+    victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(root / "runtime"), label])
+    try:
+        code = lb.cmd_stop(argparse.Namespace(run_id=root.name, logs_to=None))
+        spared = victim.poll() is None
+    finally:
+        victim.kill()
+        victim.wait()
+    assert spared, "stop signalled a process for a run id with no stamped sandbox.json"
+    assert code == lb.EXIT_REFUSED
+    assert (root / "data" / "encryption.key").exists() and (root / "logs" / "primary.log").exists()
+    assert json.loads(live.read_text()) == {"run_id": root.name, "preferred": 2457}
+
+
+def test_scan_under_the_root_never_reads_a_second_hard_link(tmp_path: Path) -> None:
+    """Finding: a hard link to the live store planted at logs/live.db was read by the root scan. Under the
+    root a file with a second link is not opened for reading: the scan is incomplete, never quietly clean."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    (root / "logs").mkdir(parents=True)
+    (root / "logs" / "own.log").write_text("clean\n")
+    live = tmp_path / "live.db"
+    live.write_text(f"live store {FAKE_TOKEN}")
+    os.link(live, root / "logs" / "live.db")
+    result = lb.scan_paths([root], [FAKE_TOKEN], root=root)
+    planted = os.path.join(os.path.realpath(root), "logs", "live.db")
+    assert (result["complete"], result["files_scanned"], result["hits"]) == (False, 1, [])
+    assert result["unreadable_paths"] == [planted]
+    elsewhere = lb.scan_paths([root], [FAKE_TOKEN])  # control: outside a root's walk the same file is a hit
+    assert elsewhere["hits"] == [planted]
+
+
+def test_a_volume_event_log_the_run_could_write_is_still_scanned(tmp_path: Path) -> None:
+    """The root-owned .fseventsd macOS makes on each mounted root is passed over; a .fseventsd the run could
+    have made (owned by this user, or below the top of the root) is scanned like any other directory."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    for planted in (root / ".fseventsd", root / "logs" / ".fseventsd"):
+        planted.mkdir(parents=True)
+        (planted / "0000").write_text(FAKE_TOKEN)
+    result = lb.scan_paths([root], [FAKE_TOKEN], root=root)
+    base = os.path.realpath(root)
+    assert result["complete"] is True
+    assert sorted(result["hits"]) == [
+        os.path.join(base, ".fseventsd", "0000"),
+        os.path.join(base, "logs", ".fseventsd", "0000"),
+    ]
+
+
+def test_scan_never_follows_a_directory_swapped_for_a_link_mid_walk(tmp_path: Path) -> None:
+    """Finding: O_NOFOLLOW covered only the final component, so a parent directory replaced by a link after
+    the walk listed it led the scanner out of the tree. Each entry is opened from its parent's descriptor."""
+    import shutil as sh
+
+    lb = _load()
+    top = tmp_path / "logs"
+    (top / "sub").mkdir(parents=True)
+    (top / "a.log").write_text("clean\n")
+    (top / "sub" / "b.log").write_text("clean\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "b.log").write_text(FAKE_TOKEN)
+    unreadable: list[str] = []
+    walk = lb.walk_files([top], None, [], unreadable)
+    first, fd = next(walk)  # the walk has listed logs/ and is about to descend into sub/
+    os.close(fd)
+    sh.rmtree(top / "sub")
+    (top / "sub").symlink_to(outside, target_is_directory=True)
+    rest = list(walk)
+    for _, fd in rest:
+        os.close(fd)
+    assert Path(first).name == "a.log"
+    assert [path for path, _ in rest] == []
+    assert unreadable == [os.path.join(os.path.realpath(top), "sub")]
+
+
+def _home_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lb: ModuleType) -> tuple[Path, Path]:
+    """A home with a live agent-lb (state/front.json, the store key) and a sandbox root under it."""
+    home = tmp_path / "home"
+    lb_home = home / ".agent-lb"
+    live_state = lb_home / "state"
+    live_state.mkdir(parents=True)
+    (live_state / "front.json").write_text('{"preferred": 2457}')
+    (lb_home / "encryption.key").write_bytes(b"live key")
+    for name, value in {
+        "REAL_HOME": home,
+        "LB_HOME": lb_home,
+        "SANDBOXES": lb_home / "sandboxes",
+        "LIVE_RUNTIME": lb_home / "runtime" / "agent-lb",
+        "LIVE_KEY_DIR_LEGACY": home / ".codex-lb",
+        "LIVE_PLIST": home / "Library" / "LaunchAgents" / "com.aneyman.agent-lb.plist",
+    }.items():
+        monkeypatch.setattr(lb, name, value)
+    root = lb_home / "sandboxes" / "r1"
+    for sub in ("state", "bin", "data"):
+        (root / sub).mkdir(parents=True)
+    return root, lb_home
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
+@pytest.mark.parametrize("reads", [True, False])
+@pytest.mark.parametrize("planted", ["state/front.json.tmp", "bin/lb-sandbox"])
+def test_a_confined_writer_never_writes_through_a_link_planted_in_the_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reads: bool, planted: str
+) -> None:
+    """Findings: the front's writeFileSync(state/front.json.tmp) and start's copy into bin/lb-sandbox open by
+    name and follow a link planted in the root to live state/front.json. Under the root's Seatbelt profile
+    (the aux and the front it starts run under it; start's copy runs in a confined child) the write is denied.
+    """
+    lb = _load()
+    root, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    live = lb_home / "state" / "front.json"
+    (root / planted).symlink_to(live)
+
+    def write_by_name() -> None:
+        with open(root / planted, "w") as fh:  # what writeFileSync and shutil.copy2 do: open, follow, truncate
+            fh.write("{}")
+
+    with pytest.raises((lb.Refused, lb.Unhealthy)):
+        lb.run_confined(root, write_by_name, reads=reads)
+    assert live.read_text() == '{"preferred": 2457}'
+    lb.run_confined(root, lambda: (root / "state" / "own.json").write_text("{}"), reads=reads)  # control
+    assert (root / "state" / "own.json").read_text() == "{}"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
+def test_store_reads_never_reach_live_custody_through_a_swapped_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding: after the custody checks, data/ swapped for a link to the live agent-lb home let SQLite (in the
+    app, and in read_accounts) open the live store and key by name. In the root's profile that open is denied."""
+    import shutil as sh
+    import sqlite3
+
+    lb = _load()
+    root, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    for directory in (lb_home, root / "data"):
+        con = sqlite3.connect(directory / "store.db")
+        con.execute(
+            "CREATE TABLE accounts (id, provider, status, access_expires_at, access_token_encrypted,"
+            " id_token_encrypted, reset_at, blocked_at, refresh_token_encrypted)"
+        )
+        con.execute("INSERT INTO accounts (id, provider, status) VALUES (?, 'anthropic', 'active')", (directory.name,))
+        con.commit()
+        con.close()
+    rows = lb.run_confined(root, lambda: lb.store_rows(root / "data" / "store.db"), reads=True)
+    assert [row[0] for row in rows] == ["data"]  # control: the sandbox's own store reads
+    sh.rmtree(root / "data")
+    (root / "data").symlink_to(lb_home, target_is_directory=True)
+    with pytest.raises((lb.Refused, lb.Unhealthy)):
+        lb.run_confined(root, lambda: lb.store_rows(root / "data" / "store.db"), reads=True)
+    with pytest.raises((lb.Refused, lb.Unhealthy)):
+        lb.run_confined(root, lambda: (root / "data" / "encryption.key").read_bytes(), reads=True)
+
+
+def test_serve_refuses_a_root_that_is_not_its_own_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A root on the home volume can hold a hard link to a live file; _serve refuses it before the token."""
+    lb = _load()
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    _key(root)
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
+    monkeypatch.setattr(lb, "SANDBOXES", sandboxes)
+    monkeypatch.setattr(lb, "live_federation_token", lambda plist=None: pytest.fail("read the token"))
+    monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
+    with pytest.raises(lb.Refused):
+        lb.cmd_serve(str(root), ["--host", "127.0.0.1", "--port", "2481"])
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="teardown asks launchctl, which is macOS")
@@ -1049,7 +1319,7 @@ def test_serve_refuses_a_store_or_key_hard_linked_to_live_custody(
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
     _key(root)
-    (root / "sandbox.json").write_text(json.dumps({"ports": SERVE_PORTS}))
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
     live = tmp_path / "live-data"
     live.mkdir()
     (live / name).write_bytes(b"live custody file")

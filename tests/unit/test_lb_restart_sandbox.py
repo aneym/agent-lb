@@ -229,6 +229,28 @@ def test_lock_taken_after_the_guard_never_truncates_a_hard_link(tmp_path: Path) 
         pass
 
 
+def test_state_writes_never_follow_a_state_dir_swapped_for_a_link(tmp_path: Path) -> None:
+    """Finding: with state/ swapped for a link to live state after the guard, the absolute-path rename replaced
+    the live front-preferred-port and the pidfile cleanup unlinked the live lb-standby.pid. Both now go through
+    a descriptor for the real state dir under the root, and refuse a link."""
+    lb = _load()
+    root = tmp_path / ".agent-lb" / "sandboxes" / "r1"
+    (root / "state").mkdir(parents=True)
+    live = tmp_path / ".agent-lb" / "state"
+    live.mkdir(parents=True)
+    files = {"front-preferred-port": "2457\n", "front-preferred-port.tmp": "2459\n", "lb-standby.pid": "4242\n"}
+    for name, text in files.items():
+        (live / name).write_text(text)
+    lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
+    (root / "state").rmdir()
+    (root / "state").symlink_to(live, target_is_directory=True)
+    with pytest.raises(lb.SandboxRefused):
+        lb.remove_state(lb.STANDBY_PIDFILE)
+    with pytest.raises(lb.SandboxRefused):
+        lb.set_preferred(2472)
+    assert {name: (live / name).read_text() for name in files} == files
+
+
 def _plist(root: Path, **overrides) -> dict:
     data = {
         "Label": "com.agent-lb.drill.sbx-r1",

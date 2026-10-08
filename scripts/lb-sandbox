@@ -16,9 +16,11 @@ gets ports, account ids, 12-character hashes and counts, never a token.
     lb-sandbox stop --run-id R [--logs-to DIR] [--json]
     lb-sandbox gc [--older-than 3600] [--json]
 
-Layout: root ~/.agent-lb/sandboxes/R/ holds a copy of the installed runtime
-(app, config, scripts; the venv is a symlink), its own SQLite store and key,
-logs and state. Two launchd jobs run it:
+Layout: root ~/.agent-lb/sandboxes/R/ is its own volume (an encrypted sparse
+image under ~/.agent-lb/sandboxes/.images, mounted at the root, its passphrase
+never stored) and holds a copy of the installed runtime (app, config, scripts;
+the venv is a symlink), its own SQLite store and key, logs and state. Two
+launchd jobs run it:
 - com.agent-lb.drill.sbx-R: `lb-sandbox _serve <root>`, which reads the live
   federation token from the live plist, writes it into a pipe and execs
   `lb-sandbox _boot`, which reads it from the inherited pipe fd, loads the app
@@ -37,9 +39,16 @@ Custody parity with the live service (same UID): the root is mode 0700 under
 unlinked at stop, and no token, store or key reaches --out or --logs-to: the
 scans look for the raw tokens, the key and any ciphertext the key opens (an old
 store snapshot included), and the log export scans every byte it copies. Every
-path under a root is opened component by component without following a link,
-and a file with a second hard link is refused, so a link planted in the root
-never leads a read, write or unlink into live state.
+path lb-sandbox opens under a root is opened component by component without
+following a link, and a file with a second hard link is refused. The app, the
+front and the aux open paths by name, so two kernel rules cover them: the root
+is its own volume (no hard link reaches a live file) and they run under a
+Seatbelt profile that denies writes outside the root and reads of live custody
+(a planted symlink is denied, not followed). A link planted in the root never
+leads a read, write or unlink into live state.
+
+stop and gc touch only a sandbox whose sandbox.json is stamped with the run id,
+and signal only processes naming the root or the run's launchd label.
 
 Exit codes: 0 ok, 1 assertion false (scan found something, stop not clean),
 2 refused (guard), 3 unhealthy (boot, mirror or restart failed).
@@ -73,6 +82,8 @@ from pathlib import Path
 REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 LB_HOME = REAL_HOME / ".agent-lb"
 SANDBOXES = LB_HOME / "sandboxes"
+IMAGES = SANDBOXES / ".images"  # each run's encrypted volume image; never a valid run id, so never a root
+VOLUME_SIZE = "2g"  # sparse: grows only as the copied runtime, store and logs need
 LIVE_RUNTIME = LB_HOME / "runtime" / "agent-lb"
 LIVE_VENV = LIVE_RUNTIME / ".venv"
 LIVE_PLIST = REAL_HOME / "Library" / "LaunchAgents" / "com.aneyman.agent-lb.plist"
@@ -82,6 +93,7 @@ LIVE_FRONT_STATE = LB_HOME / "state" / "front.json"
 LIVE_FRONT_PORT = 2455
 LIVE_PRIMARY_PORT = 2457
 LIVE_PEER_URL = "http://127.0.0.1:2455"
+LIVE_KEY_DIR_LEGACY = REAL_HOME / ".codex-lb"
 MANAGED_ROUTING = LB_HOME / "managed" / "coding-agents"
 
 LABEL_PREFIX = "com.agent-lb.drill."
@@ -252,7 +264,8 @@ def open_in_root(root: Path, rel: str | Path, flags: int, mode: int = 0o600, cre
     rel = Path(rel)
     dir_fd = open_dir(root, rel.parent, create=create_dirs)
     try:
-        fd = os.open(rel.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
+        # O_NONBLOCK: a FIFO planted in the root fails the single-link check instead of blocking the open.
+        fd = os.open(rel.name, (flags & ~os.O_TRUNC) | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
     single_link(fd, rel)
@@ -307,11 +320,274 @@ def write_json(root: Path, rel: str | Path, data: object, mode: int = 0o600) -> 
 
 
 def read_json(path: Path) -> dict:
+    """A JSON object from a path outside any sandbox root (live state the caller reads on purpose)."""
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def read_root_json(root: Path, rel: str | Path) -> dict:
+    """A JSON object from root/rel, opened without following a link at any component; {} when absent or not ours.
+
+    sandbox.json swapped for a link to live state/front.json, or a hard link to it, reads as no metadata.
+    """
+    try:
+        fd = open_in_root(root, rel, os.O_RDONLY)
+    except OSError:
+        return {}
+    try:
+        with os.fdopen(fd, "rb") as fh:
+            data = json.loads(fh.read(1 << 20) or b"null")
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def read_root_text(root: Path, rel: str | Path, limit: int) -> str:
+    """The last limit bytes of root/rel as text, read without following a link; "" when absent or not ours."""
+    try:
+        fd = open_in_root(root, rel, os.O_RDONLY)
+    except OSError:
+        return ""
+    with os.fdopen(fd, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        fh.seek(max(0, size - limit))
+        return fh.read(limit).decode(errors="replace")
+
+
+# ---------------------------------------------------------------- kernel confinement
+# The descriptor helpers above cover lb-sandbox's own opens. The app, the front and the aux open paths by name,
+# and their code is not ours to change, so two kernel rules cover every process that works in a root:
+# - The root is its own volume (an encrypted sparse image mounted at the root). A hard link cannot cross
+#   volumes, so no name under the root can share an inode with a live file.
+# - Every process that works in a root runs under a Seatbelt profile (sandbox_init, inherited by children):
+#   no write anywhere under the home directory except the root, and no read of live custody. Seatbelt
+#   checks the resolved path, so a link planted in the root that leads to live state is denied, not followed.
+# Without either, a link swapped in after a check (data -> ~/.agent-lb, state/front.json.tmp -> live
+# front.json) would carry a write into the live service.
+
+
+def seatbelt_profile(root: Path, reads: bool) -> str:
+    """The SBPL profile for one root. reads=False confines writes only (start's copy needs the live runtime)."""
+
+    def q(path: Path | str, resolve: bool = True) -> str:
+        text = os.path.realpath(path) if resolve else str(path)
+        if '"' in text or "\\" in text:
+            raise Refused(f"path {text!r} cannot go in a sandbox profile")
+        return f'"{text}"'
+
+    rules = [
+        "(version 1)",
+        "(allow default)",
+        f"(deny file-write* (subpath {q(REAL_HOME)}))",
+    ]
+    if reads:
+        runtime = Path(os.path.realpath(LIVE_RUNTIME))
+        try:
+            envs = sorted(name for name in os.listdir(runtime) if name.startswith(".env"))
+        except OSError:
+            envs = []
+        private = " ".join([f"(subpath {q(runtime / '.codex-lb')})"] + [f"(literal {q(runtime / n)})" for n in envs])
+        custody = f"(subpath {q(LB_HOME)}) (subpath {q(LIVE_KEY_DIR_LEGACY)}) (literal {q(LIVE_PLIST)})"
+        rules += [
+            # Live custody: the agent-lb home (store key, state, logs), the legacy store dir and the live plist.
+            f"(deny file-read-data {custody})",
+            # The installed runtime is code (the venv and an editable install point into it), minus its env files.
+            f"(allow file-read-data (subpath {q(runtime)}))",
+            f"(deny file-read-data {private})",
+        ]
+    # The root's own name is never resolved: a root that is a link is refused by confine, not followed here.
+    own = Path(os.path.realpath(Path(root).parent)) / Path(root).name
+    if reads:
+        # The sandboxes directory itself (a listing of run ids, no file in it): confined opens start from a
+        # descriptor for it (open_root).
+        rules.append(f"(allow file-read-data (literal {q(own.parent, resolve=False)}))")
+    # file-read-data named, not file-read*: a wildcard allow does not undo the deny of a named operation above.
+    rules.append(f"(allow file-read* file-read-data file-write* (subpath {q(own, resolve=False)}))")
+    return "".join(rules)
+
+
+def _libsystem():
+    import ctypes
+
+    lib = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+    lib.sandbox_init.argtypes = [ctypes.c_char_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p)]
+    lib.sandbox_init.restype = ctypes.c_int
+    lib.sandbox_check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    lib.sandbox_check.restype = ctypes.c_int
+    return lib
+
+
+def confine(root: Path, reads: bool = True) -> None:
+    """Put this process (and every child it starts) under the root's Seatbelt profile. Irreversible; fails closed."""
+    import ctypes
+
+    if not stat.S_ISDIR(os.stat(root, follow_symlinks=False).st_mode):
+        raise Refused(f"sandbox root {root} is not a real directory")
+    profile = seatbelt_profile(root, reads)
+    error = ctypes.c_char_p()
+    if _libsystem().sandbox_init(profile.encode(), 0, ctypes.byref(error)) != 0:
+        raise Refused(f"cannot confine to {root}: {(error.value or b'').decode(errors='replace')}")
+
+
+def is_confined(pid: int | None) -> bool | None:
+    """True when pid runs under a Seatbelt profile (None when it cannot be asked)."""
+    if not pid or sys.platform != "darwin":
+        return None
+    try:
+        return _libsystem().sandbox_check(int(pid), None, 0) == 1
+    except OSError:
+        return None
+
+
+def run_confined(root: Path, action, reads: bool, timeout_s: int = 120):
+    """action() in a forked child confined to root; its JSON-able result, or its Refused/Unhealthy re-raised.
+
+    lb-sandbox runs only on macOS (launchd, hdiutil, Seatbelt); elsewhere no sandbox can exist and action runs
+    in place, which only unit tests reach.
+    """
+    if sys.platform != "darwin":
+        return action()
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # child: never returns
+        code = 1
+        try:
+            os.close(read_fd)
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(sig, signal.SIG_DFL)
+            signal.alarm(timeout_s)
+            confine(root, reads)
+            out = {"ok": action()}
+            code = 0
+        except BaseException as exc:  # noqa: BLE001 - reported to the parent by class and message
+            out = {"error": exc.__class__.__name__, "message": str(exc)}
+        try:
+            data = json.dumps(out).encode()
+            while data:
+                data = data[os.write(write_fd, data) :]
+        finally:
+            os._exit(code)
+    os.close(write_fd)
+    chunks = []
+    with os.fdopen(read_fd, "rb") as fh:
+        while chunk := fh.read(65536):
+            chunks.append(chunk)
+    os.waitpid(pid, 0)
+    try:
+        out = json.loads(b"".join(chunks) or b"{}")
+    except ValueError:
+        out = {}
+    if "ok" in out:
+        return out["ok"]
+    kind = {"Refused": Refused, "Unhealthy": Unhealthy}.get(out.get("error"), Unhealthy)
+    raise kind(f"confined step failed: {out.get('error', 'no result')}: {out.get('message', '')}")
+
+
+def image_for(run_id: str) -> Path:
+    """The run's volume image. Named by a hash: no command line (hdiutil's helpers) carries the run id."""
+    return IMAGES / f"{hashlib.sha256(check_run_id(run_id).encode()).hexdigest()[:24]}.sparseimage"
+
+
+def on_own_volume(root: Path) -> bool:
+    """True when root is a real directory that is the top of a volume other than its parent's."""
+    try:
+        info = os.stat(root, follow_symlinks=False)
+        parent = os.stat(os.path.realpath(root.parent))
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and info.st_dev != parent.st_dev
+
+
+def check_own_volume(root: Path) -> None:
+    if not on_own_volume(root):
+        raise Refused(f"sandbox root {root} is not its own volume; refusing to work in it")
+
+
+def images_dir_fd() -> int:
+    """A descriptor for SANDBOXES/.images, created 0700, never a link."""
+    parent = os.open(os.path.realpath(SANDBOXES), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            os.mkdir(IMAGES.name, 0o700, dir_fd=parent)
+        except FileExistsError:
+            pass
+        fd = os.open(IMAGES.name, DIR_FLAGS, dir_fd=parent)
+    finally:
+        os.close(parent)
+    os.fchmod(fd, 0o700)
+    return fd
+
+
+def remove_image(run_id: str) -> bool:
+    """Unlink the run's image by name inside the real images dir; True when it is gone."""
+    try:
+        fd = images_dir_fd()
+    except OSError:
+        return not image_for(run_id).exists()
+    try:
+        os.unlink(image_for(run_id).name, dir_fd=fd)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return True
+
+
+def attach_volume(root: Path, run_id: str) -> None:
+    """Create the run's encrypted sparse image and mount it at root (an empty directory start just made).
+
+    The passphrase is random, lives only in this process and goes to hdiutil on stdin, so the image on disk is
+    ciphertext: neither the scan of ~/.agent-lb nor a copy of the image finds the store, key or tokens in it.
+    """
+    import secrets as secrets_module
+
+    image = image_for(run_id)
+    if not remove_image(run_id):
+        raise Unhealthy(f"stale image {image} could not be removed")
+    passphrase = secrets_module.token_hex(32).encode()
+    create = subprocess.run(
+        ["/usr/bin/hdiutil", "create", "-quiet", "-size", VOLUME_SIZE, "-type", "SPARSE", "-fs", "APFS"]
+        + ["-volname", "lb-sandbox", "-encryption", "AES-256", "-stdinpass", str(image)],
+        input=passphrase,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if create.returncode != 0:
+        raise Unhealthy(f"hdiutil create failed (exit {create.returncode})")
+    os.chmod(image, 0o600)
+    attach = subprocess.run(
+        ["/usr/bin/hdiutil", "attach", "-quiet", "-nobrowse", "-noautoopen", "-owners", "on", "-stdinpass"]
+        + ["-mountpoint", str(root), str(image)],
+        input=passphrase,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    del passphrase
+    if attach.returncode != 0 or not on_own_volume(root):
+        raise Unhealthy(f"the sandbox volume did not mount at {root} (hdiutil exit {attach.returncode})")
+    os.chmod(root, 0o700)
+    write_in_root(root, ".metadata_never_index", b"")  # Spotlight never reads the store
+
+
+def detach_volume(root: Path) -> dict:
+    """Unmount the run's volume from root (plain, then forced). Returns what happened, never raises."""
+    if not on_own_volume(root):
+        return {"volume": "not mounted"}
+    for extra in ([], [], ["-force"]):
+        subprocess.run(
+            ["/usr/bin/hdiutil", "detach", "-quiet", *extra, str(root)], capture_output=True, timeout=60, check=False
+        )
+        if not on_own_volume(root):
+            return {"volume": "detached"}
+        time.sleep(1)
+    return {"volume": "still mounted"}
 
 
 def http(port: int, path: str, timeout: float = 3.0) -> tuple[int, bytes]:
@@ -333,11 +609,24 @@ def port_free(port: int) -> bool:
     return True
 
 
+def sandbox_roots() -> list[Path]:
+    """Every directory directly under SANDBOXES whose name is a run id (links and .images never count)."""
+    try:
+        entries = sorted(os.scandir(SANDBOXES), key=lambda e: e.name)
+    except OSError:
+        return []
+    return [
+        SANDBOXES / entry.name
+        for entry in entries
+        if RUN_ID_RE.match(entry.name) and entry.is_dir(follow_symlinks=False)
+    ]
+
+
 def ports_in_use_by_sandboxes() -> set[int]:
     used: set[int] = set()
-    if SANDBOXES.is_dir():
-        for meta in SANDBOXES.glob("*/sandbox.json"):
-            used.update(int(p) for p in read_json(meta).get("ports", {}).values() if isinstance(p, int))
+    for root in sandbox_roots():
+        ports = read_root_json(root, "sandbox.json").get("ports", {})
+        used.update(int(p) for p in (ports.values() if isinstance(ports, dict) else []) if isinstance(p, int))
     return used
 
 
@@ -408,8 +697,33 @@ def names_root(cmd: str, root: Path) -> bool:
     return any(token == text or token.startswith(text + "/") for token in cmd.split())
 
 
+def names_label(cmd: str, run_id: str) -> bool:
+    """True when a command line holds this run's launchd label (or gui/<uid>/<label>) as a whole token."""
+    labels = set(labels_for(run_id))
+    return any(token.rsplit("/", 1)[-1] in labels for token in cmd.split() if token.startswith(("gui/", LABEL_PREFIX)))
+
+
 def names_run(cmd: str, run_id: str) -> bool:
-    return re.search(rf"(?<![a-z0-9-]){re.escape(run_id)}(?![a-z0-9-])", cmd) is not None
+    """True when a command line is a command of this run: its label, or `--run-id R` as an argument pair.
+
+    Never a bare word: run id `aneyman` or `runtime` must not claim the live agent-lb, whose command line holds
+    both as path segments. Used to find processes to inspect or report, never to choose what to kill.
+    """
+    return names_label(cmd, run_id) or run_argument(cmd, run_id)
+
+
+def run_argument(cmd: str, run_id: str) -> bool:
+    """True when a command line passes this run id as `--run-id R` or `--run-id=R`."""
+    tokens = cmd.split()
+    return any(
+        token == f"--run-id={run_id}" or (token == "--run-id" and tokens[i + 1 : i + 2] == [run_id])
+        for i, token in enumerate(tokens)
+    )
+
+
+def owned_process(cmd: str, root: Path, run_id: str) -> bool:
+    """What stop may signal: a process naming this sandbox root (or a path in it) or this run's launchd label."""
+    return names_root(cmd, root) or names_label(cmd, run_id)
 
 
 def own_lineage(rows: list[tuple[int, int, str]]) -> set[int]:
@@ -438,11 +752,21 @@ def emit(data: dict, code: int) -> int:
     return code
 
 
+def stamped_meta(root: Path, run_id: str) -> dict:
+    """sandbox.json when it is this run's own (a real single-link file stamped with run_id and its label), else {}."""
+    meta = read_root_json(root, "sandbox.json")
+    if meta.get("run_id") != run_id:
+        return {}
+    if "label" in meta and meta["label"] != labels_for(run_id)[0]:
+        return {}
+    return meta
+
+
 def load_meta(run_id: str) -> tuple[Path, dict]:
     root = root_for(run_id)
-    meta = read_json(root / "sandbox.json")
+    meta = stamped_meta(root, run_id)
     if not meta:
-        raise Unhealthy(f"no sandbox {run_id} (missing {root / 'sandbox.json'})")
+        raise Unhealthy(f"no sandbox {run_id} (no sandbox.json stamped with this run id under {root})")
     return root, meta
 
 
@@ -496,6 +820,26 @@ def check_data_custody(root: Path) -> None:
         os.close(data_fd)
 
 
+def store_rows(db: Path) -> list[list]:
+    """The account rows of the store at db, bytes as {"b64": ...} so they cross a pipe as JSON ([] unmigrated)."""
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+    try:
+        rows = con.execute(
+            "SELECT id, provider, status, access_expires_at, access_token_encrypted, id_token_encrypted,"
+            " reset_at, blocked_at, refresh_token_encrypted FROM accounts"
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return []  # the store exists but the app has not migrated it: no token was ever written
+        raise
+    finally:
+        con.close()
+    return [
+        [{"b64": base64.b64encode(bytes(v)).decode()} if isinstance(v, (bytes, memoryview)) else v for v in row]
+        for row in rows
+    ]
+
+
 def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False) -> list[dict]:
     """Mirrored accounts from the sandbox store. Tokens stay in this process; callers get auth_hash12.
 
@@ -512,24 +856,15 @@ def read_accounts(root: Path, *, with_tokens: bool = False, strict: bool = False
         if strict:
             raise Refused("sandbox store missing; its account tokens cannot be scanned for")
         return []
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
     try:
-        rows = con.execute(
-            "SELECT id, provider, status, access_expires_at, access_token_encrypted, id_token_encrypted,"
-            " reset_at, blocked_at, refresh_token_encrypted FROM accounts"
-        ).fetchall()
-    except sqlite3.OperationalError as exc:
-        if "no such table" in str(exc):
-            return []  # the store exists but the app has not migrated it: no token was ever written
+        # SQLite opens the store by name, so a data dir swapped for a link after the checks above would lead
+        # it into live custody: the read runs in a child confined to the root, where that open is denied.
+        rows = run_confined(root, lambda: store_rows(db), reads=True, timeout_s=60)
+    except (Refused, Unhealthy, sqlite3.Error):
         if strict:
             raise
         return []
-    except sqlite3.Error:
-        if strict:
-            raise
-        return []
-    finally:
-        con.close()
+    rows = [tuple(base64.b64decode(v["b64"]) if isinstance(v, dict) else v for v in row) for row in rows]
     fernet = _fernet(root) if rows else None
     now = time.time()
     accounts = []
@@ -700,71 +1035,6 @@ class Detector:
         return False
 
 
-def iter_files(
-    paths: list[Path],
-    newer_than: float | None,
-    exclude: list[Path],
-    unreadable: list[str],
-    skip_exact: list[Path] | None = None,
-):
-    """Regular files under paths (symlinks never followed), modified after newer_than, outside exclude.
-
-    skip_exact names single files to pass over, by exact path only: a hard link elsewhere is still read.
-
-    A directory or file that exists but cannot be read is appended to unreadable; one that vanished
-    while the walk ran is not (it holds nothing any more).
-    """
-    excluded = {os.path.realpath(e) for e in exclude}
-    skipped = {os.path.join(os.path.realpath(p.parent), p.name) for p in (skip_exact or [])}
-
-    def is_excluded(path: str) -> bool:
-        return any(path == e or path.startswith(e + os.sep) for e in excluded)
-
-    for top in paths:
-        top = os.path.realpath(top)
-        if is_excluded(top):
-            continue
-        try:
-            info = os.stat(top)
-        except FileNotFoundError:
-            continue
-        except OSError:  # isfile/isdir would hide a permission error as "not there"
-            unreadable.append(top)
-            continue
-        if stat.S_ISREG(info.st_mode):
-            if newer_than is None or info.st_mtime > newer_than:
-                yield Path(top)
-            continue
-        stack = [top] if stat.S_ISDIR(info.st_mode) else []
-        while stack:
-            directory = stack.pop()
-            try:
-                entries = os.scandir(directory)
-            except FileNotFoundError:
-                continue
-            except OSError:
-                unreadable.append(directory)
-                continue
-            with entries:
-                for entry in entries:
-                    try:
-                        if entry.is_symlink():
-                            continue
-                        if entry.is_dir(follow_symlinks=False):
-                            if not is_excluded(entry.path):
-                                stack.append(entry.path)
-                        elif entry.path in skipped:
-                            continue
-                        elif entry.is_file(follow_symlinks=False) and (
-                            newer_than is None or entry.stat(follow_symlinks=False).st_mtime > newer_than
-                        ):
-                            yield Path(entry.path)
-                    except FileNotFoundError:
-                        continue
-                    except OSError:
-                        unreadable.append(entry.path)
-
-
 def scan_stream(read, detector: Detector, write=None, chunk: int = 4 << 20) -> tuple[bool, int]:
     """Feed read(n) blocks through the detector (and to write, when given). Returns (hit, bytes read)."""
     tail, total = b"", 0
@@ -781,10 +1051,172 @@ def scan_stream(read, detector: Detector, write=None, chunk: int = 4 << 20) -> t
         tail = buf[-detector.overlap :] if detector.overlap > 0 else b""
 
 
+NOFOLLOW_ANY = getattr(os, "O_NOFOLLOW_ANY", 0)  # macOS: refuse a link at any component of the path
+READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+# A whole path with no link anywhere (O_NOFOLLOW_ANY; macOS refuses it combined with O_NOFOLLOW, EINVAL).
+PATH_FLAGS = os.O_RDONLY | os.O_NONBLOCK | (NOFOLLOW_ANY or os.O_NOFOLLOW)
+# The event log fseventsd keeps at the top of every mounted volume: owned by root, unreadable to the run and
+# unwritable by it, so it can hold no token the run wrote. Skipped only there, only root-owned, only on the
+# root's own volume; a directory of that name the run could have made is scanned like any other.
+VOLUME_EVENT_LOG = ".fseventsd"
+
+
+def _under(path: str, base: str) -> bool:
+    return path == base or path.startswith(base + os.sep)
+
+
+def root_text(root: Path) -> str:
+    """The root as the walker spells it: its parent resolved, its own name never followed."""
+    return os.path.join(os.path.realpath(root.parent), root.name)
+
+
+def _open_top(top: Path, root: Path | None) -> tuple[int, str]:
+    """(descriptor, path text) for a scan top.
+
+    Inside the sandbox root the path is opened from a root descriptor one component at a time, no link
+    followed. Elsewhere the caller's path is resolved once (TMPDIR sits behind /var -> /private/var) and opened
+    with no link at any component since, so a directory swapped for a link after the resolve is refused.
+    """
+    text = os.path.abspath(top)
+    if root is not None:
+        base = root_text(root)
+        for candidate in (text, os.path.realpath(text)):
+            if _under(candidate, base):
+                rel = Path(os.path.relpath(candidate, base))
+                if rel == Path("."):
+                    return open_root(root), base
+                dir_fd = open_dir(root, rel.parent)
+                try:
+                    return os.open(rel.name, READ_FLAGS, dir_fd=dir_fd), candidate
+                finally:
+                    os.close(dir_fd)
+    real = os.path.realpath(text)
+    return os.open(real, PATH_FLAGS), real
+
+
+def walk_files(
+    paths: list[Path],
+    newer_than: float | None,
+    exclude: list[Path],
+    unreadable: list[str],
+    skip_exact: list[Path] | None = None,
+    root: Path | None = None,
+):
+    """(path text, open descriptor) for each regular file under paths, modified after newer_than, outside exclude.
+
+    The walk holds a descriptor for every directory and opens each entry relative to it with O_NOFOLLOW, so a
+    parent swapped for a link between the listing and the open is never followed; a file is read only when the
+    descriptor is the inode the listing named. Symlinks are never followed. Under the sandbox root a file with a
+    second hard link is not read and counts as unreadable (the scan is incomplete): it may be a live file.
+    skip_exact names single files to pass over, by exact path only. The caller closes each descriptor.
+
+    A path that exists but cannot be read is appended to unreadable; one that vanished while the walk ran is
+    not (it holds nothing any more).
+    """
+    excluded = {os.path.realpath(e) for e in exclude}
+    skipped = {os.path.join(os.path.realpath(p.parent), p.name) for p in (skip_exact or [])}
+    base = root_text(root) if root is not None else None
+
+    def is_excluded(path: str) -> bool:
+        return any(_under(path, e) for e in excluded)
+
+    def checked_file(fd: int, path: str, expect: tuple[int, int] | None):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or (expect is not None and (info.st_dev, info.st_ino) != expect):
+            unreadable.append(path)  # swapped since the listing, or not a regular file
+            return None
+        if base is not None and _under(path, base) and info.st_nlink != 1:
+            unreadable.append(path)  # a second name for this inode: possibly a live file, never read
+            return None
+        if newer_than is not None and info.st_mtime <= newer_than:
+            return None
+        return fd
+
+    def volume_event_log(name: str, listed: os.stat_result, dir_fd: int) -> bool:
+        return (
+            name == VOLUME_EVENT_LOG
+            and stat.S_ISDIR(listed.st_mode)
+            and listed.st_uid == 0
+            and os.getuid() != 0
+            and listed.st_dev == os.fstat(dir_fd).st_dev
+        )
+
+    def walk(dir_fd: int, path: str):
+        try:
+            with os.scandir(dir_fd) as listing:
+                # In name order: a walk is the same walk every time.
+                entries = sorted((e.name, e.is_symlink(), e.is_dir(follow_symlinks=False)) for e in listing)
+        except FileNotFoundError:
+            return
+        except OSError:
+            unreadable.append(path)
+            return
+        for name, is_link, is_dir in entries:
+            child = os.path.join(path, name)
+            if is_link or is_excluded(child):
+                continue
+            try:
+                if is_dir:
+                    listed = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                    if base is not None and path == base and volume_event_log(name, listed, dir_fd):
+                        continue
+                    fd = os.open(name, DIR_FLAGS | os.O_NONBLOCK, dir_fd=dir_fd)
+                    try:
+                        opened = os.fstat(fd)
+                        if (opened.st_dev, opened.st_ino) != (listed.st_dev, listed.st_ino):
+                            unreadable.append(child)  # swapped between the stat and the open
+                            continue
+                        yield from walk(fd, child)
+                    finally:
+                        os.close(fd)
+                    continue
+                if child in skipped:
+                    continue
+                info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                if newer_than is not None and info.st_mtime <= newer_than:
+                    continue
+                fd = os.open(name, READ_FLAGS, dir_fd=dir_fd)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                unreadable.append(child)
+                continue
+            if checked_file(fd, child, (info.st_dev, info.st_ino)) is None:
+                os.close(fd)
+                continue
+            yield child, fd
+
+    for top in paths:
+        if is_excluded(os.path.realpath(top)) or is_excluded(os.path.abspath(top)):
+            continue
+        try:
+            fd, text = _open_top(Path(top), root)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            unreadable.append(os.path.abspath(top))
+            continue
+        try:
+            info = os.fstat(fd)
+            if stat.S_ISDIR(info.st_mode):
+                yield from walk(fd, text)
+            elif stat.S_ISREG(info.st_mode) and text not in skipped and checked_file(fd, text, None) is not None:
+                yield text, os.dup(fd)
+        finally:
+            os.close(fd)
+
+
+def scan_fd(fd: int, detector: Detector, chunk: int = 4 << 20) -> tuple[bool, int]:
+    """Scan an open file; closes it. Returns (hit, bytes read)."""
+    with os.fdopen(fd, "rb") as fh:
+        return scan_stream(fh.read, detector, chunk=chunk)
+
+
 def scan_file(path: Path, detector: Detector, chunk: int = 4 << 20) -> bool:
-    # O_NOFOLLOW: a file swapped for a symlink after the walk is refused, never followed.
-    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as fh:
-        return scan_stream(fh.read, detector, chunk=chunk)[0]
+    # No link at any component (O_NOFOLLOW_ANY on macOS), so a file or parent swapped for a link is refused.
+    return scan_fd(os.open(path, PATH_FLAGS), detector, chunk)[0]
 
 
 def scan_paths(
@@ -794,10 +1226,12 @@ def scan_paths(
     exclude: list[Path] | None = None,
     skip_exact: list[Path] | None = None,
     keys: list[str] | None = None,
+    root: Path | None = None,
 ) -> dict:
     """complete is False when no secret was loaded or anything that exists could not be read.
 
-    keys: store keys whose ciphertexts are a hit too (Detector).
+    keys: store keys whose ciphertexts are a hit too (Detector). root: the sandbox root, inside which the walk
+    follows no link from a root descriptor and refuses a file with a second hard link (walk_files).
     """
     detector = Detector(secrets, keys)
     hits: list[str] = []
@@ -805,18 +1239,16 @@ def scan_paths(
     files: list[str] = []
     total = 0
     if detector:
-        for path in iter_files(paths, newer_than, exclude or [], unreadable, skip_exact):
+        for path, fd in walk_files(paths, newer_than, exclude or [], unreadable, skip_exact, root):
             try:
-                found = scan_file(path, detector)
-                total += path.stat().st_size
-            except FileNotFoundError:
-                continue
+                found, size = scan_fd(fd, detector)
             except OSError:
-                unreadable.append(str(path))
+                unreadable.append(path)
                 continue
-            files.append(str(path))
+            total += size
+            files.append(path)
             if found:
-                hits.append(str(path))
+                hits.append(path)
     return {
         "found": bool(hits),
         "complete": bool(detector) and not unreadable,
@@ -857,13 +1289,16 @@ def scan_processes(root: Path, run_id: str, secrets: list[str]) -> dict:
     Returns pids and counts only. Every process that names the run must show its environment: ps prints
     argv, then the environment, so the part after the argv (`ps` without -E) must hold this root's
     LB_SANDBOX_ROOT entry. A process whose environment ps did not show (visible_pids lacks it) makes the
-    scan incomplete, whichever process it is, so no extra child can read clean unseen.
+    scan incomplete, whichever process it is, so no extra child can read clean unseen. A command that names
+    only the run's launchd label (`launchctl kickstart -k gui/<uid>/<label>`, which lb-restart leaves waiting
+    out the drain) is not selected: launchctl is a platform binary whose environment macOS never shows, and
+    its environment is its caller's, lb-restart, which names the root and is scanned.
     """
     patterns = sorted({p for s in secrets if s for p in secret_patterns(s)})
     rows = processes()
     lineage = own_lineage(rows)
     pids = sorted(
-        pid for pid, _, cmd in rows if (names_root(cmd, root) or names_run(cmd, run_id)) and pid not in lineage
+        pid for pid, _, cmd in rows if (names_root(cmd, root) or run_argument(cmd, run_id)) and pid not in lineage
     )
     hits, visible, invisible, unreadable, scanned = [], [], [], [], []
     for pid in pids:
@@ -1072,8 +1507,6 @@ def write_plists(root: Path, run_id: str, ports: dict[str, int], transport: str)
         "KeepAlive": True,
         "ThrottleInterval": 2,
         "ExitTimeOut": DRAIN_S + 30,
-        "StandardOutPath": str(root / "logs" / "primary.log"),
-        "StandardErrorPath": str(root / "logs" / "primary.log"),
     }
     aux = {
         "Label": aux_label,
@@ -1087,9 +1520,9 @@ def write_plists(root: Path, run_id: str, ports: dict[str, int], transport: str)
         "RunAtLoad": True,
         "KeepAlive": False,
         "ExitTimeOut": 20,
-        "StandardOutPath": str(root / "logs" / "aux.log"),
-        "StandardErrorPath": str(root / "logs" / "aux.log"),
     }
+    # No StandardOutPath: launchd opens it by name and follows a planted link. _serve and _aux open their own
+    # logs from a root descriptor instead (log_to_root).
     paths = (root / "launchd" / f"{label}.plist", root / "launchd" / f"{aux_label}.plist")
     for path, body in zip(paths, (primary, aux), strict=True):
         write_in_root(root, path.relative_to(root), plistlib.dumps(body))
@@ -1158,14 +1591,57 @@ def usable_counts(accounts: list[dict]) -> dict[str, int]:
 
 def log_failure_classes(root: Path) -> dict:
     """Exception class names and app frames from the primary log; never message text."""
-    log = root / "logs" / "primary.log"
-    if not log.is_file():
+    text = read_root_text(root, "logs/primary.log", 200_000)
+    if not text:
         return {}
-    text = log.read_text(errors="replace")[-200_000:]
     return {
         "exception_classes": sorted(set(re.findall(r"^([A-Za-z0-9_.]+(?:Error|Exception)):", text, re.MULTILINE))),
         "frames": re.findall(r'File "[^\n"]*/(app/[^\n"]+)", line ([0-9]+), in ([A-Za-z0-9_]+)', text)[-8:],
     }
+
+
+def plist_paths(root: Path, run_id: str) -> tuple[Path, Path]:
+    label, aux_label = labels_for(run_id)
+    return root / "launchd" / f"{label}.plist", root / "launchd" / f"{aux_label}.plist"
+
+
+def populate_root(root: Path, run_id: str, ports: dict[str, int], meta: dict, transport: str, source: str) -> None:
+    """Fill a new root: key, metadata, runtime copy, bootstrap, plists, restart config, front preference.
+
+    start runs this in a child confined to the root (write-only profile): a link planted in the root while it
+    runs (bin/lb-sandbox -> live state/front-preferred-port, say) leads the copy to a denied write, never a
+    live file.
+    """
+    for sub in ("data", "home", "logs", "state", "bin", "clients", "runtime"):
+        os.mkdir(root / sub, 0o700)
+    create_key(root / "data" / "encryption.key")
+    write_json(root, "sandbox.json", meta)
+    runtime = root / "runtime"
+    for part in ("app", "config", "scripts"):
+        if (LIVE_RUNTIME / part).is_dir():
+            shutil.copytree(LIVE_RUNTIME / part, runtime / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    os.symlink(LIVE_VENV, runtime / ".venv")
+    write_in_root(root, "bin/lb-sandbox", Path(source).read_bytes(), 0o755)
+    managed = Path("home/.agent-lb/managed/coding-agents")
+    for name in ("routing-table.json", "decider.json"):
+        if (MANAGED_ROUTING / name).is_file():
+            write_in_root(root, managed / name, (MANAGED_ROUTING / name).read_bytes())
+    primary_plist, _ = write_plists(root, run_id, ports, transport)
+    write_json(
+        root,
+        "lb-restart.json",
+        {
+            "root": str(root),
+            "label": meta["label"],
+            "plist": str(primary_plist),
+            "runtime": str(runtime),
+            "state_dir": str(root / "state"),
+            "front_port": ports["front"],
+            "primary_port": ports["primary"],
+            "standby_port": ports["standby"],
+        },
+    )
+    write_in_root(root, "state/front-preferred-port", f"{ports['primary']}\n".encode(), 0o644)
 
 
 def cmd_start(args) -> int:
@@ -1176,7 +1652,7 @@ def cmd_start(args) -> int:
         raise Refused("only --transport http is supported (the edge must see and cut streams)")
     check_launchctl()
     root = root_for(run_id)
-    if root.exists():
+    if root.exists() or root.is_symlink():
         raise Refused(f"sandbox root {root} already exists")
     label, aux_label = labels_for(run_id)
     if label_loaded(label) or label_loaded(aux_label):
@@ -1219,9 +1695,7 @@ def cmd_start(args) -> int:
             raise Refused(f"sandbox root {root} already exists") from None
         created = True
         os.chmod(root, 0o700)  # mkdir's mode is masked by umask; set it exactly
-        for sub in ("data", "home", "logs", "state", "bin", "clients"):
-            (root / sub).mkdir(mode=0o700)
-        create_key(root / "data" / "encryption.key")
+        attach_volume(root, run_id)  # the root is its own volume from here on: no hard link reaches live files
         meta = {
             "run_id": run_id,
             "label": label,
@@ -1232,43 +1706,18 @@ def cmd_start(args) -> int:
             "created_epoch": time.time(),
             "transport": args.transport,
             "node": find_node(),
+            "volume": image_for(run_id).name,
         }
-        write_json(root, "sandbox.json", meta)
-        runtime = root / "runtime"
-        runtime.mkdir()
-        for part in ("app", "config", "scripts"):
-            if (LIVE_RUNTIME / part).is_dir():
-                shutil.copytree(
-                    LIVE_RUNTIME / part, runtime / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
-                )
-        (runtime / ".venv").symlink_to(LIVE_VENV)
-        shutil.copy2(Path(__file__).resolve(), root / "bin" / "lb-sandbox")
-        managed = root / "home" / ".agent-lb" / "managed" / "coding-agents"
-        for name in ("routing-table.json", "decider.json"):
-            if (MANAGED_ROUTING / name).is_file():
-                managed.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(MANAGED_ROUTING / name, managed / name)
-        primary_plist, aux_plist = write_plists(root, run_id, ports, args.transport)
-        write_json(
-            root,
-            "lb-restart.json",
-            {
-                "root": str(root),
-                "label": label,
-                "plist": str(primary_plist),
-                "runtime": str(runtime),
-                "state_dir": str(root / "state"),
-                "front_port": ports["front"],
-                "primary_port": ports["primary"],
-                "standby_port": ports["standby"],
-            },
+        source = str(Path(__file__).resolve())
+        run_confined(
+            root, lambda: populate_root(root, run_id, ports, meta, args.transport, source), reads=False, timeout_s=300
         )
-        write_in_root(root, "state/front-preferred-port", f"{ports['primary']}\n".encode(), 0o644)
+        primary_plist, aux_plist = plist_paths(root, run_id)
         out["live"] = live_identity()
 
         bootstrap(aux_plist, aux_label)
         deadline = time.monotonic() + 30
-        while not read_json(root / "state" / "aux.json").get("ready"):
+        while not read_root_json(root, "state/aux.json").get("ready"):
             if time.monotonic() > deadline:
                 raise Unhealthy("aux (gate, edges, front) did not become ready in 30 s")
             time.sleep(0.25)
@@ -1305,11 +1754,11 @@ def cmd_start(args) -> int:
         if isinstance(exc, Refused) and not created:
             raise
         out["error"] = f"{exc.__class__.__name__}: {exc}"
-        if created and root.exists():
+        if created and (root.exists() or root.is_symlink()):
             out["failure"] = log_failure_classes(root)
             for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                 signal.signal(sig, signal.SIG_IGN)
-            out["teardown"] = teardown(run_id, Path(args.logs_to) if args.logs_to else None)
+            out["teardown"] = teardown(run_id, Path(args.logs_to) if args.logs_to else None, created=True)
         return emit(out, EXIT_UNHEALTHY)
 
 
@@ -1322,9 +1771,9 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
     The env and argv never carry the token: _serve hands it over through a pipe (cmd_serve). Writes nothing.
     """
     root = check_root(root)
-    meta = read_json(root / "sandbox.json")
-    if not meta:
-        raise Refused(f"{root} has no sandbox.json")
+    meta = read_root_json(root, "sandbox.json")
+    if not meta or meta.get("run_id") != root.name:
+        raise Refused(f"{root} has no sandbox.json stamped with its run id")
     parser = argparse.ArgumentParser(prog="lb-sandbox _serve")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
@@ -1396,8 +1845,31 @@ def token_pipe(token: str) -> int:
     return read_fd
 
 
+def log_to_root(root: Path, rel: str) -> None:
+    """Under launchd (stdout is /dev/null: the plist names no log) send stdout and stderr to root/rel.
+
+    The log is opened from a root descriptor, never by name, so a link planted at the log path is refused
+    (launchd's StandardOutPath would have followed it). A process whose stdout is already a file (the standby
+    lb-restart starts, logging to its own file) keeps it.
+    """
+    try:
+        out, null = os.fstat(1), os.stat(os.devnull)
+        if (out.st_dev, out.st_ino) != (null.st_dev, null.st_ino):
+            return
+    except OSError:
+        pass  # no stdout at all: log to the root
+    fd = confined(lambda: open_in_root(root, rel, os.O_WRONLY | os.O_APPEND | os.O_CREAT, create_dirs=True))
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(fd, 1)
+    os.dup2(fd, 2)
+    os.close(fd)
+
+
 def cmd_serve(root: str, argv: list[str]) -> int:
     root_path = check_root(Path(root))
+    log_to_root(root_path, "logs/primary.log")
+    check_own_volume(root_path)  # no hard link can reach a live file from a root on its own volume
     python, args, env, token = serve_exec_args(root_path, argv)
     read_fd = token_pipe(token)
     del token
@@ -1435,6 +1907,11 @@ def boot_app(root: Path, argv: list[str]) -> None:
     if here != (Path(root) / "bin" / "lb-sandbox").resolve():
         raise Refused("_boot runs only the lb-sandbox copy inside its own root")
     root = check_root(root, sandboxes=here.parent.parent.parent)
+    # The app opens its store, key and logs by name and its code is not ours to change: it runs on the root's
+    # own volume (no hard link to a live file) under the root's Seatbelt profile (no write outside the root
+    # and no read of live custody, whatever link is planted). Both before anything under the root is opened.
+    check_own_volume(root)
+    confine(root, reads=True)
     parser = argparse.ArgumentParser(prog="lb-sandbox _boot")
     parser.add_argument("--token-fd", type=int, required=True)
     parser.add_argument("--host", default="127.0.0.1")
@@ -1444,7 +1921,7 @@ def boot_app(root: Path, argv: list[str]) -> None:
         raise Refused("the federation token is in the exec environment; refusing to start")
     if os.environ.get("LB_SANDBOX_ROOT") != str(root):
         raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
-    meta = read_json(root / "sandbox.json")
+    meta = read_root_json(root, "sandbox.json")
     if opts.host != "127.0.0.1" or opts.port not in {meta.get("ports", {}).get(k) for k in ("primary", "standby")}:
         raise Refused("_boot serves only this sandbox's primary or standby port on 127.0.0.1")
     check_ports([opts.port])
@@ -1518,8 +1995,9 @@ def auth_hash12(headers) -> str:
 class FaultState:
     """One edge's armed fault, re-read from <root>/state/fault-<edge>.json on every request."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
+    def __init__(self, root: Path, rel: str) -> None:
+        self.root, self.rel = root, rel
+        self.path = root / rel
         self.mtime = None
         self.nonce = None
         self.fault: str | None = None
@@ -1529,13 +2007,13 @@ class FaultState:
 
     def refresh(self) -> None:
         try:
-            mtime = self.path.stat().st_mtime_ns
+            mtime = os.stat(self.path, follow_symlinks=False).st_mtime_ns
         except OSError:
             mtime = None
         if mtime == self.mtime:
             return
         self.mtime = mtime
-        data = read_json(self.path) if mtime is not None else {}
+        data = read_root_json(self.root, self.rel) if mtime is not None else {}
         if data.get("nonce") != self.nonce:
             self.nonce = data.get("nonce")
             self.fault = data.get("fault") if data.get("armed") else None
@@ -1776,9 +2254,15 @@ def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three lis
     from aiohttp import web
 
     root = check_root(Path(root_arg))
+    log_to_root(root, "logs/aux.log")
     if os.environ.get("LB_SANDBOX_ROOT") != str(root):
         raise Refused("LB_SANDBOX_ROOT does not match the sandbox root")
-    meta = read_json(root / "sandbox.json")
+    # The front (a child, inherits this) writes state/front.json through a .tmp by name: same two rules as _boot.
+    check_own_volume(root)
+    confine(root, reads=True)
+    meta = read_root_json(root, "sandbox.json")
+    if meta.get("run_id") != root.name or not isinstance(meta.get("ports"), dict):
+        raise Refused(f"{root} has no sandbox.json stamped with its run id")
     ports = meta["ports"]
     check_ports(list(ports.values()))
     state_file = root / "state" / "aux.json"
@@ -1791,7 +2275,7 @@ def cmd_aux(root_arg: str) -> int:  # noqa: C901 - one event loop with three lis
         "edge_requests": {"anthropic": 0, "openai": 0},
         "faults_applied": {"anthropic": 0, "openai": 0},
     }
-    faults = {edge: FaultState(root / "state" / f"fault-{edge}.json") for edge in EDGES}
+    faults = {edge: FaultState(root, f"state/fault-{edge}.json") for edge in EDGES}
     front_proc: dict[str, subprocess.Popen | None] = {"proc": None}
     ready = {"value": False}
 
@@ -1955,10 +2439,11 @@ def cmd_status(args) -> int:
             in_flight = int(json.loads(body)["checks"]["in_flight"])
         except (ValueError, KeyError, TypeError):
             in_flight = None
-    aux = read_json(root / "state" / "aux.json")
+    aux = read_root_json(root, "state/aux.json")
     accounts = read_accounts(root)
     for account in accounts:
         account.pop("usable", None)
+    primary_pid = launchd_pid(meta["label"])
     healthy = (
         http(ports["primary"], "/health/ready")[0] == 200
         and http(ports["front"], "/health/ready")[0] == 200
@@ -1968,10 +2453,17 @@ def cmd_status(args) -> int:
         "run_id": meta["run_id"],
         "healthy": healthy,
         "in_flight_primary": in_flight,
-        "preferred_port": read_json(root / "state" / "front.json").get("preferred"),
-        "primary_pid": launchd_pid(meta["label"]),
+        "preferred_port": read_root_json(root, "state/front.json").get("preferred"),
+        "primary_pid": primary_pid,
         "aux_pid": aux.get("pid"),
         "front_pid": aux.get("front_pid"),
+        # The two kernel rules the app and the front run under (see "kernel confinement").
+        "own_volume": on_own_volume(root),
+        "confined": {
+            "primary": is_confined(primary_pid),
+            "aux": is_confined(aux.get("pid")),
+            "front": is_confined(aux.get("front_pid")),
+        },
         "accounts": accounts,
         "accounts_per_vendor": usable_counts(read_accounts(root)),
         "gate": aux.get("gate", {"forwarded": [], "refused": 0}),
@@ -2103,6 +2595,7 @@ def cmd_scan(args) -> int:
             exclude=[Path(p) for p in args.exclude],
             skip_exact=custody_paths(root),  # the store and its key, at their own paths only
             keys=[key] if key else None,  # any ciphertext this key opens, an old snapshot's included
+            root=root,  # inside the root: no link followed from a root descriptor, no second hard link read
         )
         if args.paths
         else {"found": False, "complete": True, "files_scanned": 0, "hits": []}
@@ -2169,22 +2662,32 @@ def command_ref(cmd: str) -> str:
     return hashlib.sha256(cmd.encode(errors="replace")).hexdigest()[:12]
 
 
-def teardown(run_id: str, logs_to: Path | None) -> dict:
-    """Stop everything the sandbox started, keep scanned logs if asked, delete the root, then verify."""
+def teardown(run_id: str, logs_to: Path | None, created: bool = False) -> dict:
+    """Stop everything the sandbox started, keep scanned logs if asked, delete the root and its volume, verify.
+
+    Nothing is signalled, scanned or deleted unless the root holds this run's own stamped sandbox.json (a real
+    single-link file whose run_id is this run's), or this process created the root (start's failure path). A
+    typo, a stale id or a hostile one (`aneyman`, `runtime`) stops nothing. Processes are matched by the root
+    path or the run's launchd label, never by a bare word.
+    """
     root = root_for(run_id)
-    meta = read_json(root / "sandbox.json") if not root.is_symlink() else {}
+    real_root = root.is_dir() and not root.is_symlink()
+    meta = stamped_meta(root, run_id) if real_root else {}
+    owned = bool(meta) or created
     label, aux_label = labels_for(run_id)
-    ports = [int(p) for p in meta.get("ports", {}).values() if isinstance(p, int)]
+    meta_ports = meta.get("ports") if isinstance(meta.get("ports"), dict) else {}
+    ports = [int(p) for p in meta_ports.values() if isinstance(p, int) and not isinstance(p, bool)]
     secrets: list[str] = []
     keys: list[str] = []
     load_error = None
-    try:
-        secrets = load_secrets(root if root.is_dir() and not root.is_symlink() else None)
-        key = load_key(root) if not root.is_symlink() else None
-        keys = [key] if key else []
-    except Exception as exc:  # a broken or redirected store must not block teardown
-        secrets, keys = [], []
-        load_error = exc.__class__.__name__
+    if owned:
+        try:
+            secrets = load_secrets(root if real_root else None)
+            key = load_key(root) if real_root else None
+            keys = [key] if key else []
+        except Exception as exc:  # a broken or redirected store must not block teardown
+            secrets, keys = [], []
+            load_error = exc.__class__.__name__
     booted = {}
     for name in (label, aux_label):
         if not label_loaded(name):
@@ -2193,34 +2696,35 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
             booted[name] = bootout(name)
         else:
             booted[name] = "refused: the loaded job does not run this sandbox root"
-    pidfile = root / "state" / "lb-standby.pid"
-    rows = processes()
-    lineage = own_lineage(rows)
-    if pidfile.is_file():
-        try:
-            pid = int(pidfile.read_text().strip())
-        except ValueError:
-            pid = 0
+    refused = None
+    if owned:
+        rows = processes()
+        lineage = own_lineage(rows)
+        standby = read_root_text(root, "state/lb-standby.pid", 64).strip() if real_root else ""
+        pid = int(standby) if standby.isdigit() else 0
         if pid and any(p == pid and names_root(cmd, root) for p, _, cmd in rows):
             stop_pid(pid)
-    # Every process of the run: those naming its root and those naming its run id (a unique stamp), never
-    # this stop or its callers.
-    for pid, _, cmd in processes():
-        if (names_root(cmd, root) or names_run(cmd, run_id)) and pid not in lineage:
-            stop_pid(pid, bound=5)
+        # Every process of the run: those naming its root or its launchd label, never this stop or its callers.
+        for pid, _, cmd in processes():
+            if owned_process(cmd, root, run_id) and pid not in lineage:
+                stop_pid(pid, bound=5)
+    elif real_root or root.is_symlink():
+        refused = "no sandbox.json stamped with this run id: nothing was signalled, scanned or deleted"
     logs: dict = {"copied": False}
-    if root.is_dir() and not root.is_symlink():
+    if owned and real_root:
         # The whole root, not just logs/: a token in state/, home/ or a copied store is a leak too.
-        scanned = scan_paths([root], secrets, skip_exact=custody_paths(root), keys=keys)
+        scanned = scan_paths([root], secrets, skip_exact=custody_paths(root), keys=keys, root=root)
         logs["scan_found"] = scanned["found"]
         logs["scan_complete"] = scanned["complete"]
         logs["files_scanned"] = scanned["files_scanned"]
         logs["scan_scope"] = "root"
         logs["ciphertext_keys"] = len(keys)
-        logs["hits"] = [os.path.relpath(hit, root.resolve()) for hit in scanned["hits"]]
+        logs["hits"] = [os.path.relpath(hit, root_text(root)) for hit in scanned["hits"]]
+        logs["unreadable"] = [os.path.relpath(p, root_text(root)) for p in scanned["unreadable_paths"]]
         if logs_to is not None and (root / "logs").is_dir():
             if scanned["found"] is False and scanned["complete"] and not load_error:
-                log_files = [f for f in scanned["_files"] if Path(f).is_relative_to((root / "logs").resolve())]
+                logs_base = os.path.join(root_text(root), "logs")
+                log_files = [f for f in scanned["_files"] if f.startswith(logs_base + os.sep)]
                 try:  # the copy is best effort; teardown below always runs
                     # Every exported byte is scanned again as it is copied: the files may have changed since.
                     exported = export_logs(root, logs_to, log_files, Detector(secrets, keys))
@@ -2246,31 +2750,48 @@ def teardown(run_id: str, logs_to: Path | None) -> dict:
                 )
     if load_error:
         logs["secret_load_error"] = load_error
-    custody = unlink_key(root)
-    if root.is_symlink():
-        root.unlink()  # the link only; its target is not this sandbox's to delete
-    elif root.exists():
-        check_root(root)
-        shutil.rmtree(root)
+    custody: dict = {"key_unlinked": None}
+    volume: dict = {}
+    if owned:
+        custody = unlink_key(root)
+        if root.is_symlink():
+            root.unlink()  # the link only; its target is not this sandbox's to delete
+        elif root.exists():
+            volume = detach_volume(root)
+            if volume.get("volume") != "still mounted":
+                check_root(root)
+                shutil.rmtree(root)
+        if not on_own_volume(root):
+            volume["image_removed"] = remove_image(run_id)
     time.sleep(0.5)
     rows = processes()
     lineage = own_lineage(rows)
     leftover = [
         {"pid": pid, "command_sha12": command_ref(cmd)}
         for pid, _, cmd in rows
-        if (names_run(cmd, run_id) or names_root(cmd, root)) and pid not in lineage
+        if (owned_process(cmd, root, run_id) or names_run(cmd, run_id)) and pid not in lineage
     ]
     result = {
         "labels_loaded": [name for name in (label, aux_label) if label_loaded(name)],
         "listeners": [{"port": port, "pids": pids} for port in ports if (pids := listener_pids(port))],
         "processes": leftover,
         "root_exists": root.exists() or root.is_symlink(),
+        "volume_mounted": on_own_volume(root),
+        "image_exists": image_for(run_id).exists(),
         "bootout": booted,
         "logs": logs,
         "custody": custody,
+        "volume": volume,
     }
+    if refused:
+        result["refused"] = refused
     result["clean"] = not (
-        result["labels_loaded"] or result["listeners"] or result["processes"] or result["root_exists"]
+        result["labels_loaded"]
+        or result["listeners"]
+        or result["processes"]
+        or result["root_exists"]
+        or result["volume_mounted"]
+        or result["image_exists"]
     )
     return result
 
@@ -2282,6 +2803,8 @@ def cmd_stop(args) -> int:
         signal.signal(sig, signal.SIG_IGN)
     result = teardown(run_id, Path(args.logs_to) if args.logs_to else None)
     result["run_id"] = run_id
+    if result.get("refused"):
+        return emit(result, EXIT_REFUSED)
     safe_logs = result.get("logs", {})
     safe = (
         safe_logs.get("scan_found") is False
@@ -2296,17 +2819,20 @@ def cmd_stop(args) -> int:
 
 def cmd_gc(args) -> int:
     check_launchctl()
-    stopped, kept = [], []
+    stopped, kept, skipped = [], [], []
     now = time.time()
-    if SANDBOXES.is_dir():
-        for meta_path in sorted(SANDBOXES.glob("*/sandbox.json")):
-            meta = read_json(meta_path)
-            run_id = meta_path.parent.name
-            age = now - float(meta.get("created_epoch") or meta_path.stat().st_mtime)
-            if age > args.older_than and not pid_alive(meta.get("caller_pid")):
-                result = teardown(run_id, None)
-                stopped.append(run_id) if result["clean"] else kept.append({"run_id": run_id, "teardown": result})
-    return emit({"stopped": stopped, "not_clean": kept}, EXIT_OK if not kept else EXIT_ASSERT)
+    for root in sandbox_roots():
+        run_id = root.name
+        meta = stamped_meta(root, run_id)
+        created = meta.get("created_epoch")
+        if not meta or isinstance(created, bool) or not isinstance(created, (int, float)):
+            # Not a sandbox this code can prove it started: never stopped by gc.
+            skipped.append({"run_id": run_id, "reason": "no sandbox.json stamped with this run id"})
+            continue
+        if now - float(created) > args.older_than and not pid_alive(meta.get("caller_pid")):
+            result = teardown(run_id, None)
+            stopped.append(run_id) if result["clean"] else kept.append({"run_id": run_id, "teardown": result})
+    return emit({"stopped": stopped, "not_clean": kept, "skipped": skipped}, EXIT_OK if not kept else EXIT_ASSERT)
 
 
 # ---------------------------------------------------------------- main

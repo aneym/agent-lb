@@ -525,10 +525,18 @@ def run_check(c: Check, args) -> None:  # noqa: C901 - one scenario, steps in or
 
     # 3b. custody parity: modes and the key file (stat only)
     problems = custody_problems(root.parent, root)
+    # The kernel rules behind every name-based open the app and the front make: the root is its own volume (no
+    # hard link reaches a live file) and the primary, aux and front run under the root's Seatbelt profile.
+    if status.get("own_volume") is not True:
+        problems.append(f"root on its own volume: {status.get('own_volume')}")
+    confined = status.get("confined") or {}
+    if any(confined.get(role) is not True for role in ("primary", "aux", "front")):
+        problems.append(f"confined: {confined}")
     c.step(
         "custody-parity",
         not problems,
-        f"sandboxes dir and root 0700, store key 0600 with one link: {problems or 'yes'}",
+        f"sandboxes dir and root 0700, store key 0600 with one link, root its own volume, primary/aux/front "
+        f"confined {confined}: {problems or 'yes'}",
         [str(status_out)],
     )
 
