@@ -418,7 +418,8 @@ def foldable_groups(groups: list[Any], event: str) -> list[bool]:
 
 
 def group_overlaps(group: Any, key: str) -> bool:
-    """Whether a group may match a tool that matcher key `key` matches (a regex is tested on each name; doubt says yes)."""
+    """Whether a group may match a tool that matcher key `key` matches (a regex is tested on each name; doubt says
+    yes)."""
     if not isinstance(group, dict):
         return True
     own = matcher_key(group)
@@ -598,7 +599,7 @@ def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict
 
 
 DISPATCH_REV = re.compile(r"hook-dispatch\.py\"?\s+\w+\s+'[^']*'\s+([0-9a-f]{12})\b")
-REV_FILE = re.compile(r"registry\.([0-9a-f]{12})\.json")
+REV_FILE = re.compile(r"registry\.([0-9a-f]{12}|legacy)\.json")
 REV_KEEP_SECONDS = 7 * 86400  # a session keeps the hooks it started with; its registry stays this long
 
 
@@ -996,6 +997,7 @@ def main() -> int:
         changes[settings_path] = desired_settings_text
     backup_path = registry_path.with_name("registry.json.bak")
     rev_path = None
+    legacy_path = registry_path.with_name("registry.legacy.json")
     if new_registry is not None:
         registry_text = json.dumps(new_registry, indent=2, ensure_ascii=False) + "\n"
         rev_path = registry_path.with_name(f"registry.{new_registry['rev']}.json")
@@ -1006,9 +1008,16 @@ def main() -> int:
         for path in (registry_path, backup_path):
             if path.exists():
                 changes[path] = None
+    if folded_now and old_registry is not None and folded_rev(disk_settings) is None:
+        # Settings entries without a rev (written before revs) read registry.json, which this run replaces or removes;
+        # running sessions keep the hooks they started with, so the fold they were written with stays readable for
+        # them as registry.legacy.json (the dispatcher's last candidate for an entry without a rev), for 7 days.
+        legacy_text = json.dumps(old_registry, indent=2, ensure_ascii=False) + "\n"
+        if read_text(legacy_path) != legacy_text:
+            changes[legacy_path] = legacy_text
     if registry_path.parent.is_dir():
         for path in registry_path.parent.iterdir():
-            if REV_FILE.fullmatch(path.name) and path != rev_path and \
+            if REV_FILE.fullmatch(path.name) and path != rev_path and path not in changes and \
                     time.time() - path.stat().st_mtime > REV_KEEP_SECONDS:
                 changes[path] = None
     if not args.uninstall:
@@ -1171,7 +1180,7 @@ def main() -> int:
     # settings then switch every entry to the new rev in one atomic write; registry.json and its backup (read only
     # by entries without a rev) follow; removals come last. At every step each settings entry runs the guards it
     # was written with, so a crash between steps leaves the old or the new config, never a mix.
-    first_files = {args.home / ".claude" / DISPATCH_SCRIPT} | ({rev_path} if rev_path else set())
+    first_files = {args.home / ".claude" / DISPATCH_SCRIPT, legacy_path} | ({rev_path} if rev_path else set())
     latest_files = {registry_path, backup_path}
 
     def write_order(item: tuple[Path, str | None]) -> int:

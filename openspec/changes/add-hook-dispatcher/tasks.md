@@ -13,3 +13,12 @@
 - [x] `tests/unit/test_hook_dispatcher.py` (fold, sticky, changed guard, verbatim rollback, parity failure, uninstall, fail closed).
 - [x] Ruff on the changed files.
 - [x] Parity fixture against the live Studio guard set before `--hook-dispatcher on`; factory `checks/harden/hook-dispatcher` on the installed copy.
+
+## 4. Fix round (2026-10-07 reviews of 4e1cea13)
+
+- [x] Crash notices beside a JSON answer ride in systemMessage; the fixture compares the notices the user is shown.
+- [x] The exec'd rewriter keeps its fractional timeout and leaves no payload file.
+- [x] Damaged entries fall back to the next registry; payload write failures refuse and clean up; non-PreToolUse failures stay notices.
+- [x] Folds switch atomically by rev; entries without a rev keep registry.legacy.json.
+- [x] Process counts observed by kqueue, with a self-test, in a git repo and outside one.
+- [x] no-chrome-guard prefilter covers factory f76e54a5a (PC rule).

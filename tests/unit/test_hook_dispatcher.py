@@ -215,11 +215,11 @@ def test_missing_registry_fails_closed(tmp_path: Path) -> None:
     assert pre.returncode == 2
     assert json.loads(pre.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "--hook-dispatcher off" in pre.stderr
-    stop = run_hook(f"{DISPATCH} Stop '*'", {"hook_event_name": "Stop"}, env)
-    assert stop.returncode == 2 and json.loads(stop.stdout)["decision"] == "block"
-    # Refused once, the session may stop on the retry.
-    retry = run_hook(f"{DISPATCH} Stop '*'", {"hook_event_name": "Stop", "stop_hook_active": True}, env)
-    assert retry.returncode == 1 and not retry.stdout
+    # The other events' guards are notices and side effects: a non-blocking notice, as a failed guard gave
+    # per-hook. A refusal there would erase every prompt (UserPromptSubmit) or keep a session from stopping.
+    for event in ("Stop", "UserPromptSubmit", "PostToolUse"):
+        other = run_hook(f"{DISPATCH} {event} '*'", {"hook_event_name": event}, env)
+        assert other.returncode == 1 and not other.stdout and "--hook-dispatcher off" in other.stderr, event
     # A registry without this entry (settings and registry out of step) refuses the same way.
     (home / ".claude/hooks/dispatch").mkdir()
     (home / ".claude/hooks/dispatch/registry.json").write_text(json.dumps({"entries": {"PreToolUse": {}}}))
@@ -431,3 +431,159 @@ def test_a_fold_keeps_config_order_across_overlapping_matchers(tmp_path: Path) -
     assert last_rewrite(hooks_of(home)) == "echo safe"
     install("--hook-dispatcher", "on")
     assert last_rewrite(hooks_of(home)) == "echo safe"
+
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 2
+# The 2026-10-07 parity review of 4e1cea13 and its M1-M5 follow-ups. Each runs the real dispatcher as Claude Code
+# does (/bin/sh -c) and compares with the per-hook run through the parity fixture's model of Claude Code.
+
+def parity_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("hook_dispatch_parity", SOURCE / "hooks/hook-dispatch-parity.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def as_result(command: str, done: subprocess.CompletedProcess) -> dict:
+    return {"command": command, "code": done.returncode, "out": done.stdout, "err": done.stderr, "timed_out": False}
+
+
+def test_a_crash_notice_survives_beside_a_json_answer(tmp_path: Path) -> None:
+    """A guard that crashes beside one that answers with JSON: Claude Code ignores stderr once stdout is JSON, so the
+    notice the user saw per-hook must ride in the merged answer (4e1cea13 exited 0 and dropped it)."""
+    crash = {"type": "command", "command": "echo 'guard crashed: synthetic' >&2; exit 1"}
+    context = {"type": "command", "command": "printf %s '" + json.dumps(
+        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "ctx"}}) + "'"}
+    _home, env = dispatcher_home(tmp_path, [crash, context])
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+    parity = parity_module()
+    old = parity.effect("PreToolUse", [as_result(h["command"], run_hook(h["command"], call, env))
+                                       for h in (crash, context)])
+    new = parity.effect("PreToolUse", [as_result(DISPATCH_BASH, run_hook(DISPATCH_BASH, call, env))])
+    assert old["shown"] == "guard crashed: synthetic" and old["context"] == "ctx"
+    assert new == old
+
+
+def test_a_damaged_entry_falls_back_to_a_good_backup(tmp_path: Path) -> None:
+    """M1: `[null]` in registry.json with a valid backup runs the backup's guards (it used to allow everything)."""
+    home, env = dispatcher_home(tmp_path, [None])
+    good = {"schema": 1, "entries": {"PreToolUse": {"Bash": [MERGE_HOOK]}}, "inproc": []}
+    (home / ".claude/hooks/dispatch/registry.json.bak").write_text(json.dumps(good))
+    result = run_hook(DISPATCH_BASH, MERGE_CALL, env)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "BLOCKED: merge through the queue" in json.loads(result.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"]
+
+
+def test_a_payload_that_cannot_be_written_refuses_and_leaves_no_file(tmp_path: Path) -> None:
+    """M2: a temp file that fills mid-write (ENOSPC, here a file-size limit) refuses the call and removes itself."""
+    _home, env = dispatcher_home(tmp_path, [MERGE_HOOK])
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    env["TMPDIR"] = str(tmp)
+    call = dict(MERGE_CALL, padding="x" * 4096)
+    result = subprocess.run(["/bin/sh", "-c", DISPATCH_BASH], input=json.dumps(call), env=env,
+                            capture_output=True, text=True, timeout=60,
+                            preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64)))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not [name for name in os.listdir(tmp) if name.startswith("hook-dispatch-")]
+
+
+FAKE_RTK = """#!/bin/sh
+input=$(cat)
+case "$input" in
+  *hang-rewriter*) exec sleep 30 ;;
+  *slow-rewriter*) sleep 2 ;;
+esac
+printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rewritten"}}}'
+"""
+
+
+def rewriter_home(tmp_path: Path, wrapper: str = "") -> tuple[Path, dict]:
+    home, env = dispatcher_home(tmp_path, [{"type": "command", "command": "rtk hook claude", "timeout": 2.45}])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "rtk").write_text(wrapper or FAKE_RTK)
+    (bin_dir / "rtk").chmod(0o755)
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    return home, env | {"PATH": f"{bin_dir}:{env['PATH']}", "TMPDIR": str(tmp)}
+
+
+TIMER_RTK = """#!/usr/bin/env python3
+import json, signal, sys
+sys.stdin.read()
+left = signal.getitimer(signal.ITIMER_REAL)[0]  # the time the dispatcher left this rewriter
+print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": {"command": "%.2f" % left}}}))
+"""
+
+
+def test_the_execd_rewriter_keeps_its_fractional_timeout_and_leaves_no_payload(tmp_path: Path) -> None:
+    """The dispatcher becomes `rtk hook claude`: it gets its whole 2.45 s timeout (a whole-second alarm left it 2 s,
+    dropping answers between 2 and 2.45 s), a hang ends at its own timeout with nothing written, and no payload
+    file is left."""
+    import time
+
+    (tmp_path / "t").mkdir()
+    _home, env = rewriter_home(tmp_path / "t", TIMER_RTK)
+    call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
+    result = run_hook(DISPATCH_BASH, call, env)
+    assert result.returncode == 0, result.stderr
+    left = float(json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"])
+    assert 2.05 < left <= 2.45  # minus interpreter start-up; a rounded alarm would show at most 2.00
+    assert not [name for name in os.listdir(env["TMPDIR"]) if name.startswith("hook-dispatch-")]
+    _home, env = rewriter_home(tmp_path)
+    hang = {"tool_name": "Bash", "tool_input": {"command": "echo hang-rewriter"}, "hook_event_name": "PreToolUse"}
+    started = time.monotonic()
+    stopped = run_hook(DISPATCH_BASH, hang, env)
+    assert stopped.returncode == -14 and not stopped.stdout  # SIGALRM: discarded, as a timed-out hook's is
+    assert 2.4 <= time.monotonic() - started < 10
+    assert not [name for name in os.listdir(env["TMPDIR"]) if name.startswith("hook-dispatch-")]
+
+
+def test_the_process_watch_counts_what_a_rewriter_starts_after_the_exec(tmp_path: Path) -> None:
+    """M4: the count comes from the kernel (kqueue on the hook's pid from before it runs), not from the dispatcher's
+    own audit: an rtk wrapper that runs `sleep 0` first is seen as 2 processes; the plain rewriter as 1."""
+    parity = parity_module()
+    call = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"},
+                       "hook_event_name": "PreToolUse"}).encode()
+    quiet = "#!/usr/bin/env python3\nimport sys\nsys.stdin.read()\n"  # reads its input, forks nothing
+    _home, env = rewriter_home(tmp_path, quiet)
+    plain = parity.observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
+    assert plain["observed"] and parity.processes_of(plain) == 1
+    (tmp_path / "w").mkdir()
+    wrapper = "#!/bin/sh\nsleep 0\nexec /usr/bin/env python3 -c 'import sys; sys.stdin.read()'\n"
+    _home, env = rewriter_home(tmp_path / "w", wrapper)
+    wrapped = parity.observe(DISPATCH_BASH, call, env, str(tmp_path), 30)
+    assert wrapped["observed"] and parity.processes_of(wrapped) >= 2
+
+
+def test_sessions_on_settings_without_a_rev_keep_their_fold(tmp_path: Path) -> None:
+    """M3: settings written before revs read registry.json; the first fold with revs keeps the old one as
+    registry.legacy.json, so a key the new fold drops still runs its guards in sessions that started earlier."""
+    home, _ = make_home(tmp_path)
+    install, env = installer(tmp_path, home)
+    install("--hook-dispatcher", "on")
+    dispatch = home / ".claude/hooks/dispatch"
+    registry = json.loads((dispatch / "registry.json").read_text())
+    # Turn this into a pre-rev install: entries without a rev, a registry without one.
+    settings = json.loads((home / ".claude/settings.json").read_text())
+    text = json.dumps(settings).replace(" " + registry["rev"], "")
+    (home / ".claude/settings.json").write_text(json.dumps(json.loads(text), indent=2) + "\n")
+    old = {key: value for key, value in registry.items() if key != "rev"}
+    (dispatch / "registry.json").write_text(json.dumps(old))
+    (dispatch / "registry.json.bak").write_text(json.dumps(old))
+    install("--hook-dispatcher", "on")
+    assert json.loads((dispatch / "registry.legacy.json").read_text()) == old
+    # The new fold loses the Bash key (simulated): the old session's entry still denies through the legacy fold.
+    for name in ("registry.json", "registry.json.bak"):
+        current = json.loads((dispatch / name).read_text())
+        current["entries"]["PreToolUse"].pop("Bash")
+        (dispatch / name).write_text(json.dumps(current))
+    payload = {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 5"}, "cwd": str(tmp_path),
+               "hook_event_name": "PreToolUse"}
+    assert decision(run_hook(DISPATCH_BASH, payload, env)) == "deny"

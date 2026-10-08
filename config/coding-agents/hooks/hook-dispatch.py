@@ -18,22 +18,36 @@ How each hook runs (doubt keeps the old path: its own process through /bin/sh -c
   otherwise the real script runs. A changed script loses its pin and always runs.
 - rewriter: `rtk hook claude` (side-effect free, never blocks). It is skipped when a guard already denied or a later
   guard rewrote the input (that rewrite wins either way); when it is the only process still needed and every other
-  guard answered nothing, this process execs into it, so the usual Bash call costs one process per event.
+  guard answered nothing, this process execs into it, so the usual Bash call costs one process per event. The exec'd
+  rewriter keeps its own timeout to the fraction of a second (an inherited ITIMER_REAL from the moment it starts);
+  at that point it is stopped with nothing written, so its answer is discarded as Claude Code discards a timed-out
+  hook's. The payload file is unlinked before the exec (fd 0 keeps it readable), so nothing is left behind.
 - external: everything else, exactly as configured.
 
 Answer: one guard with output passes through byte for byte, except an exit 2 without a JSON block reason, which
 is answered as exit 2 plus the JSON block Claude Code would have built (`[<guard command>]: <stderr>`), so the
 message the model sees keeps the guard's own command. Several: any block wins and the block messages are joined in
 config order; JSON answers merge (deny > ask > allow, contexts joined, the last updatedInput in config order wins);
-plain stdout and errors follow Claude Code's per-event rules.
+plain stdout and errors follow Claude Code's per-event rules. Claude Code (2.1.293, probed 2026-10-07) reads a hook's
+stdout as JSON whatever its exit code and then ignores its stderr, so one process cannot answer with JSON and also
+raise a non-blocking error notice. A guard that failed without a JSON answer (exit 1, a crash) while another answered
+with JSON therefore has its notice (`<stderr>`, or `No stderr output`) carried in the merged answer's systemMessage,
+in config order, so the user still sees it; without any JSON answer the dispatcher exits with the failed guard's
+code and the notices on stderr, as Claude Code shows them.
 
-Failing closed (2026-10-07 post-merge review of 4e1cea13): a broken registry or entry list, a temp file that cannot
-be written, guard answers that cannot be merged and any uncaught error all refuse with exit 2 and a reason, never a
-silent exit 0 or 1. A Stop hook refuses once and lets the session stop on the retry (`stop_hook_active`).
+Failing closed (2026-10-07 post-merge review of 4e1cea13): on PreToolUse, where the guards can deny, a broken
+registry or entry list, a temp file that cannot be written, guard answers that cannot be merged and any uncaught
+error refuse the call with exit 2 and a reason, never a silent exit 0 or 1. The other events' guards are notices and
+side effects (every one is `|| true` today), so there the same faults give a non-blocking notice (exit 1), as a
+failed guard did per-hook; a refused UserPromptSubmit would erase every prompt of the session.
 
 Registry revisions: install-policy names each fold `registry.<rev>.json` and puts the rev in every settings entry
 (`... <Event> '<matcher>' <rev>`), so settings and the guards they run switch in one atomic settings write and a
-session still on older settings keeps the guards it started with. An entry without a rev reads registry.json.
+session still on older settings keeps the guards it started with. Each candidate registry is tried in turn and the
+first whose entry for this matcher is a valid hook list wins, so a damaged copy falls back to a good one: the rev's
+own file, then registry.json and its backup (whatever their rev: a rev file is kept 7 days, a session may run
+longer), then, for an entry without a rev, registry.legacy.json (the fold that entries without a rev were written
+with, kept by install-policy when it first writes revs). No valid entry anywhere refuses (PreToolUse).
 
 Rollback: `python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off` restores the per-hook
 config verbatim from the registry. Must stay Python 3.9 compatible: `python3` may resolve to /usr/bin/python3.
@@ -231,10 +245,12 @@ def pf_no_chrome(payload):
     command = _jq_field(payload, "command")
     if command is None:
         return True
-    literals = ("Chrome.app/Contents/MacOS", "Chromium.app/Contents/MacOS", "--remote-debugging-port", "--headless",
-                "puppeteer.launch", "chromium.launch", "launchPersistentContext")
-    return (any(text in command for text in literals) or ("open" in command and "Chrom" in command)
-            or ("pc" in command and "chrome" in command.lower()))  # Chrome on Alex's PC (factory f76e54a5a)
+    # Its block list: Chrome.app/Chromium.app binaries, `open -a` Chrome/Chromium, --remote-debugging-port,
+    # --headless, puppeteer.launch, chromium.launch, launchPersistentContext; since factory f76e54a5a (2026-10-07)
+    # also ssh/scp to Alex's PC with `chrome` (any case) in the command. Every Chrome or Chromium name contains
+    # "chrom" in some case, so this superset holds for both reviewed versions.
+    literals = ("--remote-debugging-port", "--headless", "puppeteer.launch", "launchPersistentContext")
+    return any(text in command for text in literals) or "chrom" in command.lower()
 
 
 _WIDE_TOOL = re.compile(r"(^|[;&|(`\s])(grep\s+([^;&|]*\s)?-[a-zA-Z]*[rR]|rg\s|find\s|fd\s)", re.M)
@@ -325,13 +341,17 @@ def pf_prettier(payload):
     return _prettier_config_near(directory)
 
 
-# Script guards: basename of the resolved script -> (sha256 of the reviewed bytes, prefilter).
+# Script guards: basename of the resolved script -> (sha256 of the reviewed bytes, or a tuple of them, prefilter).
 SCRIPT_PREFILTERS = {
     "agent-lb-bootout-guard.sh": ("8f4a0eea5f7639e7d0f6e8d02a048ffd00db3c37daa9b6f4acb86d612a36d304", pf_bootout),
     "display-wake.sh": ("e701783e043516bdca4397ae0a1acdb8838645ee125931921e345704ce64056b", pf_display_wake),
     "wide-scan-guard.sh": ("fab6ad8cdc002a48698f0fe9bd19e6232492e67ce646f5873e54a7681ef270ac", pf_wide_scan),
     "link-cli-guard.sh": ("cb71baf54200c8dfcd06ba98bb269cb954ed82d11a32ad63a0394d576482ef22", pf_link_cli),
-    "no-chrome-guard.sh": ("f8cbd0b265aebc71856916ebc5f212033c3dc967327ac84305b55d58d10e9c46", pf_no_chrome),
+    # 1106066: before factory f76e54a5a; 02f4782: its PC rule and one-shot unblock exception; f8cbd0b: factory
+    # d0d4a7243 (all 2026-10-07).
+    "no-chrome-guard.sh": (("110606670fe66ed2f9dc5824e6d9cb4ed0819286d4b2f73f99b97a73196d9468",
+                            "02f4782aadb16febacc1544cfc84dc270d28350fae29c2ce77facdd511b68b82",
+                            "f8cbd0b265aebc71856916ebc5f212033c3dc967327ac84305b55d58d10e9c46"), pf_no_chrome),
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway),
     "route.sh": ("7735c06fbe7264f0d92403e0bd7b18920f9457196493e9bce9b787e53404ed97", pf_jev_alert),
 }
@@ -426,7 +446,8 @@ def plan_hook(hook, inproc_names):
                 plan.reason = "pinned script with a fallback answer"
             elif sensitive:
                 plan.reason = "pinned script, but %s is set" % sensitive
-            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) == pinned[0]:
+            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) in (
+                    pinned[0] if isinstance(pinned[0], tuple) else (pinned[0],)):
                 plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
             else:
                 plan.reason = "script changed since its prefilter was reviewed"
@@ -488,21 +509,34 @@ class Payload(object):
 
     def __init__(self, raw):
         self.raw = raw
-        fd, self.path = tempfile.mkstemp(prefix="hook-dispatch-")
+        self.path = None
+        self.restore()
+
+    def restore(self):
+        """(Re)create the file. A write that fails (ENOSPC) removes the partial file and raises."""
+        fd, path = tempfile.mkstemp(prefix="hook-dispatch-")
         try:
+            raw = self.raw
             while raw:
                 raw = raw[os.write(fd, raw):]
-        finally:
+        except BaseException:
             os.close(fd)
+            os.unlink(path)
+            raise
+        os.close(fd)
+        self.path = path
 
     def open_fd(self):
         return os.open(self.path, os.O_RDONLY)
 
     def close(self):
+        if self.path is None:
+            return
         try:
             os.unlink(self.path)
         except OSError:
             pass
+        self.path = None
 
 
 def _stdlib_dirs():
@@ -655,7 +689,8 @@ class External(object):
         stdin = payload.open_fd()
         try:
             self.proc = subprocess.Popen([SHELL, "-c", plan.command], stdin=stdin, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, start_new_session=True)
+                                         stderr=subprocess.PIPE, start_new_session=True,
+                                         env=rewriter_env() if plan.kind == "rewriter" else None)
         finally:
             os.close(stdin)
         self.thread = threading.Thread(target=self._drain)
@@ -733,14 +768,24 @@ def encode(obj):
     return (json.dumps(obj, ensure_ascii=True) + "\n").encode("ascii")
 
 
-def refusal(event, note):
-    """Exit 2 with the reason as JSON Claude Code reads for this event, and on stderr."""
+def refusal(event, note, blocked=False):
+    """The dispatcher's own failure. PreToolUse (or a guard that did block): exit 2 with the reason as the JSON block
+    Claude Code reads for this event, and on stderr. Other events: a non-blocking notice (exit 1, the note on
+    stderr), as a failed guard gave per-hook."""
+    err = (note.rstrip("\n") + "\n").encode("utf-8", "backslashreplace")
     if event == "PreToolUse":
         obj = {"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny",
                                       "permissionDecisionReason": note}}
-    else:
+    elif blocked:
         obj = {"decision": "block", "reason": note}
-    return Result(2, encode(obj), (note.rstrip("\n") + "\n").encode("utf-8", "backslashreplace"), mode="refused")
+    else:
+        return Result(1, b"", err, mode="refused")
+    return Result(2, encode(obj), err, mode="refused")
+
+
+def notice_text(result):
+    """The text of the non-blocking error notice Claude Code shows for a guard that failed without JSON."""
+    return result.err.decode("utf-8", "replace").rstrip("\n") or "No stderr output"
 
 
 def merge(event, plans, results):
@@ -758,10 +803,11 @@ def merge(event, plans, results):
                     messages.append(block_message(plan, result, obj))
             except Exception:
                 messages.append("[%s]: answer unreadable" % plan.command)
+        blocked = bool(messages)
         if not messages:
             messages.append("hook-dispatch: could not merge the guards' answers (%s); refused"
                             % exc.__class__.__name__)
-        return refusal(event, "\n".join(messages))
+        return refusal(event, "\n".join(messages), blocked)
 
 
 def merge_answers(event, plans, results):
@@ -780,12 +826,17 @@ def merge_answers(event, plans, results):
     if len(pairs) == 1 and not (blocks and blocks[0][1].code == 2 and not deny_reason(blocks[0][2])):
         _p, only, _obj = parsed[0]
         return Result(only.code, only.out, only.err)  # byte for byte
-    objects = [obj for _p, _r, obj in parsed if obj is not None]
+    # Config order: JSON answers, and the notice of each guard that failed without one (Claude Code ignores stderr
+    # once stdout is JSON, so a merged JSON answer carries those notices in its systemMessage).
+    items = [obj if obj is not None else notice_text(r) for _p, r, obj in parsed
+             if obj is not None or r.code not in (0, 2)]
+    objects = [item for item in items if isinstance(item, dict)]
+    notices = [item for item in items if not isinstance(item, dict)]
     plain = [r.out for _p, r, obj in parsed if obj is None and r.code == 0 and r.out]
     errors = [r for _p, r, obj in parsed if obj is None and r.code not in (0, 2)]
     if blocks:
         messages = [block_message(p, r, obj) for p, r, obj in blocks]
-        merged = merge_objects(event, objects, plain) if objects else {}
+        merged = merge_objects(event, items, plain) if items or plain else {}
         merged.pop("decision", None)
         merged.pop("reason", None)
         if event == "PreToolUse":
@@ -798,18 +849,25 @@ def merge_answers(event, plans, results):
             merged["decision"] = "block"
             merged["reason"] = "\n".join(messages)
         return Result(2, encode(merged), b"".join(r.err for _p, r, _obj in blocks))
+    notice_err = ("\n".join(notices) + "\n").encode("utf-8", "backslashreplace") if notices else b""
     if not objects and not plain:
-        return Result(errors[0].code, b"", b"".join(r.err for r in errors))
-    if not objects:
-        return Result(0, b"".join(plain), b"".join(r.err for r in errors))
-    return Result(0, encode(merge_objects(event, objects, plain)), b"".join(r.err for r in errors))
+        return Result(errors[0].code, b"", notice_err)
+    if not objects and (not errors or event != "UserPromptSubmit"):
+        # Plain stdout reaches only the transcript here, as it does from a failed guard; the notices stay notices.
+        return Result(errors[0].code if errors else 0, b"".join(plain), notice_err)
+    # JSON answers, or UserPromptSubmit context (plain stdout) beside a failed guard: one JSON answer.
+    return Result(0, encode(merge_objects(event, items, plain)), b"")
 
 
 def merge_objects(event, objects, plain):
+    """Merge JSON answers in config order. A str among them is a failed guard's notice: it joins systemMessage."""
     merged, specific = {}, {}
     contexts, reasons_by_rank, system = [], {}, []
     decision, decision_reasons, stop_reasons = None, [], []
     for obj in objects:
+        if not isinstance(obj, dict):
+            system.append(obj)
+            continue
         for key, value in obj.items():
             if key == "hookSpecificOutput" and isinstance(value, dict):
                 for skey, svalue in value.items():
@@ -875,26 +933,38 @@ def merge_objects(event, objects, plain):
 # ---------------------------------------------------------------------------------------------------- the entry
 
 
-def load_registry(rev=None):
-    """The registry this settings entry was written with: registry.<rev>.json, else registry.json or its backup when
-    their rev matches; without a rev, registry.json or its backup. Raises when none reads."""
-    errors = []
+def registry_candidates(rev=None):
+    """Where this settings entry's registry may be, best first (see Registry revisions above)."""
     base = registry_path()
-    paths = [base, base + ".bak"]
-    if rev and not os.environ.get("HOOK_DISPATCH_REGISTRY"):
-        paths.insert(0, os.path.join(os.path.dirname(base), "registry.%s.json" % rev))
-    for path in paths:
+    folder = os.path.dirname(base)
+    pinned = bool(os.environ.get("HOOK_DISPATCH_REGISTRY"))
+    paths = []
+    if rev and not pinned:
+        paths.append(os.path.join(folder, "registry.%s.json" % rev))
+    paths += [base, base + ".bak"]
+    if not rev and not pinned:
+        paths.append(os.path.join(folder, "registry.legacy.json"))
+    return paths
+
+
+def load_entry(event, key, rev=None):
+    """(registry, hooks, path) from the first candidate whose entry for (event, key) is a valid hook list. A damaged or
+    missing entry in one copy falls through to the next; raises with every reason when none has it."""
+    errors = []
+    for path in registry_candidates(rev):
         try:
             with open(path, encoding="utf-8") as handle:
                 registry = json.load(handle)
-            if not (isinstance(registry, dict) and isinstance(registry.get("entries"), dict)):
-                errors.append("%s: not a registry" % path)
-            elif rev and registry.get("rev") != rev:
-                errors.append("%s: rev %s, not %s" % (path, registry.get("rev"), rev))
-            else:
-                return registry
         except (OSError, ValueError) as exc:
-            errors.append("%s: %s" % (path, exc.__class__.__name__))
+            errors.append("%s: %s" % (os.path.basename(path), exc.__class__.__name__))
+            continue
+        if not (isinstance(registry, dict) and isinstance(registry.get("entries"), dict)):
+            errors.append("%s: not a registry" % os.path.basename(path))
+            continue
+        try:
+            return registry, entry_hooks(registry, event, key), path
+        except ValueError as exc:
+            errors.append("%s: %s" % (os.path.basename(path), exc))
     raise ValueError("; ".join(errors))
 
 
@@ -943,25 +1013,47 @@ def trace_hooks(plans, results):
     return rows
 
 
+def rewriter_env():
+    """The rewriter's environment: PATH with git's own directory first. Outside a project with a .claude directory
+    `rtk hook claude` runs `git rev-parse --show-toplevel` (its only child, checked 2026-10-07 by shimming every name
+    on PATH) and forks once per PATH entry ahead of git's directory: 24 processes per Bash call on Studio's PATH.
+    The same git binary is found either way, so its answer is the same."""
+    env = dict(os.environ)
+    git = which("git")
+    if git:
+        folder = os.path.dirname(git)
+        path = env.get("PATH", os.defpath)
+        if path.split(os.pathsep)[0] != folder:
+            env["PATH"] = folder + os.pathsep + path
+    return env
+
+
 def exec_into(plan, payload, record):
-    """Replace this process with the rewriter: same pid, its own timeout kept by an inherited alarm."""
+    """Replace this process with the rewriter: same pid. Its own timeout, to the fraction of a second, runs from the
+    moment it starts (per-hook it ran beside the others with that much time of its own), kept by an inherited
+    ITIMER_REAL; at expiry SIGALRM stops it before it writes, so its answer is discarded as a timed-out hook's is.
+    The payload file is unlinked first (fd 0 keeps it readable): a successful exec leaves nothing behind. When the
+    exec fails, the file is written again and the caller runs the rewriter through /bin/sh."""
     words = plan.command.split()
     target = which(words[0])
     if not target:
         return  # not on PATH: let the caller run it through /bin/sh, which reports it as before
     fd = payload.open_fd()
     record["exec"] = plan.command
+    record["exec_timeout"] = plan.timeout
     trace(record)
     sys.stdout.flush()
     sys.stderr.flush()
     os.dup2(fd, 0)
     os.close(fd)
+    payload.close()
     signal.signal(signal.SIGALRM, signal.SIG_DFL)
-    signal.alarm(max(1, int(round(plan.timeout))))
+    signal.setitimer(signal.ITIMER_REAL, plan.timeout)
     try:
-        os.execv(target, words)
+        os.execve(target, words, rewriter_env())
     except OSError:
-        signal.alarm(0)
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        payload.restore()
 
 
 def updates_input(result):
@@ -1045,21 +1137,8 @@ def run_entry(event, hooks, raw, inproc_names):
         payload.close()
 
 
-def stop_retry(event, raw):
-    """A Stop hook that already refused once: Claude Code sets stop_hook_active on the retry."""
-    if event != "Stop":
-        return False
-    try:
-        return json.loads(raw.decode("utf-8")).get("stop_hook_active") is True
-    except Exception:
-        return False
-
-
-def answer(event, raw, result):
-    """Write the answer; return its exit code. A dispatcher refusal on a Stop retry becomes a notice (exit 1), so a
-    broken registry cannot keep a session from stopping."""
-    if result.mode == "refused" and stop_retry(event, raw):
-        result = Result(1, b"", result.err)
+def answer(result):
+    """Write the answer; return its exit code."""
     out, err = sys.stdout.buffer, sys.stderr.buffer
     if result.out:
         out.write(result.out)
@@ -1073,10 +1152,10 @@ def answer(event, raw, result):
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) < 2 or argv[0] not in EVENTS:
-        # A settings entry this dispatcher cannot read runs no guards: refuse.
-        sys.stderr.write("hook-dispatch: usage: hook-dispatch.py <%s> <matcher> [<rev>]; refused\n"
+        # A settings entry this dispatcher cannot read runs no guards: refuse a tool call, else a notice.
+        sys.stderr.write("hook-dispatch: usage: hook-dispatch.py <%s> <matcher> [<rev>]; its guards did not run\n"
                          % "|".join(EVENTS))
-        return 2
+        return 2 if argv[:1] == ["PreToolUse"] else 1
     event, key = argv[0], argv[1]
     rev = argv[2] if len(argv) > 2 else None
     raw = b""
@@ -1085,13 +1164,12 @@ def main(argv=None):
         try:
             if rev is not None and not REV.fullmatch(rev):
                 raise ValueError("bad rev %r" % rev)
-            registry = load_registry(rev)
-            hooks = entry_hooks(registry, event, key)
+            registry, hooks, _path = load_entry(event, key, rev)
         except ValueError as exc:
             note = ("hook-dispatch: registry unreadable (%s); the %s '%s' guards did not run. Restore the per-hook "
                     "config: python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off\n"
                     % (exc, event, key))
-            return answer(event, raw, refusal(event, note))
+            return answer(refusal(event, note))
         if os.environ.get("HOOK_DISPATCH_TRACE"):
             sys.addaudithook(_audit)
         # inproc_sha pins each in-process guard to the bytes the parity fixture passed on; a changed guard runs as
@@ -1102,13 +1180,14 @@ def main(argv=None):
     except BaseException as exc:
         # Anything this process did not plan for (no temp file, no process, a bug) refuses: the guards it was
         # running might have.
-        note = ("hook-dispatch: failed (%s: %s); the %s '%s' guards did not all run, so this call is refused\n"
-                % (exc.__class__.__name__, str(exc)[:200], event, key))
+        note = ("hook-dispatch: failed (%s: %s); the %s '%s' guards did not all run%s\n"
+                % (exc.__class__.__name__, str(exc)[:200], event, key,
+                   ", so this call is refused" if event == "PreToolUse" else ""))
         try:
-            return answer(event, raw, refusal(event, note))
+            return answer(refusal(event, note))
         except BaseException:
-            return 2
-    return answer(event, raw, result)
+            return 2 if event == "PreToolUse" else 1
+    return answer(result)
 
 
 if __name__ == "__main__":

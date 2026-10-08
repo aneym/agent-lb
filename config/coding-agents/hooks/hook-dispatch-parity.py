@@ -8,8 +8,15 @@ For every case (event, tool, payload) it runs, in a fresh sandbox HOME each time
 It compares (1) each guard's own result (exit code, stdout, stderr when the exit code is not 0, timeout) between the
 two paths, (2) the effect Claude Code builds from the results (decision, block message, updatedInput, context,
 system message, continue), emulated here independently of the dispatcher's merge code, and (3) the files each path
-leaves in the sandbox. It also measures processes per Bash call (the dispatcher's own audit count plus the exec chain
-check), the prettier gate, and crash and timeout behaviour with synthetic guards.
+leaves in the sandbox. It also measures processes per Bash call, the prettier gate, and crash and timeout behaviour
+with synthetic guards (a crash beside a JSON answer, a hanging and a slow exec'd rewriter).
+
+Processes are observed, not inferred: each hook command starts as `/bin/sh -c <command>` in a child that waits until
+a kqueue EVFILT_PROC watch (NOTE_FORK, NOTE_EXEC, NOTE_EXIT) is on its pid, so no fork by it or by anything it execs
+into goes unseen. A hook that never forks is exactly one process, whatever it execs into; a fork anywhere in its tree
+starts with a fork by it, so one fork seen means at least two processes. A run the watch could not observe (no
+kqueue, no exit seen) counts as unmeasured and fails the <= 2 requirement. A self-test first proves the watch sees a
+fork and sees none from a plain exec.
 
 The sandbox is test-owned: HOME, TMPDIR, lane, factory, ledger and state paths point inside it, HERDR_* and
 FACTORY_* are dropped, AGENT_LB_URL points at a closed port, AUTOCLOSE_DRY_RUN and IDLE_REAPER_DRY_RUN are set.
@@ -25,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -133,10 +141,14 @@ def parse_json(text):
 def effect(event, results):
     """What Claude Code does with these hook results, per its per-hook rules (2.1.293), in config order.
 
-    It reads stdout as JSON whatever the exit code: `decision: block` or a PreToolUse deny blocks with the reason;
-    an exit 2 with no such reason blocks with `[<command>]: <stderr>`; other exit codes are a notice to the user."""
-    view = {"decision": None, "block": [], "updatedInput": None, "context": [], "system": [], "continue": True,
+    Probed on 2.1.293 (2026-10-07): it reads stdout as JSON whatever the exit code and then ignores stderr (a JSON
+    answer with exit 1 is a success); `decision: block` or a PreToolUse deny blocks with the reason; an exit 2 with no
+    such reason blocks with `[<command>]: <stderr>`; any other exit without JSON is a non-blocking error notice to the
+    user (its stderr, or `No stderr output`) and its stdout reaches only the transcript. `shown` is what the user is
+    shown besides a block, in config order: system messages and those notices."""
+    view = {"decision": None, "block": [], "updatedInput": None, "context": [], "shown": [], "continue": True,
             "stopReason": [], "plain": []}
+    failed_stdout = False
     rank = {"allow": 1, "ask": 2, "deny": 3}
     for result in results:
         if result["timed_out"]:
@@ -145,8 +157,12 @@ def effect(event, results):
         if obj is None:
             if result["code"] == 2:
                 view["block"].append("[%s]: %s" % (result["command"], result["err"] or "No stderr output"))
-            elif result["code"] == 0 and result["out"].strip():
-                view["plain"].append(result["out"])
+            elif result["code"] == 0:
+                if result["out"].strip():
+                    view["plain"].append(result["out"])
+            else:
+                view["shown"].append(result["err"].rstrip("\n") or "No stderr output")
+                failed_stdout = failed_stdout or bool(result["out"].strip())
             continue
         specific = obj.get("hookSpecificOutput") if isinstance(obj.get("hookSpecificOutput"), dict) else {}
         reason = None
@@ -166,7 +182,7 @@ def effect(event, results):
         if specific.get("additionalContext"):
             view["context"].append(str(specific["additionalContext"]))
         if obj.get("systemMessage"):
-            view["system"].append(str(obj["systemMessage"]))
+            view["shown"].append(str(obj["systemMessage"]))
         if obj.get("continue") is False:
             view["continue"] = False
             if obj.get("stopReason"):
@@ -181,9 +197,9 @@ def effect(event, results):
     # Several messages or contexts reach the model either as separate items (old) or joined (dispatcher).
     view["block"] = "\n".join(message for message in view["block"])
     view["context"] = "\n".join(view["context"])
-    view["system"] = "\n".join(view["system"])
+    view["shown"] = "\n".join(view["shown"])
     view["stopReason"] = "\n".join(view["stopReason"])
-    view["transcript_only_stdout"] = bool(plain) and event != "UserPromptSubmit"
+    view["transcript_only_stdout"] = (bool(plain) and event != "UserPromptSubmit") or failed_stdout
     return view
 
 
@@ -343,6 +359,7 @@ def builtin_cases():
         dict(bash("railway run printenv"), name="deny-railway-printenv", expect=deny),
         dict(bash('open -a "Google Chrome" https://example.com'), name="deny-no-chrome", expect=deny),
         dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
+        dict(bash("ssh pc 'dir'"), name="allow-ssh-pc", expect="allow"),
         dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=deny),
         dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=deny),
         dict(bash("cua do click 10 10"), name="deny-desktop-guard", expect=deny),
@@ -498,6 +515,14 @@ def run_case(sandbox, registry, case):
     outcome = {"name": case["name"], "event": event, "tool": tool, "mismatches": []}
     run, old_results, old_files = run_path(sandbox, case, olds, extra, False)
     run2, new_results, new_files = run_path(sandbox, case, news, extra, True)
+    for result in new_results:
+        # The dispatcher became the rewriter (exec) and the rewriter's own timer stopped it before it wrote: that is
+        # the rewriter timing out, as the per-hook run of it does. Only that exact shape counts.
+        record = result["trace"][-1] if result["trace"] else {}
+        if record.get("exec") and result["code"] == 128 + signal.SIGALRM and not result["out"] \
+                and result["seconds"] >= float(record.get("exec_timeout") or 0) - 0.05:
+            result["timed_out"] = True
+            result["rewriter_timer"] = True
     old_view, new_view = same(effect(event, old_results), run), same(effect(event, new_results), run2)
     # (2) what Claude Code does with the answers
     if old_view != new_view:
@@ -569,34 +594,126 @@ PROCESS_COMMANDS = ("ls -la", "git status", "echo hello", "cat README.md", "pyth
                     "jq . package.json", "npm run build", "sed -n 1,20p a.txt")
 
 
+def observe(command, payload, env, cwd, timeout):
+    """Run `/bin/sh -c command` as Claude Code does and watch its pid from before it runs: forks, execs, exit.
+
+    The child waits on a pipe until the kqueue watch is on its pid, so nothing it does is missed. Returns a dict with
+    `observed` False when the watch could not be set up or no exit was seen (then nothing is claimed)."""
+    row = {"observed": False, "forks": None, "execs": None, "code": None}
+    if not hasattr(select, "kqueue"):
+        row["why"] = "no kqueue on this platform"
+        return row
+    work = tempfile.mkdtemp(prefix="observe-", dir=env.get("TMPDIR") or None)
+    paths = {name: os.path.join(work, name) for name in ("in", "out", "err")}
+    with open(paths["in"], "wb") as handle:
+        handle.write(payload)
+    fds = [os.open(paths["in"], os.O_RDONLY), os.open(paths["out"], os.O_WRONLY | os.O_CREAT, 0o600),
+           os.open(paths["err"], os.O_WRONLY | os.O_CREAT, 0o600)]
+    gate_r, gate_w = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # child: wait for the watch, then become the hook's shell
+        try:
+            os.close(gate_w)
+            os.read(gate_r, 1)
+            os.close(gate_r)
+            os.setsid()
+            os.chdir(cwd)
+            for target, fd in enumerate(fds):
+                os.dup2(fd, target)
+            os.execve("/bin/sh", ["/bin/sh", "-c", command], env)
+        finally:
+            os._exit(127)
+    os.close(gate_r)
+    for fd in fds:
+        os.close(fd)
+    kq = select.kqueue()
+    forks = execs = 0
+    exited = False
+    started = time.monotonic()
+    try:
+        kq.control([select.kevent(pid, filter=select.KQ_FILTER_PROC, flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
+                                  fflags=select.KQ_NOTE_FORK | select.KQ_NOTE_EXEC | select.KQ_NOTE_EXIT)], 0, 0)
+        watching = True
+    except OSError as exc:
+        watching = False
+        row["why"] = "kqueue watch failed: %s" % exc
+    os.write(gate_w, b"x")
+    os.close(gate_w)
+    try:
+        while watching and not exited:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                row["why"] = "no exit within %ss" % timeout
+                break
+            for event in kq.control(None, 16, remaining):
+                forks += 1 if event.fflags & select.KQ_NOTE_FORK else 0
+                execs += 1 if event.fflags & select.KQ_NOTE_EXEC else 0
+                exited = exited or bool(event.fflags & select.KQ_NOTE_EXIT)
+    finally:
+        kq.close()
+        if not exited:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        _pid, status = os.waitpid(pid, 0)
+        shutil.rmtree(work, ignore_errors=True)
+    row.update(observed=watching and exited, forks=forks, execs=execs,
+               code=os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
+    return row
+
+
+def processes_of(row):
+    """Processes a watched hook started: exactly 1 with no fork; at least 1 + forks otherwise; None unmeasured."""
+    return (1 + row["forks"]) if row["observed"] else None
+
+
+def counter_selftest(env, cwd):
+    """The watch sees a fork (a shell running two commands) and sees none from a plain exec chain."""
+    forked = observe("/usr/bin/true; /usr/bin/true", b"", env, cwd, 30)
+    plain = observe("exec /usr/bin/true", b"", env, cwd, 30)
+    ok = forked["observed"] and plain["observed"] and forked["forks"] >= 1 and plain["forks"] == 0
+    return {"ok": ok, "forking_command": forked, "exec_only_command": plain}
+
+
+CWD_CLAUDE = "under HOME (a .claude directory above)"
+CWD_PLAIN = "outside HOME (no .claude directory above)"
+
+
 def process_count(sandbox, registry):
+    """Processes per Bash call (PreToolUse + PostToolUse), observed, with the session's cwd under a .claude directory
+    (HOME and anything below it; rtk finds the project there) and under none (worktrees on another volume; rtk then
+    runs `git rev-parse --show-toplevel`)."""
     rows = []
-    for command in PROCESS_COMMANDS:
-        total, detail = 0, []
-        for event in ("PreToolUse", "PostToolUse"):
-            case = dict(bash(command), event=event, response={"stdout": ""}, name="count")
-            run = sandbox.fresh()
-            payload = payload_for(case, run)
-            trace_path = os.path.join(run, "trace.jsonl")
-            env = sandbox.env(run, {"HOOK_DISPATCH_TRACE": trace_path})
-            for hook in new_hooks(registry["dispatch"], event, "Bash"):
-                result = run_shell(hook["command"], payload, env, os.path.join(run, "work"), hook_timeout(hook))
-                try:
-                    with open(trace_path) as handle:
-                        records = [json.loads(line) for line in handle if line.strip()]
-                except OSError:
-                    records = []
-                record = records[-1] if records else {}
-                os.unlink(trace_path) if os.path.exists(trace_path) else None
-                same_pid = record.get("pid") == result["pid"]
-                spawned = int(record.get("spawned", 0))
-                count = 1 + spawned if same_pid else 2 + spawned
-                total += count
-                detail.append({"event": event, "processes": count, "sh_exec_into_python": same_pid,
-                               "spawned_by_dispatcher": spawned, "exec": record.get("exec"),
-                               "external": [row["command"][:50] for row in record.get("hooks", [])
-                                            if row.get("mode") == "external"]})
-        rows.append({"command": command, "processes": total, "detail": detail})
+    for where in (CWD_CLAUDE, CWD_PLAIN):
+        for command in PROCESS_COMMANDS:
+            total, detail = 0, []
+            for event in ("PreToolUse", "PostToolUse"):
+                run = sandbox.fresh()
+                cwd_rel = "home/project" if where == CWD_CLAUDE else "work"
+                os.makedirs(os.path.join(run, cwd_rel), exist_ok=True)
+                case = dict(bash(command, cwd_rel=cwd_rel), event=event, response={"stdout": ""}, name="count")
+                payload = payload_for(case, run)
+                trace_path = os.path.join(run, "trace.jsonl")
+                env = sandbox.env(run, {"HOOK_DISPATCH_TRACE": trace_path})
+                for hook in new_hooks(registry["dispatch"], event, "Bash"):
+                    watched = observe(hook["command"], payload, env, os.path.join(run, cwd_rel), hook_timeout(hook))
+                    try:
+                        with open(trace_path) as handle:
+                            records = [json.loads(line) for line in handle if line.strip()]
+                    except OSError:
+                        records = []
+                    record = records[-1] if records else {}
+                    os.unlink(trace_path) if os.path.exists(trace_path) else None
+                    count = processes_of(watched)
+                    total = None if total is None or count is None else total + count
+                    detail.append({"event": event, "command": hook["command"][:80], "processes": count,
+                                   "observed": watched["observed"], "forks": watched["forks"],
+                                   "execs": watched["execs"], "why": watched.get("why"), "exec": record.get("exec"),
+                                   "spawned_by_dispatcher": record.get("spawned"),
+                                   "external": [row["command"][:50] for row in record.get("hooks", [])
+                                                if row.get("mode") == "external"]})
+            rows.append({"command": command, "cwd": where, "processes": total, "detail": detail})
     return rows
 
 
@@ -613,6 +730,16 @@ SYNTHETIC = {
     "hang.sh": ("#!/bin/bash\nsleep 30\n", 0o755),
     "failclosed.sh": ("#!/bin/bash\necho 'BLOCKED: synthetic shell refusal' >&2\nexit 2\n", 0o755),
 }
+# A stand-in for `rtk hook claude` (on the sandbox PATH): rewrites the command at once, or never for a
+# `hang-rewriter` one. (The fractional-timeout case is a unit test: a sleep within half a second of a timeout is
+# too tight for a fixture that gates installs on a loaded machine.)
+FAKE_RTK = """#!/bin/sh
+input=$(cat)
+case "$input" in
+  *hang-rewriter*) exec sleep 30 ;;
+esac
+printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rtk rewritten"}}}'
+"""
 
 
 def synthetic_registry():
@@ -632,7 +759,9 @@ def synthetic_registry():
         {"type": "command", "command": "\"%sfailclosed.sh\"" % prefix},
         {"type": "command", "command": "python3 \"%shang.py\"" % prefix, "timeout": 2},
     ]
-    groups = [{"matcher": "Bash", "hooks": hooks}, {"matcher": "Agent", "hooks": closed}]
+    groups = [{"matcher": "Bash", "hooks": hooks}, {"matcher": "Agent", "hooks": closed},
+              {"matcher": "RewriteSlow", "hooks": [{"type": "command", "command": "rtk hook claude", "timeout": 2.45}]},
+              {"matcher": "RewriteHang", "hooks": [{"type": "command", "command": "rtk hook claude", "timeout": 1.45}]}]
     return build_registry({"PreToolUse": groups}, ["crash.py", "hang.py", "failclosed.py"])
 
 
@@ -662,10 +791,14 @@ def build_registry(per_hook, inproc):
 def crash_cases(root, dispatcher, real_home):
     registry = synthetic_registry()
     extra = {os.path.join("home", "synth", name): spec for name, spec in SYNTHETIC.items()}
+    extra[os.path.join("bin", "rtk")] = (FAKE_RTK, 0o755)
     sandbox = Sandbox(os.path.join(root, "synthetic"), real_home, registry, dispatcher, [], extra)
     out = []
-    for name, tool in (("crash-and-timeout-fail-open", "Bash"), ("crash-fail-closed-and-timeout", "Agent")):
-        case = dict(event="PreToolUse", tool=tool, input={"command": "true", "prompt": "x"}, name=name, expect=None)
+    for name, tool, command in (("crash-and-timeout-fail-open", "Bash", "true"),
+                                ("crash-fail-closed-and-timeout", "Agent", "true"),
+                                ("rewriter-execd-rewrites", "RewriteSlow", "echo plain-rewriter"),
+                                ("rewriter-hang-times-out", "RewriteHang", "echo hang-rewriter")):
+        case = dict(event="PreToolUse", tool=tool, input={"command": command, "prompt": "x"}, name=name, expect=None)
         out.append(run_case(sandbox, registry, case))
     return out
 
@@ -715,6 +848,8 @@ def main():
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             report["cases"] = list(pool.map(lambda case: run_case(sandbox, registry, case), cases))
         report["crash_timeout"] = [] if args.only else crash_cases(root, dispatcher, home)
+        report["process_counter_selftest"] = None if args.only else counter_selftest(
+            sandbox.env(sandbox.fresh()), root)
         report["process_count"] = [] if args.only else process_count(sandbox, registry)
         guards = sorted({hook["command"] for groups in registry["per_hook"].values() for group in groups
                          for hook in group.get("hooks", [])})
@@ -730,9 +865,12 @@ def main():
     missed = [case["name"] for case in report["cases"] if case.get("expect_ok") is False]
     report["expectations_failed"] = missed
     counts = [row["processes"] for row in report["process_count"]]
-    count_ok = all(count <= 2 for count in counts)
+    # Unmeasured counts as failed: a count the watch did not observe proves nothing.
+    selftest_ok = bool(report.get("process_counter_selftest") and report["process_counter_selftest"]["ok"])
+    count_ok = bool(counts) and selftest_ok and all(isinstance(count, int) and count <= 2 for count in counts)
     report["parity"] = "pass" if parity_ok else "fail"
-    report["process_count_max"] = max(counts) if counts else None
+    measured = [count for count in counts if isinstance(count, int)]
+    report["process_count_max"] = max(measured) if measured and len(measured) == len(counts) else None
     report["process_count_ok"] = count_ok
     report["seconds"] = round(time.time() - started, 1)
     text = json.dumps(report, indent=2)

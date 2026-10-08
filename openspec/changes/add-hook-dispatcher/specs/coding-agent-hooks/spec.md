@@ -16,9 +16,21 @@ The hook dispatcher MUST give Claude Code the same decision, block message, upda
 - **WHEN** a guard raises, exits non-zero other than 2, or runs past its timeout
 - **THEN** the effect is what Claude Code did per-hook: a crash is a non-blocking error, a timeout is cancelled, a guard that refuses on its own error still refuses
 
+#### Scenario: A guard crashes beside a JSON answer
+- **WHEN** one guard fails without JSON (exit 1, stderr S) and another answers with JSON
+- **THEN** the merged JSON answer carries S in its systemMessage, in config order, because Claude Code (2.1.293) ignores the stderr of a hook whose stdout is JSON, so the user still sees the notice
+
+#### Scenario: The exec'd rewriter hangs
+- **WHEN** the dispatcher execs into `rtk hook claude` and it runs past its own timeout T
+- **THEN** it is stopped at T (to the fraction of a second, from its start) with nothing written, so no rewrite applies, and no payload temp file is left
+
 ### Requirement: Half-installed states fail closed
 
-The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the rollback command) when its registry is unreadable or has no entry for the event and matcher it was called with. For the other events it MUST exit 1 with the same note.
+The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the rollback command) when no candidate registry has a valid entry (a non-empty list of command hooks) for the event and matcher it was called with, when its payload temp file cannot be written, or on any error of its own. A damaged entry in one candidate MUST fall through to the next (the entry's rev file, registry.json, its backup, then registry.legacy.json for entries without a rev). For the other events it MUST exit 1 with the same note; their guards are notices and side effects.
+
+#### Scenario: A damaged entry with a good backup
+- **WHEN** registry.json holds `[null]` for the entry and its backup holds the guards
+- **THEN** the backup's guards run and their deny stands
 
 #### Scenario: Registry missing
 - **WHEN** settings point at the dispatcher and the registry and its backup are missing
@@ -36,9 +48,13 @@ The dispatcher MUST refuse a PreToolUse call (exit 2 and a JSON deny naming the 
 - **WHEN** a guard answers differently on the two paths
 - **THEN** `on` exits non-zero and settings and the registry are unchanged
 
+### Requirement: Folds switch atomically
+
+Each fold MUST be written as `registry.<rev>.json` before settings name that rev, and settings MUST switch every dispatcher entry in one write. Entries without a rev (written before revs) MUST keep the fold they were written with as `registry.legacy.json`.
+
 ### Requirement: Bash calls cost at most two processes
 
-With the dispatcher installed over the live Studio guard set, a Bash tool call that no guard acts on MUST start at most two processes for its PreToolUse and PostToolUse hooks together.
+With the dispatcher installed over the live Studio guard set, a Bash tool call that no guard acts on MUST start at most two processes for its PreToolUse and PostToolUse hooks together. The count MUST be observed from the kernel (a kqueue watch on each hook process from before it runs, every fork counted), not inferred from the dispatcher's own records, and an unobserved count fails. Measured 2026-10-07: 2 with the session's cwd in a git repo; outside a git repo `rtk hook claude` runs `git rev-parse` and forks once per PATH entry ahead of git's directory (about 24 on Studio), both per-hook and through the dispatcher.
 
 #### Scenario: Plain command
 - **WHEN** a session runs `ls -la`
