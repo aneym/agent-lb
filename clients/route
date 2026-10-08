@@ -2760,6 +2760,10 @@ def workflow_seat(table: dict[str, Any], class_name: str, entry: dict[str, Any])
     seat_spec = (table.get("seats") or {}).get(seat)
     if "vendor" not in out and isinstance(seat_spec, dict) and seat_spec.get("vendor"):
         out["vendor"] = seat_spec["vendor"]
+    if class_name != "verify":
+        repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "FINISH.md"
+        managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "FINISH.md"
+        brief += "\n\n" + (repo if repo.is_file() else managed).read_text(encoding="utf-8")
     out.update(effort=effort, opts=opts, brief=brief)
     return out
 

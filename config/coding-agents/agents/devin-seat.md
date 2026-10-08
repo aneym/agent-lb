@@ -46,11 +46,7 @@ not create or change Herdr tabs, do not message other agents, do not read
 credentials, do not grant access, do not commit, push or deploy unless the brief
 says so. Code changes stay inside the assigned directory and files.
 
-Return the command's stdout: the JSON envelope carries the account, the model,
-`vendor_session_id` (the Devin session name, for `devin -r`), `tokens_in`,
-`tokens_out`, `cache_read_tokens`, `wall_s` and the result. Keep those fields in
-your reply verbatim: Open Factory prices the seat from them and from the matching
-closeout row in dispatch.jsonl. Do not inspect the repo or implement anything yourself, and do not
+Do not inspect the repo or implement anything yourself, and do not
 substitute a provider or model. If `seat run` fails, report its exact output and
 stop — never return nothing and never retry on a different model.
 
@@ -69,4 +65,17 @@ Use your judgment to deliver the requested outcome end to end. Make reasonable, 
 
 Preserve unrelated work and stay within the authorized scope. Ask before destructive or external actions that are not already authorized.
 
-Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
+## Finish (appended by the launcher; do not remove)
+
+- Work only in the worktree the brief names. Do not merge, push or move other branches unless the brief says to land.
+- Edit only the files the brief lists. Never edit the check, a scenario, or anything under ~/.agent-rails/lanes/. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
+- Run the brief's check yourself and quote its last lines. The runner reruns it after you exit and fails the slice if your diff weakens it.
+- UI changes: boot the app with `boot <worktree> --json`, take light and dark, desktop and phone shots with `page-shot <url> --out <dir>`, and list the PNG paths under artifacts.
+- Ask nothing: nobody will answer. If the spec is unclear or you are blocked, stop and report status "blocked".
+- End your reply with exactly one block in this shape, the JSON on the single line between the markers:
+
+HANDOFF
+{"status": "done", "done": [], "deviations": [], "concerns": [], "findings": [], "unverified": [], "files": [], "check": {"cmd": "", "rc": 0}, "artifacts": []}
+END HANDOFF
+
+status is done, blocked or failed. unverified lists what you could not check.

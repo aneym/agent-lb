@@ -1607,6 +1607,15 @@ def ready_candidates(args: argparse.Namespace, registry: list[dict[str, Any]], s
     return None, EXIT_NO_ACCOUNT
 
 
+def final_prompt(prompt: str) -> str:
+    """Use the same finish contract for previews and every vendor's real prompt."""
+    if "END HANDOFF" in prompt.splitlines():
+        return prompt
+    repo = Path(__file__).resolve().parent.parent / "config" / "coding-agents" / "FINISH.md"
+    managed = Path.home() / ".agent-lb" / "managed" / "coding-agents" / "FINISH.md"
+    return prompt + "\n\n" + (repo if repo.is_file() else managed).read_text(encoding="utf-8")
+
+
 def command_run(args: argparse.Namespace) -> int:
     if args.prompt_file:
         prompt_path = Path(args.prompt_file).expanduser()
@@ -1615,6 +1624,9 @@ def command_run(args: argparse.Namespace) -> int:
         prompt = " ".join(args.prompt).strip()
     if not prompt:
         fail("empty prompt: pass --prompt-file or a prompt after --")
+    if args.print_prompt:
+        sys.stdout.write(final_prompt(prompt))
+        return EXIT_OK
     cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
     registry = load_registry() + lease_accounts(args.vendor)
     state = load_state()
@@ -1745,7 +1757,7 @@ def run_on_accounts(
         print(f"seat: debug: dropped local proxy variables: {', '.join(removed_proxies)}", file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="seat-") as scratch:
         prompt_file = Path(scratch) / "prompt.md"
-        prompt_file.write_text(prompt, encoding="utf-8")
+        prompt_file.write_text(final_prompt(prompt), encoding="utf-8")
         limited_plans: set[str] = set()
         kind: str | None = None
         for account in candidates:
@@ -1970,7 +1982,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     run = commands.add_parser("run", help="dispatch one task to a vendor seat")
     run.add_argument("--vendor", choices=VENDORS, required=True)
-    run.add_argument("--model", required=True, help="model id or family alias (grok-latest, swe-latest)")
+    run.add_argument("--model", help="model id or family alias (grok-latest, swe-latest)")
     run.add_argument("--account", help="pin one account; no failover")
     run.add_argument("--class", dest="task_class", help="task class for the ledger (mechanical, explore, ...)")
     run.add_argument("--author-vendor", help="the vendor that wrote the work under review; --class verify needs it")
@@ -1982,6 +1994,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="ask: read-only tools; write: edits and shell (default)",
     )
     run.add_argument("--timeout", type=float, default=DEFAULT_RUN_TIMEOUT_SECONDS)
+    run.add_argument("--print-prompt", action="store_true", help="print the final prompt without launching a seat")
     run.add_argument("--prompt-file")
     run.add_argument("prompt", nargs="*")
     run.set_defaults(handler=command_run)
@@ -1995,7 +2008,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--trust must be an absolute path without a newline")
         if args.vendor == "devin" and not args.trust:
             parser.error("--vendor devin requires at least one --trust")
-    if args.command == "run" and args.task_class == "verify" and not args.account and not args.author_vendor:
+    if args.command == "run" and not args.print_prompt and not args.model:
+        parser.error("seat run requires --model unless --print-prompt is used")
+    if args.command == "run" and not args.print_prompt and args.task_class == "verify" and not args.account and not args.author_vendor:
         parser.error("--class verify reserves a cross-vendor reviewer: pass --author-vendor <vendor that wrote it>")
     return args
 
