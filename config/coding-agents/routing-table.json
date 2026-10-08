@@ -745,7 +745,7 @@
       "pinned": "claude-fable-5-1",
       "harness": "fable",
       "fallback": "opus-latest",
-      "note": "The newest claude-fable-N[-N] on the upstream Anthropic list; pinned, then Claude Code's fable alias, when no list is reachable; opus-latest when the list answers without Fable. The talk and Q&A seat (fable-orchestrator) reaches it without asking; anywhere else it is an explicit request (2026-10-05)."
+      "note": "The newest claude-fable-N[-N] on the upstream Anthropic list; pinned, then Claude Code's fable alias, when no list is reachable; opus-latest when the list answers without Fable. The talk and Q&A seat (fable-orchestrator) reaches it without asking; anywhere else it is an explicit request (2026-10-05). Since 2026-10-07 tabs Alex talks to default to opus-latest medium with ultracode on; fable-orchestrator runs only when Alex or a dispatch asks for Fable."
     },
     "astra-latest": {
       "vendor": "openai",
