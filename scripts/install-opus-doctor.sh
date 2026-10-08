@@ -62,7 +62,8 @@ payload = {
     "Label": os.environ["OPUS_DOCTOR_LABEL"],
     "ProgramArguments": [os.environ["OPUS_DOCTOR_LAUNCHER"], "--doctor-nightly"],
     "StartCalendarInterval": {"Hour": 3, "Minute": 20},
-    "ProcessType": "Background",
+    "Nice": 10,
+    "LowPriorityIO": True,
     "WorkingDirectory": str(state),
     "EnvironmentVariables": {
         "CLAUDE_LB_DOCTOR_STATE_DIR": str(state),

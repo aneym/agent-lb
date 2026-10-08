@@ -103,7 +103,8 @@ plist = {
     "RunAtLoad": True,
     "WatchPaths": [os.environ["INSTALL_CONFIG"]],
     "StartInterval": int(os.environ["INSTALL_INTERVAL"]),
-    "ProcessType": "Background",
+    "Nice": 10,
+    "LowPriorityIO": True,
     "StandardOutPath": f'{os.environ["INSTALL_LOG_DIR"]}/codex-routing-guard.launchd.out.log',
     "StandardErrorPath": f'{os.environ["INSTALL_LOG_DIR"]}/codex-routing-guard.launchd.err.log',
 }
