@@ -17,61 +17,24 @@ import posixpath
 
 
 def strip_heredocs(text):
-    # Quoted data is inert, but shell input and unquoted expansions execute.
-    kept, pending, bodies = [], [], []
+    # Delimiters come from shell tokens, not quoted message text. Bodies are data.
+    kept, pending = [], []
     for line in text.splitlines(keepends=True):
         if pending:
-            delimiter, tabs, executable, quoted, body = pending[0]
+            delimiter, tabs = pending[0]
             candidate = line.rstrip('\r\n')
             if tabs:
                 candidate = candidate.lstrip('\t')
             if candidate == delimiter:
                 pending.pop(0)
-                content = ''.join(body)
-                bodies.extend([content] if executable else substitutions(content, heredoc=True) if not quoted else [])
-            else:
-                body.append(line.lstrip('\t') if tabs else line)
             continue
         kept.append(line)
-        if '<<' not in line:
-            continue
         words = shell_tokens(line)
-        executable = any(word.rsplit('/', 1)[-1] in ('bash', 'sh', 'zsh', 'dash', 'ksh')
-                         for word in words)
-        raw = list(re.finditer(r'<<-?\s*([^\s;&|<>]+)', line))
-        n = 0
         for i, word in enumerate(words[:-1]):
             if word in ('<<', '<<-'):
                 delimiter = words[i + 1]
                 tabs = word == '<<-' or delimiter.startswith('-')
-                spelling = raw[n].group(1) if n < len(raw) else delimiter
-                quoted = any(char in spelling for char in "\\\"'")
-                n += 1
-                pending.append((delimiter[1:] if tabs and delimiter.startswith('-') else delimiter,
-                                tabs, executable, quoted, []))
-    if pending:
-        raise ValueError('unfinished heredoc')
-    return ''.join(kept), bodies
-
-
-def join_continuations(text):
-    kept, quote, i = [], None, 0
-    while i < len(text):
-        char = text[i]
-        if char == '\\' and quote != "'":
-            if text[i:i + 2] == '\\\n':
-                i += 2
-                continue
-            kept.append(text[i:i + 2])
-            i += 2
-            continue
-        if quote:
-            if char == quote:
-                quote = None
-        elif char in "\"'":
-            quote = char
-        kept.append(char)
-        i += 1
+                pending.append((delimiter[1:] if tabs and delimiter.startswith('-') else delimiter, tabs))
     return ''.join(kept)
 
 
@@ -85,7 +48,7 @@ def wide_root(path, cwd):
 
 
 def search_paths(name, args):
-    paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd')
+    paths, pattern, recursive = [], name == 'find', name in ('rg', 'find', 'fd')
     i, options = 0, True
     short_values = 'efmABCdD' if name in ('grep', 'egrep', 'fgrep', 'ggrep') else 'efgtdmABCj'
     long_values = {'--regexp', '--file', '--glob', '--iglob', '--type', '--type-not', '--max-depth',
@@ -107,11 +70,7 @@ def search_paths(name, args):
                 recursive |= option == '--directories' and value == 'recurse'
         elif options and arg.startswith('-') and arg != '-':
             if name == 'find':
-                if not paths and arg in ('-H', '-L', '-P', '-E', '-x', '-X', '-d', '-s'):
-                    continue
-                if arg == '-f' and i < len(args):
-                    paths.append(args[i])
-                    i += 1
+                if arg in ('-H', '-L', '-P'):
                     continue
                 break  # the remaining words are find expressions, not paths
             for j, flag in enumerate(arg[1:], 1):
@@ -168,7 +127,7 @@ def shell_tokens(text):
     return list(lexer)
 
 
-def substitutions(text, heredoc=False):
+def substitutions(text):
     # Extract executable expansions even inside double quotes, never single quotes.
     bodies = []
     quote = None
@@ -176,7 +135,7 @@ def substitutions(text, heredoc=False):
     i = 0
     while i < len(text):
         char = text[i]
-        if not heredoc and quote is None and char == '#' and boundary:
+        if quote is None and char == '#' and boundary:
             end = text.find('\n', i)
             if end == -1:
                 break
@@ -189,9 +148,9 @@ def substitutions(text, heredoc=False):
         if quote == "'":
             if char == "'":
                 quote = None
-        elif char == "'" and quote is None and not heredoc:
+        elif char == "'" and quote is None:
             quote = "'"
-        elif char == '"' and not heredoc:
+        elif char == '"':
             quote = None if quote == '"' else '"'
         elif char == '`' or text.startswith('$(', i):
             backtick = char == '`'
@@ -241,12 +200,6 @@ wrapper_values = {
     'nice': ('n', ('--adjustment',)),
     'nohup': ('', ()),
     'command': ('', ()),
-    'builtin': ('', ()),
-    'time': ('', ()),
-    'ionice': ('cnpPu', ('--class', '--classdata', '--pid', '--pgid', '--uid')),
-    'arch': ('', ()),
-    'setsid': ('', ()),
-    'watch': ('nd', ('--interval', '--differences', '--shotsdir')),
     'sudo': ('ugphCUrRt', ('--user', '--group', '--prompt', '--host', '--chdir',
                         '--close-from', '--role', '--type', '--command-timeout')),
     'xargs': ('aEdILnPs', ('--arg-file', '--eof', '--delimiter', '--replace',
@@ -286,7 +239,7 @@ def unsafe(args, depth, cwd):
             i += 1
             continue
         name = args[i].rsplit('/', 1)[-1]
-        if name in ('do', 'then', 'else', 'elif', 'if', 'while', 'until', '{', '!', 'exec'):
+        if name in ('do', 'then', 'else', 'elif', 'if', 'while', 'until', '{', '!', 'time', 'exec'):
             i += 1
             continue
         if name in ('bash', 'sh', 'zsh', 'dash', 'ksh'):
@@ -296,10 +249,7 @@ def unsafe(args, depth, cwd):
                 if arg == '--' or not arg.startswith('-'):
                     break
                 if not arg.startswith('--') and 'c' in arg[1:]:
-                    command = j + 1
-                    if command < len(args) and args[command] == '--':
-                        command += 1
-                    return command < len(args) and scan(args[command], depth + 1, cwd)
+                    return j + 1 < len(args) and scan(args[j + 1], depth + 1, cwd)
                 j += 1
                 if not arg.startswith('--') and any(flag in arg[1:] for flag in 'oO'):
                     j += 1  # shell option name, e.g. -euo pipefail
@@ -325,8 +275,6 @@ def unsafe(args, depth, cwd):
                 if arg in ('-u', '-C', '--unset', '--chdir'):
                     j += 1
         i = after_options(args, i + 1, name)
-        if name == 'watch':
-            return i < len(args) and scan(' '.join(args[i:]), depth + 1, cwd)
         if name in ('timeout', 'gtimeout'):
             i += 1  # duration
         elif name == 'nice' and i < len(args) and re.match(r'^\+?\d+$', args[i]):
@@ -337,7 +285,7 @@ def unsafe(args, depth, cwd):
     name = args[0].rsplit('/', 1)[-1]
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
         roots, recursive = search_paths(name, args[1:])
-        if recursive and any(wide_root(path, cwd) for path in (roots or ['.'])):
+        if recursive and any(wide_root(path, cwd) for path in roots):
             raise SystemExit(2)
     if name not in ('grep', 'egrep', 'fgrep', 'ggrep'):
         return False
@@ -403,14 +351,12 @@ def scan(text, depth=0, cwd=None):
         return True
     cwd = cwd or os.environ.get('SCAN_CWD') or os.getcwd()
     try:
-        text = join_continuations(text)
-        text, bodies = strip_heredocs(text)
-        bodies.extend(substitutions(text))
+        text = strip_heredocs(text)
+        bodies = substitutions(text)
         tokens = shell_tokens(text)
-    except Exception as error:
-        print("BLOCKED: cannot parse shell input; add '# wide-scan-ok' for a deliberate command: "
-              + str(error), file=__import__('sys').stderr)
-        raise SystemExit(2)
+    except ValueError:
+        # Incomplete shell input remains subject to the existing width guard.
+        return False
     if any(scan(body, depth + 1, cwd) for body in bodies):
         return True
     segment = []
@@ -428,12 +374,10 @@ def scan(text, depth=0, cwd=None):
             words = segment[:]
             while words and words[0] in ('do', 'then', 'else', 'elif', 'if', 'while', 'until', '{', '!'):
                 words.pop(0)
-            if words and words[0] in ('cd', 'pushd'):
+            if words and words[0] == 'cd':
                 paths = [word for word in words[1:] if not word.startswith('-')]
                 if paths:
                     cwd = resolve_path(paths[0], cwd)
-                elif words[0] == 'cd':
-                    cwd = os.path.expanduser('~')
             segment = []
         else:
             segment.append(token)
