@@ -7,82 +7,6 @@ INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty')
 [ -z "$CMD" ] && exit 0
-if SCAN_TEXT="$CMD" python3 - <<'DATA_PY'
-import os, shlex
-text = os.environ['SCAN_TEXT']
-try:
-    words = shlex.split(text)
-    plain = words and words[0] in ('echo', 'printf') and not any(c in text for c in '|;&()<>`$\\\n\r')
-except ValueError:
-    plain = False
-raise SystemExit(0 if plain else 1)
-DATA_PY
-then
-  exit 0
-fi
-# Only CONTRACT_EOF files used as prompts are data, not arbitrary shell heredocs.
-# See agent-lb config/coding-agents/agents/codex-verifier.md and its siblings.
-CMD=$(printf '%s\n' "$CMD" | /usr/bin/awk '
-  {
-    lines[NR] = $0
-    if (pending) {
-      line = $0
-      if (tabs[pending]) sub(/^\t+/, "", line)
-      if (line == "CONTRACT_EOF") {
-        last[pending] = NR
-        pending = 0
-      }
-      next
-    }
-    writer = $0
-    prefix = ""
-    while (match(writer, /^[ \t]*(cd[ \t]+([^ \t;&|<>"\047`$]+|"[^"`$]+"|"\$[A-Za-z_][A-Za-z0-9_]*"|"\$\{[A-Za-z_][A-Za-z0-9_]*\}"|\047[^\047]+\047)|[A-Za-z_][A-Za-z0-9_]*=\$\(mktemp[ \t]+[^()`]*\))[ \t]*&&[ \t]*/)) {
-      prefix = prefix substr(writer, 1, RLENGTH)
-      writer = substr(writer, RLENGTH + 1)
-    }
-    if (writer ~ /^[ \t]*cat[ \t]+>[ \t]*("\$[A-Za-z_][A-Za-z0-9_]*"|\$[A-Za-z_][A-Za-z0-9_]*)[ \t]+<<-?\047CONTRACT_EOF\047[ \t]*$/) {
-      pending = ++count
-      first[count] = NR
-      prefixes[count] = prefix
-      tabs[count] = (writer ~ /<<-/)
-      name = writer
-      sub(/^[^$]*\$/, "", name)
-      sub(/[^A-Za-z0-9_].*$/, "", name)
-      names[count] = name
-      checked = prefix
-      gsub("(^|&&)[ \t]*" name "=\\$\\(mktemp[ \t]+[^()`]*\\)[ \t]*", "", checked)
-      invalid[count] = (checked ~ /(^|&&)[ \t]*[A-Za-z_][A-Za-z0-9_]*=/)
-    }
-  }
-  END {
-    for (id = 1; id <= count; id++) {
-      if (!last[id] || invalid[id]) continue
-      text = prefixes[id] "\n"
-      for (i = 1; i <= NR; i++)
-        if (i < first[id] || i > last[id]) text = text lines[i] "\n"
-      v = names[id]
-      ref = "\\$(" v "([^A-Za-z0-9_]|$)|\\{" v "[^A-Za-z0-9_])"
-      arg = "(\"\\$" v "\"|\\$" v "|\"\\$\\{" v "(:\\?)?\\}\"|\\$\\{" v "\\})"
-      # Consume only complete arguments, not executable path suffixes or substitutions.
-      prompt = "--prompt-file([ \t]+" arg "|=\"\\$" v "\"|=\"\\$\\{" v "(:\\?)?\\}\")([ \t\n;&|]|$)"
-      while (match(text, "(^|[ \t])" prompt))
-        text = substr(text, 1, RSTART - 1) " " substr(text, RSTART + RLENGTH - 1)
-      cleanup = "(^|[;\n]|&&)[ \t]*rm[ \t]+-f([ \t]+" arg ")+[ \t]*([;\n]|&&|$)"
-      while (match(text, cleanup))
-        text = substr(text, 1, RSTART - 1) "\n" substr(text, RSTART + RLENGTH - 1)
-      # Remove only the assignment name, leaving its contents checked for expansions.
-      assignment = "(^|[;\n]|&&)[ \t]*" v "=\\$\\(mktemp[ \t]+"
-      gsub(assignment, " mktemp ", text)
-      drop[id] = (text !~ ref && text !~ ("(^|[^A-Za-z0-9_])" v "="))
-    }
-    for (i = 1; i <= NR; i++) {
-      omit = 0
-      for (id = 1; id <= count; id++)
-        if (drop[id] && i > first[id] && i <= last[id]) omit = 1
-      if (!omit) print lines[i]
-    }
-  }
-')
 # Check each grep separately: another command's -D skip cannot make it safe.
 # Tokenizing keeps quoted paths intact and distinguishes patterns from paths.
 if SCAN_COMMAND="$CMD" SCAN_CWD="$CWD" python3 - <<'PY'
@@ -90,6 +14,80 @@ import os
 import shlex
 import re
 import posixpath
+
+
+def strip_heredocs(text):
+    # Delimiters come from shell tokens, not quoted message text. Bodies are data.
+    kept, pending = [], []
+    for line in text.splitlines(keepends=True):
+        if pending:
+            delimiter, tabs = pending[0]
+            candidate = line.rstrip('\r\n')
+            if tabs:
+                candidate = candidate.lstrip('\t')
+            if candidate == delimiter:
+                pending.pop(0)
+            continue
+        kept.append(line)
+        words = shell_tokens(line)
+        for i, word in enumerate(words[:-1]):
+            if word in ('<<', '<<-'):
+                delimiter = words[i + 1]
+                tabs = word == '<<-' or delimiter.startswith('-')
+                pending.append((delimiter[1:] if tabs and delimiter.startswith('-') else delimiter, tabs))
+    return ''.join(kept)
+
+
+def wide_root(path, cwd):
+    path = resolve_path(path, cwd)
+    home = os.path.expanduser('~')
+    return (path in ('/', home, '/Users/aneyman', '/System', '/Library', '/home', '/root',
+                     '/Volumes/StudioExt/repos', home + '/repos')
+            or re.fullmatch(r'/Volumes/[^/]+|/home/[^/]+(?:/repos)?', path) is not None
+            or path.endswith('/.agent-rails') or path.endswith('/.agent-rails/lanes'))
+
+
+def search_paths(name, args):
+    paths, pattern, recursive = [], name == 'find', name in ('rg', 'find', 'fd')
+    i, options = 0, True
+    short_values = 'efmABCdD' if name in ('grep', 'egrep', 'fgrep', 'ggrep') else 'efgtdmABCj'
+    long_values = {'--regexp', '--file', '--glob', '--iglob', '--type', '--type-not', '--max-depth',
+                   '--maxdepth', '--max-count', '--threads', '--context', '--after-context',
+                   '--before-context', '--include', '--exclude', '--exclude-dir', '--directories', '--devices'}
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if options and arg == '--':
+            options = False
+        elif options and arg.startswith('--'):
+            option, eq, value = arg.partition('=')
+            recursive |= option in ('--recursive', '--dereference-recursive')
+            if option in long_values:
+                if not eq and i < len(args):
+                    value = args[i]
+                    i += 1
+                pattern |= option in ('--regexp', '--file')
+                recursive |= option == '--directories' and value == 'recurse'
+        elif options and arg.startswith('-') and arg != '-':
+            if name == 'find':
+                if arg in ('-H', '-L', '-P'):
+                    continue
+                break  # the remaining words are find expressions, not paths
+            for j, flag in enumerate(arg[1:], 1):
+                recursive |= name in ('grep', 'egrep', 'fgrep', 'ggrep') and flag in 'rR'
+                pattern |= flag in 'ef'
+                if flag in short_values:
+                    value = arg[j + 1:]
+                    if not value and i < len(args):
+                        value = args[i]
+                        i += 1
+                    recursive |= flag == 'd' and value == 'recurse'
+                    break
+        elif not pattern:
+            pattern = True
+        else:
+            paths.append(arg)
+    return paths, recursive
 
 
 def shell_tokens(text):
@@ -282,7 +280,14 @@ def unsafe(args, depth, cwd):
         elif name == 'nice' and i < len(args) and re.match(r'^\+?\d+$', args[i]):
             i += 1
     args = args[i:]
-    if not args or args[0].rsplit('/', 1)[-1] not in ('grep', 'egrep', 'fgrep', 'ggrep'):
+    if not args:
+        return False
+    name = args[0].rsplit('/', 1)[-1]
+    if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
+        roots, recursive = search_paths(name, args[1:])
+        if recursive and any(wide_root(path, cwd) for path in roots):
+            raise SystemExit(2)
+    if name not in ('grep', 'egrep', 'fgrep', 'ggrep'):
         return False
     recursive = False
     skip = False
@@ -346,6 +351,7 @@ def scan(text, depth=0, cwd=None):
         return True
     cwd = cwd or os.environ.get('SCAN_CWD') or os.getcwd()
     try:
+        text = strip_heredocs(text)
         bodies = substitutions(text)
         tokens = shell_tokens(text)
     except ValueError:
@@ -354,7 +360,13 @@ def scan(text, depth=0, cwd=None):
     if any(scan(body, depth + 1, cwd) for body in bodies):
         return True
     segment = []
-    for token in tokens + [';']:
+    items = iter(tokens + [';'])
+    for token in items:
+        if token and all(char in '<>&' for char in token) and ('<' in token or '>' in token):
+            if segment and segment[-1].isdigit():
+                segment.pop()
+            next(items, None)  # redirect target is not a search operand
+            continue
         if token and all(char in ';&|()<>\n' for char in token):
             if unsafe(segment, depth, cwd):
                 return True
@@ -405,18 +417,9 @@ REWRITE_PY
     echo 'grep -r under ~/.agent-rails hangs on FIFOs; use rg (skips FIFOs) or add -D skip' >&2
     exit 2
   fi
-fi
-case "$CMD" in *"# wide-scan-ok"*) [ -n "$REWRITE" ] && printf '%s\n' "$REWRITE"; exit 0 ;; esac
-# Bulletin lookups: agents were running `rg -l --max-depth 4 <b-id> ~/.agent-rails` at 120% CPU each (Studio load 250, 2026-10-06).
-LANES_ROOT='(^|[;&|(`[:space:]])(rg|grep|find|fd)[[:space:]][^;&|]*[[:space:]](~|\$HOME|"\$HOME"|/Users/aneyman)/\.agent-rails(/lanes)?/?([[:space:]]|$|;|\||\))'
-if echo "$CMD" | grep -qE "$LANES_ROOT"; then
-  echo "BLOCKED: do not rg/grep/find over ~/.agent-rails to find a bulletin or lane file; each scan ran at 120% CPU and stalled Studio. Use: lane-post read <b-id>  (prints the bulletin and its ref), lane-post list --to <pane> --limit N, or name the lane directory (~/.agent-rails/lanes/<lane>/). If it truly must be wide, add the comment '# wide-scan-ok'." >&2
-  exit 2
-fi
-TOOL='(^|[;&|(`[:space:]])(grep[[:space:]]+([^;&|]*[[:space:]])?-[a-zA-Z]*[rR]|rg[[:space:]]|find[[:space:]]|fd[[:space:]])'
-WIDE='[[:space:]](/|~|~/|\$HOME/?|"\$HOME"/?|/Users/aneyman/?|/Volumes/[^/[:space:]]+/?|/Volumes/StudioExt/repos/?|/System/?|/Library/?|/home/?|/home/[^/[:space:]]+/?|/home/[^/[:space:]]+/repos/?|/root/?)([[:space:]]|$|;|\||\))'
-if echo "$CMD" | grep -qE "$TOOL" && echo "$CMD" | grep -qE "$WIDE"; then
-  echo "BLOCKED: recursive search over the whole disk, home, a volume root or all repos. These scans stall Studio (load 130+) and trip the OrbStack NFS dialog. Scope it to one repo or directory, or use an index (git grep inside the repo). If it truly must be wide, add the comment '# wide-scan-ok'." >&2
+elif [ "$?" -eq 2 ]; then
+  case "$CMD" in *"# wide-scan-ok"*) exit 0 ;; esac
+  echo "BLOCKED: recursive search over the whole disk, home, a volume root, all repos or ~/.agent-rails. Scope it to one repo, lane or directory; use lane-post read <b-id> for bulletins. Override with '# wide-scan-ok'." >&2
   exit 2
 fi
 [ -n "$REWRITE" ] && printf '%s\n' "$REWRITE"
