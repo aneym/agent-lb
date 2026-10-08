@@ -1098,7 +1098,7 @@ def desired_routing_table(source_path: Path, live_path: Path) -> str:
 
 def write_atomic(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    mode = 0o755 if path.suffix == ".sh" else (path.stat().st_mode & 0o777 if path.exists() else 0o644)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as handle:
@@ -1328,7 +1328,7 @@ def main() -> int:
                                ("jev-health.py", "jev-health.py")):
             target = args.home / ".jev/hooks" / name
             wanted = (source / "hooks" / template).read_text()
-            if read_text(target) != wanted:
+            if read_text(target) != wanted or (target.suffix == ".sh" and target.stat().st_mode & 0o777 != 0o755):
                 changes[target] = wanted
         luna_owner = args.home / ".agent-lb/managed/coding-agents/luna-implementer"
         if read_text(luna_owner) == "agent-lb:luna-implementer:v1\n":

@@ -60,7 +60,7 @@ def test_proxy_isolation_and_timeout(setup):
     assert result.returncode == 0
     call = json.loads(Path(setup[2]['CALLS']).read_text())
     assert call['env'] == []
-    assert call['args'][call['args'].index('--max-time') + 1] == '8'
+    assert call['args'][call['args'].index('--max-time') + 1] == '40'
     assert 'fixture-only' not in json.dumps(call)
 
 
@@ -97,3 +97,60 @@ def test_stale_hook_does_not_wait_for_network(setup):
     while not (setup[0] / '.jev/status.json').exists() and time.monotonic() < deadline:
         time.sleep(.05)
     assert json.loads((setup[0] / '.jev/status.json').read_text())['status'] == 'ok'
+
+
+def test_concurrent_probes_count_one_failure(setup):
+    """The subprocess/file boundary must serialize overlapping failed refreshes."""
+    _, hooks, env = setup
+    env = {**env, 'FAIL': '1', 'DELAY': '1'}
+    children = [subprocess.Popen(['bash', str(hooks / 'health-check.sh')], env=env)]
+    lock = setup[0] / '.jev/alert-refresh.lock'
+    deadline = time.monotonic() + 5
+    while not Path(env['CALLS']).exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert lock.exists()
+    os.utime(lock, (time.time() - 60, time.time() - 60))
+    children += [subprocess.Popen(['bash', str(hooks / 'health-check.sh')], env=env) for _ in range(7)]
+    assert all(child.wait(timeout=12) == 0 for child in children)
+    assert json.loads((setup[0] / '.jev/alert-state.json').read_text())['failures'] == 1
+    assert not (setup[0] / '.jev/ALERT').exists()
+
+
+def test_real_http_slow_success(setup):
+    """Real curl must accept a healthy API taking longer than the old eight-second budget.
+
+    The network edge is a local server; no production collaborator is mocked.
+    """
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append((self.path, self.headers.get('Authorization'),
+                             json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
+            time.sleep(9)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"answers":{"alive":{"noul":true}},"model":"fixture"}')
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    home, hooks, env = setup
+    env = {**env, 'PATH': os.environ['PATH'],
+           'TYPESAFE_BASE_URL': f'http://127.0.0.1:{server.server_port}'}
+    try:
+        result = subprocess.run(['bash', str(hooks / 'health-check.sh')], env=env,
+                                capture_output=True, text=True, timeout=45)
+        assert result.returncode == 0
+        assert json.loads((home / '.jev/status.json').read_text())['status'] == 'ok'
+        assert requests[0][0] == '/v1/systemone'
+        assert requests[0][1] == 'Bearer fixture-only'
+        assert requests[0][2]['questions']['alive']['type'] == 'noul'
+        assert not (home / '.jev/ALERT').exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

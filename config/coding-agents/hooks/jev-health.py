@@ -2,10 +2,11 @@
 """Jev alert refresh, adopted from the hand-installed hooks on 2026-10-08.
 
 Fix ledger: stale ALERT ignored a newer CLI ok; curl inherited sandbox proxies and
-reported transport status 000 as an outage. Cache first, isolated eight-second
+reported transport status 000 as an outage. Cache first, isolated forty-second
 probe, two failures, and detached prompt refresh keep network off the hot path.
 """
 import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,7 @@ def probe():
                 config[key] = value.strip().strip('"\'')
     except OSError:
         return False
+    config.update({k: v for k, v in os.environ.items() if k.startswith('TYPESAFE_')})
     key = config.get('TYPESAFE_API_KEY', '')
     if not key or any(c in key for c in '\r\n"\\'):
         return False
@@ -65,11 +67,11 @@ def probe():
                        'questions': {'alive': {'type': 'noul', 'instructions': 'Respond true to confirm the model is reachable'}}})
     env = {k: v for k, v in os.environ.items() if not k.lower().endswith('_proxy')}
     try:
-        result = subprocess.run(['curl', '-q', '--config', '-', '-sS', '--max-time', '8',
+        result = subprocess.run(['curl', '-q', '--config', '-', '-sS', '--max-time', '40',
                                  '-w', '\n%{http_code}', '-X', 'POST',
-                                 'https://api.typesafe.ai/v1/systemone', '-H', 'Content-Type: application/json',
+                                 config.get('TYPESAFE_BASE_URL', 'https://api.typesafe.ai').rstrip('/') + '/v1/systemone', '-H', 'Content-Type: application/json',
                                  '--data', body], input=f'header = "Authorization: Bearer {key}"\n',
-                                text=True, capture_output=True, env=env, timeout=9)
+                                text=True, capture_output=True, env=env, timeout=41)
         response, _, code = result.stdout.rstrip('\n').rpartition('\n')
         data = json.loads(response)
         return result.returncode == 0 and code == '200' and isinstance(data, dict) and bool(data.get('answers'))
@@ -79,14 +81,12 @@ def probe():
 
 def refresh():
     HOME.mkdir(parents=True, exist_ok=True)
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        # Recover an abandoned refresh without allowing concurrent state updates.
-        if LOCK.exists() and time.time() - LOCK.stat().st_mtime > 30:
-            LOCK.unlink(missing_ok=True)
-        fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
         return
-    os.close(fd)
     try:
         status = read(STATUS)
         if fresh(status) and status.get('status') == 'ok':
@@ -106,7 +106,7 @@ def refresh():
             else:
                 ALERT.unlink(missing_ok=True)
     finally:
-        LOCK.unlink(missing_ok=True)
+        os.close(fd)
 
 
 def hook():

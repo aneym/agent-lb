@@ -534,7 +534,8 @@ def pf_display_wake(payload):
 
 
 def pf_jev_alert(_payload):
-    return os.path.lexists(os.environ.get("HOME", "") + "/.jev/ALERT")
+    # The alert-only wrapper also schedules stale-cache refreshes. Always run it.
+    return True
 
 
 def _prettier_config_near(start):
@@ -612,7 +613,7 @@ SCRIPT_PREFILTERS = {
                             "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84"), pf_no_chrome),
     # 9fa0e82: the hand-reviewed copy; since agent-lb 7a71805e its source is installed and its pin derived at install.
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
-    "route.sh": ("7735c06fbe7264f0d92403e0bd7b18920f9457196493e9bce9b787e53404ed97", pf_jev_alert),
+    "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
 }
 # Tools a pinned guard needs (each a tuple of alternatives: a name on PATH or an absolute path). Without one the guard
 # fails closed on every input, so its prefilter proves nothing and it always runs.
