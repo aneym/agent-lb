@@ -271,8 +271,9 @@
         }
       ],
       "audit": {
-        "required": true,
-        "rule": "every implement and mechanical unit, and every fix round, is reviewed after merge by a fresh verifier from the vendor that did not write it; findings become the next slice; before GA money-path units get the same one reviewer (2026-10-07)",
+        "required": false,
+        "mode": "on_request",
+        "rule": "pre-launch (2026-10-08, Alex ~12:10 ET): no cross-vendor or post-merge review when the implementing agent e2e-checked its own work and Claude set the architecture and steps; the merge tool reads the slice check as evidence; by_author_vendor names the reviewer a lead may request by name with a logged reason; a missing auditor is a logged advisory, never a refusal; GA brings review back",
         "by_author_vendor": {
           "openai": {
             "seat": "verifier",
@@ -354,8 +355,9 @@
         }
       ],
       "audit": {
-        "required": true,
-        "rule": "every implement and mechanical unit, and every fix round, is reviewed after merge by a fresh verifier from the vendor that did not write it; findings become the next slice; before GA money-path units get the same one reviewer (2026-10-07)",
+        "required": false,
+        "mode": "on_request",
+        "rule": "pre-launch (2026-10-08, Alex ~12:10 ET): no cross-vendor or post-merge review when the implementing agent e2e-checked its own work and Claude set the architecture and steps; the merge tool reads the slice check as evidence; by_author_vendor names the reviewer a lead may request by name with a logged reason; a missing auditor is a logged advisory, never a refusal; GA brings review back",
         "by_author_vendor": {
           "openai": {
             "seat": "verifier",
@@ -572,8 +574,8 @@
       "implementation": "Opus plans, specs, designs and verifies; gpt-implementer (sol-latest, medium) writes all code and mechanical edits; sonnet-implementer (sonnet-latest, high) stands in when Codex is empty (2026-09-28, E12); opus-seat takes judgment code and is the pace-gated implement fallback; Luna has no seat (2026-09-29, Alex: every GPT seat runs sol-latest)."
     },
     "review": {
-      "owner_date": "2026-10-07",
-      "timing": "after_merge",
+      "owner_date": "2026-10-08",
+      "timing": "on_request",
       "fresh_per_unit": true,
       "cross_vendor": true,
       "release_facts": false,
@@ -581,9 +583,9 @@
       "max_fix_rounds": 1,
       "money_path": {
         "lenses": 1,
-        "timing": "after_merge"
+        "timing": "on_request"
       },
-      "evidence": "Alex, 2026-10-07 21:35 ET: \"treat this as a personal project. we want fast iteration and not treating it liek a prod app yet until we're launched\". Before GA, one fresh cross-vendor reviewer reads each change after merge and findings become the next slice; nothing holds the merge but the secret scan. The 2026-09-26 orch-lab E7 3-lens any-fail panel is the GA setting."
+      "evidence": "Alex, 2026-10-08 ~12:10 ET: \"new rule: as long as the agent that does the work has e2e check its own work, lets not worry about codex reviews yet. as long as claude determined the right teps to take for the architecture and stuff.\" Pre-launch, no cross-vendor or post-merge review runs by default; the merge tool reads the slice check record (or a check: line it runs) plus the import and test-collection preflights; a lead may request verifier, codex-verifier or security-reviewer by name with a logged reason, and the fields above describe that review. Shipped defects are fixed forward. The 2026-09-26 orch-lab E7 3-lens any-fail panel is the GA setting."
     },
     "stage_effort": {
       "owner_date": "2026-09-26",

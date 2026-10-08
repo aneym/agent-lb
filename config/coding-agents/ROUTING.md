@@ -7,7 +7,7 @@ Ask `factory ask "<question>" --json` for the current answer with live state; re
 
 Every project is a personal project until launch. Alex, 2026-10-07 21:35 ET: "treat this as a personal project. we want fast iteration and not treating it liek a prod app yet until we're launched ... the only bottle neck should be raw scoping and code writing". Alex, 2026-10-08 09:18 ET: "dont have guards that are too aggressive. seems like we're inducing a merge loop that isnt working well by having too many rules?" Alex, 2026-10-08 09:27 ET: "we dont care about printing secrets, we're going to rotate everything before we launch"
 - **Only the kept floors stop work** (2026-10-08 09:27 ET): Alex's own passwords, passkeys and codes are never typed or printed by an agent; outbound to a real person; spend past a cap; destructive data without an approval on record. The secret floor is off until launch and restored then (the launch rotation checklist).
-- **Review, verdicts, scenarios, type checks, suites, screenshots, parity, version bumps and generated files** all run after merge; red is fixed forward and becomes the next slice.
+- **Scenarios, type checks, suites, screenshots, parity, version bumps and generated files** run after merge; red is fixed forward and becomes the next slice. Code review does not run at all by default (see Merging, deploy and review).
 - **Agents decide after a scope is approved** (2026-10-05), log the reason in the lane state and keep going.
 
 ## Merging, deploy and review (2026-10-08)
@@ -16,7 +16,10 @@ Until launch the main machine's checkout is the source of truth and GitHub is a 
 - **Agent Rails merges only through `scripts/studio_merge.py merge <branch>` on the main machine:** a check under 5 s, then the merge and a mirror push; never `gh pr merge`, never push to GitHub main by hand, and never rebuild the gate in a harness.
 - **On a `conflict` refusal,** rebase the branch once on main and merge again; a second conflict goes to the lane lead.
 - **Railway deploys from the mirrored main on push,** ungated; a failed deploy is fixed forward.
-- **One fresh reviewer from the other vendor reads each merged range after merge** (2026-10-07); its brief names the author vendor, and must-fix findings become the next slice.
+- **No cross-vendor or post-merge review while pre-launch** (Alex, 2026-10-08 ~12:10 ET: "new rule: as long as the agent that does the work has e2e check its own work, lets not worry about codex reviews yet. as long as claude determined the right teps to take for the architecture and stuff."). It holds when the implementing agent e2e-checked its own work and Claude (Opus or Fable) set the architecture and steps.
+- **The slice check is evidence the merge tool reads** (2026-10-08): a harness check record for the candidate sha, or a `check:` line in the commit body that the merge tool runs. A sentence in lane state is never evidence. The two mechanical preflights, the import check and test collection, stay on the merge path.
+- **A shipped defect is fixed forward** and becomes the next slice (2026-10-08).
+- **Review seats run on request only** (2026-10-08): verifier, codex-verifier and security-reviewer run only when a lead asks for one by name and logs the reason in the lane state. At GA the rotation checklist brings review back.
 - **Other repos** without a merge tool land by a fast-forward push to `origin/main`.
 
 ## Who decides and what goes to Alex (2026-10-08)
@@ -41,8 +44,8 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Mechanical sweeps | gpt-implementer, then devin-seat | sol-latest low; swe-latest medium |
 | Judgment code, or work a seat failed twice | opus-seat | opus-latest |
 | Read-only exploration | gpt-explorer | sol-latest low |
-| Review after merge, non-Claude author | verifier | sonnet-latest high |
-| Review after merge, Claude author | codex-verifier | sol-latest xhigh |
+| Review, on request only (non-Claude author) | verifier | sonnet-latest high |
+| Review, on request only (Claude author) | codex-verifier | sol-latest xhigh |
 | Plan second opinion | sol-consult; astra-consult light (one per plan, brief under 2k tokens) | sol-latest high; astra-latest high |
 | Plans, specs, verdicts, design | Opus | opus-latest |
 | Tabs Alex talks to, leads, orchestrators | Opus tab, ultracode on | opus-latest medium; fable-latest on request |
@@ -74,7 +77,7 @@ No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, an
 - **Nobody writes a watcher or runs a gh poll loop** (2026-10-08): a lane waits with `factory-wait --repo <repo> --sha <sha> --until <state> --max 270` under Monitor, or is woken by the merge-events relay's lane-post task; `seat-run --wait` stays for seat results.
 - **No tool call blocks past 270 s;** run long work in the background and poll in waits of 270 s or less.
 - **A lead with work out sets a wake timer** before ending its turn (2026-10-05).
-- **Workflow seats:** pass `agentType`, run `route workflow-args` in the launching turn and pass it as `args.route`, and review with `R.review_for[<author vendor>]` (2026-10-05).
+- **Workflow seats:** pass `agentType`, run `route workflow-args` in the launching turn and pass it as `args.route`, and use `R.review_for[<author vendor>]` only when a lead asks for a review by name (2026-10-08).
 - **Status is state, not a message** (2026-10-04); talk up the tree only for a contract change, a block outside your branch, a decision above your level, or done.
 - **An orchestrator or lead first spawns the seat, then replies to Alex in one or two lines** (Alex, 2026-10-05 10:17 ET: "dont you delegate work?").
 - **Reports to Alex list every open product call from each lane's `STATE.md`** (2026-10-05).
@@ -82,5 +85,5 @@ No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, an
 
 ## GA restores (2026-10-08)
 
-At launch, the rotation checklist turns the secret scan, its floor-door review and the secret guards back on, and setting `rails.mode` to `ga` brings back review before merge, the money-path panel, the full per-change code floor, staging before production and automatic rollback, each only if it earns its place.
+At launch, the rotation checklist turns the secret scan, its floor-door review and the secret guards back on, and setting `rails.mode` to `ga` brings back cross-vendor review before merge, the money-path panel, the full per-change code floor, staging before production and automatic rollback, each only if it earns its place.
 

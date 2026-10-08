@@ -1714,76 +1714,89 @@ def class_candidates(
                 skip(seat, alias, f"pool {pool} behind pace: {pace:+.1f} < {min_pace:+g}")
                 continue
             paced.append(f"{seat} admitted: pool {pool} pace {pace:+.1f} >= {min_pace:+g}")
-        auditor = None
-        audit_spec = spec.get("audit")
-        if isinstance(audit_spec, dict) and isinstance(audit_spec.get("by_author_vendor"), dict):
-            audit_entry = audit_spec["by_author_vendor"].get(vendor)
-            if not isinstance(audit_entry, dict) or not isinstance(audit_entry.get("model"), str):
-                skip(seat, alias, f"no auditor declared for author vendor {vendor}")
-                continue
-            audit_alias = audit_entry["model"]
-            audit_models = served.get() if family_alias(table, audit_alias) in aliases else []
-            audit_model, audit_why = resolve_alias(
-                table, audit_alias, audit_models, str(audit_entry.get("seat") or ""))
-            if audit_model is None:
-                # Work nobody can audit is not accepted work; route to a seat that can be.
-                skip(seat, alias, f"its auditor {audit_entry['model']} is unavailable: {audit_why}")
-                continue
-            audit_pool = pool_for_model(table, audit_entry["model"])
-            audit_lease_reason = lease_unavailable(
-                table, {"seat": audit_entry["seat"], "pool": audit_pool}, pools, leases)
-            audit_seat = str(audit_entry.get("seat") or "")
-            audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
-            audit_eligible = audit_pool_doc.get("eligibleAccounts")
-            audit_unavailable = f"its auditor: {audit_lease_reason}" if audit_lease_reason else None
-            if pool_exhausted(audit_pool_doc):
-                audit_unavailable = f"its auditor's pool {audit_pool} is exhausted"
-            elif isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
-                audit_unavailable = f"its auditor's pool {audit_pool} is critical: {audit_eligible} eligible"
-            alternate = None
-            if audit_unavailable:
-                policy = table.get("policy")
-                via = policy.get("auditor_via") if isinstance(policy, dict) else None
-                alternate = via.get(audit_pool) if isinstance(via, dict) else None
-                if isinstance(alternate, dict) and all(
-                    isinstance(alternate.get(key), str) and alternate[key] for key in ("pool", "vendor", "model")
-                ):
-                    alternate_doc = pools.get(alternate["pool"], {})
-                    alternate_eligible = alternate_doc.get("eligibleAccounts")
-                    critical = (
-                        isinstance(alternate_eligible, int)
-                        and not isinstance(alternate_eligible, bool)
-                        and alternate_eligible <= 1
-                    )
-                    if (
-                        not alternate_doc
-                        or pool_exhausted(alternate_doc)
-                        or critical
-                        or lease_unavailable(table, {"seat": "cursor-seat", "pool": alternate["pool"]},
-                                             pools, leases)
-                        or not seat_is_up(seats, "cursor-seat")
-                        or alternate["model"] not in cursor_models()
+        # Canonical Codex stand-ins retain their own admission rule, independent of review.
+        codex_pool = pools.get("openai-codex", {})
+        codex_eligible = codex_pool.get("eligibleAccounts")
+        if (spec.get("codex_empty_fallback") and vendor == "anthropic"
+                and (pool_exhausted(codex_pool) or (
+                    isinstance(codex_eligible, int) and not isinstance(codex_eligible, bool)
+                    and codex_eligible <= 1))):
+            band = "exhausted" if pool_exhausted(codex_pool) else f"critical: {codex_eligible} eligible"
+            skip(seat, alias, f"Codex stand-in admission: its auditor's pool openai-codex is {band}")
+            continue
+
+        def resolve_auditor() -> tuple[dict[str, Any] | None, str | None]:
+            # (auditor, gap): gap names why the declared auditor cannot serve this entry.
+            auditor = None
+            audit_spec = spec.get("audit")
+            if isinstance(audit_spec, dict) and isinstance(audit_spec.get("by_author_vendor"), dict):
+                audit_entry = audit_spec["by_author_vendor"].get(vendor)
+                if not isinstance(audit_entry, dict) or not isinstance(audit_entry.get("model"), str):
+                    return None, f"no auditor declared for author vendor {vendor}"
+                audit_alias = audit_entry["model"]
+                audit_models = served.get() if family_alias(table, audit_alias) in aliases else []
+                audit_model, audit_why = resolve_alias(
+                    table, audit_alias, audit_models, str(audit_entry.get("seat") or ""))
+                if audit_model is None:
+                    return None, f"its auditor {audit_entry['model']} is unavailable: {audit_why}"
+                audit_pool = pool_for_model(table, audit_entry["model"])
+                audit_lease_reason = lease_unavailable(
+                    table, {"seat": audit_entry["seat"], "pool": audit_pool}, pools, leases)
+                audit_seat = str(audit_entry.get("seat") or "")
+                audit_pool_doc = pools.get(audit_pool, {}) if audit_pool else {}
+                audit_eligible = audit_pool_doc.get("eligibleAccounts")
+                audit_unavailable = f"its auditor: {audit_lease_reason}" if audit_lease_reason else None
+                if pool_exhausted(audit_pool_doc):
+                    audit_unavailable = f"its auditor's pool {audit_pool} is exhausted"
+                elif isinstance(audit_eligible, int) and not isinstance(audit_eligible, bool) and audit_eligible <= 1:
+                    audit_unavailable = f"its auditor's pool {audit_pool} is critical: {audit_eligible} eligible"
+                alternate = None
+                if audit_unavailable:
+                    policy = table.get("policy")
+                    via = policy.get("auditor_via") if isinstance(policy, dict) else None
+                    alternate = via.get(audit_pool) if isinstance(via, dict) else None
+                    if isinstance(alternate, dict) and all(
+                        isinstance(alternate.get(key), str) and alternate[key] for key in ("pool", "vendor", "model")
                     ):
-                        alternate = None
+                        alternate_doc = pools.get(alternate["pool"], {})
+                        alternate_eligible = alternate_doc.get("eligibleAccounts")
+                        critical = (
+                            isinstance(alternate_eligible, int)
+                            and not isinstance(alternate_eligible, bool)
+                            and alternate_eligible <= 1
+                        )
+                        if (
+                            not alternate_doc
+                            or pool_exhausted(alternate_doc)
+                            or critical
+                            or lease_unavailable(table, {"seat": "cursor-seat", "pool": alternate["pool"]},
+                                                 pools, leases)
+                            or not seat_is_up(seats, "cursor-seat")
+                            or alternate["model"] not in cursor_models()
+                        ):
+                            alternate = None
+                        else:
+                            audit_seat = "cursor-seat"
                     else:
-                        audit_seat = "cursor-seat"
-                else:
-                    alternate = None
-                if alternate is None:
-                    skip(seat, alias, audit_unavailable)
-                    continue
-            if audit_seat and not seat_is_up(seats, audit_seat):
-                skip(seat, alias, f"its auditor seat {audit_seat} is down per routing-state.json")
-                continue
-            auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
-            if alternate is not None:
-                auditor.update({
-                    "seat": audit_seat,
-                    "via": alternate["vendor"],
-                    "pool": alternate["pool"],
-                    "model": alternate["model"],
-                    "reason": f"{audit_unavailable}; auditor via {alternate['vendor']} pool {alternate['pool']}",
-                })
+                        alternate = None
+                    if alternate is None:
+                        return None, audit_unavailable
+                if audit_seat and not seat_is_up(seats, audit_seat):
+                    return None, f"its auditor seat {audit_seat} is down per routing-state.json"
+                auditor = {**audit_entry, "alias": audit_entry["model"], "model": audit_model, "reason": audit_why}
+                if alternate is not None:
+                    auditor.update({
+                        "seat": audit_seat,
+                        "via": alternate["vendor"],
+                        "pool": alternate["pool"],
+                        "model": alternate["model"],
+                        "reason": f"{audit_unavailable}; auditor via {alternate['vendor']} pool {alternate['pool']}",
+                    })
+            return auditor, None
+
+        auditor, audit_gap = resolve_auditor()
+        if audit_gap:
+            paced.append(f"{seat} advisory: {audit_gap}; review is on request only")
         routable.append(
             {
                 "seat": seat,
@@ -1793,6 +1806,7 @@ def class_candidates(
                 "vendor": vendor,
                 "poolStatus": status,
                 "auditor": auditor,
+                "audit_gap": audit_gap,
             }
         )
 
@@ -1969,6 +1983,7 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                 and not entry.get("same_vendor_fallback")):
             reason = f"same maker {author}"
         audit = None
+        audit_gap = None
         # Explore is read-only and no decision rides on it, so it needs no auditor (2026-10-06).
         if reason is None and class_name in ("implement", "mechanical"):
             review = ladder_walk(table, "verify", pools, seats, served, history, now, entry["maker"], leases=leases)
@@ -1988,15 +2003,18 @@ def ladder_walk(table: dict, class_name: str, pools: dict, seats: Any, served: S
                 audit = available[0]["auditor"] if available else None
                 if audit is not None:
                     audit.update(rung=None, maker="anthropic" if audit.get("via") else audit.get("vendor"))
-                if audit is None and rejected:
-                    reason = rejected[0]["reason"]
-            if audit is None and reason is None:
-                reason = f"no open reviewer for {entry['maker']}"
+                if audit is None:
+                    audit_gap = (available[0].get("audit_gap") if available else
+                                 rejected[0]["reason"] if rejected else None)
+            if audit is None:
+                gaps = "; ".join(f"{row['rung']}: {row['reason']}" for row in review["skipped"])
+                audit_gap = audit_gap or f"no open reviewer for {entry['maker']}: {gaps}"
         row = {"rung": entry["id"], "seat": entry["seat"], "model": model,
                "alias": entry["model"], "effort": entry.get("effort"), "maker": entry["maker"],
                "vendor": entry["maker"], "stand_in_only": bool(entry.get("stand_in_only")),
                "pool": pool, "same_vendor": class_name == "verify" and entry["maker"] == author,
-               "audit": audit, "read_only": bool(entry.get("read_only"))}
+               "audit": audit, "auditor": audit, "audit_gap": audit_gap,
+               "read_only": bool(entry.get("read_only"))}
         if pending:
             row["model_pending"] = True
         if waived:
@@ -2274,7 +2292,7 @@ def command_reserve(args: argparse.Namespace) -> int:
 def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | None, str | None]:
     """Under the hold, list the models a deferred rung and its reviewer wait on. Returns the resolved worker and
     reviewer models, or why the hold must go: a worker that resolves to another model than the caller's, or a worker
-    or reviewer that does not resolve (no reviewer, no implement or mechanical run: the admission floor)."""
+    that does not resolve. Reviewer discovery is advisory."""
     allow_discovery()
     resolved: dict = {}
     try:
@@ -2289,8 +2307,11 @@ def settle_pending(table: dict, row: dict, wanted: str | None) -> tuple[dict | N
         if isinstance(audit, dict) and audit.get("model_pending"):
             model, why = rung_model(table, {"model": audit["alias"], "seat": audit["seat"]}, ServedModels())
             if not model:
-                return None, f"{row['rung']}'s reviewer {audit['rung']} unresolvable once held: {why}"
-            resolved["audit"] = {**{k: v for k, v in audit.items() if k != "model_pending"}, "model": model}
+                resolved.update(audit=None, auditor=None,
+                                audit_gap=f"{row['rung']}'s reviewer {audit['rung']} unresolvable once held: {why}")
+            else:
+                resolved["audit"] = {**{k: v for k, v in audit.items() if k != "model_pending"}, "model": model}
+                resolved["auditor"] = resolved["audit"]
         return resolved, None
     finally:
         global _DEFER_DISCOVERY
@@ -2509,6 +2530,8 @@ def command_pick(args: argparse.Namespace, table: dict | None = None) -> int:
         "class": args.task_class,
         "state_age_s": None if age is None else round(age, 1),
         "audit": auditor,
+        "auditor": auditor,
+        "audit_gap": chosen.get("audit_gap"),
         "lease_availability": "known" if leases is not None else "unknown",
         "reserve": reserve_state(table, pools, args.task_class),
         "seat": chosen["seat"],

@@ -998,10 +998,10 @@ def test_an_lb_without_weekly_pace_is_paced_from_its_accounts(tmp_path: Path) ->
     assert "pace +30.0" in picked["reason"]
 
 
-def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:
+def test_a_seat_whose_auditor_cannot_resolve_is_picked_with_an_audit_gap(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
     _paced_pools(fixtures, 60.0, 84.0, 4)
-    # No Sol served: Opus-written work could not be audited, so Opus is skipped.
+    # No Sol served: Opus can still implement without an available auditor.
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-luna"}]})
     extra = {
         "ROUTE_MODELS_CACHE": str(tmp_path / "models.json"),
@@ -1010,8 +1010,11 @@ def test_a_seat_whose_auditor_cannot_resolve_is_skipped(tmp_path: Path) -> None:
     result = run(
         "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
     )
-    assert result.returncode == 2
-    assert "its auditor sol-latest is unavailable" in result.stderr
+    assert result.returncode == 0, result.stderr
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "opus-seat"
+    assert picked["auditor"] is None
+    assert "its auditor sol-latest is unavailable" in picked["audit_gap"]
 
 
 def test_report_counts_repeated_records_as_one_task_with_rework(tmp_path: Path) -> None:
@@ -1057,7 +1060,7 @@ def test_report_counts_repeated_records_as_one_task_with_rework(tmp_path: Path) 
     assert "| cursor-seat | grok | 1 | 1/1 | 1.0 | 40 | 200 | 20 | 220 |" in report.stdout
 
 
-def test_an_entry_whose_auditor_pool_is_exhausted_is_skipped(tmp_path: Path) -> None:
+def test_an_entry_whose_auditor_pool_is_exhausted_is_picked_with_an_audit_gap(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
     reset = (datetime.now(timezone.utc) + timedelta(hours=84)).strftime("%Y-%m-%dT%H:%M:%SZ")
     write_fixture(
@@ -1084,9 +1087,11 @@ def test_an_entry_whose_auditor_pool_is_exhausted_is_skipped(tmp_path: Path) -> 
     result = run(
         "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
     )
-    # Opus's pool is exhausted and Codex Sol's auditor is Opus, so nothing can be both built and audited.
-    assert result.returncode == 2
-    assert "its auditor's pool anthropic-general is exhausted" in result.stderr
+    assert result.returncode == 0, result.stderr
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "codex-sol"
+    assert picked["auditor"] is None
+    assert "its auditor's pool anthropic-general is exhausted" in picked["audit_gap"]
 
 
 def test_pace_prefers_the_lbs_per_account_weekly_pace(tmp_path: Path) -> None:
@@ -1124,7 +1129,7 @@ def test_pace_prefers_the_lbs_per_account_weekly_pace(tmp_path: Path) -> None:
     assert "behind pace: -25.0 < -10" in picked["reason"]
 
 
-def test_a_fallback_whose_auditor_pool_is_critical_is_skipped(tmp_path: Path) -> None:
+def test_a_fallback_whose_auditor_pool_is_critical_is_picked_with_an_audit_gap(tmp_path: Path) -> None:
     fixtures = tmp_path / "fixtures"
     _paced_pools(fixtures, 60.0, 84.0, 1)
     write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6-sol"}]})
@@ -1132,9 +1137,11 @@ def test_a_fallback_whose_auditor_pool_is_critical_is_skipped(tmp_path: Path) ->
     result = run(
         "pick", "implement", "--json", home=tmp_path, table=_pace_gated_table(tmp_path), fixtures=fixtures, extra=extra
     )
-    # Opus is critical, so it neither implements nor audits Codex Sol's work.
-    assert result.returncode == 2
-    assert "its auditor's pool anthropic-general is critical: 1 eligible" in result.stderr
+    assert result.returncode == 0, result.stderr
+    picked = json.loads(result.stdout)
+    assert picked["seat"] == "codex-sol"
+    assert picked["auditor"] is None
+    assert "its auditor's pool anthropic-general is critical: 1 eligible" in picked["audit_gap"]
 
 @pytest.mark.parametrize(
     ("status", "eligible", "recorded_down", "expected_seat", "expected_error"),
