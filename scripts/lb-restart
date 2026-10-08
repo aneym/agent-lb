@@ -253,22 +253,32 @@ SANDBOX_PLIST_KEYS = frozenset(
 )
 
 
-def check_sandbox_bootstrap(root: Path) -> None:
-    """The plist's program, <root>/bin/lb-sandbox, must be a real single-link file in a real <root>/bin.
+def sandbox_bootstrap() -> Path:
+    """The lb-sandbox a sandbox job runs: the one installed beside this lb-restart (lb-sandbox restart runs its
+    sibling lb-restart), outside every root. Never <root>/bin/lb-sandbox: the confined app can rewrite anything
+    under the root, and the standby and launchd's KeepAlive restart run the program before any confinement."""
+    return Path(__file__).resolve().parent / "lb-sandbox"
 
-    Checked from the pinned root descriptor, so a swapped ancestor cannot show it someone else's bin."""
+
+def _trusted_file(what: str, path: Path, info: os.stat_result) -> None:
+    """Only this user or root can change it: owned by one of them, no group or other write."""
+    if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
+        raise SandboxRefused(f"{what} {path} is one another user could write")
+
+
+def check_sandbox_bootstrap(root: Path) -> None:
+    """The plist's program script, sandbox_bootstrap(), is lb-restart's own sibling: outside the sandboxes dir, no
+    link from the top, a single-link regular file owned by this user or root that group and other cannot write.
+    The identity is the path (pinned in check_sandbox_plist); nothing under the root is ever run."""
+    script = sandbox_bootstrap()
+    if _inside(script, root.parent):
+        raise SandboxRefused(f"sandbox bootstrap {script} is inside the sandboxes dir")
+    _refuse_links_on("bootstrap", script, "file")
     try:
-        bin_fd = _sandbox_dir_fd(root / "bin", create=False)
-    except (OSError, SandboxRefused) as exc:
-        raise SandboxRefused(f"sandbox bootstrap dir {root / 'bin'} is missing or a link") from exc
-    try:
-        info = os.stat("lb-sandbox", dir_fd=bin_fd, follow_symlinks=False)
+        info = os.lstat(script)
     except OSError as exc:
-        raise SandboxRefused(f"sandbox bootstrap {root / 'bin' / 'lb-sandbox'} is missing") from exc
-    finally:
-        os.close(bin_fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise SandboxRefused("sandbox bootstrap is a link, not lb-sandbox's own copy inside the root")
+        raise SandboxRefused(f"sandbox bootstrap {script} is missing") from exc
+    _trusted_file("sandbox bootstrap", script, info)
 
 
 def sandbox_python_for(root: Path) -> Path:
@@ -280,27 +290,91 @@ def sandbox_python_for(root: Path) -> Path:
     return root.parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
 
 
+# What an executable binary starts with: Mach-O (thin 64/32-bit, fat) on macOS, ELF elsewhere (unit tests only).
+NATIVE_MAGIC = (
+    (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
+    if sys.platform == "darwin"
+    else (b"\x7fELF",)
+)
+BASE_INTERPRETER_NAME = re.compile(r"^python(3(\.[0-9]+)?)?$")
+
+
+def sandbox_venv_base_dir(python: Path) -> Path:
+    """The resolved `home` directory the venv's own pyvenv.cfg names. pyvenv.cfg is read without following a
+    link and must be a single-link regular file only this user or root can write, as must its home dir."""
+    cfg = python.parent.parent / "pyvenv.cfg"
+    try:
+        fd = os.open(cfg, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        raise SandboxRefused(f"interpreter {python} has no venv config {cfg}") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SandboxRefused(f"venv config {cfg} is not a single-link regular file")
+        _trusted_file("venv config", cfg, info)
+        text = os.read(fd, 1 << 16).decode(errors="replace")
+    finally:
+        os.close(fd)
+    home = ""
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip().lower() == "home":
+            home = value.strip()
+    if not home.startswith("/"):
+        raise SandboxRefused(f"venv config {cfg} names no absolute home")
+    base = Path(os.path.realpath(home))
+    try:
+        _trusted_file("venv home", base, os.stat(base))
+    except OSError as exc:
+        raise SandboxRefused(f"venv home {home} is missing") from exc
+    return base
+
+
 def check_sandbox_interpreter(python: Path, root: Path) -> None:
-    """The interpreter that will run is the installed venv's own: every directory from / to its bin is a real
-    directory (no link), and the file it names (after the venv's own python -> base interpreter link) is a
-    regular executable owned by this user or root that group and other cannot write, outside every sandbox
+    """The interpreter that will run is the installed venv's own base interpreter, by identity: every directory
+    from / to its bin is a real directory (no link), and the file it leads to sits in the directory the venv's
+    pyvenv.cfg names, is called python, python3 or python3.N, is a native executable (Mach-O: a script or shell
+    shim is refused), is owned by this user or root with no group or other write, and is outside every sandbox
     root. Checked just before each exec. Raises SandboxRefused."""
     python = _lexical(python)
     sandboxes = root.parent
     if python != sandbox_python_for(root) or _inside(python, sandboxes):
         raise SandboxRefused(f"interpreter {python} is not the installed runtime's venv python")
     _refuse_links_on("interpreter", python.parent, "dir")
+    base = sandbox_venv_base_dir(python)
     try:
         target = Path(os.path.realpath(python))
-        info = os.stat(target)
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as exc:
         raise SandboxRefused(f"interpreter {python} is missing ({exc.__class__.__name__})") from exc
+    try:
+        info = os.fstat(fd)
+        head = os.read(fd, 4) if stat.S_ISREG(info.st_mode) else b""
+    finally:
+        os.close(fd)
     if _inside(target, sandboxes) or _inside(target, root):
         raise SandboxRefused(f"interpreter {python} leads into a sandbox root")
-    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR:
-        raise SandboxRefused(f"interpreter {python} does not lead to an executable regular file")
-    if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
-        raise SandboxRefused(f"interpreter {python} leads to a file another user could write")
+    if target.parent != base or not BASE_INTERPRETER_NAME.match(target.name):
+        raise SandboxRefused(f"interpreter {python} does not lead to the base interpreter its venv config names")
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR or head not in NATIVE_MAGIC:
+        raise SandboxRefused(f"interpreter {python} does not lead to a native executable (a script or shim?)")
+    _trusted_file("interpreter", target, info)
+
+
+def sandbox_program(root: Path) -> list[str]:
+    """The head of ProgramArguments lb-sandbox writes: `<venv python> -I <installed lb-sandbox> _serve <root>`.
+    -I (isolated): no PYTHON* variable (the plist's PYTHONPATH names <root>/runtime, where a sitecustomize.py
+    could be planted), no user site and no script or working directory on sys.path before _boot confines."""
+    return [str(sandbox_python_for(root)), "-I", str(sandbox_bootstrap()), "_serve", str(root)]
+
+
+# The environment keys lb-sandbox writes (sandbox_env). Any other key is refused: DYLD_INSERT_LIBRARIES naming a
+# library in the root, say, would load it into the interpreter before any guard runs.
+SANDBOX_ENV_KEYS = frozenset(
+    {"HOME", "PATH", "PYTHONPATH", "LB_SANDBOX_ROOT", "FORWARDED_ALLOW_IPS", "UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN"}
+)
+SANDBOX_ENV_PREFIX = "AGENT_LB_"
+SANDBOX_PATH_ENV = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
 def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int) -> None:
@@ -314,24 +388,21 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
     extra = sorted(str(key) for key in set(data) - SANDBOX_PLIST_KEYS)
     if extra:
         raise SandboxRefused(f"sandbox plist has keys lb-sandbox never writes: {', '.join(extra)}")
-    want = [
-        str(sandbox_python_for(root)),
-        str(root / "bin" / "lb-sandbox"),
-        "_serve",
-        str(root),
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(primary_port),
-    ]
+    want = [*sandbox_program(root), "--host", "127.0.0.1", "--port", str(primary_port)]
     if data.get("Label") != label or data.get("ProgramArguments") != want:
-        raise SandboxRefused("sandbox plist does not run `lb-sandbox _serve <root>` on the primary port")
+        raise SandboxRefused("sandbox plist does not run `<venv python> -I <installed lb-sandbox> _serve <root>`")
     env = data.get("EnvironmentVariables")
     if not isinstance(env, dict):
         raise SandboxRefused("sandbox plist has no environment")
     if "AGENT_LB_FEDERATION_TOKEN" in env:
         raise SandboxRefused("sandbox plist carries the federation token")
+    unknown = sorted(str(k) for k in env if k not in SANDBOX_ENV_KEYS and not str(k).startswith(SANDBOX_ENV_PREFIX))
+    if unknown:
+        raise SandboxRefused(f"sandbox plist env has keys lb-sandbox never writes: {', '.join(unknown)}")
     fixed = {
+        "HOME": str(root / "home"),
+        "PATH": SANDBOX_PATH_ENV,
+        "PYTHONPATH": str(root / "runtime"),
         "LB_SANDBOX_ROOT": str(root),
         "AGENT_LB_DATA_DIR": str(root / "data"),
         "AGENT_LB_DATABASE_URL": f"sqlite+aiosqlite:///{root / 'data' / 'store.db'}",
@@ -1002,9 +1073,13 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
         # exec goes by path, so check the path still names the pinned root just before it, and start the
         # standby in the pinned runtime dir (fchdir), not in whatever the runtime path names now.
         verify_sandbox_ancestry()
-        # The program is the installed venv's python (check_sandbox_plist pins the name), and what that name runs
-        # is checked here, just before the exec: a shim planted anywhere on its path is refused, never run.
+        # The program is the installed venv's python running the installed lb-sandbox with -I
+        # (check_sandbox_plist pins all three), and what they are is checked here, just before the exec: a shim
+        # planted on the interpreter's path is refused, and nothing under the root runs before _boot confines.
+        if args[: len(sandbox_program(SANDBOX_ROOT))] != sandbox_program(SANDBOX_ROOT):
+            raise SandboxRefused("standby program is not `<venv python> -I <installed lb-sandbox> _serve <root>`")
         check_sandbox_interpreter(Path(args[0]), SANDBOX_ROOT)
+        check_sandbox_bootstrap(SANDBOX_ROOT)
         try:
             runtime_fd = _sandbox_dir_fd(RUNTIME, create=False)
         except OSError as exc:
@@ -1158,15 +1233,16 @@ def loaded_job_program(text: str) -> tuple[str | None, list[str]]:
 
 def check_loaded_sandbox_job() -> None:
     """Before a kickstart of the sandbox label: the loaded job runs the checked interpreter on
-    `<root>/bin/lb-sandbox _serve <root>`. launchd execs what it loaded at bootstrap, so this is checked, not the
-    plist file. Raises SandboxRefused."""
+    `-I <installed lb-sandbox> _serve <root>`. launchd execs what it loaded at bootstrap, so this is checked, not
+    the plist file. Raises SandboxRefused."""
     assert SANDBOX_ROOT is not None
     python = sandbox_python_for(SANDBOX_ROOT)
     check_sandbox_interpreter(python, SANDBOX_ROOT)
+    check_sandbox_bootstrap(SANDBOX_ROOT)
     out = subprocess.run(["launchctl", "print", f"gui/{UID}/{LABEL}"], capture_output=True, text=True).stdout
     program, arguments = loaded_job_program(out)
-    want = [str(python), str(SANDBOX_ROOT / "bin" / "lb-sandbox"), "_serve", str(SANDBOX_ROOT)]
-    if program != str(python) or arguments[:4] != want:
+    want = sandbox_program(SANDBOX_ROOT)
+    if program != str(python) or arguments[: len(want)] != want:
         raise SandboxRefused(f"loaded job {LABEL} does not run `lb-sandbox _serve` on the checked interpreter")
 
 

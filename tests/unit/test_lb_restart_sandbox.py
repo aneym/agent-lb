@@ -252,12 +252,31 @@ def test_state_writes_never_follow_a_state_dir_swapped_for_a_link(tmp_path: Path
     assert {name: (live / name).read_text() for name in files} == files
 
 
+def _bootstrap(home: Path) -> Path:
+    """A stand-in for the lb-sandbox installed beside lb-restart (never run here): a private single-link file
+    outside the sandboxes. Tests point lb.sandbox_bootstrap at it; a checkout may be group-writable."""
+    path = home / "installed-bin" / "lb-sandbox"
+    if not os.path.lexists(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env python3\n# stand-in for the installed lb-sandbox; never run\n")
+        path.chmod(0o755)
+    return path
+
+
+def _use_bootstrap(lb: ModuleType, home: Path) -> Path:
+    path = _bootstrap(home)
+    lb.sandbox_bootstrap = lambda: path
+    return path
+
+
 def _plist(root: Path, **overrides) -> dict:
+    home = root.parent.parent.parent
     data = {
         "Label": "com.agent-lb.drill.sbx-r1",
         "ProgramArguments": [
-            str(_venv_python(root.parent.parent.parent)),
-            str(root / "bin" / "lb-sandbox"),
+            str(_venv_python(home)),
+            "-I",
+            str(_bootstrap(home)),
             "_serve",
             str(root),
             "--host",
@@ -303,12 +322,18 @@ def _plist(root: Path, **overrides) -> dict:
         {"env": {"AGENT_LB_CONVERSATION_ARCHIVE_DIR": "~/.agent-lb/conversation-archive"}},
         {"Program": "/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb"},
         {"StandardOutPath": "/h/.agent-lb/agent-lb.log"},
+        # S2-3 (M1): code loaded into the interpreter before any guard: a library, a startup hook, a module path.
+        {"env": {"DYLD_INSERT_LIBRARIES": "lib/hook.dylib"}},
+        {"env": {"PYTHONSTARTUP": "runtime/hook.py"}},
+        {"env": {"PYTHONPATH": "runtime/elsewhere"}},
+        {"env": {"PATH": "bin:/usr/bin:/bin"}},
     ],
 )
 def test_sandbox_plist_must_run_serve_against_its_own_store(tmp_path: Path, overrides: dict) -> None:
     """Finding: an in-root plist with a live DB URL or key path was trusted, so the standby booted on live."""
     lb = _load()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
+    _use_bootstrap(lb, root.parent.parent.parent)
     lb.check_sandbox_plist(_plist(root), root, "com.agent-lb.drill.sbx-r1", 2471)  # control
     with pytest.raises(lb.SandboxRefused):
         lb.check_sandbox_plist(_plist(root, **overrides), root, "com.agent-lb.drill.sbx-r1", 2471)
@@ -333,37 +358,109 @@ def test_the_plist_lb_sandbox_writes_passes_the_restart_guard(tmp_path: Path) ->
     lb, lbs = _load(), _load_sandbox()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
     root.mkdir(parents=True, mode=0o700)
+    root.parent.chmod(0o700)  # lb-sandbox start makes the sandboxes dir 0700, whatever the umask
     ports = {"front": 2470, "primary": 2471, "standby": 2472, "gate": 2473, "edge_anthropic": 2474, "edge_openai": 2475}
     primary, _aux = lbs.write_plists(root, "r1", ports, "http")
     data = plistlib.loads(primary.read_bytes())
     lb.check_sandbox_plist(data, root, "com.agent-lb.drill.sbx-r1", 2471)
 
 
-def test_standby_start_refuses_a_bootstrap_that_is_a_link(tmp_path: Path) -> None:
-    """The plist's program path is right but <root>/bin/lb-sandbox is a link to something else (a live
-    launcher): reading the plist for the standby refuses, so nothing is spawned."""
+@pytest.mark.parametrize("plant", ["in-root-copy", "installed-link", "installed-hard-link", "installed-group-writable"])
+def test_the_standby_runs_only_the_installed_lb_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plant: str
+) -> None:
+    """M2 (S2-3, lb-restart:1007,256): the standby ran <root>/bin/lb-sandbox, checked for shape (one link, a
+    regular file) but not identity, so a regular Python file put there wrote live state before any confinement.
+    The program is now the lb-sandbox installed beside lb-restart, outside every root; a plist naming the root's
+    copy is refused, and the installed file must be a private single-link regular file. Popen is the OS edge."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    _apply(lb, config, tmp_path)
+    started: list[list[str]] = []
+
+    class _Proc:
+        pid = 424242
+
+    monkeypatch.setattr(lb.subprocess, "Popen", lambda args, **kwargs: started.append(list(args)) or _Proc())
+    lb.start_standby(1)  # control: the installed lb-sandbox, run with -I
+    assert started and started[0][1:4] == ["-I", str(_bootstrap(tmp_path)), "_serve"]
+    started.clear()
+    installed = _bootstrap(tmp_path)
+    if plant == "in-root-copy":
+        # A regular single-link Python file in the root that would write live state (text only, never run).
+        (root / "bin").mkdir()
+        (root / "bin" / "lb-sandbox").write_text("open('/h/.agent-lb/state/front-preferred-port', 'w')\n")
+        plist = _plist(root)
+        plist["ProgramArguments"][2] = str(root / "bin" / "lb-sandbox")
+        Path(json.loads(config.read_text())["plist"]).write_bytes(plistlib.dumps(plist))
+    elif plant == "installed-link":
+        real = installed.with_name("lb-sandbox.real")
+        installed.rename(real)
+        installed.symlink_to(real)
+    elif plant == "installed-hard-link":
+        os.link(installed, tmp_path / "second-name")
+    else:
+        installed.chmod(0o775)
+    with pytest.raises(lb.SandboxRefused):
+        lb.start_standby(1)
+    assert started == []
+
+
+def test_the_restart_guard_refuses_a_bootstrap_inside_the_sandboxes_dir(tmp_path: Path) -> None:
+    """M2: even named as the installed copy, a bootstrap that sits inside the sandboxes dir is the root's to
+    rewrite and is refused."""
     lb = _load()
     root = (tmp_path / ".agent-lb" / "sandboxes" / "r1").resolve()
-    (root / "launchd").mkdir(parents=True)
-    root.chmod(0o700)
-    root.parent.chmod(0o700)  # as lb-sandbox start makes the sandboxes dir, whatever the umask
-    (root / "launchd" / "com.agent-lb.drill.sbx-r1.plist").write_bytes(plistlib.dumps(_plist(root)))
-    (root / "bin").mkdir()
-    bootstrap = root / "bin" / "lb-sandbox"
-    bootstrap.write_text("#!/usr/bin/env python3\n")
-    live = tmp_path / ".agent-lb" / "runtime" / "agent-lb" / "agent-lb"
-    live.parent.mkdir(parents=True)
-    live.write_text("#!/bin/sh\n")
-    lb.__dict__.update(lb.sandbox_bindings(_config(tmp_path), home=tmp_path))
-    assert lb.read_plist()["Label"] == "com.agent-lb.drill.sbx-r1"  # control: its own copy is accepted
-    bootstrap.unlink()
-    bootstrap.symlink_to(live)
-    with pytest.raises(lb.SandboxRefused):
-        lb.read_plist()
-    bootstrap.unlink()
-    os.link(live, bootstrap)
-    with pytest.raises(lb.SandboxRefused):
-        lb.read_plist()
+    (root / "bin").mkdir(parents=True)
+    inside = root / "bin" / "lb-sandbox"
+    inside.write_text("#!/usr/bin/env python3\n")
+    inside.chmod(0o755)
+    lb.sandbox_bootstrap = lambda: inside
+    with pytest.raises(lb.SandboxRefused, match="inside the sandboxes dir"):
+        lb.check_sandbox_bootstrap(root)
+    _use_bootstrap(lb, tmp_path)
+    lb.check_sandbox_bootstrap(root)  # control
+
+
+def test_a_startup_hook_planted_on_the_plist_pythonpath_never_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M1 (S2-3, lb-restart:1013, lb-sandbox:1555): the plist's PYTHONPATH names <root>/runtime, so a planted
+    <root>/runtime/sitecustomize.py ran at interpreter start, before _serve or _boot reached a guard. Integration
+    with the real interpreter: the argv and env start_standby builds are run with the stand-in interpreter
+    swapped for this one and the bootstrap for a script that only reports it ran. The hook must not run; the
+    control (the same argv without -I) shows the plant would have fired."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    _apply(lb, config, tmp_path)
+    built: list[tuple[list[str], dict]] = []
+
+    class _Proc:
+        pid = 424242
+
+    def record(args, **kwargs):
+        built.append((list(args), dict(kwargs["env"])))
+        return _Proc()
+
+    monkeypatch.setattr(lb.subprocess, "Popen", record)
+    lb.start_standby(1)
+    monkeypatch.undo()  # the real Popen again, for the real interpreter below
+    args, env = built[0]
+    assert env["PYTHONPATH"] == str(root / "runtime") and args[1] == "-I"
+    hook_ran, script_ran = tmp_path / "hook-ran", tmp_path / "script-ran"
+    (root / "runtime" / "sitecustomize.py").write_text(f"open({str(hook_ran)!r}, 'w').close()\n")
+    script = tmp_path / "reports.py"
+    script.write_text(f"open({str(script_ran)!r}, 'w').close()\n")
+
+    def run(argv: list[str]) -> None:
+        subprocess.run(argv, env=env, cwd=root, timeout=30, check=True, start_new_session=True)
+
+    run([sys.executable, args[1], str(script), *args[3:]])
+    assert script_ran.exists() and not hook_ran.exists(), "a planted sitecustomize.py ran before any guard"
+    run([sys.executable, str(script), *args[3:]])  # control: without -I the plant fires
+    assert hook_ran.exists()
 
 
 # ---------------------------------------------------------------- S2 fix round 3 (review FAIL on ea866e22)
@@ -374,15 +471,25 @@ def _venv_python(home: Path) -> Path:
     return home / ".agent-lb" / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
 
 
+def _native_head() -> bytes:
+    """The first bytes of the interpreter running this test: what a native executable starts with here."""
+    with open(os.path.realpath(sys.executable), "rb") as fh:
+        return fh.read(4)
+
+
 def _install_venv_python(home: Path) -> Path:
-    """A stand-in for the installed venv's interpreter (never run here): bin/python -> a private executable
-    file outside the sandboxes, as the real venv's python leads to its base interpreter."""
+    """A stand-in for the installed venv's interpreter (never run here): bin/python -> a private file outside the
+    sandboxes that starts like a native executable, in the dir the venv's pyvenv.cfg names as its home, as the
+    real venv's python leads to its base interpreter."""
     python = _venv_python(home)
     python.parent.mkdir(parents=True, exist_ok=True)
     base = home / "base-python" / "python3"
     base.parent.mkdir(exist_ok=True)
-    base.write_text("#!/bin/sh\nexit 99\n")
+    base.parent.chmod(0o755)
+    base.write_bytes(_native_head() + bytes(60))
     base.chmod(0o755)
+    (python.parent.parent / "pyvenv.cfg").write_text(f"home = {base.parent}\nversion_info = 3.14\n")
+    (python.parent.parent / "pyvenv.cfg").chmod(0o644)  # what a venv writes, whatever the umask
     python.symlink_to(base)
     return python
 
@@ -401,8 +508,6 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
     root.chmod(0o700)  # lb-sandbox start makes the root 0700; the pinned root must be
     root.parent.chmod(0o700)  # and the sandboxes dir 0700, whatever the umask
     (root / "runtime").mkdir()
-    (root / "bin").mkdir()
-    (root / "bin" / "lb-sandbox").write_text("#!/usr/bin/env python3\n")
     Path(config["plist"]).write_bytes(plistlib.dumps(_plist(root)))
     if not os.path.lexists(_venv_python(tmp_path)):
         _install_venv_python(tmp_path)
@@ -414,6 +519,7 @@ def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
 def _apply(lb: ModuleType, config: Path, home: Path) -> None:
     """apply_sandbox with the test's home in place of the real one (the guard reads it from pwd)."""
     lb._real_home = lambda: home
+    _use_bootstrap(lb, home)
     lb.apply_sandbox(config)
 
 
@@ -649,13 +755,20 @@ def test_a_root_lb_sandbox_did_not_make_is_refused(tmp_path: Path, which: str, m
 SHIM_BODY = "#!/bin/sh\nlaunch" + "ctl kick" + "start -k gui/$UID/com.aneyman.agent-lb\n"
 
 
-@pytest.mark.parametrize("shim", ["link-into-root", "bin-dir-link", "group-writable", "in-root-name"])
+@pytest.mark.parametrize(
+    "shim",
+    ["link-into-root", "bin-dir-link", "group-writable", "in-root-name", "private-script", "native-elsewhere"],
+)
 def test_a_shim_on_the_interpreter_path_is_refused_and_never_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shim: str
 ) -> None:
     """M1 (lb-restart:285,969): the guard checked only the text <root>/runtime/.venv/bin/python, so a shim there
     (one that kickstarts the live agent-lb) passed and Popen ran it. The program is now the installed venv's
-    python and what it leads to is checked just before the exec. subprocess.Popen is the OS edge, recorded."""
+    python and what it leads to is checked just before the exec. subprocess.Popen is the OS edge, recorded.
+
+    S2-3 (M3, lb-restart:294): a private same-user mode-0755 shell script outside the sandboxes passed every
+    shape check. The interpreter is now checked for identity: a native executable in the dir the venv's
+    pyvenv.cfg names, so a script (private-script) or a native file anywhere else (native-elsewhere) is refused."""
     lb = _load()
     config = _built_sandbox(tmp_path)
     root = config.parent
@@ -691,6 +804,20 @@ def test_a_shim_on_the_interpreter_path_is_refused_and_never_run(
         writable.chmod(0o775)
         python.unlink()
         python.symlink_to(writable)
+    elif shim == "private-script":
+        private = tmp_path / "private" / "python3"
+        private.parent.mkdir(mode=0o700)
+        private.write_text(SHIM_BODY)
+        private.chmod(0o755)
+        python.unlink()
+        python.symlink_to(private)
+    elif shim == "native-elsewhere":
+        elsewhere = tmp_path / "elsewhere" / "python3"
+        elsewhere.parent.mkdir(mode=0o755)
+        elsewhere.write_bytes((tmp_path / "base-python" / "python3").read_bytes())
+        elsewhere.chmod(0o755)
+        python.unlink()
+        python.symlink_to(elsewhere)
     else:
         in_root = root / "runtime" / ".venv" / "bin" / "python"
         in_root.parent.mkdir(parents=True)
@@ -714,7 +841,7 @@ def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
     root = config.parent
     _apply(lb, config, tmp_path)
     python = str(_venv_python(tmp_path))
-    shown = {"program": python, "arguments": [python, str(root / "bin" / "lb-sandbox"), "_serve", str(root)]}
+    shown = {"program": python, "arguments": [python, "-I", str(_bootstrap(tmp_path)), "_serve", str(root)]}
     kicked: list[list[str]] = []
 
     def job_print(argv, **kwargs):
@@ -732,6 +859,9 @@ def test_a_kickstart_never_runs_a_loaded_job_on_another_interpreter(
     for program, arguments in (
         (in_root, [in_root, *shown["arguments"][1:]]),
         (python, [python, "/h/.agent-lb/runtime/agent-lb/.venv/bin/agent-lb", "--port", "2471"]),
+        # S2-3: a job loaded without -I (a planted sitecustomize.py runs) or on the root's own copy (M2).
+        (python, [python, str(_bootstrap(tmp_path)), "_serve", str(root)]),
+        (python, [python, "-I", str(root / "bin" / "lb-sandbox"), "_serve", str(root)]),
     ):
         shown.update(program=program, arguments=arguments)
         with pytest.raises(lb.SandboxRefused):

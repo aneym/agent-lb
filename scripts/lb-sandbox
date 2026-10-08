@@ -21,7 +21,8 @@ image under ~/.agent-lb/sandboxes/.images, mounted at the root, its passphrase
 never stored) and holds a copy of the installed runtime (app, config, scripts;
 the venv is a symlink), its own SQLite store and key, logs and state. Two
 launchd jobs run it:
-- com.agent-lb.drill.sbx-R: `lb-sandbox _serve <root>`, which reads the live
+- com.agent-lb.drill.sbx-R: `<venv python> -I <installed lb-sandbox> _serve <root>` (nothing under the root
+  runs before confinement: the script is the installed file and -I ignores PYTHONPATH), which reads the live
   federation token from the live plist, writes it into a pipe and execs
   `lb-sandbox _boot`, which reads it from the inherited pipe fd, loads the app
   settings with it and starts the app in the same process. The token is never
@@ -236,26 +237,105 @@ def interpreter_for(root: Path) -> Path:
     return _lexical(Path(root)).parent.parent / "runtime" / "agent-lb" / ".venv" / "bin" / "python"
 
 
+# What an executable binary starts with: Mach-O (thin 64/32-bit, fat) on macOS, ELF elsewhere (unit tests only).
+NATIVE_MAGIC = (
+    (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf")
+    if sys.platform == "darwin"
+    else (b"\x7fELF",)
+)
+BASE_INTERPRETER_NAME = re.compile(r"^python(3(\.[0-9]+)?)?$")
+
+
+def _trusted_file(what: str, path: Path, info: os.stat_result) -> None:
+    """A file or dir only this user or root can change: owned by one of them, no group or other write."""
+    if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
+        raise Refused(f"{what} {path} is one another user could write")
+
+
+def venv_base_dir(python: Path) -> Path:
+    """The resolved `home` directory the venv's own pyvenv.cfg names. Raises Refused.
+
+    pyvenv.cfg is read without following a link and must be a single-link regular file only this user or root
+    can write; the home directory must be one only this user or root can write."""
+    cfg = python.parent.parent / "pyvenv.cfg"
+    try:
+        fd = os.open(cfg, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise Refused(f"interpreter {python} has no venv config {cfg}") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise Refused(f"venv config {cfg} is not a single-link regular file")
+        _trusted_file("venv config", cfg, info)
+        text = os.read(fd, 1 << 16).decode(errors="replace")
+    finally:
+        os.close(fd)
+    home = ""
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip().lower() == "home":
+            home = value.strip()
+    if not home.startswith("/"):
+        raise Refused(f"venv config {cfg} names no absolute home")
+    base = Path(os.path.realpath(home))
+    try:
+        _trusted_file("venv home", base, os.stat(base))
+    except OSError:
+        raise Refused(f"venv home {home} is missing") from None
+    return base
+
+
 def check_interpreter(python: Path, root: Path) -> None:
-    """What python runs is the venv's own interpreter: no link from the top to its bin dir, and the file it
-    leads to is a regular executable owned by this user or root that group and other cannot write, outside
-    every sandbox root. Checked just before each exec. Raises Refused."""
+    """What python runs is the venv's own base interpreter, by identity: no link from the top to its bin dir, and
+    the file it leads to sits in the directory the venv's pyvenv.cfg names, is called python, python3 or
+    python3.N, is a native executable (Mach-O; a script or shell shim is refused), is owned by this user or root
+    with no group or other write, and is outside every sandbox root. Checked just before each exec. Raises Refused."""
     python = _lexical(python)
     sandboxes = _lexical(Path(root)).parent
     if python != interpreter_for(root) or sandboxes in python.parents:
         raise Refused(f"interpreter {python} is not the installed runtime's venv python")
     _refuse_linked_dirs("interpreter", python.parent)
+    base = venv_base_dir(python)
     try:
         target = Path(os.path.realpath(python))
-        info = os.stat(target)
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         raise Refused(f"interpreter {python} is missing") from None
+    try:
+        info = os.fstat(fd)
+        head = os.read(fd, 4) if stat.S_ISREG(info.st_mode) else b""
+    finally:
+        os.close(fd)
     if target == sandboxes or sandboxes in target.parents:
         raise Refused(f"interpreter {python} leads into a sandbox root")
-    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR:
-        raise Refused(f"interpreter {python} does not lead to an executable regular file")
-    if info.st_uid not in (os.getuid(), 0) or info.st_mode & 0o022:
-        raise Refused(f"interpreter {python} leads to a file another user could write")
+    if target.parent != base or not BASE_INTERPRETER_NAME.match(target.name):
+        raise Refused(f"interpreter {python} does not lead to the base interpreter its venv config names")
+    if not stat.S_ISREG(info.st_mode) or not info.st_mode & stat.S_IXUSR or head not in NATIVE_MAGIC:
+        raise Refused(f"interpreter {python} does not lead to a native executable (a script or shim?)")
+    _trusted_file("interpreter", target, info)
+
+
+def bootstrap_script() -> Path:
+    """The lb-sandbox every sandbox job runs: this installed file, outside every root. Never a copy inside a root:
+    the confined app can write there, and launchd (KeepAlive) or lb-restart's standby would run it unconfined."""
+    return Path(__file__).resolve()
+
+
+def check_bootstrap(script: Path, root: Path) -> None:
+    """script is a real path outside the sandboxes dir: no link on the way, a single-link regular file owned by
+    this user or root that group and other cannot write. Raises Refused."""
+    script = _lexical(script)
+    sandboxes = _lexical(Path(root)).parent
+    if script == sandboxes or sandboxes in script.parents:
+        raise Refused(f"bootstrap {script} is inside the sandboxes dir")
+    _refuse_linked_dirs("bootstrap", script.parent)
+    try:
+        info = os.lstat(script)
+    except OSError:
+        raise Refused(f"bootstrap {script} is missing") from None
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise Refused(f"bootstrap {script} is not a single-link regular file")
+    _trusted_file("bootstrap", script, info)
 
 
 def check_launchctl() -> None:
@@ -1901,14 +1981,20 @@ def sandbox_env(root: Path, ports: dict[str, int], run_id: str, transport: str) 
     return env
 
 
-def write_plists(root: Path, run_id: str, ports: dict[str, int], transport: str) -> tuple[Path, Path]:
+def write_plists(
+    root: Path, run_id: str, ports: dict[str, int], transport: str, script: Path | None = None
+) -> tuple[Path, Path]:
+    """Both jobs run `<venv python> -I <installed lb-sandbox>`: nothing under the root runs before confinement.
+    -I (isolated): no PYTHON* variable (PYTHONPATH names <root>/runtime, where a sitecustomize.py could be
+    planted), no user site and no script or working directory on sys.path."""
     label, aux_label = labels_for(run_id)
     python = str(interpreter_for(root))
-    script = str(root / "bin" / "lb-sandbox")
+    script = str(script or bootstrap_script())
     primary = {
         "Label": label,
         "ProgramArguments": [
             python,
+            "-I",
             script,
             "_serve",
             str(root),
@@ -1926,7 +2012,7 @@ def write_plists(root: Path, run_id: str, ports: dict[str, int], transport: str)
     }
     aux = {
         "Label": aux_label,
-        "ProgramArguments": [python, script, "_aux", str(root)],
+        "ProgramArguments": [python, "-I", script, "_aux", str(root)],
         "WorkingDirectory": str(root),
         "EnvironmentVariables": {
             "HOME": str(root / "home"),
@@ -2022,13 +2108,13 @@ def plist_paths(root: Path, run_id: str) -> tuple[Path, Path]:
 
 
 def populate_root(root: Path, run_id: str, ports: dict[str, int], meta: dict, transport: str, source: str) -> None:
-    """Fill a new root: key, metadata, runtime copy, bootstrap, plists, restart config, front preference.
+    """Fill a new root: key, metadata, runtime copy, plists, restart config, front preference.
 
     start runs this in a child confined to the root (write-only profile): a link planted in the root while it
-    runs (bin/lb-sandbox -> live state/front-preferred-port, say) leads the copy to a denied write, never a
-    live file.
+    runs (runtime/app -> live state, say) leads the copy to a denied write, never a live file. No lb-sandbox
+    copy goes into the root: the plists run source, the installed file outside it (bootstrap_script).
     """
-    for sub in ("data", "home", "logs", "state", "bin", "clients", "runtime"):
+    for sub in ("data", "home", "logs", "state", "clients", "runtime"):
         os.mkdir(root / sub, 0o700)
     create_key(root / "data" / "encryption.key")
     write_json(root, "sandbox.json", meta)
@@ -2037,12 +2123,11 @@ def populate_root(root: Path, run_id: str, ports: dict[str, int], meta: dict, tr
         if (LIVE_RUNTIME / part).is_dir():
             shutil.copytree(LIVE_RUNTIME / part, runtime / part, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     os.symlink(LIVE_VENV, runtime / ".venv")
-    write_in_root(root, "bin/lb-sandbox", Path(source).read_bytes(), 0o755)
     managed = Path("home/.agent-lb/managed/coding-agents")
     for name in ("routing-table.json", "decider.json"):
         if (MANAGED_ROUTING / name).is_file():
             write_in_root(root, managed / name, (MANAGED_ROUTING / name).read_bytes())
-    primary_plist, _ = write_plists(root, run_id, ports, transport)
+    primary_plist, _ = write_plists(root, run_id, ports, transport, Path(source))
     write_json(
         root,
         "lb-restart.json",
@@ -2137,7 +2222,9 @@ def cmd_start(args) -> int:
             # The sandboxes dir this root was made in: stop removes the root only through that very directory.
             "sandboxes_id": list(sandboxes_id()),
         }
-        source = str(Path(__file__).resolve())
+        source = str(bootstrap_script())
+        check_bootstrap(Path(source), root)
+        check_interpreter(interpreter_for(root), root)
         run_confined(
             root, lambda: populate_root(root, run_id, ports, meta, args.transport, source), reads=False, timeout_s=300
         )
@@ -2256,10 +2343,14 @@ def serve_exec_args(root: Path, argv: list[str]) -> tuple[str, list[str], dict[s
         raise Unhealthy("live plist has no federation token")
     python = str(interpreter_for(root))
     check_interpreter(Path(python), root)  # what execve runs, checked just before it
+    script = bootstrap_script()  # this file, outside the root: nothing under the root runs before _boot confines
+    check_bootstrap(script, root)
     # --port last and literal: lb-restart recognises its standby by "--port <standby>" in the command line.
+    # -I: no PYTHON* variable, user site or script dir reaches the interpreter before _boot confines it.
     args = [
         python,
-        str(root / "bin" / "lb-sandbox"),
+        "-I",
+        str(script),
         "_boot",
         str(root),
         "--data-id",
@@ -2314,7 +2405,7 @@ def cmd_serve(root: str, argv: list[str]) -> int:
     read_fd = token_pipe(token)
     del token
     os.chdir(root_path / "runtime")
-    os.execve(python, [*args[:4], "--token-fd", str(read_fd), *args[4:]], env)
+    os.execve(python, [*args[:5], "--token-fd", str(read_fd), *args[5:]], env)
     return EXIT_UNHEALTHY  # not reached
 
 
@@ -2374,12 +2465,11 @@ def boot_app(root: Path, argv: list[str]) -> None:
     and it is removed again once the settings hold it, so no child the app spawns inherits it. Same process,
     no second exec.
     """
-    # _serve confined the root and its data paths before it read the token; _boot runs only the copy of
-    # lb-sandbox inside that root, so the sandboxes directory is the one this file sits in.
-    here = Path(__file__).resolve()
-    if here != (Path(root) / "bin" / "lb-sandbox").resolve():
-        raise Refused("_boot runs only the lb-sandbox copy inside its own root")
-    root = check_root(root, sandboxes=here.parent.parent.parent)
+    # _serve checked the root and its data paths before it read the token. _boot never runs from inside a
+    # sandboxes dir: a copy there is one the confined app could have rewritten.
+    sandboxes = _lexical(Path(root)).parent
+    check_bootstrap(bootstrap_script(), Path(root))
+    root = check_root(root, sandboxes=sandboxes)
     # The app opens its store, key and logs by name and its code is not ours to change: it runs on the root's
     # own volume (no hard link to a live file) under the root's Seatbelt profile (no write outside the root
     # and no read of live custody, whatever link is planted). Both before anything under the root is opened.

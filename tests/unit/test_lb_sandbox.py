@@ -48,25 +48,45 @@ def _install_venv(home_lb: Path, runnable: bool = False) -> Path:
     """<home_lb>/runtime/agent-lb/.venv as interpreter_for names it for roots under <home_lb>/sandboxes.
 
     runnable: a real venv dir whose bin/python leads to the interpreter running this test, with this test
-    venv's packages (the integration test execs it). Otherwise bin/python leads to a private stand-in file:
-    the guards only inspect it, and the box's interpreter may be group-writable."""
+    venv's packages (the integration test execs it). Otherwise bin/python leads to a private stand-in that starts
+    like a native executable (the guards only inspect it; the box's interpreter may be group-writable). Either
+    way pyvenv.cfg names the dir bin/python leads to as the venv's home, as a real venv's does."""
     venv = home_lb / "runtime" / "agent-lb" / ".venv"
     python = venv / "bin" / "python"
     if not os.path.lexists(python):
         python.parent.mkdir(parents=True, exist_ok=True)
         if runnable:
-            python.symlink_to(os.path.realpath(sys.executable))
+            real = Path(os.path.realpath(sys.executable))
+            python.symlink_to(real)
             cfg = Path(sys.prefix) / "pyvenv.cfg"
-            if cfg.is_file():
-                (venv / "pyvenv.cfg").write_bytes(cfg.read_bytes())
+            lines = cfg.read_text().splitlines() if cfg.is_file() else []
+            lines = [line for line in lines if line.partition("=")[0].strip().lower() != "home"]
+            (venv / "pyvenv.cfg").write_text("\n".join([f"home = {real.parent}", *lines]) + "\n")
+            (venv / "pyvenv.cfg").chmod(0o644)  # what a venv writes, whatever the umask
             (venv / "lib").symlink_to(Path(sys.prefix) / "lib", target_is_directory=True)
         else:
             base = home_lb / "base-python" / "python3"
             base.parent.mkdir(exist_ok=True)
-            base.write_text("#!/bin/sh\nexit 99\n")
+            base.parent.chmod(0o755)
+            with open(os.path.realpath(sys.executable), "rb") as fh:
+                base.write_bytes(fh.read(4) + bytes(60))
             base.chmod(0o755)
+            (venv / "pyvenv.cfg").write_text(f"home = {base.parent}\nversion_info = 3.14\n")
+            (venv / "pyvenv.cfg").chmod(0o644)  # what a venv writes, whatever the umask
             python.symlink_to(base)
     return python
+
+
+def _use_bootstrap(lb: ModuleType, home: Path) -> Path:
+    """Point lb.bootstrap_script at a private copy of lb-sandbox outside the sandboxes, as the installed file
+    is (a checkout may be group-writable). Returns its path."""
+    path = home / "installed-bin" / "lb-sandbox"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(SCRIPT.read_bytes())
+        path.chmod(0o755)
+    lb.bootstrap_script = lambda: path
+    return path
 
 
 def _key(root: Path) -> None:
@@ -251,6 +271,7 @@ def test_serve_keeps_the_token_out_of_the_exec_env_and_argv(tmp_path: Path, monk
     monkeypatch.setenv("AGENT_LB_DATA_DIR", str(root.resolve() / "data"))
     monkeypatch.delenv("AGENT_LB_FEDERATION_TOKEN", raising=False)
     _install_venv(tmp_path)
+    _use_bootstrap(lb, tmp_path)
     reads_fake_plist = lb.live_federation_token() == FAKE_TOKEN
     assert reads_fake_plist, "the test must never read the live plist"
     before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
@@ -319,14 +340,18 @@ FAKE_APP = {
 
 
 def _fake_sandbox(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """A sandbox root with the real lb-sandbox copy and a stand-in app; returns (sandboxes, root, live plist)."""
+    """A sandbox root with a stand-in app, and the real lb-sandbox installed outside it (tmp/installed-bin, what
+    _serve and _boot run); returns (sandboxes, root, live plist)."""
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
-    for sub in ("data", "bin", "runtime", "logs", "state", "home"):
+    for sub in ("data", "runtime", "logs", "state", "home"):
         (root / sub).mkdir(parents=True)
     (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS, "transport": "http"}))
     _key(root)
-    (root / "bin" / "lb-sandbox").write_bytes(SCRIPT.read_bytes())
+    installed = tmp_path / "installed-bin" / "lb-sandbox"
+    installed.parent.mkdir()
+    installed.write_bytes(SCRIPT.read_bytes())
+    installed.chmod(0o755)
     for rel, text in FAKE_APP.items():
         (root / "runtime" / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / "runtime" / rel).write_text(text)
@@ -372,7 +397,7 @@ def test_serve_hands_the_token_over_a_pipe_never_through_ps_eww(tmp_path: Path, 
     driver = (
         "import importlib.machinery, importlib.util, sys\n"
         "from pathlib import Path\n"
-        f"loader = importlib.machinery.SourceFileLoader('lbs', {str(SCRIPT)!r})\n"
+        f"loader = importlib.machinery.SourceFileLoader('lbs', {str(tmp_path / 'installed-bin' / 'lb-sandbox')!r})\n"
         "spec = importlib.util.spec_from_loader('lbs', loader)\n"
         "m = importlib.util.module_from_spec(spec)\n"
         "loader.exec_module(m)\n"
@@ -1393,6 +1418,7 @@ def test_serve_refuses_a_store_or_key_hard_linked_to_live_custody(
     monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root.resolve()))
     _install_venv(tmp_path)
+    _use_bootstrap(lb, tmp_path)
     with pytest.raises(lb.Refused):
         lb.serve_exec_args(root, ["--host", "127.0.0.1", "--port", "2482"])
     (root / "data" / name).unlink()
@@ -1504,11 +1530,16 @@ def test_teardown_removes_the_root_inside_the_sandboxes_dir_it_pinned(
     assert not (lb_home / "moved" / "r1").exists()
 
 
-@pytest.mark.parametrize("shim", ["link-into-root", "bin-dir-link", "group-writable"])
+@pytest.mark.parametrize(
+    "shim", ["link-into-root", "bin-dir-link", "group-writable", "private-script", "native-elsewhere"]
+)
 def test_serve_execs_only_the_installed_venv_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shim: str) -> None:
     """M1 on lb-sandbox's side: _serve exec'd <root>/runtime/.venv/bin/python, a name anything in the root can
     swap for a shim, and handed it the token pipe. It now execs the installed venv's python, and what that name
-    leads to is checked just before the exec. The plist start writes names the same interpreter."""
+    leads to is checked just before the exec. The plist start writes names the same interpreter.
+
+    S2-3 (M3, lb-sandbox:266): a private same-user 0755 shell script outside the sandboxes passed the shape
+    checks. Identity now: a native executable in the dir the venv's pyvenv.cfg names."""
     lb = _load()
     sandboxes = tmp_path / "sandboxes"
     root = sandboxes / "r1"
@@ -1520,6 +1551,7 @@ def test_serve_execs_only_the_installed_venv_python(tmp_path: Path, monkeypatch:
     monkeypatch.setattr(lb, "LIVE_PLIST", live_plist)
     monkeypatch.setenv("LB_SANDBOX_ROOT", str(root))
     python = _install_venv(tmp_path)
+    _use_bootstrap(lb, tmp_path)
     assert lb.serve_exec_args(root, ["--port", "2482"])[0] == str(python)  # control
     primary, _aux = lb.write_plists(root, "r1", SERVE_PORTS, "http")
     assert plistlib.loads(primary.read_bytes())["ProgramArguments"][0] == str(python)
@@ -1534,12 +1566,26 @@ def test_serve_execs_only_the_installed_venv_python(tmp_path: Path, monkeypatch:
         (root / "fakebin").mkdir()
         (root / "fakebin" / "python").symlink_to(shim_file)
         python.parent.symlink_to(root / "fakebin", target_is_directory=True)
-    else:
+    elif shim == "group-writable":
         writable = tmp_path / "writable-python"
         writable.write_text("#!/bin/sh\n")
         writable.chmod(0o775)
         python.unlink()
         python.symlink_to(writable)
+    elif shim == "private-script":
+        private = tmp_path / "private" / "python3"
+        private.parent.mkdir(mode=0o700)
+        private.write_text("#!/bin/sh\nexit 0\n")
+        private.chmod(0o755)
+        python.unlink()
+        python.symlink_to(private)
+    else:
+        elsewhere = tmp_path / "elsewhere" / "python3"
+        elsewhere.parent.mkdir(mode=0o755)
+        elsewhere.write_bytes(Path(os.path.realpath(python)).read_bytes())
+        elsewhere.chmod(0o755)
+        python.unlink()
+        python.symlink_to(elsewhere)
     with pytest.raises(lb.Refused):
         lb.serve_exec_args(root, ["--port", "2482"])
 
@@ -1712,7 +1758,7 @@ def test_app_store_opens_never_follow_a_swapped_data_dir(tmp_path: Path, mounted
     driver = (
         "import importlib.machinery, importlib.util, os, sys\n"
         "from pathlib import Path\n"
-        f"loader = importlib.machinery.SourceFileLoader('lbs', {str(SCRIPT)!r})\n"
+        f"loader = importlib.machinery.SourceFileLoader('lbs', {str(tmp_path / 'installed-bin' / 'lb-sandbox')!r})\n"
         "spec = importlib.util.spec_from_loader('lbs', loader)\n"
         "m = importlib.util.module_from_spec(spec)\n"
         "loader.exec_module(m)\n"
@@ -1723,7 +1769,7 @@ def test_app_store_opens_never_follow_a_swapped_data_dir(tmp_path: Path, mounted
         f"{swap}"
         "fd = m.token_pipe(token)\n"
         "os.chdir(root / 'runtime')\n"
-        "os.execve(python, [*args[:4], '--token-fd', str(fd), *args[4:]], env)\n"
+        "os.execve(python, [*args[:5], '--token-fd', str(fd), *args[5:]], env)\n"
     )
     env = {k: v for k, v in os.environ.items() if k != "AGENT_LB_FEDERATION_TOKEN"}
     env["LB_SANDBOX_ROOT"] = str(root)
@@ -1747,3 +1793,91 @@ def test_app_store_opens_never_follow_a_swapped_data_dir(tmp_path: Path, mounted
     else:
         assert started, f"control: the app must start (exit {proc.returncode})"
         assert (root / "data-aside" / "app-touched").exists(), "the app's data opens stay in the checked dir"
+
+
+# ---------------------------------------------------------------- S2-3 fix round (live-safety review, 84a63c41)
+
+
+def test_both_jobs_run_the_installed_lb_sandbox_isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """M1 and M2 (lb-restart:1013,1007; lb-sandbox:1555): the plists ran <root>/bin/lb-sandbox without -I, so a
+    regular file replacing it, or a sitecustomize.py on the plist's PYTHONPATH (<root>/runtime), ran before any
+    guard. Both jobs now run `<venv python> -I <installed lb-sandbox>`: no program or script path under the root."""
+    lb = _load()
+    root = tmp_path / "sandboxes" / "r1"
+    root.mkdir(parents=True, mode=0o700)
+    root.parent.chmod(0o700)  # lb-sandbox start makes the sandboxes dir 0700, whatever the umask
+    python = _install_venv(tmp_path)
+    installed = _use_bootstrap(lb, tmp_path)
+    paths = lb.write_plists(root, "r1", SERVE_PORTS, "http")
+    heads = [plistlib.loads(path.read_bytes())["ProgramArguments"][:5] for path in paths]
+    assert heads == [
+        [str(python), "-I", str(installed), "_serve", str(root)],
+        [str(python), "-I", str(installed), "_aux", str(root)],
+    ]
+    with pytest.raises(lb.Refused, match="inside the sandboxes dir"):
+        lb.check_bootstrap(root / "bin" / "lb-sandbox", root)
+
+
+def test_boot_never_runs_from_a_copy_inside_the_sandboxes_dir(tmp_path: Path) -> None:
+    """M2 on lb-sandbox's side: _boot used to require the copy inside its root, which the confined app can
+    rewrite. Run from such a copy it now refuses before it touches the root."""
+    sandboxes = tmp_path / "sandboxes"
+    root = sandboxes / "r1"
+    (root / "bin").mkdir(parents=True)
+    copy = root / "bin" / "lb-sandbox"
+    copy.write_bytes(SCRIPT.read_bytes())
+    copy.chmod(0o755)
+    loader = importlib.machinery.SourceFileLoader("lb_sandbox_root_copy", str(copy))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    in_root = importlib.util.module_from_spec(spec)
+    loader.exec_module(in_root)
+    with pytest.raises(in_root.Refused, match="inside the sandboxes dir"):
+        in_root.boot_app(root, ["--token-fd", "0", "--port", "2481"])
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
+def test_a_confined_process_reads_its_own_root_under_the_agent_lb_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1 (84a63c41, lb-sandbox:240,318): the no-follow walk opened every ancestor for reading, and the root's
+    profile denies reads under ~/.agent-lb, so a confined _boot or _aux read its own sandbox.json as {} and
+    refused a valid sandbox. Ancestors are now opened search-only. The layout is the real one, <home>/.agent-lb/
+    sandboxes/<run>, under a test home; live custody stays unreadable and a planted link is still refused."""
+    lb = _load()
+    root, lb_home = _home_layout(tmp_path, monkeypatch, lb)
+    (root / "sandbox.json").write_text(json.dumps({"run_id": "r1", "ports": SERVE_PORTS}))
+    (root / "linked.json").symlink_to(root / "sandbox.json")
+    got = lb.run_confined(
+        root,
+        lambda: [lb.read_root_json(root, "sandbox.json"), lb.read_root_json(root, "linked.json")],
+        reads=True,
+    )
+    assert got == [{"run_id": "r1", "ports": SERVE_PORTS}, {}]
+    with pytest.raises(lb.Unhealthy):  # control: live state under the same home stays unreadable
+        lb.run_confined(root, lambda: (lb_home / "state" / "front.json").read_text(), reads=True)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
+def test_a_confined_process_reads_its_own_root_in_the_real_sandboxes_dir() -> None:
+    """P1 against the real layout and profile: a test-owned root directly under the real ~/.agent-lb/sandboxes,
+    confined with the real constants. Skipped where that dir is not this user's real directory. The root is
+    removed by its asserted path; nothing else under ~/.agent-lb is opened for writing."""
+    import shutil
+    import uuid
+
+    lb = _load()
+    sandboxes = lb.SANDBOXES
+    try:
+        lb.sandboxes_fd(sandboxes)
+    except OSError:
+        pytest.skip("no private real ~/.agent-lb/sandboxes on this host")
+    root = sandboxes / f"lbsbx-unit-{uuid.uuid4().hex[:12]}"
+    os.mkdir(root, 0o700)
+    try:
+        (root / "sandbox.json").write_text(json.dumps({"run_id": root.name, "unit_test": True}))
+        got = lb.run_confined(root, lambda: lb.read_root_json(root, "sandbox.json"), reads=True)
+    finally:
+        assert root.parent == sandboxes and root.name.startswith("lbsbx-unit-")
+        shutil.rmtree(root)
+    assert got == {"run_id": root.name, "unit_test": True}
