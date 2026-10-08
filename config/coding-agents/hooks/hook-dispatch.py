@@ -27,6 +27,14 @@ message the model sees keeps the guard's own command. Several: any block wins an
 config order; JSON answers merge (deny > ask > allow, contexts joined, the last updatedInput in config order wins);
 plain stdout and errors follow Claude Code's per-event rules.
 
+Failing closed (2026-10-07 post-merge review of 4e1cea13): a broken registry or entry list, a temp file that cannot
+be written, guard answers that cannot be merged and any uncaught error all refuse with exit 2 and a reason, never a
+silent exit 0 or 1. A Stop hook refuses once and lets the session stop on the retry (`stop_hook_active`).
+
+Registry revisions: install-policy names each fold `registry.<rev>.json` and puts the rev in every settings entry
+(`... <Event> '<matcher>' <rev>`), so settings and the guards they run switch in one atomic settings write and a
+session still on older settings keeps the guards it started with. An entry without a rev reads registry.json.
+
 Rollback: `python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off` restores the per-hook
 config verbatim from the registry. Must stay Python 3.9 compatible: `python3` may resolve to /usr/bin/python3.
 """
@@ -48,6 +56,12 @@ DEFAULT_TIMEOUT = 600.0  # seconds; Claude Code's default for a command hook
 SHELL = "/bin/sh"  # Claude Code spawns command hooks with shell: true (observed: /bin/sh -c '<command>')
 HERE = os.path.dirname(os.path.abspath(__file__))
 REWRITERS = {"rtk hook claude"}  # side-effect free, never blocks; may be skipped or exec'd into
+REV = re.compile(r"[0-9a-f]{12}")
+# Environment that changes what a pinned shell guard does before or while it runs (a startup file, shell options,
+# exported functions that replace jq, grep or echo, injected libraries). With any of it set the prefilter's proof
+# does not hold, so the guard runs.
+ENV_SENSITIVE = ("BASH_ENV", "ENV", "BASHOPTS", "SHELLOPTS", "POSIXLY_CORRECT", "GREP_OPTIONS", "GLOBIGNORE",
+                 "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH")
 
 # Source text that makes in-process execution unsafe or different: a forked or exec'd copy of this process, threads
 # that outlive the guard, exit handlers, signal handling, or a handler that could swallow the timer's exception.
@@ -91,6 +105,17 @@ class _GuardTimeout(BaseException):
 
 def registry_path():
     return os.environ.get("HOOK_DISPATCH_REGISTRY") or os.path.join(HERE, "dispatch", "registry.json")
+
+
+def env_sensitive():
+    """The first variable in the environment that a prefilter's proof does not cover, or None."""
+    for key in ENV_SENSITIVE:
+        if key in os.environ:
+            return key
+    for key in os.environ:
+        if key.startswith("BASH_FUNC_"):
+            return key
+    return None
 
 
 def which(name):
@@ -380,7 +405,11 @@ def plan_hook(hook, inproc_names):
         return plan
     prefilter = COMMAND_PREFILTERS.get(hashlib.sha256(command.encode("utf-8")).hexdigest())
     if prefilter is not None:
-        plan.kind, plan.prefilter, plan.reason = "filtered", prefilter, "pinned command"
+        sensitive = env_sensitive()
+        if sensitive:
+            plan.reason = "pinned command, but %s is set" % sensitive
+        else:
+            plan.kind, plan.prefilter, plan.reason = "filtered", prefilter, "pinned command"
         return plan
     match = SHAPE.match(command)
     if not match:
@@ -388,10 +417,16 @@ def plan_hook(hook, inproc_names):
         return plan
     if match.group("interp") is None:
         # A pinned shell guard, bare or inside `2>/dev/null || true`: when its prefilter says it cannot act, the
-        # wrapped command ends with exit 0 and no output either way.
+        # wrapped command ends with exit 0 and no output either way. A printf fallback answers whenever the guard
+        # fails for a reason no prefilter sees (startup, a missing tool), so that guard always runs.
         pinned = SCRIPT_PREFILTERS.get(os.path.basename(os.path.realpath(expand_word(match.group("script")))))
         if pinned is not None:
-            if sha256_file(os.path.realpath(expand_word(match.group("script")))) == pinned[0]:
+            sensitive = env_sensitive()
+            if match.group("fb") is not None:
+                plan.reason = "pinned script with a fallback answer"
+            elif sensitive:
+                plan.reason = "pinned script, but %s is set" % sensitive
+            elif sha256_file(os.path.realpath(expand_word(match.group("script")))) == pinned[0]:
                 plan.kind, plan.prefilter, plan.reason = "filtered", pinned[1], "pinned script"
             else:
                 plan.reason = "script changed since its prefilter was reviewed"
@@ -487,12 +522,19 @@ def run_inproc(plan, payload):
     saved_modules = set(sys.modules)
     saved_environ = dict(os.environ)
     saved_cwd = os.getcwd()
-    out_file, err_file = tempfile.TemporaryFile(), tempfile.TemporaryFile()
-    in_fd = payload.open_fd()
-    os.dup2(in_fd, 0)
-    os.close(in_fd)
-    os.dup2(out_file.fileno(), 1)
-    os.dup2(err_file.fileno(), 2)
+    try:
+        out_file, err_file = tempfile.TemporaryFile(), tempfile.TemporaryFile()
+        in_fd = payload.open_fd()
+        os.dup2(in_fd, 0)
+        os.close(in_fd)
+        os.dup2(out_file.fileno(), 1)
+        os.dup2(err_file.fileno(), 2)
+    except BaseException:
+        # Setup failed before the guard ran: put fds 0-2 back so the answer still reaches Claude Code.
+        for target, fd in enumerate(saved_fds):
+            os.dup2(fd, target)
+            os.close(fd)
+        raise
     enc_in = getattr(saved_std[0], "encoding", None) or "utf-8"
     err_in = getattr(saved_std[0], "errors", None) or "strict"
     enc_out = getattr(saved_std[1], "encoding", None) or "utf-8"
@@ -636,8 +678,9 @@ class External(object):
             except Exception:
                 pass
             self.outcome = Result(1, b"", b"", True, "external", 1)
-        except Exception as exc:  # the dispatcher could not read it; report as a non-blocking failure
-            self.outcome = Result(1, b"", ("hook-dispatch: %s\n" % exc).encode(), False, "external", 1)
+        except Exception as exc:  # the dispatcher lost the guard's answer: refuse, as the guard might have
+            self.outcome = Result(2, b"", ("hook-dispatch: could not read this guard's answer (%s); refused\n"
+                                           % exc.__class__.__name__).encode(), False, "external", 1)
 
     def result(self):
         self.thread.join()
@@ -660,14 +703,20 @@ def parse_json(out):
     return value if isinstance(value, dict) else None
 
 
+def text_of(value):
+    """A guard's free-text field as text, whatever JSON type it sent."""
+    return value if isinstance(value, str) else json.dumps(value)
+
+
 def deny_reason(obj):
     if not obj:
         return None
     specific = obj.get("hookSpecificOutput") if isinstance(obj.get("hookSpecificOutput"), dict) else {}
     if specific.get("permissionDecision") == "deny":
-        return specific.get("permissionDecisionReason") or obj.get("reason") or "Blocked by hook"
+        reason = specific.get("permissionDecisionReason") or obj.get("reason")
+        return text_of(reason) if reason else "Blocked by hook"
     if obj.get("decision") == "block":
-        return obj.get("reason") or "Blocked by hook"
+        return text_of(obj["reason"]) if obj.get("reason") else "Blocked by hook"
     return None
 
 
@@ -680,10 +729,42 @@ def block_message(plan, result, obj):
 
 
 def encode(obj):
-    return (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
+    # ASCII escapes: a lone surrogate in a guard's text cannot break the answer.
+    return (json.dumps(obj, ensure_ascii=True) + "\n").encode("ascii")
+
+
+def refusal(event, note):
+    """Exit 2 with the reason as JSON Claude Code reads for this event, and on stderr."""
+    if event == "PreToolUse":
+        obj = {"hookSpecificOutput": {"hookEventName": event, "permissionDecision": "deny",
+                                      "permissionDecisionReason": note}}
+    else:
+        obj = {"decision": "block", "reason": note}
+    return Result(2, encode(obj), (note.rstrip("\n") + "\n").encode("utf-8", "backslashreplace"), mode="refused")
 
 
 def merge(event, plans, results):
+    """merge_answers, failing closed: answers it cannot merge deny, with every block message it could read."""
+    try:
+        return merge_answers(event, plans, results)
+    except Exception as exc:
+        messages = []
+        for plan, result in zip(plans, results):
+            if result is None or result.timed_out:
+                continue
+            try:
+                obj = parse_json(result.out) if result.out else None
+                if result.code == 2 or deny_reason(obj):
+                    messages.append(block_message(plan, result, obj))
+            except Exception:
+                messages.append("[%s]: answer unreadable" % plan.command)
+        if not messages:
+            messages.append("hook-dispatch: could not merge the guards' answers (%s); refused"
+                            % exc.__class__.__name__)
+        return refusal(event, "\n".join(messages))
+
+
+def merge_answers(event, plans, results):
     """One answer for Claude Code from the results of every guard of the entry, in config order.
 
     Claude Code (2.1.293) reads a hook's stdout as JSON whatever its exit code; a JSON deny or `decision: block`
@@ -736,10 +817,10 @@ def merge_objects(event, objects, plain):
                         if svalue not in (None, ""):
                             contexts.append(str(svalue))
                     elif skey == "permissionDecision":
-                        rank = _RANK.get(svalue, 0)
+                        rank = _RANK.get(svalue, 0) if isinstance(svalue, str) else 0
                         reasons_by_rank.setdefault(rank, [])
                         if value.get("permissionDecisionReason"):
-                            reasons_by_rank[rank].append(value["permissionDecisionReason"])
+                            reasons_by_rank[rank].append(text_of(value["permissionDecisionReason"]))
                         if rank > _RANK.get(specific.get("permissionDecision"), 0):
                             specific["permissionDecision"] = svalue
                     elif skey in ("permissionDecisionReason", "hookEventName"):
@@ -761,7 +842,7 @@ def merge_objects(event, objects, plain):
                 if value == "block":
                     decision = "block"
                     if obj.get("reason"):
-                        decision_reasons.append(obj["reason"])
+                        decision_reasons.append(text_of(obj["reason"]))
                 elif decision is None:
                     decision = value
             elif key == "reason":
@@ -794,26 +875,44 @@ def merge_objects(event, objects, plain):
 # ---------------------------------------------------------------------------------------------------- the entry
 
 
-def load_registry():
-    """The registry, else its backup copy. Raises when neither reads."""
+def load_registry(rev=None):
+    """The registry this settings entry was written with: registry.<rev>.json, else registry.json or its backup when
+    their rev matches; without a rev, registry.json or its backup. Raises when none reads."""
     errors = []
-    for path in (registry_path(), registry_path() + ".bak"):
+    base = registry_path()
+    paths = [base, base + ".bak"]
+    if rev and not os.environ.get("HOOK_DISPATCH_REGISTRY"):
+        paths.insert(0, os.path.join(os.path.dirname(base), "registry.%s.json" % rev))
+    for path in paths:
         try:
             with open(path, encoding="utf-8") as handle:
                 registry = json.load(handle)
-            if isinstance(registry, dict) and isinstance(registry.get("entries"), dict):
+            if not (isinstance(registry, dict) and isinstance(registry.get("entries"), dict)):
+                errors.append("%s: not a registry" % path)
+            elif rev and registry.get("rev") != rev:
+                errors.append("%s: rev %s, not %s" % (path, registry.get("rev"), rev))
+            else:
                 return registry
-            errors.append("%s: not a registry" % path)
         except (OSError, ValueError) as exc:
             errors.append("%s: %s" % (path, exc.__class__.__name__))
     raise ValueError("; ".join(errors))
 
 
-def dedupe(hooks):
+def entry_hooks(registry, event, key):
+    """The entry's hooks, deduplicated. Raises unless it is a non-empty list of command hooks: install-policy never
+    writes anything else, so anything else is damage, and skipping it would skip guards."""
+    hooks = (registry["entries"].get(event) or {}) if isinstance(registry["entries"].get(event), dict) else None
+    if hooks is None or key not in hooks:
+        raise ValueError("no %s '%s' entry" % (event, key))  # settings and registry disagree: half installed
+    hooks = hooks[key]
+    if not isinstance(hooks, list) or not hooks:
+        raise ValueError("the %s '%s' entry is %s, not a list of hooks" % (event, key, type(hooks).__name__))
+    for hook in hooks:
+        if not (isinstance(hook, dict) and hook.get("type", "command") == "command"
+                and isinstance(hook.get("command"), str) and hook["command"].strip()):
+            raise ValueError("the %s '%s' entry holds %r, not a command hook" % (event, key, hook))
     seen, kept = set(), []
     for hook in hooks:
-        if not isinstance(hook, dict):
-            continue
         marker = json.dumps([hook.get("type"), hook.get("command")])
         if marker in seen:
             continue
@@ -946,38 +1045,21 @@ def run_entry(event, hooks, raw, inproc_names):
         payload.close()
 
 
-def main(argv=None):
-    argv = sys.argv[1:] if argv is None else argv
-    if len(argv) < 2 or argv[0] not in EVENTS:
-        sys.stderr.write("usage: hook-dispatch.py <%s> <matcher>\n" % "|".join(EVENTS))
-        return 0
-    event, key = argv[0], argv[1]
-    raw = sys.stdin.buffer.read()
+def stop_retry(event, raw):
+    """A Stop hook that already refused once: Claude Code sets stop_hook_active on the retry."""
+    if event != "Stop":
+        return False
     try:
-        registry = load_registry()
-        if key not in (registry.get("entries", {}).get(event) or {}):
-            raise ValueError("no %s '%s' entry" % (event, key))  # settings and registry disagree: half installed
-    except ValueError as exc:
-        note = ("hook-dispatch: registry unreadable (%s); the %s '%s' guards did not run. Restore the per-hook "
-                "config: python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off\n"
-                % (exc, event, key))
-        if event == "PreToolUse":  # the guards here can deny; refuse rather than skip them silently
-            sys.stdout.write(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": note}}) + "\n")
-            sys.stderr.write(note)
-            return 2
-        sys.stderr.write(note)
-        return 1
-    hooks = dedupe(registry.get("entries", {}).get(event, {}).get(key) or [])
-    if not hooks:
-        return 0
-    if os.environ.get("HOOK_DISPATCH_TRACE"):
-        sys.addaudithook(_audit)
-    # inproc_sha pins each in-process guard to the bytes the parity fixture passed on; a changed guard runs as its
-    # own process until install-policy reruns the fixture.
-    inproc_names = registry.get("inproc_sha") if isinstance(registry.get("inproc_sha"), dict) else \
-        dict.fromkeys(registry.get("inproc") or [])
-    result = run_entry(event, hooks, raw, inproc_names)
+        return json.loads(raw.decode("utf-8")).get("stop_hook_active") is True
+    except Exception:
+        return False
+
+
+def answer(event, raw, result):
+    """Write the answer; return its exit code. A dispatcher refusal on a Stop retry becomes a notice (exit 1), so a
+    broken registry cannot keep a session from stopping."""
+    if result.mode == "refused" and stop_retry(event, raw):
+        result = Result(1, b"", result.err)
     out, err = sys.stdout.buffer, sys.stderr.buffer
     if result.out:
         out.write(result.out)
@@ -986,6 +1068,47 @@ def main(argv=None):
         err.write(result.err)
         err.flush()
     return result.code
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) < 2 or argv[0] not in EVENTS:
+        # A settings entry this dispatcher cannot read runs no guards: refuse.
+        sys.stderr.write("hook-dispatch: usage: hook-dispatch.py <%s> <matcher> [<rev>]; refused\n"
+                         % "|".join(EVENTS))
+        return 2
+    event, key = argv[0], argv[1]
+    rev = argv[2] if len(argv) > 2 else None
+    raw = b""
+    try:
+        raw = sys.stdin.buffer.read()
+        try:
+            if rev is not None and not REV.fullmatch(rev):
+                raise ValueError("bad rev %r" % rev)
+            registry = load_registry(rev)
+            hooks = entry_hooks(registry, event, key)
+        except ValueError as exc:
+            note = ("hook-dispatch: registry unreadable (%s); the %s '%s' guards did not run. Restore the per-hook "
+                    "config: python3 ~/.agents/policy/coding-agents/install-policy.py --hook-dispatcher off\n"
+                    % (exc, event, key))
+            return answer(event, raw, refusal(event, note))
+        if os.environ.get("HOOK_DISPATCH_TRACE"):
+            sys.addaudithook(_audit)
+        # inproc_sha pins each in-process guard to the bytes the parity fixture passed on; a changed guard runs as
+        # its own process until install-policy reruns the fixture.
+        inproc_names = registry.get("inproc_sha") if isinstance(registry.get("inproc_sha"), dict) else \
+            dict.fromkeys(name for name in registry.get("inproc") or [] if isinstance(name, str))
+        result = run_entry(event, hooks, raw, inproc_names)
+    except BaseException as exc:
+        # Anything this process did not plan for (no temp file, no process, a bug) refuses: the guards it was
+        # running might have.
+        note = ("hook-dispatch: failed (%s: %s); the %s '%s' guards did not all run, so this call is refused\n"
+                % (exc.__class__.__name__, str(exc)[:200], event, key))
+        try:
+            return answer(event, raw, refusal(event, note))
+        except BaseException:
+            return 2
+    return answer(event, raw, result)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -416,11 +417,60 @@ def foldable_groups(groups: list[Any], event: str) -> list[bool]:
     return [good and not any(hook["command"] in shared for hook in group["hooks"]) for group, good in zip(groups, ok)]
 
 
-def dispatch_group(event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]]) -> dict[str, Any]:
+def group_overlaps(group: Any, key: str) -> bool:
+    """Whether a group may match a tool that matcher key `key` matches (a regex is tested on each name; doubt says yes)."""
+    if not isinstance(group, dict):
+        return True
+    own = matcher_key(group)
+    if own is not None:
+        return keys_overlap(own, key)
+    if key == "*" or not isinstance(group.get("matcher"), str):
+        return True
+    try:
+        pattern = re.compile(group["matcher"])
+    except re.error:
+        return True
+    return any(pattern.search(name) for name in key.split("|"))
+
+
+def keep_config_order(groups: list[Any], eligible: list[bool]) -> list[bool]:
+    """A fold runs all of a key's groups at the place of its first group. That keeps config order (which decides the
+    last updatedInput and the order of messages) only when no group that may match the same tool sits between them;
+    a group past such a group stays per-hook, in place. Repeats until stable: each pass only unfolds."""
+    eligible = list(eligible)
+    changed = True
+    while changed:
+        changed = False
+        first: dict[str, int] = {}
+        for index, (group, good) in enumerate(zip(groups, eligible)):
+            if not good:
+                continue
+            key = matcher_key(group)
+            if key not in first:
+                first[key] = index
+                continue
+            if any(
+                group_overlaps(groups[between], key)
+                and not (eligible[between] and matcher_key(groups[between]) == key)
+                for between in range(first[key] + 1, index)
+            ):
+                eligible[index] = False
+                changed = True
+    return eligible
+
+
+def registry_rev(entries: dict[str, Any]) -> str:
+    """Names a fold by the hooks it runs, so an unchanged fold keeps its settings bytes."""
+    return hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+
+
+def dispatch_group(
+    event: str, key: str, matcher_field: Any, hooks: list[dict[str, Any]], rev: str
+) -> dict[str, Any]:
     timeout = sum(hook.get("timeout") or DEFAULT_HOOK_TIMEOUT for hook in hooks) + 5
     entry: dict[str, Any] = {
         "type": "command",
-        "command": f'python3 "$HOME/.claude/{DISPATCH_SCRIPT}" {event} \'{key}\'',
+        "command": f'python3 "$HOME/.claude/{DISPATCH_SCRIPT}" {event} \'{key}\' {rev}',
         "timeout": int(timeout) if float(timeout).is_integer() else timeout,
     }
     messages = list(dict.fromkeys(hook["statusMessage"] for hook in hooks if hook.get("statusMessage")))
@@ -442,7 +492,7 @@ def fold_hooks(
     folded = json.loads(json.dumps(hooks))
     per_hook: dict[str, list[Any]] = {}
     entries: dict[str, dict[str, list[Any]]] = {}
-    dispatch: dict[str, list[Any]] = {}
+    dispatch: dict[str, Any] = {}
     for event in DISPATCH_EVENTS:
         groups = hooks.get(event)
         if not isinstance(groups, list) or not groups:
@@ -451,6 +501,7 @@ def fold_hooks(
         if only is not None:
             allowed = only.get(event, [])
             eligible = [good and group in allowed for group, good in zip(groups, eligible)]
+        eligible = keep_config_order(groups, eligible)
         if worth is not None:
             by_key: dict[str, list[Any]] = {}
             for group, good in zip(groups, eligible):
@@ -458,6 +509,8 @@ def fold_hooks(
                     by_key.setdefault(matcher_key(group), []).extend(group["hooks"])
             unworthy = {key for key, key_hooks in by_key.items() if not worth(key_hooks)}
             eligible = [good and matcher_key(group) not in unworthy for group, good in zip(groups, eligible)]
+            # A group left per-hook by `worth` can now sit between the groups of another key.
+            eligible = keep_config_order(groups, eligible)
         if not any(eligible):
             continue
         out: list[Any] = []
@@ -475,18 +528,22 @@ def fold_hooks(
             if key not in placed:
                 placed[key] = {"matcher_field": group.get("matcher"), "index": len(out)}
                 out.append(None)
-        for key, spot in placed.items():
-            out[spot["index"]] = dispatch_group(event, key, spot["matcher_field"], event_entries[key])
         per_hook[event] = json.loads(json.dumps(groups))
         entries[event] = event_entries
-        dispatch[event] = out
-        folded[event] = out
+        dispatch[event] = (out, placed)
     if not entries:
         return folded, None
+    rev = registry_rev(entries)
+    for event, (out, placed) in list(dispatch.items()):
+        for key, spot in placed.items():
+            out[spot["index"]] = dispatch_group(event, key, spot["matcher_field"], entries[event][key], rev)
+        dispatch[event] = out
+        folded[event] = out
     registry = {
         "schema": 1,
         "about": "hook-dispatch.py registry, written by agent-lb install-policy.py --hook-dispatcher on; "
         "per_hook is the config it replaced (restore: install-policy.py --hook-dispatcher off)",
+        "rev": rev,
         "per_hook": per_hook,
         "dispatch": dispatch,
         "entries": entries,
@@ -540,8 +597,28 @@ def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict
     return unfolded
 
 
-def read_registry(home: Path) -> dict[str, Any] | None:
-    for path in (home / DISPATCH_REGISTRY, (home / DISPATCH_REGISTRY).with_name("registry.json.bak")):
+DISPATCH_REV = re.compile(r"hook-dispatch\.py\"?\s+\w+\s+'[^']*'\s+([0-9a-f]{12})\b")
+REV_FILE = re.compile(r"registry\.([0-9a-f]{12})\.json")
+REV_KEEP_SECONDS = 7 * 86400  # a session keeps the hooks it started with; its registry stays this long
+
+
+def folded_rev(settings: dict[str, Any]) -> str | None:
+    """The registry rev the folded settings entries run, or None (no rev: an entry from before revs)."""
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    for event in DISPATCH_EVENTS:
+        for group in hooks.get(event) or []:
+            for hook in (group.get("hooks") or []) if isinstance(group, dict) else []:
+                match = DISPATCH_REV.search(hook["command"]) if is_dispatch_hook(hook) else None
+                if match:
+                    return match.group(1)
+    return None
+
+
+def read_registry(home: Path, rev: str | None = None) -> dict[str, Any] | None:
+    paths = [home / DISPATCH_REGISTRY, (home / DISPATCH_REGISTRY).with_name("registry.json.bak")]
+    if rev:
+        paths.insert(0, (home / DISPATCH_REGISTRY).with_name(f"registry.{rev}.json"))
+    for path in paths:
         try:
             registry = json.loads(path.read_text())
         except (OSError, ValueError):
@@ -826,7 +903,7 @@ def main() -> int:
     disk_settings = settings
     registry_path = args.home / DISPATCH_REGISTRY
     folded_now = is_folded(settings)
-    old_registry = read_registry(args.home) if folded_now else None
+    old_registry = read_registry(args.home, folded_rev(settings)) if folded_now else None
     if folded_now:
         try:
             settings = {**settings, "hooks": unfold_hooks(settings["hooks"], old_registry)}
@@ -918,14 +995,21 @@ def main() -> int:
     if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
     backup_path = registry_path.with_name("registry.json.bak")
+    rev_path = None
     if new_registry is not None:
         registry_text = json.dumps(new_registry, indent=2, ensure_ascii=False) + "\n"
-        for path in (backup_path, registry_path):
+        rev_path = registry_path.with_name(f"registry.{new_registry['rev']}.json")
+        for path in (rev_path, backup_path, registry_path):
             if read_text(path) != registry_text:
                 changes[path] = registry_text
     else:
         for path in (registry_path, backup_path):
             if path.exists():
+                changes[path] = None
+    if registry_path.parent.is_dir():
+        for path in registry_path.parent.iterdir():
+            if REV_FILE.fullmatch(path.name) and path != rev_path and \
+                    time.time() - path.stat().st_mtime > REV_KEEP_SECONDS:
                 changes[path] = None
     if not args.uninstall:
         codex_config = args.home / ".codex" / "config.toml"
@@ -1083,15 +1167,20 @@ def main() -> int:
         shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
         print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
     print(f"checkpoint {checkpoint}")
-    # Order: the dispatcher and its registry land before settings point at them; removals come after settings
-    # stop pointing at them. A crash between steps leaves a working config either way.
-    dispatch_files = {args.home / DISPATCH_REGISTRY, backup_path, args.home / ".claude" / DISPATCH_SCRIPT}
+    # Order: the dispatcher and this fold's registry.<rev>.json land first (no settings entry names that rev yet);
+    # settings then switch every entry to the new rev in one atomic write; registry.json and its backup (read only
+    # by entries without a rev) follow; removals come last. At every step each settings entry runs the guards it
+    # was written with, so a crash between steps leaves the old or the new config, never a mix.
+    first_files = {args.home / ".claude" / DISPATCH_SCRIPT} | ({rev_path} if rev_path else set())
+    latest_files = {registry_path, backup_path}
 
     def write_order(item: tuple[Path, str | None]) -> int:
         path, content = item
         if content is None:
-            return 2
-        return 0 if path in dispatch_files else 1
+            return 3
+        if path in first_files:
+            return 0
+        return 2 if path in latest_files else 1
 
     for path, content in sorted(changes.items(), key=write_order):
         if content is None:
