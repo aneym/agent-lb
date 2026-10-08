@@ -33,6 +33,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     from app.audit_routing import add_parser
 
     add_parser(commands)
+    from app.audit_forwarded import add_parser as add_forwarded_parser
+
+    add_forwarded_parser(commands)
     tokens = commands.add_parser("tokens", help="Account for tokens and list-price dollars.")
     tokens.add_argument("--window", default="7d")
     tokens.add_argument("--since")
@@ -175,6 +178,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.command == "audit":
         if args.audit_command == "routing":
             from app.audit_routing import run
+        elif args.audit_command == "forwarded":
+            from app.audit_forwarded import run
         else:
             from app.audit_tokens import run
 

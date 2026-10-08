@@ -42,19 +42,26 @@ def main() -> None:
     if provider:
         header = re.compile(r'\[\s*model_providers\.(?:"%s"|%s)\s*\]\s*(?:#.*)?$'
                             % (re.escape(provider), re.escape(provider)))
-        block, active = [], False
+        subheader = re.compile(r'\[\s*model_providers\.(?:"%s"|%s)\.[^\]]+\]\s*(?:#.*)?$'
+                               % (re.escape(provider), re.escape(provider)))
+        block, subtables, active, main_table = [], [], False, False
         for line in text:
             if line.lstrip().startswith("["):
-                active = bool(header.fullmatch(line.strip()))
-            if active and not re.match(r"\s*supports_websockets\s*=", line):
-                block.append(line)
+                main_table = bool(header.fullmatch(line.strip()))
+                active = main_table or bool(subheader.fullmatch(line.strip()))
+            if active:
+                if main_table:
+                    if not re.match(r"\s*supports_websockets\s*=", line):
+                        block.append(line)
+                else:
+                    subtables.append(line)
         if not block:
             if text:
                 parser.error("selected provider has no configuration table")
             block = ['[model_providers.agent-lb]', 'name = "Agent LB"',
                      'base_url = "http://127.0.0.1:2455/backend-api/codex"',
                      'wire_api = "responses"', 'requires_openai_auth = true']
-        lines += [""] + block + ["supports_websockets = false"]
+        lines += [""] + block + ["supports_websockets = false"] + subtables
     destination.mkdir(parents=True, exist_ok=True)
     sessions = destination / "sessions"
     if sessions.is_symlink():
