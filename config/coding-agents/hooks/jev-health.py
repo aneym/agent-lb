@@ -32,7 +32,7 @@ def read(path):
 def fresh(status):
     try:
         age = time.time() - datetime.datetime.fromisoformat(status['checkedAt'].replace('Z', '+00:00')).timestamp()
-        return 0 <= age < 300
+        return 0 <= age < 600
     except (KeyError, TypeError, ValueError):
         return False
 

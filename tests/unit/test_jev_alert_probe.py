@@ -48,7 +48,7 @@ def run(setup, name, **extra):
 def test_cached_ok_suppresses_stale_alert(setup):
     home, _, env = setup
     (home / '.jev/ALERT').write_text('down: unexpected status 000')
-    (home / '.jev/status.json').write_text(json.dumps({'status': 'ok', 'checkedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}))
+    (home / '.jev/status.json').write_text(json.dumps({'status': 'ok', 'checkedAt': (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=6)).isoformat()}))
     result = run(setup, 'route.sh')
     assert result.returncode == 0
     assert result.stdout == ''
@@ -102,7 +102,7 @@ def test_stale_hook_does_not_wait_for_network(setup):
 def test_concurrent_probes_count_one_failure(setup):
     """The subprocess/file boundary must serialize overlapping failed refreshes."""
     _, hooks, env = setup
-    env = {**env, 'FAIL': '1', 'DELAY': '1'}
+    env = {**env, 'FAIL': '1', 'DELAY': '4'}
     children = [subprocess.Popen(['bash', str(hooks / 'health-check.sh')], env=env)]
     lock = setup[0] / '.jev/alert-refresh.lock'
     deadline = time.monotonic() + 5
