@@ -1063,6 +1063,33 @@ def updates_input(result):
     return "updatedInput" in specific
 
 
+def subagent_bash(payload, event):
+    """Only the hook payload distinguishes a Claude subagent from its lead."""
+    return (event == "PreToolUse" and isinstance(payload, dict) and "agent_id" in payload
+            and payload.get("tool_name") == "Bash")
+
+
+def suppress_subagent_owner(result, payload, event):
+    """Compose after other rewrites; preserve denials and explicit seat-run --owner."""
+    if not subagent_bash(payload, event) or result.code != 0:
+        return result
+    obj = parse_json(result.out) if result.out else {}
+    if obj is None or deny_reason(obj):
+        return result
+    specific = obj.setdefault("hookSpecificOutput", {})
+    original = payload.get("tool_input")
+    updated = specific.get("updatedInput", original)
+    if not isinstance(updated, dict) or not isinstance(updated.get("command"), str):
+        return result
+    prefix = "export FACTORY_OWNER_PANE=none;"
+    command = updated["command"]
+    if not command.startswith(prefix):
+        command = prefix + " " + command
+    specific["hookEventName"] = event
+    specific["updatedInput"] = dict(updated, command=command)
+    return Result(result.code, encode(obj), result.err)
+
+
 def run_entry(event, hooks, raw, inproc_names):
     record = {"event": event, "pid": os.getpid(), "ppid": os.getppid()}
     plans = []
@@ -1120,7 +1147,8 @@ def run_entry(event, hooks, raw, inproc_names):
                 continue
             others_quiet = not started and all(r.empty() for _i, r in known) and \
                 all(p.kind == "rewriter" or results[i] is not None for i, p in enumerate(plans) if i != index)
-            if others_quiet and sum(1 for p in plans if p.kind == "rewriter") == 1:
+            if others_quiet and sum(1 for p in plans if p.kind == "rewriter") == 1 \
+                    and not subagent_bash(payload_obj, event):
                 record["hooks"] = trace_hooks(plans, results)
                 record["spawned"] = _SPAWNS[0]
                 exec_into(plan, payload, record)
@@ -1129,7 +1157,7 @@ def run_entry(event, hooks, raw, inproc_names):
             results[index] = external.result()
         record["hooks"] = trace_hooks(plans, results)
         record["spawned"] = _SPAWNS[0]
-        answer = merge(event, plans, results)
+        answer = suppress_subagent_owner(merge(event, plans, results), payload_obj, event)
         record["answer"] = {"code": answer.code, "out": answer.out.decode("utf-8", "replace"),
                             "err": answer.err.decode("utf-8", "replace")}
         trace(record)

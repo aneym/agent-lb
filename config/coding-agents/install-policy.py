@@ -702,6 +702,18 @@ def run_parity(source: Path, home: Path, registry: dict[str, Any]) -> tuple[bool
 
     Parity is the gate. The process count is measured and reported, not required: a group left per-hook (added since
     the last `on`) costs its own process and must not undo the fold of the rest."""
+    # The dispatcher's built-in subagent rewrite intentionally differs from the old
+    # per-hook path, so exercise its protocol separately before legacy parity.
+    try:
+        wake = subprocess.run(
+            [sys.executable, str(source / "hooks" / "seat-run-wake-parity.py"),
+             "--dispatcher", str(source / DISPATCH_SCRIPT)],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"seat-run wake fixture did not run: {exc.__class__.__name__}"
+    if wake.returncode != 0:
+        return False, f"seat-run wake fixture failed: {wake.stderr.strip()[-400:]}"
     report = home / DISPATCH_PARITY
     report.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="hook-dispatch-stage-") as stage:
