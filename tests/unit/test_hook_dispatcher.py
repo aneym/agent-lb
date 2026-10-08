@@ -6,6 +6,7 @@ run the real installer, dispatcher and parity fixture against a temp HOME with s
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import resource
@@ -633,25 +634,47 @@ def write_registry(home: Path, name: str, rev: str | None, entry: list) -> None:
     (home / ".claude/hooks/dispatch" / name).write_text(json.dumps(registry))
 
 
+def rev_of(entry: list) -> str:
+    """The rev install-policy gives a fold whose only entry is PreToolUse 'Bash' = entry (registry_rev)."""
+    entries = {"PreToolUse": {"Bash": entry}}
+    return hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+
+
 def test_an_entry_never_runs_another_folds_registry(tmp_path: Path) -> None:
-    """Review M1 of 4e0dfdaa: a session whose settings name rev 111111111111 (its Bash guard denies `gh pr merge`)
-    after that rev's file is gone, with registry.json now at rev 222222222222 holding only `true`. 4e0dfdaa ran
-    `true` and allowed; the entry must refuse instead. An entry without a rev reads the legacy fold, not a newer one."""
-    home, env = dispatcher_home(tmp_path, [{"type": "command", "command": "true"}])
-    write_registry(home, "registry.json", "222222222222", [{"type": "command", "command": "true"}])
-    write_registry(home, "registry.json.bak", "222222222222", [{"type": "command", "command": "true"}])
+    """Review M1 of 4e0dfdaa: a session whose settings name rev R1 (its Bash guard denies `gh pr merge`) after that
+    rev's file is gone, with registry.json now at rev R2 holding only `true`. 4e0dfdaa ran `true` and allowed; the
+    entry must refuse instead. An entry without a rev reads the legacy fold, not a newer one."""
+    true_entry = [{"type": "command", "command": "true"}]
+    r1, r2 = rev_of([DENY_MERGE]), rev_of(true_entry)
+    home, env = dispatcher_home(tmp_path, true_entry)
+    write_registry(home, "registry.json", r2, true_entry)
+    write_registry(home, "registry.json.bak", r2, true_entry)
     assert per_hook([DENY_MERGE], MERGE_CALL, env) == "deny"  # what the session's own fold ran
-    old_session = run_hook(f"{DISPATCH_BASH} 111111111111", MERGE_CALL, env)
+    old_session = run_hook(f"{DISPATCH_BASH} {r1}", MERGE_CALL, env)
     assert old_session.returncode == 2, old_session.stdout + old_session.stderr
-    assert "not this entry's 111111111111" in json.loads(old_session.stdout)["hookSpecificOutput"][
+    assert f"not this entry's {r1}" in json.loads(old_session.stdout)["hookSpecificOutput"][
         "permissionDecisionReason"]
     write_registry(home, "registry.legacy.json", None, [DENY_MERGE])
     no_rev = run_hook(DISPATCH_BASH, MERGE_CALL, env)
     assert decision(no_rev) == "deny" and "BLOCKED: merge through the queue" in no_rev.stdout
     # The entry's own fold still answers from its file, or from registry.json when that carries its rev.
-    write_registry(home, "registry.111111111111.json", "111111111111", [DENY_MERGE])
-    assert decision(run_hook(f"{DISPATCH_BASH} 111111111111", MERGE_CALL, env)) == "deny"
-    assert decision(run_hook(f"{DISPATCH_BASH} 222222222222", MERGE_CALL, env)) == "allow"
+    write_registry(home, f"registry.{r1}.json", r1, [DENY_MERGE])
+    assert decision(run_hook(f"{DISPATCH_BASH} {r1}", MERGE_CALL, env)) == "deny"
+    assert decision(run_hook(f"{DISPATCH_BASH} {r2}", MERGE_CALL, env)) == "allow"
+
+
+def test_a_registry_edited_after_its_fold_never_answers(tmp_path: Path) -> None:
+    """Review M1 of 34fd811b: the entry [merge guard, true] edited to [true] with its rev kept. 34fd811b ran `true`
+    and allowed a call the fold denied; entries that no longer hash to the rev are refused, in every copy."""
+    folded = [DENY_MERGE, {"type": "command", "command": "true"}]
+    rev = rev_of(folded)
+    home, env = dispatcher_home(tmp_path, folded)
+    for name in (f"registry.{rev}.json", "registry.json", "registry.json.bak"):
+        write_registry(home, name, rev, [{"type": "command", "command": "true"}])
+    edited = run_hook(f"{DISPATCH_BASH} {rev}", MERGE_CALL, env)
+    assert edited.returncode == 2 and "do not hash to rev" in edited.stdout, edited.stdout + edited.stderr
+    write_registry(home, "registry.json", rev, folded)  # one good copy of the fold answers again
+    assert decision(run_hook(f"{DISPATCH_BASH} {rev}", MERGE_CALL, env)) == "deny"
 
 
 # Floor guards as the live settings run them (2026-10-07), each replaced by a stub that fails; the stub bytes never
@@ -956,3 +979,46 @@ def test_the_fixture_waits_for_a_running_install(tmp_path: Path) -> None:
             if run.poll() is None:
                 os.killpg(run.pid, 9)
                 run.wait(timeout=30)
+
+
+# ---------------------------------------------------------------------------------------------------- fix round 4
+# hook-dispatcher-2 round 3 (2026-10-08): the review of 34fd811b, and a live install that failed on Studio.
+
+
+def policy_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("install_policy", SOURCE / "install-policy.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_registry_problem_rejects_edited_entries_and_records():
+    """Review M2 and M3 of 34fd811b: rollback must not trust a registry whose entries were emptied beside an empty
+    per_hook, nor one whose per_hook timeout differs from the entry it folded into."""
+    policy = policy_module()
+    hooks = {"PreToolUse": [{"matcher": "Bash", "hooks": [DENY_MERGE, {"type": "command", "command": "true",
+                                                                       "timeout": 1}]}]}
+    _folded, registry = policy.fold_hooks(hooks)
+    assert policy.registry_problem(registry) is None
+    emptied = json.loads(json.dumps(registry))
+    emptied["entries"], emptied["per_hook"]["PreToolUse"] = {}, []
+    assert policy.registry_problem(emptied)
+    emptied["rev"] = policy.registry_rev({})  # a rev recomputed for the damage still fails on the event's shape
+    assert policy.registry_problem(emptied)
+    retimed = json.loads(json.dumps(registry))
+    retimed["per_hook"]["PreToolUse"][0]["hooks"][1]["timeout"] = 0.001
+    assert policy.registry_problem(retimed)
+
+
+def test_unfold_splits_hooks_another_installer_appended_to_a_dispatcher_group():
+    """2026-10-08: the open-factory tool appended its hook to the folded Bash group; install-policy refused to unfold
+    (`mixes the dispatcher with other hooks`) and every coding-agents sync failed. The appended hook stays per-hook."""
+    policy = policy_module()
+    hooks = {"PreToolUse": [{"matcher": "Bash", "hooks": [DENY_MERGE, {"type": "command", "command": "true"}]}]}
+    folded, registry = policy.fold_hooks(hooks)
+    added = {"type": "command", "command": "/usr/bin/python3 /opt/other/bash_guards.py", "timeout": 10}
+    folded["PreToolUse"][0]["hooks"].append(added)
+    unfolded = policy.unfold_hooks(folded, registry)
+    assert unfolded["PreToolUse"] == hooks["PreToolUse"] + [{"matcher": "Bash", "hooks": [added]}]

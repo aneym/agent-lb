@@ -663,6 +663,19 @@ def unfold_hooks(hooks: dict[str, Any], registry: dict[str, Any] | None) -> dict
             for group in groups
         ):
             continue
+        # Another installer may append its hooks to a dispatcher group (the open-factory tool did, 2026-10-08). Claude
+        # Code runs a group's hooks in parallel, so that group is the dispatcher group plus a group of the added hooks
+        # under the same matcher; the added ones stay per-hook, after the restored config.
+        split: list[Any] = []
+        for group in groups:
+            members = group.get("hooks") if isinstance(group, dict) else None
+            if isinstance(members, list) and len(members) > 1 and any(is_dispatch_hook(hook) for hook in members) \
+                    and not all(is_dispatch_hook(hook) for hook in members):
+                split.append({**group, "hooks": [hook for hook in members if is_dispatch_hook(hook)]})
+                split.append({**group, "hooks": [hook for hook in members if not is_dispatch_hook(hook)]})
+            else:
+                split.append(group)
+        groups = split
         if registry is None:
             raise ValueError(f"{event} hooks run through hook-dispatch.py but its registry is unreadable")
         if registry.get("dispatch", {}).get(event) == groups:
