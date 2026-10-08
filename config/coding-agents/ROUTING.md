@@ -9,7 +9,7 @@ Machines come from the deterministic factory registry (`factory machines`), not 
 Best first; only Claude is precious. Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
 - Spec'd code: `gpt-implementer` Sol medium first, `devin-seat` SWE high overflow, Sonnet high last. Opus stays off the routine code ladder.
 - Mechanical: `gpt-implementer` Sol low first, then `devin-seat` SWE medium overflow. Standard speed, never Fast; inputs under 256k.
-- Ladder update (2026-10-08, audit SIMPLIFY-2026-10-07 item 9): Cursor is out until a passing probe at the 2026-10-30 reset; switch only on real 429s or usage-limit errors.
+- Ladder update (2026-10-08, audit SIMPLIFY-2026-10-07 item 9): Cursor is out until a passing probe at the 2026-10-30 reset; switch only on real 429s or usage-limit errors. Evidence: real usage-limit errors (seat-run logs remerge-5053-cursor, s13-fold3 2026-10-07; gate notes 2026-10-05).
 - Read/explore: `gpt-explorer` Sol low; no decision rides on it.
 - Review, after merge only (2026-10-07): Sonnet high `verifier` for non-Claude authors; `codex-verifier` Sol xhigh for Claude-authored work. Money path, migrations and gate config get the same one post-merge reviewer as any change; no panel before GA (Alex, 2026-10-07: "not treating it liek a prod app yet until we're launched"). Grok and Composer never review.
 - Plans, specs, verdicts, design, build-lane tabs, job runners and fact helpers stay Opus until an eval says otherwise. Tabs Alex talks to stay Opus unless he picks Fable. Claude decides; other seats advise or type.
