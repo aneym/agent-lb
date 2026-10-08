@@ -22,3 +22,8 @@
 - [x] Folds switch atomically by rev; entries without a rev keep registry.legacy.json.
 - [x] Process counts observed by kqueue, with a self-test, in a git repo and outside one.
 - [x] no-chrome-guard prefilter covers factory f76e54a5a (PC rule).
+
+## 5. Fix round (2026-10-08, hook-dispatcher-3)
+
+- [x] The exec'd rewriter's own timeout is armed before the exec: a late rewrite never lands, the kill shows a notice; the fixture's 1.45 s rewriter under a 1 s timeout proves it.
+- [x] `~/.claude/hooks/wide-scan-guard.sh` is adopted as `config/coding-agents/hooks/wide-scan-guard.sh` and installed by install-policy.py; edits go to the source only.

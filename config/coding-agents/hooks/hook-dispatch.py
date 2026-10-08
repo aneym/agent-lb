@@ -19,9 +19,10 @@ How each hook runs (doubt keeps the old path: its own process through /bin/sh -c
 - rewriter: `rtk hook claude` (side-effect free, never blocks). It is skipped when a guard already denied or a later
   guard rewrote the input (that rewrite wins either way); when it is the only process still needed and every other
   guard answered nothing, this process execs into it, so the usual Bash call costs one process per event. The exec'd
-  rewriter has no timer of its own: Claude Code's timeout for the entry cancels one that hangs, with nothing shown,
-  as it cancelled the rewriter per-hook (a timer here would kill it with SIGALRM, which Claude Code reports as a
-  failed hook). The payload file is unlinked before the exec (fd 0 keeps it readable), so nothing is left behind.
+  rewriter carries its own timeout as a timer armed before the exec (build lead decision (a), 2026-10-08): one that
+  hangs or answers late is killed by SIGALRM at its own timeout, so a late rewrite never lands; Claude Code shows
+  that as a failed-hook notice, where per-hook it cancelled the rewriter with nothing shown. The payload file is
+  unlinked before the exec (fd 0 keeps it readable), so nothing is left behind.
 - external: everything else, exactly as configured.
 
 Answer: one guard with output passes through byte for byte, except an exit 2 without a JSON block reason, which
@@ -1173,13 +1174,16 @@ def rewriter_env():
 
 
 def exec_into(plan, payload, record):
-    """Replace this process with the rewriter: same pid, no timer of its own. Claude Code's timeout for this entry
-    (every guard's timeout added up, plus 5 s) is the one that ends a rewriter that hangs, and Claude Code cancels a
-    timed-out hook with nothing shown, as it cancelled the rewriter per-hook. A timer here would kill it with
-    SIGALRM instead, which Claude Code reports as a failed hook (`Failed with non-blocking status code`); that
-    notice is not what the user saw per-hook (2026-10-07 review M2). Timers this process inherited are cleared.
-    The payload file is unlinked first (fd 0 keeps it readable): a successful exec leaves nothing behind. When the
-    exec fails, the file is written again and the caller runs the rewriter through /bin/sh."""
+    """Replace this process with the rewriter: same pid, bounded by the rewriter's own timeout. The timer is armed
+    just before the exec with SIGALRM at its default action, and an interval timer survives exec, so a rewriter that
+    hangs or answers after its timeout is killed then and its late rewrite never lands. Without it, Claude Code's
+    timeout for the whole entry (every guard's timeout added up, plus 5 s) was the bound, and a rewrite that came
+    after the rewriter's own timeout but before the entry's was applied, which per-hook it never was. Build lead
+    decision (a), 2026-10-08: the kill shows as a failed-hook notice (`Failed with non-blocking status code: No
+    stderr output`) where per-hook the cancel showed nothing; that notice is accepted and replaces the 2026-10-07
+    review M2 choice of no timer. The payload file is unlinked first (fd 0 keeps it readable): a successful exec
+    leaves nothing behind. When the exec fails, the timer is cleared, the file is written again and the caller runs
+    the rewriter through /bin/sh."""
     words = plan.command.split()
     target = which(words[0])
     if not target:
@@ -1194,9 +1198,12 @@ def exec_into(plan, payload, record):
     payload.close()
     signal.setitimer(signal.ITIMER_REAL, 0)
     signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGALRM])
+    signal.setitimer(signal.ITIMER_REAL, plan.timeout)
     try:
         os.execve(target, words, rewriter_env())
     except OSError:
+        signal.setitimer(signal.ITIMER_REAL, 0)
         payload.restore()
 
 

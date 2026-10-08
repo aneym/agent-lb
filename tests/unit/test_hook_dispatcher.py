@@ -11,8 +11,10 @@ import json
 import os
 import resource
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -500,15 +502,14 @@ def test_a_payload_that_cannot_be_written_refuses_and_leaves_no_file(tmp_path: P
 FAKE_RTK = """#!/bin/sh
 input=$(cat)
 case "$input" in
-  *hang-rewriter*) exec sleep 30 ;;
-  *slow-rewriter*) sleep 2 ;;
+  *late-rewriter*) sleep 1.45 ;;
 esac
 printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rewritten"}}}'
 """
 
 
-def rewriter_home(tmp_path: Path, wrapper: str = "") -> tuple[Path, dict]:
-    home, env = dispatcher_home(tmp_path, [{"type": "command", "command": "rtk hook claude", "timeout": 2.45}])
+def rewriter_home(tmp_path: Path, wrapper: str = "", timeout: float = 2.45) -> tuple[Path, dict]:
+    home, env = dispatcher_home(tmp_path, [{"type": "command", "command": "rtk hook claude", "timeout": timeout}])
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "rtk").write_text(wrapper or FAKE_RTK)
@@ -544,21 +545,30 @@ def run_owned(command: str, payload: dict, env: dict, timeout: float) -> subproc
         proc.wait(timeout=30)
 
 
-def test_the_execd_rewriter_runs_without_a_timer_and_a_hang_is_cancelled_by_the_entry(tmp_path: Path) -> None:
-    """Review M2 of 4e0dfdaa: the exec'd rewriter inherited a timer and a hang ended in SIGALRM, which Claude Code
-    shows as `Failed with non-blocking status code: No stderr output`; per-hook the rewriter was cancelled with
-    nothing shown. Now no timer reaches it, so a hang lasts until Claude Code's own timeout for the entry, which
-    cancels it as before; the payload file is still gone."""
+def test_the_execd_rewriter_is_bounded_by_its_own_timeout_and_a_late_rewrite_never_lands(tmp_path: Path) -> None:
+    """Build lead decision (a), 2026-10-08, on the exec'd rewriter: with no timer, a rewriter that answered after its
+    own timeout but before the entry's (its timeout plus 5 s) had its rewrite applied, which per-hook Claude Code had
+    cancelled. Now its own timeout is armed before the exec and survives it: the rewriter sees it running, and a 1.45 s
+    rewriter under a 1 s timeout is killed by SIGALRM at 1 s, with no rewrite, well inside the entry's 6 s, which
+    Claude Code shows as a failed-hook notice (a signal exit, no stderr). The payload file is gone either way."""
     (tmp_path / "t").mkdir()
-    _home, env = rewriter_home(tmp_path / "t", TIMER_RTK)
+    _home, env = rewriter_home(tmp_path / "t", TIMER_RTK)  # the rewriter's own timeout is 2.45 s
     call = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "hook_event_name": "PreToolUse"}
     result = run_owned(DISPATCH_BASH, call, env, 30)
     assert result is not None and result.returncode == 0, result
-    assert json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"] == "0.00"
+    left = float(json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]["command"])
+    assert 0 < left <= 2.45, left
     assert not [name for name in os.listdir(env["TMPDIR"]) if name.startswith("hook-dispatch-")]
-    _home, env = rewriter_home(tmp_path)  # the rewriter's own timeout is 2.45 s
-    hang = {"tool_name": "Bash", "tool_input": {"command": "echo hang-rewriter"}, "hook_event_name": "PreToolUse"}
-    assert run_owned(DISPATCH_BASH, hang, env, 4.5) is None  # still running past 2.45 s: the entry's timeout ends it
+    (tmp_path / "late").mkdir()
+    _home, env = rewriter_home(tmp_path / "late", timeout=1)
+    late = {"tool_name": "Bash", "tool_input": {"command": "echo late-rewriter"}, "hook_event_name": "PreToolUse"}
+    started = time.monotonic()
+    result = run_owned(DISPATCH_BASH, late, env, 6)  # 6 s: the entry's own timeout (1 + 5)
+    seconds = time.monotonic() - started
+    assert result is not None, "the rewriter ran to the entry's timeout: its own timer did not end it"
+    assert result.returncode in (-signal.SIGALRM, 128 + signal.SIGALRM), result  # a failed-hook notice
+    assert result.stdout == "" and "updatedInput" not in result.stdout, result
+    assert seconds < 6, seconds
     assert not [name for name in os.listdir(env["TMPDIR"]) if name.startswith("hook-dispatch-")]
 
 
@@ -878,6 +888,23 @@ def test_the_fold_drops_the_global_prettier_hook(tmp_path: Path) -> None:
     assert "prettier" not in json.dumps(hooks_of(home)) and "prettier" not in json.dumps(registry)
     install("--hook-dispatcher", "off")
     assert "prettier" not in json.dumps(hooks_of(home))
+
+
+def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) -> None:
+    """wide-scan-guard.sh had no source, so each hand edit of the live copy unpinned it (2026-10-08). install-policy
+    now installs it from config/coding-agents/hooks: byte for byte, executable (settings run it by path, so a 0644
+    copy would fail open on every Bash call), and it still refuses a root scan and allows a scoped one."""
+    home, _settings = make_home(tmp_path)
+    install, env = installer(tmp_path, home)
+    install()
+    guard = home / ".claude/hooks/wide-scan-guard.sh"
+    assert guard.read_bytes() == (SOURCE / "hooks/wide-scan-guard.sh").read_bytes()
+    assert os.access(guard, os.X_OK)
+    call = {"tool_name": "Bash", "hook_event_name": "PreToolUse", "cwd": str(tmp_path)}
+    refused = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg needle /"}}, env)
+    assert refused.returncode == 2 and "BLOCKED: recursive search" in refused.stderr, refused
+    allowed = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg -n needle src"}}, env)
+    assert allowed.returncode == 0 and not allowed.stdout, allowed
 
 
 def test_rollback_passes_over_a_registry_that_cannot_restore_the_guards(tmp_path: Path) -> None:

@@ -180,6 +180,14 @@ MANAGED_AGENTS = (
         Path("hooks/workflow-seat-guard.py"),
     ),
     (
+        # Adopted 2026-10-08 (hook-dispatcher-3): it had no source, so every hand edit of the live copy unpinned it.
+        # Edit this source only; hook-dispatch.py SCRIPT_PREFILTERS pins its sha256: re-pin on a change.
+        Path(".claude/hooks/wide-scan-guard.sh"),
+        Path(".agent-lb/managed/coding-agents/wide-scan-guard"),
+        "agent-lb:wide-scan-guard:v1\n",
+        Path("hooks/wide-scan-guard.sh"),
+    ),
+    (
         Path(".claude/hooks/hook-dispatch.py"),
         Path(".agent-lb/managed/coding-agents/hook-dispatch"),
         "agent-lb:hook-dispatch:v1\n",
@@ -1364,7 +1372,7 @@ def main() -> int:
             print(f"removed {path}")
         else:
             write_atomic(path, content)
-            if path.suffix == ".py" or path.name in ("verify-routing", "route", "seat"):
+            if path.suffix in (".py", ".sh") or path.name in ("verify-routing", "route", "seat"):
                 os.chmod(path, path.stat().st_mode | 0o111)
             print(f"updated {path}")
     for reason, path in preserved_agents:

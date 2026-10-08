@@ -11,7 +11,10 @@ system message and error notices, continue), emulated here independently of the 
 floor rule applied to the per-hook results (a floor guard that fails refuses the call), and (3) the files each path
 leaves in the sandbox. Results are compared as observed: a dispatcher entry that hits its timeout here is cancelled
 as Claude Code cancels a hook. A case whose only difference may be a guard's timeout on a loaded machine is rerun
-(at most twice) before it counts.
+(at most twice) before it counts. One expected difference is modelled, as the floor rule is: a rewriter the
+dispatcher execs into carries its own timeout as a timer (build lead decision (a), 2026-10-08), so where per-hook it
+hit that timeout and was cancelled with nothing shown, the dispatcher's is killed by SIGALRM at it: no rewrite, and
+a failed-hook notice.
 
 Floor replay: each live floor guard is made to time out, crash, go missing and print a malformed answer (a stub in
 the sandbox, never the real file); the dispatcher must refuse every one, and a non-floor control must fail open.
@@ -310,6 +313,14 @@ def with_floor(event, results, unfolded=()):
                 result = dict(result, code=raw["code"], out=raw["out"], err=raw["err"], timed_out=False)
         out.append(result)
     return out
+
+
+def with_exec_timer(results, execd):
+    """The per-hook results as the dispatcher must answer when it exec'd into a rewriter (a command in `execd`): one
+    that hit its own timeout per-hook is killed by the timer armed before the exec, which Claude Code reads as a
+    signal exit with no stderr (a failed-hook notice), never as a cancel and never as its late rewrite."""
+    return [dict(result, code=128 + signal.SIGALRM, out="", err="", timed_out=False)
+            if result["command"] in execd and result["timed_out"] else result for result in results]
 
 
 def effective(result):
@@ -646,8 +657,10 @@ def run_case(sandbox, registry, case):
     # Each result is compared as observed: a dispatcher entry that hit its timeout here (this harness kills it as
     # Claude Code does) is a cancelled hook, exactly as a per-hook hook that hit its own.
     unfolded = {result["command"] for result in new_results if not result["trace"]}  # left per-hook by the fold
+    execd = {record["exec"] for result in new_results for record in result["trace"] if record.get("exec")}
     old_plain = same(effect(event, old_results), run)
-    old_view = same(effect(event, with_floor(event, old_results, unfolded)), run)
+    expected = with_exec_timer(old_results, execd)
+    old_view = same(effect(event, with_floor(event, expected, unfolded)), run)
     new_view = same(effect(event, new_results), run2)
     # (2) what Claude Code does with the answers
     if old_view != new_view:
@@ -667,7 +680,7 @@ def run_case(sandbox, registry, case):
                     new_by_command[row["command"]] = (None, row["mode"])
                 elif "code" in row:
                     new_by_command[row["command"]] = (effective(row), row.get("mode"))
-    for old in old_results:
+    for old in expected:
         if old["command"] not in new_by_command:
             outcome["mismatches"].append({"what": "guard did not run on the new path", "command": old["command"]})
             continue
@@ -705,12 +718,21 @@ def run_case(sandbox, registry, case):
     outcome["block_message"] = old_plain["block"][:400]
     outcome["new_decision"] = new_view["decision"] or "allow"
     outcome["new_block_message"] = new_view["block"][:400]
+    # What the dispatcher path showed and how long its entries ran: the exec'd rewriter's timeout case reads these.
+    outcome["new_updated_input"] = new_view["updatedInput"]
+    outcome["new_shown"] = new_view["shown"][:400]
+    outcome["new_codes"] = [result["code"] for result in new_results]
+    outcome["new_seconds"] = max([result["seconds"] for result in new_results] or [0])
+    outcome["new_timed_out"] = any(result["timed_out"] for result in new_results)
+    outcome["execd"] = sorted(execd)
     if case.get("expect"):
         outcome["expect"] = case["expect"]
         outcome["expect_ok"] = outcome["decision"] == case["expect"]
     outcome["modes"] = modes
+    # An exec'd rewriter killed by its own timer hit its timeout too (a loaded machine can push a quick one past it).
     outcome["timeouts"] = any(r["timed_out"] for r in old_results + new_results) or any(
-        row.get("timed_out") for r in new_results for record in r["trace"] for row in record.get("hooks", []))
+        row.get("timed_out") for r in new_results for record in r["trace"] for row in record.get("hooks", [])) or any(
+        r["code"] == 128 + signal.SIGALRM and any(record.get("exec") for record in r["trace"]) for r in new_results)
     outcome["result"] = "pass" if not outcome["mismatches"] else "fail"
     return outcome
 
@@ -1045,13 +1067,14 @@ SYNTHETIC = {
     "hang.sh": ("#!/bin/bash\nsleep 30\n", 0o755),
     "failclosed.sh": ("#!/bin/bash\necho 'BLOCKED: synthetic shell refusal' >&2\nexit 2\n", 0o755),
 }
-# A stand-in for `rtk hook claude` (on the sandbox PATH): rewrites the command at once, or never for a
-# `hang-rewriter` one. The dispatcher execs into it with no timer, so a hang ends at the dispatcher entry's own
-# timeout, where this harness (as Claude Code) cancels it: the observed result, compared as it is.
+# A stand-in for `rtk hook claude` (on the sandbox PATH): rewrites the command at once, or after 1.45 s for a
+# `late-rewriter` one. The RewriteLate entry gives it a 1 s timeout: per-hook it is cancelled at 1 s; the dispatcher
+# execs into it with that timeout armed as a timer, so it is killed at 1 s and its late rewrite never lands (build
+# lead decision (a), 2026-10-08), well before the entry's own timeout (6 s) would have cancelled it.
 FAKE_RTK = """#!/bin/sh
 input=$(cat)
 case "$input" in
-  *hang-rewriter*) exec sleep 30 ;;
+  *late-rewriter*) sleep 1.45 ;;
 esac
 printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"rtk rewritten"}}}'
 """
@@ -1076,7 +1099,7 @@ def synthetic_registry():
     ]
     groups = [{"matcher": "Bash", "hooks": hooks}, {"matcher": "Agent", "hooks": closed},
               {"matcher": "RewriteSlow", "hooks": [{"type": "command", "command": "rtk hook claude", "timeout": 2.45}]},
-              {"matcher": "RewriteHang", "hooks": [{"type": "command", "command": "rtk hook claude", "timeout": 1.45}]}]
+              {"matcher": "RewriteLate", "hooks": [{"type": "command", "command": "rtk hook claude", "timeout": 1}]}]
     return build_registry({"PreToolUse": groups}, ["crash.py", "hang.py", "failclosed.py"])
 
 
@@ -1197,7 +1220,7 @@ def crash_cases(root, dispatcher, real_home):
     for name, tool, command in (("crash-and-timeout-fail-open", "Bash", "true"),
                                 ("crash-fail-closed-and-timeout", "Agent", "true"),
                                 ("rewriter-execd-rewrites", "RewriteSlow", "echo plain-rewriter"),
-                                ("rewriter-hang-times-out", "RewriteHang", "echo hang-rewriter")):
+                                ("rewriter-late-times-out", "RewriteLate", "echo late-rewriter")):
         case = dict(event="PreToolUse", tool=tool, input={"command": command, "prompt": "x"}, name=name, expect=None)
         outcome, attempts = run_case(sandbox, registry, case), 1
         while timing_only(outcome) and attempts < 3:  # a loaded machine: the slow rewriter ran past its 2.45 s

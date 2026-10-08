@@ -22,7 +22,8 @@ The hook dispatcher MUST give Claude Code the same decision, block message, upda
 
 #### Scenario: The exec'd rewriter hangs
 - **WHEN** the dispatcher execs into `rtk hook claude` and it runs past its own timeout T
-- **THEN** it is stopped at T (to the fraction of a second, from its start) with nothing written, so no rewrite applies, and no payload temp file is left
+- **THEN** it is stopped at T (to the fraction of a second, from the exec) by a timer armed before the exec, with nothing written, so no late rewrite applies, and no payload temp file is left
+- **AND** Claude Code shows the kill as a failed-hook notice (build lead decision (a), 2026-10-08), where per-hook the cancel showed nothing
 
 ### Requirement: Half-installed states fail closed
 
