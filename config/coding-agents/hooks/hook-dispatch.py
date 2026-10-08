@@ -47,7 +47,8 @@ did per-hook; a refused UserPromptSubmit would erase every prompt of the session
 
 Registry revisions: install-policy names each fold `registry.<rev>.json` and puts the rev in every settings entry
 (`... <Event> '<matcher>' <rev>`), so settings and the guards they run switch in one atomic settings write and a
-session still on older settings keeps the guards it started with. Each candidate registry of the entry's own fold is
+session still on older settings keeps the guards it started with. A registry whose entries no longer hash to its
+rev is damaged and never answers. Each candidate registry of the entry's own fold is
 tried in turn and the first whose entry for this matcher is a valid hook list wins, so a damaged copy falls back to a
 good copy of the same fold: the rev's own file, then registry.json and its backup when they carry that rev; for an
 entry without a rev, registry.json and its backup when they have none, then registry.legacy.json (the fold entries
@@ -1094,11 +1095,21 @@ def load_entry(event, key, rev=None):
             errors.append("%s: fold %s, not this entry's %s" % (
                 os.path.basename(path), registry.get("rev") or "without a rev", rev or "(without a rev)"))
             continue
+        if rev and entries_rev(registry["entries"]) != rev:
+            # The rev names the hooks the fold runs (install-policy registry_rev); entries edited since, a guard
+            # dropped from a list included, no longer hash to it (2026-10-08 review M1).
+            errors.append("%s: entries do not hash to rev %s" % (os.path.basename(path), rev))
+            continue
         try:
             return registry, entry_hooks(registry, event, key), path
         except ValueError as exc:
             errors.append("%s: %s" % (os.path.basename(path), exc))
     raise ValueError("; ".join(errors))
+
+
+def entries_rev(entries):
+    """install-policy.py registry_rev: the first 12 hex of sha256 over the entries as sorted-key JSON."""
+    return hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 
 def entry_hooks(registry, event, key):
@@ -1303,7 +1314,9 @@ def run_entry(event, hooks, raw, inproc_names, key=None):
             if blocked or superseded:
                 results[index] = Result(0, b"", b"", False, "skipped (%s)" % ("blocked" if blocked else "superseded"))
                 continue
-            others_quiet = not started and all(r.empty() for _i, r in known) and \
+            # A floor guard that failed under a `|| true` wrapper reads as empty here, yet refuses the call at the
+            # merge; it never counts as quiet (2026-10-08 review: the exec skipped that refusal).
+            others_quiet = not started and all(r.empty() and not r.floor_failure for _i, r in known) and \
                 all(p.kind == "rewriter" or results[i] is not None for i, p in enumerate(plans) if i != index)
             if others_quiet and sum(1 for p in plans if p.kind == "rewriter") == 1 \
                     and not subagent_bash(payload_obj, event):

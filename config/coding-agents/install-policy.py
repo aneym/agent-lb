@@ -514,12 +514,21 @@ def registry_problem(registry: Any) -> str | None:
     per_hook, entries, dispatch = registry.get("per_hook"), registry.get("entries"), registry.get("dispatch")
     if not (isinstance(per_hook, dict) and isinstance(entries, dict) and isinstance(dispatch, dict)):
         return "per_hook, entries or dispatch is missing"
-    for event, keyed in entries.items():
+    # The rev names the hooks the fold runs; entries edited since no longer hash to it (2026-10-08 review M2).
+    if registry.get("rev") and registry_rev(entries) != registry["rev"]:
+        return f"entries do not hash to rev {registry['rev']}"
+    # Every event any block names is checked, not only the events of entries (2026-10-08 review M2: `entries: {}`
+    # beside an intact dispatch list and an empty per_hook passed).
+    for event in dict.fromkeys(list(entries) + list(per_hook) + list(dispatch)):
+        keyed = entries.get(event)
         groups = per_hook.get(event)
         folded = dispatch.get(event)
         if not isinstance(keyed, dict) or not isinstance(groups, list) or not isinstance(folded, list):
             return f"{event}: entries, per_hook or dispatch is not the right shape"
-        commands: dict[str, set[str]] = {}
+        # Each entry is exactly what the fold derives from the per_hook groups folded into it: the same hook records
+        # (timeout and every other field, not only the command), deduplicated by command, in config order (2026-10-08
+        # review M3: a per_hook timeout of 0.001 beside an entry timeout of 1 passed).
+        derived: dict[str, list[Any]] = {}
         for group in groups:
             if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
                 return f"{event}: a per_hook group is not a group"
@@ -531,13 +540,13 @@ def registry_problem(registry: Any) -> str | None:
             for hook in group["hooks"]:
                 if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
                     return f"{event}: a per_hook hook is not a command hook"
-                commands.setdefault(key, set()).add(hook["command"])
+                if all(hook["command"] != seen["command"] for seen in derived.setdefault(key, [])):
+                    derived[key].append(hook)
         for key, hooks in keyed.items():
             if not isinstance(hooks, list) or not hooks:
                 return f"{event} '{key}': the entry is not a list of hooks"
-            for hook in hooks:
-                if not isinstance(hook, dict) or hook.get("command") not in commands.get(key, set()):
-                    return f"{event} '{key}': entry hook {str(hook)[:80]} is not in per_hook"
+            if hooks != derived.get(key):
+                return f"{event} '{key}': the entry is not the per_hook groups folded into it"
         for group in folded:
             if not isinstance(group, dict):
                 return f"{event}: a folded group is not a group"
@@ -1193,6 +1202,12 @@ def main() -> int:
             elif agent_path.exists():
                 preserved_agents.append(("unmanaged", agent_path))
         else:
+            if keep_fold and template_relative_path in (Path(DISPATCH_SCRIPT), Path("hooks/hook-dispatch-parity.py")):
+                # The kept fold runs the dispatcher its fixture passed on: the rejected one is not published over it
+                # (2026-10-08 review M2), and the next run that passes publishes it.
+                if agent_text != agent_template:
+                    print(f"hook dispatcher: keeping the installed {relative_path.name}; the new one failed the fixture")
+                continue
             if agent_text != agent_template:
                 changes[agent_path] = agent_template
             if not agent_owned:

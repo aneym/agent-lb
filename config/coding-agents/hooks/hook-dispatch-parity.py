@@ -353,8 +353,11 @@ class Sandbox(object):
         if os.path.lexists(dispatcher_link):
             os.unlink(dispatcher_link)
         os.symlink(os.path.abspath(dispatcher), dispatcher_link)
-        with open(os.path.join(hooks_dir, "dispatch", "registry.json"), "w") as handle:
-            json.dump(registry, handle, indent=2)
+        # As installed: registry.json and the rev file every settings entry reads first (2026-10-08 review M3).
+        names = ["registry.json"] + (["registry.%s.json" % registry["rev"]] if registry.get("rev") else [])
+        for name in names:
+            with open(os.path.join(hooks_dir, "dispatch", name), "w") as handle:
+                json.dump(registry, handle, indent=2)
         for rel in remove:  # a guard the run must find missing: its link goes (never the real file behind it)
             path = os.path.join(self.template, rel)
             if os.path.islink(path) or os.path.isfile(path):
@@ -741,6 +744,16 @@ def child_pids(pid):
     return [buf[i] for i in range(max(0, min(count, 4096))) if buf[i] > 0]
 
 
+def reaped_children(pid):
+    """True when pid has reaped a child (rusage_info_v1 ri_child_elapsed_abstime > 0), None when unreadable."""
+    native = _native()
+    ctypes = native["ctypes"]
+    buf = (ctypes.c_uint64 * 20)()  # ri_uuid (2 words), then 16 counters; RUSAGE_INFO_V1 = 1
+    if native["proc"].proc_pid_rusage(pid, 1, buf) != 0:
+        return None
+    return buf[17] > 0
+
+
 def proc_argv(pid):
     """A process's argv (sysctl KERN_PROCARGS2), or None when it is gone or unreadable."""
     native = _native()
@@ -776,7 +789,8 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
     every pid so found; `hook_layer` counts the root and each child a dispatcher process forked (the guard
     processes it starts; a process an in-process guard starts counts here too, which only makes the count higher).
     `observed` is False (nothing claimed) when the watch could not be set, the root did not exit in time, part of the
-    tree outlived it by more than `grace` seconds, or a process forked more children than were found."""
+    tree outlived it by more than `grace` seconds, a process forked more children than were found, or a process
+    reaped a child before its watch was on."""
     row = {"observed": False, "processes": None, "processes_lower": None, "hook_layer": None, "code": None,
            "why": None, "tree": []}
     if not hasattr(select, "kqueue") or sys.platform != "darwin":
@@ -808,7 +822,7 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
     own_group = os.getpgrp()
     kq = select.kqueue()
     known = {root: {"parent": None, "by_dispatcher": False}}
-    forks, live, stopped, missed = {}, set(), set(), []
+    forks, live, stopped, missed, gaps = {}, set(), set(), [], []
     flags = select.KQ_NOTE_FORK | select.KQ_NOTE_EXEC | select.KQ_NOTE_EXIT
 
     def watch(pid):
@@ -842,16 +856,22 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
         stopped.clear()
 
     def sweep():
-        frontier = list(known)
+        frontier = [(pid, False) for pid in known]
         while frontier:
-            pid = frontier.pop()
+            pid, new = frontier.pop()
             for child in child_pids(pid):
                 if child in known:
                     continue
                 known[child] = {"parent": pid, "by_dispatcher": pid in live and runs_dispatcher(pid)}
                 freeze([child])
                 watch(child)
-                frontier.append(child)
+                frontier.append((child, True))
+            # A process found here ran unwatched from its fork until now: a child it started and reaped in that
+            # window sent no event and is listed nowhere. Its rusage still shows the reaped child, so such a gap
+            # makes the count incomplete, never a low count claimed as observed (2026-10-08 review M1). Read after
+            # its children are listed, so a child reaped since then errs toward incomplete.
+            if new and reaped_children(pid) is not False:
+                gaps.append(pid)
 
     watching = watch(root)
     if not watching:
@@ -920,9 +940,13 @@ def observe(command, payload, env, cwd, timeout, grace=5.0):
     row["processes_lower"] = max(len(known), 1 + sum(forks.values()))
     row["hook_layer"] = 1 + sum(1 for info in known.values() if info["by_dispatcher"])
     row["missed"] = missed
+    row["gaps"] = gaps
     if missed and not row["why"]:
         row["why"] = "a process forked more children than were found: %s" % missed
-    row["observed"] = bool(watching and root_exit is not None and not leftover and not missed and not row["why"])
+    if gaps and not row["why"]:
+        row["why"] = "a process reaped a child before it was watched: %s" % gaps
+    row["observed"] = bool(watching and root_exit is not None and not leftover and not missed and not gaps
+                           and not row["why"])
     return row
 
 
@@ -990,10 +1014,16 @@ def process_count(sandbox, registry, jobs=4):
 
     def one(pair):
         where, command = pair
-        new = measure_call(sandbox, registry, command, where, "dispatcher")
+        # An incomplete watch (a gap, a missed fork) is no count at all, so it is observed again, up to three times;
+        # only a complete observation is used.
+        for attempt in range(1, 4):
+            new = measure_call(sandbox, registry, command, where, "dispatcher")
+            if new["complete"]:
+                break
         old = measure_call(sandbox, registry, command, where, "per-hook")
         ok = new["complete"] and new["hook_layer"] <= 2 and new["processes"] <= old["processes"]
-        return {"command": command, "cwd": where, "processes": new["processes"] if new["complete"] else None,
+        return {"command": command, "cwd": where, "attempts": attempt,
+                "processes": new["processes"] if new["complete"] else None,
                 "hook_layer": new["hook_layer"] if new["complete"] else None, "per_hook_processes": old["processes"],
                 "per_hook_complete": old["complete"], "ok": ok, "detail": new["detail"],
                 "per_hook_detail": old["detail"]}
