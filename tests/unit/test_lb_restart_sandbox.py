@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import plistlib
 import subprocess
@@ -337,3 +338,155 @@ def test_standby_start_refuses_a_bootstrap_that_is_a_link(tmp_path: Path) -> Non
     os.link(live, bootstrap)
     with pytest.raises(lb.SandboxRefused):
         lb.read_plist()
+
+
+# ---------------------------------------------------------------- S2 fix round 3 (review FAIL on ea866e22)
+
+
+def _built_sandbox(tmp_path: Path, name: str = "r1") -> Path:
+    """A sandbox laid out as lb-sandbox start leaves it (config, plist, bootstrap); returns the config path."""
+    root = tmp_path / ".agent-lb" / "sandboxes" / name
+    config = _config(
+        tmp_path,
+        root=str(root),
+        plist=str(root / "launchd" / "com.agent-lb.drill.sbx-r1.plist"),
+        runtime=str(root / "runtime"),
+        state_dir=str(root / "state"),
+    )
+    (root / "launchd").mkdir(parents=True)
+    (root / "runtime").mkdir()
+    (root / "bin").mkdir()
+    (root / "bin" / "lb-sandbox").write_text("#!/usr/bin/env python3\n")
+    Path(config["plist"]).write_bytes(plistlib.dumps(_plist(root)))
+    path = root / "lb-restart.json"
+    path.write_text(json.dumps(config))
+    return path
+
+
+def _apply(lb: ModuleType, config: Path, home: Path) -> None:
+    """apply_sandbox with the test's home in place of the real one (the guard reads it from pwd)."""
+    lb._real_home = lambda: home
+    lb.apply_sandbox(config)
+
+
+def test_a_sandboxes_dir_swapped_for_a_link_after_the_guard_never_reaches_live_state(tmp_path: Path) -> None:
+    """Finding (lb-restart:333): a valid sandbox named 'runtime'; after validation the sandboxes dir becomes a
+    link to ~/.agent-lb, so <root>/lb-restart.lock names the live runtime/lb-restart.lock, which lock
+    acquisition truncated. Every write now goes through the pinned root, and exec-by-path is refused."""
+    lb = _load()
+    config = _built_sandbox(tmp_path, "runtime")
+    live = tmp_path / ".agent-lb" / "runtime"  # the live runtime dir the swapped path would name
+    live.mkdir()
+    for name, text in (("lb-restart.lock", "pid=1 live\n"), ("sync.log", "live log\n")):
+        (live / name).write_text(text)
+    (tmp_path / ".agent-lb" / "state").mkdir()
+    _apply(lb, config, tmp_path)
+    sandboxes = tmp_path / ".agent-lb" / "sandboxes"
+    sandboxes.rename(tmp_path / ".agent-lb" / "moved")
+    sandboxes.symlink_to(tmp_path / ".agent-lb")
+    with lb.Lock("unit", 1):
+        pass
+    lb.sync_log("unit")
+    assert (live / "lb-restart.lock").read_text() == "pid=1 live\n"
+    assert (live / "sync.log").read_text() == "live log\n"
+    assert (tmp_path / ".agent-lb" / "moved" / "runtime" / "logs" / "sync.log").read_text().endswith("unit\n")
+    with pytest.raises(lb.SandboxRefused):
+        lb.verify_sandbox_ancestry()  # what start_standby runs before it execs anything by path
+
+
+def test_a_sandboxes_dir_that_is_already_a_link_is_refused(tmp_path: Path) -> None:
+    """The same swap before the guard: resolving made ~/.agent-lb/runtime look directly under the sandboxes."""
+    lb = _load()
+    _built_sandbox(tmp_path, "runtime")
+    sandboxes = tmp_path / ".agent-lb" / "sandboxes"
+    sandboxes.rename(tmp_path / ".agent-lb" / "moved")
+    sandboxes.symlink_to(tmp_path / ".agent-lb")
+    live_lock = tmp_path / ".agent-lb" / "runtime" / "lb-restart.lock"
+    live_lock.parent.mkdir()
+    live_lock.write_text("pid=1 live\n")
+    with pytest.raises(lb.SandboxRefused, match="link"):
+        _apply(lb, tmp_path / ".agent-lb" / "moved" / "runtime" / "lb-restart.json", tmp_path)
+    assert live_lock.read_text() == "pid=1 live\n"
+    assert lb.SANDBOX_ROOT is None and lb.LOCK_FILE == lb.LIVE_BINDINGS["LOCK_FILE"]
+
+
+@pytest.mark.parametrize(
+    "planted", ["lb-restart.lock", "state/front.json", "watchdog.pause", "launchd/com.agent-lb.drill.sbx-r1.plist"]
+)
+def test_an_in_root_symlink_is_refused_before_anything_is_written(tmp_path: Path, planted: str) -> None:
+    """Finding (lb-restart:176): the guard resolved paths first, so lb-restart.lock -> lb-restart.json passed
+    as an in-root single-link file and lock acquisition overwrote the config. The link itself is refused."""
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    root = config.parent
+    before = config.read_bytes()
+    target = root / "launchd" / "copy.plist" if planted.endswith(".plist") else config
+    if planted.endswith(".plist"):
+        target.write_bytes((root / planted).read_bytes())
+        (root / planted).unlink()
+    (root / planted).parent.mkdir(parents=True, exist_ok=True)
+    (root / planted).symlink_to(target)
+    with pytest.raises(lb.SandboxRefused, match="link"):
+        _apply(lb, config, tmp_path)
+    assert config.read_bytes() == before
+
+
+def test_an_in_root_symlink_planted_after_the_guard_is_refused_at_use(tmp_path: Path) -> None:
+    lb = _load()
+    config = _built_sandbox(tmp_path)
+    before = config.read_bytes()
+    _apply(lb, config, tmp_path)
+    (config.parent / "lb-restart.lock").symlink_to(config)
+    with pytest.raises(lb.SandboxRefused):
+        with lb.Lock("unit", 1):
+            pass
+    (config.parent / "state").mkdir()
+    (config.parent / "state" / "front.json").symlink_to(config)
+    with pytest.raises(lb.SandboxRefused):
+        lb.front_routes_to(2471, timeout=0)
+    assert config.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--reap", "{pid}", "0", "--sandbox={config}"],
+        ["--reap", "{pid}", "0", "--sandbox"],
+        ["--reap", "{pid}", "0", "--sand", "{config}"],
+        ["--reap", "{pid}", "0", "--sandbox", "{config}", "--extra"],
+        ["--reap", "{pid}", "0", "{config}"],
+        ["--reap={pid}", "0"],
+        ["--reason", "x", "--reap", "{pid}", "0"],
+    ],
+)
+def test_the_reaper_refuses_any_argument_list_it_did_not_write(tmp_path: Path, argv: list[str]) -> None:
+    """Finding (lb-restart:874): '--reap <live standby pid> 0 --sandbox=<config>' skipped binding, kept the live
+    standby port and SIGKILLed the live standby. A stand-in that looks like the live standby must survive."""
+    standin = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", "agent-lb", "--port", "2459"],
+        start_new_session=True,
+    )
+    try:
+        words = [w.format(pid=standin.pid, config=tmp_path / "lb-restart.json") for w in argv]
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), *words],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            env={**os.environ, "HOME": str(tmp_path)},  # a broken parser logs to this home, never the live one
+        )
+        assert proc.returncode == 2, proc.stderr
+        assert standin.poll() is None, "the stand-in standby was signalled"
+    finally:
+        standin.kill()
+        standin.wait(10)
+
+
+def test_the_reaper_reads_back_exactly_what_spawn_reaper_writes() -> None:
+    lb = _load()
+    assert lb.parse_reaper_args(["--reap", "123", "90"]) == (123, 90.0, None)
+    assert lb.parse_reaper_args(["--reap", "123", "90", "--sandbox", "/x/c.json"]) == (123, 90.0, Path("/x/c.json"))
+    for bad in (["--reap", "0", "90"], ["--reap", "-5", "90"], ["--reap", "1", "90"], ["--reap", "12", "nan"]):
+        with pytest.raises(lb.SandboxRefused):
+            lb.parse_reaper_args(bad)

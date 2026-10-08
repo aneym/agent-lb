@@ -94,6 +94,29 @@ SANDBOX_MIN_PORT = 2470
 SANDBOX_KEYS = ("root", "label", "plist", "runtime", "state_dir", "front_port", "primary_port", "standby_port")
 SANDBOX_CONFIG: Path | None = None
 SANDBOX_ROOT: Path | None = None  # set by --sandbox; processes outside it are never signalled
+# What apply_sandbox restores when a refusal comes after the constants were rebound.
+LIVE_BINDINGS: dict[str, object] = {
+    name: globals()[name]
+    for name in (
+        "SANDBOX_ROOT",
+        "RUNTIME",
+        "BACKUPS",
+        "SYNC_LOG",
+        "STATE_DIR",
+        "LOCK_FILE",
+        "PREFERRED_FILE",
+        "FRONT_STATE",
+        "STANDBY_PIDFILE",
+        "STANDBY_LOG",
+        "WATCHDOG_PAUSE",
+        "LABEL",
+        "FRONT_LABEL",
+        "PLIST",
+        "FRONT_PORT",
+        "PRIMARY_PORT",
+        "STANDBY_PORT",
+    )
+}
 
 
 class SandboxRefused(Exception):
@@ -110,18 +133,47 @@ def _inside(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
 
 
+def _lexical(path: Path) -> Path:
+    """path with . and .. folded by text alone: nothing on disk is followed."""
+    return Path(os.path.normpath(str(path)))
+
+
+def _refuse_links_on(name: str, path: Path, leaf: str) -> None:
+    """Every existing component of absolute path must be a real directory, checked with lstat from / down and
+    before anything is resolved: a symlink anywhere (an ancestor, the root, the leaf) is refused, not followed.
+    The leaf may be missing, else a real directory (leaf="dir") or a single-link regular file (leaf="file")."""
+    parts = path.parts
+    for i in range(1, len(parts) + 1):
+        prefix = Path(*parts[:i])
+        try:
+            info = prefix.lstat()
+        except FileNotFoundError:
+            return
+        if i < len(parts) or leaf == "dir":
+            if not stat.S_ISDIR(info.st_mode):
+                raise SandboxRefused(f"{name} {path}: {prefix} is a link or not a directory")
+        elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SandboxRefused(f"{name} {path} is not a single-link regular file (a link to live state?)")
+
+
 def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object]:
-    """Validate an lb-sandbox config and return the module constants it rebinds. Raises SandboxRefused."""
+    """Validate an lb-sandbox config and return the module constants it rebinds. Raises SandboxRefused.
+
+    Paths are kept as written (lexically normalised), never resolved: resolving would turn an in-root symlink
+    (lb-restart.lock -> lb-restart.json) into its target and the link would then pass as a plain file."""
     missing = [key for key in SANDBOX_KEYS if key not in config]
     if missing:
         raise SandboxRefused(f"sandbox config lacks {', '.join(missing)}")
-    sandboxes = ((home or _real_home()) / ".agent-lb" / "sandboxes").resolve()
+    sandboxes = _lexical((home or _real_home()) / ".agent-lb" / "sandboxes")
     root = Path(str(config["root"])).expanduser()
     if not root.is_absolute():
         raise SandboxRefused("sandbox root must be absolute")
-    root = root.resolve()
-    if root.parent != sandboxes:
+    root = _lexical(root)
+    if root.parent != sandboxes or root.name in ("", ".", ".."):
         raise SandboxRefused(f"sandbox root {root} is not directly under {sandboxes}")
+    # From / down: a sandboxes dir (or root) swapped for a link to ~/.agent-lb is refused here and, after this
+    # check, cannot redirect anything because every file operation goes through the pinned root descriptor.
+    _refuse_links_on("root", root, "dir")
     label = str(config["label"])
     suffix = label.removeprefix(SANDBOX_LABEL_PREFIX)
     if not label.startswith(SANDBOX_LABEL_PREFIX) or not suffix or not suffix.replace("-", "").isalnum():
@@ -139,10 +191,10 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
     paths = {}
     for key in ("plist", "runtime", "state_dir"):
         path = Path(str(config[key])).expanduser()
-        resolved = (path if path.is_absolute() else root / path).resolve()
-        if not _inside(resolved, root):
-            raise SandboxRefused(f"{key} {resolved} is outside the sandbox root")
-        paths[key] = resolved
+        path = _lexical(path if path.is_absolute() else root / path)
+        if root not in path.parents:
+            raise SandboxRefused(f"{key} {path} is outside the sandbox root")
+        paths[key] = path
     state_dir = paths["state_dir"]
     derived = {
         "BACKUPS": root / "backups",
@@ -155,26 +207,18 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
         "STANDBY_LOG": root / "logs" / "agent-lb-standby.log",
         "WATCHDOG_PAUSE": root / "watchdog.pause",
     }
+    for name, path in (("RUNTIME", paths["runtime"]), ("STATE_DIR", state_dir), ("BACKUPS", derived["BACKUPS"])):
+        _refuse_links_on(name, path, "dir")
+    # The store the standby opens: a data dir, DB or key planted as a link would boot it against live.
+    _refuse_links_on("data", root / "data", "dir")
+    for leaf in ("store.db", "encryption.key"):
+        _refuse_links_on("data", root / "data" / leaf, "file")
     for name, path in derived.items():
-        # A symlink planted at any of these must not lead a sandbox restart into live state.
-        resolved = path.resolve()
-        if not _inside(resolved, root):
-            raise SandboxRefused(f"{name} {path} resolves outside the sandbox root")
-        derived[name] = resolved
-    for name in (
-        "SYNC_LOG",
-        "LOCK_FILE",
-        "PREFERRED_FILE",
-        "PREFERRED_TMP",
-        "FRONT_STATE",
-        "STANDBY_PIDFILE",
-        "STANDBY_LOG",
-        "WATCHDOG_PAUSE",
-    ):
-        # A hard link passes the path rule: an in-root lock linked to the live front-preferred-port would be
-        # truncated and overwritten by lock acquisition. Only a missing or single-link regular file is ours.
-        _single_link_or_missing(name, derived[name])
-    _single_link_or_missing("plist", paths["plist"])
+        if name != "BACKUPS":
+            # A hard link passes a path rule: an in-root lock linked to the live front-preferred-port would be
+            # truncated and overwritten by lock acquisition. Only a missing or single-link regular file is ours.
+            _refuse_links_on(name, path, "file")
+    _refuse_links_on("plist", paths["plist"], "file")
     return {
         "SANDBOX_ROOT": root,
         "RUNTIME": paths["runtime"],
@@ -187,15 +231,6 @@ def sandbox_bindings(config: dict, home: Path | None = None) -> dict[str, object
         "PRIMARY_PORT": ports[1],
         "STANDBY_PORT": ports[2],
     }
-
-
-def _single_link_or_missing(name: str, path: Path) -> None:
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        return
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise SandboxRefused(f"{name} {path} is not a single-link regular file (a link to live state?)")
 
 
 SANDBOX_PORT_URL = re.compile(r"^http://127\.0\.0\.1:([0-9]{4})$")
@@ -219,14 +254,20 @@ SANDBOX_PLIST_KEYS = frozenset(
 
 
 def check_sandbox_bootstrap(root: Path) -> None:
-    """The plist's program, <root>/bin/lb-sandbox, must be a real single-link file in a real <root>/bin."""
-    bin_dir = root / "bin"
+    """The plist's program, <root>/bin/lb-sandbox, must be a real single-link file in a real <root>/bin.
+
+    Checked from the pinned root descriptor, so a swapped ancestor cannot show it someone else's bin."""
     try:
-        dir_info = bin_dir.lstat()
-        info = (bin_dir / "lb-sandbox").lstat()
+        bin_fd = _sandbox_dir_fd(root / "bin", create=False)
+    except (OSError, SandboxRefused) as exc:
+        raise SandboxRefused(f"sandbox bootstrap dir {root / 'bin'} is missing or a link") from exc
+    try:
+        info = os.stat("lb-sandbox", dir_fd=bin_fd, follow_symlinks=False)
     except OSError as exc:
-        raise SandboxRefused(f"sandbox bootstrap {bin_dir / 'lb-sandbox'} is missing") from exc
-    if not stat.S_ISDIR(dir_info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SandboxRefused(f"sandbox bootstrap {root / 'bin' / 'lb-sandbox'} is missing") from exc
+    finally:
+        os.close(bin_fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise SandboxRefused("sandbox bootstrap is a link, not lb-sandbox's own copy inside the root")
 
 
@@ -267,6 +308,9 @@ def check_sandbox_plist(data: object, root: Path, label: str, primary_port: int)
     for key, value in fixed.items():
         if env.get(key) != value:
             raise SandboxRefused(f"sandbox plist {key} is not the sandbox's own")
+    for store in (root / "data", root / "data" / "store.db", root / "data" / "encryption.key"):
+        if not _inside(store.resolve(), root):
+            raise SandboxRefused(f"sandbox store {store} resolves outside the sandbox root (a link?)")
     workdir = data.get("WorkingDirectory")
     if workdir is not None and not _inside(Path(str(workdir)).resolve(), root):
         raise SandboxRefused("sandbox plist working directory is outside the sandbox root")
@@ -307,17 +351,21 @@ def apply_sandbox(config_path: Path) -> None:
     if not isinstance(config, dict):
         raise SandboxRefused("sandbox config is not a JSON object")
     bindings = sandbox_bindings(config)
-    try:
-        # O_NOFOLLOW and one link: the guard's lstat may predate a link planted since.
-        with os.fdopen(os.open(bindings["PLIST"], os.O_RDONLY | os.O_NOFOLLOW), "rb") as fh:
-            if os.fstat(fh.fileno()).st_nlink != 1:
-                raise SandboxRefused("sandbox plist has a second hard link")
-            plist = plistlib.load(fh)
-    except (OSError, ValueError, plistlib.InvalidFileException) as exc:
-        raise SandboxRefused(f"cannot read sandbox plist: {exc.__class__.__name__}") from exc
-    check_sandbox_plist(plist, bindings["SANDBOX_ROOT"], bindings["LABEL"], bindings["PRIMARY_PORT"])
-    check_sandbox_bootstrap(bindings["SANDBOX_ROOT"])
     globals().update(bindings)
+    try:
+        # Pin the root now (O_NOFOLLOW from / down) and read the plist through that descriptor: a link planted
+        # since the guard ran, at the plist or at any ancestor, is refused instead of followed.
+        pin_sandbox_root()
+        with os.fdopen(sandbox_open(bindings["PLIST"], os.O_RDONLY), "rb") as fh:
+            plist = plistlib.load(fh)
+        check_sandbox_plist(plist, bindings["SANDBOX_ROOT"], bindings["LABEL"], bindings["PRIMARY_PORT"])
+        check_sandbox_bootstrap(bindings["SANDBOX_ROOT"])
+    except BaseException as exc:
+        globals().update(LIVE_BINDINGS)
+        unpin_sandbox_root()
+        if isinstance(exc, (OSError, ValueError, plistlib.InvalidFileException)):
+            raise SandboxRefused(f"cannot read sandbox plist: {exc.__class__.__name__}") from exc
+        raise
     SANDBOX_CONFIG = Path(config_path).resolve()
 
 
@@ -327,20 +375,81 @@ def apply_sandbox(config_path: Path) -> None:
 # ran is refused (exit 2), never written through. Without --sandbox these helpers keep the old calls.
 
 
-def _sandbox_dir_fd(directory: Path) -> int:
+SANDBOX_ROOT_FD: int | None = None
+SANDBOX_ROOT_PINNED: tuple[Path, int, int] | None = None  # (root path, st_dev, st_ino) the descriptor holds
+
+
+def _open_dir_nofollow(path: Path) -> int:
+    """Open absolute path from / down, one component at a time with O_NOFOLLOW: a link anywhere is refused."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:]:
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def pin_sandbox_root() -> int:
+    """The descriptor for SANDBOX_ROOT, opened once (from / down, no links) and held for the whole run."""
+    global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
+    assert SANDBOX_ROOT is not None
+    if SANDBOX_ROOT_FD is not None and SANDBOX_ROOT_PINNED is not None and SANDBOX_ROOT_PINNED[0] == SANDBOX_ROOT:
+        return SANDBOX_ROOT_FD
+    unpin_sandbox_root()
+    try:
+        fd = _open_dir_nofollow(SANDBOX_ROOT)
+    except OSError as exc:
+        raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} or an ancestor is a link or missing ({exc})") from exc
+    info = os.fstat(fd)
+    SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = fd, (SANDBOX_ROOT, info.st_dev, info.st_ino)
+    return fd
+
+
+def unpin_sandbox_root() -> None:
+    global SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED
+    if SANDBOX_ROOT_FD is not None:
+        os.close(SANDBOX_ROOT_FD)
+    SANDBOX_ROOT_FD, SANDBOX_ROOT_PINNED = None, None
+
+
+def verify_sandbox_ancestry() -> None:
+    """Before anything that must go by path (exec of the standby): the root path still names the pinned root."""
+    fd = pin_sandbox_root()
+    try:
+        again = _open_dir_nofollow(SANDBOX_ROOT)
+    except OSError as exc:
+        raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} or an ancestor became a link ({exc})") from exc
+    try:
+        now, pinned = os.fstat(again), os.fstat(fd)
+    finally:
+        os.close(again)
+    if (now.st_dev, now.st_ino) != (pinned.st_dev, pinned.st_ino):
+        raise SandboxRefused(f"sandbox root {SANDBOX_ROOT} no longer names the directory this run pinned")
+
+
+def _sandbox_dir_fd(directory: Path, create: bool = True) -> int:
+    """A descriptor for directory, walked from the pinned root with O_NOFOLLOW (missing dirs made 0700)."""
     assert SANDBOX_ROOT is not None
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    parent = os.open(SANDBOX_ROOT.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        fd = os.open(SANDBOX_ROOT.name, flags, dir_fd=parent)
-    finally:
-        os.close(parent)
+        rel = directory.relative_to(SANDBOX_ROOT)
+    except ValueError as exc:
+        raise SandboxRefused(f"{directory} is outside the sandbox root") from exc
+    if ".." in rel.parts:
+        raise SandboxRefused(f"{directory} climbs out of the sandbox root")
+    fd = os.dup(pin_sandbox_root())
     try:
-        for part in directory.relative_to(SANDBOX_ROOT).parts:
-            try:
-                os.mkdir(part, 0o700, dir_fd=fd)
-            except FileExistsError:
-                pass
+        for part in rel.parts:
+            if create:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
             child = os.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = child
@@ -367,6 +476,57 @@ def sandbox_open(path: Path, flags: int, mode: int = 0o600) -> int:
     if flags & os.O_TRUNC:
         os.ftruncate(fd, 0)
     return fd
+
+
+def read_state(path: Path) -> tuple[str, float] | None:
+    """(text, mtime) of a state file, None when it is missing or unreadable. With --sandbox, through the root fd."""
+    if SANDBOX_ROOT is None:
+        try:
+            return path.read_text(), path.stat().st_mtime
+        except OSError:
+            return None
+    try:
+        dir_fd = _sandbox_dir_fd(path.parent, create=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise SandboxRefused(f"{path.parent} is a link or unreachable inside the sandbox root ({exc})") from exc
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise SandboxRefused(f"{path} is a link inside the sandbox root ({exc})") from exc
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(fd, "rb") as fh:
+        info = os.fstat(fh.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SandboxRefused(f"{path} is not a single-link regular file")
+        return fh.read().decode(errors="replace"), info.st_mtime
+
+
+def remove_state(path: Path) -> None:
+    """unlink(missing_ok=True); with --sandbox, by name in the directory reached from the pinned root."""
+    if SANDBOX_ROOT is None:
+        path.unlink(missing_ok=True)
+        return
+    try:
+        dir_fd = _sandbox_dir_fd(path.parent)
+    except OSError as exc:
+        raise SandboxRefused(f"{path.parent} is a link or unreachable inside the sandbox root ({exc})") from exc
+    try:
+        os.unlink(path.name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def ensure_dir(path: Path) -> None:
+    """mkdir -p; with --sandbox the helpers above make missing dirs under the pinned root themselves."""
+    if SANDBOX_ROOT is None:
+        path.mkdir(parents=True, exist_ok=True)
 
 
 def open_append(path: Path):
@@ -530,16 +690,27 @@ def wait_until(pred, timeout: float, interval: float = 0.25) -> bool:
 
 
 def set_preferred(port: int) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PREFERRED_FILE.with_suffix(".tmp")
     if SANDBOX_ROOT is None:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
         tmp.write_text(f"{port}\n")
-    else:
-        # A link or hard link planted after the guard ran must not carry the write out of the sandbox.
-        fd = sandbox_open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-        with os.fdopen(fd, "w") as fh:
-            fh.write(f"{port}\n")
-    os.replace(tmp, PREFERRED_FILE)
+        os.replace(tmp, PREFERRED_FILE)
+        return
+    # A link or hard link planted after the guard ran must not carry the write out of the sandbox, and the
+    # rename goes by name inside the state dir reached from the pinned root, never by path.
+    fd = sandbox_open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(f"{port}\n")
+    if tmp.parent != PREFERRED_FILE.parent:
+        raise SandboxRefused("preference temp file is not beside the preference file")
+    try:
+        dir_fd = _sandbox_dir_fd(PREFERRED_FILE.parent)
+    except OSError as exc:
+        raise SandboxRefused(f"{PREFERRED_FILE.parent} is a link or unreachable inside the sandbox root") from exc
+    try:
+        os.replace(tmp.name, PREFERRED_FILE.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def owned_by_sandbox(pid: int) -> bool:
@@ -556,19 +727,23 @@ def front_understands_preference() -> bool:
     # launchd runs the front through a volta shim, so compare against the
     # process that actually holds the public port.
     pid = listener_pid(FRONT_PORT)
-    try:
-        state = json.loads(FRONT_STATE.read_text())
-    except (OSError, ValueError):
+    got = read_state(FRONT_STATE)
+    if got is None:
         return False
-    fresh = time.time() - FRONT_STATE.stat().st_mtime < 5
+    try:
+        state = json.loads(got[0])
+    except ValueError:
+        return False
+    fresh = time.time() - got[1] < 5
     return bool(pid and state.get("pid") == pid and fresh and STANDBY_PORT in state.get("upstreams", []))
 
 
 def front_routes_to(port: int, timeout: float = 5.0) -> bool:
     def ok() -> bool:
+        got = read_state(FRONT_STATE)
         try:
-            return json.loads(FRONT_STATE.read_text()).get("preferred") == port
-        except (OSError, ValueError):
+            return got is not None and json.loads(got[0]).get("preferred") == port
+        except (ValueError, AttributeError):
             return False
 
     return wait_until(ok, timeout)
@@ -584,7 +759,7 @@ class Lock:
         self.fh = None
 
     def __enter__(self) -> "Lock":
-        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ensure_dir(LOCK_FILE.parent)
         if SANDBOX_ROOT is None:
             self.fh = LOCK_FILE.open("a+")
         else:
@@ -704,20 +879,42 @@ def start_standby(drain_seconds: int) -> subprocess.Popen:
         args[i + 1] = str(STANDBY_PORT)
     except ValueError:
         args += ["--port", str(STANDBY_PORT)]
-    STANDBY_LOG.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(STANDBY_LOG.parent)
     log = open_append(STANDBY_LOG)
     log.write(f"\n==== {now_iso()} standby start ====\n")
     log.flush()
-    proc = subprocess.Popen(
-        args,
-        cwd=RUNTIME,
-        env=env,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if SANDBOX_ROOT is None:
+        proc = subprocess.Popen(
+            args,
+            cwd=RUNTIME,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    else:
+        # exec goes by path, so check the path still names the pinned root just before it, and start the
+        # standby in the pinned runtime dir (fchdir), not in whatever the runtime path names now.
+        verify_sandbox_ancestry()
+        try:
+            runtime_fd = _sandbox_dir_fd(RUNTIME, create=False)
+        except OSError as exc:
+            raise SandboxRefused(f"{RUNTIME} is a link or missing inside the sandbox root") from exc
+        try:
+            proc = subprocess.Popen(
+                args,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                pass_fds=(runtime_fd,),
+                preexec_fn=lambda: os.fchdir(runtime_fd),
+            )
+        finally:
+            os.close(runtime_fd)
+    ensure_dir(STATE_DIR)
     write_state(STANDBY_PIDFILE, f"{proc.pid}\n")
     return proc
 
@@ -757,7 +954,7 @@ def stop_pid_gracefully(pid: int, port: int, bound: float) -> tuple[float, bool]
 def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None) -> None:
     pid = listener_pid(STANDBY_PORT)
     if pid is None:
-        STANDBY_PIDFILE.unlink(missing_ok=True)
+        remove_state(STANDBY_PIDFILE)
         return
     say(f"found a standby still on :{STANDBY_PORT} (pid {pid}) from an earlier run")
     if not owned_by_sandbox(pid):
@@ -774,7 +971,7 @@ def stop_leftover_standby(drain_seconds: int, hold_for_oauth=lambda port: None) 
     spawn_reaper(pid, drain_seconds)
     wait_until(lambda: listener_pid(STANDBY_PORT) is None, 15)
     say("leftover standby stopped listening; it drains in the background")
-    STANDBY_PIDFILE.unlink(missing_ok=True)
+    remove_state(STANDBY_PIDFILE)
 
 
 # A standby that got SIGTERM must exit within its drain bound. On 2026-09-25 two
@@ -870,14 +1067,40 @@ def exit_timeout() -> int:
 # ---------------------------------------------------------------- main
 
 
+def parse_reaper_args(argv: list[str]) -> tuple[int, float, Path | None]:
+    """The reaper's argv is exactly what spawn_reaper writes: --reap PID SECONDS [--sandbox CONFIG].
+
+    Anything else (--sandbox=CONFIG, an abbreviation, extra or missing words) is refused before a signal is
+    sent: an unparsed --sandbox would leave the live constants bound and the reaper would kill the live standby.
+    Raises SandboxRefused."""
+    if len(argv) not in (3, 5) or argv[0] != "--reap":
+        raise SandboxRefused(f"reaper takes --reap PID SECONDS [--sandbox CONFIG], got {len(argv)} word(s)")
+    if not argv[1].isascii() or not argv[1].isdigit() or int(argv[1]) <= 1:
+        raise SandboxRefused("reaper pid must be a positive integer above 1")
+    try:
+        deadline = float(argv[2])
+    except ValueError as exc:
+        raise SandboxRefused("reaper seconds must be a number") from exc
+    if not 0 <= deadline <= 86400:
+        raise SandboxRefused("reaper seconds out of range")
+    config = None
+    if len(argv) == 5:
+        if argv[3] != "--sandbox" or not argv[4]:
+            raise SandboxRefused(f"reaper option {argv[3]!r} is not --sandbox CONFIG")
+        config = Path(argv[4])
+    return int(argv[1]), deadline, config
+
+
 def main() -> int:
-    if sys.argv[1:2] == ["--reap"]:
-        if sys.argv[4:5] == ["--sandbox"]:
-            try:
-                apply_sandbox(Path(sys.argv[5]))
-            except (SandboxRefused, IndexError):
-                return 2
-        return reap(int(sys.argv[2]), float(sys.argv[3]))
+    if any(arg.startswith("--reap") for arg in sys.argv[1:]):
+        try:
+            pid, deadline, config = parse_reaper_args(sys.argv[1:])
+            if config is not None:
+                apply_sandbox(config)
+        except SandboxRefused as exc:
+            print(f"lb-restart --reap refused: {exc}", file=sys.stderr)
+            return 2
+        return reap(pid, deadline)
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--reason", required=True, help="Why; goes into sync.log.")
     p.add_argument("--from", dest="src", type=Path, help="Source root (a worktree) for --files.")
@@ -941,7 +1164,7 @@ def main() -> int:
                 say(f"crashed: {exc!r}; primary pid {launchd_pid(LABEL)}, standby pid {standby}")
                 sync_log(
                     f"lb-restart CRASHED reason={args.reason!r} error={exc!r}; front prefers "
-                    f"{PREFERRED_FILE.read_text().strip() if PREFERRED_FILE.exists() else '?'}; standby pid {standby}. "
+                    f"{(read_state(PREFERRED_FILE) or ('?', 0))[0].strip()}; standby pid {standby}. "
                     "The front falls back to whichever instance is up; the next lb-restart retires a leftover standby."
                 )
                 raise
@@ -998,7 +1221,7 @@ def run(args) -> int:
         if standby.poll() is None:
             stop_pid_gracefully(standby.pid, STANDBY_PORT, 10)
         rolled = files.rollback()
-        STANDBY_PIDFILE.unlink(missing_ok=True)
+        remove_state(STANDBY_PIDFILE)
         sync_log(
             f"lb-restart FAILED reason={args.reason!r} standby health gate failed after {stats['standby_boot_s']}s; "
             f"primary untouched (pid {old_pid}); rollback={'yes ' + str(files.restored_from) if rolled else 'none'}"
@@ -1007,7 +1230,7 @@ def run(args) -> int:
     say(f"standby healthy on :{STANDBY_PORT} in {stats['standby_boot_s']}s (pid {standby.pid})")
     if args.check:
         secs, forced = stop_pid_gracefully(standby.pid, STANDBY_PORT, drain + 15)
-        STANDBY_PIDFILE.unlink(missing_ok=True)
+        remove_state(STANDBY_PIDFILE)
         say(f"--check: code on disk boots and passes health; standby stopped in {secs:.1f}s; primary untouched")
         return 0
 
@@ -1083,7 +1306,7 @@ def run(args) -> int:
         pass
     spawn_reaper(standby.pid, drain)
     wait_until(lambda: listener_pid(STANDBY_PORT) is None, 10)
-    STANDBY_PIDFILE.unlink(missing_ok=True)
+    remove_state(STANDBY_PIDFILE)
     stats["total_s"] = round(time.monotonic() - T0, 1)
     say(
         f"standby pid {standby.pid} stopped listening and drains its {stats['standby_in_flight_at_cutover']} "
