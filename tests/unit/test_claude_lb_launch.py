@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import os
+import re
 import socket
 import time
 from pathlib import Path
@@ -1325,6 +1326,35 @@ def test_splice_relays_both_directions_and_reports_totals() -> None:
     assert received == b"a" * 4_000
     assert reply == b"b" * 1_000
     assert result["totals"] == (4_000, 1_000)
+
+
+def test_tunnel_connect_failure_is_stamped_in_the_proxy_log(capsys) -> None:
+    """2026-10-08: rails.so CONNECTs through :2458 stalled while Studio was
+    losing packets, and nothing in the proxy log said which upstream connect
+    failed or when, so the stall read as a proxy fault. Drives a real CONNECT
+    through the proxy server to a closed port."""
+    launcher = load_launcher_module()
+    closed = socket.socket()
+    closed.bind(("127.0.0.1", 0))
+    closed_port = closed.getsockname()[1]
+    closed.close()
+    server = launcher._ThreadingProxyServer(("127.0.0.1", 0), launcher._ProxyHandler)
+    import threading
+
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with socket.create_connection(server.server_address, timeout=10) as client:
+            target = f"127.0.0.1:{closed_port}"
+            client.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+            reply = client.recv(1024)
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert reply.startswith(b"HTTP/1.1 502")
+    assert re.search(
+        rf"cc-proxy: \d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\dZ connect 127\.0\.0\.1:{closed_port} failed: .+ after \d+\.\ds",
+        capsys.readouterr().err,
+    )
 
 
 def test_overlapping_launchers_keep_independent_readiness_after_peer_cleanup(monkeypatch, tmp_path):

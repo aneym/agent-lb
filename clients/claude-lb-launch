@@ -253,6 +253,8 @@ SHIM_TUNNEL_RATE_MBPS_DEFAULT = 40.0
 # heavy flows are attributable without packet capture (the shared desktop shim
 # logs to ~/.agent-lb/claude-desktop-proxy.err.log; per-session shims discard).
 SHIM_TUNNEL_LOG_MIN_BYTES = 8 * 1024 * 1024
+# Upstream connects slower than this (a lost SYN costs >=1s) are logged too.
+SHIM_TUNNEL_SLOW_CONNECT_SECONDS = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -879,9 +881,14 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 pass
 
     def _tunnel(self, host: str, port: int) -> None:
+        connecting = time.monotonic()
         try:
             upstream = socket.create_connection((host, port), timeout=20)
-        except OSError:
+        except OSError as error:
+            # Stamped so a client-visible stall can be matched to the upstream
+            # connect that caused it (2026-10-08: Studio packet loss read as a
+            # proxy fault for want of this line).
+            _log_tunnel_connect(host, port, time.monotonic() - connecting, f"failed: {error}")
             try:
                 self.connection.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except OSError:
@@ -895,6 +902,8 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 pass
             return
+        if time.monotonic() - connecting >= SHIM_TUNNEL_SLOW_CONNECT_SECONDS:
+            _log_tunnel_connect(host, port, time.monotonic() - connecting, "slow")
         started = time.monotonic()
         sent, received = _splice(self.connection, upstream, getattr(self.server, "tunnel_bucket", None))
         if sent + received >= SHIM_TUNNEL_LOG_MIN_BYTES:
@@ -906,6 +915,12 @@ class _ProxyHandler(http.server.BaseHTTPRequestHandler):
                 f"{received / 1e6:.1f}MB down / {sent / 1e6:.1f}MB up in {duration:.0f}s\n"
             )
             sys.stderr.flush()
+
+
+def _log_tunnel_connect(host: str, port: int, elapsed: float, outcome: str) -> None:
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    sys.stderr.write(f"cc-proxy: {stamp} connect {host}:{port} {outcome} after {elapsed:.1f}s\n")
+    sys.stderr.flush()
 
 
 class _ThreadingProxyServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
