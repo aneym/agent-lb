@@ -15,6 +15,12 @@ POLICY = ROOT / 'config/coding-agents'
 HOOK = POLICY / 'hooks/workflow-seat-guard.py'
 
 
+
+def warned(output):
+    """Guard trim (Alex, 2026-10-08 09:18 ET): the workflow seat guard warns in one line and never denies."""
+    return 'permissionDecision' not in output and output.get('additionalContext', '').startswith(
+        'workflow-seat-guard (warn only, not blocked): ')
+
 def invoke(script=None, *, script_path=None, table=None, raw=None, env=None, args=None):
     payload = (
         {'tool_input': {'script': script}} if script_path is None
@@ -49,10 +55,10 @@ def invoke(script=None, *, script_path=None, table=None, raw=None, env=None, arg
     ("/* agent(p, opts) */ agent(p, {label: ') , }'})", 'without agentType'),
     ("const text = `agent(p, {label:'y'})`; agent(p, {label:'y'})", 'without agentType'),
 ])
-def test_static_violations_are_denied(script, reason):
+def test_static_violations_are_warned_never_denied(script, reason):
     output = invoke(script)
-    assert output['permissionDecision'] == 'deny'
-    assert reason in output['permissionDecisionReason']
+    assert warned(output)
+    assert reason in output['additionalContext']
 
 
 @pytest.mark.parametrize('script', [
@@ -104,19 +110,19 @@ ROUTED = "agent(p, {...R.seats.implement.opts, label: 'x'})"
 def test_seat_options_in_workflow_args_are_checked(args, denied):
     """Options a script reads from args are invisible to the static scan; `route workflow-args` output lands here."""
     output = invoke(ROUTED, args=args)
-    assert ('permissionDecision' in output) is denied
+    assert warned(output) is denied
     if denied:
-        assert 'Workflow args pin retired model' in output['permissionDecisionReason']
+        assert 'Workflow args pin retired model' in output['additionalContext']
 
 
-def test_retired_args_are_denied_even_when_script_cannot_be_parsed():
+def test_retired_args_are_warned_even_when_script_cannot_be_parsed():
     """The hook must enforce args retirement before its fail-open script parser."""
     output = invoke(
         'if (false) /[)]/.test(")"); await agent("x", args.opts);',
         args={'opts': {'agentType': 'opus-seat', 'model': 'claude-sonnet-5'}},
     )
-    assert output['permissionDecision'] == 'deny'
-    assert 'Workflow args pin retired model' in output['permissionDecisionReason']
+    assert warned(output)
+    assert 'Workflow args pin retired model' in output['additionalContext']
 
 
 @pytest.mark.parametrize('script', [
@@ -138,9 +144,9 @@ def test_alias_is_checked_against_resolved_retirement(tmp_path, alias):
         {'retired': ['claude-old-*'], 'aliases': {alias + '-latest': {'pinned': 'claude-old-1'}}}
     ))
     script = f"agent(p, {{agentType: seat, model: '{alias}'}})"
-    assert invoke(
+    assert warned(invoke(
         script, table=table, env={'ANTHROPIC_DEFAULT_' + alias.upper() + '_MODEL': ''}
-    )['permissionDecision'] == 'deny'
+    ))
     assert 'permissionDecision' not in invoke(
         script, table=table, env={'ANTHROPIC_DEFAULT_' + alias.upper() + '_MODEL': 'claude-current'}
     )
@@ -192,13 +198,13 @@ def test_a_seat_defined_off_the_ladder_needs_a_request_and_the_request_is_logged
     ledger = tmp_path / 'dispatch.jsonl'
     env = {'SEAT_GUARD_AGENTS_DIR': str(agents), 'ROUTE_LEDGER': str(ledger)}
     silent = invoke("agent(p, {agentType: 'legacy-fable', label: 'x'})", env=env)
-    assert silent['permissionDecision'] == 'deny'
-    assert "defined on 'claude-fable-5-1', and nothing asked for it" in silent['permissionDecisionReason']
+    assert warned(silent)
+    assert "defined on 'claude-fable-5-1', and nothing asked for it" in silent['additionalContext']
     undefined = invoke("agent(p, {agentType: 'legacy-fable', model: undefined})", env=env)
-    assert undefined['permissionDecision'] == 'deny'
+    assert warned(undefined)
     from_args = invoke('agent(p, args.opts)', args={'opts': {'agentType': 'legacy-fable'}}, env=env)
-    assert from_args['permissionDecision'] == 'deny'
-    assert "defined on 'claude-fable-5-1', and nothing asked" in from_args['permissionDecisionReason']
+    assert warned(from_args)
+    assert "defined on 'claude-fable-5-1', and nothing asked" in from_args['additionalContext']
     assert not ledger.exists()
     asked = invoke("agent(p, {agentType: 'legacy-fable', model: 'claude-fable-5-1'});"
                    "agent(q, {agentType: 'opus-seat', model: 'astra-latest-high'})", env=env)

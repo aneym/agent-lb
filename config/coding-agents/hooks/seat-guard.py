@@ -4,15 +4,17 @@
 Capacity is advisory: pool state is surfaced as status so the caller can
 choose deliberately. Model rule (Alex, 2026-10-05: "we shouldnt just block model
 usage, we shoudl allow them if we request or we want t escalate things"):
-- an exact pin (the dispatch's `model`, or the seat definition) on the table's
-  `blocked` list (no longer served upstream) is denied; a regex hit in the
-  brief's prose never denies, it is logged and surfaced as advice;
+- nothing is denied (guard trim, Alex 2026-10-08 09:18 ET: "dont have guards
+  that are too aggressive"): an exact pin (the dispatch's `model`, or the seat
+  definition) on the table's `blocked` list (no longer served upstream) is
+  logged and warned in one line; a regex hit in the brief's prose is logged
+  and surfaced as advice;
 - a model on the `retired` list is off the default ladder. A dispatch that
   names one itself (`model`) or whose brief tells the seat to use one
   (`--model <id>`, `model: <id>`) is an explicit request: it runs and the
   ledger records it with the dispatch's description as the reason. A subagent
   type whose definition pins one, with nothing asking for it, is a silent
-  default and is denied. The `readmitted` map exempts named seats from named
+  default and is warned and logged, never denied. The `readmitted` map exempts named seats from named
   patterns (2026-10-05: fable-orchestrator on Fable, astra-consult on Astra).
 """
 
@@ -69,19 +71,16 @@ def emit_advisory(advisory: str) -> None:
     )
 
 
-def emit_deny(reason: str) -> None:
+def emit_warning(reason: str) -> None:
+    """One line of context; the dispatch goes through (seat guard is not a floor; guard trim 2026-10-08)."""
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": (
-                        "seat-guard: " + reason + ". A model off the default ladder runs only when a dispatch "
-                        "or its brief names it (Alex, 2026-10-05); a blocked model is no longer served. "
-                        "Name a family alias for default work: `opus`/`sonnet` for Claude seats, "
-                        "`route resolve sol-latest` for Codex; "
-                        "`route pick <class>` picks the seat. Canon: ~/.agents/policy/coding-agents/ROUTING.md."
+                    "additionalContext": (
+                        "seat-guard (warn only, not blocked): " + reason + "; logged in the routing ledger. "
+                        "Default work names a family alias (`route pick <class>`)."
                     ),
                 }
             }
@@ -304,21 +303,21 @@ def main() -> None:
     blocked = blocked_patterns(table)
     brief_pins = retired_pins(prompt, retired)
     blocked_pins = retired_pins(prompt, blocked)
-    deny_reason = None
-    # Only an exact pin (the dispatch's model, the seat definition) can deny. A regex hit in
+    warn_reason = None
+    # Only an exact pin (the dispatch's model, the seat definition) warns. A regex hit in
     # the brief's prose is advisory and logged: it denied a verifier at 19:51Z on a mention
     # (rules-vs-agent audit, 2026-10-06).
     if forbidden_model(model, blocked):
-        deny_reason = f"this dispatch pins {model!r}, which is no longer served"
+        warn_reason = f"this dispatch pins {model!r}, which is no longer served"
     elif not model and pinned and forbidden_model(pinned, blocked):
-        deny_reason = f"subagent type {subagent!r} is defined on {pinned!r}, which is no longer served"
+        warn_reason = f"subagent type {subagent!r} is defined on {pinned!r}, which is no longer served"
     elif not model and pinned and forbidden_model(pinned, retired) and pinned not in [p.lower() for p in brief_pins]:
-        deny_reason = (f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
+        warn_reason = (f"subagent type {subagent!r} is defined on the retired model {pinned!r} and nothing asked "
                        "for it; name the model on the dispatch or in the brief to request it")
     explicit = [{"model": model, "source": "dispatch"}] if model and forbidden_model(model, retired) else []
     explicit += [{"model": pin, "source": "brief", **({"blocked": True} if pin in blocked_pins else {})}
                  for pin in dict.fromkeys(brief_pins + blocked_pins)]
-    if explicit and not deny_reason:
+    if explicit and not warn_reason:
         record["explicit_models"] = explicit
         record["why"] = str(tool_input.get("description") or tool_input.get("name") or "") or None
         advisories.append("explicit request for a model off the default ladder ("
@@ -326,10 +325,10 @@ def main() -> None:
         if blocked_pins:
             advisories.append("the brief names " + ", ".join(repr(pin) for pin in blocked_pins)
                               + ", no longer served upstream; prose is not enforced, the seat may fail on it")
-    if deny_reason:
-        record["denied"] = deny_reason
+    if warn_reason:
+        record["warned"] = warn_reason
         append(record, ledger)
-        emit_deny(deny_reason)
+        emit_warning(warn_reason)
         return
     is_fork = subagent == "fork"
     if is_fork:

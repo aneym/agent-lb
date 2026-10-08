@@ -251,7 +251,7 @@ def retired_in_args(value, table: dict, path: str = 'args') -> str | None:
 
 
 def inspect(script: str, table: dict, explicit: list | None = None) -> tuple[str | None, bool]:
-    """(first deny reason, warning). A literal retired model id is an explicit request
+    """(first warn reason, warning). A literal retired model id is an explicit request
     (Alex, 2026-10-05): it is allowed and appended to `explicit`; a blocked id, a
     harness alias that silently resolves to a retired model, or a seat whose definition
     pins one with no `model` given, is denied."""
@@ -352,8 +352,8 @@ def main() -> None:
         explicit: list = []
         if not reason:
             reason, warning = inspect(script, table, explicit)
-        if reason:
-            output.update(permissionDecision='deny', permissionDecisionReason=reason)
+        if reason:  # warn only, never deny (guard trim, Alex 2026-10-08 09:18 ET)
+            output['additionalContext'] = 'workflow-seat-guard (warn only, not blocked): ' + reason
         elif explicit:
             record_explicit(sorted(set(explicit)))
             output['additionalContext'] = ('workflow-seat-guard: agent() explicitly requests a model off the default ladder ('

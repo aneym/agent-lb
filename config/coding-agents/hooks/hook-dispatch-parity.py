@@ -559,17 +559,18 @@ def builtin_cases():
         dict(bash("railway variables --json | jq 'keys'"), name="allow-railway-names", expect="allow"),
         dict(bash("link-cli auth status --filter-output authenticated"), name="allow-link-cli-filtered",
              expect="allow"),
-        # deny, one guard each
+        # deny, one guard each. Guard trim (2026-10-08 09:18 ET): the wide-scan, no-direct-merge,
+        # herdr-shell-host, seat and relay cases keep their names but only warn now (expect None).
         dict(bash("rm -rf /"), name="deny-dangerous-cmd", expect=deny),
         dict(bash("rm -rf $d"), name="deny-rm-dynamic-deny", expect=deny),
         dict(bash("launchctl kickstart -k gui/501/com.aneyman.agent-lb"), name="deny-agent-lb-bootout",
              expect=deny),
         # Since the 2026-10-08 guard edit a plain grep -r there is rewritten with -D skip; one with shell syntax
         # (here a pipe) is still refused.
-        dict(bash("grep -r needle ~/.agent-rails/x | head -1"), name="deny-wide-scan-fifo", expect=deny),
+        dict(bash("grep -r needle ~/.agent-rails/x | head -1"), name="deny-wide-scan-fifo", expect=None),
         dict(bash("grep -r needle ~/.agent-rails/x"), name="rewrite-wide-scan-fifo", expect=None),
-        dict(bash("rg needle /"), name="deny-wide-scan-root", expect=deny),
-        dict(bash("rg -l b-123 ~/.agent-rails"), name="deny-wide-scan-lanes", expect=deny),
+        dict(bash("rg needle /"), name="deny-wide-scan-root", expect=None),
+        dict(bash("rg -l b-123 ~/.agent-rails"), name="deny-wide-scan-lanes", expect=None),
         dict(bash("link-cli auth status"), name="deny-link-cli-secret", expect=deny),
         dict(bash("railway variables --kv"), name="deny-railway-kv", expect=deny),
         dict(bash("railway run printenv"), name="deny-railway-printenv", expect=deny),
@@ -577,8 +578,8 @@ def builtin_cases():
         dict(bash("ssh pc 'start " + "chrome chrome://extensions'"), name="deny-no-chrome-pc", expect=deny),
         dict(bash("ssh pc chr'" + "ome'"), name="deny-no-chrome-pc-quote-split", expect=deny),
         dict(bash("ssh pc 'dir'"), name="allow-ssh-pc", expect="allow"),
-        dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=deny),
-        dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=deny),
+        dict(bash("gh pr merge 5 --squash"), name="deny-no-direct-merge", expect=None),
+        dict(bash("open -a 'Herdr Shell'"), name="deny-herdr-shell-host", expect=None),
         dict(bash("cua do click 10 10"), name="deny-desktop-guard", expect=deny),
         dict(bash("rm -rf / && gh pr merge 1 --squash"), name="deny-two-guards", expect=deny),
         dict(bash("git stash push -m parity", cwd_rel="work/repo"), name="deny-stash-guard", expect=deny,
@@ -597,13 +598,13 @@ def builtin_cases():
         # Agent: the seat guard
         dict(event="PreToolUse", tool="Agent",
              input={"subagent_type": "general-purpose", "model": "gpt-5.4-mini", "prompt": "x", "description": "x"},
-             name="deny-seat-guard-blocked-model", expect=deny),
+             name="deny-seat-guard-blocked-model", expect=None),
         dict(event="PreToolUse", tool="Agent",
              input={"subagent_type": "Explore", "prompt": "find files", "description": "explore"},
              name="allow-seat-guard", expect=None),
         # Workflow: the relay guard and the workflow seat guard
         dict(event="PreToolUse", tool="Workflow", input={"script": "agent('do the thing')"},
-             name="deny-relay-guard", expect=deny),
+             name="deny-relay-guard", expect=None),
         dict(event="PreToolUse", tool="Workflow", input={"script": "// RELAYED-REQUEST-GUARD\nagent('x')"},
              name="allow-relay-guard", expect=None),
         # aside

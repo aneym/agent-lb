@@ -81,12 +81,29 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("bash <<< 'rg x src'", 0),
 ])
 def test_hook_command_segments(command, expected):
-    result = subprocess.run(
+    """expected 2 marks a wide scan. Guard trim (Alex, 2026-10-08 09:18 ET): the guard only warns now, so a wide
+    scan exits 0 with one warn-only line of context and the call goes through; anything else passes silently."""
+    result = run(command)
+    assert result.returncode == 0, (command, result.stdout, result.stderr)
+    assert warned(result) is (expected == 2), (command, result.stdout, result.stderr)
+
+
+def run(command):
+    return subprocess.run(
         ["bash", str(GUARD)],
         input=json.dumps({"tool_input": {"command": command}, "cwd": CWD}),
         text=True, capture_output=True, timeout=10,
     )
-    assert result.returncode == expected, (command, result.stdout, result.stderr)
+
+
+def warned(result):
+    if not result.stdout.strip():
+        return False
+    out = json.loads(result.stdout)["hookSpecificOutput"]
+    if "updatedInput" in out:  # the FIFO grep rewrite (-D skip) is a fix, not a warning
+        return False
+    assert "permissionDecision" not in out
+    return out["additionalContext"].startswith("wide-scan-guard (warn only, not blocked): ")
 
 
 @pytest.mark.parametrize("command", [
@@ -104,16 +121,10 @@ def test_hook_command_segments(command, expected):
 ])
 @pytest.mark.xfail(reason="Accepted residual: accident guard, not an adversarial boundary", strict=False)
 def test_documented_residuals(command):
-    result = subprocess.run(
-        ["bash", str(GUARD)],
-        input=json.dumps({"tool_input": {"command": command}, "cwd": CWD}),
-        text=True, capture_output=True, timeout=10,
-    )
-    assert result.returncode == 2
+    assert warned(run(command))
 
 
-# Missing or failing jq (and a failing scanner) is no longer an accepted residual: the guard is a floor guard and
-# refuses (hook-dispatcher-4, 2026-10-08); tests/unit/test_hook_dispatcher.py covers both paths.
+# Missing or failing jq (and a failing scanner) lets the call through with a warning (guard trim, 2026-10-08).
 
 
 def test_installed_hook_matches_source():

@@ -453,11 +453,11 @@ DISPATCH_SCRIPT = "hooks/hook-dispatch.py"
 DISPATCH_REGISTRY = Path(".claude/hooks/dispatch/registry.json")
 DISPATCH_PARITY = Path(".claude/hooks/dispatch/parity-last.json")
 # Python guards reviewed for in-process runs (hook-dispatch.py still refuses any whose source has a hazard). The
-# seat guards (money path), load-governor and herdr-lane-autoclose (fork), alex-said and every node or shell hook
+# seat guards (money path) and herdr-lane-autoclose (fork), alex-said and every node or shell hook
 # run as their own process, as before.
 DISPATCH_INPROC = (
     "rm-dynamic-deny", "desktop-guard", "stash-guard", "herdr-shell-host-guard.py", "rm-cd-rewrite.py",
-    "no-direct-merge.py", "box-offload-hook", "lane-bulletin-hook", "repeat-read-warn.py", "aside-regular-tabs.py",
+    "no-direct-merge.py", "box-offload-hook", "lane-bulletin-hook", "aside-regular-tabs.py",
     "workflow-relay-guard.py", "routing-pulse.py", "herdr-tab-autoname.py", "idle-agents.py",
 )
 # Matchers whose hooks the parity fixture cannot run safely (AskUserQuestion files a real ask) stay per-hook.
@@ -474,7 +474,11 @@ TOOL_ALIASES = {"Task": "Agent", "KillShell": "TaskStop", "KillBash": "TaskStop"
                 "ReadMcpResource": "ReadMcpResourceTool", "ReadMcpResourceDir": "ReadMcpResourceDirTool"}
 # Dropped at the fold (simplify lead, 2026-10-07: repos format in their own checks): the global PostToolUse
 # `npx prettier --write` hook on Edit|Write|MultiEdit, by the sha256 of its exact command.
-DISPATCH_DROPPED = {"55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write"}
+# Guard trim (Alex, 2026-10-08 09:18 ET: "dont have guards that are too aggressive"): load-governor (placement and
+# factory-admit own load; it refused seats at load 272 from non-lane processes) and repeat-read-warn.
+DISPATCH_DROPPED = {"55c67a61ea18f3d6d58b572fe09f1699073e09ddbbc05b2d15ccf853937501d7": "global prettier --write",
+                    "70e4747d8e5cf5206a535899bcc19eb6e3acff6e2325fce6932d0e014c59acaa": "load-governor",
+                    "9185b387b7e583755f8534b4f1ef3cb3dbc08e860ba4270684920bd9bfd39e7e": "repeat-read-warn"}
 
 
 def is_dispatch_hook(hook: Any) -> bool:

@@ -95,10 +95,12 @@ def test_a_retired_model_named_on_the_dispatch_runs_and_is_logged(tmp_path: Path
     assert "denied" not in record
 
 
-def test_a_blocked_model_is_denied_even_when_named(tmp_path: Path) -> None:
+def test_a_blocked_model_is_warned_and_logged_never_denied(tmp_path: Path) -> None:
+    # Guard trim (Alex, 2026-10-08 09:18 ET): the seat guard logs the pick and warns in one line; it never denies.
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="claude-planner")
-    assert output["permissionDecision"] == "deny"
-    assert record and record["denied"] == "this dispatch pins 'claude-planner', which is no longer served"
+    assert "permissionDecision" not in output
+    assert output["additionalContext"].startswith("seat-guard (warn only, not blocked): ")
+    assert record and record["warned"] == "this dispatch pins 'claude-planner', which is no longer served"
 
 
 @pytest.mark.parametrize(
@@ -122,7 +124,7 @@ def test_readmitted_seats_use_their_own_family_without_asking(
 
 
 @pytest.mark.parametrize("pinned", ["claude-fable-5-1", "astra-latest-high", "claude-planner"])
-def test_a_definition_that_pins_an_off_ladder_model_with_nothing_asking_is_denied(
+def test_a_definition_that_pins_an_off_ladder_model_with_nothing_asking_is_warned(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned: str
 ) -> None:
     agents = tmp_path / "agents"
@@ -130,8 +132,8 @@ def test_a_definition_that_pins_an_off_ladder_model_with_nothing_asking_is_denie
     (agents / "sonnet-implementer.md").write_text(f"---\nname: sonnet-implementer\nmodel: {pinned}\n---\nbody\n")
     monkeypatch.setenv("SEAT_GUARD_AGENTS_DIR", str(agents))
     output, record = invoke(tmp_path, snapshot=valid_snapshot(), model="")
-    assert output["permissionDecision"] == "deny"
-    assert record and "defined on " in record["denied"] and pinned in record["denied"]
+    assert "permissionDecision" not in output and "warn only" in output["additionalContext"]
+    assert record and "defined on " in record["warned"] and pinned in record["warned"]
 
 
 def test_a_brief_that_names_an_off_ladder_model_runs_and_is_logged(tmp_path: Path) -> None:
