@@ -645,7 +645,7 @@ check(
     + (": " + "; ".join(stale) if stale else ""),
 )
 
-# Seat guard behaviour: deny a pinned Fable model and a Fable-defined type.
+# Seat guard behaviour: warn, never deny, on a pinned retired model or a Fable-defined type.
 hook = SOURCE / "hooks" / "seat-guard.py"
 with tempfile.TemporaryDirectory() as scratch:
     agents_dir = Path(scratch) / "agents"
@@ -682,10 +682,11 @@ with tempfile.TemporaryDirectory() as scratch:
     # Alex, 2026-10-05: a model off the ladder runs when asked for; a silent default or a blocked model does not.
     check(decision({"subagent_type": "opus-seat", "model": "fable"}) is None,
           "seat guard admits model=fable when the dispatch names it (logged)")
-    check(decision({"subagent_type": "opus-seat", "model": "claude-planner"}) == "deny",
-          "seat guard denies a blocked model even when named")
-    check(decision({"subagent_type": "legacy-fable"}) == "deny",
-          "seat guard denies a Fable-defined subagent type with nothing asking for Fable")
+    # Alex, 2026-10-08 09:18 ET (guard trim): a blocked or retired pin is logged and warned, never denied.
+    check(decision({"subagent_type": "opus-seat", "model": "claude-planner"}) != "deny",
+          "seat guard warns, never denies, a blocked model named on the dispatch")
+    check(decision({"subagent_type": "legacy-fable"}) != "deny",
+          "seat guard warns, never denies, a Fable-defined subagent type with nothing asking for Fable")
     check(decision({"subagent_type": "gpt-implementer"}) is None, "seat guard admits a cheap seat")
     check(decision({"subagent_type": "fable-orchestrator", "model": "fable"}) is None,
           "seat guard admits Fable on the readmitted fable-orchestrator seat")

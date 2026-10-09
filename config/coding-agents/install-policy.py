@@ -1114,16 +1114,14 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                 command = hook.get("command")
                 if not isinstance(command, str):
                     continue
-                command = re.sub(
-                    r'(?:\$HOME/factory|/Users/aneyman/factory|/Volumes/StudioExt/repos/factory)/bin/',
-                    '$HOME/.agent-rails/factory-runtime/bin/', command)
-                command = command.replace('/Volumes/StudioExt/repos/personal/unblock/',
-                                          '$HOME/.local/share/unblock-headless/')
-                command = command.replace('/Users/aneyman/repos/skill-stats/',
-                                          '$HOME/.local/share/skill-stats/')
+                # Match by path shape, not by machine literal: the public policy carries no home or volume names.
+                command = re.sub(r'(?:\$HOME|/[^\s"\':;]*)/(?:repos/)?factory/bin/',
+                                 '$HOME/.agent-rails/factory-runtime/bin/', command)
+                command = re.sub(r'/[^\s"\':;]*/repos/personal/unblock/',
+                                 '$HOME/.local/share/unblock-headless/', command)
+                command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', '$HOME/.local/share/skill-stats/', command)
                 # Floor commands stay direct execs: the dispatcher requires their receipt and fails closed.
-                match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME|/Users/aneyman)/[^"\n]+)"(.*)',
-                                     command)
+                match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
                 if match and any(path in command for path in (
                         '/.agent-rails/factory-runtime/', '/.local/share/unblock-headless/',
                         '/.local/share/skill-stats/')) \
