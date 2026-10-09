@@ -155,6 +155,7 @@ class ExcludedAccount:
     cooldown_until: datetime | None
     deactivation_reason: str | None
     plan_type: str | None
+    transient_backoff_until: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,13 +390,22 @@ def _selection_failure(
             cooldown_until=_timestamp_as_utc(state.cooldown_until),
             deactivation_reason=state.deactivation_reason,
             plan_type=state.plan_type,
+            transient_backoff_until=_timestamp_as_utc(
+                state.last_error_at + min(300, 30 * (2 ** (state.error_count - 3)))
+                if state.error_count >= 3 and state.blocked_at is None and state.last_error_at is not None
+                else None
+            ),
         )
         for state in states
     ]
     future_recoveries = [
         recovery_at
         for excluded in excluded_accounts
-        for recovery_at in (excluded.reset_at, excluded.cooldown_until)
+        for recovery_at in (
+            excluded.reset_at if excluded.status in ("rate_limited", "quota_exceeded") else None,
+            excluded.cooldown_until,
+            excluded.transient_backoff_until,
+        )
         if recovery_at is not None and recovery_at.timestamp() > current
     ]
     return SelectionResult(
@@ -608,6 +618,12 @@ def select_account(
             if cooldowns:
                 wait_seconds = max(0.0, min(cooldowns) - current)
                 return _selection_failure(_format_retry_hint(wait_seconds), all_states, current=current)
+            if in_error_backoff:
+                count = len(in_error_backoff)
+                noun = "account" if count == 1 else "accounts"
+                return _selection_failure(
+                    f"Selector transient backoff excluded {count} {noun}", all_states, current=current
+                )
             return _selection_failure("No available accounts", all_states, current=current)
 
     def _reset_first_sort_key(state: AccountState) -> tuple[int, float, float, float, float, str]:

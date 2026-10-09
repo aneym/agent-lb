@@ -337,6 +337,13 @@ async def probe_account(
         ) from exc
     if result is None:
         raise DashboardNotFoundError("Account not found", code="account_not_found")
+    if result.probe_status_code == 200:
+        # Use the existing request-serving selector only. A pinned probe proves
+        # transient failures recovered; it does not override quota or cooldowns.
+        account = await context.repository.get_by_id(account_id)
+        service = getattr(request.app.state, "anthropic_proxy_service", None)
+        if account is not None and account.provider != "openai" and service is not None:
+            await service._load_balancer.record_success(account)
     AuditService.log_async(
         "account_probed",
         actor_ip=request.client.host if request.client else None,

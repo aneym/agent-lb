@@ -1,0 +1,4 @@
+- [x] Clear transient Anthropic selector errors after successful pinned probe.
+- [x] Preserve transient backoff in failure diagnostics and retry metadata.
+- [x] Prove regression red before repair and green after repair through HTTP and real database.
+- [x] Run focused tests, Ruff, and OpenSpec validation.
