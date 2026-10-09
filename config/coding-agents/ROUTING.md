@@ -82,6 +82,7 @@ No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, an
 - **An orchestrator or lead first spawns the seat, then replies to Alex in one or two lines** (Alex, 2026-10-05 10:17 ET: "dont you delegate work?").
 - **Reports to Alex list every open product call from each lane's `STATE.md`** (2026-10-05).
 - **A done lane closes itself:** it stops its seats, leaves no wake or background shell, and ends with "the lane is closed" or "handed to <lead>".
+- **Stand down an infra action with TaskStop, not SendMessage** (2026-10-09): a message reaches a seat only at its next turn, so a seat mid-action keeps going (2026-10-07: seat ax42-down sent a Hetzner hardware reset 7 min after a stand-down message). Stop the seat, then send any follow-up.
 
 ## GA restores (2026-10-08)
 
