@@ -273,7 +273,9 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
       ]},
       {"matcher": "Agent|Workflow", "hooks": [
         {"type": "command", "command": "$HOME/.claude/hooks/ccdex-gpt-only.sh"}
-      ]}
+      ]},
+      {"matcher": "Agent", "hooks": [{"type": "command", "command": "/usr/bin/python3 \\"$HOME/.claude/hooks/seat-guard.py\\""}]},
+      {"matcher": "Agent", "hooks": [{"type": "command", "command": "/usr/bin/python3 \\"$HOME/.claude/hooks/seat-guard.py\\""}]}
     ]
   }
 }
@@ -303,12 +305,14 @@ def test_policy_installer_migrates_legacy_sections_and_preserves_unrelated_confi
         for group in settings["hooks"]["PreToolUse"]
         for hook_config in group["hooks"]
     ]
+    # A seat guard registered twice under Agent (the live settings had it, factory-operations 165) runs once.
     assert commands[0] == ("Bash", "keep-safety-hook")
     assert commands[1:] == [
         ("Agent", '/usr/bin/python3 "$HOME/.claude/hooks/seat-guard.py"'),
         ("Workflow", '/usr/bin/python3 "$HOME/.claude/hooks/workflow-seat-guard.py"'),
         ("Bash", 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"'),
         ("Bash", '"$HOME/.claude/hooks/dangerous-command-guard.sh"'),
+        ("Bash", '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"'),
     ]
 
 

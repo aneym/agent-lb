@@ -230,6 +230,13 @@ MANAGED_AGENTS = (
         Path("hooks/plutil-guard.sh"),
     ),
     (
+        # factory-operations 60 (2026-10-09): pattern kills (pkill -f, pgrep | xargs kill) stay inside the session.
+        Path(".claude/hooks/kill-scope-guard.py"),
+        Path(".agent-lb/managed/coding-agents/kill-scope-guard"),
+        "agent-lb:kill-scope-guard:v1\n",
+        Path("hooks/kill-scope-guard.py"),
+    ),
+    (
         Path(".claude/hooks/hook-dispatch.py"),
         Path(".agent-lb/managed/coding-agents/hook-dispatch"),
         "agent-lb:hook-dispatch:v1\n",
@@ -391,12 +398,15 @@ def is_workflow_seat_guard_hook(command: Any) -> bool:
 
 DANGEROUS_GUARD_HOOK = {"type": "command", "command": '"$HOME/.claude/hooks/dangerous-command-guard.sh"', "timeout": 10}
 RAILWAY_GUARD_HOOK = {"type": "command", "command": 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"', "timeout": 10}
+KILL_SCOPE_GUARD_HOOK = {"type": "command", "command": '/usr/bin/python3 "$HOME/.claude/hooks/kill-scope-guard.py"',
+                        "timeout": 10}
 # Installation and removal share this registry, including guards registered only with a source tree.
 SETTINGS_HOOKS = (
     ("PreToolUse", "Agent", SEAT_GUARD_HOOK, False),
     ("PreToolUse", "Workflow", WORKFLOW_SEAT_GUARD_HOOK, False),
     ("PreToolUse", "Bash", RAILWAY_GUARD_HOOK, False),
     ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
+    ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
 )
 
@@ -1214,7 +1224,37 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
                 event_groups.append(group)
     if not uninstall and source is not None:
         internal_hook_commands(updated.get("hooks", {}), source)
+    dedupe_hooks(updated.get("hooks"))
     return updated
+
+
+def dedupe_hooks(hooks: Any) -> None:
+    """Drop a hook whose command already runs for the same event and matcher (factory-operations 165, 2026-10-09:
+    the live settings carried seat-guard twice under the Agent matcher, so every Agent launch ran it twice). The
+    first occurrence stays; a group left empty is removed."""
+    if not isinstance(hooks, dict):
+        return
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        seen: set[tuple[Any, str]] = set()
+        kept = []
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                kept.append(group)
+                continue
+            items = []
+            for hook in group["hooks"]:
+                command = hook.get("command") if isinstance(hook, dict) else None
+                key = (group.get("matcher"), command)
+                if isinstance(command, str) and key in seen:
+                    continue
+                if isinstance(command, str):
+                    seen.add(key)
+                items.append(hook)
+            if items:
+                kept.append({**group, "hooks": items})
+        hooks[event] = kept
 
 
 def desired_routing_table(source_path: Path, live_path: Path) -> str:
