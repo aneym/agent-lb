@@ -1676,6 +1676,23 @@ def test_guard_trim_sql_comment_residual():
                             text=True, capture_output=True)
     assert result.returncode == 2
 
+
+@pytest.mark.parametrize("command,rc", [
+    # factory-operations 165 (2026-10-09): the bootout guard grepped the whole text, so a heredoc note, an echo, a
+    # commit message or an ssh argument naming a raw restart was refused. Only a restart that runs here is refused.
+    (RAW_RESTART, 2), ("sudo " + RAW_RESTART, 2), ("bash -c '" + RAW_RESTART + "'", 2), ("x=$(" + RAW_RESTART + ")", 2),
+    ("echo \"$(" + RAW_RESTART + ")\"", 2), ("bash <<'EOF'\n" + RAW_RESTART + "\nEOF", 2),
+    ("true && " + RAW_RESTART + " # done", 2), ("cat <<EOF\n$(" + RAW_RESTART + ")\nEOF", 2),
+    ("cat > notes.md <<'EOF'\n" + RAW_RESTART + "\nEOF", 0), ("echo '" + RAW_RESTART + "'", 0),
+    ("git commit -m 'guard: " + RAW_RESTART + " is refused'", 0), ("ssh ax42 '" + RAW_RESTART + "'", 0),
+    ("echo '$(" + RAW_RESTART + ")'", 0), ("launch" "ctl print gui/501/com.aneyman.agent-lb", 0),
+])
+def test_the_bootout_guard_reads_only_the_command_that_runs(tmp_path, command, rc):
+    result = subprocess.run(['bash', str(BOOTOUT)], input=json.dumps({'tool_input': {'command': command}}),
+                            text=True, capture_output=True, env={**os.environ, 'HOME': str(tmp_path)})
+    assert result.returncode == rc, result.stderr
+
+
 @pytest.mark.parametrize("guard,command", [
     (DANGER, "psql -c 'DROP TABLE accounts'"),
     (SOURCE / 'hooks/agent-lb-bootout-guard.sh', 'launchctl bootout gui/501/com.aneyman.agent-lb'),
