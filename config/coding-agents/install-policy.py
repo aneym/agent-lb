@@ -1105,6 +1105,37 @@ def reconcile_codex_config(text: str, model: str) -> str:
     return "".join(lines)
 
 
+def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
+    """Keep executable hook dependencies on the installed internal-volume copies."""
+    dispatcher = dispatcher_module(source)
+    for groups in hooks.values():
+        for group in groups:
+            for hook in group.get("hooks", []):
+                command = hook.get("command")
+                if not isinstance(command, str):
+                    continue
+                command = re.sub(
+                    r'(?:\$HOME/factory|/Users/aneyman/factory|/Volumes/StudioExt/repos/factory)/bin/',
+                    '$HOME/.agent-rails/factory-runtime/bin/', command)
+                command = command.replace('/Volumes/StudioExt/repos/personal/unblock/',
+                                          '$HOME/.local/share/unblock-headless/')
+                command = command.replace('/Users/aneyman/repos/skill-stats/',
+                                          '$HOME/.local/share/skill-stats/')
+                # Floor commands stay direct execs: the dispatcher requires their receipt and fails closed.
+                match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME|/Users/aneyman)/[^"\n]+)"(.*)',
+                                     command)
+                if match and any(path in command for path in (
+                        '/.agent-rails/factory-runtime/', '/.local/share/unblock-headless/',
+                        '/.local/share/skill-stats/')) \
+                        and not dispatcher.floor_name(command) \
+                        and '# hook missing: fail open' not in command:
+                    script = match[2]
+                    command = (f'if [ -r "{script}" ]; then {command}; else '
+                               f'printf \'%s\\n\' "hook warning: missing {script}; continuing" >&2; '
+                               'fi # hook missing: fail open')
+                hook["command"] = command
+
+
 def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL,
                        source: Path | None = None) -> dict[str, Any]:
     updated = json.loads(json.dumps(settings))
@@ -1183,6 +1214,8 @@ def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: 
                 event_groups.insert(workflow_index, group)
             else:
                 event_groups.append(group)
+    if not uninstall and source is not None:
+        internal_hook_commands(updated.get("hooks", {}), source)
     return updated
 
 
@@ -1562,6 +1595,16 @@ def main() -> int:
         shutil.copytree(checkpoint / "policy-link-target", policy_dir, symlinks=True)
         print(f"replaced symlink {policy_dir} -> {policy_link_target} with an installed copy")
     print(f"checkpoint {checkpoint}")
+    # Analytics previously ran through ~/repos (a volume symlink). Install its built
+    # CLI and dependencies beside the other internal-volume hook runtimes.
+    analytics = args.home / "repos/skill-stats"
+    installed_analytics = args.home / ".local/share/skill-stats"
+    if analytics.is_dir() and (analytics / "dist/cli.js").is_file():
+        for name in ("dist", "node_modules"):
+            if (analytics / name).is_dir():
+                shutil.copytree(analytics / name, installed_analytics / name,
+                                dirs_exist_ok=True, symlinks=False)
+        shutil.copy2(analytics / "package.json", installed_analytics / "package.json")
     # Order: the dispatcher and this fold's registry.<rev>.json land first (no settings entry names that rev yet);
     # settings then switch every entry to the new rev in one atomic write; registry.json and its backup (read only
     # by entries without a rev) follow; removals come last. At every step each settings entry runs the guards it
