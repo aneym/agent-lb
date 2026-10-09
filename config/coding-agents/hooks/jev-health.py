@@ -3,7 +3,7 @@
 
 Fix ledger: stale ALERT ignored a newer CLI ok; curl inherited sandbox proxies and
 reported transport status 000 as an outage. Cache first, isolated forty-second
-probe, two failures, and detached prompt refresh keep network off the hot path.
+probe, two failures at least a minute apart, and detached prompt refresh keep network off the hot path.
 """
 import datetime
 import fcntl
@@ -19,6 +19,9 @@ STATUS = HOME / 'status.json'
 STATE = HOME / 'alert-state.json'
 ALERT = HOME / 'ALERT'
 LOCK = HOME / 'alert-refresh.lock'
+# Two failures inside one blip (a launchd run and a prompt refresh seconds apart) are one outage signal,
+# not two: the second counts only this long after the first (2026-10-09).
+MIN_FAILURE_SPACING_SECONDS = 60
 
 
 def read(path):
@@ -100,11 +103,17 @@ def refresh():
             state = read(STATE)
             failures = state.get('failures', 0)
             failures = failures if isinstance(failures, int) and failures >= 0 else 0
-            write(STATE, {'failures': min(failures + 1, 2)})
-            if failures >= 1:
+            first = state.get('firstFailureAt')
+            now = time.time()
+            if failures == 0 or not isinstance(first, (int, float)):
+                # A streak with no recorded start (state from before spacing) starts over here.
+                write(STATE, {'failures': 1, 'firstFailureAt': now})
+                ALERT.unlink(missing_ok=True)
+            elif now - first >= MIN_FAILURE_SPACING_SECONDS:
+                write(STATE, {'failures': 2, 'firstFailureAt': first})
                 ALERT.write_text('down: two consecutive health probes failed\n')
             else:
-                ALERT.unlink(missing_ok=True)
+                write(STATE, {'failures': failures, 'firstFailureAt': first})
     finally:
         os.close(fd)
 

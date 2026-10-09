@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -64,18 +65,53 @@ def test_proxy_isolation_and_timeout(setup):
     assert 'fixture-only' not in json.dumps(call)
 
 
-def test_one_failure_is_quiet(setup):
-    assert run(setup, 'health-check.sh', FAIL='1').returncode == 0
-    assert not (setup[0] / '.jev/ALERT').exists()
+def age_first_failure(home, seconds):
+    """Fake the clock at the state-file boundary: the recorded first failure happened `seconds` ago."""
+    state_path = home / '.jev/alert-state.json'
+    state = json.loads(state_path.read_text())
+    state['firstFailureAt'] -= seconds
+    state_path.write_text(json.dumps(state))
+
+
+def test_failures_inside_a_minute_are_quiet(setup):
+    """2026-10-08: two failures seconds apart (one blip seen by launchd and a prompt refresh) alerted."""
+    for _ in range(3):
+        assert run(setup, 'health-check.sh', FAIL='1').returncode == 0
+        assert not (setup[0] / '.jev/ALERT').exists()
     assert run(setup, 'route.sh', FAIL='1').stdout == ''
 
 
-def test_two_failures_alert(setup):
-    for _ in range(2):
-        assert run(setup, 'health-check.sh', FAIL='1').returncode == 0
+def test_two_failures_a_minute_apart_alert(setup):
+    assert run(setup, 'health-check.sh', FAIL='1').returncode == 0
+    age_first_failure(setup[0], 61)
+    assert run(setup, 'health-check.sh', FAIL='1').returncode == 0
     result = run(setup, 'route.sh', FAIL='1')
-    assert 'UNAVAILABLE' in result.stdout
-    assert 'two consecutive' in result.stdout
+    assert result.stdout == '[jev] UNAVAILABLE: two consecutive health probes failed. Fall back to your own model for decisions.\n'
+
+
+def test_install_policy_installs_the_hooks_executable_and_restores_a_lost_mode(tmp_path):
+    """install-policy owns ~/.jev/hooks: the installed bytes are the repo hooks, mode 0755, and a hook that lost
+    its exec bit (launchd then fails to run health-check.sh) is repaired by the next install."""
+    home = tmp_path / 'home'
+    home.mkdir()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('ROUTE_', 'HOOK_DISPATCH_'))}
+    env.update({'HOME': str(home), 'AGENT_LB_URL': 'http://127.0.0.1:1', 'ROUTE_MODELS_CACHE': str(tmp_path / 'models.json')})
+    source = ROOT / 'config/coding-agents'
+
+    def install():
+        result = subprocess.run([sys.executable, str(source / 'install-policy.py'), '--home', str(home)],
+                                env=env, capture_output=True, text=True, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    install()
+    hooks = home / '.jev/hooks'
+    for name, template in [('route.sh', 'jev-route.sh'), ('health-check.sh', 'jev-health-check.sh'), ('jev-health.py', 'jev-health.py')]:
+        assert (hooks / name).read_bytes() == (source / 'hooks' / template).read_bytes()
+    for name in ('route.sh', 'health-check.sh'):
+        assert (hooks / name).stat().st_mode & 0o777 == 0o755
+    (hooks / 'route.sh').chmod(0o644)
+    install()
+    assert (hooks / 'route.sh').stat().st_mode & 0o777 == 0o755
 
 
 def test_six_second_success_no_alert(setup):
