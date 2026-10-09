@@ -1392,6 +1392,26 @@ def main() -> int:
     # Compare parsed settings so a formatting-only difference never rewrites the file.
     if desired_settings != disk_settings:
         changes[settings_path] = desired_settings_text
+    if not args.uninstall and registry_path.parent.is_dir():
+        # Already-running sessions keep their revision-pinned settings. Keep the
+        # revision and guard set, but migrate executable paths in those registries.
+        for path in registry_path.parent.glob("registry*.json"):
+            legacy = json.loads(path.read_text())
+            before = json.dumps(legacy, sort_keys=True)
+
+            def relocate(value: Any) -> None:
+                if isinstance(value, dict):
+                    if isinstance(value.get("command"), str):
+                        internal_hook_commands({"legacy": [{"hooks": [value]}]}, source)
+                    for child in value.values():
+                        relocate(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        relocate(child)
+
+            relocate(legacy)
+            if json.dumps(legacy, sort_keys=True) != before:
+                changes[path] = json.dumps(legacy, indent=2, ensure_ascii=False) + "\n"
     backup_path = registry_path.with_name("registry.json.bak")
     rev_path = None
     legacy_path = registry_path.with_name("registry.legacy.json")

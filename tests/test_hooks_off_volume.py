@@ -39,6 +39,11 @@ def test_rendered_hooks_survive_missing_factory(tmp_path):
         "SessionStart": [{"hooks": [{"type": "command", "command":
             'export PATH="$HOME/factory/bin/agent-shims:$PATH" # desktop-guard agent PATH'}]}]
     }}))
+    legacy_path = claude / "hooks/dispatch/registry.0123456789ab.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(json.dumps({"rev": "0123456789ab", "entries": {"PreToolUse": {
+        "Bash": [{"type": "command", "command": '/usr/bin/python3 "$HOME/factory/bin/desktop-guard"'}]
+    }}}))
     env = dict(os.environ, HOME=str(home), HERDR_ENV="", HERDR_PANE_ID="")
     result = subprocess.run([sys.executable, str(INSTALLER), "--home", str(home),
                              "--hook-dispatcher", "off"], env=env, capture_output=True, text=True, timeout=120)
@@ -51,6 +56,9 @@ def test_rendered_hooks_survive_missing_factory(tmp_path):
         for word in re.findall(r'(?:\$HOME|/Users/aneyman|/Volumes)/[^\s\"\';&:]+', command):
             path = Path(word.replace("$HOME", str(home)))
             assert not str(path.resolve()).startswith("/Volumes/"), command
+    legacy = json.loads(legacy_path.read_text())
+    assert legacy["rev"] == "0123456789ab"
+    assert "$HOME/factory/" not in legacy_path.read_text()
     desktop = next(command for command in commands if "/desktop-guard\"" in command)
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "printf hello"}})
     ran = subprocess.run(["/bin/sh", "-c", desktop], input=payload, env=env,
