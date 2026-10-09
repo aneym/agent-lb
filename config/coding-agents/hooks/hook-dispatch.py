@@ -104,7 +104,9 @@ REV_SHA = re.compile(r"[0-9a-f]{64}")
 # dangerous-command-guard.sh (S44) replaces the inline `bash -c 'CMD=$(cat | jq ...)'` leaf.
 FLOOR_SCRIPTS = ("rm-dynamic-deny",
                  "stash-guard", "railway-vars-guard.sh", "link-cli-guard.sh", "plutil-guard.sh", "kill-guard",
-                 "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh")
+                 "agent-lb-bootout-guard.sh", "dangerous-command-guard.sh",
+                 # factory a4c09d9e1 (2026-10-09, factory-operations 165): fails closed and prints its receipt.
+                 "no-chrome-guard.sh")
 FLOOR_WORD = re.compile(r"(?:^|[/\s\"'])(%s)(?=$|[\s\"';|&)])" % "|".join(re.escape(name) for name in FLOOR_SCRIPTS))
 FLOOR_TEXT = "BLOCKED: Dangerous command"  # an inline copy of the dangerous-command leaf, in any version of its text
 INLINE_FLOOR = "dangerous-command"  # its floor name: never a script, so never a direct exec
