@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -28,9 +29,27 @@ def build_args(argv: list[str]) -> list[str]:
     return args
 
 
+def pane_policy() -> str:
+    """The factory's agent-pane-policy helper, or exit: an unattended launch never runs without it."""
+    for found in (os.environ.get("AGENT_PANE_POLICY_BIN"), shutil.which("agent-pane-policy"),
+                  str(Path.home() / ".agent-rails/factory-runtime/bin/agent-pane-policy")):
+        if found and os.access(found, os.X_OK):
+            return found
+    raise SystemExit("cc: --unattended needs agent-pane-policy (factory bin) and it is missing; stop and install it")
+
+
 def main() -> None:
     opus = Path(__file__).resolve().with_name("opus")
-    os.execv(opus, [str(opus), *build_args(sys.argv[1:])])
+    argv = sys.argv[1:]
+    # factory-operations 103 (2026-10-09): an unattended CoS, scoping or lead launch (--unattended or
+    # AGENT_UNATTENDED=1) runs under `agent-pane-policy exec`; a tab Alex talks to stays plain cc.
+    unattended = "--unattended" in argv or os.environ.get("AGENT_UNATTENDED") == "1"
+    argv = [arg for arg in argv if arg != "--unattended"]
+    args = build_args(argv)
+    if unattended:
+        helper = pane_policy()
+        os.execv(helper, [helper, "exec", "--", str(opus), *args])
+    os.execv(opus, [str(opus), *args])
 
 
 if __name__ == "__main__":
