@@ -145,6 +145,16 @@ def new_hooks(dispatch, event, tool):
 # ---------------------------------------------------------------------------------------------------- running
 
 
+def reap_group(pid):
+    """Kill what a hook left in its own session after it returned: a child it backgrounded with its output detached
+    keeps running (or sits stopped, state T, when the observer froze it) after communicate() returns, and each one
+    held memory and XProtect scans on Studio until reboot (2026-10-09). SIGKILL ends stopped processes too."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
 def run_shell(command, payload, env, cwd, timeout):
     started = time.monotonic()
     proc = subprocess.Popen(["/bin/sh", "-c", command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -159,6 +169,7 @@ def run_shell(command, payload, env, cwd, timeout):
             pass
         out, err = proc.communicate()
         timed_out = True
+    reap_group(proc.pid)
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
     return {"command": command, "code": code, "out": out.decode("utf-8", "replace"),
             "err": err.decode("utf-8", "replace"), "timed_out": timed_out, "pid": proc.pid,
@@ -327,6 +338,7 @@ def run_direct(argv, name, payload, env, cwd, timeout):
             pass
         out, err = proc.communicate()
         timed_out = True
+    reap_group(proc.pid)
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
     text, receipt = out.decode("utf-8", "replace"), False
     want = "floor-ok %s" % name

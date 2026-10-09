@@ -41,6 +41,29 @@ QUIET = "import sys\nsys.stdin.read()\n"
 CONTEXT = "import sys\nsys.stdin.read()\nprint('context from routing-pulse')\n"
 
 
+def processes_naming(text: str) -> list[tuple[int, str]]:
+    """(pid, state) of every process whose argv or environment names text (ps -E adds the environment)."""
+    rows = subprocess.run(["ps", "-axwwE", "-o", "pid=,stat=,command="], capture_output=True, text=True).stdout
+    found = []
+    for line in rows.splitlines():
+        pid, state, rest = (line.split(None, 2) + ["", ""])[:3]
+        if text in rest and pid.isdigit() and int(pid) != os.getpid():
+            found.append((int(pid), state))
+    return found
+
+
+@pytest.fixture(autouse=True)
+def kill_spawned_hooks(tmp_path: Path):
+    """Teardown: kill every process a test's hooks left behind, stopped (T) ones included. They run in their own
+    sessions with HOME under tmp_path, so pytest never reaps them; on Studio they piled up across runs (2026-10-09)."""
+    yield
+    for pid, _state in processes_naming(str(tmp_path)):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
 def make_home(tmp_path: Path) -> tuple[Path, dict]:
     home = tmp_path / "home"
     hooks = home / ".claude/hooks"
@@ -1718,3 +1741,19 @@ def test_guard_trim_approval_comment_boundary(tmp_path, guard, command, prefix, 
         ref.rename(original)
         ref.symlink_to(original)
         assert run().returncode == 2
+
+
+def test_a_hook_child_left_running_or_stopped_is_killed_after_the_parity_run(tmp_path: Path) -> None:
+    """A guard that backgrounds a child with its output detached returns at once, and the child outlived the parity
+    run (stopped, state T, when the observer froze it). The run now kills the hook's whole session group."""
+    from importlib.machinery import SourceFileLoader
+    parity = SourceFileLoader("hook_dispatch_parity", str(SOURCE / "hooks/hook-dispatch-parity.py")).load_module()
+    marker = str(tmp_path / "leftover-marker")
+    command = (f"sh -c 'kill -STOP $$; sleep 300 # {marker}' </dev/null >/dev/null 2>&1 & "
+               f"sleep 300 {marker} </dev/null >/dev/null 2>&1 & exit 0")
+    result = parity.run_shell(command, b"{}", dict(os.environ), str(tmp_path), 30)
+    assert result["code"] == 0 and not result["timed_out"]
+    deadline = time.monotonic() + 5
+    while processes_naming(marker) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert processes_naming(marker) == []
