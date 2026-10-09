@@ -110,6 +110,12 @@ STATE_MAX_AGE_SECONDS = 7200
 # forwarder's health and not the health of the model's home vendor.
 SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin"}
 
+# A vendor CLI probe (`devin auth status`) can time out once under load while the seat works. One failure keeps a
+# CLI seat routable; it is held only after this many consecutive doctor runs fail, and only for CLI_SEAT_HOLD_SECONDS
+# (shorter than the 30 min doctor interval). A passing probe clears the count and the hold (2026-10-09).
+CLI_SEAT_HOLD_AFTER_FAILURES = 2
+CLI_SEAT_HOLD_SECONDS = 600
+
 ANALYTICS_SESSION_CAP = 20
 
 
@@ -1566,7 +1572,10 @@ def seat_is_up(seats: Any, seat: str) -> bool:
     record = seats.get(seat)
     if not isinstance(record, dict):
         return True
-    return record.get("ok") is not False
+    if record.get("ok") is not False:
+        return True
+    hold_until = _parse_ts(record.get("hold_until"))
+    return hold_until is not None and hold_until <= datetime.now(timezone.utc)
 
 
 def _override_matches(override: Any, class_name: str, entry: dict[str, Any]) -> bool:
@@ -3150,6 +3159,31 @@ def seat_states(table: dict[str, Any], probes: dict[str, dict[str, Any]], models
     return seats
 
 
+def apply_cli_seat_holds(seats: dict[str, Any], previous: dict[str, Any]) -> None:
+    """Count consecutive CLI-probe failures per CLI seat across doctor runs; hold a seat only from the
+    CLI_SEAT_HOLD_AFTER_FAILURES-th, until a short deadline. A stale previous state counts from zero."""
+    age = state_age_seconds(previous)
+    fresh = age is not None and age <= STATE_MAX_AGE_SECONDS
+    prior_seats = previous.get("seats") if fresh and isinstance(previous.get("seats"), dict) else {}
+    now = datetime.now(timezone.utc)
+    for seat in SEAT_PROBE:
+        record = seats.get(seat)
+        if not isinstance(record, dict) or record["ok"]:
+            continue
+        prior = prior_seats.get(seat)
+        count = prior.get("failures") if isinstance(prior, dict) else None
+        failures = (count if isinstance(count, int) and not isinstance(count, bool) else 0) + 1
+        record["failures"] = failures
+        if failures < CLI_SEAT_HOLD_AFTER_FAILURES:
+            record["ok"] = True
+            record["note"] = (
+                f"probe failed ({record['error']}); {failures} consecutive failure(s), "
+                f"held only after {CLI_SEAT_HOLD_AFTER_FAILURES}"
+            )
+        else:
+            record["hold_until"] = (now + timedelta(seconds=CLI_SEAT_HOLD_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def alert_text(state: dict[str, Any]) -> str:
     down = [f"{name} ({record['error']})" for name, record in sorted(state["seats"].items()) if not record["ok"]]
     broken = [f"{probe['name']} ({probe['error']})" for probe in state["probes"] if not probe["ok"]]
@@ -3195,9 +3229,11 @@ def command_doctor(args: argparse.Namespace) -> int:
         probes.append(probe)
 
     by_name = {probe["name"]: probe for probe in probes}
+    seats = seat_states(table, by_name, models)
+    apply_cli_seat_holds(seats, read_state())
     state = {
         "ts": now_iso(),
-        "seats": seat_states(table, by_name, models),
+        "seats": seats,
         "pools": pools_document,
         "probes": probes,
         "trafficWindowMinutes": SESSION_WINDOW_MINUTES,

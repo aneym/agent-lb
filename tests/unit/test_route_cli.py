@@ -592,6 +592,42 @@ def test_doctor_never_runs_the_host_cursor_or_devin_cli(home: Path) -> None:
     assert probes["devin"]["error"] == f"exit {VENDOR_CLI_STUB_EXIT}"
 
 
+
+def test_one_cli_seat_failure_keeps_routing_and_two_hold_it_until_a_passing_probe(home: Path, tmp_path: Path) -> None:
+    """2026-10-08: one 15 s `devin auth status` timeout under load took devin-seat out until the next doctor run
+    (30 min). One failure now keeps the seat routable; two consecutive failures hold it (for a short window), and
+    the next passing probe clears the hold."""
+    table = json.loads(TABLE.read_text(encoding="utf-8"))
+    table["classes"]["mechanical"]["chain"].insert(0, {"seat": "devin-seat", "model": "claude-opus-5"})
+    table_path = tmp_path / "devin-table.json"
+    table_path.write_text(json.dumps(table), encoding="utf-8")
+    fixtures = doctor_fixtures(
+        tmp_path,
+        name="devin-flaky",
+        pools={"anthropic-general": "ok", "openai-codex": "ok"},
+        messages={"id": "msg_probe", "content": []},
+        sessions={"sessions": []},
+    )
+    failing = {**FAST_PROBES, "ROUTE_DEVIN_CMD": "/bin/sh -c 'exit 7'"}
+
+    def doctor_then_pick(probes: dict[str, str]) -> str:
+        run("doctor", "--write", home=home, table=table_path, fixtures=fixtures, extra=probes)
+        picked = run("pick", "mechanical", "--json", home=home, table=table_path, fixtures=fixtures)
+        return json.loads(picked.stdout)["seat"]
+
+    assert doctor_then_pick(failing) == "devin-seat"
+    assert seat_record(home, "devin-seat")["failures"] == 1
+
+    assert doctor_then_pick(failing) == "cursor-seat"
+    held = seat_record(home, "devin-seat")
+    assert held["ok"] is False and held["failures"] == 2 and "exit 7" in held["error"]
+    hold_until = datetime.fromisoformat(held["hold_until"].replace("Z", "+00:00"))
+    assert timedelta(0) < hold_until - datetime.now(timezone.utc) <= timedelta(minutes=10)
+
+    assert doctor_then_pick(FAST_PROBES) == "devin-seat"
+    assert "hold_until" not in seat_record(home, "devin-seat")
+
+
 def test_doctor_without_write_prints_the_state_and_touches_nothing(home: Path) -> None:
     result = run(
         "doctor",
