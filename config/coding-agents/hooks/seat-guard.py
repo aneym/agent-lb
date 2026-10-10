@@ -43,6 +43,15 @@ FORWARDER_SEATS = {
     "sol-consult",
     "astra-consult",
 }
+# Seats that forward a brief naming a worktree through seat-submit, which places it only by its NEEDS line
+# (factory needs.py); a brief without one runs on the submitting host. Warn the lead at dispatch (harden audit
+# 2026-10-10, Alex: "so factory still isnt hardened?").
+SUBMIT_SEATS = {"gpt-implementer", "sonnet-implementer"}
+WORKTREE_BRIEF = re.compile(r"worktree|-wt/", re.IGNORECASE)
+NEEDS_LINE = re.compile(r"^\ufeff?[ \t]*NEEDS:", re.MULTILINE)
+STUDIO_ONLY = re.compile(r"^\ufeff?[ \t]*PLACEMENT:[ \t]*studio-only(?![\w-])", re.MULTILINE)
+NEEDS_MISSING = ("no NEEDS line: add one line `NEEDS: land=yes|no local=yes|no tools=a,b paths=/x,/y os=linux|mac` "
+                 "(land and local required); without it seat-submit places the brief on this host")
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
 SNAPSHOT_MAX_FUTURE_SECONDS = 60
@@ -297,6 +306,10 @@ def main() -> None:
         "cwd": payload.get("cwd"),
     }
     advisories: list[str] = []
+    if subagent in SUBMIT_SEATS and WORKTREE_BRIEF.search(prompt) and not NEEDS_LINE.search(prompt) \
+            and not STUDIO_ONLY.search(prompt):
+        record["needs_missing"] = True
+        advisories.append(NEEDS_MISSING)
     agents_dir = Path(os.environ.get("SEAT_GUARD_AGENTS_DIR") or Path.home() / ".claude" / "agents")
     pinned = definition_model(subagent, agents_dir)
     retired = retired_patterns(table, subagent)
@@ -328,7 +341,7 @@ def main() -> None:
     if warn_reason:
         record["warned"] = warn_reason
         append(record, ledger)
-        emit_warning(warn_reason)
+        emit_warning(warn_reason + ("; " + NEEDS_MISSING if record.get("needs_missing") else ""))
         return
     is_fork = subagent == "fork"
     if is_fork:

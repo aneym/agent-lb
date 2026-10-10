@@ -244,3 +244,28 @@ def test_dispatch_is_recorded_under_the_interpreter_the_hook_is_installed_with(t
     record = json.loads(ledger.read_text())
     assert record["event"] == "dispatch"
     assert record["task_class"] == "verify"
+
+
+def needs_dispatch(tmp_path: Path, prompt: str, subagent: str = "gpt-implementer") -> tuple[dict, dict]:
+    ledger = tmp_path / "dispatch.jsonl"
+    payload = json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": subagent, "prompt": prompt}})
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps(valid_snapshot()))
+    result = subprocess.run(
+        [sys.executable, str(HOOK)], input=payload, text=True, capture_output=True, check=True,
+        env=os.environ | {"LIMIT_WATCH_SNAPSHOT": str(snapshot), "DISPATCH_LEDGER": str(ledger), "ROUTE_TABLE": str(TABLE)},
+    )
+    output = json.loads(result.stdout)["hookSpecificOutput"] if result.stdout.strip() else {}
+    return output, json.loads(ledger.read_text().splitlines()[-1])
+
+
+def test_implementer_brief_without_needs_line_warns_once_at_dispatch(tmp_path: Path) -> None:
+    brief = "Worktree /repos/x-wt/topic. Check: pytest -q tests/test_a.py\n"
+    output, record = needs_dispatch(tmp_path, brief)
+    assert "no NEEDS line: add one line `NEEDS: land=yes|no local=yes|no" in output["additionalContext"]
+    assert output["additionalContext"].count("no NEEDS line") == 1 and record["needs_missing"] is True
+    for declared in (brief + "NEEDS: land=no local=no\n", brief + "PLACEMENT: studio-only\n"):
+        output, record = needs_dispatch(tmp_path, declared)
+        assert "no NEEDS line" not in output.get("additionalContext", "") and "needs_missing" not in record
+    output, record = needs_dispatch(tmp_path, brief, subagent="gpt-explorer")
+    assert "needs_missing" not in record
