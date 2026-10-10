@@ -4,6 +4,7 @@
   <key>Label</key><string>com.aneyman.llm-usage-publish</string>
   <key>ProgramArguments</key><array><string>/bin/zsh</string><string>/Users/aneyman/.agent-lb/bin/llm-usage-publish.sh</string></array>
   <key>StartInterval</key><integer>900</integer>
+  <key>Nice</key><integer>15</integer><key>LowPriorityIO</key><true/>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/Users/aneyman/.agent-lb/llm-usage-publish.log</string>
   <key>StandardErrorPath</key><string>/Users/aneyman/.agent-lb/llm-usage-publish.log</string>

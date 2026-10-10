@@ -18,6 +18,7 @@ cat > "$PLIST" <<PL
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>$BIN</string></array>
   <key>StartInterval</key><integer>600</integer>
+  <key>Nice</key><integer>15</integer><key>LowPriorityIO</key><true/>
   <key>RunAtLoad</key><true/>
   <key>StandardErrorPath</key><string>$HOME/.agent-lb/cache-watch.err.log</string>
 </dict></plist>
