@@ -248,6 +248,7 @@ READ_ARG = re.compile(
     r"(?:^|[;&|]\s*)(?:rtk read|cat|head|tail|sed -n \S+)(?:\s+-\S+(?:\s+\d+)?)*\s+"
     r"([~/][^\s;&|>]+|[\w.-]+/[^\s;&|>]+)"
 )
+LOG_TARGET = re.compile(r"^/tmp/|\.(?:log|out)$")
 BIG_OUTPUT = 20000
 COMMAND_CAP = 20000
 INLINE_OUTPUT = 15000
@@ -421,7 +422,8 @@ def nav_counters(calls) -> dict:
         target = facts["read_target"]
         if target:
             if target in seen_reads:
-                counts["repeat_reads"] += 1
+                # Re-reading a log a running build writes is a status poll, not a wasted read.
+                counts["status_polls" if LOG_TARGET.search(target) else "repeat_reads"] += 1
             seen_reads.add(target)
         counts["outputs_over_20k"] += facts["out_len"] > BIG_OUTPUT
         counts["outputs_over_15k"] += facts["out_len"] > INLINE_OUTPUT

@@ -186,21 +186,24 @@ def test_closeout_records_navigation_counters(interpreter: str, tmp_path: Path) 
     rows += _tool_turn("m5", "t5", "Bash", {"command": "gh pr checks 12"}, "pass", False)
     rows += _tool_turn("m6", "t6", "Edit", {"file_path": "/repo/app.py"}, "ok", False)
     rows += _tool_turn("m7", "t7", "Bash", {"command": "rg -n x . | head"}, "app.py:1:x", False)
+    # Tailing a log a build is still writing twice is a status poll, not a repeat read.
+    rows += _tool_turn("m8", "t8", "Bash", {"command": "tail -3 /tmp/build.log"}, "building", False)
+    rows += _tool_turn("m9", "t9", "Bash", {"command": "tail -3 /tmp/build.log"}, "done", False)
     transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
     nav = _run(interpreter, tmp_path, transcript)[0]["nav"]
 
-    assert nav["calls"] == 7
-    assert nav["nav"] == 5
+    assert nav["calls"] == 9
+    assert nav["nav"] == 7
     assert nav["nav_before_write"] == 4
-    # grep and cat run through rtk; rg does not.
-    assert nav["nav_rtk"] == 2
+    # grep, cat and tail run through rtk; rg does not.
+    assert nav["nav_rtk"] == 4
     # A Read that succeeds on text quoting an error is not a failed lookup.
     assert nav["failed"] == {"zsh_glob": 1, "missing_path": 1, "cmd_not_found": 0, "too_large": 0}
     assert nav["failed_lookups"] == 2
     assert nav["repeat_reads"] == 1
     assert nav["outputs_over_20k"] == 1
-    assert nav["status_polls"] == 1
+    assert nav["status_polls"] == 2
 
 
 @pytest.mark.parametrize("interpreter", INTERPRETERS)
