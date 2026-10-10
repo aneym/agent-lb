@@ -125,11 +125,11 @@ def test_fold_parity_sticky_and_verbatim_rollback(tmp_path: Path) -> None:
     folded = hooks_of(home)
     bash = [group for group in folded["PreToolUse"] if group.get("matcher") == "Bash"]
     registry = json.loads((home / ".claude/hooks/dispatch/registry.json").read_text())
-    # 1225: the guards' timeouts plus 5, the railway guard (7a71805e) and the dangerous-command guard (S44) that
-    # install-policy registers on Bash included.
+    # 1235: the guards' timeouts plus 5, the railway guard (7a71805e), the dangerous-command guard (S44) and the
+    # kill-scope guard (factory-operations 60, timeout 10) that install-policy registers on Bash included.
     assert bash == [{"matcher": "Bash", "hooks": [{"type": "command",
                                                    "command": f"{DISPATCH} PreToolUse 'Bash' {registry['rev']}",
-                                                   "timeout": 1225}]}]
+                                                   "timeout": 1235}]}]
     bash_entry = [hook["command"] for hook in registry["entries"]["PreToolUse"]["Bash"]]
     assert 'bash "$HOME/.claude/hooks/railway-vars-guard.sh"' in bash_entry
     assert '"$HOME/.claude/hooks/dangerous-command-guard.sh"' in bash_entry
