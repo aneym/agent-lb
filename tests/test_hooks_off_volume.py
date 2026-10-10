@@ -84,11 +84,17 @@ def test_rendered_hooks_survive_missing_factory(tmp_path):
     assert json.loads(first) == json.loads(settings_path.read_text())
 
 
-def test_factory_installer_uses_internal_runtime(tmp_path):
+def test_factory_installer_uses_stable_links(tmp_path):
+    # The guard and cua shim hooks run the manifest's ~/.local links, which the factory runtime and the open-factory
+    # engine plus overlay both install, so neither the repo volume nor a runtime swap can strand them.
     env = dict(os.environ, HOME=str(tmp_path))
     result = subprocess.run([sys.executable, str(FACTORY / "bin/desktop-guard-install")],
                             env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     rendered = json.loads(result.stdout[result.stdout.index("{"):])
-    assert '$HOME/.agent-rails/factory-runtime/bin/desktop-guard' in rendered["PreToolUse"]["hooks"][0]["command"]
-    assert '$HOME/.agent-rails/factory-runtime/bin/agent-shims' in rendered["SessionStart"]["hooks"][0]["command"]
+    guard = rendered["PreToolUse"]["hooks"][0]["command"]
+    path = rendered["SessionStart"]["hooks"][0]["command"]
+    assert '"$HOME/.local/bin/desktop-guard"' in guard
+    assert '$HOME/.local/share/desktop-guard/agent-shims:$PATH' in path
+    for command in (guard, path):
+        assert "/Volumes/" not in command and "factory-runtime" not in command, command
