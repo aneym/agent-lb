@@ -52,6 +52,7 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Remote-machine relay (batch templates) | host-relay | sonnet-latest low |
 
 - **Every agent tab and session runs Opus medium with ultracode on** unless an explicit model, effort or settings flag says otherwise (Alex, 2026-10-07 19:27 ET: "for now, default all our agents to opus medium but with ultracode on please").
+  Exception (2026-10-10): Recruiter runs Fable medium, set in its agent.json `model`/`effort` (Alex, 2026-10-10 ~03:50Z: "restart the chat fable medium always for recruiter please").
 - **Cursor is out until a passing probe at the 2026-10-30 reset.** Switch pools only on real 429s or usage-limit errors, never on a low percentage (2026-09-28).
 - **While Claude is on its last account or a 5h window is under 40%,** Claude runs only tabs, plans and specs (2026-09-29).
 - **Retired models run when asked** (Alex, 2026-10-05 19:55 ET: "we shouldnt just block model usage, we shoudl allow them if we request or we want t escalate things"). Each use is logged; only a model gone upstream is refused.
