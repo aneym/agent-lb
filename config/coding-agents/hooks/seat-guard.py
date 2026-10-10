@@ -44,15 +44,16 @@ FORWARDER_SEATS = {
     "astra-consult",
 }
 # Seats that forward a brief naming a worktree through seat-submit, which places it only by its NEEDS line
-# (factory needs.py); a brief without one goes to the roomiest box, so a Mac-only need it never declared is lost. Warn the lead at dispatch (harden audit
-# 2026-10-10, Alex: "so factory still isnt hardened?").
+# (factory needs.py). NEEDS_MISSING is needs.NO_NEEDS_WARNING verbatim after "WARNING: " (open-factory b090a4b6).
+# Warn the lead at dispatch (harden audit 2026-10-10, Alex: "so factory still isnt hardened?").
 SUBMIT_SEATS = {"gpt-implementer", "sonnet-implementer"}
 WORKTREE_BRIEF = re.compile(r"worktree|-wt/", re.IGNORECASE)
 NEEDS_LINE = re.compile(r"^\ufeff?[ \t]*NEEDS:", re.MULTILINE)
 STUDIO_ONLY = re.compile(r"^\ufeff?[ \t]*PLACEMENT:[ \t]*studio-only(?![\w-])", re.MULTILINE)
 NEEDS_MISSING = ("no NEEDS line: add one line `NEEDS: land=yes|no local=yes|no tools=a,b paths=/x,/y os=linux|mac` "
-                 "(land and local required); without it seat-submit assumes no Mac-only need, sends the brief to the "
-                 "roomiest pooled box, and runs it here only when no box takes it")
+                 "(land and local required); without it seat-submit treats the brief as needing nothing Mac-only and "
+                 "places it on the roomiest reachable box, never on Studio; with no box free it waits, then holds the "
+                 "contract for a retry")
 ANTHROPIC_MODEL_MARKERS = ("opus", "sonnet", "fable", "haiku", "claude")
 SNAPSHOT_MAX_AGE_SECONDS = 600
 SNAPSHOT_MAX_FUTURE_SECONDS = 60
