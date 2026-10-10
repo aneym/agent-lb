@@ -293,6 +293,11 @@ def parse_args() -> argparse.Namespace:
         "after the parity fixture passes against this home's guards; off: restore the per-hook config verbatim. "
         "Absent: keep the current state (a folded config stays folded, over the guards it was checked on).",
     )
+    parser.add_argument(
+        "--check-hook-paths", action="store_true",
+        help="write nothing; exit 1 when a hook the live settings run (through the dispatcher registry when folded) "
+        "names a release-scoped path, or a PreToolUse guard names a path that is missing",
+    )
     return parser.parse_args()
 
 
@@ -1125,16 +1130,23 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                 if not isinstance(command, str):
                     continue
                 # Match by path shape, not by machine literal: the public policy carries no home or volume names.
-                command = re.sub(r'(?:\$HOME|/[^\s"\':;]*)/(?:repos/)?factory/bin/',
-                                 '$HOME/.agent-rails/factory-runtime/bin/', command)
+                # A factory script runs through its manifest-owned ~/.local/bin link, which the factory runtime and
+                # the open-factory engine both install, so a runtime swap or cutover never strands the hook.
+                before = command
+                factory_bin = r'(?:\$HOME|/[^\s"\':;]*)/(?:(?:repos/)?factory|\.agent-rails/factory-runtime)/bin/'
+                command = re.sub(factory_bin + r'agent-shims(?=[\s"\':;/]|$)',
+                                 '$HOME/.local/share/desktop-guard/agent-shims', command)
+                command = re.sub(factory_bin + r'(?=[^\s"\':;/]+(?:$|[\s"\';]))', '$HOME/.local/bin/', command)
+                command = re.sub(factory_bin, '$HOME/.agent-rails/factory-runtime/bin/', command)
+                from_factory = command != before and '/.local/bin/' in command
                 command = re.sub(r'/[^\s"\':;]*/repos/personal/unblock/',
                                  '$HOME/.local/share/unblock-headless/', command)
                 command = re.sub(r'/[^\s"\':;]*/repos/skill-stats/', '$HOME/.local/share/skill-stats/', command)
                 # Floor commands stay direct execs: the dispatcher requires their receipt and fails closed.
                 match = re.fullmatch(r'((?:"[^"\n]+"|[^\s]+)\s+)?"((?:\$HOME)?/[^"\n]+)"(.*)', command)
-                if match and any(path in command for path in (
+                if match and (from_factory or any(path in command for path in (
                         '/.agent-rails/factory-runtime/', '/.local/share/unblock-headless/',
-                        '/.local/share/skill-stats/')) \
+                        '/.local/share/skill-stats/'))) \
                         and not dispatcher.floor_name(command) \
                         and '# hook missing: fail open' not in command:
                     script = match[2]
@@ -1142,6 +1154,37 @@ def internal_hook_commands(hooks: dict[str, Any], source: Path) -> None:
                                f'printf \'%s\\n\' "hook warning: missing {script}; continuing" >&2; '
                                'fi # hook missing: fail open')
                 hook["command"] = command
+
+
+RELEASE_SCOPED = re.compile(r'factory-runtime|/factory/bin/|/repos/|/Volumes/')
+HOOK_PATH = re.compile(r'(?:\$HOME|~|/)[^\s"\';|&)<>]*')
+
+
+def hook_path_problems(home: Path) -> list[str]:
+    """What --check-hook-paths reports for the live settings, through the registry of their fold."""
+    settings = json.loads(read_text(home / ".claude/settings.json") or "{}")
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    if is_folded(settings):
+        registry = read_registry(home, folded_rev(settings))
+        if registry is None:
+            return ["the dispatcher registry for these settings is missing or damaged"]
+        hooks = unfold_hooks(hooks, registry)
+    problems = []
+    for event, groups in hooks.items():
+        for group in groups if isinstance(groups, list) else []:
+            for hook in group.get("hooks", []) if isinstance(group, dict) else []:
+                command = hook.get("command")
+                if not isinstance(command, str):
+                    continue
+                for word in HOOK_PATH.findall(command):
+                    if word in ("/", "~"):
+                        continue
+                    if RELEASE_SCOPED.search(word):
+                        problems.append(f"{event}: release-scoped path {word} in: {command}")
+                    elif event == "PreToolUse" and not os.path.exists(
+                            re.sub(r'^(?:\$HOME|~)(?=/)', str(home), word)):
+                        problems.append(f"{event}: missing guard target {word} in: {command}")
+    return problems
 
 
 def reconcile_settings(settings: dict[str, Any], uninstall: bool, sonnet_model: str = SONNET_MODEL,
@@ -1286,6 +1329,12 @@ def write_atomic(path: Path, content: str) -> None:
 
 def main() -> int:
     args = parse_args()
+    if args.check_hook_paths:
+        problems = hook_path_problems(args.home)
+        for line in problems:
+            print(line)
+        print("hook paths: ok" if not problems else f"hook paths: {len(problems)} problem(s)")
+        return 1 if problems else 0
     source = Path(__file__).resolve().parent
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
@@ -1435,6 +1484,11 @@ def main() -> int:
         # revision and guard set, but migrate executable paths in those registries.
         for path in registry_path.parent.glob("registry*.json"):
             legacy = json.loads(path.read_text())
+            if isinstance(legacy, dict) and legacy.get("rev") and isinstance(legacy.get("entries"), dict) \
+                    and registry_rev(legacy["entries"]) == legacy["rev"]:
+                # An intact fold: the dispatcher refuses a registry whose entries no longer hash to its rev, so an
+                # edit here would refuse every PreToolUse call of the sessions running it. They keep its paths.
+                continue
             before = json.dumps(legacy, sort_keys=True)
 
             def relocate(value: Any) -> None:

@@ -4,6 +4,7 @@ Regression: a sync restores repo-backed desktop/unblock hooks or the agent PATH.
 Existing dispatcher parity does not exercise installation paths or a broken factory
 symlink. This uses the installer CLI and real installed guard, without test seams.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,8 @@ def test_rendered_hooks_survive_missing_factory(tmp_path):
     runtime = home / ".agent-rails/factory-runtime/bin"
     runtime.mkdir(parents=True)
     shutil.copy2(FACTORY / "bin/desktop-guard", runtime / "desktop-guard")
+    (home / ".local/bin").mkdir(parents=True)
+    (home / ".local/bin/desktop-guard").symlink_to(runtime / "desktop-guard")
     settings_path = claude / "settings.json"
     settings_path.write_text(json.dumps({"hooks": {
         "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command":
@@ -98,3 +101,66 @@ def test_factory_installer_uses_stable_links(tmp_path):
     assert '$HOME/.local/share/desktop-guard/agent-shims:$PATH' in path
     for command in (guard, path):
         assert "/Volumes/" not in command and "factory-runtime" not in command, command
+
+
+def test_floor_guards_render_to_stable_links_and_check_catches_drift(tmp_path):
+    # rm-dynamic-deny and stash-guard (kept floors) ran from factory-runtime; a cutover that moves the runtime would
+    # leave the hook naming a missing script. The rendered hook must name the manifest's ~/.local/bin link, an intact
+    # revision-pinned registry must not be edited (the dispatcher refuses one whose entries no longer hash to its
+    # rev), and --check-hook-paths must fail on a release-scoped path or a missing guard target.
+    home = tmp_path / "home"
+    claude = home / ".claude"
+    claude.mkdir(parents=True)
+    runtime = home / ".agent-rails/factory-runtime/bin"
+    runtime.mkdir(parents=True)
+    links = home / ".local/bin"
+    links.mkdir(parents=True)
+    for name in ("rm-dynamic-deny", "stash-guard"):
+        shutil.copy2(FACTORY / "bin" / name, runtime / name)
+        (links / name).symlink_to(runtime / name)
+    settings_path = claude / "settings.json"
+    settings_path.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": '/usr/bin/python3 "$HOME/factory/bin/rm-dynamic-deny"'},
+        {"type": "command", "command": '/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/stash-guard"'}]}]}}))
+    entries = {"PreToolUse": {"Bash": [{"type": "command", "command":
+        '/usr/bin/python3 "$HOME/.agent-rails/factory-runtime/bin/rm-dynamic-deny"'}]}}
+    rev = hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    pinned = claude / f"hooks/dispatch/registry.{rev}.json"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text(json.dumps({"rev": rev, "entries": entries}))
+    pinned_bytes = pinned.read_bytes()
+    env = dict(os.environ, HOME=str(home), HERDR_ENV="", HERDR_PANE_ID="")
+
+    def installer(*args):
+        return subprocess.run([sys.executable, str(INSTALLER), "--home", str(home), *args],
+                              env=env, capture_output=True, text=True, timeout=120)
+
+    result = installer("--hook-dispatcher", "off")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert pinned.read_bytes() == pinned_bytes
+    commands = [hook["command"] for group in json.loads(settings_path.read_text())["hooks"]["PreToolUse"]
+                for hook in group["hooks"] if "rm-dynamic-deny" in hook["command"] or "stash-guard" in hook["command"]]
+    assert commands == ['/usr/bin/python3 "$HOME/.local/bin/rm-dynamic-deny"',
+                        '/usr/bin/python3 "$HOME/.local/bin/stash-guard"']
+    checked = installer("--check-hook-paths")
+    assert checked.returncode == 0, checked.stdout
+    rm_payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm -rf $d"}})
+    denied = subprocess.run(["/bin/sh", "-c", commands[0]], input=rm_payload, env=env,
+                            capture_output=True, text=True, timeout=10)
+    assert denied.returncode == 2, denied.stdout + denied.stderr
+
+    (runtime / "rm-dynamic-deny").unlink()
+    missing = installer("--check-hook-paths")
+    assert missing.returncode == 1
+    assert "missing guard target $HOME/.local/bin/rm-dynamic-deny" in missing.stdout
+
+    shutil.copy2(FACTORY / "bin/rm-dynamic-deny", runtime / "rm-dynamic-deny")
+    settings = json.loads(settings_path.read_text())
+    for group in settings["hooks"]["PreToolUse"]:
+        for hook in group["hooks"]:
+            hook["command"] = hook["command"].replace("$HOME/.local/bin/stash-guard",
+                                                      "$HOME/.agent-rails/factory-runtime/bin/stash-guard")
+    settings_path.write_text(json.dumps(settings))
+    scoped = installer("--check-hook-paths")
+    assert scoped.returncode == 1
+    assert "release-scoped path $HOME/.agent-rails/factory-runtime/bin/stash-guard" in scoped.stdout
