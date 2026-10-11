@@ -343,3 +343,60 @@ def test_anthropic_status_for_error_maps_types() -> None:
     assert anthropic_status_for_error({"type": "error", "error": {"type": "invalid_request_error"}}) == 400
     assert anthropic_status_for_error({"type": "error", "error": {"type": "api_error"}}) == 502
     assert anthropic_status_for_error({"type": "error", "error": {"type": "rate_limit_error"}}) == 429
+
+
+def _workflow_relay_fixture() -> dict[str, str]:
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "workflow_harness_relay.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _input_texts(translated) -> list[str]:
+    texts: list[str] = []
+    for item in translated.to_payload()["input"]:
+        for part in item.get("content") or []:
+            if isinstance(part, dict) and "text" in part:
+                texts.append(part["text"])
+    return texts
+
+
+@pytest.mark.parametrize("as_parts", [False, True])
+def test_seat_sees_only_its_brief_when_workflow_harness_relays_lead_chat(as_parts: bool) -> None:
+    """Golden: the Workflow harness frames captured from run wf_7d1bfe12-263.
+
+    Every seat in that run refused its brief because the relayed lead chat was
+    framed as the authoritative request. The bridge must drop the relayed chat
+    and keep the brief's body verbatim, in both content shapes Claude Code sends.
+    """
+    fx = _workflow_relay_fixture()
+    reminder = "<system-reminder>CLAUDE.md contents</system-reminder>"
+
+    def turn(text: str) -> object:
+        return [{"type": "text", "text": reminder}, {"type": "text", "text": text}] if as_parts else text
+
+    translated = claude_to_responses(
+        _request(
+            messages=[
+                {"role": "user", "content": turn(fx["relayed_request"])},
+                {"role": "user", "content": fx["computed_task"]},
+            ]
+        )
+    )
+    texts = _input_texts(translated)
+    joined = "\n".join(texts)
+
+    assert "recorder app" not in joined
+    assert "user request]" not in joined
+    assert "carries no user authority" not in joined
+    assert "It is the only request for this agent" in joined
+    brief_body = fx["computed_task"].partition("\n")[2]
+    assert joined.endswith(brief_body)
+    assert (reminder in texts) is as_parts
+
+
+def test_ordinary_user_turns_pass_through_the_bridge_unchanged() -> None:
+    text = "[Workflow harness — computed task] mentioned mid-sentence is not a frame.\nThe computed task text follows:"
+    translated = claude_to_responses(_request(messages=[{"role": "user", "content": text}]))
+
+    assert _input_texts(translated) == [text]

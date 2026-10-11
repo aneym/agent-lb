@@ -1,0 +1,3 @@
+- [x] Strip the relayed-request frame and reframe the computed-task frame in `claude_to_responses`.
+- [x] Golden test with the frames captured from run wf_7d1bfe12-263.
+- [x] Check: a Workflow of 3 gpt-implementer seats completes with the relay present.
