@@ -428,7 +428,9 @@ factory("escalation", valid_escalation, "implement escalates to an audited chain
 
 # Names of people and machines stay out of this public file too: each operator lists their own private literals
 # (people, machines, hosts), one per line, in the file named by AGENT_LB_PRIVATE_LITERALS. Unset means only the
-# generic patterns run; set but unreadable or empty is a failed check, not a silent pass.
+# generic patterns run; set but unreadable or empty is a failed check, not a silent pass. The generic home and
+# volume patterns need a name after the prefix: a bare /Users/ or /Volumes/ (a path-shape pattern such as
+# install-policy.py's release-scoped check) names nobody and no machine (2026-10-11).
 private_literals: list[str] = []
 literals_error = ""
 literals_path = os.environ.get("AGENT_LB_PRIVATE_LITERALS")
@@ -444,7 +446,7 @@ if literals_path:
 factory("private-literals", not literals_error, literals_error or "operator literal list loaded or not configured")
 public_pattern = re.compile(
     "|".join(
-        [r"/Users/|/Volumes/|\.ts\.net\b|[Tt]ailscale|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}"]
+        [r"/Users/[A-Za-z0-9._-]|/Volumes/[A-Za-z0-9._-]|\.ts\.net\b|[Tt]ailscale|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}"]
         + [rf"(?<![A-Za-z0-9_]){re.escape(literal)}(?![A-Za-z0-9_])" for literal in private_literals]
     )
 )
