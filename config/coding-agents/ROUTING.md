@@ -65,13 +65,14 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 Opus plans and asks `sol-consult` before splitting complex or risky work. Every slice names its files, fixed interfaces and one check, which is one user scenario on one vertical path; the seat runs it while writing and the harness reruns it on main after merge (2026-10-07). A decision the check cannot back stays on Opus. Start independent slices together; an open product call gets a seam with a reasonable default (2026-09-28). An incident fix ships with the check that catches it next time (2026-09-26).
 Tests: load the test-audit skill first, prefer e2e, then integration without mocks of our own code, then golden; never thin a test that guards a kept floor (2026-10-07).
 
-## Capacity and placement (2026-10-05; updated 2026-10-08)
+## Capacity and placement (2026-10-05; updated 2026-10-12)
 
 No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, and going by usage and space").
-- **Checks and seats run on the box with the most measured room.** The main machine keeps the tabs, Mac-only steps and the merge step.
+- **Every seat, check, build and test suite that is not Mac-only runs on the box with the most measured room, by default, with no opt-in** (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"). The seat definitions a lead's Agent call uses (gpt-implementer, gpt-explorer, sonnet-implementer, verifier, opus-seat, codex-sol, codex-verifier, codex-test-runner, computer-use) forward to `seat-run`, which places the seat on ax42, pc-wsl or forge, mirrors the worktree and brings the diff back. The main machine keeps the tabs, the merge step and Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots), which uses the `<seat>-local` definitions, and runs a seat only when no box admits it.
+- **Placement is measured, not claimed** (2026-10-12): every seat placement writes one row (seat, where, host, reason, headroom) to `state/placements.jsonl`, and `placement-check` sends 20 dry-run seats through the forwarding path on every factory merge and daily; it fails when more than the Mac-only share lands on Studio.
 - **Admission never sits on the merge path,** and a slice's own check runs at once in a mirror of its worktree.
 - **A box dying loses a check run, never a lane:** lane state and worktrees live on the main machine and the mirror, and the check is re-placed.
-- **Model work runs as workflow agents inside the lead's process,** not as new CLI sessions or panes; only the tabs Alex talks to and Mac-only steps get their own process.
+- **Leads and seat forwarders run inside the lead's process,** not as new CLI sessions or panes; the seat's own work runs on the box `seat-run` picks (2026-10-12). Only the tabs Alex talks to and Mac-only steps get their own process on the main machine.
 - **Back off only on real 429s, usage-limit errors or climbing error rates** (Alex, 2026-09-25: hundreds of agents must stay possible). Agent-lb throttling is a bug; report the request IDs.
 
 ## Waits, watchers and leads (2026-09-29; updated 2026-10-08)

@@ -19,15 +19,17 @@ cd <working directory> && f=$(mktemp "${TMPDIR:-/tmp}/codex-sol-contract.XXXXXX"
 <contract text built below>
 CONTRACT_EOF
 vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-sol --)
-${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort <low|medium|high|xhigh> [--write] [--background] --prompt-file "$f"
+k=codex-sol-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); echo "key=$k"; seat-run --bg --name "$k" --timeout 4320 -- ${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort <low|medium|high|xhigh> [--write] --prompt-file "$f"
 ```
+
+Placement (Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"): the launch goes through `seat-run --bg`, which runs it on the factory box with the most measured room unless the contract names a Mac-only tool (then Studio). Note the printed `key=`; then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 75, at most 30 waits; it prints the output tail and exit code (full log: `~/.agent-rails/jobs/seat-run/$k.log`). Exit 69 (`NO-BOX`) or a `studio-governor:` line is a placement event, not a death: relaunch once at once with a new key, `seat-run --box studio` after NO-BOX and `seat-run --box auto` after a governor refusal. Studio-only work (a Mac app, Aside, herdr, simulators) uses `codex-sol-local` instead.
 
 Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
 
 - The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
 - `--write` only when the contract says Codex writes files; never in a shared checkout that another seat owns. Without `--write` Codex is read-only on disk.
 - `--effort`: the brief's effort, default `high` for research and deliberation, `medium` for mechanical work, `xhigh` when the brief says "hard".
-- `--background` for work over ~10 minutes; return the job ID and the command to collect it. Never `--resume-last` in a shared worktree.
+- Long work needs no `--background`: seat-run runs it detached and `--wait` collects it. Never `--resume-last` in a shared worktree.
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs, or Herdr tab changes unless the brief says the owner authorized that exact thing.
 - Web access is on for research contracts; ask Codex to cite every source with a date.
 

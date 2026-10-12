@@ -54,6 +54,14 @@ MANAGED = (
     ("sonnet-implementer", ".claude/agents/sonnet-implementer.md", "agents/sonnet-implementer.md"),
     ("effort-xhigh", ".claude/agents/effort-xhigh.md", "agents/effort-xhigh.md"),
     ("host-relay", ".claude/agents/host-relay.md", "agents/host-relay.md"),
+    ("gpt-implementer-local", ".claude/agents/gpt-implementer-local.md", "agents/gpt-implementer-local.md"),
+    ("gpt-explorer-local", ".claude/agents/gpt-explorer-local.md", "agents/gpt-explorer-local.md"),
+    ("sonnet-implementer-local", ".claude/agents/sonnet-implementer-local.md", "agents/sonnet-implementer-local.md"),
+    ("verifier-local", ".claude/agents/verifier-local.md", "agents/verifier-local.md"),
+    ("opus-seat-local", ".claude/agents/opus-seat-local.md", "agents/opus-seat-local.md"),
+    ("codex-sol-local", ".claude/agents/codex-sol-local.md", "agents/codex-sol-local.md"),
+    ("codex-test-runner-local", ".claude/agents/codex-test-runner-local.md", "agents/codex-test-runner-local.md"),
+    ("computer-use-local", ".claude/agents/computer-use-local.md", "agents/computer-use-local.md"),
     ("seat-guard", ".claude/hooks/seat-guard.py", "hooks/seat-guard.py"),
     ("subagent-closeout", ".claude/hooks/subagent-closeout.py", "hooks/subagent-closeout.py"),
 )
@@ -273,7 +281,8 @@ factory(
     "cross-vendor review on request only, money path included, and one fix round",
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
-forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat"}
+forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat",
+              "sonnet-implementer", "verifier", "codex-sol-local", "codex-test-runner-local", "computer-use-local"}
 VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi")
 BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}
 EFFORTS = ("low", "medium", "high", "xhigh")

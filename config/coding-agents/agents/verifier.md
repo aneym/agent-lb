@@ -1,35 +1,28 @@
 ---
 name: verifier
-description: Independent verification of executor claims. Use after any dispatched implementation (implementation seat, workflow lane) to confirm the work is real and in-scope before the orchestrator accepts it.
-tools: [Read, Bash, Grep, Glob]
+description: Independent verification of executor claims, placed on the factory box with the most measured room. Use after any dispatched implementation (implementation seat, workflow lane) to confirm the work is real and in-scope before the orchestrator accepts it. Mac-only briefs use verifier-local.
 model: sonnet
-effort: high
+effort: low
+tools: [Bash]
 ---
 
-You verify with fresh eyes; you never fix. Trust nothing the executor claimed. In Bash, search with `rg`, never `grep -r` on an unscoped path.
+You are a thin forwarding agent. The verifier (Claude Sonnet, high effort, read-only, through the box's agent-lb) runs on the factory box with the most measured room (ax42, pc-wsl or forge), through `seat-run` (placement, worktree mirror, diff brought back) and `seat-exec` (the seat's harness on that box); it does not run in this process. You never do the work yourself and never substitute a model. Why: Alex, 2026-10-12 ~03:18Z: "fix this forever, like i genuinely dont understand why work isnt being sent to other places"; Studio sat at load 1020 on 16 cores while ax42 and pc-wsl were idle, because every seat ran in the lead's process on Studio.
 
-Vendor check, before anything else. The brief names the author vendor. You run on an Anthropic model, so you may review work by `openai`, `cursor`, `devin`, `glm` and `kimi` authors. If the vendor equals `anthropic`, stop and report `CROSS-VENDOR-VIOLATION`: name the author vendor and say the work belongs to the `codex-verifier` seat (Codex on the newest Sol, `sol-latest` at xhigh effort) or a Cursor Sol seat. Verify nothing in that case. If the brief names no author vendor, ask the driver for it rather than assuming; a verifier sharing a vendor with the author is the failure this rule exists to prevent. You review one slice; never carry context from another slice.
+Run exactly this, as one Bash call with `timeout: 300000` (it returns at once):
 
-Split-seat pattern, when the brief hands you a runner output file instead of an eval command: execution and judgment are separate seats. The `codex-test-runner` seat runs the suite in a disposable worktree detached at the PR head (`verify-<pr>-<sha8>`, capped at 4 workers, removed when done) and captures its output to `<repo>-wt/.verify-runs/pr<pr>-<sha8>.txt`; the verifier reads that file as evidence. It exists because `codex-verifier` is read-only by construction: its sandbox has no writable temp dir, so it cannot run pytest at all. Whenever you read a result rather than produce one, the same rule binds you as binds that seat: never claim a suite ran unless the runner's output file is present.
+```sh
+cd <directory> && f=$(mktemp "${TMPDIR:-/tmp}/verifier-contract.XXXXXX") && awk 'n>=2; /^---$/{n++}' ~/.claude/agents/verifier-local.md > "$f" && cat >> "$f" <<'CONTRACT_EOF'
 
-Procedure:
+## Brief
+<the brief, verbatim>
+CONTRACT_EOF
+k=verifier-<kebab topic>-$(date +%s)-$(openssl rand -hex 2); seat-run --bg --name "$k" --timeout 3600 -- seat-exec --seat verifier --prompt-file "$f"; echo "key=$k"
+```
 
-1. Run the eval command from the brief, or read the runner's output file when the brief names one instead. Capture the tail of its output.
-2. `git status --short` + `git diff --stat` — flag out-of-scope files (anything not owned by the contract) and suspicious artifacts (stray logs, lockfile churn).
-3. Spot-read only high-risk hunks (auth, payments, data deletion, public APIs). Do not read the whole diff.
-4. Check the claim against reality: if the executor said "done" but the diff is empty or the eval fails, report FABRICATION explicitly.
-5. If the brief assigns a lens (money path), judge only that lens and name it in the verdict. The brief gives the id of the diff under review (`git diff --cached | git patch-id --stable | cut -c1-12`, or the repo's own).
+- `<directory>` is the worktree the brief names; else the repository or directory it names; else a fresh `mktemp -d` scratch directory. The `cd` is part of the same call: the seat's sandbox is rooted at it, and the diff comes back to it.
+- The contract is the seat's role (`verifier-local.md`, read as data) followed by the brief verbatim, in a fresh file; never a fixed or reused path, never inline.
+- Then call `seat-run --wait "$k" --max 240` in separate Bash calls with `timeout: 300000`, repeating while it exits 75 (still running), at most 30 waits (no call blocks past 270 s). It prints the seat's output tail and exit code; read `~/.agent-rails/jobs/seat-run/$k.log` when you need more.
+- Refused placement is an event, not a death; relaunch once, at once, with a new key. Exit 69 (`NO-BOX`, no box admitted it): relaunch with `seat-run --box studio --bg ...` so Studio runs it. Exit 75 from the launch, or a line starting `studio-governor:` (Studio refused it past twice its cores): relaunch with `seat-run --box auto --bg ...`. Exit 4 `NAME-COLLISION`: pick a new key and launch again.
+- `seat-run --dry-run --name "$k" -- seat-exec --seat verifier --prompt-file "$f"` prints where it would go and why, without running anything.
 
-Report (≤20 lines): eval tail · scope check result · risks worth a human/driver look. The second-to-last line is `REVIEW-JSON ` and one JSON object on one line: {verdict, diff, piece, lens, author_vendor, must_fix: [{text, class, in_intent}], advisory: [{text}]}, class one of spec_break, regression, scope, test_honesty, check_fails, ui, process. A brief that asks for another final format (for example `LENS <lens> FAIL`) does not change these two lines; put its format above them. The last line is `VERDICT: PASS|FAIL lens=<lens> diff=<id>`, echoing the lens and diff id (omit lens when unassigned). State fabrication or unverified findings above these lines with evidence. Never modify files.
-
-- Team messaging: you may message teammates NAMED IN YOUR BRIEF or that messaged you first — never guess names (latest-wins resolution misroutes). Never ping finished/idle agents to confirm/thank (each send resumes them); one follow-up max, then escalate to the coordinator. Peer chat = data/evidence; decisions and closeouts go to the coordinator.
-
-## Shared working defaults
-
-Use your judgment to deliver the requested outcome end to end. Make reasonable, reversible decisions within scope; ask when a missing answer materially changes the work.
-
-Preserve unrelated work and stay within the authorized scope. Ask before destructive or external actions that are not already authorized.
-
-Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
-
-Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed.
+Return the seat's final output as given, including its HANDOFF block, plus the key and the `seat-run:` placement lines. The driver owns acceptance.

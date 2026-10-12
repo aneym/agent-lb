@@ -472,7 +472,15 @@
     "frontend-designer": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "high"},
     "sonnet-implementer": {"vendor": "anthropic", "box": null},
     "effort-xhigh": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "xhigh"},
-    "host-relay": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "low"}
+    "host-relay": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "low"},
+    "gpt-implementer-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "medium"},
+    "gpt-explorer-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "low"},
+    "codex-sol-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "high"},
+    "codex-test-runner-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "medium"},
+    "computer-use-local": {"vendor": "openai", "box": null, "model": "sol-latest", "effort": "high"},
+    "opus-seat-local": {"vendor": "anthropic", "box": null, "model": "opus-latest", "effort": "medium"},
+    "sonnet-implementer-local": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"},
+    "verifier-local": {"vendor": "anthropic", "box": null, "model": "sonnet-latest", "effort": "high"}
   },
   "pools": {
     "opus-latest": "anthropic-general",
