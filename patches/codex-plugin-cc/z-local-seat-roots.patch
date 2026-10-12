@@ -1,0 +1,48 @@
+diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
+--- a/plugins/codex/scripts/lib/codex.mjs
++++ b/plugins/codex/scripts/lib/codex.mjs
+@@ -1257,3 +1257,44 @@
+ }
+ 
+ export { DEFAULT_CONTINUE_PROMPT, TASK_THREAD_PREFIX };
++
++// Local seats need admission bookkeeping outside their scratch cwd. Only the own lane's
++// evidence directory is added, never the whole lanes tree or repository tree.
++function localSeatWritableRoots(cwd, sandbox) {
++  if (sandbox !== "workspace-write" || process.env.PLACEMENT !== "studio-only" ||
++      process.env.BOX_EXEC_HOST !== "studio") return [];
++  const home = os.homedir();
++  const lanes = path.join(home, ".agent-rails", "lanes");
++  const canonical = (value) => {
++    try { return fs.realpathSync(value); } catch { return path.resolve(value); }
++  };
++  const laneRoot = canonical(lanes);
++  const candidate = process.env.LANE_DIR || process.env.SEAT_LANE_DIR ||
++    (process.env.FACTORY_LANE ? path.join(lanes, process.env.FACTORY_LANE) : cwd);
++  const resolved = candidate ? canonical(candidate) : "";
++  const relative = path.relative(laneRoot, resolved);
++  const roots = [path.join(home, ".agent-rails", "factory", "admit")];
++  if (relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." &&
++      !path.isAbsolute(relative)) {
++    const evidence = path.join(laneRoot, relative.split(path.sep)[0], "evidence");
++    // Refuse an evidence symlink that escapes the own lane.
++    const lane = path.dirname(evidence);
++    const target = canonical(evidence);
++    if (target === evidence || target.startsWith(`${lane}${path.sep}`)) roots.push(evidence);
++  }
++  return roots;
++}
++
++// Extend the shared sandbox builder without replacing its worktree/configured roots.
++const sharedSandboxConfig = sandboxConfig;
++sandboxConfig = async function(client, cwd, sandbox) {
++  const result = await sharedSandboxConfig(client, cwd, sandbox);
++  const roots = localSeatWritableRoots(cwd, sandbox);
++  if (!roots.length) return result;
++  let configured = result.config?.sandbox_workspace_write?.writable_roots;
++  if (!configured) {
++    const response = await client.request("config/read", { includeLayers: false, cwd });
++    configured = response?.config?.sandbox_workspace_write?.writable_roots ?? [];
++  }
++  return { config: { sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])] } } };
++};
