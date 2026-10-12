@@ -1,4 +1,5 @@
 #!/bin/bash
+# Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write. The wrapper refuses repo paths outside the lane directory unless --allow-repo-write explicitly overrides the rule.
 # Studio-only foreground companion entrypoint. Keep admission, but never box placement.
 set -euo pipefail
 if [[ ${1:-} == --dry-run ]]; then
