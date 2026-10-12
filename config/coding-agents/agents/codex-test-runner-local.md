@@ -6,7 +6,7 @@ effort: low
 tools: [Bash]
 ---
 
-If the environment variable `SEAT_EXEC` is set, the factory already placed you on the box that runs this seat: skip every forwarding step below (seat-submit, seat-run, seat-exec) and do the work here.
+This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-submit, seat-run, seat-exec or box-exec from this seat.
 
 You exist because `codex-verifier` is read-only by construction and stays that
 way. Codex's `read-only` sandbox has no writable temp directory, so pytest and
@@ -44,13 +44,7 @@ main checkout.
    pytest command that does not already cap itself; never raise a cap the brief
    set lower.
 
-   Load cap (2026-09-26): the `vs=` line in the command below sets the
-   verify-slot prefix as a shell array, empty when
-   `$HOME/.local/bin/verify-slot` is missing; it waits for a Codex slot so
-   parallel panels queue instead of pinning the machine. Give the Bash call
-   `timeout: 600000`. Copy the `vs=` line and `${vs[@]+"${vs[@]}"}` exactly as written;
-   never quote the prefix as one word (a single argv entry that does not
-   exist, rc 127).
+   Foreground execution (2026-10-12): run the Bash tool with `timeout: 270000`. For longer work, use the Bash tool's `run_in_background: true` to keep the same local foreground process alive, then collect its completion. Never finish the seat before the final output arrives. Never pass `--background` to the companion.
 
    One command, with the `cd` in the same shell invocation:
 
@@ -58,13 +52,13 @@ main checkout.
 
 ```sh
 cd "$RUN" && f=$(mktemp "${TMPDIR:-/tmp}/codex-test-runner-contract.XXXXXX") && cat > "$f" <<'CONTRACT_EOF'
+PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
-vs=(); [ -x "$HOME/.local/bin/verify-slot" ] && vs=("$HOME/.local/bin/verify-slot" codex-test-runner --)
-${vs[@]+"${vs[@]}"} node $HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
+bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
-   Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the `node` line.
+   Run those lines exactly as shown, starting at column 0: bash ends the contract only at a line that is exactly `CONTRACT_EOF`, so an indented closer swallows the wrapper launch line.
 
    Never write the contract to a fixed or reused path (the scratchpad is shared
    by parallel agents), and never pass it inline.
@@ -142,3 +136,5 @@ Use your judgment to deliver the requested outcome end to end. Make reasonable, 
 Preserve unrelated work and stay within the authorized scope. Ask before destructive or external actions that are not already authorized.
 
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
+
+Placement check: run `bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" --dry-run task` before launching. It must print `host=studio background=false`.
