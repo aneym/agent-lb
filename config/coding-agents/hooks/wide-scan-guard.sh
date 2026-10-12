@@ -1,8 +1,9 @@
 #!/bin/bash
-# Refuse recursive grep/rg/find over /, $HOME, /Volumes/<disk> or the whole repos dir.
+# Refuse recursive grep/rg/find/fd (bare or through rtk) over /, $HOME, /Volumes/<disk> or ~/.agent-rails as a whole;
+# warn on the other wide roots (/System, /Library, the whole repos dir).
 # Such scans ran for minutes on 2026-09-25, pushed Studio load past 130 and tripped
 # the OrbStack NFS dialog. Scope to one repo or directory instead.
-# Override for a deliberate scan: append the comment "# wide-scan-ok".
+# The comment "# wide-scan-ok" silences a warning; it never lifts a refusal.
 # A floor guard fails closed (hook-dispatcher-4, 2026-10-08): input it cannot read (jq missing or failing) and a
 # scanner that fails (python3 missing or crashing) refuse the call; before, both fell through to an allow.
 # S44 (2026-10-08): every read is checked (set -euo pipefail); a `cat` that fails or reads nothing refuses (review M2:
@@ -12,6 +13,11 @@
 # Warn only (guard trim, Alex 2026-10-08 09:18 ET: "dont have guards that are too aggressive"): a wide scan is not a
 # kept floor, so every finding is one line of context and the call goes through. Only a broken guard (input it cannot
 # read, a scanner that crashes) still refuses, as the dispatcher's fail-closed rule asks.
+# Refuse again for the roots that took Studio down (factory-burn-2026-10-12, Studio at 0% idle): a recursive grep, rg,
+# find or fd, bare or through rtk (rtk grep is recursive), over /, $HOME, /Volumes/<disk>, ~/.agent-rails or its
+# agents, evidence or lanes dir as a whole exits 2 with one line naming the house-tools rule and the scoped
+# replacement; no override comment. One lane, agent or repo dir stays allowed; the other wide roots (/System,
+# /Library, all repos) still only warn.
 set -euo pipefail
 refuse() {
   echo "BLOCKED: wide-scan-guard $1, so this call is refused (the guard fails closed). Check cat, jq and python3 on PATH." >&2
@@ -143,6 +149,37 @@ def join_continuations(text):
     return ''.join(kept)
 
 
+class Refused(Exception):
+    pass
+
+
+WARNED = []
+
+
+def refused_root(path, cwd):
+    path = resolve_path(path, cwd)
+    home = os.path.expanduser('~')
+    return (path in ('/', home, '/Users/aneyman')
+            or re.fullmatch(r'/Volumes/[^/]+', path) is not None
+            or re.search(r'/\.agent-rails(?:/(?:agents|evidence|lanes))?$', path) is not None)
+
+
+def refusal(tool, root, pattern, cwd):
+    home = os.path.expanduser('~')
+    shown = resolve_path(root, cwd)
+    if shown == home or shown.startswith(home + '/'):
+        shown = '~' + shown[len(home):]
+    pattern = pattern or '<pattern>'
+    scope = '~/.agent-rails/<one dir>' if '/.agent-rails' in resolve_path(root, cwd) else '<one repo or dir>'
+    hint = 'rg -n "%s" %s' % (pattern, scope)
+    if re.fullmatch(r'b-\d{8,}[-0-9a-f]*', pattern):
+        hint = 'lane-post read %s' % pattern
+    elif re.fullmatch(r'\d{8,}', pattern):
+        hint = 'lane-post read %s for a bulletin, gh run view %s for a run, or %s' % (pattern, pattern, hint)
+    return ('BLOCKED: wide-scan-guard: recursive %s over %s is refused (house-tools rule: search one directory under '
+            '~/.agent-rails with rg -n, never all of it, $HOME or a volume root). Use: %s' % (tool, shown, hint))
+
+
 def wide_root(path, cwd):
     path = resolve_path(path, cwd)
     home = os.path.expanduser('~')
@@ -154,6 +191,7 @@ def wide_root(path, cwd):
 
 def search_paths(name, args):
     paths, pattern, recursive = [], name == 'find' or (name == 'rg' and '--files' in args), name in ('rg', 'find', 'fd')
+    word = None
     i, options = 0, True
     short_values = 'efmABCdD' if name in ('grep', 'egrep', 'fgrep', 'ggrep') else 'efgtdmABCj'
     long_values = {'--regexp', '--file', '--glob', '--iglob', '--type', '--type-not', '--max-depth',
@@ -171,6 +209,8 @@ def search_paths(name, args):
                 if not eq and i < len(args):
                     value = args[i]
                     i += 1
+                if option in ('--regexp', '--file') and word is None:
+                    word = value
                 pattern |= option in ('--regexp', '--file')
                 recursive |= option == '--directories' and value == 'recurse'
         elif options and arg.startswith('-') and arg != '-':
@@ -191,12 +231,15 @@ def search_paths(name, args):
                         value = args[i]
                         i += 1
                     recursive |= flag == 'd' and value == 'recurse'
+                    if flag in 'ef' and word is None:
+                        word = value
                     break
         elif not pattern:
             pattern = True
+            word = arg
         else:
             paths.append(arg)
-    return paths, recursive
+    return paths, recursive, word
 
 
 def shell_tokens(text):
@@ -403,10 +446,39 @@ def unsafe(args, depth, cwd):
     if not args:
         return False
     name = args[0].rsplit('/', 1)[-1]
+    tool = name
+    if name == 'rtk':
+        j = 1
+        while j < len(args) and args[j].startswith('-'):
+            j += 1  # rtk's global options (-v, --ultra-compact) take no value
+        sub = args[j] if j < len(args) else ''
+        rest = args[j + 1:]
+        if sub == 'run':
+            for k, arg in enumerate(rest):
+                if arg in ('-c', '--command') and k + 1 < len(rest):
+                    return scan(rest[k + 1], depth + 1, cwd)
+                if arg.startswith('--command='):
+                    return scan(arg.partition('=')[2], depth + 1, cwd)
+            return bool(rest) and scan(' '.join(rest), depth + 1, cwd)
+        if sub in ('proxy', 'err', 'summary', 'test'):
+            while rest and rest[0].startswith('-'):
+                rest = rest[1:]
+            return unsafe(rest, depth, cwd)
+        if sub not in ('grep', 'rg', 'find'):
+            return False
+        # rtk grep runs ripgrep: recursive whatever its flags say, and it skips FIFOs.
+        tool, name, args = 'rtk ' + sub, ('find' if sub == 'find' else 'rg'), [sub] + rest
     if name in ('rg', 'find', 'fd', 'grep', 'egrep', 'fgrep', 'ggrep'):
-        roots, recursive = search_paths(name, args[1:])
-        if recursive and any(wide_root(path, cwd) for path in (roots or ['.'])):
-            raise SystemExit(2)
+        roots, recursive, word = search_paths(name, args[1:])
+        recursive |= tool.startswith('rtk ')
+        if recursive:
+            for path in (roots or ['.']):
+                if refused_root(path, cwd):
+                    raise Refused(refusal(tool, path, word, cwd))
+            if any(wide_root(path, cwd) for path in (roots or ['.'])):
+                WARNED.append(tool)
+    if tool.startswith('rtk '):
+        return False
     if name not in ('grep', 'egrep', 'fgrep', 'ggrep'):
         return False
     recursive = False
@@ -510,8 +582,15 @@ def scan(text, depth=0, cwd=None):
     return False
 
 
-# 0: a FIFO grep to rewrite; 2: a wide scan (raised above); 3: nothing to do. Anything else is a failure.
-raise SystemExit(0 if scan(os.environ['SCAN_COMMAND']) else 3)
+# 0: a FIFO grep to rewrite; 2: a refused root (its line on stderr); 6: a wide scan to warn about; 3: nothing to do.
+# Anything else is a failure.
+try:
+    fifo = scan(os.environ['SCAN_COMMAND'])
+except Refused as refused:
+    import sys
+    print(refused.args[0], file=sys.stderr)
+    raise SystemExit(2)
+raise SystemExit(0 if fifo else 6 if WARNED else 3)
 PY
 REWRITE=""
 if [ "$SCAN" -eq 0 ]; then
@@ -545,6 +624,8 @@ REWRITE_PY
     warn "grep -r under ~/.agent-rails hangs on FIFOs; use rg (skips FIFOs) or add -D skip"
   fi
 elif [ "$SCAN" -eq 2 ]; then
+  exit 2
+elif [ "$SCAN" -eq 6 ]; then
   case "$CMD" in *"# wide-scan-ok"*) allow ;; esac
   warn "recursive search over the whole disk, home, a volume root, all repos or ~/.agent-rails; scope it to one repo, lane or directory next time"
 elif [ "$SCAN" -eq 4 ]; then

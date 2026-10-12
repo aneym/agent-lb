@@ -991,7 +991,7 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
     assert os.access(guard, os.X_OK)
     call = {"tool_name": "Bash", "hook_event_name": "PreToolUse", "cwd": str(tmp_path)}
     refused = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg needle /"}}, env)
-    assert refused.returncode == 0 and "warn only, not blocked): recursive search" in refused.stdout, refused
+    assert refused.returncode == 2 and "BLOCKED: wide-scan-guard: recursive rg over /" in refused.stderr, refused
     allowed = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg -n needle src"}}, env)
     assert allowed.returncode == 0 and not allowed.stdout, allowed
     # The installed mirror's own installer (the rollback command) reads the guard from the mirror: it must be there.
@@ -1006,7 +1006,7 @@ def test_an_install_puts_the_adopted_wide_scan_guard_in_place(tmp_path: Path) ->
     assert guard.read_bytes() == (SOURCE / "hooks/wide-scan-guard.sh").read_bytes() and os.access(guard, os.X_OK)
     assert not (home / ".agent-lb/managed/coding-agents/wide-scan-guard").exists()
     refused = run_hook(f'"{guard}"', call | {"tool_input": {"command": "rg needle /"}}, env)
-    assert refused.returncode == 0 and "warn only, not blocked): recursive search" in refused.stdout, refused
+    assert refused.returncode == 2 and "BLOCKED: wide-scan-guard: recursive rg over /" in refused.stderr, refused
 
 
 def test_rollback_passes_over_a_registry_that_cannot_restore_the_guards(tmp_path: Path) -> None:
@@ -1240,6 +1240,9 @@ WIDE_SCAN_COMMANDS = (
     "python3 -c 'print(1)'",
     # ad7c78e5: heredocs and here-strings read across the whole command.
     "bash <<< 'rg x /'", "cat <<< 'rg x /'", "git commit -F - <<'EOF'\nrg x /\nEOF", "bash <<EOF\nrg x /\nEOF",
+    # factory-burn 2026-10-12: refusals over ~/.agent-rails and its agents or evidence dir, bare and through rtk.
+    "grep -rl x ~/.agent-rails/agents ~/.agent-rails/evidence", "rtk grep x ~/.agent-rails", "rtk grep x src",
+    "rtk proxy grep -r x ~", "rtk run -c 'rg x /'", "rtk grep x ~/.agent-rails/lanes/a", "rtk git status",
 )
 
 

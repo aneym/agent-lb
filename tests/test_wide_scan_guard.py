@@ -29,9 +29,10 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("rg foo ~/.agent-rails", 2),
     ('echo "$(rg foo /Volumes/Media500)"', 2),
     ("bash -c 'rg foo /Volumes/Media500'", 2),
-    ("grep -r x ~/.agent-rails/agents/home 2>/dev/null", 2),
+    ("grep -r x ~/.agent-rails/agents/home 2>/dev/null", 1),
     ("grep -r -D skip x ~/.agent-rails/agents/home 2>/dev/null", 0),
-    ("rg foo /Volumes/Media500 # wide-scan-ok", 0),
+    ("rg foo /Volumes/Media500 # wide-scan-ok", 2),  # the comment silences a warning, never a refusal
+    ("rg foo /Volumes/StudioExt/repos # wide-scan-ok", 0),
     ("bash <<EOF\nrg x /\nEOF\n", 2),
     ("sh <<-EOF\n\trg x /\n\tEOF\n", 2),
     ("cat <<'EOF' | bash\nrg x /\nEOF\n", 2),
@@ -42,9 +43,9 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("cat <<'EOF'\n$(rg x /)\nEOF\n", 0),
     ('echo "two\nlines"; rg x file.log', 0),
     ("cd / && rg x src", 0),
-    ("cat <<'EOF'\ntext\nrg x /", 2),
-    ("rg x / 'unfinished", 2),
-    ('echo "$(rg x /', 2),
+    ("cat <<'EOF'\ntext\nrg x /", 1),
+    ("rg x / 'unfinished", 1),
+    ('echo "$(rg x /', 1),
     ("r\\\ng x /", 2),
     ("rg x /Volu\\\nmes/Media500", 2),
     ("cd / && rg x", 2),
@@ -79,13 +80,56 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("bash <<< 'rg x /'", 2),
     ("sh <<< 'rg x /'", 2),
     ("bash <<< 'rg x src'", 0),
+    # factory-burn 2026-10-12: the scans that took Studio to 0% idle, bare and through rtk (rtk grep is recursive).
+    ("grep -rl 0123abcd ~/.agent-rails/agents ~/.agent-rails/evidence", 2),
+    ("grep -rl 38280104567 ~/.agent-rails --include=*.jsonl", 2),
+    ("rtk grep -rl 0123abcd ~/.agent-rails/agents ~/.agent-rails/evidence", 2),
+    ("rtk grep x ~/.agent-rails", 2),
+    ("rtk grep x ~/.agent-rails/lanes", 2),
+    ("rtk -v grep x /Volumes/StudioExt", 2),
+    ("rtk find ~ -name x", 2),
+    ("rtk proxy grep -r x ~", 2),
+    ("rtk run -c 'rg x /'", 2),
+    ("rg -n x ~/.agent-rails/evidence", 2),
+    ("rg -n x /Users/aneyman", 2),
+    ("cd ~/.agent-rails && grep -r x", 2),
+    # one lane, one agent dir or a repo checkout stays allowed
+    ("rg -n x ~/.agent-rails/lanes/factory-burn-2026-10-09", 0),
+    ("rtk grep x ~/.agent-rails/lanes/factory-burn-2026-10-09", 0),
+    ("rtk grep -rl x ~/.agent-rails/agents/home", 0),
+    ("rg -n x /Volumes/StudioExt/repos/agent-lb", 0),
+    ("rtk grep x src", 0),
+    ("rtk git status", 0),
+    # other wide roots only warn
+    ("rg x /Volumes/StudioExt/repos", 1),
+    ("rtk grep x /System", 1),
 ])
 def test_hook_command_segments(command, expected):
-    """expected 2 marks a wide scan. Guard trim (Alex, 2026-10-08 09:18 ET): the guard only warns now, so a wide
-    scan exits 0 with one warn-only line of context and the call goes through; anything else passes silently."""
+    """expected 2: refused (exit 2, one BLOCKED line on stderr), for a recursive search over /, $HOME, a volume root
+    or ~/.agent-rails (or its agents, evidence or lanes dir) as a whole (factory-burn 2026-10-12). expected 1: exit 0
+    with one warn-only line of context (other wide roots, unparsed input, a FIFO grep it cannot rewrite). 0: silent."""
     result = run(command)
+    if expected == 2:
+        assert result.returncode == 2, (command, result.stdout, result.stderr)
+        assert result.stderr.startswith("BLOCKED: wide-scan-guard: recursive "), result.stderr
+        assert len(result.stderr.strip().splitlines()) == 1, result.stderr
+        return
     assert result.returncode == 0, (command, result.stdout, result.stderr)
-    assert warned(result) is (expected == 2), (command, result.stdout, result.stderr)
+    assert warned(result) is (expected == 1), (command, result.stdout, result.stderr)
+
+
+@pytest.mark.parametrize("command,replacement", [
+    ("grep -rl 0123abcd ~/.agent-rails/agents", 'Use: rg -n "0123abcd" ~/.agent-rails/<one dir>'),
+    ("rg -n b-20261012171717-76059f49d8a72a41 ~/.agent-rails/lanes",
+     "Use: lane-post read b-20261012171717-76059f49d8a72a41"),
+    ("grep -rl 38280104567 ~/.agent-rails --include=*.jsonl", "lane-post read 38280104567 for a bulletin"),
+    ("rg x /", 'Use: rg -n "x" <one repo or dir>'),
+])
+def test_refusal_names_the_rule_and_the_replacement(command, replacement):
+    result = run(command)
+    assert result.returncode == 2
+    assert "house-tools rule: search one directory under ~/.agent-rails" in result.stderr
+    assert replacement in result.stderr, result.stderr
 
 
 def run(command):
