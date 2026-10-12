@@ -17,7 +17,7 @@ cd <assigned lane directory> && f=$(mktemp "${TMPDIR:-/tmp}/computer-use-contrac
 PLACEMENT: studio-only
 <contract text built below>
 CONTRACT_EOF
-bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --prompt-file "$f"
+bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($HOME/.agent-lb/bin/route resolve sol-latest)" --effort medium --write --prompt-file "$f"
 ```
 
 Isolated Space (R597, Alex, 2026-10-06: "we should be using isolatedcua spaces for automation in all lanes, i think agent rails is running cua on my normal desktop and its interrupting me"): a Mac GUI step never runs on Alex's desktop. Sustained testing and every input action run in the herdr-qa Space, a Lume macOS VM with no host window: `herdr-shell-space up`, then `herdr-shell-space start|exec|driver|shot` (one holder at a time; it waits on the lock). The only host access is a one-off background read of an app that must be on the host, through the mac-apps server; never host input, never a foreground switch. A GUI step that is not Mac-only belongs to `computer-use` (a box display through `cua-display`). Wrap the run with `desktop-guard-focus watch --seconds <run length>` in the background and return its JSON; `steals` above 0, or a changed front app or cursor with no human input, is a failure to report, not a pass.
@@ -27,6 +27,8 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 Do not add `--write`. Forward the exact app, page, permitted interactions, evidence destination and device hold. Write the entire contract to the file with the quoted heredoc above. For long work, use the Bash tool's `run_in_background: true` with waits under 270 seconds, but keep the companion foreground and collect its final report before returning. Never pass `--background`. Never use latest-thread continuation in a shared cwd.
 
 Require Codex to discover its actual tools first. A configured node_repl server, computer_use feature flag, model name, HTTP fetch or wrapper is not proof of desktop control. Use installed browser/desktop capabilities only, with a read-only first probe. Report tool names, observed result and limitations. Never invent @oai/sky availability or signatures.
+
+Use workspace-write mode for admission, evidence and daemon/network access, even when app source files remain read-only. Launch from the owning lane directory or export `LANE_DIR` for scratch cwd. This does not authorize repository edits.
 
 No new visible specialist tab, Herdr mutation, foreground input, credentials, login, TCC/system settings, extension installation, or access grants. Do not change user tabs. Interactions are allowed only on the explicitly assigned scratch/test app. Stop on an approval request or missing capability; return the exact blocker, not a fallback presented as computer-use. Read-only sandbox does not itself constrain external MCP tool side effects.
 

@@ -29,7 +29,8 @@ bash "$HOME/.agents/policy/coding-agents/hooks/codex-local.sh" task --model "$($
 Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
 
 - The `cd` is part of the same shell invocation (Codex's sandbox is rooted at the cwd; each Bash call starts in the session cwd). Research and deliberation contracts cd into the directory whose files Codex must read or write (a scratchpad directory is fine). Coding contracts cd into the lane's worktree.
-- `--write` only when the contract says Codex writes files; never in a shared checkout that another seat owns. Without `--write` Codex is read-only on disk.
+- Use `--write` for browser walkers, admission/check commands, evidence capture, and any contract needing network access, even when product/repository files remain read-only. Launch from the owning lane directory, or export `LANE_DIR` when using scratch cwd. This workspace-write mode grants admission bookkeeping, own-lane evidence writes, and network access. It does not authorize repository edits.
+- Omit `--write` only for filesystem inspection that needs neither admission nor network. Strict read-only mode cannot run a browser walker. Never use write mode in a shared checkout another seat owns.
 - `--effort`: the brief's effort, default `high` for research and deliberation, `medium` for mechanical work, `xhigh` when the brief says "hard".
 - Return the completed job report, not a queued job ID. Never `--resume-last` in a shared worktree.
 - Computer use: forward the exact app, pages, permitted interactions, evidence directory and hold rules; require Codex to discover its tools first (a computer_use flag is not proof of control). No foreground input, credentials, logins, TCC or system settings, extension installs, or Herdr tab changes unless the brief says the owner authorized that exact thing.

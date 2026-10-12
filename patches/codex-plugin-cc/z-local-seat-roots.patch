@@ -44,5 +44,5 @@ diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/cod
 +    const response = await client.request("config/read", { includeLayers: false, cwd });
 +    configured = response?.config?.sandbox_workspace_write?.writable_roots ?? [];
 +  }
-+  return { config: { sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])] } } };
++  return { config: { sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])], network_access: true } } };
 +};
