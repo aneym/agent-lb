@@ -9,7 +9,7 @@ GUARD = Path(__file__).resolve().parents[1] / "config/coding-agents/hooks/wide-s
 CWD = str(Path.home() / ".agent-rails/agents/home")
 
 
-@pytest.mark.parametrize("command,expected", [
+@pytest.mark.parametrize("command,expected,cwd", [row if len(row) == 3 else (*row, CWD) for row in [
     ("grep -rh -o x ~/Library/foo/*/options.xml 2>/dev/null | sort -u", 0),
     ("grep -rh -o x ~/Library/foo/*/options.xml | sort -u", 0),
     ('ls /Volumes/; rg -i err "$J/log/a.log" | tail', 0),
@@ -32,7 +32,7 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("grep -r x ~/.agent-rails/agents/home 2>/dev/null", 1),
     ("grep -r -D skip x ~/.agent-rails/agents/home 2>/dev/null", 0),
     ("rg foo /Volumes/Media500 # wide-scan-ok", 2),  # the comment silences a warning, never a refusal
-    ("rg foo /Volumes/StudioExt/repos # wide-scan-ok", 0),
+    ("rg foo /Volumes/StudioExt/repos # wide-scan-ok", 2),
     ("bash <<EOF\nrg x /\nEOF\n", 2),
     ("sh <<-EOF\n\trg x /\n\tEOF\n", 2),
     ("cat <<'EOF' | bash\nrg x /\nEOF\n", 2),
@@ -100,15 +100,37 @@ CWD = str(Path.home() / ".agent-rails/agents/home")
     ("rg -n x /Volumes/StudioExt/repos/agent-lb", 0),
     ("rtk grep x src", 0),
     ("rtk git status", 0),
+    # factory-burn 2026-10-12 19:43Z: the repos root and the worktree roots, as a path or as `.` with that cwd, bare
+    # or through rtk grep/rg; one repo or worktree inside them stays allowed.
+    ("rg x /Volumes/StudioExt/repos", 2),
+    ("grep -rln x .", 2, "/Volumes/StudioExt/repos"),
+    ("rtk grep -rln cost_cmd --include=*.py .", 2, "/Volumes/StudioExt/repos"),
+    ("rtk rg cost_cmd .", 2, "/Volumes/StudioExt/repos"),
+    ("rtk grep x", 2, "/Volumes/StudioExt/repos"),
+    ("rg x", 2, "/Volumes/StudioExt/repos"),
+    ("find . -name x", 2, "/Volumes/StudioExt/repos"),
+    ("fd x", 2, "/Volumes/StudioExt/repos"),
+    ("grep -rln x /Volumes/StudioExt/repos/agent-lb-wt", 2),
+    ("rtk grep x /Volumes/StudioExt/repos/factory-wt/", 2),
+    ("grep -rln x .", 2, "/Volumes/StudioExt/repos/agent-lb-wt"),
+    ("cd /Volumes/StudioExt/repos && grep -rln x .", 2, "/Volumes/StudioExt/repos/factory"),
+    ("grep -rln x ..", 2, "/Volumes/StudioExt/repos/factory"),
+    ("grep -rln x .", 0, "/Volumes/StudioExt/repos/factory"),
+    ("rtk grep -rln cost_cmd --include=*.py .", 0, "/Volumes/StudioExt/repos/factory"),
+    ("grep -rln x .", 0, "/Volumes/StudioExt/repos/agent-lb-wt/wide-scan-repos-root"),
+    ("rg -n x /Volumes/StudioExt/repos/agent-lb-wt/topic", 0),
+    ("rg -n x /Volumes/StudioExt/repos/agent-lb-wt/topic ../factory", 0, "/Volumes/StudioExt/repos/factory"),
+    ("grep -n x /Volumes/StudioExt/repos/README.md", 0),
+    ("ls /Volumes/StudioExt/repos", 0),
     # other wide roots only warn
-    ("rg x /Volumes/StudioExt/repos", 1),
     ("rtk grep x /System", 1),
-])
-def test_hook_command_segments(command, expected):
-    """expected 2: refused (exit 2, one BLOCKED line on stderr), for a recursive search over /, $HOME, a volume root
-    or ~/.agent-rails (or its agents, evidence or lanes dir) as a whole (factory-burn 2026-10-12). expected 1: exit 0
-    with one warn-only line of context (other wide roots, unparsed input, a FIFO grep it cannot rewrite). 0: silent."""
-    result = run(command)
+]])
+def test_hook_command_segments(command, expected, cwd):
+    """expected 2: refused (exit 2, one BLOCKED line on stderr), for a recursive search over /, $HOME, a volume root,
+    the repos root or a worktree root, or ~/.agent-rails (or its agents, evidence or lanes dir) as a whole
+    (factory-burn 2026-10-12). expected 1: exit 0 with one warn-only line of context (other wide roots, unparsed
+    input, a FIFO grep it cannot rewrite). 0: silent. A third column is the payload cwd."""
+    result = run(command, cwd)
     if expected == 2:
         assert result.returncode == 2, (command, result.stdout, result.stderr)
         assert result.stderr.startswith("BLOCKED: wide-scan-guard: recursive "), result.stderr
@@ -124,6 +146,11 @@ def test_hook_command_segments(command, expected):
      "Use: lane-post read b-20261012171717-76059f49d8a72a41"),
     ("grep -rl 38280104567 ~/.agent-rails --include=*.jsonl", "lane-post read 38280104567 for a bulletin"),
     ("rg x /", 'Use: rg -n "x" <one repo or dir>'),
+    ("rg x /Volumes/StudioExt/repos", 'Use: rg -n "x" /Volumes/StudioExt/repos/<one repo or worktree>'),
+    ("rtk grep -rln cost_cmd --include=*.py /Volumes/StudioExt/repos/factory-wt",
+     'over /Volumes/StudioExt/repos/factory-wt is refused (house-tools rule: search one directory under ~/.agent-rails '
+     'with rg -n, never all of it, $HOME, a volume root or the repos root). Use: rg -n "cost_cmd" '
+     '/Volumes/StudioExt/repos/<one repo or worktree>'),
 ])
 def test_refusal_names_the_rule_and_the_replacement(command, replacement):
     result = run(command)
@@ -132,10 +159,10 @@ def test_refusal_names_the_rule_and_the_replacement(command, replacement):
     assert replacement in result.stderr, result.stderr
 
 
-def run(command):
+def run(command, cwd=CWD):
     return subprocess.run(
         ["bash", str(GUARD)],
-        input=json.dumps({"tool_input": {"command": command}, "cwd": CWD}),
+        input=json.dumps({"tool_input": {"command": command}, "cwd": cwd}),
         text=True, capture_output=True, timeout=10,
     )
 

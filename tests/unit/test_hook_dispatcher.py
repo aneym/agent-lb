@@ -1243,6 +1243,10 @@ WIDE_SCAN_COMMANDS = (
     # factory-burn 2026-10-12: refusals over ~/.agent-rails and its agents or evidence dir, bare and through rtk.
     "grep -rl x ~/.agent-rails/agents ~/.agent-rails/evidence", "rtk grep x ~/.agent-rails", "rtk grep x src",
     "rtk proxy grep -r x ~", "rtk run -c 'rg x /'", "rtk grep x ~/.agent-rails/lanes/a", "rtk git status",
+    # factory-burn 2026-10-12 19:43Z: the repos root and the worktree roots, as a path or as `.` with that cwd.
+    "grep -rln x .", "rtk grep -rln cost_cmd --include=*.py .", "rg x /Volumes/StudioExt/repos",
+    "grep -rln x /Volumes/StudioExt/repos/agent-lb-wt", "rtk rg x /Volumes/StudioExt/repos/factory-wt/",
+    "rg -n x /Volumes/StudioExt/repos/agent-lb-wt/topic", "grep -rln x ..",
 )
 
 
@@ -1270,7 +1274,8 @@ def test_the_pinned_wide_scan_guard_is_skipped_only_where_it_cannot_act(tmp_path
     registry_path = home / ".claude/hooks/dispatch/registry.json"
     registry_path.write_text(json.dumps(dict(json.loads(registry_path.read_text()), script_sha=pins)))
     trace = tmp_path / "trace.jsonl"
-    cwds = [str(home / "project"), str(home), str(home / ".agent-rails/lanes/a"), "/Volumes/StudioExt/repos/x"]
+    cwds = [str(home / "project"), str(home), str(home / ".agent-rails/lanes/a"), "/Volumes/StudioExt/repos/x",
+            "/Volumes/StudioExt/repos", "/Volumes/StudioExt/repos/x-wt"]
     differ, skipped = [], set()
     for cwd in cwds:
         for command in WIDE_SCAN_COMMANDS:

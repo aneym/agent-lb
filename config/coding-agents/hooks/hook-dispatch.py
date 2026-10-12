@@ -385,6 +385,8 @@ def _scan_maybe_wide(path):
         return True
     if parts[0] in ("Users", "home", "Volumes") and (len(parts) == 2 or (len(parts) == 3 and parts[2] == "repos")):
         return True
+    if parts[:3] == ["Volumes", "StudioExt", "repos"] and len(parts) == 4 and parts[3].endswith("-wt"):
+        return True  # a worktree root, refused since factory-burn 2026-10-12 19:43Z
     home = os.path.expanduser("~")
     return path in (home, home + "/repos")
 

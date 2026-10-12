@@ -17,7 +17,12 @@
 # find or fd, bare or through rtk (rtk grep is recursive), over /, $HOME, /Volumes/<disk>, ~/.agent-rails or its
 # agents, evidence or lanes dir as a whole exits 2 with one line naming the house-tools rule and the scoped
 # replacement; no override comment. One lane, agent or repo dir stays allowed; the other wide roots (/System,
-# /Library, all repos) still only warn.
+# /Library) still only warn.
+# The repos root too (factory-burn 2026-10-12 19:43Z): `rtk grep -rln cost_cmd --include=*.py .` from cwd
+# /Volumes/StudioExt/repos ran 13 minutes over every repo and worktree on Studio. /Volumes/StudioExt/repos and each
+# worktree root /Volumes/StudioExt/repos/<repo>-wt (the directory itself, never a repo or worktree inside it), as a
+# path or as `.` with that cwd, bare or through rtk grep/rg, are refused with the same one line naming one repo or
+# worktree as the allowed scope.
 set -euo pipefail
 refuse() {
   echo "BLOCKED: wide-scan-guard $1, so this call is refused (the guard fails closed). Check cat, jq and python3 on PATH." >&2
@@ -161,6 +166,7 @@ def refused_root(path, cwd):
     home = os.path.expanduser('~')
     return (path in ('/', home, '/Users/aneyman')
             or re.fullmatch(r'/Volumes/[^/]+', path) is not None
+            or re.fullmatch(r'/Volumes/StudioExt/repos(?:/[^/]+-wt)?', path) is not None
             or re.search(r'/\.agent-rails(?:/(?:agents|evidence|lanes))?$', path) is not None)
 
 
@@ -170,14 +176,21 @@ def refusal(tool, root, pattern, cwd):
     if shown == home or shown.startswith(home + '/'):
         shown = '~' + shown[len(home):]
     pattern = pattern or '<pattern>'
-    scope = '~/.agent-rails/<one dir>' if '/.agent-rails' in resolve_path(root, cwd) else '<one repo or dir>'
+    resolved = resolve_path(root, cwd)
+    if '/.agent-rails' in resolved:
+        scope = '~/.agent-rails/<one dir>'
+    elif resolved.startswith('/Volumes/StudioExt/repos'):
+        scope = '/Volumes/StudioExt/repos/<one repo or worktree>'
+    else:
+        scope = '<one repo or dir>'
     hint = 'rg -n "%s" %s' % (pattern, scope)
     if re.fullmatch(r'b-\d{8,}[-0-9a-f]*', pattern):
         hint = 'lane-post read %s' % pattern
     elif re.fullmatch(r'\d{8,}', pattern):
         hint = 'lane-post read %s for a bulletin, gh run view %s for a run, or %s' % (pattern, pattern, hint)
     return ('BLOCKED: wide-scan-guard: recursive %s over %s is refused (house-tools rule: search one directory under '
-            '~/.agent-rails with rg -n, never all of it, $HOME or a volume root). Use: %s' % (tool, shown, hint))
+            '~/.agent-rails with rg -n, never all of it, $HOME, a volume root or the repos root). Use: %s'
+            % (tool, shown, hint))
 
 
 def wide_root(path, cwd):
