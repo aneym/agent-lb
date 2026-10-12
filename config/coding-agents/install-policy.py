@@ -228,6 +228,12 @@ MANAGED_AGENTS = (
         Path("hooks/workflow-seat-guard.py"),
     ),
     (
+        Path(".claude/hooks/factory-context.py"),
+        Path(".agent-lb/managed/coding-agents/factory-context"),
+        "agent-lb:factory-context:v1\n",
+        Path("hooks/factory-context.py"),
+    ),
+    (
         # Adopted 2026-10-08 (hook-dispatcher-3): it had no source, so every hand edit of the live copy unpinned it.
         # Edit this source only; its dispatcher pin is derived from it at install (DERIVED_PINS).
         Path(".claude/hooks/wide-scan-guard.sh"),
@@ -437,6 +443,14 @@ CLOSEOUT_HOOK = {
 }
 
 
+FACTORY_CONTEXT_HOOK = {
+    "type": "command",
+    "command": '/usr/bin/python3 "$HOME/.claude/hooks/factory-context.py" 2>/dev/null || true',
+    "timeout": 10,
+    "statusMessage": "Factory context",
+}
+
+
 def is_closeout_hook(command: Any) -> bool:
     return isinstance(command, str) and "hooks/subagent-closeout.py" in command
 
@@ -461,6 +475,7 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
+    ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
 )
 
 
