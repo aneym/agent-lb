@@ -582,7 +582,12 @@ SCRIPT_PREFILTERS = {
                             "64cf185450a08b3faab701fb8c289d32b55611ebe6049065854b2c92fd2450c8",
                             "77520a3185bc8d146aa0ae2a3cf2d0b0267240db5820448fde3487c085c5eb48",
                             "67708a8bbd00fa5fed75e70422ecd1281855606d32bb60c811e78f152e0ec75b",
-                            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84"), pf_no_chrome),
+                            "6dab221f51c25d4c97645ffe8e34318426fa9682e4a7db6ce77fc45a3178ea84",
+                            # 6c8dfc6: open-factory engine 582613a8 (factory a4c09d9e14 plus owner wording): PAT is
+                            # only a prefilter and every refusal still needs PAT or both "pc" and "chrome", so
+                            # pf_no_chrome stays a superset. Unpinned since 10-09 it ran on every Bash call of
+                            # every session (studio-headroom, 2026-10-12).
+                            "6c8dfc6a63731027e0a27bdfa1a2de3093f0d100ce94a1870e68dc37515801b3"), pf_no_chrome),
     # 9fa0e82: the hand-reviewed copy; since agent-lb 7a71805e its source is installed and its pin derived at install.
     "railway-vars-guard.sh": ("9fa0e824554830e501bda0d9cb8a21213e6011935101b26f25e03a99796818dd", pf_railway_custody),
     "route.sh": ("36bbdd44a69543ff7fe2865985443a2a09ab2f540d6bf09df25ec6c978e1d629", pf_jev_alert),
