@@ -1493,7 +1493,32 @@ def command_resolve(args: argparse.Namespace) -> int:
             model = name
             record_explicit_model(name, "route resolve")
         if model:
-            print(model)
+            result = {"alias": name, "model": model, "reason": reason}
+            if name in ("opus-latest", "sonnet-latest"):
+                pools, _ = fetch_pools()
+                pool_id = pool_for_model(table, name)
+                pool = pools_by_id(pools).get(pool_id, {})
+                # Status is a headroom band, not a quota failure. Only the live
+                # eligibility signal counts; never degrade on fallback estimates.
+                eligible = pool.get("eligibleAccounts")
+                accounts = http_get("/api/accounts")
+                body = accounts.body if accounts.json_ok else None
+                rows = body.get("accounts") if isinstance(body, dict) else body
+                relevant = [row for row in rows if isinstance(row, dict)
+                            and row.get("provider") == "anthropic"
+                            and row.get("status") in _ROUTABLE_STATUSES] if isinstance(rows, list) else []
+                quota_failed = bool(relevant) and all(
+                    row.get("status") in ("rate_limited", "quota_exceeded") for row in relevant)
+                if (quota_failed and isinstance(eligible, int) and not isinstance(eligible, bool)
+                        and eligible == 0 and pool.get("accounts", 0) > 0
+                        and pool.get("source") != "accounts_fallback"):
+                    replacement, _ = resolve_alias(table, "sol-latest", served)
+                    if replacement:
+                        result.update(model=replacement, degraded_from=name,
+                                      resolved_alias="sol-latest", pool=pool_id,
+                                      reason="no eligible Anthropic accounts")
+                        append_ledger({"event": "model_degraded", "source": "route resolve", **result})
+            print(json.dumps(result, sort_keys=True) if args.json else result["model"])
             return EXIT_OK
         if reason == f"unknown alias {name}":
             unknown.append(name)
@@ -3693,6 +3718,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     resolve = sub.add_parser("resolve", help="newest served model for the first resolvable family alias")
     resolve.add_argument("aliases", nargs="+", metavar="alias")
+    resolve.add_argument("--json", action="store_true")
     resolve.set_defaults(handler=command_resolve)
 
     models = sub.add_parser("models", help="every family alias and what it resolves to now")

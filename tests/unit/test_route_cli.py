@@ -1498,3 +1498,34 @@ def test_route_seats_on_the_canonical_rules_meets_the_workflow_preflight(tmp_pat
     assert coder.returncode == 0, coder.stderr
     assert (json.loads(coder.stdout)["model"], json.loads(coder.stdout)["effort"],
             json.loads(coder.stdout)["box"]) == ("gpt-9-sol", "medium", {"adapter": "codex"})
+
+
+def test_resolve_degrades_only_live_empty_anthropic_pool_and_recovers(tmp_path: Path) -> None:
+    """CLI integration: actual pool boundary signals, not estimated percentages."""
+    fixtures = tmp_path / "degrade-fixtures"
+    write_fixture(fixtures, "api_models.json", {"models": [{"id": "gpt-6.1-sol"}]})
+    extra = {"ROUTE_LEDGER": str(tmp_path / "degradation.jsonl"),
+             "ROUTE_MODELS_CACHE": str(tmp_path / "models.json")}
+    for eligible, source, status, degraded in [
+            (1, "lb", "active", False), (0, "lb", "active", False),
+            (0, "accounts_fallback", "rate_limited", False),
+            (0, "lb", "rate_limited", True), (1, "lb", "active", False)]:
+        write_fixture(fixtures, "api_accounts.json", {"accounts": [
+            {"provider": "anthropic", "status": status}]})
+        write_fixture(fixtures, "api_pools.json", {"pools": [{
+            "id": "anthropic-general", "accounts": 2, "eligibleAccounts": eligible,
+            "status": "exhausted", "headroomPercent": 0, "source": source}]})
+        for alias in ("opus-latest", "sonnet-latest"):
+            result = run("resolve", alias, "--json", home=tmp_path, table=CANONICAL_TABLE,
+                         fixtures=fixtures, extra=extra)
+            assert result.returncode == 0, result.stderr
+            row = json.loads(result.stdout)
+            assert (row.get("degraded_from") == alias) == degraded
+            if degraded:
+                assert row["model"] == "gpt-6.1-sol"
+                assert row["resolved_alias"] == "sol-latest"
+        fable = run("resolve", "fable-latest", "--json", home=tmp_path, table=CANONICAL_TABLE,
+                    fixtures=fixtures, extra=extra)
+        assert "degraded_from" not in json.loads(fable.stdout)
+    records = [json.loads(line) for line in (tmp_path / "degradation.jsonl").read_text().splitlines()]
+    assert [row["degraded_from"] for row in records] == ["opus-latest", "sonnet-latest"]

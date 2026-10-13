@@ -1,0 +1,4 @@
+- [x] Add JSON resolution with degradation metadata and a routing ledger event.
+- [x] Exercise exhausted, advisory, fallback and recovered pools through the CLI.
+- [x] Route forwarding seat commands to the corresponding Codex harness.
+- [ ] Carry metadata into provider request logs and direct seat-exec commands in the external factory repository.
