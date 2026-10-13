@@ -795,6 +795,10 @@ class AccountsRepository:
                 Account.refresh_token_encrypted == expected_token,
                 or_(Account.owner_instance.is_(None), Account.owner_instance == get_settings().local_instance_id),
                 or_(Account.status != AccountStatus.EXCHANGE_UNCERTAIN, literal(replay)),
+                or_(
+                    literal(not replay),
+                    Account.status.not_in((AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED)),
+                ),
             )
             .with_for_update()
         )
@@ -808,6 +812,7 @@ class AccountsRepository:
                         .where(
                             Account.id == account_id,
                             Account.refresh_token_encrypted == expected_token,
+                            Account.status.not_in((AccountStatus.REAUTH_REQUIRED, AccountStatus.DEACTIVATED)),
                             or_(
                                 Account.owner_instance.is_(None),
                                 Account.owner_instance == get_settings().local_instance_id,
