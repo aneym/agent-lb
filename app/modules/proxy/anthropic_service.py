@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 from pydantic import ValidationError
+from yarl import URL
 
 from app.core import upload_admission
 from app.core.anthropic.identity import ensure_claude_code_identity_body
@@ -422,6 +423,13 @@ class AnthropicCountTokensResult:
     status_code: int
     body: bytes
     media_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnthropicFrameResult:
+    status_code: int
+    body: bytes
+    headers: Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1197,6 +1205,73 @@ class AnthropicProxyService:
             provider_name=provider_name,
             quota_key=quota_key,
         )
+
+    async def frame_request(
+        self,
+        method: str,
+        path_and_query: str,
+        body: bytes,
+        inbound_headers: Mapping[str, str],
+        *,
+        api_key: ApiKeyData | None = None,
+    ) -> AnthropicFrameResult:
+        session_id = _anthropic_session_header(inbound_headers)
+        quota_key = "anthropic_top_thinking"
+        account = await self._select_account(
+            _ANTHROPIC_PLANNER_MODEL,
+            provider_name=ANTHROPIC_PROVIDER_NAME,
+            exclude_account_ids=set(),
+            sticky_key=f"claude:{quota_key}:session:{_hash_for_key(session_id)}" if session_id else None,
+            quota_key=quota_key,
+        )
+        started_at = time.monotonic()
+        useragent, useragent_group = _request_log_useragent_fields(inbound_headers)
+        status = "error"
+        error_code = "upstream_error"
+        try:
+            token = await self._fresh_access_token(account)
+            url = URL(_upstream_base_url(ANTHROPIC_PROVIDER_NAME).rstrip("/") + path_and_query, encoded=True)
+            async with lease_http_session() as session:
+                for attempt in range(2):
+                    headers = _build_anthropic_headers(inbound_headers, token)
+                    headers = _frame_end_to_end_headers(headers)
+                    async with session.request(
+                        method,
+                        url,
+                        headers=headers,
+                        data=body,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                        allow_redirects=False,
+                        auto_decompress=False,
+                    ) as resp:
+                        raw = await resp.read()
+                        result = AnthropicFrameResult(resp.status, raw, _frame_end_to_end_headers(resp.headers))
+                    if result.status_code != 401 or attempt == 1:
+                        status = "success" if result.status_code < 400 else "error"
+                        error_code = None if status == "success" else f"http_{result.status_code}"
+                        return result
+                    token = await self._fresh_access_token(account, rejected_access_token=token)
+        except AnthropicProxyError as exc:
+            error_code = exc.code
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise AnthropicProxyError(502, "Anthropic frame upstream request failed", code="upstream_error") from exc
+        finally:
+            await self._persist_request_log(
+                account=account,
+                provider_name=ANTHROPIC_PROVIDER_NAME,
+                request_id=ensure_request_id(_request_id_from_headers(inbound_headers)),
+                model="frame",
+                started_at=started_at,
+                status=status,
+                error_code=error_code,
+                api_key=api_key,
+                session_id=session_id,
+                useragent=useragent,
+                useragent_group=useragent_group,
+                request_kind="frame",
+            )
+        raise AssertionError("Frame retry loop exhausted")
 
     async def count_tokens(
         self,
@@ -1983,6 +2058,7 @@ class AnthropicProxyService:
         latency_first_token_ms: int | None = None,
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
+        request_kind: str = "normal",
     ) -> None:
         # The member lookup adds an await. Keep the log task alive if the client
         # disconnects, as the proxy request logger does.
@@ -2006,6 +2082,7 @@ class AnthropicProxyService:
                 identity=get_request_identity(),
                 unified_5h_utilization=unified_5h_utilization,
                 unified_7d_utilization=unified_7d_utilization,
+                request_kind=request_kind,
             )
         )
         try:
@@ -2046,6 +2123,7 @@ class AnthropicProxyService:
         unified_5h_utilization: float | None = None,
         unified_7d_utilization: float | None = None,
         identity: RequestIdentity | None = None,
+        request_kind: str = "normal",
     ) -> None:
         try:
             latency_ms = int((time.monotonic() - started_at) * 1000)
@@ -2076,6 +2154,7 @@ class AnthropicProxyService:
                     session_id=session_id,
                     useragent=useragent,
                     useragent_group=useragent_group,
+                    request_kind=request_kind,
                 )
         except Exception:
             logger.warning("Failed to persist Anthropic request log request_id=%s", request_id, exc_info=True)
@@ -2548,6 +2627,22 @@ def _upgrade_helper_cache(
         _merge_anthropic_beta_header(headers, ["extended-cache-ttl-2025-04-11"])
         return "1h"
     return None
+
+
+def _frame_end_to_end_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    connection_tokens = {value.strip().lower() for value in headers.get("connection", "").split(",") if value.strip()}
+    excluded = connection_tokens | {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "content-length",
+    }
+    return {key: value for key, value in headers.items() if key.lower() not in excluded}
 
 
 def _build_anthropic_headers(

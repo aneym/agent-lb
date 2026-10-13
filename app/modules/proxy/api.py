@@ -971,6 +971,30 @@ async def v1_messages(
     )
 
 
+@usage_router.api_route(
+    "/api/frame/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], response_model=None
+)
+async def anthropic_frame(
+    request: Request,
+    path: str,
+    context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    raw_path = request.scope["raw_path"].decode("ascii")
+    query = request.scope["query_string"].decode("ascii")
+    try:
+        result = await context.service.frame_request(
+            request.method,
+            raw_path + (f"?{query}" if query else ""),
+            await request.body(),
+            request.headers,
+            api_key=api_key,
+        )
+    except AnthropicProxyError as exc:
+        return _anthropic_proxy_error_response(exc)
+    return Response(content=result.body, status_code=result.status_code, headers=result.headers)
+
+
 @v1_router.post("/messages/count_tokens", response_model=None)
 async def v1_messages_count_tokens(
     request: Request,
