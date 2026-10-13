@@ -465,6 +465,7 @@
     "opus-seat-full": {"vendor": "anthropic", "box": {"adapter": "claude-code"}, "model": "opus-latest", "effort": "medium"},
     "cursor-seat": {"vendor": "cursor", "box": {"adapter": "cursor"}},
     "devin-seat": {"vendor": "devin", "box": {"adapter": "devin"}},
+    "muse-seat": {"vendor": "muse", "box": null, "model": "muse-latest", "effort": "low"},
     "verifier": {"vendor": "anthropic", "box": null, "needs_test_run": false},
     "codex-verifier": {"vendor": "openai", "box": null, "needs_test_run": true},
     "computer-use": {"vendor": "openai", "box": null},

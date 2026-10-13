@@ -26,7 +26,7 @@ from app.modules.shared.schemas import DashboardModel
 
 logger = logging.getLogger(__name__)
 
-CLI_SEAT_VENDORS = ("cursor", "devin")
+CLI_SEAT_VENDORS = ("cursor", "devin", "muse")
 POOL_KIND_CLI_SEAT = "cli_seat"
 POOL_SOURCE_SEAT_STATE = "seat_state"
 # A state nobody has touched for this long says nothing about auth today.

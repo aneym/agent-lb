@@ -65,8 +65,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
 from urllib.parse import urlsplit
 
-VENDORS = ("cursor", "devin")
-SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat"}
+VENDORS = ("cursor", "devin", "muse")
+SEAT_FOR_VENDOR = {"cursor": "cursor-seat", "devin": "devin-seat", "muse": "muse-seat-local"}
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -128,7 +128,8 @@ def ledger_path() -> Path:
 
 
 def cli_bin(vendor: str) -> str:
-    return os.environ.get(f"SEAT_{vendor.upper()}_BIN") or {"cursor": "cursor-agent", "devin": "devin"}[vendor]
+    binaries = {"cursor": "cursor-agent", "devin": "devin", "muse": "muse"}
+    return os.environ.get(f"SEAT_{vendor.upper()}_BIN") or binaries[vendor]
 
 
 def now() -> datetime:
@@ -377,6 +378,9 @@ def account_env(account: dict[str, Any]) -> dict[str, str]:
     elif vendor == "cursor":
         env.pop("CURSOR_API_KEY", None)
         env.pop("AGENT_CLI_CREDENTIAL_STORE", None)
+    elif vendor == "muse":
+        # Preserve account login without inspecting or copying its credential store.
+        env.pop("META_API_KEY", None)
     elif vendor == "devin" and auth == "lease":
         env["XDG_DATA_HOME"] = str(devin_data_dir(account))
     elif vendor == "devin":
@@ -405,7 +409,9 @@ def devin_trusted(account: dict[str, Any], cwd: Path) -> bool:
 
 def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     vendor = account.get("vendor")
-    if vendor == "devin":
+    if vendor == "muse":
+        command = [cli_bin("muse"), "--version"]
+    elif vendor == "devin":
         command = [cli_bin("devin"), "auth", "status"]
     elif account.get("auth") == "api-key":
         # `status` and `about` report the keychain login even when CURSOR_API_KEY is set;
@@ -427,7 +433,11 @@ def run_probe(account: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         return {"auth_ok": False, "auth_error": f"{type(error).__name__}: {error}"[:ERROR_CHARS]}, None
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", completed.stdout + "\n" + completed.stderr)
-    if vendor == "cursor" and account.get("auth") == "api-key":
+    if vendor == "muse":
+        # Installation is not an auth proof. Actual dispatch reports auth errors.
+        ok = completed.returncode == 0 and "Muse Code 1.4.7" in text
+        identity = {"version": text.strip(), "auth_source": "existing-login-unverified"}
+    elif vendor == "cursor" and account.get("auth") == "api-key":
         ok = completed.returncode == 0 and not AUTH_RE.search(text)
         identity = {}
     elif vendor == "cursor":
@@ -662,6 +672,10 @@ def command_add(args: argparse.Namespace) -> int:
             account.update({"auth": "api-key", "key_file": str(key_file)})
         else:
             account["auth"] = "login"
+    elif args.vendor == "muse":
+        if sys.platform != "darwin":
+            fail("Muse login seats are Studio-local; box credentials are not provisioned")
+        account["auth"] = "login"
     else:
         account["auth"] = "data-dir"
         if args.data_dir:
@@ -896,11 +910,22 @@ def check_cursor_model(model: str, candidates: list[dict[str, Any]],
     return supported
 
 
-def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_file: Path) -> list[str]:
+def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_file: Path,
+                  effort: str = "medium") -> list[str]:
     if vendor == "cursor":
         command = [cli_bin("cursor"), "-p", "--trust", "--output-format", "json", "--model", model]
         command += ["--mode", "ask"] if mode == "ask" else ["--force"]
         return command
+    if vendor == "muse":
+        if sys.platform != "darwin":
+            fail("Muse account login is Studio-local; box path is parked")
+        version = subprocess.run([cli_bin("muse"), "--version"], capture_output=True, text=True,
+                                 timeout=PROBE_TIMEOUT_SECONDS, check=False)
+        if version.returncode or version.stdout.strip() != "Muse Code 1.4.7 (1.4.7-R6101.1)":
+            fail("Muse seat requires pinned Muse Code 1.4.7 (1.4.7-R6101.1)")
+        return [cli_bin("muse"), "exec", "--json", "--trust-workspace", "--model", model,
+                "--effort", effort, "--approval-mode", "never", "--contributor-mode", "off",
+                "--no-foreign-personal-context", "--prompt-file", str(prompt_file)]
     # Devin's `auto` rejects every shell call in print mode, `ls` included, so a read-only
     # task cannot finish; `smart` runs what Devin's own safety model judges safe.
     permission = "smart" if mode == "ask" else "dangerous"
@@ -949,6 +974,44 @@ def parse_outcome(vendor: str, completed: subprocess.CompletedProcess[str], expo
         "error": None,
     }
     stderr = completed.stderr.strip()
+    if vendor == "muse":
+        terminal = None
+        seen = set()
+        for line in completed.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            event_id = event.get("id")
+            if event_id and event_id in seen:
+                continue
+            if event_id:
+                seen.add(event_id)
+            payload = event.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
+            stream = event.get("stream")
+            stream = stream if isinstance(stream, dict) else {}
+            if stream.get("kind") == "session":
+                outcome["session_id"] = stream.get("id")
+            if event.get("payload_type", "").startswith("run.terminal."):
+                terminal = payload.get("terminal")
+                outcome["result"] = payload.get("text")
+                outcome["error"] = payload.get("reason")
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                for field, names in (("tokens_in", ("input_tokens", "inputTokens")),
+                                     ("tokens_out", ("output_tokens", "outputTokens")),
+                                     ("cache_read_tokens", ("cache_read_tokens", "cacheReadTokens"))):
+                    value = next((usage[n] for n in names if n in usage), None)
+                    if isinstance(value, int) and value >= 0:
+                        outcome[field] = (outcome[field] or 0) + value
+        outcome["ok"] = completed.returncode == 0 and terminal == "completed"
+        if not outcome["ok"]:
+            outcome["error"] = (str(outcome["error"] or stderr or "Muse emitted no completed terminal"))[:ERROR_CHARS]
+        outcome["usage_source"] = "exec-json" if outcome["tokens_in"] is not None else "unavailable"
+        return outcome
     if vendor == "cursor":
         try:
             envelope = json.loads(completed.stdout.strip().splitlines()[-1]) if completed.stdout.strip() else {}
@@ -1768,7 +1831,9 @@ def run_on_accounts(
         print(f"seat: debug: dropped local proxy variables: {', '.join(removed_proxies)}", file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="seat-") as scratch:
         prompt_file = Path(scratch) / "prompt.md"
-        prompt_file.write_text(final_prompt(prompt, args.task_class), encoding="utf-8")
+        prompt_file.write_text(final_prompt(prompt, args.task_class) +
+                               ("\nRead-only task: do not edit files or perform any state-changing operations.\n"
+                                if args.vendor == "muse" and args.mode == "ask" else ""), encoding="utf-8")
         limited_plans: set[str] = set()
         kind: str | None = None
         for account in candidates:
@@ -1786,7 +1851,8 @@ def run_on_accounts(
                 }
                 continue
             export_file = Path(scratch) / f"{account['id']}.export.json"
-            command = build_command(args.vendor, model, args.mode, prompt_file, export_file)
+            command = build_command(args.vendor, model, args.mode, prompt_file, export_file,
+                                    getattr(args, "effort", "medium"))
             for retry in range(2):
                 if control and (stopped := control.stop_reason()):
                     outcome, kind = {"ok": False, "error": stopped}, "stopped"
@@ -1917,6 +1983,8 @@ def run_on_accounts(
         "ok": bool(outcome.get("ok")),
         "error": outcome.get("error"),
     }
+    if args.vendor == "muse":
+        closeout["usage_source"] = outcome.get("usage_source", "unavailable")
     append_ledger([closeout])
     envelope = {
         "ok": closeout["ok"],
@@ -1932,6 +2000,8 @@ def run_on_accounts(
         "error": closeout["error"],
         "result": outcome.get("result"),
     }
+    if args.vendor == "muse":
+        envelope["usage_source"] = closeout["usage_source"]
     print(json.dumps(envelope, indent=2))
     if closeout["ok"]:
         return EXIT_OK
@@ -2004,6 +2074,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="write",
         help="ask: read-only tools; write: edits and shell (default)",
     )
+    run.add_argument("--effort", choices=("low", "medium", "high", "xhigh"), default="medium")
     run.add_argument("--timeout", type=float, default=DEFAULT_RUN_TIMEOUT_SECONDS)
     run.add_argument("--print-prompt", action="store_true", help="print the final prompt without launching a seat")
     run.add_argument("--prompt-file")
@@ -2021,7 +2092,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             parser.error("--vendor devin requires at least one --trust")
     if args.command == "run" and not args.print_prompt and not args.model:
         parser.error("seat run requires --model unless --print-prompt is used")
-    if args.command == "run" and not args.print_prompt and args.task_class == "verify" and not args.account and not args.author_vendor:
+    if (args.command == "run" and not args.print_prompt and args.task_class == "verify"
+            and not args.account and not args.author_vendor):
         parser.error("--class verify reserves a cross-vendor reviewer: pass --author-vendor <vendor that wrote it>")
     return args
 

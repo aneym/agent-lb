@@ -108,7 +108,7 @@ STATE_MAX_AGE_SECONDS = 7200
 
 # cursor-seat forwards to cursor-agent whatever model id it carries, so its health is the
 # forwarder's health and not the health of the model's home vendor.
-SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin"}
+SEAT_PROBE = {"cursor-seat": "cursor-agent", "devin-seat": "devin", "muse-seat-local": "muse"}
 
 # A vendor CLI probe (`devin auth status`) can time out once under load while the seat works. One failure keeps a
 # CLI seat routable; it is held only after this many consecutive doctor runs fail, and only for CLI_SEAT_HOLD_SECONDS
@@ -969,6 +969,25 @@ def command_pools(args: argparse.Namespace) -> int:
     if document is None:
         print(f"route: {error}", file=sys.stderr)
         return EXIT_DEGRADED
+    muse_state = Path(os.environ.get("SEAT_HOME") or Path.home() / ".agent-lb" / "seats") / "state.json"
+    try:
+        state = json.loads(muse_state.read_text())
+        members = [r for r in state.get("accounts", {}).values() if r.get("vendor") == "muse"]
+    except (OSError, ValueError, AttributeError):
+        members = []
+    if members and not any(p.get("id") == "muse" for p in document.get("pools", [])):
+        runs = [run for r in members for run in r.get("runs", [])]
+        stamp = datetime.now(timezone.utc)
+        ready = sum(r.get("enabled", True) and r.get("auth_ok") is True
+                    and (not (until := _parse_ts(r.get("cooldown_until"))) or until <= stamp)
+                    and bool(checked := _parse_ts(r.get("auth_checked_at")))
+                    and (stamp - checked).total_seconds() < 43200 for r in members)
+        document["pools"].append({"id": "muse", "provider": "muse", "kind": "cli_seat",
+            "source": "seat_state", "accounts": len(members), "eligibleAccounts": ready,
+            "status": "ok" if ready else "exhausted", "headroomPercent": 100 if ready else 0,
+            "observedRuns": len(runs), "observedTokens": sum((r.get("tokens_in") or 0) +
+                (r.get("tokens_out") or 0) for r in runs), "limitReadback": "unavailable",
+            "usageSource": "observed request log; token counts unavailable when CLI omits usage"})
     now = datetime.now(timezone.utc)
     history = load_pool_history(now)
     try:
@@ -1931,7 +1950,7 @@ def rung_model(table: dict, entry: dict, served: ServedModels) -> tuple[str | No
     if model is None and why.startswith("pending: "):
         return alias, why
     if model and family_alias(table, alias) not in table.get("aliases", {}):
-        vendor = {"cursor-seat": "cursor", "devin-seat": "devin"}.get(entry["seat"])
+        vendor = {"cursor-seat": "cursor", "devin-seat": "devin", "muse-seat-local": "muse"}.get(entry["seat"])
         listed = cursor_models() if vendor == "cursor" else (devin_models() if vendor == "devin" else [])
         if not listed and vendor in _DEFERRED_DISCOVERY:
             return model, model_list_pending(vendor)
