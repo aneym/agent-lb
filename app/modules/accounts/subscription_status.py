@@ -8,6 +8,7 @@ ACTIVE_SUBSCRIPTION_STATUS = "active"
 CANCELED_SUBSCRIPTION_STATUS = "canceled"
 LEGACY_CANCEL_PENDING_SUBSCRIPTION_STATUS = "cancel_pending"
 SUBSCRIPTION_STATUS_PATTERN = r"^(active|pause_pending|paused|canceled)$"
+ANTHROPIC_OAUTH_ORGANIZATION_BLOCK = "anthropic_oauth_organization_blocked"
 
 
 def normalize_subscription_status(status: str | None) -> str | None:
@@ -18,7 +19,10 @@ def normalize_subscription_status(status: str | None) -> str | None:
 
 
 def is_subscription_usable(account: Account) -> bool:
-    return normalize_subscription_status(account.subscription_status) != CANCELED_SUBSCRIPTION_STATUS
+    return (
+        normalize_subscription_status(account.subscription_status) != CANCELED_SUBSCRIPTION_STATUS
+        and account.deactivation_reason != ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
+    )
 
 
 def subscription_usable_accounts(accounts: Iterable[Account]) -> list[Account]:

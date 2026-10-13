@@ -32,6 +32,7 @@ from app.db.models import Account, AccountStatus, UsageHistory
 from app.db.session import get_background_session
 from app.modules.accounts import reset_credit_cache
 from app.modules.accounts.auth_manager import AccountsRepositoryPort, AuthManager
+from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.usage.additional_quota_keys import canonicalize_additional_quota_key
 from app.modules.usage.identity_mismatch import (
     clear_identity_mismatch,
@@ -649,6 +650,21 @@ class UsageUpdater:
             )
             usage_written = usage_written or _usage_entry_written(entry)
         await self._recover_quota_status_from_usage(account, primary=primary, secondary=secondary, monthly=monthly)
+        if self._auth_manager and account.deactivation_reason == ANTHROPIC_OAUTH_ORGANIZATION_BLOCK:
+            repo = cast(AccountsRepositoryWithStatusComparePort, self._auth_manager._repo)
+            updated = await repo.update_status_if_current(
+                account.id,
+                account.status,
+                None,
+                account.reset_at,
+                blocked_at=account.blocked_at,
+                expected_status=account.status,
+                expected_deactivation_reason=ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
+                expected_reset_at=account.reset_at,
+                expected_blocked_at=account.blocked_at,
+            )
+            if updated:
+                account.deactivation_reason = None
         return AccountRefreshResult(usage_written=usage_written)
 
     async def _deactivate_for_client_error(self, account: Account, exc: UsageFetchError) -> None:
