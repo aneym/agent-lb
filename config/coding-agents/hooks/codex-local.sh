@@ -26,6 +26,11 @@ if [[ $(uname -s) != Darwin || $(hostname -s | tr '[:upper:]' '[:lower:]') != *s
   exit 75
 fi
 export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
+# Admission owns the wait. Re-enter only as its child, then capture immediately before launch.
+if [[ ${LOCAL_SEAT_ADMITTED:-0} != 1 && -x "$HOME/.local/bin/verify-slot" ]]; then
+  exec "$HOME/.local/bin/verify-slot" codex-local -- env LOCAL_SEAT_ADMITTED=1 bash "$0" "$@"
+fi
+unset LOCAL_SEAT_ADMITTED
 # Capture host telemetry before the worker; the sandbox never calls WindowServer.
 focus_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-local-focus.XXXXXX")
 export LOCAL_SEAT_FOCUS_BASELINE="$focus_dir/baseline.json"
@@ -36,7 +41,4 @@ chmod +x "$focus_dir/desktop-guard-focus"
 export PATH="$focus_dir:$PATH"
 printf 'codex-local: host baseline %s; sandbox snapshot: python3 %s --baseline %s snapshot (non-live; lead compares after run)\n' "$LOCAL_SEAT_FOCUS_BASELINE" "$LOCAL_SEAT_FOCUS_HELPER" "$LOCAL_SEAT_FOCUS_BASELINE" >&2
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
-if [[ -x "$HOME/.local/bin/verify-slot" ]]; then
-  exec "$HOME/.local/bin/verify-slot" codex-local -- node "$companion" "$@"
-fi
 exec node "$companion" "$@"

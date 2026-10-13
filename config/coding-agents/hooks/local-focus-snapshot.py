@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import time
 
 
 def fail(message):
@@ -26,7 +27,7 @@ def main():
             data = json.loads(stdout)
             if child.returncode or not data.get('front') or not isinstance(data.get('cursor'), list):
                 raise ValueError('host snapshot incomplete')
-            destination.write_text(json.dumps(data)+'\n')
+            destination.write_text(json.dumps({**data, 'captured_at':time.time()})+'\n')
             return 0
         except (subprocess.TimeoutExpired, ValueError):
             os.killpg(child.pid, signal.SIGKILL) if child.poll() is None else None
