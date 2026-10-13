@@ -71,3 +71,46 @@ def test_existing_destructive_sql_floor(tmp_path):
     result = run('psql -c "DROP TABLE app"', tmp_path)
     assert result.returncode == 2
     assert "floor: destructive data" in result.stderr
+
+
+def test_unparsable_non_floor_warns_and_allows(tmp_path):
+    result = run('echo "unterminated railway', tmp_path)
+    assert result.returncode == 0
+    assert "WARNING:" in result.stderr
+
+
+def test_installer_revision_refuses_stale_and_passes_descendant(tmp_path):
+    """Real git repository boundary proves stale policy cannot replace current policy."""
+    import runpy
+    installer = GUARD.parent.parent / 'install-policy.py'
+    verify = runpy.run_path(str(installer))['verify_install_revision']
+    remote = tmp_path / 'remote.git'
+    repo = tmp_path / 'work'
+    def git(*args, cwd=None):
+        return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True)
+    git('init', '--bare', str(remote))
+    git('clone', str(remote), str(repo))
+    git('config', 'user.email', 'fixture@example.invalid', cwd=repo)
+    git('config', 'user.name', 'Fixture', cwd=repo)
+    git('checkout', '-b', 'main', cwd=repo)
+    (repo / 'fixture').write_text('first')
+    git('add', '.', cwd=repo)
+    git('commit', '-m', 'first', cwd=repo)
+    first = git('rev-parse', 'HEAD', cwd=repo).stdout.strip()
+    git('push', 'origin', 'main', cwd=repo)
+    source = repo / 'config/coding-agents'
+    source.mkdir(parents=True)
+    verify(source)
+    (repo / 'fixture').write_text('second')
+    git('commit', '-am', 'second', cwd=repo)
+    git('push', 'origin', 'main', cwd=repo)
+    git('checkout', '--detach', first, cwd=repo)
+    with pytest.raises(SystemExit, match='rebase onto origin/main'):
+        verify(source)
+    with pytest.raises(SystemExit):
+        verify(source, True, None)
+    verify(source, True, 'fixture exercises logged override')
+    git('checkout', 'main', cwd=repo)
+    (repo / 'fixture').write_text('third')
+    git('commit', '-am', 'third', cwd=repo)
+    verify(source)

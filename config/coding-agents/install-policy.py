@@ -341,6 +341,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument("--print", action="store_true", dest="preview")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--reason", help="Logged reason for forcing installation from a stale revision")
     parser.add_argument(
         "--hook-dispatcher", choices=("on", "off"),
         help="on: fold the PreToolUse, PostToolUse, UserPromptSubmit and Stop hooks into hooks/hook-dispatch.py "
@@ -1399,6 +1401,7 @@ def main() -> int:
         print("hook paths: ok" if not problems else f"hook paths: {len(problems)} problem(s)")
         return 1 if problems else 0
     source = Path(__file__).resolve().parent
+    verify_install_revision(source, args.force, args.reason)
     claude_path = args.home / ".claude" / "CLAUDE.md"
     codex_path = args.home / ".codex" / "AGENTS.md"
     template = (source / "claude-adapter.md").read_text()
@@ -1814,28 +1817,94 @@ def main() -> int:
     return 0
 
 
-def locked_main() -> int:
-    """One install at a time per home: the coding-agents sync and a hand run must not interleave their writes."""
-    import fcntl
-    import time
+def verify_install_revision(source: Path, force: bool = False, reason: str | None = None) -> None:
+    """Only current-main descendants may overwrite the shared host policy."""
+    repo = source.parent.parent
+    if not (repo / ".git").exists():
+        raise SystemExit("error: installer needs a git worktree; rebase onto origin/main")
+    def git(*words):
+        return subprocess.run(["git", "-C", str(repo), *words], capture_output=True, text=True, timeout=60)
+    fetched = git("fetch", "origin", "main")
+    if fetched.returncode:
+        raise SystemExit("error: could not fetch origin/main; refusing policy installation")
+    head = git("rev-parse", "HEAD").stdout.strip()
+    main_sha = git("rev-parse", "origin/main").stdout.strip()
+    if git("merge-base", "--is-ancestor", "origin/main", "HEAD").returncode == 0:
+        return
+    message = f"HEAD={head} origin/main={main_sha}; rebase onto origin/main"
+    if not force or not reason or not reason.strip():
+        raise SystemExit("error: stale installer: " + message)
+    print("WARNING: forced stale installation: " + message + "; reason=" + reason, flush=True)
 
-    home = parse_args().home.expanduser().resolve()
-    # Outside the home, so a --print run writes nothing there.
+
+def locked_main() -> int:
+    """Serialize host installs and retire a recorded stalled installer, never a Claude process."""
+    import fcntl
+    import signal
+
+    args = parse_args()
+    home = args.home.expanduser().resolve()
     digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]
-    # A fixed directory, not TMPDIR: launchd jobs and shells see different TMPDIRs.
     lock_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
     lock_path = lock_dir / f"agent-lb-install-policy-{os.getuid()}-{digest}.lock"
-    with open(lock_path, "a") as handle:
+    with open(lock_path, "a+") as handle:
         deadline = time.monotonic() + 600
         while True:
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
+                handle.seek(0)
+                try:
+                    holder = json.loads(handle.read())
+                    pid = int(holder["pid"])
+                    stale = time.time() - float(holder["progress_at"]) > 900
+                    started = time.time() - float(holder["started_at"]) > 900
+                except (ValueError, KeyError, TypeError):
+                    stale = started = False
+                if stale and started:
+                    process = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                                             capture_output=True, text=True, timeout=10).stdout.strip()
+                    if "install-policy.py" in process and "python" in process and "claude" not in process.lower():
+                        print(f"WARNING: retiring stalled policy installer pid={pid}; no recorded progress for over 15 minutes", flush=True)
+                        os.kill(pid, signal.SIGTERM)
+                        until = time.monotonic() + 30
+                        while time.monotonic() < until:
+                            try:
+                                os.kill(pid, 0)
+                            except ProcessLookupError:
+                                break
+                            time.sleep(1)
+                        else:
+                            os.kill(pid, signal.SIGKILL)
+                        continue
                 if time.monotonic() > deadline:
                     raise SystemExit(f"error: another install-policy run holds {lock_path}")
                 time.sleep(1)
-        return main()
+        started_at = time.time()
+        def progress():
+            handle.seek(0)
+            handle.truncate()
+            json.dump({"pid": os.getpid(), "started_at": started_at, "progress_at": time.time()}, handle)
+            handle.flush()
+        progress()
+        class ProgressStream:
+            def __init__(self, stream):
+                self.stream = stream
+            def write(self, text):
+                if text.strip():
+                    progress()
+                return self.stream.write(text)
+            def flush(self):
+                return self.stream.flush()
+        stdout = sys.stdout
+        sys.stdout = ProgressStream(stdout)
+        try:
+            return main()
+        finally:
+            sys.stdout = stdout
+            handle.seek(0)
+            handle.truncate()
 
 
 if __name__ == "__main__":

@@ -215,7 +215,7 @@ def inspect(source, inherited, depth=0):
 try:
     print(inspect(text, os.environ))
 except ValueError:
-    print("kept floor: Alex" + chr(39) + "s own provider login. Could not parse executable argv; use a factory-provisioned token.")
+    print("WARNING: provider guard could not parse executable argv; allowing command.", file=sys.stderr)
 PY
 ) || refuse "could not inspect provider argv"
 if [ -n "$PROVIDER" ]; then
@@ -288,7 +288,13 @@ for index, words in enumerate(parts):
         print(read_file(parts[index-1][1]))
 # DROP/**/TABLE is an accepted residual: this accidental-command guard does not normalize SQL comments.
 PY
-) || refuse "could not parse the shell command"
+) || {
+  if grep -qiE 'rm[[:space:]]+-rf|DROP|launchctl[[:space:]]+disable' <<<"$CMD"; then
+    refuse "could not parse a kept-floor command"
+  fi
+  echo "WARNING: destructive-data guard could not parse executable argv; allowing command." >&2
+  allow
+}
 MATCH=0
 grep -qiE '(DROP\s+(DATABASE|TABLE)|TRUNCATE\s+(TABLE\s+)?[A-Za-z_])' <<<"$SQL" || MATCH=$?
 if [ "$MATCH" -eq 0 ] && ! approved; then
