@@ -294,7 +294,7 @@ def pf_dangerous(payload):
     if command is None:
         return True
     # grep -iE "rm\s+-rf\s+/|DROP\s+(DATABASE|TABLE)"; [\ss] also covers a grep that reads \s as a literal s.
-    return "psql" in command  # File SQL and truncate need inspection even without DROP in the command.
+    return any(name in command for name in ("psql", "railway", "vercel", "fly", "neonctl"))  # Inspect SQL and provider argv.
 
 
 def pf_bootout(payload):

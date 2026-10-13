@@ -68,6 +68,160 @@ allow() {
 }
 CMD=$(jq -n -r 'input | .tool_input.command // empty' 2>/dev/null) || refuse "could not read the hook input (jq exit $?)"
 [ -n "$CMD" ] || allow
+# Inspect executable argv, not provider names in data or ssh arguments. No token values leave this parser.
+PROVIDER=$(python3 - "$CMD" <<'PY'
+import os, re, shlex, sys
+providers = {
+    'railway': ('Railway', ('RAILWAY_TOKEN', 'RAILWAY_API_TOKEN')),
+    'vercel': ('Vercel', ('VERCEL_TOKEN',)),
+    'fly': ('Fly', ('FLY_API_TOKEN',)),
+    'flyctl': ('Fly', ('FLY_API_TOKEN',)),
+    'neonctl': ('Neon', ('NEON_API_KEY',)),
+}
+text = sys.argv[1]
+# An approval must be explicitly referenced, within the approval directory, and name this exact command.
+match = re.search(r'\s+# alex-approval:\s*(\S+)\s*$', text)
+if match:
+    path = os.path.expanduser(match[1].replace('${HOME}', os.path.expanduser('~')).replace('$HOME', os.path.expanduser('~')))
+    root = os.path.expanduser('~/.open-factory/approvals')
+    if (os.path.dirname(path) == root and re.fullmatch(r'alex-.*\.md', os.path.basename(path))
+            and not os.path.islink(path)):
+        try:
+            approval = open(path).read()
+            exact = text[:match.start()].strip()
+            if any(line.strip().strip(chr(96)) == exact for line in approval.splitlines()):
+                sys.exit(0)
+        except OSError:
+            pass
+
+def without_heredocs(source):
+    # Heredoc bodies are data, including provider-looking commands.
+    lines = source.splitlines(keepends=True)
+    clean = []
+    delimiters = []
+    for line in lines:
+        if delimiters:
+            if line.rstrip('\r\n').lstrip('\t') == delimiters[0]:
+                delimiters.pop(0)
+            continue
+        clean.append(line)
+        delimiters.extend(m[1] or m[2] or m[3] for m in re.finditer(
+            r"<<-?\s*(?:'([^']+)'|\"([^\"]+)\"|([\w]+))", line))
+    return ''.join(clean)
+
+def substitutions(source):
+    quote = None
+    i = 0
+    while i < len(source):
+        char = source[i]
+        if char == chr(92) and quote != chr(39):
+            i += 2
+            continue
+        if char == chr(39) and quote != chr(34):
+            quote = None if quote else char
+        elif char == chr(34) and quote != chr(39):
+            quote = None if quote else char
+        elif quote != chr(39) and source.startswith('$(', i) and not source.startswith('$((', i):
+            start = i + 2
+            level = 1
+            i = start
+            while i < len(source) and level:
+                if source[i] == '(': level += 1
+                elif source[i] == ')': level -= 1
+                i += 1
+            if level: raise ValueError('unclosed substitution')
+            yield source[start:i - 1]
+            continue
+        elif quote != chr(39) and char == chr(96):
+            end = source.find(chr(96), i + 1)
+            if end < 0: raise ValueError('unclosed substitution')
+            yield source[i + 1:end]
+            i = end
+        i += 1
+
+def segments(source):
+    lexer = shlex.shlex(source, posix=True, punctuation_chars=';&|()<>\n')
+    lexer.whitespace = ' \t\r'
+    lexer.whitespace_split = True
+    lexer.commenters = '#'
+    words = []
+    for word in lexer:
+        if all(c in ';&|()<>\n' for c in word):
+            if words:
+                yield words
+                words = []
+        else:
+            words.append(word)
+    if words:
+        yield words
+
+def inspect(source, inherited, depth=0):
+    if depth > 12:
+        raise ValueError('shell nesting limit')
+    source = without_heredocs(source)
+    for body in substitutions(source):
+        result = inspect(body, inherited, depth + 1)
+        if result:
+            return result
+    exported = dict(inherited)
+    for words in segments(source):
+        local = dict(exported)
+        while words and (re.match(r'^[A-Za-z_][A-Za-z_0-9]*=', words[0]) or words[0] in ('env', 'command', 'exec')):
+            word = words.pop(0)
+            if word == 'env':
+                while words and words[0].startswith('-'):
+                    option = words.pop(0)
+                    if option in ('-i', '--ignore-environment'):
+                        local.clear()
+                    elif option in ('-u', '--unset') and words:
+                        local.pop(words.pop(0), None)
+                    elif option.startswith('--unset='):
+                        local.pop(option.split('=', 1)[1], None)
+                    elif option == '--':
+                        break
+            elif word in ('command', 'exec'):
+                while words and words[0].startswith('-'):
+                    words.pop(0)
+            if '=' in word:
+                key, value = word.split('=', 1)
+                # Literal empty values and references to absent exported variables do not provide a token.
+                ref = re.fullmatch(r'\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?', value)
+                local[key] = exported.get(ref[1], '') if ref else value
+        if not words:
+            continue
+        name = os.path.basename(words[0])
+        if name == 'export':
+            for word in words[1:]:
+                if '=' in word:
+                    key, value = word.split('=', 1)
+                    exported[key] = value
+            continue
+        if name == 'unset':
+            for key in words[1:]:
+                exported.pop(key, None)
+            continue
+        if name in ('bash', 'sh', 'zsh'):
+            for i, word in enumerate(words[1:], 1):
+                if word.startswith('-') and 'c' in word[1:] and i + 1 < len(words):
+                    result = inspect(words[i + 1], local, depth + 1)
+                    if result:
+                        return result
+                    break
+        if name in providers:
+            label, keys = providers[name]
+            if not any(local.get(key) for key in keys):
+                return f"kept floor: Alex{chr(39)}s own {label} login. Use a factory-provisioned {keys[0]} (ask ub_vaxptt)"
+    return ''
+try:
+    print(inspect(text, os.environ))
+except ValueError:
+    print("kept floor: Alex" + chr(39) + "s own provider login. Could not parse executable argv; use a factory-provisioned token.")
+PY
+) || refuse "could not inspect provider argv"
+if [ -n "$PROVIDER" ]; then
+  printf 'BLOCKED: %s\n' "$PROVIDER" >&2
+  exit 2
+fi
 SQL=$(python3 - "$CMD" <<'PY'
 import os, re, shlex, sys
 # Quoted heredocs sent to data readers are inert. Shell consumers are reparsed.
@@ -87,7 +241,40 @@ def commands(text):
             i += 1
             if re.match(r"\s*(?:bash|sh|zsh)\b", line):
                 yield from commands(''.join(body))
-    lexer = shlex.shlex(''.join(clean), posix=True, punctuation_chars=';|&<>')
+    return ''.join(clean)
+
+def substitutions(source):
+    quote = None
+    i = 0
+    while i < len(source):
+        char = source[i]
+        if char == chr(92) and quote != chr(39):
+            i += 2
+            continue
+        if char == chr(39) and quote != chr(34):
+            quote = None if quote else char
+        elif char == chr(34) and quote != chr(39):
+            quote = None if quote else char
+        elif quote != chr(39) and source.startswith('$(', i) and not source.startswith('$((', i):
+            start = i + 2
+            level = 1
+            i = start
+            while i < len(source) and level:
+                if source[i] == '(': level += 1
+                elif source[i] == ')': level -= 1
+                i += 1
+            if level: raise ValueError('unclosed substitution')
+            yield source[start:i - 1]
+            continue
+        elif quote != chr(39) and char == chr(96):
+            end = source.find(chr(96), i + 1)
+            if end < 0: raise ValueError('unclosed substitution')
+            yield source[i + 1:end]
+            i = end
+        i += 1
+
+def segments(source):
+    lexer = shlex.shlex(source, posix=True, punctuation_chars=';|&<>')
     lexer.whitespace = ' \t\r'
     lexer.commenters = '#'
     segment = []
