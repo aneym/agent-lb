@@ -49,6 +49,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     tokens.add_argument("--top", type=int, default=30)
     tokens.add_argument("--snapshot-panes-only", action="store_true")
 
+    from app.audit_tabs import add_parser as add_tabs_parser
+
+    add_tabs_parser(commands)
+
     from app.latency_cli import add_parser as add_latency_parser
 
     add_latency_parser(subparsers)
@@ -178,6 +182,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.command == "audit":
         if args.audit_command == "routing":
             from app.audit_routing import run
+        elif args.audit_command == "tabs":
+            from app.audit_tabs import run
         elif args.audit_command == "forwarded":
             from app.audit_forwarded import run
         else:
