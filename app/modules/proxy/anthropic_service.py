@@ -59,6 +59,7 @@ from app.modules.accounts.credits import (
     window_from_usage,
 )
 from app.modules.accounts.service import AccountsService
+from app.modules.accounts.subscription_status import ANTHROPIC_OAUTH_ORGANIZATION_BLOCK
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
 from app.modules.federation.scheduler import build_federation_mirror_scheduler
 from app.modules.proxy._service.support import _request_log_useragent_fields
@@ -736,7 +737,24 @@ class AnthropicProxyService:
                                             else:
                                                 account_override = account
                                                 continue
-                                        await self._load_balancer.record_error(account)
+                                        if resp.status == 403 and (
+                                            "oauth authentication is currently not allowed for this organization"
+                                            in error_message.lower()
+                                        ):
+                                            async with self._repo_factory() as repos:
+                                                await repos.accounts.update_status_if_current(
+                                                    account.id,
+                                                    account.status,
+                                                    ANTHROPIC_OAUTH_ORGANIZATION_BLOCK,
+                                                    account.reset_at,
+                                                    blocked_at=account.blocked_at,
+                                                    expected_status=account.status,
+                                                    expected_deactivation_reason=account.deactivation_reason,
+                                                    expected_reset_at=account.reset_at,
+                                                    expected_blocked_at=account.blocked_at,
+                                                )
+                                        else:
+                                            await self._load_balancer.record_error(account)
                                     else:
                                         error_code = "invalid_api_key"
                                         await self._load_balancer.mark_permanent_failure(account, error_code)
@@ -1419,6 +1437,15 @@ class AnthropicProxyService:
         if provider_name == ANTHROPIC_PROVIDER_NAME:
             quota_key = model_quota_key(model, quota_key)
         eligibility = await self._provider_quota_eligibility(provider_name, quota_key, model=model)
+        if provider_name == ANTHROPIC_PROVIDER_NAME and not eligibility.account_ids and eligibility.blocked_count == 0:
+            async with self._repo_factory() as repos:
+                has_accounts = any(
+                    account.provider == provider_name for account in await repos.accounts.list_accounts()
+                )
+            if has_accounts:
+                raise AnthropicProxyError(
+                    429, "No selectable Anthropic account", code=_no_available_accounts_code(provider_name)
+                )
         if not eligibility.account_ids and eligibility.blocked_count == 0 and provider_name in {"glm", "kimi"}:
             async with self._repo_factory() as repos:
                 has_no_balance = any(

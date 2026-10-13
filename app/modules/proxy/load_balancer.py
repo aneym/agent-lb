@@ -2217,6 +2217,13 @@ def _state_from_account(
             credits_unlimited=raw_credits_unlimited,
             credits_balance=raw_credits_balance,
         )
+    ) or (
+        normalize_provider_name(account.provider) == "anthropic"
+        and account.status == AccountStatus.QUOTA_EXCEEDED
+        and secondary_used is not None
+        and secondary_used >= 100.0
+        and secondary_reset is not None
+        and secondary_reset > now_epoch
     ):
         quota_status, quota_used, quota_reset = apply_usage_quota(
             status=status,
