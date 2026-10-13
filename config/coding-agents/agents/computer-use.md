@@ -29,7 +29,7 @@ The box job runs in a mirrored copy of the lane directory, so evidence written t
 
 Never write the contract to a fixed or reused path (the scratchpad is shared by parallel agents), and never pass it inline.
 
-Do not add `--write`. Forward the exact app, page, permitted interactions, evidence destination and device hold. Write the entire contract to the file with the quoted heredoc above. Never use latest-thread continuation in a shared cwd.
+For an explicitly placed box browser proof, add `--write`: it needs network sockets and writes to the assigned lane evidence root and durable browser profile. Keep read-only for inspection contracts. Forward the exact app, page, permitted interactions, evidence destination and device hold. Write the entire contract to the file with the quoted heredoc above. Never use latest-thread continuation in a shared cwd.
 
 Require Codex to discover its actual tools first. A configured node_repl server, computer_use feature flag, model name, HTTP fetch or wrapper is not proof of desktop control. Use installed browser/desktop capabilities only, with a read-only first probe. Report tool names, observed result and limitations. Never invent @oai/sky availability or signatures.
 
