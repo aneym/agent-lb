@@ -76,6 +76,15 @@ def test_models_install_lifecycle(tmp_path: Path, workspace: bytes | None) -> No
     assert "model: sol-latest-medium" in implementer
     assert "`AUTHORITY: <grant-id>`" in implementer and "factory-grant verify" in implementer
     assert "Do not commit, push" not in implementer
+    # Local coding seats must submit to the runtime with their Studio-pinned identity.
+    for name in ("gpt-implementer", "sonnet-implementer"):
+        local = (home / f".claude/agents/{name}-local.md").read_text()
+        command = (
+            'python3 ~/.agent-rails/factory-runtime/bin/seat-submit --worktree <wt> '
+            f'--prompt-file <f> --check "<check>" --seat {name}-local'
+        )
+        assert f"`{command}`" in local
+        assert "~/factory/bin/seat-submit" not in local
     backups = list((home / ".claude/ledgers").glob("models-md-handkept-*.md"))
     assert len(backups) == 1
     backup = backups[0]
