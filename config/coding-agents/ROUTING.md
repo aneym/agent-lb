@@ -34,26 +34,27 @@ Until launch the main machine's checkout is the source of truth and GitHub is a 
 
 A guard blocks only on a kept floor and names that floor in its message; everything else warns in one line or is deleted. A blocking guard accepts the CoS approval record as Alex's yes. A guard matches the command that will run, never text inside a heredoc, a quoted string or an ssh argument. Until launch no guard blocks on secrets (2026-10-08 09:27 ET), and that suspension excludes Alex's own passwords, passkeys and codes.
 
-## Model ladder and seats (2026-09-30; updated 2026-10-08)
+## Model ladder and seats (2026-09-30; updated 2026-10-13)
 
 Best first, and only Claude is precious; use family aliases (`route resolve <alias>`). Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
 
 | Job | Seat | Model, effort |
 |---|---|---|
-| Code to a spec | gpt-implementer, then devin-seat, then Sonnet | sol-latest medium; swe-latest high; sonnet-latest high |
-| Mechanical sweeps | gpt-implementer, then devin-seat | sol-latest low; swe-latest medium |
-| Judgment code, or work a seat failed twice | opus-seat | opus-latest |
+| Code to a spec | gpt-implementer; devin-seat; sonnet-implementer | sol-latest medium; sonnet-implementer off while quota is tight (2026-10-13) |
+| Mechanical sweeps | gpt-implementer; devin-seat | sol-latest low while quota is tight (2026-10-13) |
+| Judgment code, or work a seat failed twice | opus-seat | off while quota is tight (2026-10-13); use sol-latest |
 | Read-only exploration | gpt-explorer | sol-latest low |
-| Review, on request only (non-Claude author) | verifier | sonnet-latest high |
+| Review, on request only (non-Claude author) | verifier (Sonnet) | off while quota is tight (2026-10-13); use codex-verifier on sol-latest |
 | Review, on request only (Claude author) | codex-verifier | sol-latest xhigh |
-| Plan second opinion | sol-consult; astra-consult light (one per plan, brief under 2k tokens) | sol-latest high; astra-latest high |
-| Plans, specs, verdicts, design | Opus | opus-latest |
-| Tabs Alex talks to, leads, orchestrators | Opus tab, ultracode on | opus-latest medium; fable-latest on request |
-| Remote-machine relay (batch templates) | host-relay | sonnet-latest low |
+| Plan second opinion | sol-consult; astra-consult light (one per plan, brief under 2k tokens) | sol-latest high for both while quota is tight (2026-10-13) |
+| Plans, specs, verdicts, design | Opus; fable-orchestrator | sol-latest for workflow agents; fable-orchestrator off while quota is tight (2026-10-13) |
+| Tabs Alex talks to, leads, orchestrators | Opus tab, ultracode off; leads and orchestrators on Sol | opus-latest medium for tabs; sol-latest for leads and orchestrators |
+| Remote-machine relay (batch templates) | host-relay | sol-latest low |
 
-- **Every agent tab and session runs Opus medium with ultracode on** unless an explicit model, effort or settings flag says otherwise (Alex, 2026-10-07 19:27 ET: "for now, default all our agents to opus medium but with ultracode on please").
-  Exception (2026-10-10): the CoS, Factory, Raise, Rails and Recruiter tabs run fable-latest medium (claude-fable-5-1), set in each agent.json `model`/`effort` or the tab's own launch argv; every other agent tab stays Opus medium, and leads, seats and workflow agents keep the ladder (Alex, 2026-10-10 ~04:15Z: "lets try moving all our agents to run on fable 5.1 by default for the important ones like cos factory raise rails and recruiter for now please. we can audit the token use but cos should be pretty lean anyways, i want the best model making the judgement for now."). A daily token audit of the five runs as a factory automation.
-  Lanes and leads (2026-10-12): lane-spawn, lead_spawn, workflow agents and seats run opus-latest medium with ultracode on; the five tabs above stay fable-latest medium; running lanes switch at their next spawn or restart, never mid-slice (Alex, 2026-10-12 ~03:03Z: "we can swap all lanes back to opus medium").
+- **Quota rule (2026-10-13): every tab runs `opus-latest` medium with ultracode off.** This replaces the 2026-10-10 Fable exception and the 2026-10-12 Claude lane defaults. Alex, 2026-10-13 ~03:00Z: "okay we ahve very limited claude quota left. we need to slow thigns down a lot until we're ready - ensure everything runs on opus medium at the top level as well."
+  Alex, 2026-10-13 ~03:10Z: "token allocation should be to raise and recruiter and that's basically it i think. since those are our priorities".
+  Claude quota goes to the Raise and Recruiter tabs only, both at tier `full`. Every other tab (`cos`, `factory`, `rails`, `content`, `home`, `health`, `league-coach`, `frank`, `shelf`, `poker-trainer`, `internet`) is `wake-only`: no scheduled loops, timers, 2h summaries or per-bulletin wakes. These tabs wake only for prod down, a security incident, or Alex typing.
+  Lanes, leads, seats and workflow agents run Sol (`sol-latest`), never Claude. This quota rule overrides the ladder and older planning, wake and model defaults while quota is tight. Status goes to state files, not bulletins. The quota allocation lives in `~/.config/open-factory/quota.toml` and is managed by `factory quota`, which is being built.
 - **Cursor is out until a passing probe at the 2026-10-30 reset.** Switch pools only on real 429s or usage-limit errors, never on a low percentage (2026-09-28).
 - **While Claude is on its last account or a 5h window is under 40%,** Claude runs only tabs, plans and specs (2026-09-29).
 - **Retired models run when asked** (Alex, 2026-10-05 19:55 ET: "we shouldnt just block model usage, we shoudl allow them if we request or we want t escalate things"). Each use is logged; only a model gone upstream is refused.
