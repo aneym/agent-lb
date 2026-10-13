@@ -925,10 +925,6 @@ def build_command(vendor: str, model: str, mode: str, prompt_file: Path, export_
     if vendor == "muse":
         if sys.platform != "darwin":
             fail("Muse account login is Studio-local; box path is parked")
-        version = subprocess.run([cli_bin("muse"), "--version"], capture_output=True, text=True,
-                                 timeout=PROBE_TIMEOUT_SECONDS, check=False)
-        if version.returncode or version.stdout.strip() != "Muse Code 1.4.7 (1.4.7-R6101.1)":
-            fail("Muse seat requires pinned Muse Code 1.4.7 (1.4.7-R6101.1)")
         return [cli_bin("muse"), "exec", "--json", "--trust-workspace", "--model", model,
                 "--effort", effort, "--approval-mode", "never", "--contributor-mode", "off",
                 "--no-foreign-personal-context", "--prompt-file", str(prompt_file)]
@@ -1708,6 +1704,11 @@ def command_run(args: argparse.Namespace) -> int:
         sys.stdout.write(final_prompt(prompt, args.task_class))
         return EXIT_OK
     cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
+    if args.vendor == "muse":
+        version = subprocess.run([cli_bin("muse"), "--version"], capture_output=True, text=True,
+                                 timeout=PROBE_TIMEOUT_SECONDS, check=False)
+        if version.returncode or version.stdout.strip() != "Muse Code 1.4.7 (1.4.7-R6101.1)":
+            fail("Muse seat requires pinned Muse Code 1.4.7 (1.4.7-R6101.1)")
     registry = load_registry() + lease_accounts(args.vendor)
     state = load_state()
     run_id = f"seat-{uuid.uuid4()}"

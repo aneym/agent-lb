@@ -281,9 +281,9 @@ factory(
     "cross-vendor review on request only, money path included, and one fix round",
 )
 bands = source_table.get("policy", {}).get("stage_effort", {}).get("bands", {})
-forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat",
+forwarders = {"codex-sol", "codex-verifier", "codex-test-runner", "computer-use", "cursor-seat", "devin-seat", "muse-seat", "muse-seat-local",
               "sonnet-implementer", "verifier", "codex-sol-local", "codex-test-runner-local", "computer-use-local"}
-VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi")
+VENDORS = ("anthropic", "openai", "cursor", "devin", "glm", "kimi", "muse")
 BOX_ADAPTERS = {"codex": "openai", "claude-code": "anthropic", "cursor": "cursor", "devin": "devin"}
 EFFORTS = ("low", "medium", "high", "xhigh")
 SEAT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

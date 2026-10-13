@@ -2,7 +2,7 @@
 
 The vendor executable alone is a stand-in. This guards lost workspace trust,
 incorrect completion settlement, build drift and missing vendor-limit cooldowns.
-The existing Cursor test cannot exercise Muse's plain exec/session contract.
+The existing Cursor test cannot exercise Muse's JSON exec/session contract.
 """
 from __future__ import annotations
 
@@ -21,13 +21,16 @@ REPO = Path(__file__).resolve().parents[2]
 def test_muse_exec_receipt_pool_limit_and_version_pin(tmp_path: Path) -> None:
     vendor = tmp_path / "muse"
     vendor.write_text('''#!/usr/bin/env python3
-import os, sys
+import json, os, sys
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
     print('Muse Code 1.4.7 (1.4.7-R6101.1)' if not Path('wrong-version').exists() else 'Muse Code 1.4.6')
     raise SystemExit(0)
 a = sys.argv[1:]
 assert a[0] == 'exec'
+assert '--json' in a
+assert a[a.index('--effort') + 1] == 'medium'
+assert 'META_API_KEY' not in os.environ
 assert '--trust-workspace' in a
 assert a[a.index('--contributor-mode') + 1] == 'off'
 assert a[a.index('--approval-mode') + 1] == 'never'
@@ -38,7 +41,7 @@ if Path('limited').exists():
     print('usage limit reached; try again in 2 hours', file=sys.stderr)
     raise SystemExit(1)
 Path('result.txt').write_text('Muse seat check\\n')
-print('Created result.txt')
+print(json.dumps({'id':'event-1', 'stream':{'kind':'session','id':'00000000-0000-4000-8000-000000000001'}, 'payload_type':'run.terminal.completed', 'payload':{'terminal':'completed','text':'Created result.txt'}}))
 ''')
     vendor.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("SEAT_", "ROUTE_", "META_"))}
@@ -48,15 +51,21 @@ print('Created result.txt')
                META_API_KEY="synthetic-test-key")
 
     def seat(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([sys.executable, str(REPO / "clients/seat"), *args], env=env,
+        return subprocess.run([sys.executable, "-c", "import runpy,sys; sys.platform='darwin'; "
+                               "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')",
+                               str(REPO / "clients/seat"), *args], env=env,
                               cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False)
 
+    if sys.platform != "darwin":
+        refused = subprocess.run([sys.executable, str(REPO / "clients/seat"), "add", "muse-box",
+                                  "--vendor", "muse"], env=env, cwd=tmp_path, capture_output=True, text=True)
+        assert refused.returncode != 0 and "Studio-local" in refused.stderr
     added = seat("add", "muse-test", "--vendor", "muse")
     assert added.returncode == 0, added.stderr
-    assert "unknown until a real run" in added.stdout
+    assert "auth ok" in added.stdout
     probe = seat("probe", "--vendor", "muse", "--json")
-    assert probe.returncode == 1
-    assert json.loads(probe.stdout)["muse-test"].get("auth_ok") is None
+    assert probe.returncode == 0
+    assert json.loads(probe.stdout)["muse-test"]["identity"]["auth_source"] == "existing-login-unverified"
     args = ("run", "--vendor", "muse", "--account", "muse-test", "--model", "muse-latest",
             "--cwd", str(tmp_path), "--", "Create result.txt")
     completed = seat(*args)
@@ -69,7 +78,7 @@ print('Created result.txt')
     assert (tmp_path / "result.txt").read_text() == "Muse seat check\n"
     rows = [json.loads(line) for line in (tmp_path / "dispatch.jsonl").read_text().splitlines()]
     assert [row["event"] for row in rows] == ["dispatch", "closeout"]
-    assert rows[1]["person"] == "unknown" and rows[1]["machine"]
+    assert rows[1]["usage_source"] == "unavailable"
     pool = cli_seat_pools(read_seat_accounts(tmp_path / "seats/state.json"))[0]
     assert pool.id == "muse" and pool.observed_runs == 1
     assert pool.observed_tokens is None and pool.headroom_percent is None
