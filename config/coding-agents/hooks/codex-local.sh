@@ -14,6 +14,23 @@ for arg in "$@"; do
   esac
 done
 [[ ${1:-} == task ]] || { echo 'usage: codex-local.sh [--dry-run] task [companion options]' >&2; exit 2; }
+# Render the same lane boundary for previews and real companion prompts.
+prompt_file=""
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+  if [[ ${args[i]} == --prompt-file ]]; then
+    prompt_file=${args[i+1]:-}
+  elif [[ ${args[i]} == --prompt-file=* ]]; then
+    prompt_file=${args[i]#--prompt-file=}
+  fi
+done
+if [[ $dry_run == 1 ]]; then
+  if [[ -n $prompt_file ]]; then
+    python3 "$(dirname "$0")/seat-finish.py" --prompt-file "$prompt_file"
+  else
+    python3 "$(dirname "$0")/seat-finish.py"
+  fi
+fi
 if [[ $dry_run == 1 ]]; then
   printf 'host=studio background=false\n'
   printf 'BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only node codex-companion.mjs'
@@ -31,6 +48,20 @@ if [[ ${LOCAL_SEAT_ADMITTED:-0} != 1 && -x "$HOME/.local/bin/verify-slot" ]]; th
   exec "$HOME/.local/bin/verify-slot" codex-local -- env LOCAL_SEAT_ADMITTED=1 bash "$0" "$@"
 fi
 unset LOCAL_SEAT_ADMITTED
+if [[ -n $prompt_file ]]; then
+  rendered_prompt=$(mktemp "${TMPDIR:-/tmp}/codex-local-contract.XXXXXX")
+  cat "$prompt_file" > "$rendered_prompt"
+  printf '\n\n' >> "$rendered_prompt"
+  python3 "$(dirname "$0")/seat-finish.py" --prompt-file "$prompt_file" >> "$rendered_prompt"
+  for ((i=0; i<${#args[@]}; i++)); do
+    if [[ ${args[i]} == --prompt-file ]]; then
+      args[i+1]=$rendered_prompt
+    elif [[ ${args[i]} == --prompt-file=* ]]; then
+      args[i]="--prompt-file=$rendered_prompt"
+    fi
+  done
+  set -- "${args[@]}"
+fi
 # Capture host telemetry before the worker; the sandbox never calls WindowServer.
 focus_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-local-focus.XXXXXX")
 export LOCAL_SEAT_FOCUS_BASELINE="$focus_dir/baseline.json"

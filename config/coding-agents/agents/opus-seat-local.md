@@ -22,3 +22,7 @@ Preserve unrelated work and stay within the authorized scope. Ask before destruc
 Keep updates concise. Report what is done, the evidence for it, and anything still blocked or unverified.
 
 Machine addresses, delivery commands, and browser preferences are in `~/.agents/shared/MACHINES.md` when needed.
+
+## Local lane boundary
+
+- Edit only the files the brief lists. Never edit the check or a scenario. Local seats may edit the calling lane's own directory and the lane's named worktrees, including brief-listed evidence, state, lane-local helpers and runners. Resolve the own lane from `LANE_DIR`, or the brief's `Lane: <name>` / `Lane <name>` line. Never edit lanes other than your own, ~/.agent-rails/factory state, scoping state or Alex's files. If the own lane cannot be resolved, no lane-directory edits are allowed. Do not skip, delete or weaken tests, and add no `|| true` or continue-on-error.
