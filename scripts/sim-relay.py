@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import math
 from pathlib import Path
 import re
 import socketserver
@@ -43,6 +44,12 @@ def execute(request):
     if not any(u.get('holder')==lane and not u.get('expired_at') and descendants(pid,int(u.get('pid') or 0)) for u in users):
         raise ValueError('caller must descend from live own-lane lease holder')
     verb = args[0]
+    driver = None
+    def coordinate(value):
+        number = float(value)
+        if not math.isfinite(number) or not 0 <= number <= 2048:
+            raise ValueError('coordinate must be finite and within 0..2048 points')
+        return str(number)
     if verb == 'list':
         if args != ['list']: raise ValueError('list takes no arguments')
         result = subprocess.run(['/usr/bin/xcrun','simctl','list','devices','available','-j'],capture_output=True,text=True,timeout=20)
@@ -50,7 +57,16 @@ def execute(request):
         devices = json.loads(result.stdout)
         devices['devices'] = {runtime:[d for d in ds if d['udid']==udid] for runtime,ds in devices['devices'].items()}
         return {'rc':0,'stdout':json.dumps(devices),'stderr':''}
-    if verb in ('boot','shutdown') and len(args)==1: command=[verb,udid]
+    if verb == 'tap' and len(args)==3:
+        driver=['tap',coordinate(args[1]),coordinate(args[2])]
+    elif verb == 'swipe' and len(args)==5:
+        driver=['swipe',*[coordinate(x) for x in args[1:]],'--duration','0.5']
+    elif verb == 'type' and len(args)==2 and len(args[1])<=2048 and '\x00' not in args[1]:
+        driver=['text',args[1]]
+    elif verb == 'button' and len(args)==2 and args[1].upper() in ('HOME','BACK'):
+        # iOS has no hardware BACK button; its navigation affordance is top-left.
+        driver=['button','HOME'] if args[1].upper()=='HOME' else ['tap','24','60']
+    elif verb in ('boot','shutdown') and len(args)==1: command=[verb,udid]
     elif verb == 'install' and len(args)==2:
         app=Path(args[1]).resolve(strict=True)
         if app.suffix!='.app' or not app.is_dir() or not str(app).startswith('/Volumes/StudioExt/repos/'):
@@ -69,7 +85,8 @@ def execute(request):
     # Preserve the canonical DRIVE arbitration for all simulator mutations and captures.
     gate=subprocess.run([sys.executable,str(LEASE_TOOL),'drive-check','--holder',lane,'--pid',str(pid),'--op',verb],capture_output=True,text=True,timeout=15)
     if gate.returncode: return {'rc':gate.returncode,'stdout':gate.stdout,'stderr':gate.stderr}
-    result=subprocess.run(['/usr/bin/xcrun','simctl',*command],capture_output=True,text=True,timeout=90)
+    tool = [str(HOME/'.local/bin/idb'),'ui',*driver,'--udid',udid] if driver else ['/usr/bin/xcrun','simctl',*command]
+    result=subprocess.run(tool,capture_output=True,text=True,timeout=90)
     return {'rc':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
 
 
