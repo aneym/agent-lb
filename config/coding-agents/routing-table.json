@@ -647,6 +647,12 @@
     "2026-09-25: Cursor and Devin accounts are registered in agent-lb (`seat accounts`, ~/.agent-lb/seats). cursor-seat and devin-seat dispatch through `seat run`, which picks an account, fails over on a limit or auth error and writes the receipt; /api/pools serves `cursor` and `devin` as cli_seat pools from the seat state. Neither vendor offers a supported API for subscription models, so there is no request-level route through the LB."
   ],
   "aliases": {
+    "muse-latest": {
+      "vendor": "muse",
+      "family": "muse-wonder",
+      "pinned": "muse-wonder-1.0",
+      "note": "2026-10-13 official Meta model catalog pin; availability is checked at dispatch. Muse seat integration is pending; no default ladder change."
+    },
     "opus-latest": {
       "vendor": "anthropic",
       "family": "opus",

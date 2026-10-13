@@ -72,6 +72,7 @@ CMD=$(jq -n -r 'input | .tool_input.command // empty' 2>/dev/null) || refuse "co
 PROVIDER=$(python3 - "$CMD" <<'PY'
 import os, re, shlex, sys
 providers = {
+    'muse': ('Muse Code', ('META_API_KEY',)),
     'railway': ('Railway', ('RAILWAY_TOKEN', 'RAILWAY_API_TOKEN')),
     'vercel': ('Vercel', ('VERCEL_TOKEN',)),
     'fly': ('Fly', ('FLY_API_TOKEN',)),
