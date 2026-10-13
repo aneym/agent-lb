@@ -80,7 +80,7 @@ def test_no_live_and_missing_burn():
     assert decide(PolicyState(), NOW).reason == "no_live_accounts"
     pool = state()
     pool.live_accounts[0].burn_rate_pct_per_hour = None
-    assert decide(pool, NOW).reason == "unknown_burn_rate"
+    assert decide(pool, NOW).reason == "no_burn_sample"
 
 
 @pytest.mark.parametrize("remaining,word", [((3, 2), "redeem"), ((20, 20), "hold")])
@@ -112,23 +112,74 @@ def test_cli_synthetic_state_never_applies(tmp_path, remaining, word):
     assert "redemption" not in record
 
 
-@pytest.mark.parametrize("remaining,expected_posts", [(3, 1), (20, 0)])
-def test_live_cli_applies_only_redeem(remaining, expected_posts):
+@pytest.mark.parametrize(
+    "remaining,inventory_status,history,expected_reason",
+    [
+        (4, 200, "valid", "cannot_last:"),
+        (20, 409, "valid", "above_threshold:"),
+        (4, 409, "valid", "inventory_unavailable:claude-a"),
+        (4, 429, "valid", "inventory_unavailable:claude-a"),
+        (4, 200, "missing", "no_burn_sample"),
+        (4, 200, "recent", "no_burn_sample"),
+        (4, 200, "different_reset", "no_burn_sample"),
+        (4, 200, "expired", "no_burn_sample"),
+    ],
+)
+def test_live_cli_applies_only_redeem(tmp_path, remaining, inventory_status, history, expected_reason):
     """Real CLI HTTP boundary with a local service stand-in, no production mocks."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
 
     samples = 0
+    inventory_requests = []
     posts = []
-    reset = (datetime.now(UTC) + timedelta(hours=6)).isoformat()
+    now = datetime.now(UTC)
+    reset = (now + timedelta(hours=6)).isoformat()
+    samples_path = tmp_path / "samples.json"
+    age = {"recent": timedelta(minutes=1), "expired": timedelta(hours=49)}.get(history, timedelta(minutes=10))
+    stored_reset = (now + timedelta(hours=7)).isoformat() if history == "different_reset" else reset
+    stored = (
+        [
+            {
+                "account_id": "claude-a",
+                "window": "primary",
+                "reset_at": stored_reset,
+                "remaining_pct": 9,
+                "observed_at": (now - age).isoformat(),
+            }
+        ]
+        if history != "missing"
+        else []
+    )
+    # Too-recent observations must not displace the eligible ten-minute sample.
+    stored.append(
+        {
+            "account_id": "claude-a",
+            "window": "primary",
+            "reset_at": reset,
+            "remaining_pct": remaining,
+            "observed_at": (now - timedelta(seconds=30)).isoformat(),
+        }
+    )
+    stored.append(
+        {
+            "account_id": "claude-a",
+            "window": "primary",
+            "reset_at": reset,
+            "remaining_pct": 99,
+            "observed_at": (now - timedelta(hours=49)).isoformat(),
+        }
+    )
+    samples_path.write_text(json.dumps(stored))
+    expected_posts = int(expected_reason == "cannot_last:")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
-        def reply(self, payload):
+        def reply(self, payload, status=200):
             body = json.dumps(payload).encode()
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -148,8 +199,7 @@ def test_live_cli_applies_only_redeem(remaining, expected_posts):
                                 "provider": "anthropic",
                                 "status": "active",
                                 "usage": {
-                                    "primaryRemainingPercent": remaining + (1 if samples == 1 else 0),
-                                    "secondaryRemainingPercent": 50,
+                                    "primaryRemainingPercent": remaining,
                                 },
                                 "resetAtPrimary": reset,
                             }
@@ -157,8 +207,10 @@ def test_live_cli_applies_only_redeem(remaining, expected_posts):
                     }
                 )
             elif self.path.endswith("/rate-limit-reset-credits"):
+                inventory_requests.append(self.path)
                 self.reply(
-                    {"availableCount": 1, "redeemableNow": True, "credits": [{"id": "grant-a", "status": "available"}]}
+                    {"availableCount": 1, "redeemableNow": True, "credits": [{"id": "grant-a", "status": "available"}]},
+                    status=inventory_status,
                 )
             else:
                 self.reply({})
@@ -179,6 +231,8 @@ def test_live_cli_applies_only_redeem(remaining, expected_posts):
                     "resets",
                     "policy",
                     "--apply",
+                    "--samples",
+                    str(samples_path),
                     "--json",
                     "--base-url",
                     f"http://127.0.0.1:{server.server_port}",
@@ -193,7 +247,63 @@ def test_live_cli_applies_only_redeem(remaining, expected_posts):
     assert result.returncode == 0, result.stderr
     record = json.loads(result.stdout)
     assert record["action"] == ("redeem" if expected_posts else "hold")
+    assert record["reason"].startswith(expected_reason)
+    assert samples == 1
+    assert len(inventory_requests) == int(remaining < 5)
+    persisted = json.loads(samples_path.read_text())
+    assert all(datetime.fromisoformat(sample["observed_at"]) >= now - timedelta(hours=48) for sample in persisted)
+    assert persisted[-1]["remaining_pct"] == remaining
+    assert datetime.fromisoformat(persisted[-1]["reset_at"]) == datetime.fromisoformat(reset)
     assert len(posts) == expected_posts
     if expected_posts:
         assert posts == [("/api/accounts/claude-a/rate-limit-reset-credits/consume", {"creditId": "grant-a"})]
         assert record["redemption"]["status"] == "redeemed"
+
+
+def test_above_threshold_never_requests_inventory(tmp_path, monkeypatch, capsys):
+    """A pool-wide threshold must gate inventory even for the first low account.
+
+    The brief requires a fake _request to detect any attempted inventory call.
+    """
+    from argparse import Namespace
+
+    from app import reset_cli
+
+    requests = []
+    reset = (datetime.now(UTC) + timedelta(hours=6)).isoformat()
+
+    def request(base_url, path, timeout, **kwargs):
+        requests.append(path)
+        pytest.fail(f"inventory must not be requested above threshold: {path}")
+
+    def observe(**kwargs):
+        return {
+            "accounts": [
+                {
+                    "account_id": account_id,
+                    "provider": "anthropic",
+                    "usable": "usable",
+                    "primary": {"remaining_percent": remaining, "reset_at": reset},
+                    "weekly": {"remaining_percent": None, "reset_at": None},
+                }
+                for account_id, remaining in [("low", 4), ("high", 20)]
+            ]
+        }
+
+    monkeypatch.setattr(reset_cli, "_request", request)
+    monkeypatch.setattr("app.status_cli.observe", observe)
+    reset_cli.run(
+        Namespace(
+            resets_command="policy",
+            state=None,
+            samples=str(tmp_path / "samples.json"),
+            apply=True,
+            base_url="http://127.0.0.1:2455",
+            timeout=1,
+            json=True,
+        )
+    )
+    record = json.loads(capsys.readouterr().out)
+    assert record["action"] == "hold"
+    assert record["reason"] == "above_threshold:high=20"
+    assert requests == []

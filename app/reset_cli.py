@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -13,7 +14,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from app.status_cli import DEFAULT_BASE_URL, StatusObservationError, _NoRedirect, _validated_base_url
 
 if TYPE_CHECKING:
-    from app.modules.accounts.claude_reset_policy import PolicyState
+    from app.modules.accounts.claude_reset_policy import PolicyState, WindowSample
 
 
 class ResetCliError(Exception):
@@ -145,7 +146,6 @@ def _request(base_url: str, path: str, timeout: float, *, body: dict[str, Any] |
 
 def _run_policy(args: Any) -> None:
     from datetime import UTC, datetime
-    from pathlib import Path
 
     from pydantic import ValidationError
 
@@ -157,7 +157,7 @@ def _run_policy(args: Any) -> None:
             state = PolicyState.model_validate_json(Path(args.state).read_text())
         else:
             base_url = _validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
-            state = _observe_policy(base_url, args.timeout)
+            state = _observe_policy(base_url, args.timeout, Path(args.samples).expanduser())
         decision = decide(state, datetime.now(UTC))
         record = decision.model_dump()
         record["observed_at"] = datetime.now(UTC).isoformat()
@@ -185,33 +185,47 @@ def _run_policy(args: Any) -> None:
         raise SystemExit(2) from exc
 
 
-def _observe_policy(base_url: str, timeout: float) -> PolicyState:
-    """Measure per-window burn from two fresh status samples 10 seconds apart.
+def _observe_policy(base_url: str, timeout: float, samples_path: Path) -> PolicyState:
+    """Observe quota once and compare it with persisted window history."""
+    from datetime import UTC, datetime, timedelta
 
-    /api/usage/history contains averages, not timestamped quota samples.
-    Resets or changing window identities invalidate a burn sample. Inventory
-    eligibility is the service's ResetStatus.redemption_blocker projection.
-    The inventory preserves provider grant order but does not expose
-    next_grant_id; the first available grant is proposed and the existing
-    consume endpoint must confirm it is the selected provider grant.
-    """
-    import time
-    from datetime import UTC, datetime
+    from pydantic import TypeAdapter
 
-    from app.modules.accounts.claude_reset_policy import BlockedAccount, CodexSummary, LiveAccount, PolicyState
+    from app.modules.accounts.claude_reset_policy import (
+        BlockedAccount,
+        CodexSummary,
+        LiveAccount,
+        PolicyState,
+        WindowSample,
+    )
     from app.status_cli import observe
 
-    first = observe(base_url=base_url, timeout=timeout, provider=None, model=None)
-    start = time.monotonic()
-    time.sleep(10)
-    second = observe(base_url=base_url, timeout=timeout, provider=None, model=None)
-    hours = (time.monotonic() - start) / 3600
-    previous = {account["account_id"]: account for account in first["accounts"]}
+    now = datetime.now(UTC)
+    adapter = TypeAdapter(list[WindowSample])
+    samples = adapter.validate_json(samples_path.read_text()) if samples_path.exists() else []
+    samples = [sample for sample in samples if now - timedelta(hours=48) <= sample.observed_at <= now]
+    observation = observe(base_url=base_url, timeout=timeout, provider=None, model=None)
+    current_samples = []
+    for account in observation["accounts"]:
+        if account["provider"] != "anthropic":
+            continue
+        for window in ("primary", "weekly"):
+            quota = account[window]
+            if quota["remaining_percent"] is not None and quota["reset_at"] is not None:
+                current_samples.append(
+                    WindowSample(
+                        account_id=account["account_id"],
+                        window=window,
+                        reset_at=quota["reset_at"],
+                        remaining_pct=quota["remaining_percent"],
+                        observed_at=now,
+                    )
+                )
+    _save_policy_samples(samples_path, samples + current_samples, adapter)
     live = []
     blocked = []
     codex = CodexSummary()
-    now = datetime.now(UTC)
-    for account in second["accounts"]:
+    for account in observation["accounts"]:
         if account["provider"] == "openai":
             codex.usable_count += int(account["usable"] == "usable")
             codex.banked_resets_total += account["reset_credits_available"] or 0
@@ -240,33 +254,30 @@ def _observe_policy(base_url: str, timeout: float) -> PolicyState:
             if future:
                 blocked.append(BlockedAccount(id=account_id, reset_at=min(future)))
             continue
-        old = previous.get(account_id)
         burns = []
-        valid = old is not None and old["usable"] == "usable"
+        valid = True
         for window in ("primary", "weekly"):
             current = account[window]
             if current["remaining_percent"] is None:
-                if old is not None and old[window]["remaining_percent"] is not None:
-                    valid = False
                 continue
-            before = old[window] if old else {}
-            remaining = before.get("remaining_percent")
-            if (
-                remaining is None
-                or before.get("reset_at") != current["reset_at"]
-                or remaining < current["remaining_percent"]
-            ):
+            reset_at = datetime.fromisoformat(current["reset_at"]) if current["reset_at"] else None
+            prior = max(
+                (
+                    sample
+                    for sample in samples
+                    if sample.account_id == account_id
+                    and sample.window == window
+                    and sample.reset_at == reset_at
+                    and sample.observed_at <= now - timedelta(minutes=5)
+                ),
+                key=lambda sample: sample.observed_at,
+                default=None,
+            )
+            if prior is None or prior.remaining_pct < current["remaining_percent"]:
                 valid = False
             else:
-                burns.append((remaining - current["remaining_percent"]) / hours)
-        inventory = _inventory(
-            _request(
-                base_url,
-                f"/api/accounts/{quote(account_id, safe='')}/rate-limit-reset-credits",
-                timeout,
-            )
-        )
-        grant = next((credit for credit in inventory["credits"] if credit.get("status") == "available"), {})
+                hours = (now - prior.observed_at).total_seconds() / 3600
+                burns.append((prior.remaining_pct - current["remaining_percent"]) / hours)
         live.append(
             LiveAccount(
                 id=account_id,
@@ -276,10 +287,40 @@ def _observe_policy(base_url: str, timeout: float) -> PolicyState:
                 weekly_remaining_pct=account["weekly"]["remaining_percent"],
                 weekly_reset_at=account["weekly"]["reset_at"],
                 burn_rate_pct_per_hour=max(burns) if valid and burns else None,
-                reset_grants_available=inventory["availableCount"],
-                next_grant_id=grant.get("id"),
-                grant_expires_at=grant.get("expiresAt"),
-                redeemable_now=inventory.get("redeemableNow") is True,
             )
         )
+    if live and all(account.remaining() is not None and account.remaining() < 5 for account in live):
+        for account in live:
+            try:
+                inventory = _inventory(
+                    _request(
+                        base_url,
+                        f"/api/accounts/{quote(account.id, safe='')}/rate-limit-reset-credits",
+                        timeout,
+                    )
+                )
+            except ResetCliError:
+                account.inventory_available = False
+                break
+            grant = next((credit for credit in inventory["credits"] if credit.get("status") == "available"), {})
+            account.reset_grants_available = inventory["availableCount"]
+            account.next_grant_id = grant.get("id")
+            expires_at = grant.get("expiresAt")
+            account.grant_expires_at = datetime.fromisoformat(expires_at) if expires_at else None
+            account.redeemable_now = inventory.get("redeemableNow") is True
     return PolicyState(live_accounts=live, blocked_accounts=blocked, codex=codex)
+
+
+def _save_policy_samples(path: Path, samples: list[WindowSample], adapter: Any) -> None:
+    from tempfile import NamedTemporaryFile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with NamedTemporaryFile(dir=path.parent, delete=False) as output:
+            temporary = Path(output.name)
+            output.write(adapter.dump_json(samples))
+        temporary.replace(path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()

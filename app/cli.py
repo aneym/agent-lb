@@ -98,6 +98,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     policy = resets_commands.add_parser("policy", formatter_class=_CliHelpFormatter)
     policy.add_argument("--state", metavar="FILE.json")
+    policy.add_argument("--samples", default="~/.agent-lb/claude-reset-policy-samples.json", metavar="PATH")
     policy.add_argument("--apply", action="store_true")
     policy.add_argument("--base-url", default=None, metavar="URL")
     policy.add_argument("--json", action="store_true")

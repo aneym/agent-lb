@@ -42,10 +42,20 @@ class LiveAccount(BaseModel):
     grant_expires_at: AwareDatetime | None = None
     redeemable_now: bool = False
     reset_status: ResetStatus | None = None
+    inventory_available: bool = True
 
     def remaining(self) -> float | None:
         windows = [v for v in (self.primary_remaining_pct, self.weekly_remaining_pct) if v is not None]
         return min(windows) if windows else None
+
+
+class WindowSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    account_id: str
+    window: Literal["primary", "weekly"]
+    reset_at: AwareDatetime
+    remaining_pct: float = Field(ge=0, le=100, allow_inf_nan=False)
+    observed_at: AwareDatetime
 
 
 class BlockedAccount(BaseModel):
@@ -97,6 +107,9 @@ def decide(state: PolicyState, now: datetime) -> Decision:
             return result(f"unknown_remaining:{account.id}")
         if remaining >= 5:
             return result(f"above_threshold:{account.id}={remaining:g}")
+    for account in live:
+        if not account.inventory_available:
+            return result(f"inventory_unavailable:{account.id}")
     openings = [account.reset_at for account in state.blocked_accounts]
     if not openings:
         openings = [
@@ -111,7 +124,7 @@ def decide(state: PolicyState, now: datetime) -> Decision:
     if not openings:
         return result("unknown_next_opening")
     if any(account.burn_rate_pct_per_hour is None for account in live):
-        return result("unknown_burn_rate")
+        return result("no_burn_sample")
     burn = sum(account.burn_rate_pct_per_hour or 0 for account in live)
     runway = sum(account.remaining() or 0 for account in live) / burn if burn else math.inf
     opens_in = max(0.0, (min(openings) - now).total_seconds() / 3600)
