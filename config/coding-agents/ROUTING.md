@@ -82,6 +82,7 @@ No slot counts or job caps anywhere (Alex, 2026-10-05: "we're removing slots, an
 - **No tool call blocks past 270 s;** run long work in the background and poll in waits of 270 s or less.
 - **A lead with work out sets a wake timer** before ending its turn (2026-10-05).
 - **Workflow seats:** pass `agentType`, run `route workflow-args` in the launching turn and pass it as `args.route`, and use `R.review_for[<author vendor>]` only when a lead asks for a review by name (2026-10-08).
+- **Agent-lb issues go to the model-ops lane** (Alex, 2026-09-25: "yes anything that is an issue with agent lb you can route to the of agent"; owner named 2026-10-13): post an agent-lb issue (quota, resets, upstream errors, routing, token audit) to lane model-ops with `lane-post`; once that lane is closed, the Factory tab (w5H:p16A) owns it.
 - **Status is state, not a message** (2026-10-04); talk up the tree only for a contract change, a block outside your branch, a decision above your level, or done.
 - **An orchestrator or lead first spawns the seat, then replies to Alex in one or two lines** (Alex, 2026-10-05 10:17 ET: "dont you delegate work?").
 - **Reports to Alex list every open product call from each lane's `STATE.md`** (2026-10-05).
