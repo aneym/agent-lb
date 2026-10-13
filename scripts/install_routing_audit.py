@@ -30,7 +30,7 @@ def install_tab_audit(home: Path, domain: str, uninstall: bool) -> None:
         value.replace("@AGENT_LB@", executable).replace("@HOME@", str(home))
         for value in payload["ProgramArguments"]
     ]
-    for key in ("StandardOutPath", "StandardErrorPath"):
+    for key in ("StandardOutPath", "StandardErrorPath", "WorkingDirectory"):
         payload[key] = payload[key].replace("@HOME@", str(home))
     payload["EnvironmentVariables"]["PATH"] = payload["EnvironmentVariables"]["PATH"].replace("@HOME@", str(home))
     plist.parent.mkdir(parents=True, exist_ok=True)

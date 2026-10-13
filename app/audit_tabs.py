@@ -197,3 +197,12 @@ def run(args: argparse.Namespace) -> None:
     except Exception as exc:
         message = f"Tab audit failed ({type(exc).__name__}); check tab configuration and database availability."
         raise SystemExit(message) from None
+
+
+if __name__ == "__main__":
+    # The launchd job runs `python -m app.audit_tabs` from the runtime venv, so it works before
+    # the next lb-restart ships the `agent-lb audit tabs` CLI entry.
+    _parser = argparse.ArgumentParser(prog="agent-lb audit tabs")
+    _commands = _parser.add_subparsers(dest="audit_command", required=True)
+    add_parser(_commands)
+    run(_parser.parse_args(["tabs", *sys.argv[1:]]))

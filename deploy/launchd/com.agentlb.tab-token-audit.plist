@@ -11,13 +11,13 @@
 	<string>com.agentlb.tab-token-audit</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>@AGENT_LB@</string>
-		<string>audit</string>
-		<string>tabs</string>
+		<string>@HOME@/.agent-lb/runtime/agent-lb/.venv/bin/python</string>
+		<string>-m</string>
+		<string>app.audit_tabs</string>
 		<string>--window</string>
 		<string>24h</string>
 		<string>--out-md</string>
-		<string>@HOME@/.agent-rails/lanes/model-ops/tab-audit/latest.md</string>
+		<string>@HOME@/.agent-lb/audit/tab-token-audit-latest.md</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>@HOME@/.agent-lb/tab-token-audit.err.log</string>
@@ -30,5 +30,7 @@
 		<key>Minute</key>
 		<integer>20</integer>
 	</dict>
+	<key>WorkingDirectory</key>
+	<string>@HOME@/.agent-lb/runtime/agent-lb</string>
 </dict>
 </plist>
