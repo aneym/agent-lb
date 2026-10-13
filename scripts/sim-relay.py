@@ -83,7 +83,7 @@ def execute(request):
         command=['io',udid,'screenshot',str(output)]
     else: raise ValueError('unsupported simctl operation or arguments')
     # Preserve the canonical DRIVE arbitration for all simulator mutations and captures.
-    gate=subprocess.run([sys.executable,str(LEASE_TOOL),'drive-check','--holder',lane,'--pid',str(pid),'--op',verb],capture_output=True,text=True,timeout=15)
+    gate=subprocess.run([sys.executable,str(LEASE_TOOL),'drive-check','--holder',lane,'--pid',str(pid),'--op',verb],capture_output=True,text=True,timeout=45)
     if gate.returncode: return {'rc':gate.returncode,'stdout':gate.stdout,'stderr':gate.stderr}
     tool = [str(HOME/'.local/bin/idb'),'ui',*driver,'--udid',udid] if driver else ['/usr/bin/xcrun','simctl',*command]
     result=subprocess.run(tool,capture_output=True,text=True,timeout=90)
@@ -114,7 +114,7 @@ def main():
         p=argparse.ArgumentParser();p.add_argument('--lane',default=os.environ.get('FACTORY_LANE'));p.add_argument('--udid',required=True);p.add_argument('args',nargs=argparse.REMAINDER);a=p.parse_args()
         lane=a.lane or Path(os.environ.get('LANE_DIR','')).name
         with socket.create_connection(('127.0.0.1',PORT),timeout=5) as sock:
-            sock.settimeout(110);sock.sendall((json.dumps({'lane':lane,'udid':a.udid,'pid':os.getpid(),'args':a.args})+'\n').encode())
+            sock.settimeout(140);sock.sendall((json.dumps({'lane':lane,'udid':a.udid,'pid':os.getpid(),'args':a.args})+'\n').encode())
             result=json.loads(sock.makefile('r').readline(2*1024*1024))
         print(result['stdout'],end='');print(result['stderr'],end='',file=sys.stderr);return result['rc']
     return 0
