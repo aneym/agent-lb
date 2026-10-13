@@ -1843,6 +1843,8 @@ def locked_main() -> int:
     import signal
 
     args = parse_args()
+    if not args.check_hook_paths:
+        verify_install_revision(Path(__file__).resolve().parent, args.force, args.reason)
     home = args.home.expanduser().resolve()
     digest = hashlib.sha256(str(home).encode()).hexdigest()[:16]
     lock_dir = Path("/tmp") if Path("/tmp").is_dir() else Path(tempfile.gettempdir())
