@@ -21,9 +21,11 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("entrypoint", ["auth", "scheduler"])
+@pytest.mark.parametrize(
+    "entrypoint,provider", [("auth", "anthropic"), ("scheduler", "anthropic"), ("scheduler", "kimi")]
+)
 @pytest.mark.parametrize("outcome", ["success", "ambiguous", "permanent"])
-async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, entrypoint, outcome):
+async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, entrypoint, provider, outcome):
     """Real DB + HTTP: fresh access/usage must not strand a mature first exchange.
 
     Existing exchange-flow tests call refresh directly and miss the normal auth
@@ -33,7 +35,9 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
     requests = []
 
     async def token(request):
-        requests.append(await request.json())
+        requests.append(
+            await request.json() if request.content_type == "application/json" else dict(await request.post())
+        )
         if outcome == "ambiguous":
             return web.json_response({"error": "server_error"}, status=503)
         if outcome == "permanent":
@@ -54,15 +58,16 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
     port = site._server.sockets[0].getsockname()[1]
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_OAUTH_TOKEN_URL", f"http://127.0.0.1:{port}/token")
     monkeypatch.setenv("AGENT_LB_ANTHROPIC_UPSTREAM_BASE_URL", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("AGENT_LB_KIMI_OAUTH_TOKEN_URL", f"http://127.0.0.1:{port}/token")
     monkeypatch.setenv("AGENT_LB_USAGE_REFRESH_ENABLED", "true")
     get_settings.cache_clear()
     encryptor = TokenEncryptor()
-    account_id = f"automatic-{entrypoint}-{outcome}"
+    account_id = f"automatic-{entrypoint}-{provider}-{outcome}"
     async with SessionLocal() as session:
         await AccountsRepository(session).upsert(
             Account(
                 id=account_id,
-                provider="anthropic",
+                provider=provider,
                 email="recovery@example.invalid",
                 plan_type="claude",
                 access_token_encrypted=encryptor.encrypt("access"),
@@ -110,10 +115,14 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
             async with SessionLocal() as session:
                 stored = await session.get(Account, account_id)
                 intent = await session.get(AccountExchangeIntent, account_id)
+                if entrypoint == "auth":
+                    assert stored.status == AccountStatus.EXCHANGE_UNCERTAIN
+                    assert intent is not None and intent.replay is False
+                    continue
                 expected = {
                     "success": AccountStatus.ACTIVE,
                     "ambiguous": AccountStatus.EXCHANGE_UNCERTAIN,
-                    "permanent": AccountStatus.REAUTH_REQUIRED,
+                    "permanent": AccountStatus.DEACTIVATED if provider == "kimi" else AccountStatus.REAUTH_REQUIRED,
                 }[outcome]
                 assert stored.status == expected
                 if outcome == "success":
@@ -123,8 +132,11 @@ async def test_eligible_exchange_recovers_without_reset(db_setup, monkeypatch, e
                     assert intent.replay is True
                 else:
                     assert intent is None
-        assert len(requests) == 1
-        assert requests[0]["refresh_token"] == "refresh"
+        if entrypoint == "auth":
+            assert requests == []
+        else:
+            assert len(requests) == 1
+            assert requests[0]["refresh_token"] == "refresh"
     finally:
         await close_http_client()
         await runner.cleanup()

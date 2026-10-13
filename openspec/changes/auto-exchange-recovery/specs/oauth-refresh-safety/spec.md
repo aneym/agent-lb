@@ -2,7 +2,8 @@
 
 ### Requirement: Periodic bounded uncertain exchange recovery
 The service SHALL revisit locally owned uncertain exchanges through the usage
-scheduler and normal freshness checks. Recovery MUST use the database-clock
+scheduler only. Foreground checks MUST preserve usable access tokens without
+initiating recovery. Recovery MUST use the database-clock
 processing window and atomic ownership/token fences. It MUST NOT reopen
 permanent auth failures or replay an unsaved success or ambiguous replay.
 Usage freshness, auth cooldowns and near-reset priority MUST NOT suppress this
@@ -17,7 +18,7 @@ recovery pass.
 
 #### Scenario: Recovery remains bounded
 - **GIVEN** an uncertain exchange is still processing, already replayed, unsaved, missing, or mismatched
-- **WHEN** normal freshness or the periodic scheduler revisits the account
+- **WHEN** the periodic scheduler revisits the account
 - **THEN** no automatic refresh replay is sent
 
 #### Scenario: Permanent failure and remote ownership stay closed

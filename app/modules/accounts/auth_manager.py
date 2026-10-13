@@ -300,7 +300,7 @@ class AuthManager:
         # connection. See _run_refresh.
         self._refresh_repo_factory = refresh_repo_factory
 
-    async def ensure_fresh(self, account: Account, *, force: bool = False) -> Account:
+    async def ensure_fresh(self, account: Account, *, force: bool = False, recover_uncertain: bool = False) -> Account:
         settings = get_settings()
         # Selection inputs are cached briefly. Recheck ownership and the token
         # version against the database before returning a cached access token.
@@ -317,7 +317,7 @@ class AuthManager:
             return await self._ensure_chatgpt_account_id(account)
         recover_exchange = False
         if account.status == AccountStatus.EXCHANGE_UNCERTAIN:
-            if isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
+            if recover_uncertain and isinstance(getattr(self._repo, "session", None), db_session.AsyncSession):
                 intent = await self._repo.exchange_intent_window(account.id, _exchange_timeout_seconds())
                 recover_exchange = (
                     intent is not None

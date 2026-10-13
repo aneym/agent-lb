@@ -7,8 +7,10 @@ the intent, and usage refresh freshness/cooldowns or reset priority can skip it.
 An already ambiguous replay or unsaved success still requires operator judgment.
 
 ## What Changes
-- Consult the database-clock intent window during normal auth freshness checks.
-- Use the existing usage scheduler to revisit uncertain accounts before usage
+- Consult the database-clock intent window only during scheduler recovery,
+  leaving foreground requests on usable access tokens.
+- Use the existing usage scheduler to revisit OpenAI, Anthropic and Kimi
+  uncertain accounts before usage
   freshness, cooldown and near-reset priority gates.
 - Keep one automatic replay per unresolved token generation, ownership and
   token fences, and permanent-status admission; never clear an intent to recover.

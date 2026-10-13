@@ -10,7 +10,7 @@ from typing import AsyncIterator, Protocol, cast
 
 from app.core.auth.refresh import RefreshError
 from app.core.config.settings import get_settings
-from app.core.providers import ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME
+from app.core.providers import ANTHROPIC_PROVIDER_NAME, KIMI_PROVIDER_NAME, OPENAI_PROVIDER_NAME
 from app.core.usage import capacity_for_plan
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
@@ -110,18 +110,20 @@ class UsageRefreshScheduler:
                     request_logs_repo = RequestLogsRepository(session)
                     before_primary = await usage_repo.latest_by_account(window="primary")
                     before_secondary = await usage_repo.latest_by_account(window="secondary")
-                    accounts = _usage_refresh_accounts(await accounts_repo.list_accounts())
+                    all_accounts = await accounts_repo.list_accounts()
+                    accounts = _usage_refresh_accounts(all_accounts)
                     uncertain_accounts = [
                         Account(**{column.key: getattr(account, column.key) for column in Account.__table__.columns})
-                        for account in accounts
-                        if account.status == AccountStatus.EXCHANGE_UNCERTAIN
+                        for account in all_accounts
+                        if account.provider in {ANTHROPIC_PROVIDER_NAME, OPENAI_PROVIDER_NAME, KIMI_PROVIDER_NAME}
+                        and account.status == AccountStatus.EXCHANGE_UNCERTAIN
                         and is_locally_owned(account, get_settings())
                     ]
                     if uncertain_accounts:
                         auth_manager = AuthManager(accounts_repo)
                         for account in uncertain_accounts:
                             try:
-                                await auth_manager.ensure_fresh(account)
+                                await auth_manager.ensure_fresh(account, recover_uncertain=True)
                             except RefreshError as exc:
                                 logger.debug(
                                     "Uncertain exchange recovery deferred account_id=%s code=%s", account.id, exc.code
