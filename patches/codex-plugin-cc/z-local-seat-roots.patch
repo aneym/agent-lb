@@ -23,9 +23,9 @@ diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/cod
 +  const relative = path.relative(laneRoot, resolved);
 +  const roots = [
 +    path.join(home, ".agent-rails", "factory", "admit"),
-+    ...["sim-leases", "build-leases", "desktop-guard", "cua-display", "locks", "verify"]
++    ...["sim-leases", "build-leases", "desktop-guard", "cua-display", "locks", "verify", "browser-sessions"]
 +      .map((dir) => path.join(home, ".agent-rails", dir)),
-+    path.join(home, ".cua", "herdr-space")
++    path.join(home, ".cua", "herdr-space"), path.join(home, ".argent")
 +  ];
 +  if (relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." &&
 +      !path.isAbsolute(relative)) {
