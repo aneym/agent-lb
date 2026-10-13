@@ -96,6 +96,18 @@ MANAGED_AGENTS = (
         Path("agents/devin-seat.md"),
     ),
     (
+        Path(".claude/agents/muse-seat.md"),
+        Path(".agent-lb/managed/coding-agents/muse-seat"),
+        "agent-lb:muse-seat:v1\n",
+        Path("agents/muse-seat.md"),
+    ),
+    (
+        Path(".claude/agents/muse-seat-local.md"),
+        Path(".agent-lb/managed/coding-agents/muse-seat-local"),
+        "agent-lb:muse-seat-local:v1\n",
+        Path("agents/muse-seat-local.md"),
+    ),
+    (
         Path(".claude/agents/codex-verifier.md"),
         Path(".agent-lb/managed/coding-agents/codex-verifier"),
         "agent-lb:codex-verifier:v1\n",

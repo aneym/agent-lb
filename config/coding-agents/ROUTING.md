@@ -51,6 +51,8 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 | Tabs Alex talks to, leads, orchestrators | Opus tab, ultracode off; leads and orchestrators on Sol | opus-latest medium for tabs; sol-latest for leads and orchestrators |
 | Remote-machine relay (batch templates) | host-relay | sol-latest low |
 
+Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code `1.4.7-R6101.1`, `muse-latest` pins `muse-wonder-1.0`. Alex reports login complete on 2026-10-13; live seat validation is pending. Boxes are not yet provisioned. No ladder promotion before interleaved evals.
+
 - **Quota rule (2026-10-13): every tab runs `opus-latest` medium with ultracode off.** This replaces the 2026-10-10 Fable exception and the 2026-10-12 Claude lane defaults. Alex, 2026-10-13 ~03:00Z: "okay we ahve very limited claude quota left. we need to slow thigns down a lot until we're ready - ensure everything runs on opus medium at the top level as well."
   Alex, 2026-10-13 ~03:10Z: "token allocation should be to raise and recruiter and that's basically it i think. since those are our priorities".
   Claude quota goes to the Raise and Recruiter tabs only, both at tier `full`. Every other tab (`cos`, `factory`, `rails`, `content`, `home`, `health`, `league-coach`, `frank`, `shelf`, `poker-trainer`, `internet`) is `wake-only`: no scheduled loops, timers, 2h summaries or per-bulletin wakes. These tabs wake only for prod down, a security incident, or Alex typing.

@@ -1,4 +1,4 @@
-"""Pools for the CLI-only seats (Cursor, Devin), read from the `seat` CLI's state file.
+"""Pools for the CLI-only seats (Cursor, Devin, Muse), read from the `seat` CLI's state file.
 
 Their traffic never passes through the LB and neither vendor publishes a usage
 endpoint for these plans, so there is no window to read. What the LB can serve is
@@ -219,13 +219,14 @@ def cli_seat_pools(seats: SeatAccountsResponse) -> list[PoolSummary]:
                 kind=POOL_KIND_CLI_SEAT,
                 accounts=len(members),
                 eligible_accounts=len(ready),
-                headroom_percent=headroom,
-                aggregate_remaining_percent=100.0 * len(ready) / len(members),
+                headroom_percent=None if vendor == "muse" else headroom,
+                aggregate_remaining_percent=None if vendor == "muse" else 100.0 * len(ready) / len(members),
                 reset_at=None if ready or not cooling else min(cooling),
                 status=POOL_STATUS_OK if ready else POOL_STATUS_EXHAUSTED,
                 source=seats.source,
                 observed_runs=sum(account.last_day.runs for account in members),
-                observed_tokens=sum(account.last_day.tokens_in + account.last_day.tokens_out for account in members),
+                observed_tokens=(None if vendor == "muse" else
+                                 sum(account.last_day.tokens_in + account.last_day.tokens_out for account in members)),
             )
         )
     return pools

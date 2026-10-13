@@ -2794,7 +2794,7 @@ def _print_pick(result: dict[str, Any], *, as_json: bool) -> None:
 # - Every other seat is a Claude seat: opts.model and opts.effort override the
 #   definition's frontmatter.
 WORKFLOW_BRIDGE_SEATS = frozenset({"gpt-implementer", "gpt-explorer", "sol-consult"})
-WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat"})
+WORKFLOW_BRIEF_SEATS = frozenset({"cursor-seat", "devin-seat", "muse-seat", "muse-seat-local"})
 WORKFLOW_EFFORT_BRIEF_SEATS = frozenset({"codex-sol"})
 WORKFLOW_FIXED_FORWARDERS = frozenset({"codex-verifier", "codex-test-runner", "computer-use"})
 WORKFLOW_AUTHOR_VENDORS = ("anthropic", "openai", "xai", "cursor", "cognition", "devin", "glm", "kimi")

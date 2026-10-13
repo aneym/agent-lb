@@ -673,6 +673,8 @@ def command_add(args: argparse.Namespace) -> int:
         else:
             account["auth"] = "login"
     elif args.vendor == "muse":
+        if args.api_key_file or args.api_key_prompt or args.data_dir:
+            fail("Muse uses existing Studio login; no credential files are accepted")
         if sys.platform != "darwin":
             fail("Muse login seats are Studio-local; box credentials are not provisioned")
         account["auth"] = "login"
@@ -684,6 +686,8 @@ def command_add(args: argparse.Namespace) -> int:
     def add(registry: list[dict[str, Any]], state: dict[str, Any]) -> None:
         if any(a["id"] == args.id for a in registry):
             fail(f"account {args.id} already registered")
+        if args.vendor == "muse" and any(a.get("vendor") == "muse" for a in registry):
+            fail("one Muse login account per host; credentials are never copied or leased")
         if args.vendor == "cursor" and account["auth"] == "login":
             if any(a.get("vendor") == "cursor" and a.get("auth") == "login" for a in registry):
                 fail("a Cursor login account exists already; extra Cursor accounts need --api-key-prompt")
@@ -773,6 +777,8 @@ def record_lease_usage(account: dict[str, Any], row: dict[str, Any]) -> None:
 def record_run(record: dict[str, Any], run: dict[str, Any]) -> None:
     run = dict(run)
     for field in ("tokens_in", "tokens_out", "cache_read"):
+        if record.get("vendor") == "muse" and run.get(field) is None:
+            continue
         try:
             run[field] = int(run.get(field) or 0)
         except (TypeError, ValueError, OverflowError):

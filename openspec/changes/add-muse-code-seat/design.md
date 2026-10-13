@@ -1,25 +1,44 @@
 ## Context
 
-See proposal.md for scope and docs/muse-code.md for dated research. The current change implements the offline resolver and provider guard only. The Linux worker has no Muse binary, shell DNS fails, and the authorized Studio open-factory worktree is absent. The local open-factory origin/main snapshot is readable.
-
-## Goals / Non-Goals
-
-Resolve a recorded Muse model and prevent accidental personal sign-in use. Record the remaining integration contracts so a host with the pinned binary can finish them. Default ladder promotion and deployment are outside this brief.
+Alex reports Studio Muse installed and logged in on 2026-10-13 at about 04:22Z.
+The supplied native help and version pin establish the exec options. This run
+is a Linux box on ax42, with Studio SSH blocked by the sandbox. The earlier
+resolver/guard commit is present. Research remains at the explicitly requested
+`docs/muse-code.md` path.
 
 ## Decisions
 
-Use a distinct `muse` alias vendor with a `pinned` model and family check. Catalog discovery is deferred because no authenticated catalog is available. Resolution checks the existing blocked and retired model rules before returning the pin.
+Extend `clients/seat` and the CLI-seat pool reader, following Cursor and Devin.
+Do not guess JSONL fields. Plain exec has a documented exit contract; assign a
+session UUID and retain null tokens pending a real transcript. Count observed
+runs and process vendor-limit errors through existing cooldown settlement.
+Muse percentages remain unknown; no API rate limit becomes a subscription quota.
 
-Extend the existing provider executable map with `muse` and `META_API_KEY`. This follows the provider guard precedent without creating another credential parser. The guard validates credential presence only; it cannot establish subscription eligibility.
+Use Alex's existing macOS login without reading settings or credentials. Clear
+the environment API key for a login account. Linux needs a provisioned key and
+never receives a browser session lease. Registration does not claim an auth
+probe, since the pinned help has no auth-status command. Runs check the exact
+build before launch, trust the assigned workspace, retain the sandbox and
+select Contributor mode off. Read-only mode disables writes and shell calls.
 
-Keep the account and receipt adapter pending until `muse exec --json`, auth status and quota output are captured from the pinned native binary. The SDK session protocol is documented, but its notification shape does not establish the headless CLI's JSONL shape. Guessing that shape would corrupt usage or label failed work successful.
+Add optional seat definitions and policy installation. Do not change class
+ladders. Seat forwarding uses `seat-run --box studio` followed by `seat-exec`,
+which calls agent-lb's account runner. With no Muse ladder, do not pass --class.
 
-Use the open-factory box tools installer for durable installation and seat-run for returned diffs. A copy under factory-runtime would disappear at a runtime replacement. No substitute checkout is writable under this brief.
+Prepare open-factory in an isolated checkout under the writable workspace,
+since the named Studio worktree is absent. The installer requires a verified
+platform checksum and exact version before replacing the durable executable.
+This pin has no measured real artifact checksum yet, so no installation occurs.
 
-## Risks / Trade-offs
+## Validation and remaining work
 
-The model pin does not prove account eligibility or available quota. Completion requires live readback and a real scratch task. Subscription onboarding keys and independently created API keys have different billing; provisioning must preserve that distinction. Contributor mode must be off for repository content under the privacy floor.
+Subprocess tests prove installation rejection, launch forwarding, settlement,
+model resolution and cooldowns with a vendor stand-in. The real native run,
+returned scratch diff, LB request-log receipt and Studio endpoint health remain
+pending. The CLI ledger is distinct from the HTTP request log. Review remains
+pending because the brief prohibits agent messages and pushes.
 
-## Migration Plan
-
-Complete the unchecked tasks on a host with the authorized open-factory worktree and download access. Keep deployment and push disabled under this brief. After validation, commit each authorized worktree with the requested trailers. Rollback of this partial change removes the Muse alias and provider map entry.
+Phase 4 follows the real seat run. Read Raise's package and launch configuration,
+share its memory if supported, create Raise (Muse) beside the existing tab and
+capture its memory answer and MCP tool list. This box cannot access those files
+or the Herdr runtime. Never fabricate a tab ID or claim the phase complete.

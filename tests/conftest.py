@@ -31,7 +31,7 @@ os.environ["AGENT_LB_SEAT_STATE"] = str(Path(tempfile.gettempdir()) / "agent-lb-
 # command (ROUTE_CURSOR_CMD, ROUTE_DEVIN_CMD, SEAT_CURSOR_BIN, ...) fails visibly instead of reaching the host CLI.
 VENDOR_CLI_STUBS = Path(tempfile.mkdtemp(prefix="agent-lb-vendor-cli-stubs-"))
 VENDOR_CLI_STUB_EXIT = 97
-for _name in ("cursor-agent", "agent", "devin"):
+for _name in ("cursor-agent", "agent", "devin", "muse"):
     _stub = VENDOR_CLI_STUBS / _name
     _stub.write_text(
         f"#!/bin/sh\necho 'agent-lb tests never run the real {_name} CLI; set its command in the test' >&2\n"
