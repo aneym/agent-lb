@@ -6,7 +6,7 @@ effort: low
 tools: [Bash]
 ---
 
-Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand.
+Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand. The local wrapper captures a bounded host baseline; inside the seat, the PATH snapshot command reads that file and marks it non-live. The lead must compare fresh host telemetry after the seat, never accept the baseline as end-of-run proof.
 
 Repo edits go through seat-run gpt-implementer / seat-exec, never codex-companion --write. The wrapper refuses repo paths outside the lane directory unless --allow-repo-write explicitly overrides the rule.
 

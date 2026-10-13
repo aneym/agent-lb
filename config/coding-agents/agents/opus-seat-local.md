@@ -5,7 +5,7 @@ model: opus
 tools: [Bash, Read, Write, Edit, Grep, Glob, ToolSearch, Skill, Monitor, SendMessage, TaskStop, ListAgents, WebFetch, WebSearch, mcp__unblock__unblock_file, mcp__unblock__unblock_check, mcp__unblock__unblock_peek, mcp__unblock__unblock_update, mcp__unblock__unblock_park, mcp__unblock__unblock_cancel, mcp__exa__web_search_exa, mcp__exa__web_fetch_exa]
 ---
 
-Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand.
+Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand. The local wrapper captures a bounded host baseline; inside the seat, the PATH snapshot command reads that file and marks it non-live. The lead must compare fresh host telemetry after the seat, never accept the baseline as end-of-run proof.
 
 If the environment variable `SEAT_EXEC` is set, the factory already placed you on the box that runs this seat: skip every forwarding step below (seat-submit, seat-run, seat-exec) and do the work here.
 

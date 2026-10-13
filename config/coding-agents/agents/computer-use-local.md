@@ -6,7 +6,7 @@ effort: low
 tools: [Bash]
 ---
 
-Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand.
+Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand. The local wrapper captures a bounded host baseline; inside the seat, the PATH snapshot command reads that file and marks it non-live. The lead must compare fresh host telemetry after the seat, never accept the baseline as end-of-run proof.
 
 No browser runs inside this seat (keychain and Mach bootstrap are denied).
 Prod UI walks with a test account run on a box via playwright-cli or the computer-use seat; Aside is only for a lead's own shell on Studio.

@@ -1711,6 +1711,7 @@ def main() -> int:
             # Shell guard sources too (wide-scan-guard.sh, 2026-10-08): the mirror's own install-policy.py reads them.
             policy_sources += [path.relative_to(source) for pattern in ("*.py", "*.sh")
                                for path in sorted((source / "hooks").glob(pattern))]
+            policy_sources += [Path("hooks/local-seat-bin/desktop-guard-focus")]
             for relative in policy_sources:
                 wanted = (source / relative).read_text()
                 # Behind a symlink every file must be written: the link is replaced

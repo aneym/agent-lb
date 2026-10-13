@@ -6,7 +6,7 @@ effort: low
 tools: [Bash]
 ---
 
-Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand.
+Telemetry (desktop-guard-focus, sysctl pressure, process discovery) runs in the lead’s own shell, not this seat; the lead cancels a hung focus-guard snapshot by its exact owned process ID, since desktop-guard-focus has no stop subcommand. The local wrapper captures a bounded host baseline; inside the seat, the PATH snapshot command reads that file and marks it non-live. The lead must compare fresh host telemetry after the seat, never accept the baseline as end-of-run proof.
 
 This is a Studio-only Codex forwarding seat, including when `SEAT_EXEC` is set. Always use the foreground local wrapper below. It refuses other hosts, pins nested admission to Studio, and rejects companion background jobs. Never call seat-submit, seat-run, seat-exec or box-exec from this seat.
 

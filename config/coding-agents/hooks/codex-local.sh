@@ -26,6 +26,14 @@ if [[ $(uname -s) != Darwin || $(hostname -s | tr '[:upper:]' '[:lower:]') != *s
   exit 75
 fi
 export BOX_EXEC_HOST=studio SEAT_BOX=studio PLACEMENT=studio-only
+# Capture host telemetry before the worker; the sandbox never calls WindowServer.
+focus_dir=$(mktemp -d "${TMPDIR:-/tmp}/codex-local-focus.XXXXXX")
+export LOCAL_SEAT_FOCUS_BASELINE="$focus_dir/baseline.json"
+python3 "$(dirname "$0")/local-focus-snapshot.py" "$LOCAL_SEAT_FOCUS_BASELINE"
+export LOCAL_SEAT_FOCUS_HELPER="$(dirname "$0")/local-focus-snapshot.py"
+cp "$(dirname "$0")/local-seat-bin/desktop-guard-focus" "$focus_dir/desktop-guard-focus"
+chmod +x "$focus_dir/desktop-guard-focus"
+export PATH="$focus_dir:$PATH"
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
 if [[ -x "$HOME/.local/bin/verify-slot" ]]; then
   exec "$HOME/.local/bin/verify-slot" codex-local -- node "$companion" "$@"

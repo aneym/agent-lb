@@ -1,7 +1,7 @@
 diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
 --- a/plugins/codex/scripts/lib/codex.mjs
 +++ b/plugins/codex/scripts/lib/codex.mjs
-@@ -1257,3 +1257,49 @@
+@@ -1257,3 +1257,51 @@
  }
  
  export { DEFAULT_CONTINUE_PROMPT, TASK_THREAD_PREFIX };
@@ -34,6 +34,8 @@ diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/cod
 +    const lane = path.dirname(evidence);
 +    const target = canonical(evidence);
 +    if (target === evidence || target.startsWith(`${lane}${path.sep}`)) roots.push(evidence);
++    const proof = path.join("/Volumes/StudioExt/agent-rails-runs", relative.split(path.sep)[0]);
++    if (canonical(proof) === proof) roots.push(proof);
 +  }
 +  return roots;
 +}
