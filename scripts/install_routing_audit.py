@@ -11,6 +11,32 @@ import sys
 from pathlib import Path
 
 LABEL = "com.agentlb.routing-audit"
+TAB_LABEL = "com.agentlb.tab-token-audit"
+
+
+def install_tab_audit(home: Path, domain: str, uninstall: bool) -> None:
+    plist = home / "Library/LaunchAgents" / (TAB_LABEL + ".plist")
+    if subprocess.run(["launchctl", "print", domain + "/" + TAB_LABEL], capture_output=True).returncode == 0:
+        subprocess.run(["launchctl", "bootout", domain + "/" + TAB_LABEL], check=True, capture_output=True)
+    if uninstall:
+        plist.unlink(missing_ok=True)
+        return
+    executable = shutil.which("agent-lb")
+    if not executable:
+        raise SystemExit("Install agent-lb on PATH before installing the tab token audit")
+    template = Path(__file__).resolve().parent.parent / "deploy/launchd" / (TAB_LABEL + ".plist")
+    payload = plistlib.loads(template.read_bytes())
+    payload["ProgramArguments"] = [
+        value.replace("@AGENT_LB@", executable).replace("@HOME@", str(home))
+        for value in payload["ProgramArguments"]
+    ]
+    for key in ("StandardOutPath", "StandardErrorPath"):
+        payload[key] = payload[key].replace("@HOME@", str(home))
+    payload["EnvironmentVariables"]["PATH"] = payload["EnvironmentVariables"]["PATH"].replace("@HOME@", str(home))
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_bytes(plistlib.dumps(payload))
+    subprocess.run(["launchctl", "bootstrap", domain, str(plist)], check=True, capture_output=True)
+    print("tab token audit installed for 07:20 local daily")
 
 
 def main():
@@ -27,6 +53,7 @@ def main():
     if args.uninstall:
         plist.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
+        install_tab_audit(home, domain, True)
         print("routing audit uninstalled")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +75,7 @@ def main():
     }
     plist.write_bytes(plistlib.dumps(payload))
     subprocess.run(["launchctl", "bootstrap", domain, str(plist)], check=True, capture_output=True)
+    install_tab_audit(home, domain, False)
     print("routing audit installed for 11:05Z daily")
 
 

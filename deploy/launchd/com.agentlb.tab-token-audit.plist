@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@HOME@/.local/bin:@HOME@/.agent-lb/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.agentlb.tab-token-audit</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@AGENT_LB@</string>
+		<string>audit</string>
+		<string>tabs</string>
+		<string>--window</string>
+		<string>24h</string>
+		<string>--out-md</string>
+		<string>@HOME@/.agent-rails/lanes/model-ops/tab-audit/latest.md</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>@HOME@/.agent-lb/tab-token-audit.err.log</string>
+	<key>StandardOutPath</key>
+	<string>@HOME@/.agent-lb/tab-token-audit.out.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>7</integer>
+		<key>Minute</key>
+		<integer>20</integer>
+	</dict>
+</dict>
+</plist>
