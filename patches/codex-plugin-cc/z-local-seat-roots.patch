@@ -21,7 +21,7 @@ diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/cod
 +    (process.env.FACTORY_LANE ? path.join(lanes, process.env.FACTORY_LANE) : cwd);
 +  const resolved = candidate ? canonical(candidate) : "";
 +  const relative = path.relative(laneRoot, resolved);
-+  const roots = [path.join(home, ".agent-rails", "factory", "admit")];
++  const roots = [path.join(home, ".agent-rails", "factory", "admit"), path.join(home, ".agent-rails", "sim-leases")];
 +  if (relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." &&
 +      !path.isAbsolute(relative)) {
 +    const evidence = path.join(laneRoot, relative.split(path.sep)[0], "evidence");
