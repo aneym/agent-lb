@@ -1,7 +1,7 @@
 diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/codex.mjs
 --- a/plugins/codex/scripts/lib/codex.mjs
 +++ b/plugins/codex/scripts/lib/codex.mjs
-@@ -1257,3 +1257,51 @@
+@@ -1257,3 +1257,62 @@
  }
  
  export { DEFAULT_CONTINUE_PROMPT, TASK_THREAD_PREFIX };
@@ -45,11 +45,22 @@ diff --git a/plugins/codex/scripts/lib/codex.mjs b/plugins/codex/scripts/lib/cod
 +sandboxConfig = async function(client, cwd, sandbox) {
 +  const result = await sharedSandboxConfig(client, cwd, sandbox);
 +  const roots = localSeatWritableRoots(cwd, sandbox);
++  const baseline = process.env.LOCAL_SEAT_FOCUS_BASELINE;
++  const local = process.env.PLACEMENT === "studio-only" && process.env.BOX_EXEC_HOST === "studio";
++  if (local && baseline) {
++    // The broker survives tasks: explicitly override its stale shell environment per thread.
++    result.config = { ...result.config, shell_environment_policy: { set: {
++      LOCAL_SEAT_FOCUS_BASELINE: baseline,
++      LOCAL_SEAT_FOCUS_HELPER: process.env.LOCAL_SEAT_FOCUS_HELPER ?? "",
++      LANE_DIR: process.env.LANE_DIR ?? process.env.SEAT_LANE_DIR ?? cwd,
++      BOX_EXEC_HOST: "studio", PLACEMENT: "studio-only"
++    } } };
++  }
 +  if (!roots.length) return result;
 +  let configured = result.config?.sandbox_workspace_write?.writable_roots;
 +  if (!configured) {
 +    const response = await client.request("config/read", { includeLayers: false, cwd });
 +    configured = response?.config?.sandbox_workspace_write?.writable_roots ?? [];
 +  }
-+  return { config: { sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])], network_access: true } } };
++  return { config: { ...result.config, sandbox_workspace_write: { writable_roots: [...new Set([...configured, ...roots])], network_access: true } } };
 +};
