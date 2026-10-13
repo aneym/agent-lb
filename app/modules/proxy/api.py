@@ -266,6 +266,11 @@ v1_router = APIRouter(
     tags=["proxy"],
     dependencies=[Security(validate_proxy_api_key), Depends(set_openai_error_format)],
 )
+frame_db_router = APIRouter(
+    prefix="/api/frame/db",
+    tags=["proxy"],
+    dependencies=[Security(validate_proxy_api_key), Depends(set_openai_error_format)],
+)
 v1_ws_router = APIRouter(
     prefix="/v1",
     tags=["proxy"],
@@ -798,6 +803,19 @@ def _untagged_headless_opus_refusal(request: Request, model: str | None) -> Resp
         return None
     logger.info("untagged_headless_opus_refused model=%s session=%s", model, session)
     return _anthropic_error_response(403, "permission_error", _UNTAGGED_HEADLESS_OPUS_MESSAGE)
+
+
+@frame_db_router.post("/agent", response_model=None)
+async def frame_db_agent(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    context: AnthropicProxyContext = Depends(get_anthropic_proxy_context),
+) -> Response:
+    try:
+        result = await context.service.frame_db(payload, request.headers)
+    except AnthropicProxyError as exc:
+        return _anthropic_proxy_error_response(exc)
+    return Response(content=result.body, status_code=result.status_code, media_type=result.media_type)
 
 
 @v1_router.post(
