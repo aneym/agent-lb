@@ -65,3 +65,9 @@ def test_exact_cos_approval(tmp_path):
     approval.write_text('Alex approved at 22:44Z\n`railway ssh`\n')
     assert run(f'railway ssh # alex-approval: {approval}', tmp_path).returncode == 0
     assert run(f'railway variable set X=1 # alex-approval: {approval}', tmp_path).returncode == 2
+
+
+def test_existing_destructive_sql_floor(tmp_path):
+    result = run('psql -c "DROP TABLE app"', tmp_path)
+    assert result.returncode == 2
+    assert "floor: destructive data" in result.stderr

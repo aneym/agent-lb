@@ -241,40 +241,7 @@ def commands(text):
             i += 1
             if re.match(r"\s*(?:bash|sh|zsh)\b", line):
                 yield from commands(''.join(body))
-    return ''.join(clean)
-
-def substitutions(source):
-    quote = None
-    i = 0
-    while i < len(source):
-        char = source[i]
-        if char == chr(92) and quote != chr(39):
-            i += 2
-            continue
-        if char == chr(39) and quote != chr(34):
-            quote = None if quote else char
-        elif char == chr(34) and quote != chr(39):
-            quote = None if quote else char
-        elif quote != chr(39) and source.startswith('$(', i) and not source.startswith('$((', i):
-            start = i + 2
-            level = 1
-            i = start
-            while i < len(source) and level:
-                if source[i] == '(': level += 1
-                elif source[i] == ')': level -= 1
-                i += 1
-            if level: raise ValueError('unclosed substitution')
-            yield source[start:i - 1]
-            continue
-        elif quote != chr(39) and char == chr(96):
-            end = source.find(chr(96), i + 1)
-            if end < 0: raise ValueError('unclosed substitution')
-            yield source[i + 1:end]
-            i = end
-        i += 1
-
-def segments(source):
-    lexer = shlex.shlex(source, posix=True, punctuation_chars=';|&<>')
+    lexer = shlex.shlex(''.join(clean), posix=True, punctuation_chars=';|&<>')
     lexer.whitespace = ' \t\r'
     lexer.commenters = '#'
     segment = []
