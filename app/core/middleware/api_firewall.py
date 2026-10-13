@@ -59,7 +59,7 @@ def add_api_firewall_middleware(app: FastAPI) -> None:
 def _is_protected_api_path(path: str) -> bool:
     if path == "/backend-api/codex" or path.startswith("/backend-api/codex/"):
         return True
-    if path == "/api/frame/db" or path.startswith("/api/frame/db/"):
+    if path == "/api/frame" or path.startswith("/api/frame/"):
         return True
     return path == "/v1" or path.startswith("/v1/")
 

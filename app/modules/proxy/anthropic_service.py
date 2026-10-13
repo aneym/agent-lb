@@ -1215,7 +1215,8 @@ class AnthropicProxyService:
         *,
         api_key: ApiKeyData | None = None,
     ) -> AnthropicFrameResult:
-        session_id = _anthropic_session_header(inbound_headers)
+        normalized_headers = {key.lower(): value for key, value in inbound_headers.items()}
+        session_id = _anthropic_session_header(inbound_headers) or normalized_headers.get("x-agent-lb-seat")
         quota_key = "anthropic_top_thinking"
         account = await self._select_account(
             _ANTHROPIC_PLANNER_MODEL,
@@ -1234,6 +1235,9 @@ class AnthropicProxyService:
             async with lease_http_session() as session:
                 for attempt in range(2):
                     headers = _build_anthropic_headers(inbound_headers, token)
+                    seat = normalized_headers.get("x-agent-lb-seat")
+                    if seat:
+                        headers["x-agent-lb-seat"] = seat
                     headers = _frame_end_to_end_headers(headers)
                     async with session.request(
                         method,
@@ -1272,38 +1276,6 @@ class AnthropicProxyService:
                 request_kind="frame",
             )
         raise AssertionError("Frame retry loop exhausted")
-
-    async def frame_db(
-        self, body: Mapping[str, Any], inbound_headers: Mapping[str, str]
-    ) -> AnthropicCountTokensResult:
-        """Forward the fixed artifact endpoint using a refreshed pool account."""
-        account = await self._select_account(
-            "claude-opus-5-5",
-            provider_name=ANTHROPIC_PROVIDER_NAME,
-            exclude_account_ids=set(),
-            sticky_key=_anthropic_session_header(inbound_headers),
-            quota_key="anthropic_frame_db",
-        )
-        access_token = await self._fresh_access_token(account)
-        headers = _build_anthropic_headers(inbound_headers, access_token)
-        # Frame metadata is required by the artifact API, not the Messages API.
-        headers.update({key: value for key, value in inbound_headers.items() if key.lower().startswith("x-frame-")})
-        try:
-            async with lease_http_session() as session:
-                async with session.post(
-                    "https://api.anthropic.com/api/frame/db/agent",
-                    json=dict(body),
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                    allow_redirects=False,
-                ) as resp:
-                    return AnthropicCountTokensResult(
-                        status_code=resp.status,
-                        body=await resp.read(),
-                        media_type=resp.headers.get("content-type") or "application/json",
-                    )
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            raise AnthropicProxyError(502, "Anthropic frame-db upstream request failed", code="upstream_error") from exc
 
     async def count_tokens(
         self,
