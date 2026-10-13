@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import ProxyHandler, Request, build_opener
 
 from app.status_cli import DEFAULT_BASE_URL, StatusObservationError, _NoRedirect, _validated_base_url
+
+if TYPE_CHECKING:
+    from app.modules.accounts.claude_reset_policy import PolicyState
 
 
 class ResetCliError(Exception):
@@ -18,6 +21,9 @@ class ResetCliError(Exception):
 
 
 def run(args: Any) -> None:
+    if args.resets_command == "policy":
+        _run_policy(args)
+        return
     try:
         base_url = _validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
         account = _select_account(_request(base_url, "/api/accounts", args.timeout), args.account)
@@ -59,9 +65,11 @@ def _select_account(response: Any, selector: str) -> dict[str, Any]:
     if not isinstance(accounts, list) or not all(isinstance(item, dict) for item in accounts):
         raise ResetCliError("service returned a malformed accounts response")
     matches = [
-        account for account in accounts
+        account
+        for account in accounts
         if account.get("accountId") == selector
-        or isinstance(account.get("email"), str) and account["email"].casefold() == selector.casefold()
+        or isinstance(account.get("email"), str)
+        and account["email"].casefold() == selector.casefold()
     ]
     if len(matches) != 1:
         raise ResetCliError(f"account {selector!r} matched {len(matches)} accounts; use a unique exact ID or email")
@@ -133,3 +141,145 @@ def _request(base_url: str, path: str, timeout: float, *, body: dict[str, Any] |
         raise ResetCliError("service is unavailable or did not respond") from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ResetCliError("service returned invalid JSON") from exc
+
+
+def _run_policy(args: Any) -> None:
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from pydantic import ValidationError
+
+    from app.modules.accounts.claude_reset_policy import PolicyState, decide
+
+    try:
+        base_url = None
+        if args.state:
+            state = PolicyState.model_validate_json(Path(args.state).read_text())
+        else:
+            base_url = _validated_base_url(args.base_url or os.getenv("AGENT_LB_BASE_URL", DEFAULT_BASE_URL))
+            state = _observe_policy(base_url, args.timeout)
+        decision = decide(state, datetime.now(UTC))
+        record = decision.model_dump()
+        record["observed_at"] = datetime.now(UTC).isoformat()
+        record["synthetic"] = bool(args.state)
+        if args.apply and not args.state and decision.action == "redeem":
+            assert base_url is not None and decision.account_id is not None
+            path = f"/api/accounts/{quote(decision.account_id, safe='')}/rate-limit-reset-credits/consume"
+            # The existing endpoint rechecks provider eligibility and writes the
+            # durable redemption attempt/audit ledger. Never retry this POST.
+            outcome = _request(base_url, path, args.timeout, body={"creditId": decision.grant_id})
+            record["redemption"] = outcome
+            if not isinstance(outcome, dict) or outcome.get("status") != "redeemed":
+                print(json.dumps(record))
+                raise SystemExit(1)
+        if args.json:
+            print(json.dumps(record))
+        elif decision.action == "redeem":
+            print(f"redeem {decision.account_id} {decision.grant_id} ({decision.reason})")
+        else:
+            print(f"hold {decision.reason}")
+    except (OSError, ValueError, ValidationError, ResetCliError, StatusObservationError) as exc:
+        # Validation errors may contain synthetic input; do not echo it.
+        message = str(exc) if isinstance(exc, (ResetCliError, StatusObservationError)) else "invalid policy state"
+        print(f"agent-lb resets policy: {message}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
+def _observe_policy(base_url: str, timeout: float) -> PolicyState:
+    """Measure per-window burn from two fresh status samples 10 seconds apart.
+
+    /api/usage/history contains averages, not timestamped quota samples.
+    Resets or changing window identities invalidate a burn sample. Inventory
+    eligibility is the service's ResetStatus.redemption_blocker projection.
+    The inventory preserves provider grant order but does not expose
+    next_grant_id; the first available grant is proposed and the existing
+    consume endpoint must confirm it is the selected provider grant.
+    """
+    import time
+    from datetime import UTC, datetime
+
+    from app.modules.accounts.claude_reset_policy import BlockedAccount, CodexSummary, LiveAccount, PolicyState
+    from app.status_cli import observe
+
+    first = observe(base_url=base_url, timeout=timeout, provider=None, model=None)
+    start = time.monotonic()
+    time.sleep(10)
+    second = observe(base_url=base_url, timeout=timeout, provider=None, model=None)
+    hours = (time.monotonic() - start) / 3600
+    previous = {account["account_id"]: account for account in first["accounts"]}
+    live = []
+    blocked = []
+    codex = CodexSummary()
+    now = datetime.now(UTC)
+    for account in second["accounts"]:
+        if account["provider"] == "openai":
+            codex.usable_count += int(account["usable"] == "usable")
+            codex.banked_resets_total += account["reset_credits_available"] or 0
+            continue
+        if account["provider"] != "anthropic":
+            continue
+        account_id = account["account_id"]
+        if account["usable"] == "unknown":
+            raise ResetCliError("Claude quota telemetry is incomplete; no redemption attempted")
+        if account["usable"] != "usable":
+            # Paused, disconnected and canceled accounts do not open on reset.
+            if account["status"] not in {"active", "rate_limited", "quota_exceeded"}:
+                continue
+            if account["subscription"]["usable"] is False:
+                continue
+            resets = [
+                datetime.fromisoformat(value)
+                for value in (
+                    account["primary"]["reset_at"],
+                    account["weekly"]["reset_at"],
+                    account["rate_limit_reset_at"],
+                )
+                if value
+            ]
+            future = [reset for reset in resets if reset > now]
+            if future:
+                blocked.append(BlockedAccount(id=account_id, reset_at=min(future)))
+            continue
+        old = previous.get(account_id)
+        burns = []
+        valid = old is not None and old["usable"] == "usable"
+        for window in ("primary", "weekly"):
+            current = account[window]
+            if current["remaining_percent"] is None:
+                if old is not None and old[window]["remaining_percent"] is not None:
+                    valid = False
+                continue
+            before = old[window] if old else {}
+            remaining = before.get("remaining_percent")
+            if (
+                remaining is None
+                or before.get("reset_at") != current["reset_at"]
+                or remaining < current["remaining_percent"]
+            ):
+                valid = False
+            else:
+                burns.append((remaining - current["remaining_percent"]) / hours)
+        inventory = _inventory(
+            _request(
+                base_url,
+                f"/api/accounts/{quote(account_id, safe='')}/rate-limit-reset-credits",
+                timeout,
+            )
+        )
+        grant = next((credit for credit in inventory["credits"] if credit.get("status") == "available"), {})
+        live.append(
+            LiveAccount(
+                id=account_id,
+                usable=True,
+                primary_remaining_pct=account["primary"]["remaining_percent"],
+                primary_reset_at=account["primary"]["reset_at"],
+                weekly_remaining_pct=account["weekly"]["remaining_percent"],
+                weekly_reset_at=account["weekly"]["reset_at"],
+                burn_rate_pct_per_hour=max(burns) if valid and burns else None,
+                reset_grants_available=inventory["availableCount"],
+                next_grant_id=grant.get("id"),
+                grant_expires_at=grant.get("expiresAt"),
+                redeemable_now=inventory.get("redeemableNow") is True,
+            )
+        )
+    return PolicyState(live_accounts=live, blocked_accounts=blocked, codex=codex)
