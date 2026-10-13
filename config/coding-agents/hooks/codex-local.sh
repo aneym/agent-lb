@@ -34,6 +34,7 @@ export LOCAL_SEAT_FOCUS_HELPER="$(dirname "$0")/local-focus-snapshot.py"
 cp "$(dirname "$0")/local-seat-bin/desktop-guard-focus" "$focus_dir/desktop-guard-focus"
 chmod +x "$focus_dir/desktop-guard-focus"
 export PATH="$focus_dir:$PATH"
+printf 'codex-local: host baseline %s; sandbox snapshot: python3 %s --baseline %s snapshot (non-live; lead compares after run)\n' "$LOCAL_SEAT_FOCUS_BASELINE" "$LOCAL_SEAT_FOCUS_HELPER" "$LOCAL_SEAT_FOCUS_BASELINE" >&2
 companion="$HOME/.agent-lb/plugins/codex-plugin-cc/plugins/codex/scripts/codex-companion.mjs"
 if [[ -x "$HOME/.local/bin/verify-slot" ]]; then
   exec "$HOME/.local/bin/verify-slot" codex-local -- node "$companion" "$@"

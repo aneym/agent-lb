@@ -14,6 +14,9 @@ def fail(message):
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == '--baseline':
+        os.environ['LOCAL_SEAT_FOCUS_BASELINE'] = sys.argv[2]
+        sys.argv = [sys.argv[0], sys.argv[3]]
     if len(sys.argv) == 2 and sys.argv[1] != 'snapshot':
         destination = Path(sys.argv[1])
         child = subprocess.Popen([str(Path.home()/'.local/bin/desktop-guard-focus'), 'snapshot'],
