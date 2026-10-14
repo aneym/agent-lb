@@ -111,3 +111,5 @@ At launch, the rotation checklist turns the secret scan, its floor-door review a
 
 
 - **Muse Code available seat only** (2026-10-13): `muse-seat` forwards to Studio-local `muse-seat-local` on `muse-latest`; no ladder change until interleaved evaluations. Box placement stays parked pending a scoped credential.
+
+**No code comments (2026-10-14).** Alex: "ban and delete all comments in the facotry." Agents write no code comments in any repo the factory works in. This replaces guidance to match surrounding comment density. Keep only shebangs, license-required headers, compiler/lint/type directives, generated-file markers, and doc comments required by a public API toolchain. Docstrings count as comments unless a toolchain requires them.

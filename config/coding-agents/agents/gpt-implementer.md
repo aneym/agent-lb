@@ -42,3 +42,5 @@ HANDOFF
 END HANDOFF
 
 status is done, blocked or failed. unverified lists what you could not check.
+
+**No code comments (2026-10-14).** Alex: "ban and delete all comments in the facotry." Agents write no code comments in any repo the factory works in. This replaces guidance to match surrounding comment density. Keep only shebangs, license-required headers, compiler/lint/type directives, generated-file markers, and doc comments required by a public API toolchain. Docstrings count as comments unless a toolchain requires them.

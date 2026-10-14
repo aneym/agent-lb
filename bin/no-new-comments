@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+import argparse
+import ast
+import io
+import re
+import subprocess
+import sys
+import tokenize
+from pathlib import Path
+
+EXTENSIONS = {'.py', '.ts', '.tsx', '.js', '.mjs', '.swift', '.sh', '.go', '.rs', '.sql', '.css', '.yaml', '.yml', '.toml', '.html'}
+KEEP = re.compile(r'^(?:![/\w]|.*(?:SPDX-License-Identifier:|Copyright|Licensed under|Permission is hereby granted|@generated|Code generated|DO NOT EDIT)|\s*(?:eslint-disable(?:-next-line|-line)?\b|@ts-expect-error\b|@ts-ignore\b|type:\s*ignore\b|noqa\b|pragma\b|swiftlint:|@flow\b|prettier-ignore\b|biome-ignore\b|swift-tools-version:|.*-\*-.*coding.*-\*-))', re.I)
+
+
+def git(repo, *args):
+    return subprocess.check_output(['git', '-C', str(repo), *args])
+
+
+def comments(text, suffix):
+    if suffix == '.py':
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type == tokenize.COMMENT:
+                    yield token.start[0], token.end[0], token.string[1:]
+        except (tokenize.TokenError, IndentationError):
+            pass
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+                first = node.body[0]
+                if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                    yield first.lineno, first.end_lineno, first.value.value
+        return
+    hash_comments = suffix in {'.sh', '.yaml', '.yml', '.toml'}
+    slash_comments = suffix in {'.ts', '.tsx', '.js', '.mjs', '.swift', '.go', '.rs'}
+    block_comments = slash_comments or suffix in {'.css', '.sql'}
+    i, line = 0, 1
+    while i < len(text):
+        c = text[i]
+        if c == '\n':
+            line += 1
+            i += 1
+            continue
+        marker = None
+        end = None
+        if hash_comments and c == '#' and (i == 0 or text[i - 1].isspace()):
+            marker, end = '#', '\n'
+        elif slash_comments and text.startswith('//', i):
+            marker, end = '//', '\n'
+        elif block_comments and text.startswith('/*', i):
+            marker, end = '/*', '*/'
+        elif suffix == '.sql' and text.startswith('--', i):
+            marker, end = '--', '\n'
+        elif suffix == '.html' and text.startswith('<!--', i):
+            marker, end = '<!--', '-->'
+        if marker:
+            start = i + len(marker)
+            stop = text.find(end, start)
+            if stop < 0:
+                stop = len(text)
+            body = text[start:stop]
+            last = line + body.count('\n')
+            yield line, last, body
+            line = last
+            i = stop if end == '\n' else stop + len(end)
+            continue
+        if suffix == '.sql' and c == '$':
+            match = re.match(r'\$(?:[A-Za-z_]\w*)?\$', text[i:])
+            if match:
+                delimiter = match.group()
+                stop = text.find(delimiter, i + len(delimiter))
+                stop = len(text) if stop < 0 else stop + len(delimiter)
+                line += text[i:stop].count('\n')
+                i = stop
+                continue
+        if suffix == '.rs' and c == 'r':
+            match = re.match(r'r(#+)?"', text[i:])
+            if match:
+                delimiter = '"' + (match.group(1) or '')
+                stop = text.find(delimiter, i + len(match.group()))
+                stop = len(text) if stop < 0 else stop + len(delimiter)
+                line += text[i:stop].count('\n')
+                i = stop
+                continue
+        if c in {'"', "'", '`'}:
+            if c == "'" and suffix == '.rs' and re.match(r"'[a-zA-Z_]\w*\b(?!')", text[i:]):
+                i += 1
+                continue
+            quote = c * 3 if text.startswith(c * 3, i) and suffix in {'.toml', '.swift'} else c
+            i += len(quote)
+            while i < len(text):
+                if text.startswith(quote, i):
+                    i += len(quote)
+                    break
+                if text[i] == '\\':
+                    line += text[i:i + 2].count('\n')
+                    i += 2
+                else:
+                    line += text[i] == '\n'
+                    i += 1
+            continue
+        if c == '/' and suffix in {'.js', '.mjs', '.ts', '.tsx'} and re.search(r'(?:^|[=(:,!\[;{}]|\breturn)\s*$', text[:i]):
+            i += 1
+            bracket = False
+            while i < len(text) and text[i] != '\n':
+                if text[i] == '\\':
+                    i += 2
+                    continue
+                if text[i] == '[':
+                    bracket = True
+                elif text[i] == ']':
+                    bracket = False
+                elif text[i] == '/' and not bracket:
+                    i += 1
+                    break
+                i += 1
+            continue
+        i += 1
+
+
+def violations(repo, base, head):
+    diff = git(repo, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--unified=0', '--no-renames', base, head).decode('utf-8', 'replace')
+    added = {}
+    path, line = None, 0
+    for entry in diff.splitlines():
+        if entry.startswith('+++ b/'):
+            path = entry[6:]
+        elif entry.startswith('@@ '):
+            line = int(re.search(r'\+(\d+)', entry).group(1))
+        elif entry.startswith('+') and path:
+            added.setdefault(path, set()).add(line)
+            line += 1
+        elif entry.startswith(' ') and path:
+            line += 1
+    for path, lines in added.items():
+        suffix = Path(path).suffix
+        if suffix not in EXTENSIONS and not suffix:
+            probe = git(repo, 'show', f'{head}:{path}').decode('utf-8', 'replace')
+            if probe.startswith('#!'):
+                suffix = '.py' if 'python' in probe.splitlines()[0] else '.sh'
+        if suffix not in EXTENSIONS:
+            continue
+        text = git(repo, 'show', f'{head}:{path}').decode('utf-8', 'replace')
+        for first, last, body in comments(text, suffix):
+            if KEEP.match(body.strip()):
+                continue
+            for number in sorted(lines.intersection(range(first, last + 1))):
+                yield f'{path}:{number}: new comment is not a required directive, license or generated marker'
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('base')
+    parser.add_argument('head', nargs='?', default='HEAD')
+    parser.add_argument('--repo', default='.')
+    args = parser.parse_args()
+    try:
+        failures = list(violations(args.repo, args.base, args.head))
+    except subprocess.CalledProcessError as exc:
+        return exc.returncode
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    return int(bool(failures))
+
+
+if __name__ == '__main__':
+    sys.exit(main())
