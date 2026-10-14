@@ -5,7 +5,7 @@ from collections.abc import Callable
 import pytest
 from alembic import command
 from anyio import to_thread
-from sqlalchemy import text
+from sqlalchemy import BigInteger, inspect, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.auth import DEFAULT_PLAN
@@ -713,6 +713,55 @@ async def test_federation_usage_daily_migration_up_and_down(tmp_path):
             assert table.scalar_one_or_none() is None
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_federation_bigint_migration_preserves_rollups(db_setup):
+    parent = "20261014_050000_add_additional_latest_indexes"
+    config = _build_alembic_config(_DATABASE_URL)
+    await run_startup_migrations(_DATABASE_URL)
+    await to_thread.run_sync(lambda: command.downgrade(config, parent))
+    counters = ("requests", "input_tokens", "output_tokens", "cache_read_tokens", "session_count")
+    async with SessionLocal() as session:
+        await session.execute(
+            text(
+                "INSERT INTO federation_usage_daily "
+                "(instance_id, account_id, provider, day, requests, input_tokens, output_tokens, "
+                "cache_read_tokens, cost, session_count, reported_at) "
+                "VALUES ('migration-peer', 'migration-account', 'anthropic', '2026-10-14', 1, 2, 3, 4, 1.25, 5, "
+                "'2026-10-14 00:00:00')"
+            )
+        )
+        await session.commit()
+    await to_thread.run_sync(lambda: run_upgrade(_DATABASE_URL, "head", bootstrap_legacy=False))
+    async with SessionLocal() as session:
+        values = (
+            await session.execute(
+                text(
+                    "SELECT requests, input_tokens, output_tokens, cache_read_tokens, session_count "
+                    "FROM federation_usage_daily WHERE instance_id = 'migration-peer'"
+                )
+            )
+        ).one()
+        assert tuple(values) == (1, 2, 3, 4, 5)
+        connection = await session.connection()
+        columns = await connection.run_sync(lambda conn: inspect(conn).get_columns("federation_usage_daily"))
+        assert all(isinstance(column["type"], BigInteger) for column in columns if column["name"] in counters)
+        await session.execute(
+            text("UPDATE federation_usage_daily SET " + ", ".join(f"{column} = :value" for column in counters)),
+            {"value": 3260172888},
+        )
+        await session.commit()
+    async with SessionLocal() as session:
+        values = (
+            await session.execute(
+                text(
+                    "SELECT requests, input_tokens, output_tokens, cache_read_tokens, session_count "
+                    "FROM federation_usage_daily WHERE instance_id = 'migration-peer'"
+                )
+            )
+        ).one()
+        assert tuple(values) == (3260172888,) * len(counters)
 
 
 @pytest.mark.asyncio

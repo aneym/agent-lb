@@ -141,6 +141,35 @@ async def test_usage_report_requires_auth_and_upserts_by_instance(
 
 
 @pytest.mark.asyncio
+async def test_usage_report_preserves_bigint_counters(async_client, monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_federation(monkeypatch)
+    counters = dict.fromkeys(
+        ("requests", "input_tokens", "output_tokens", "cache_read_tokens", "session_count"), 3260172888
+    )
+    response = await async_client.post(
+        "/api/federation/usage-report",
+        headers=_auth_headers(),
+        json={
+            "instance_id": "large-peer",
+            "rollups": [
+                {
+                    "day": "2026-10-14",
+                    "account_id": "large-account",
+                    "provider": "anthropic",
+                    "cost": 1.25,
+                    **counters,
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    async with SessionLocal() as session:
+        row = await session.get(FederationUsageDaily, ("large-peer", "large-account", date(2026, 10, 14)))
+        assert row is not None
+        assert {column: getattr(row, column) for column in counters} == counters
+
+
+@pytest.mark.asyncio
 async def test_usage_report_recovers_from_concurrent_duplicate_insert(monkeypatch: pytest.MonkeyPatch) -> None:
     day = date(2026, 7, 29)
     reported_at = utcnow()
