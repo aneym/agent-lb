@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Launch Muse Code through agent-lb.
+
+Muse already speaks the Responses wire and takes ``--base-url``, so unlike
+Claude Code no MITM proxy is needed: this points Muse at the agent-lb
+passthrough (``/muse-api`` on the local LB), which forwards the client's own
+Meta token to api.meta.ai and records the call under provider ``muse``.
+
+Usage:
+  clients/muse-lb-launch [muse args...]
+
+Env:
+  MUSE_LB_BASE_URL   agent-lb muse-api base (default http://127.0.0.1:2455/muse-api)
+  MUSE_LB_DISABLE=1  bypass the LB entirely; exec plain `muse`
+  MUSE_LB_DRY_RUN=1  print the final command instead of exec'ing it
+  MUSE_MODEL         model override (default: `route resolve muse-latest`)
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+DEFAULT_BASE_URL = "http://127.0.0.1:2455/muse-api"
+DEFAULT_MODEL = "muse-wonder-1.0"
+
+
+def resolve_model() -> str:
+    override = os.environ.get("MUSE_MODEL")
+    if override:
+        return override
+    route = os.path.expanduser("~/.agent-lb/bin/route")
+    try:
+        result = subprocess.run(
+            [route, "resolve", "muse-latest"], capture_output=True, text=True, timeout=10
+        )
+        model = result.stdout.strip()
+        if result.returncode == 0 and model:
+            return model
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return DEFAULT_MODEL
+
+
+def lb_healthy(base_url: str) -> bool:
+    health = base_url.rsplit("/muse-api", 1)[0] + "/health"
+    try:
+        with urllib.request.urlopen(health, timeout=3) as response:
+            return response.status == 200
+    except OSError:
+        return False
+
+
+def main(argv: list[str]) -> None:
+    muse = shutil.which("muse") or os.path.expanduser("~/.local/bin/muse")
+    if os.environ.get("MUSE_LB_DISABLE") == "1":
+        os.execvp(muse, [muse, *argv])
+    base_url = os.environ.get("MUSE_LB_BASE_URL", DEFAULT_BASE_URL)
+    if not lb_healthy(base_url):
+        print(
+            "muse-lb-launch: agent-lb is not healthy; launching Muse directly",
+            file=sys.stderr,
+        )
+        os.execvp(muse, [muse, *argv])
+    flags = [
+        "--provider", "meta",
+        "--base-url", base_url,
+        "--model", resolve_model(),
+    ]
+    subcommands = {
+        "resume", "exec", "config", "export", "trace", "model-profile",
+        "skills", "voice", "plugins", "sandbox", "schema", "serve",
+        "session-message", "mcp", "auth", "login", "logout", "init",
+    }
+    if argv and argv[0] in subcommands:
+        # muse wants the command first, its flags after it.
+        command = [muse, argv[0], *flags, *argv[1:]]
+    else:
+        command = [muse, *flags, *argv]
+    if os.environ.get("MUSE_LB_DRY_RUN") == "1":
+        print(" ".join(command))
+        return
+    os.execvp(command[0], command)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
