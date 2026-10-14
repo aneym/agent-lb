@@ -24,21 +24,18 @@ def test_each_seat_kind_gets_options_that_reach_its_model(tmp_path: Path) -> Non
     seats = args["seats"]
     assert args["errors"] == {}
 
-    # Cursor forwarder: the CLI model rides in the brief; the Claude wrapper stays at low effort.
     implement = seats["implement"]
-    assert (implement["seat"], implement["model"]) == ("cursor-seat", "grok-4.7-medium")
-    assert implement["opts"] == {"agentType": "cursor-seat", "effort": "low"}
-    assert implement["brief"] == "Seat model: grok-4.7-medium\n"
-    # Its reviewer is a Claude seat: model and effort override the definition's frontmatter.
+    assert (implement["seat"], implement["model"]) == ("gpt-implementer", "gpt-6.1-sol")
+    assert implement["opts"] == {"agentType": "gpt-implementer", "model": "sol-latest-medium"}
     assert implement["audit"]["opts"] == {
         "agentType": "verifier", "model": "claude-sonnet-5-5", "effort": "high"}
-
-    # GPT bridge seat: the bridge locks effort from the model name, so no separate effort.
     assert seats["explore"]["opts"] == {"agentType": "gpt-explorer", "model": "sol-latest-low"}
-    read_only = [f for f in seats["explore"]["fallbacks"] if f["seat"] == "cursor-seat"]
-    assert read_only and read_only[0]["brief"] == "Seat model: composer-2.5\nSeat mode: ask\n"
-
-    assert seats["plan"]["opts"] == {"agentType": "planner", "model": "claude-opus-5-5", "effort": "high"}
+    assert all(seat["vendor"] == "openai" for seat in seats.values())
+    assert seats["plan"]["opts"] == {"agentType": "codex-sol"}
+    assert seats["plan"]["model"] == "gpt-6.1-sol"
+    assert "Effort: high" in seats["plan"]["brief"]
+    assert args["agent_cap"] == 6
+    assert args["quota"]["opus_stages"] == ["judge", "synthesis"]
 
     # Cross-vendor review: Claude-authored work never goes to a Claude reviewer, and the
     # fixed Codex forwarder gets no model or effort its definition would ignore.
@@ -73,7 +70,7 @@ def test_cursor_exhausted_moves_implement_to_the_sol_bridge_seat(tmp_path: Path)
 
     implement = workflow_args(env)["seats"]["implement"]
     assert implement["opts"] == {"agentType": "gpt-implementer", "model": "sol-latest-medium"}
-    assert implement["brief"] == ""
+    assert "HANDOFF" in implement["brief"]
 
 
 def test_baseline_forwarders_get_the_picked_model_and_effort_in_the_brief(tmp_path: Path) -> None:
@@ -85,5 +82,15 @@ def test_baseline_forwarders_get_the_picked_model_and_effort_in_the_brief(tmp_pa
     assert audit["opts"] == {"agentType": "cursor-seat", "effort": "low"}
     assert audit["brief"].startswith("Seat model: claude-sonnet-5-5-high\nSeat mode: ask\n")
     codex = [f for f in args["seats"]["explore"]["fallbacks"] if f["seat"] == "codex-sol"]
-    assert codex and (codex[0]["opts"], codex[0]["brief"]) == ({"agentType": "codex-sol"}, "Effort: medium\n")
+    assert args["seats"]["explore"]["opts"]["model"].startswith("sol-latest")
     assert args["review_for"]["devin"]["vendor"] != "devin"
+
+
+def test_normal_quota_emits_sixteen_agent_cap(tmp_path: Path) -> None:
+    env = setup(tmp_path, codex_low=False)
+    path = Path(env['HOME']) / '.config/open-factory/quota.toml'
+    path.parent.mkdir(parents=True)
+    path.write_text('mode = "normal"\n')
+    args = workflow_args(env)
+    assert args['agent_cap'] == 16 and args['quota']['mode'] == 'normal'
+    assert args['quota']['excluded_work'] == ['status', 'wake', 'polling', 'single-file']

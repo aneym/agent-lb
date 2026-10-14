@@ -34,6 +34,17 @@ Until launch the main machine's checkout is the source of truth and GitHub is a 
 
 A guard blocks only on a kept floor and names that floor in its message; everything else warns in one line or is deleted. A blocking guard accepts the CoS approval record as Alex's yes. A guard matches the command that will run, never text inside a heredoc, a quoted string or an ssh argument. Until launch no guard blocks on secrets (2026-10-08 09:27 ET), and that suspension excludes Alex's own passwords, passkeys and codes.
 
+## Workflow quota rules (2026-10-14)
+
+Alex, 2026-10-14 ~02:55Z: "regardless, have the factory fix this without losing quality of everything."
+Alex, 2026-10-14 ~02:58Z: "ultracode on is fine - we want workflows to be used and just to have proper rules aorund it."
+
+Full-tier tabs, including raise, recruiter, factory and rails when full, keep ultracode on. Wake-only tabs keep their current allocation. Workflow agents default to `sol-latest`. Opus runs only a judge or synthesis stage. Keep cross-vendor review and escalate failed work through the existing quality checks. Each workflow may run at most 6 agents in tight quota mode or 16 in normal mode. These limits apply to one workflow, not host job admission. `factory quota show --json` emits the rules and `route workflow-args` emits the stage options and cap.
+
+Use scripts or Sol for wakes, status digests and polling. Never start a workflow for status, polling or single-file work. Do not wake Claude for a status digest or a routine wake. Task delivery and Alex's requests still follow the tab's tier. `factory quota tick` persists tight mode when any Claude account's 5h utilization passes 70%, retaining explicit tab allocations.
+
+Each Workflow completion appends to `~/.open-factory/state/workflow-readback.jsonl`, or `FACTORY_HOME/workflow-readback.jsonl`. Record quota percentage from a matching workflow id in agent-lb unified utilization capture when present; otherwise record the run's tokens and label missing usage. Never infer quota percentage from token counts. Hook context for SessionStart, UserPromptSubmit and PostToolUse is at most 1024 UTF-8 bytes per hook. Deliver bulletin ids and a one-line preview, keep overflow queued, and retrieve full text with `lane-post read <id>`. Memory and learnings use short pointers with commands for full text.
+
 ## Model ladder and seats (2026-09-30; updated 2026-10-13)
 
 Best first, and only Claude is precious; use family aliases (`route resolve <alias>`). Alex, 2026-09-30: "use things up that are best always first, using fallbacks when we need to ... the only precious thing i think is claude usage".
@@ -53,10 +64,10 @@ Best first, and only Claude is precious; use family aliases (`route resolve <ali
 
 Available optional seat: `muse-seat` via `muse-seat-local` on Studio, Muse Code `1.4.7-R6101.1`, `muse-latest` pins `muse-wonder-1.0`. Alex reports login complete on 2026-10-13; live seat validation is pending. Boxes are not yet provisioned. No ladder promotion before interleaved evals.
 
-- **Quota rule (2026-10-13): every tab runs `opus-latest` medium with ultracode off.** This replaces the 2026-10-10 Fable exception and the 2026-10-12 Claude lane defaults. Alex, 2026-10-13 ~03:00Z: "okay we ahve very limited claude quota left. we need to slow thigns down a lot until we're ready - ensure everything runs on opus medium at the top level as well."
+- **Quota rule (2026-10-14): tabs run `opus-latest` medium; full-tier ultracode stays on.** This replaces the 2026-10-10 Fable exception and the 2026-10-12 Claude lane defaults. Alex, 2026-10-13 ~03:00Z: "okay we ahve very limited claude quota left. we need to slow thigns down a lot until we're ready - ensure everything runs on opus medium at the top level as well."
   Alex, 2026-10-13 ~03:10Z: "token allocation should be to raise and recruiter and that's basically it i think. since those are our priorities".
   Claude quota goes to the Raise and Recruiter tabs only, both at tier `full`. Every other tab (`cos`, `factory`, `rails`, `content`, `home`, `health`, `league-coach`, `frank`, `shelf`, `poker-trainer`, `internet`) is `wake-only`: no scheduled loops, timers, 2h summaries or per-bulletin wakes. These tabs wake only for prod down, a security incident, or Alex typing.
-  Lanes, leads, seats and workflow agents run Sol (`sol-latest`), never Claude. This quota rule overrides the ladder and older planning, wake and model defaults while quota is tight. Status goes to state files, not bulletins. The quota allocation lives in `~/.config/open-factory/quota.toml` and is managed by `factory quota`, which is being built.
+  Lanes, leads and workflow agents run Sol (`sol-latest`). Workflow judge and synthesis stages may use Opus. This quota rule overrides the ladder and older planning, wake and model defaults while quota is tight. Status goes to state files, not bulletins. The quota allocation lives in `~/.config/open-factory/quota.toml` and is managed by `factory quota`, which also emits the workflow policy.
 - **Cursor is out until a passing probe at the 2026-10-30 reset.** Switch pools only on real 429s or usage-limit errors, never on a low percentage (2026-09-28).
 - **While Claude is on its last account or a 5h window is under 40%,** Claude runs only tabs, plans and specs (2026-09-29).
 - **Retired models run when asked** (Alex, 2026-10-05 19:55 ET: "we shouldnt just block model usage, we shoudl allow them if we request or we want t escalate things"). Each use is logged; only a model gone upstream is refused.
