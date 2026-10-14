@@ -731,16 +731,48 @@ def add_pool_refills(document: dict[str, Any], body: Any) -> None:
             pool.setdefault("pace", {})["next_refill_h"] = (min(low_resets) - now).total_seconds() / 3600
 
 
+def pool_snapshot_path() -> Path:
+    return _env_path("ROUTE_POOL_SNAPSHOT", Path.home() / ".cache" / "agent-lb" / "route-pools.json")
+
+
+def cached_pool_snapshot() -> dict[str, Any] | None:
+    if _fixture_file("/api/pools") is not None:
+        return None
+    try:
+        record = json.loads(pool_snapshot_path().read_text(encoding="utf-8"))
+        age = time.time() - record["savedAt"]
+        document = record["document"]
+        if (record["baseUrl"] != base_url() or not 0 <= age < 60
+                or not isinstance(document, dict) or not isinstance(document.get("pools"), list)):
+            return None
+        return {**document, "source": "cache", "cacheAgeSeconds": age}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
                 accounts: HttpResult | None = None, refills: bool = False) -> tuple[dict[str, Any] | None, str | None]:
-    """C1 from the LB, else an approximation from /api/accounts, else an error string."""
+    deadline = time.monotonic() + timeout
+
+    def read_accounts() -> HttpResult:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return HttpResult(ok=False, status=None, body=None, error="snapshot deadline exceeded")
+        return http_get("/api/accounts", timeout=remaining)
+
     direct = http_get("/api/pools", timeout=timeout)
     if direct.json_ok and isinstance(direct.body, dict) and isinstance(direct.body.get("pools"), list):
         document = dict(direct.body)
         document.setdefault("source", "lb")
+        if _fixture_file("/api/pools") is None:
+            try:
+                atomic_write(pool_snapshot_path(), json.dumps({
+                    "baseUrl": base_url(), "savedAt": time.time(), "document": document}))
+            except OSError:
+                pass
         if not refills:
             return document, None
-        accounts = accounts or http_get("/api/accounts", timeout=timeout)
+        accounts = accounts or read_accounts()
         if accounts.json_ok:
             try:
                 add_pool_refills(document, accounts.body)
@@ -749,7 +781,10 @@ def fetch_pools(*, timeout: float = READ_TIMEOUT_SECONDS,
                     pool.pop("refills", None)
                     pool.pop("pace", None)
         return document, None
-    accounts = accounts or http_get("/api/accounts", timeout=timeout)
+    cached = cached_pool_snapshot()
+    if cached is not None:
+        return cached, None
+    accounts = accounts or read_accounts()
     if accounts.json_ok:
         document = pools_from_accounts(accounts.body)
         if refills:
