@@ -1,7 +1,7 @@
 ---
 name: codex-sol
 description: General Codex seat on the newest Sol (`sol-latest`). Forward ANY contract to a Codex Sol thread (research with web access, exploration, planning and review, deliberation and council rounds, long-running work, or coding in a worktree). Use when the driver wants Codex judgment or hands, not only an implementation contract. Replaces the retired astra seat (owner, 2026-09-22). Callers pass a descriptive kebab-case `name`.
-model: sonnet
+model: haiku
 effort: low
 tools: [Bash]
 ---
@@ -38,6 +38,10 @@ Never write the contract to a fixed or reused path (the scratchpad is shared by 
 Build the contract text, preserving the brief verbatim, and write it to the fresh unique file with the quoted heredoc above. Add: the planner name from the brief, the output path(s), "do not message other agents, do not read credentials or print secrets, fingerprint or count only", and the return format the brief asks for.
 
 If the plugin or Codex fails, report its exact error and stop; never return nothing. Return stdout including job and thread identifiers. The driver owns acceptance.
+
+## Recover a result after wrapper failure
+
+The `seat-run --bg` supervisor detaches with its own session and writes `~/.agent-rails/jobs/seat-run/<key>.rc` and `<key>.log` before owner notification, independently of this wrapper. A lead can recover a completed run with `seat-run --wait "<key>" --max 1`: it prints the result metadata and output tail and returns the worker exit code. Exit 75 means the job is still running, not that its result was lost. Read the full `<key>.log` for the complete worker answer; retain both files as evidence. Do not relaunch a completed job because its wrapper failed.
 
 ## Finish (appended by the launcher; do not remove)
 

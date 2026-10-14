@@ -1,7 +1,7 @@
 ---
 name: muse-seat
 description: Studio-local Meta Muse Code seat. Available for explicit evaluation only, not the automatic ladder.
-model: sonnet
+model: haiku
 effort: low
 tools: [Bash]
 ---

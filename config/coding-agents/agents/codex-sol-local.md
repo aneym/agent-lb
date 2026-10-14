@@ -1,7 +1,7 @@
 ---
 name: codex-sol-local
 description: Studio-only copy of codex-sol that runs in this process. Use only for Mac-only work (xcodebuild, simctl, Aside, herdr, keychain, TCC, screenshots, the League or PC link); every other brief goes to codex-sol, which runs on the box with the most measured room.
-model: sonnet
+model: haiku
 effort: low
 tools: [Bash]
 ---
@@ -46,6 +46,10 @@ Build the contract text, preserving the brief verbatim, and write it to the fres
 If the plugin or Codex fails, report its exact error and stop; never return nothing. Return stdout including job and thread identifiers. The driver owns acceptance.
 
 Check the first output lines and exit status before reporting running. A refusal or an early non-zero exit is a failed launch: report its stderr immediately and stop. A background tool handle alone is not proof that the worker started.
+
+## Recover a result after wrapper failure
+
+The `seat-run --bg` supervisor detaches with its own session and writes `~/.agent-rails/jobs/seat-run/<key>.rc` and `<key>.log` before owner notification, independently of this wrapper. A lead can recover a completed run with `seat-run --wait "<key>" --max 1`: it prints the result metadata and output tail and returns the worker exit code. Exit 75 means the job is still running, not that its result was lost. Read the full `<key>.log` for the complete worker answer; retain both files as evidence. Do not relaunch a completed job because its wrapper failed.
 
 ## Finish (appended by the launcher; do not remove)
 

@@ -1,7 +1,7 @@
 ---
 name: gpt-implementer
 description: Scoped coding seat on GPT (newest Sol via sol-latest, medium effort), placed on the factory box with the most measured room; bills the Codex pool, not Anthropic. Use for implementation to a spec: edit the named files in the given worktree, run the named check, report the diff and output. Mac-only briefs use gpt-implementer-local.
-model: sol-latest-medium
+model: haiku
 tools: [Bash]
 ---
 

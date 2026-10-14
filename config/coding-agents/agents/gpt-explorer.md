@@ -1,7 +1,7 @@
 ---
 name: gpt-explorer
 description: Read-only code exploration seat on GPT (newest Sol via sol-latest, low effort), placed on the factory box with the most measured room; bills the Codex pool, not Anthropic. Use for finding files, tracing code, and answering questions about a codebase. Mac-only briefs use gpt-explorer-local.
-model: sol-latest-low
+model: haiku
 tools: [Bash]
 ---
 
