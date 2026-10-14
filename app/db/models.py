@@ -1368,6 +1368,24 @@ Index(
 )
 
 
+# Equality prefixes let SQLite resolve canonical and historical aliases without
+# ranking the complete additional quota history.
+for _quota_column, _quota_suffix in (
+    (AdditionalUsageHistory.quota_key, "key"),
+    (func.lower(AdditionalUsageHistory.limit_name), "limit"),
+    (func.lower(AdditionalUsageHistory.metered_feature), "feature"),
+):
+    Index(
+        f"ix_additional_latest_{_quota_suffix}",
+        AdditionalUsageHistory.account_id,
+        AdditionalUsageHistory.window,
+        _quota_column,
+        AdditionalUsageHistory.recorded_at.desc(),
+        AdditionalUsageHistory.used_percent.desc(),
+        AdditionalUsageHistory.id.desc(),
+    ).ddl_if(dialect="sqlite")
+
+
 class RoutingPolicyVersion(Base):
     __tablename__ = "routing_policy_versions"
 

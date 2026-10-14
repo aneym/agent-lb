@@ -1056,3 +1056,88 @@ async def test_delete_for_account_limit_window_canonicalizes_legacy_alias(async_
     assert [(entry.account_id, entry.limit_name, entry.window) for entry in entries] == [
         ("acc_delete", "codex_other", "primary"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_latest_sqlite_seeks_preserve_alias_ties_since_and_account_filter(
+    async_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = tmp_path / "registry.json"
+    _write_registry(registry, quota_key="spark_enterprise", quota_key_aliases=["legacy_spark"])
+    monkeypatch.setenv("AGENT_LB_ADDITIONAL_QUOTA_REGISTRY_FILE", str(registry))
+    repo = AdditionalUsageRepository(async_session)
+    now = datetime.now(timezone.utc)
+    rows = [
+        AdditionalUsageHistory(
+            account_id="wanted",
+            quota_key="spark_enterprise",
+            limit_name="other",
+            metered_feature="other",
+            window="primary",
+            used_percent=90,
+            recorded_at=now - timedelta(seconds=1),
+        ),
+        AdditionalUsageHistory(
+            account_id="wanted",
+            quota_key="legacy_spark",
+            limit_name="other",
+            metered_feature="other",
+            window="primary",
+            used_percent=30,
+            recorded_at=now,
+        ),
+        AdditionalUsageHistory(
+            account_id="wanted",
+            quota_key="other",
+            limit_name="CODEX_OTHER",
+            metered_feature="other",
+            window="primary",
+            used_percent=50,
+            recorded_at=now,
+        ),
+        AdditionalUsageHistory(
+            account_id="wanted",
+            quota_key="other",
+            limit_name="other",
+            metered_feature="CODEX_BENGALFOX",
+            window="primary",
+            used_percent=50,
+            recorded_at=now,
+        ),
+        AdditionalUsageHistory(
+            account_id="excluded",
+            quota_key="spark_enterprise",
+            limit_name="other",
+            metered_feature="other",
+            window="primary",
+            used_percent=100,
+            recorded_at=now + timedelta(seconds=1),
+        ),
+    ]
+    async_session.add_all(rows)
+    await async_session.commit()
+    result = await repo.latest_by_account("spark_enterprise", "primary", account_ids=["wanted", "missing"])
+    assert {key: entry.id for key, entry in result.items()} == {"wanted": rows[3].id}
+    assert await repo.latest_by_account("spark_enterprise", "secondary", account_ids=["wanted"]) == {}
+    assert await repo.latest_by_account("spark_enterprise", "primary", account_ids=[]) == {}
+    assert (
+        await repo.latest_by_account(
+            "spark_enterprise", "primary", account_ids=["wanted"], since=now + timedelta(seconds=1)
+        )
+        == {}
+    )
+
+
+@pytest.mark.asyncio
+async def test_latest_sqlite_large_account_pool(async_session: AsyncSession) -> None:
+    repo = AdditionalUsageRepository(async_session)
+    await repo.add_entry(
+        account_id="account_550", quota_key="anthropic_top_thinking",
+        limit_name="anthropic_top_thinking", metered_feature="anthropic_messages",
+        window="primary", used_percent=50,
+    )
+    result = await repo.latest_by_account(
+        "anthropic_top_thinking", "primary", account_ids=[f"account_{i}" for i in range(650)]
+    )
+    assert set(result) == {"account_550"}
+    assert result["account_550"].used_percent == 50

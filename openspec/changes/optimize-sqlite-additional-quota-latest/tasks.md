@@ -1,0 +1,3 @@
+- [x] Implement indexed SQLite seeks and migration.
+- [x] Verify aliases, ties, filters and historical DB result equality.
+- [x] Benchmark, migrate backup, deploy gracefully, verify live CPU.

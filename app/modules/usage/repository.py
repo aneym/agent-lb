@@ -8,7 +8,7 @@ from hashlib import sha256
 from threading import RLock
 
 from anyio import to_thread
-from sqlalchemy import Integer, and_, cast, delete, func, insert, literal, literal_column, or_, select, true
+from sqlalchemy import Integer, and_, cast, delete, func, insert, literal, literal_column, or_, select, true, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config.settings import get_settings
@@ -1037,7 +1037,76 @@ class AdditionalUsageRepository:
         if since is not None:
             conditions.append(AdditionalUsageHistory.recorded_at >= since)
         bind = self._session.get_bind()
-        if bind is not None and bind.dialect.name == "postgresql" and account_ids:
+        if bind is not None and bind.dialect.name == "sqlite":
+            # Each alias gets an equality seek; OR-ing aliases before LIMIT can
+            # otherwise rank/scan the entire historical quota table.
+            if account_ids is not None and not account_ids:
+                return {}
+            if account_ids is not None and len(account_ids) > 400:
+                # SQLite limits compound SELECTs to 500 terms by default.
+                # Keep each seek batch bounded without sharing a session
+                # concurrently or dropping rows from a large account pool.
+                result: dict[str, AdditionalUsageHistory] = {}
+                ids = sorted(set(account_ids))
+                for offset in range(0, len(ids), 400):
+                    result.update(
+                        await self.latest_by_account(
+                            quota_key, window, limit_name=limit_name,
+                            account_ids=ids[offset:offset + 400], since=since,
+                        )
+                    )
+                return result
+            accounts_stmt = select(AdditionalUsageHistory.account_id).distinct()
+            if account_ids is not None:
+                accounts_stmt = union_all(
+                    *(select(literal(account_id).label("account_id")) for account_id in sorted(set(account_ids)))
+                )
+            accounts = accounts_stmt.subquery("quota_accounts")
+            matches = [
+                AdditionalUsageHistory.quota_key == value
+                for value in sorted(scope.quota_key_match_values or {scope.quota_key})
+            ]
+            matches.extend(
+                func.lower(AdditionalUsageHistory.limit_name) == value
+                for value in sorted(scope.limit_name_match_values)
+            )
+            matches.extend(
+                func.lower(AdditionalUsageHistory.metered_feature) == value
+                for value in sorted(scope.metered_feature_match_values)
+            )
+            order = (
+                AdditionalUsageHistory.recorded_at.desc(),
+                AdditionalUsageHistory.used_percent.desc(),
+                AdditionalUsageHistory.id.desc(),
+            )
+            candidates = []
+            for match in matches:
+                seek_conditions = [
+                    AdditionalUsageHistory.account_id == accounts.c.account_id,
+                    AdditionalUsageHistory.window == window,
+                    match,
+                ]
+                if since is not None:
+                    seek_conditions.append(AdditionalUsageHistory.recorded_at >= since)
+                candidates.append(
+                    select(AdditionalUsageHistory.id)
+                    .where(*seek_conditions)
+                    .order_by(*order)
+                    .limit(1)
+                    .correlate(accounts)
+                    .scalar_subquery()
+                )
+            latest_id = (
+                select(AdditionalUsageHistory.id)
+                .where(AdditionalUsageHistory.id.in_(candidates))
+                .order_by(*order)
+                .limit(1)
+                .correlate(accounts)
+                .scalar_subquery()
+            )
+            ids = select(latest_id.label("usage_id")).select_from(accounts).subquery("latest_quota_ids")
+            stmt = select(AdditionalUsageHistory).join(ids, AdditionalUsageHistory.id == ids.c.usage_id)
+        elif bind is not None and bind.dialect.name == "postgresql" and account_ids:
 
 
 
