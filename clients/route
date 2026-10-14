@@ -73,6 +73,7 @@ import statistics
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -2902,14 +2903,48 @@ def _workflow_pick(table: dict[str, Any], class_name: str, author_vendor: str | 
     return out
 
 
+def workflow_quota():
+    path = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'open-factory/quota.toml'
+    try:
+        mode = tomllib.loads(path.read_text()).get('mode', 'tight')
+    except FileNotFoundError:
+        mode = 'tight'
+    if mode not in ('tight', 'normal'):
+        raise ValueError('invalid factory quota mode')
+    return {'mode': mode, 'agent_cap': 6 if mode == 'tight' else 16,
+            'default_model': 'sol-latest', 'opus_stages': ['judge', 'synthesis'],
+            'excluded_work': ['status', 'wake', 'polling', 'single-file'],
+            'maintenance_model': 'sol-latest', 'auto_tighten_used_percent': 70}
+
+
+def workflow_table(table):
+    # Workflow stages have their own defaults; ordinary route pick retains its ladder.
+    for name, spec in table['classes'].items():
+        if name == 'verify' or spec.get('driver'):
+            continue
+        entries = ladder_entries(table, name) or spec.get('chain', [])
+        sol = [dict(entry) for entry in entries if str(entry.get('model', '')).startswith('sol-latest')]
+        if not sol:
+            seat = 'gpt-explorer' if name == 'explore' else 'sol-consult' if name == 'plan' else 'gpt-implementer'
+            sol = [{'seat': seat, 'model': 'sol-latest', 'pool': 'openai-codex',
+                    'effort': 'high' if name == 'plan' else 'medium'}]
+        spec['chain'] = sol
+        if table.get('ladder'):
+            table['ladders'][table['ladder']][name] = [
+                dict(entry, id=entry.get('id', 'sol-default'), maker='openai') for entry in sol]
+    return table
+
+
 def command_workflow_args(args: argparse.Namespace) -> int:
-    table = load_table()
+    quota = workflow_quota()
+    table = workflow_table(load_table())
     classes = table.get("classes") if isinstance(table.get("classes"), dict) else {}
     document: dict[str, Any] = {
         "generated_at": now_iso(),
         "ladder": table.get("ladder"),
         "table_sha256": hashlib.sha256(table_path().read_bytes()).hexdigest() if table_path().is_file() else None,
-        "agent_cap": min(WORKFLOW_AGENT_CAP, max(1, (os.cpu_count() or 3) - 2)),
+        "agent_cap": quota["agent_cap"],
+        "quota": quota,
         "seats": {},
         "review_for": {},
         "errors": {},

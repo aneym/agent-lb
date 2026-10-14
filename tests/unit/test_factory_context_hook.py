@@ -62,12 +62,12 @@ def test_compact_reinjects_lane_context(tmp_path: Path) -> None:
         assert any(line.startswith(
             "Factory role: lead of lane ctxlane (project factory, herdr pane w9:p42)"
         ) for line in context.splitlines())
-        for expected in ("SENTINEL-S04", "# ctxlane — STATE", "PANE-ROW"):
+        for expected in ("Lane state:", "cat ", "PANE-ROW"):
             assert expected in context
-        for excluded in ("LINE-75-HIDDEN", "EXPIRED-ROW"):
+        for excluded in ("LINE-75-HIDDEN", "EXPIRED-ROW", "fix: resolved"):
             assert excluded not in context
-        assert sum(line.startswith("- [") for line in context.splitlines()) <= 20
-        assert len(context) <= 12000
+        assert sum(line.startswith("- [") for line in context.splitlines()) <= 3
+        assert len(context.encode()) <= 1024
         startup = run(python, "startup", tmp_path, env)
         assert startup.stdout == "" and startup.returncode == 0
         resumed_env = dict(env)

@@ -240,6 +240,12 @@ MANAGED_AGENTS = (
         Path("hooks/workflow-seat-guard.py"),
     ),
     (
+        Path(".claude/hooks/workflow-readback.py"),
+        Path(".agent-lb/managed/coding-agents/workflow-readback"),
+        "agent-lb:workflow-readback:v1\n",
+        Path("hooks/workflow-readback.py"),
+    ),
+    (
         Path(".claude/hooks/factory-context.py"),
         Path(".agent-lb/managed/coding-agents/factory-context"),
         "agent-lb:factory-context:v1\n",
@@ -489,6 +495,9 @@ SETTINGS_HOOKS = (
     ("PreToolUse", "Bash", DANGEROUS_GUARD_HOOK, True),
     ("PreToolUse", "Bash", KILL_SCOPE_GUARD_HOOK, True),
     ("SubagentStop", None, CLOSEOUT_HOOK, False),
+    ("PostToolUse", "Workflow", {"type": "command",
+        "command": '/usr/bin/python3 "$HOME/.claude/hooks/workflow-readback.py"',
+        "timeout": 5}, False),
     ("SessionStart", "compact|resume", FACTORY_CONTEXT_HOOK, False),
 )
 

@@ -1,0 +1,3 @@
+- [x] Emit workflow model and quota defaults.
+- [x] Add completion readback and shorten context.
+- [ ] Install and validate on the serving host.

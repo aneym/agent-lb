@@ -72,12 +72,12 @@ def identity(payload: dict, lanes: Path, agents: Path, pane: str) -> tuple:
 
 
 def cap_lines(lines: list, limit: int) -> list:
-    if len("\n".join(lines)) <= limit:
+    if len("\n".join(lines).encode()) <= limit:
         return lines
     kept = []
     for line in lines:
         candidate = kept + [line, TRUNCATED]
-        if len("\n".join(candidate)) > limit:
+        if len("\n".join(candidate).encode()) > limit:
             break
         kept.append(line)
     return kept + [TRUNCATED] if limit >= len(TRUNCATED) else []
@@ -93,7 +93,8 @@ def state_lines(path: Path) -> list:
                 lines.append(line.rstrip("\r\n")[:400])
     except OSError:
         return []
-    return cap_lines(["## Lane STATE.md (first 60 lines)"] + lines, 6000)
+    preview = next((line for line in lines if line.strip() and not line.startswith('#')), '')
+    return [f'Lane state: {preview[:120]} (full: cat {path})']
 
 
 def expired(value: object, now: datetime) -> bool:
@@ -137,9 +138,9 @@ def learning_lines(path: Path, pane: str, lane: str, project: str) -> list:
         problem, fix = str(row.get("problem", "")), str(row.get("fix", ""))
         content = (problem + " " + fix).lower()
         rank = 0 if pane and row.get("by") == pane else (1 if any(name in content for name in names) else 2)
-        text = "- [{}] {} -> fix: {}".format(row.get("at", "-"), problem, fix)
+        text = "- [{}] {} (full: cat {})".format(row.get("id") or row.get("at", "-"), problem[:80], path)
         ranked.append((rank, index, text.replace("\r", " ").replace("\n", " ")[:300]))
-    selected = sorted(ranked, key=lambda item: (item[0], -item[1]))[:20]
+    selected = sorted(ranked, key=lambda item: (item[0], -item[1]))[:3]
     if not selected:
         return []
     return ["## Recent factory learnings (factory learn)"] + [
@@ -183,13 +184,13 @@ def main() -> None:
             "Factory role: agent home {} (herdr pane {}). Context re-injected after {}.".format(agent, pane, source)
         ]
     learnings = learning_lines(learned, pane, lane, project)
-    while learnings and len("\n".join(base + state + learnings)) > 12000:
+    while learnings and len("\n".join(base + state + learnings).encode()) > 1024:
         learnings.pop()
         if len(learnings) == 1:
             learnings = []
-    budget = 12000 - len("\n".join(base + learnings)) - bool(base and state) - bool(learnings and state)
+    budget = 1024 - len("\n".join(base + learnings).encode()) - bool(base and state) - bool(learnings and state)
     state = cap_lines(state, budget)
-    text = "\n".join(cap_lines(base + state + learnings, 12000))
+    text = "\n".join(cap_lines(base + state + learnings, 1024))
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
 
 
