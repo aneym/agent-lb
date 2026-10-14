@@ -50,7 +50,9 @@ class CommentDiffCheck(unittest.TestCase):
                               ('a.swift', '// swiftlint:disable all\n'), ('a.js', '// @flow\n'),
                               ('a.js', '// prettier-ignore\n'), ('a.js', '// biome-ignore lint/all\n'),
                               ('a.swift', '// swift-tools-version: 5.9\n'), ('a.go', '// Code generated. DO NOT EDIT.\n'),
-                              ('a.rs', '// SPDX-License-Identifier: MIT\n')]:
+                              ('a.rs', '// SPDX-License-Identifier: MIT\n'), ('a.go', '//go:build linux\n'),
+                              ('a.sh', '# shellcheck disable=SC2086\n'), ('a.css', '/* stylelint-disable */\n'),
+                              ('a.ts', '/// <reference path="types.d.ts" />\n')]:
             with self.subTest(name=name, content=content):
                 self.check_diff(name, content, 0)
 

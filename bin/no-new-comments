@@ -9,7 +9,7 @@ import tokenize
 from pathlib import Path
 
 EXTENSIONS = {'.py', '.ts', '.tsx', '.js', '.mjs', '.swift', '.sh', '.go', '.rs', '.sql', '.css', '.yaml', '.yml', '.toml', '.html'}
-KEEP = re.compile(r'^(?:![/\w]|.*(?:SPDX-License-Identifier:|Copyright|Licensed under|Permission is hereby granted|@generated|Code generated|DO NOT EDIT)|\s*(?:eslint-disable(?:-next-line|-line)?\b|@ts-expect-error\b|@ts-ignore\b|type:\s*ignore\b|noqa\b|pragma\b|swiftlint:|@flow\b|prettier-ignore\b|biome-ignore\b|swift-tools-version:|.*-\*-.*coding.*-\*-))', re.I)
+KEEP = re.compile(r'^(?:![/\w]|.*(?:SPDX-License-Identifier:|Copyright|Licensed under|Permission is hereby granted|@generated|Code generated|DO NOT EDIT)|\s*(?:eslint-disable(?:-next-line|-line)?\b|@ts-expect-error\b|@ts-ignore\b|type:\s*ignore\b|noqa\b|pragma\b|swiftlint:|@flow\b|prettier-ignore\b|biome-ignore\b|swift-tools-version:|go:build\b|\+build\b|shellcheck\b|stylelint-disable\b|/\s*<reference\b|.*-\*-.*coding.*-\*-))', re.I)
 
 
 def git(repo, *args):
@@ -157,6 +157,8 @@ def main():
     parser.add_argument('head', nargs='?', default='HEAD')
     parser.add_argument('--repo', default='.')
     args = parser.parse_args()
+    if '..' in args.base:
+        args.base, args.head = args.base.split('..', 1)
     try:
         failures = list(violations(args.repo, args.base, args.head))
     except subprocess.CalledProcessError as exc:
